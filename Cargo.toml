@@ -14,3 +14,15 @@ web-sys = { version = "0.3", features = ["AudioContext", "AudioDestinationNode"]
 [[example]]
 name = "dorian_melody"
 path = "examples/dorian_melody.rs"
+
+[[example]]
+name = "modular_clock"
+path = "examples/modular_clock.rs"
+
+[[example]]
+name = "modular_chain"
+path = "examples/modular_chain.rs"
+
+[[example]]
+name = "modular_voice"
+path = "examples/modular_voice.rs"
