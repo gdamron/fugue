@@ -1,17 +1,17 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
-use crate::sequencer::{NoteSignal, MelodyParams};
+use crate::signal::AudioSignal;
 use crate::module::Generator;
-use crate::synthesis::Oscillator;
 
-/// ModularAudioEngine - plays a modular voice chain through the audio device
-pub struct ModularAudioEngine {
+/// DAC (Digital-to-Analog Converter) - the output node that sends audio to speakers
+/// In Eurorack terms, this is like the audio output jack
+pub struct Dac {
     stream: Option<Stream>,
     sample_rate: u32,
 }
 
-impl ModularAudioEngine {
+impl Dac {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let host = cpal::default_host();
         let device = host
@@ -31,14 +31,11 @@ impl ModularAudioEngine {
         self.sample_rate
     }
 
-    /// Start a voice generator that combines note generation with oscillator
-    pub fn start_voice<G>(
-        &mut self,
-        mut voice_gen: G,
-        melody_params: MelodyParams,
-    ) -> Result<(), Box<dyn std::error::Error>>
+    /// Start playing audio from the given generator
+    /// The generator should output AudioSignal samples
+    pub fn start<G>(&mut self, mut generator: G) -> Result<(), Box<dyn std::error::Error>>
     where
-        G: Generator<NoteSignal> + Send + 'static,
+        G: Generator<AudioSignal> + Send + 'static,
     {
         let host = cpal::default_host();
         let device = host
@@ -46,9 +43,6 @@ impl ModularAudioEngine {
             .ok_or("No output device available")?;
 
         let config = device.default_output_config()?;
-        let sample_rate = config.sample_rate().0;
-
-        let mut oscillator = Oscillator::new(sample_rate, melody_params.get_oscillator_type());
 
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => self.build_stream::<f32>(
@@ -56,18 +50,9 @@ impl ModularAudioEngine {
                 &config.into(),
                 move |data: &mut [f32]| {
                     for sample in data.iter_mut() {
-                        // Process the voice generator
-                        voice_gen.process();
-                        let note_signal = voice_gen.output();
-
-                        // Update oscillator type if changed
-                        let osc_type = melody_params.get_oscillator_type();
-                        oscillator.set_type(osc_type);
-                        oscillator.set_frequency(note_signal.frequency.hz);
-
-                        // Generate audio with envelope
-                        let audio_sample = oscillator.output();
-                        *sample = audio_sample.value * note_signal.gate.velocity * 0.15;
+                        generator.process();
+                        let audio = generator.output();
+                        *sample = audio.value.clamp(-1.0, 1.0);
                     }
                 },
             )?,
@@ -76,15 +61,9 @@ impl ModularAudioEngine {
                 &config.into(),
                 move |data: &mut [i16]| {
                     for sample in data.iter_mut() {
-                        voice_gen.process();
-                        let note_signal = voice_gen.output();
-
-                        let osc_type = melody_params.get_oscillator_type();
-                        oscillator.set_type(osc_type);
-                        oscillator.set_frequency(note_signal.frequency.hz);
-
-                        let audio_sample = oscillator.output();
-                        let value = (audio_sample.value * note_signal.gate.velocity * 0.15 * i16::MAX as f32) as i16;
+                        generator.process();
+                        let audio = generator.output();
+                        let value = (audio.value.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                         *sample = value;
                     }
                 },
@@ -94,15 +73,9 @@ impl ModularAudioEngine {
                 &config.into(),
                 move |data: &mut [u16]| {
                     for sample in data.iter_mut() {
-                        voice_gen.process();
-                        let note_signal = voice_gen.output();
-
-                        let osc_type = melody_params.get_oscillator_type();
-                        oscillator.set_type(osc_type);
-                        oscillator.set_frequency(note_signal.frequency.hz);
-
-                        let audio_sample = oscillator.output();
-                        let value = ((audio_sample.value * note_signal.gate.velocity * 0.15 + 1.0) * 0.5 * u16::MAX as f32) as u16;
+                        generator.process();
+                        let audio = generator.output();
+                        let value = ((audio.value.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16;
                         *sample = value;
                     }
                 },
@@ -137,7 +110,9 @@ impl ModularAudioEngine {
         Ok(stream)
     }
 
+    /// Stop audio playback
     pub fn stop(&mut self) {
         self.stream = None;
     }
 }
+

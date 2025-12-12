@@ -16,7 +16,7 @@ pub use signal::{
 pub use module::{Module, Generator, Processor, Connect};
 
 pub use time::{Clock, Tempo};
-pub use synthesis::{Oscillator, OscillatorType, Filter};
+pub use synthesis::{Oscillator, OscillatorType, Filter, Voice};
 pub use scale::{Scale, Mode, Note};
 pub use sequencer::{MelodyGenerator, MelodyParams, NoteSignal};
-pub use modular_audio::ModularAudioEngine;
+pub use modular_audio::Dac;

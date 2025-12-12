@@ -5,28 +5,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Fugue - Algorithmic Music Composition (Modular)");
     println!("================================================\n");
 
-    let sample_rate = 44100;
+    // Get actual device sample rate
+    let mut dac = Dac::new()?;
+    let sample_rate = dac.sample_rate();
     let tempo = Tempo::new(120.0);
     
+    println!("Sample rate: {} Hz", sample_rate);
+    println!("Tempo: {} BPM\n", tempo.get_bpm());
+
     let root = Note::new(60); // Middle C
     let scale = Scale::new(root, Mode::Dorian);
     
     let allowed_degrees = vec![0, 1, 2, 3, 4, 5, 6];
     let params = MelodyParams::new(allowed_degrees);
     
-    // Build modular chain: Clock → Sequencer
+    // Build modular chain: Clock → Sequencer → Voice → DAC
     let clock = Clock::new(sample_rate, tempo.clone()).with_time_signature(4);
     let sequencer = MelodyGenerator::new(scale, params.clone(), sample_rate, tempo.clone());
     
-    let voice = clock.connect(sequencer);
+    // Voice converts NoteSignal to AudioSignal with live oscillator control
+    let voice = Voice::new(sample_rate, params.get_oscillator_type())
+        .with_osc_type_control(params.oscillator_type.clone());
     
-    let mut engine = ModularAudioEngine::new()?;
+    // Connect the chain
+    let audio_gen = clock.connect(sequencer).connect(voice);
     
-    println!("Starting Dorian melody at 120 BPM...");
-    println!("Sample rate: {} Hz", engine.sample_rate());
-    println!("\nModular chain: Clock → Sequencer → Oscillator → Audio\n");
+    println!("Starting Dorian melody...");
+    println!("Modular chain: Clock → Sequencer → Voice → DAC → 🔊\n");
     
-    engine.start_voice(voice, params.clone())?;
+    dac.start(audio_gen)?;
     
     println!("Commands:");
     println!("  1-7: Toggle scale degrees (1=root, 2=second, etc.)");
@@ -34,7 +41,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  +/-: Increase/decrease tempo");
     println!("  f/n: Faster/slower notes");
     println!("  r: Emphasize root and fifth");
+    println!("  i: Show current settings");
     println!("  x: Exit\n");
+    
+    println!("Current settings:");
+    println!("  Tempo: {} BPM", tempo.get_bpm());
+    println!("  Note duration: {:.2} beats (quarter note)", *params.note_duration.lock().unwrap());
+    println!();
 
     let mut current_degrees = vec![0, 1, 2, 3, 4, 5, 6];
     
@@ -94,6 +107,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 params.set_note_weights(weights);
                 println!("✓ Emphasized root and fifth");
             }
+            "i" => {
+                println!("Current settings:");
+                println!("  Tempo: {} BPM", tempo.get_bpm());
+                println!("  Note duration: {:.3} beats", *params.note_duration.lock().unwrap());
+                println!("  Active degrees: {:?}", current_degrees.iter().map(|d| d + 1).collect::<Vec<_>>());
+            }
             "x" => {
                 println!("Stopping...");
                 break;
@@ -103,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
-    engine.stop();
+    dac.stop();
     println!("Goodbye!");
     
     Ok(())

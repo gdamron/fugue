@@ -20,7 +20,7 @@ impl MelodyParams {
         Self {
             allowed_degrees: Arc::new(Mutex::new(allowed_degrees)),
             note_weights: Arc::new(Mutex::new(weights)),
-            note_duration: Arc::new(Mutex::new(0.25)),
+            note_duration: Arc::new(Mutex::new(1.0)), // Quarter note (1 beat)
             oscillator_type: Arc::new(Mutex::new(OscillatorType::Sine)),
         }
     }
