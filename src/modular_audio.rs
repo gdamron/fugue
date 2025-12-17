@@ -43,16 +43,22 @@ impl Dac {
             .ok_or("No output device available")?;
 
         let config = device.default_output_config()?;
+        let channels = config.channels() as usize;
 
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => self.build_stream::<f32>(
                 &device,
                 &config.into(),
                 move |data: &mut [f32]| {
-                    for sample in data.iter_mut() {
+                    // Process once per frame (not per sample)
+                    for frame in data.chunks_mut(channels) {
                         generator.process();
                         let audio = generator.output();
-                        *sample = audio.value.clamp(-1.0, 1.0);
+                        let value = audio.value.clamp(-1.0, 1.0);
+                        // Write same value to all channels (mono -> stereo)
+                        for sample in frame.iter_mut() {
+                            *sample = value;
+                        }
                     }
                 },
             )?,
@@ -60,11 +66,15 @@ impl Dac {
                 &device,
                 &config.into(),
                 move |data: &mut [i16]| {
-                    for sample in data.iter_mut() {
+                    // Process once per frame (not per sample)
+                    for frame in data.chunks_mut(channels) {
                         generator.process();
                         let audio = generator.output();
                         let value = (audio.value.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                        *sample = value;
+                        // Write same value to all channels (mono -> stereo)
+                        for sample in frame.iter_mut() {
+                            *sample = value;
+                        }
                     }
                 },
             )?,
@@ -72,11 +82,15 @@ impl Dac {
                 &device,
                 &config.into(),
                 move |data: &mut [u16]| {
-                    for sample in data.iter_mut() {
+                    // Process once per frame (not per sample)
+                    for frame in data.chunks_mut(channels) {
                         generator.process();
                         let audio = generator.output();
                         let value = ((audio.value.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16;
-                        *sample = value;
+                        // Write same value to all channels (mono -> stereo)
+                        for sample in frame.iter_mut() {
+                            *sample = value;
+                        }
                     }
                 },
             )?,

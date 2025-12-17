@@ -1,9 +1,9 @@
-use crate::scale::{Scale, Note};
-use crate::synthesis::OscillatorType;
-use crate::signal::{ClockSignal, GateSignal, FrequencySignal};
 use crate::module::{Module, Processor};
-use rand::{Rng, SeedableRng};
+use crate::scale::{Note, Scale};
+use crate::signal::{ClockSignal, FrequencySignal, GateSignal};
+use crate::synthesis::OscillatorType;
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -28,7 +28,7 @@ impl MelodyParams {
     pub fn set_allowed_degrees(&self, degrees: Vec<usize>) {
         let mut allowed = self.allowed_degrees.lock().unwrap();
         *allowed = degrees.clone();
-        
+
         let mut weights = self.note_weights.lock().unwrap();
         weights.resize(degrees.len(), 1.0);
     }
@@ -62,7 +62,12 @@ pub struct MelodyGenerator {
 }
 
 impl MelodyGenerator {
-    pub fn new(scale: Scale, params: MelodyParams, sample_rate: u32, tempo: crate::time::Tempo) -> Self {
+    pub fn new(
+        scale: Scale,
+        params: MelodyParams,
+        sample_rate: u32,
+        tempo: crate::time::Tempo,
+    ) -> Self {
         let current_note = Note::new(60);
         Self {
             scale,
@@ -106,7 +111,7 @@ impl Module for MelodyGenerator {
     fn process(&mut self) -> bool {
         true
     }
-    
+
     fn name(&self) -> &str {
         "MelodyGenerator"
     }
@@ -124,13 +129,13 @@ impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
         let note_duration = *self.params.note_duration.lock().unwrap();
         let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
         let samples_per_note = (samples_per_beat * note_duration as f64) as u64;
-        
+
         // Check if we need a new note
         if self.samples_since_note >= samples_per_note {
             self.current_note = self.next_note();
             self.samples_since_note = 0;
         }
-        
+
         // Calculate envelope (simple ASR)
         let envelope = if self.samples_since_note < samples_per_note / 10 {
             self.samples_since_note as f32 / (samples_per_note as f32 / 10.0)
@@ -140,9 +145,9 @@ impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
         } else {
             1.0
         };
-        
+
         self.samples_since_note += 1;
-        
+
         NoteSignal {
             gate: GateSignal::new(true, envelope),
             frequency: FrequencySignal::from_midi(self.current_note.midi_note),
