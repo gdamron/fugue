@@ -1,7 +1,7 @@
 use crate::module::{Module, Processor};
+use crate::oscillator::OscillatorType;
 use crate::scale::{Note, Scale};
-use crate::signal::{ClockSignal, FrequencySignal, GateSignal};
-use crate::synthesis::OscillatorType;
+use crate::signal::{Audio, ClockSignal, FrequencySignal};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Mutex};
@@ -120,7 +120,7 @@ impl Module for MelodyGenerator {
 /// Output combines gate and frequency information
 #[derive(Debug, Clone, Copy)]
 pub struct NoteSignal {
-    pub gate: GateSignal,
+    pub gate: Audio,
     pub frequency: FrequencySignal,
 }
 
@@ -149,7 +149,7 @@ impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
         self.samples_since_note += 1;
 
         NoteSignal {
-            gate: GateSignal::new(true, envelope),
+            gate: Audio::gate(true, envelope),
             frequency: FrequencySignal::from_midi(self.current_note.midi_note),
         }
     }
