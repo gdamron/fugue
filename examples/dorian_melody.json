@@ -7,7 +7,7 @@
       "id": "clock",
       "type": "clock",
       "config": {
-        "bpm": 120.0,
+        "bpm": 60.0,
         "time_signature": {
           "beats_per_measure": 4,
           "beat_unit": 4
@@ -22,12 +22,31 @@
         "mode": "dorian",
         "scale_degrees": [0, 1, 2, 3, 4, 5, 6],
         "note_weights": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-        "note_duration": 1.0,
+        "note_duration": 4.0,
         "oscillator_type": "sine"
       }
     },
     {
       "id": "voice",
+      "type": "voice",
+      "config": {
+        "oscillator_type": "sine"
+      }
+    },
+    {
+      "id": "melody_2",
+      "type": "melody",
+      "config": {
+        "root_note": 60,
+        "mode": "dorian",
+        "scale_degrees": [0, 1, 2, 3, 4, 5, 6],
+        "note_weights": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        "note_duration": 4.0,
+        "oscillator_type": "sine"
+      }
+    },
+    {
+      "id": "voice_2",
       "type": "voice",
       "config": {
         "oscillator_type": "sine"
@@ -45,11 +64,23 @@
       "to": "melody"
     },
     {
+      "from": "clock",
+      "to": "melody_2"
+    },
+    {
       "from": "melody",
       "to": "voice"
     },
     {
+      "from": "melody_2",
+      "to": "voice_2"
+    },
+    {
       "from": "voice",
+      "to": "dac"
+    },
+    {
+      "from": "voice_2",
       "to": "dac"
     }
   ]

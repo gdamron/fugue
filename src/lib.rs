@@ -24,5 +24,5 @@ pub use oscillator::{Oscillator, OscillatorType};
 pub use patch::{Connection, ModuleConfig, ModuleSpec, Patch, TimeSignature};
 pub use scale::{Mode, Note, Scale};
 pub use sequencer::{MelodyGenerator, MelodyParams, NoteSignal};
-pub use synthesis::{Filter, Voice};
+pub use synthesis::{Filter, Mixer, Voice};
 pub use time::{Clock, Tempo};
