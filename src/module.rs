@@ -8,7 +8,7 @@ pub trait Module: Send {
     fn process(&mut self) -> bool {
         true
     }
-    
+
     /// Get the module's name for debugging
     fn name(&self) -> &str {
         "Module"
@@ -37,11 +37,11 @@ impl<T: Clone> Connection<T> {
     pub fn new(signal: T) -> Self {
         Self { signal }
     }
-    
+
     pub fn read(&self) -> T {
         self.signal.clone()
     }
-    
+
     pub fn write(&mut self, signal: T) {
         self.signal = signal;
     }

@@ -1,8 +1,8 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
-use crate::signal::AudioSignal;
 use crate::module::Generator;
+use crate::signal::AudioSignal;
 
 /// DAC (Digital-to-Analog Converter) - the output node that sends audio to speakers
 /// In Eurorack terms, this is like the audio output jack
@@ -46,10 +46,8 @@ impl Dac {
         let channels = config.channels() as usize;
 
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => self.build_stream::<f32>(
-                &device,
-                &config.into(),
-                move |data: &mut [f32]| {
+            cpal::SampleFormat::F32 => {
+                self.build_stream::<f32>(&device, &config.into(), move |data: &mut [f32]| {
                     // Process once per frame (not per sample)
                     for frame in data.chunks_mut(channels) {
                         generator.process();
@@ -60,12 +58,10 @@ impl Dac {
                             *sample = value;
                         }
                     }
-                },
-            )?,
-            cpal::SampleFormat::I16 => self.build_stream::<i16>(
-                &device,
-                &config.into(),
-                move |data: &mut [i16]| {
+                })?
+            }
+            cpal::SampleFormat::I16 => {
+                self.build_stream::<i16>(&device, &config.into(), move |data: &mut [i16]| {
                     // Process once per frame (not per sample)
                     for frame in data.chunks_mut(channels) {
                         generator.process();
@@ -76,24 +72,23 @@ impl Dac {
                             *sample = value;
                         }
                     }
-                },
-            )?,
-            cpal::SampleFormat::U16 => self.build_stream::<u16>(
-                &device,
-                &config.into(),
-                move |data: &mut [u16]| {
+                })?
+            }
+            cpal::SampleFormat::U16 => {
+                self.build_stream::<u16>(&device, &config.into(), move |data: &mut [u16]| {
                     // Process once per frame (not per sample)
                     for frame in data.chunks_mut(channels) {
                         generator.process();
                         let audio = generator.output();
-                        let value = ((audio.value.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16;
+                        let value =
+                            ((audio.value.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16;
                         // Write same value to all channels (mono -> stereo)
                         for sample in frame.iter_mut() {
                             *sample = value;
                         }
                     }
-                },
-            )?,
+                })?
+            }
             _ => return Err("Unsupported sample format".into()),
         };
 
@@ -129,4 +124,3 @@ impl Dac {
         self.stream = None;
     }
 }
-

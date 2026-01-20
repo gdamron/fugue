@@ -1,11 +1,11 @@
 #[derive(Debug, Clone, Copy)]
 pub enum Mode {
-    Ionian,      // Major
+    Ionian, // Major
     Dorian,
     Phrygian,
     Lydian,
     Mixolydian,
-    Aeolian,     // Natural Minor
+    Aeolian, // Natural Minor
     Locrian,
 }
 
@@ -59,11 +59,10 @@ impl Scale {
         let intervals = self.mode.intervals();
         let octave = degree / intervals.len();
         let degree_in_octave = degree % intervals.len();
-        
-        let midi_note = self.root.midi_note as i32 + 
-                       (octave as i32 * 12) + 
-                       intervals[degree_in_octave];
-        
+
+        let midi_note =
+            self.root.midi_note as i32 + (octave as i32 * 12) + intervals[degree_in_octave];
+
         Note::new(midi_note as u8)
     }
 
