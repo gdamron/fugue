@@ -2,6 +2,7 @@ pub mod builder;
 pub mod modular_audio;
 pub mod module;
 pub mod oscillator;
+pub mod oscillator_builder;
 pub mod patch;
 pub mod scale;
 pub mod sequencer;
@@ -20,7 +21,10 @@ pub use module::{Connect, Generator, Module, Processor};
 
 pub use builder::{PatchBuilder, PatchRuntime, RunningPatch};
 pub use modular_audio::Dac;
-pub use oscillator::{Oscillator, OscillatorType};
+pub use oscillator::{ModulatedOscillator, ModulationInputs, Oscillator, OscillatorType};
+pub use oscillator_builder::{
+    OscillatorPatchBuilder, OscillatorPatchRuntime, RunningOscillatorPatch,
+};
 pub use patch::{Connection, ModuleConfig, ModuleSpec, Patch, TimeSignature};
 pub use scale::{Mode, Note, Scale};
 pub use sequencer::{MelodyGenerator, MelodyParams, NoteSignal};

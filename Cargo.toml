@@ -20,3 +20,11 @@ path = "examples/dorian_melody.rs"
 [[example]]
 name = "dorian_melody_declarative"
 path = "examples/dorian_melody_declarative.rs"
+
+[[example]]
+name = "fm_synthesis_demo"
+path = "examples/fm_synthesis_demo.rs"
+
+[[example]]
+name = "am_synthesis_demo"
+path = "examples/am_synthesis_demo.rs"

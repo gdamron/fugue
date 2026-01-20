@@ -90,6 +90,15 @@ pub struct ModuleConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oscillator_type: Option<String>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency: Option<f32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fm_amount: Option<f32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub am_amount: Option<f32>,
+
     // Filter configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cutoff: Option<f32>,

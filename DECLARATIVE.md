@@ -111,6 +111,54 @@ Converts note signals to audio using an oscillator and envelope.
 **Config Options:**
 - `oscillator_type` (optional, default: "sine"): Waveform type (sine, square, sawtooth/saw, triangle/tri)
 
+### Oscillator
+
+Standalone oscillator module for FM/AM synthesis and modulation.
+
+```json
+{
+  "id": "oscillator1",
+  "type": "oscillator",
+  "config": {
+    "frequency": 440.0,
+    "oscillator_type": "sine",
+    "fm_amount": 100.0,
+    "am_amount": 0.8
+  }
+}
+```
+
+**Config Options:**
+- `frequency` (optional, default: 440.0): Base frequency in Hz
+- `oscillator_type` (optional, default: "sine"): Waveform type
+- `fm_amount` (optional, default: 0.0): Frequency modulation depth in Hz
+- `am_amount` (optional, default: 0.0): Amplitude modulation depth (0.0 to 1.0)
+
+**Input Ports:**
+- `fm`: Frequency modulation input (audio signal modulates frequency)
+- `am`: Amplitude modulation input (audio signal modulates amplitude)
+- (default): Standard audio input
+
+**Example FM Synthesis:**
+```json
+{
+  "connections": [
+    {"from": "modulator", "to": "carrier", "to_port": "fm"},
+    {"from": "carrier", "to": "dac"}
+  ]
+}
+```
+
+**Example AM Synthesis:**
+```json
+{
+  "connections": [
+    {"from": "lfo", "to": "carrier", "to_port": "am"},
+    {"from": "carrier", "to": "dac"}
+  ]
+}
+```
+
 ### DAC
 
 Digital-to-analog converter - outputs audio to speakers.
