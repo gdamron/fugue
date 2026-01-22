@@ -30,7 +30,7 @@
     {
       "from": "lfo",
       "to": "carrier",
-      "to_port": "am"
+      "to_port": "amplitude"
     },
     {
       "from": "carrier",

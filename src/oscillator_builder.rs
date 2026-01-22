@@ -48,8 +48,10 @@ impl OscillatorPatchBuilder {
                     .or_insert_with(ModulationConnections::default);
 
                 match port.as_str() {
-                    "fm" => entry.fm_source = Some(conn.from.clone()),
-                    "am" => entry.am_source = Some(conn.from.clone()),
+                    "frequency" | "freq" | "fm" => entry.frequency_source = Some(conn.from.clone()),
+                    "amplitude" | "amp" | "gain" | "am" => {
+                        entry.amplitude_source = Some(conn.from.clone())
+                    }
                     _ => return Err(format!("Unknown modulation port: {}", port).into()),
                 }
             }
@@ -104,8 +106,8 @@ impl OscillatorPatchBuilder {
 
 #[derive(Default)]
 struct ModulationConnections {
-    fm_source: Option<String>,
-    am_source: Option<String>,
+    frequency_source: Option<String>,
+    amplitude_source: Option<String>,
 }
 
 pub struct OscillatorPatchRuntime {
@@ -160,13 +162,13 @@ impl OscillatorGraph {
             // Get modulation inputs for this oscillator
             let mod_inputs = if let Some(mod_conn) = self.modulation_map.get(id) {
                 ModulationInputs {
-                    fm: mod_conn
-                        .fm_source
+                    frequency: mod_conn
+                        .frequency_source
                         .as_ref()
                         .and_then(|src| osc_outputs.get(src).copied())
                         .unwrap_or(0.0),
-                    am: mod_conn
-                        .am_source
+                    amplitude: mod_conn
+                        .amplitude_source
                         .as_ref()
                         .and_then(|src| osc_outputs.get(src).copied())
                         .unwrap_or(0.0),

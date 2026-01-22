@@ -30,7 +30,7 @@
     {
       "from": "modulator",
       "to": "carrier",
-      "to_port": "fm"
+      "to_port": "frequency"
     },
     {
       "from": "carrier",

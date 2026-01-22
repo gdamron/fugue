@@ -68,10 +68,10 @@ impl Oscillator {
         self.am_amount = amount.clamp(0.0, 1.0);
     }
 
-    /// Generate a sample with optional FM and AM modulation
-    pub fn generate_sample_with_modulation(&mut self, fm_mod: f32, am_mod: f32) -> f32 {
+    /// Generate a sample with optional frequency and amplitude modulation
+    pub fn generate_sample_with_modulation(&mut self, freq_mod: f32, amp_mod: f32) -> f32 {
         // Apply frequency modulation
-        let modulated_freq = self.frequency + (fm_mod * self.fm_amount);
+        let modulated_freq = self.frequency + (freq_mod * self.fm_amount);
 
         // Generate waveform
         let sample = match self.osc_type {
@@ -92,16 +92,16 @@ impl Oscillator {
         self.phase %= 1.0;
 
         // Apply amplitude modulation
-        // am_mod is expected to be in range [-1, 1]
+        // amp_mod is expected to be in range [-1, 1]
         // We map it to [0, 1] for amplitude scaling
-        let am_scale = if self.am_amount > 0.0 {
-            let normalized_am = (am_mod + 1.0) * 0.5; // Convert [-1, 1] to [0, 1]
-            1.0 - self.am_amount + (normalized_am * self.am_amount)
+        let amp_scale = if self.am_amount > 0.0 {
+            let normalized_amp = (amp_mod + 1.0) * 0.5; // Convert [-1, 1] to [0, 1]
+            1.0 - self.am_amount + (normalized_amp * self.am_amount)
         } else {
             1.0
         };
 
-        sample * am_scale
+        sample * amp_scale
     }
 
     fn generate_sample(&mut self) -> f32 {
@@ -147,8 +147,8 @@ impl Processor<FrequencySignal, AudioSignal> for Oscillator {
 /// Modulation inputs for an oscillator
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ModulationInputs {
-    pub fm: f32, // Frequency modulation input (audio signal value)
-    pub am: f32, // Amplitude modulation input (audio signal value)
+    pub frequency: f32, // Frequency modulation input (audio signal value)
+    pub amplitude: f32, // Amplitude modulation input (audio signal value)
 }
 
 /// ModulatedOscillator - accepts modulation inputs as well as base frequency
@@ -190,7 +190,7 @@ impl ModulatedOscillator {
     pub fn process_with_modulation(&mut self, mod_inputs: ModulationInputs) -> AudioSignal {
         AudioSignal::new(
             self.oscillator
-                .generate_sample_with_modulation(mod_inputs.fm, mod_inputs.am),
+                .generate_sample_with_modulation(mod_inputs.frequency, mod_inputs.amplitude),
         )
     }
 }
