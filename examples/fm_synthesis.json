@@ -1,0 +1,40 @@
+{
+  "version": "1.0.0",
+  "title": "FM Synthesis Example",
+  "description": "Simple FM synthesis with one modulator affecting one carrier",
+  "modules": [
+    {
+      "id": "modulator",
+      "type": "oscillator",
+      "config": {
+        "frequency": 200.0,
+        "oscillator_type": "sine"
+      }
+    },
+    {
+      "id": "carrier",
+      "type": "oscillator",
+      "config": {
+        "frequency": 440.0,
+        "oscillator_type": "sine",
+        "fm_amount": 100.0
+      }
+    },
+    {
+      "id": "dac",
+      "type": "dac",
+      "config": {}
+    }
+  ],
+  "connections": [
+    {
+      "from": "modulator",
+      "to": "carrier",
+      "to_port": "frequency"
+    },
+    {
+      "from": "carrier",
+      "to": "dac"
+    }
+  ]
+}

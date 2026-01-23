@@ -1,0 +1,40 @@
+{
+  "version": "1.0.0",
+  "title": "AM Synthesis Example",
+  "description": "Amplitude modulation with a slow LFO modulating a carrier",
+  "modules": [
+    {
+      "id": "lfo",
+      "type": "oscillator",
+      "config": {
+        "frequency": 5.0,
+        "oscillator_type": "sine"
+      }
+    },
+    {
+      "id": "carrier",
+      "type": "oscillator",
+      "config": {
+        "frequency": 440.0,
+        "oscillator_type": "sawtooth",
+        "am_amount": 0.8
+      }
+    },
+    {
+      "id": "dac",
+      "type": "dac",
+      "config": {}
+    }
+  ],
+  "connections": [
+    {
+      "from": "lfo",
+      "to": "carrier",
+      "to_port": "amplitude"
+    },
+    {
+      "from": "carrier",
+      "to": "dac"
+    }
+  ]
+}

@@ -2,39 +2,45 @@ use fugue::*;
 use std::io::{self, Write};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Fugue - Algorithmic Music Composition (Modular)");
-    println!("================================================\n");
+    println!("Fugue - Declarative Patch Example");
+    println!("==================================\n");
 
-    // Get actual device sample rate
-    let mut dac = Dac::new()?;
+    // Load patch from JSON file
+    let patch = Patch::from_file("examples/dorian_melody.json")?;
+
+    println!(
+        "Loaded patch: {}",
+        patch.title.as_deref().unwrap_or("Untitled")
+    );
+    if let Some(desc) = &patch.description {
+        println!("Description: {}", desc);
+    }
+    println!();
+
+    // Build the patch
+    let dac = Dac::new()?;
     let sample_rate = dac.sample_rate();
-    let tempo = Tempo::new(120.0);
 
     println!("Sample rate: {} Hz", sample_rate);
-    println!("Tempo: {} BPM\n", tempo.get_bpm());
+    println!("Building patch...\n");
 
-    let root = Note::new(60); // Middle C
-    let scale = Scale::new(root, Mode::Dorian);
+    let builder = PatchBuilder::new(sample_rate);
+    let runtime = builder.build_and_run(patch)?;
 
-    let allowed_degrees = vec![0, 1, 2, 3, 4, 5, 6];
-    let params = MelodyParams::new(allowed_degrees);
+    // Display the signal chain
+    println!("Signal chain:");
+    for (i, module) in runtime.patch().modules.iter().enumerate() {
+        if i > 0 {
+            println!("  ↓");
+        }
+        println!("  [{}] {}", module.module_type, module.id);
+    }
+    println!();
 
-    // Build modular chain: Clock → Sequencer → Voice → DAC
-    let clock = Clock::new(sample_rate, tempo.clone()).with_time_signature(4);
-    let sequencer = MelodyGenerator::new(scale, params.clone(), sample_rate, tempo.clone());
+    // Start audio
+    let running = runtime.start()?;
 
-    // Voice converts NoteSignal to AudioSignal with live oscillator control
-    let voice = Voice::new(sample_rate, params.get_oscillator_type())
-        .with_osc_type_control(params.oscillator_type.clone());
-
-    // Connect the chain
-    let audio_gen = clock.connect(sequencer).connect(voice);
-
-    println!("Starting Dorian melody...");
-    println!("Modular chain: Clock → Sequencer → Voice → DAC → 🔊\n");
-
-    dac.start(audio_gen)?;
-
+    println!("Audio started! 🔊\n");
     println!("Commands:");
     println!("  1-7: Toggle scale degrees (1=root, 2=second, etc.)");
     println!("  s/w/t/q: Change oscillator (Sine/saWtooth/Triangle/sQuare)");
@@ -45,10 +51,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  x: Exit\n");
 
     println!("Current settings:");
-    println!("  Tempo: {} BPM", tempo.get_bpm());
+    println!("  Tempo: {} BPM", running.tempo().get_bpm());
     println!(
-        "  Note duration: {:.2} beats (quarter note)",
-        *params.note_duration.lock().unwrap()
+        "  Note duration: {:.2} beats",
+        *running.melody_params().note_duration.lock().unwrap()
     );
     println!();
 
@@ -62,60 +68,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         io::stdin().read_line(&mut input)?;
 
         match input.trim() {
-            "1" => toggle_degree(&mut current_degrees, &params, 0),
-            "2" => toggle_degree(&mut current_degrees, &params, 1),
-            "3" => toggle_degree(&mut current_degrees, &params, 2),
-            "4" => toggle_degree(&mut current_degrees, &params, 3),
-            "5" => toggle_degree(&mut current_degrees, &params, 4),
-            "6" => toggle_degree(&mut current_degrees, &params, 5),
-            "7" => toggle_degree(&mut current_degrees, &params, 6),
+            "1" => toggle_degree(&mut current_degrees, running.melody_params(), 0),
+            "2" => toggle_degree(&mut current_degrees, running.melody_params(), 1),
+            "3" => toggle_degree(&mut current_degrees, running.melody_params(), 2),
+            "4" => toggle_degree(&mut current_degrees, running.melody_params(), 3),
+            "5" => toggle_degree(&mut current_degrees, running.melody_params(), 4),
+            "6" => toggle_degree(&mut current_degrees, running.melody_params(), 5),
+            "7" => toggle_degree(&mut current_degrees, running.melody_params(), 6),
             "s" => {
-                params.set_oscillator_type(OscillatorType::Sine);
+                running
+                    .melody_params()
+                    .set_oscillator_type(OscillatorType::Sine);
                 println!("✓ Switched to Sine wave");
             }
             "w" => {
-                params.set_oscillator_type(OscillatorType::Sawtooth);
+                running
+                    .melody_params()
+                    .set_oscillator_type(OscillatorType::Sawtooth);
                 println!("✓ Switched to Sawtooth wave");
             }
             "t" => {
-                params.set_oscillator_type(OscillatorType::Triangle);
+                running
+                    .melody_params()
+                    .set_oscillator_type(OscillatorType::Triangle);
                 println!("✓ Switched to Triangle wave");
             }
             "q" => {
-                params.set_oscillator_type(OscillatorType::Square);
+                running
+                    .melody_params()
+                    .set_oscillator_type(OscillatorType::Square);
                 println!("✓ Switched to Square wave");
             }
             "+" => {
-                let new_tempo = tempo.get_bpm() + 10.0;
-                tempo.set_bpm(new_tempo);
+                let new_tempo = running.tempo().get_bpm() + 10.0;
+                running.tempo().set_bpm(new_tempo);
                 println!("✓ Tempo: {} BPM", new_tempo);
             }
             "-" => {
-                let new_tempo = (tempo.get_bpm() - 10.0).max(40.0);
-                tempo.set_bpm(new_tempo);
+                let new_tempo = (running.tempo().get_bpm() - 10.0).max(40.0);
+                running.tempo().set_bpm(new_tempo);
                 println!("✓ Tempo: {} BPM", new_tempo);
             }
             "f" => {
-                let new_duration = (*params.note_duration.lock().unwrap() * 0.75).max(0.0625);
-                params.set_note_duration(new_duration);
+                let new_duration =
+                    (*running.melody_params().note_duration.lock().unwrap() * 0.75).max(0.0625);
+                running.melody_params().set_note_duration(new_duration);
                 println!("✓ Note duration: {:.3} beats", new_duration);
             }
             "n" => {
-                let new_duration = (*params.note_duration.lock().unwrap() * 1.33).min(2.0);
-                params.set_note_duration(new_duration);
+                let new_duration =
+                    (*running.melody_params().note_duration.lock().unwrap() * 1.33).min(2.0);
+                running.melody_params().set_note_duration(new_duration);
                 println!("✓ Note duration: {:.3} beats", new_duration);
             }
             "r" => {
                 let weights = vec![3.0, 1.0, 1.0, 1.0, 2.5, 1.0, 1.0];
-                params.set_note_weights(weights);
+                running.melody_params().set_note_weights(weights);
                 println!("✓ Emphasized root and fifth");
             }
             "i" => {
                 println!("Current settings:");
-                println!("  Tempo: {} BPM", tempo.get_bpm());
+                println!("  Tempo: {} BPM", running.tempo().get_bpm());
                 println!(
                     "  Note duration: {:.3} beats",
-                    *params.note_duration.lock().unwrap()
+                    *running.melody_params().note_duration.lock().unwrap()
                 );
                 println!(
                     "  Active degrees: {:?}",
@@ -131,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    dac.stop();
+    running.stop();
     println!("Goodbye!");
 
     Ok(())
