@@ -5,14 +5,17 @@ use crate::oscillator::{Oscillator, OscillatorType};
 use crate::sequencer::NoteSignal;
 use crate::signal::AudioSignal;
 
-/// Voice - converts NoteSignal (gate + frequency) to AudioSignal
-/// Combines an oscillator with envelope following
+/// Converts note information into audio output.
+///
+/// A voice combines an oscillator with envelope following, processing
+/// [`NoteSignal`] input (gate + frequency) into audio samples.
 pub struct Voice {
     oscillator: Oscillator,
     osc_type: Arc<Mutex<OscillatorType>>,
 }
 
 impl Voice {
+    /// Creates a new voice with the given sample rate and oscillator type.
     pub fn new(sample_rate: u32, osc_type: OscillatorType) -> Self {
         Self {
             oscillator: Oscillator::new(sample_rate, osc_type),
@@ -20,6 +23,7 @@ impl Voice {
         }
     }
 
+    /// Sets a shared oscillator type control for real-time waveform changes.
     pub fn with_osc_type_control(mut self, osc_type: Arc<Mutex<OscillatorType>>) -> Self {
         self.osc_type = osc_type;
         self
@@ -38,15 +42,10 @@ impl Module for Voice {
 
 impl Processor<NoteSignal, AudioSignal> for Voice {
     fn process_signal(&mut self, input: NoteSignal) -> AudioSignal {
-        // Update oscillator type if it changed
         let osc_type = *self.osc_type.lock().unwrap();
         self.oscillator.set_type(osc_type);
-
-        // Update frequency from note
         self.oscillator.set_frequency(input.frequency.hz);
 
-        // Generate audio and apply envelope (velocity)
-        // Scale by 0.3 to prevent clipping
         let audio = self.oscillator.output();
         AudioSignal::new(audio.value * input.gate.value * 0.3)
     }

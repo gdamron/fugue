@@ -1,3 +1,10 @@
+//! Oscillators for waveform generation.
+//!
+//! - [`Oscillator`] - Basic waveform generator with FM/AM support
+//! - [`OscillatorType`] - Waveform shapes (sine, square, saw, triangle)
+//! - [`ModulatedOscillator`] - Oscillator with external modulation inputs
+//! - [`ModulationInputs`] - FM/AM modulation values
+
 mod modulation;
 mod oscillator_type;
 
@@ -8,20 +15,24 @@ use crate::module::{Generator, Module, Processor};
 use crate::signal::{AudioSignal, FrequencySignal};
 use std::f32::consts::PI;
 
-/// Oscillator - can work as either a Generator (with fixed frequency)
-/// or a Processor (accepting FrequencySignal)
-/// Now supports FM (Frequency Modulation) and AM (Amplitude Modulation)
+/// A waveform generator that produces audio signals.
+///
+/// Can operate as a [`Generator`] with a fixed frequency, or as a
+/// [`Processor`] that accepts [`FrequencySignal`] input. Supports
+/// frequency modulation (FM) and amplitude modulation (AM).
 pub struct Oscillator {
     osc_type: OscillatorType,
     frequency: f32,
     phase: f32,
     sample_rate: u32,
-    // Modulation parameters
-    fm_amount: f32, // Frequency modulation depth (in Hz)
-    am_amount: f32, // Amplitude modulation depth (0.0 to 1.0)
+    fm_amount: f32,
+    am_amount: f32,
 }
 
 impl Oscillator {
+    /// Creates a new oscillator with the given sample rate and waveform type.
+    ///
+    /// Defaults to 440 Hz with no modulation.
     pub fn new(sample_rate: u32, osc_type: OscillatorType) -> Self {
         Self {
             osc_type,
@@ -33,43 +44,51 @@ impl Oscillator {
         }
     }
 
+    /// Sets the oscillator frequency in Hz.
     pub fn with_frequency(mut self, freq: f32) -> Self {
         self.frequency = freq;
         self
     }
 
+    /// Sets the frequency modulation depth in Hz.
     pub fn with_fm_amount(mut self, amount: f32) -> Self {
         self.fm_amount = amount;
         self
     }
 
+    /// Sets the amplitude modulation depth (0.0 to 1.0).
     pub fn with_am_amount(mut self, amount: f32) -> Self {
         self.am_amount = amount.clamp(0.0, 1.0);
         self
     }
 
+    /// Sets the oscillator frequency in Hz.
     pub fn set_frequency(&mut self, freq: f32) {
         self.frequency = freq;
     }
 
+    /// Changes the waveform type.
     pub fn set_type(&mut self, osc_type: OscillatorType) {
         self.osc_type = osc_type;
     }
 
+    /// Sets the frequency modulation depth in Hz.
     pub fn set_fm_amount(&mut self, amount: f32) {
         self.fm_amount = amount;
     }
 
+    /// Sets the amplitude modulation depth (0.0 to 1.0).
     pub fn set_am_amount(&mut self, amount: f32) {
         self.am_amount = amount.clamp(0.0, 1.0);
     }
 
-    /// Generate a sample with optional frequency and amplitude modulation
+    /// Generates a sample with the given modulation values.
+    ///
+    /// - `freq_mod`: Frequency modulation signal (scaled by `fm_amount`)
+    /// - `amp_mod`: Amplitude modulation signal in range [-1, 1] (scaled by `am_amount`)
     pub fn generate_sample_with_modulation(&mut self, freq_mod: f32, amp_mod: f32) -> f32 {
-        // Apply frequency modulation
         let modulated_freq = self.frequency + (freq_mod * self.fm_amount);
 
-        // Generate waveform
         let sample = match self.osc_type {
             OscillatorType::Sine => (self.phase * 2.0 * PI).sin(),
             OscillatorType::Square => {
@@ -83,15 +102,11 @@ impl Oscillator {
             OscillatorType::Triangle => 4.0 * (self.phase - 0.5).abs() - 1.0,
         };
 
-        // Advance phase with modulated frequency
         self.phase += modulated_freq / self.sample_rate as f32;
         self.phase %= 1.0;
 
-        // Apply amplitude modulation
-        // amp_mod is expected to be in range [-1, 1]
-        // We map it to [0, 1] for amplitude scaling
         let amp_scale = if self.am_amount > 0.0 {
-            let normalized_amp = (amp_mod + 1.0) * 0.5; // Convert [-1, 1] to [0, 1]
+            let normalized_amp = (amp_mod + 1.0) * 0.5;
             1.0 - self.am_amount + (normalized_amp * self.am_amount)
         } else {
             1.0
@@ -101,21 +116,20 @@ impl Oscillator {
     }
 
     pub(crate) fn generate_sample(&mut self) -> f32 {
-        // No modulation version
         self.generate_sample_with_modulation(0.0, 0.0)
     }
 
+    /// Resets the oscillator phase to zero.
     pub fn reset(&mut self) {
         self.phase = 0.0;
     }
 
-    // Legacy API for backward compatibility
+    /// Generates the next sample (legacy API, prefer using as Generator).
     pub fn next_sample(&mut self) -> f32 {
         self.generate_sample()
     }
 }
 
-// Oscillator as a Generator (fixed frequency)
 impl Module for Oscillator {
     fn process(&mut self) -> bool {
         true
@@ -132,7 +146,6 @@ impl Generator<AudioSignal> for Oscillator {
     }
 }
 
-// Oscillator as a Processor (accepts FrequencySignal)
 impl Processor<FrequencySignal, AudioSignal> for Oscillator {
     fn process_signal(&mut self, input: FrequencySignal) -> AudioSignal {
         self.set_frequency(input.hz);

@@ -3,21 +3,26 @@ use crate::signal::AudioSignal;
 
 use super::{Oscillator, OscillatorType};
 
-/// Modulation inputs for an oscillator
+/// Input values for frequency and amplitude modulation.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ModulationInputs {
-    pub frequency: f32, // Frequency modulation input (audio signal value)
-    pub amplitude: f32, // Amplitude modulation input (audio signal value)
+    /// Frequency modulation input signal value.
+    pub frequency: f32,
+    /// Amplitude modulation input signal value.
+    pub amplitude: f32,
 }
 
-/// ModulatedOscillator - accepts modulation inputs as well as base frequency
-/// This is used in the patch system for FM/AM synthesis
+/// An oscillator that accepts external modulation signals for FM/AM synthesis.
+///
+/// Wraps a standard [`Oscillator`] and provides methods to process
+/// modulation inputs for more complex sound design.
 pub struct ModulatedOscillator {
     oscillator: Oscillator,
     base_frequency: f32,
 }
 
 impl ModulatedOscillator {
+    /// Creates a new modulated oscillator with the given sample rate and waveform type.
     pub fn new(sample_rate: u32, osc_type: OscillatorType) -> Self {
         Self {
             oscillator: Oscillator::new(sample_rate, osc_type),
@@ -25,27 +30,31 @@ impl ModulatedOscillator {
         }
     }
 
+    /// Sets the base frequency in Hz.
     pub fn with_frequency(mut self, freq: f32) -> Self {
         self.base_frequency = freq;
         self.oscillator.set_frequency(freq);
         self
     }
 
+    /// Sets the frequency modulation depth in Hz.
     pub fn with_fm_amount(mut self, amount: f32) -> Self {
         self.oscillator.set_fm_amount(amount);
         self
     }
 
+    /// Sets the amplitude modulation depth (0.0 to 1.0).
     pub fn with_am_amount(mut self, amount: f32) -> Self {
         self.oscillator.set_am_amount(amount);
         self
     }
 
+    /// Changes the oscillator waveform type.
     pub fn set_type(&mut self, osc_type: OscillatorType) {
         self.oscillator.set_type(osc_type);
     }
 
-    /// Process with modulation inputs
+    /// Generates a sample with the given modulation inputs applied.
     pub fn process_with_modulation(&mut self, mod_inputs: ModulationInputs) -> AudioSignal {
         AudioSignal::new(
             self.oscillator

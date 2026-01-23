@@ -1,3 +1,9 @@
+//! Melody generation and sequencing.
+//!
+//! - [`MelodyGenerator`] - Generates notes from a scale with weighted random selection
+//! - [`MelodyParams`] - Thread-safe parameters for melody control
+//! - [`NoteSignal`] - Combined gate and frequency signal
+
 mod melody_generator;
 mod melody_params;
 mod note_signal;

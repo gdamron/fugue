@@ -7,7 +7,11 @@ use rand::{Rng, SeedableRng};
 
 use super::{MelodyParams, NoteSignal};
 
-/// MelodyGenerator - accepts ClockSignal and outputs gate+frequency per note
+/// Generates melodies by selecting notes from a scale based on weighted probabilities.
+///
+/// Processes [`ClockSignal`] input and outputs [`NoteSignal`] with gate and
+/// frequency information. Note selection uses weighted random choice from
+/// the allowed scale degrees.
 pub struct MelodyGenerator {
     scale: Scale,
     params: MelodyParams,
@@ -19,6 +23,10 @@ pub struct MelodyGenerator {
 }
 
 impl MelodyGenerator {
+    /// Creates a new melody generator.
+    ///
+    /// Notes are selected from the given scale according to the parameters.
+    /// The tempo controls note timing.
     pub fn new(scale: Scale, params: MelodyParams, sample_rate: u32, tempo: Tempo) -> Self {
         let current_note = Note::new(60);
         Self {
@@ -32,6 +40,9 @@ impl MelodyGenerator {
         }
     }
 
+    /// Selects the next note using weighted random choice.
+    ///
+    /// Returns middle C (MIDI 60) if no degrees are allowed.
     pub fn next_note(&mut self) -> Note {
         let allowed = self.params.allowed_degrees.lock().unwrap();
         let weights = self.params.note_weights.lock().unwrap();
@@ -54,6 +65,7 @@ impl MelodyGenerator {
         self.scale.get_note(allowed[0])
     }
 
+    /// Returns a reference to the melody parameters.
     pub fn params(&self) -> &MelodyParams {
         &self.params
     }
@@ -75,13 +87,12 @@ impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
         let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
         let samples_per_note = (samples_per_beat * note_duration as f64) as u64;
 
-        // Check if we need a new note
         if self.samples_since_note >= samples_per_note {
             self.current_note = self.next_note();
             self.samples_since_note = 0;
         }
 
-        // Calculate envelope (simple ASR)
+        // Simple attack-sustain-release envelope
         let envelope = if self.samples_since_note < samples_per_note / 10 {
             self.samples_since_note as f32 / (samples_per_note as f32 / 10.0)
         } else if self.samples_since_note > samples_per_note * 9 / 10 {

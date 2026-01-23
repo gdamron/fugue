@@ -1,15 +1,30 @@
+/// A musical mode defining the interval pattern of a scale.
+///
+/// Each mode has a unique pattern of whole and half steps that gives it
+/// a distinctive sound character.
 #[derive(Debug, Clone, Copy)]
 pub enum Mode {
-    Ionian, // Major
+    /// Major scale (W-W-H-W-W-W-H).
+    Ionian,
+    /// Minor with raised 6th, jazzy sound.
     Dorian,
+    /// Minor with lowered 2nd, Spanish/Middle Eastern flavor.
     Phrygian,
+    /// Major with raised 4th, bright and dreamy.
     Lydian,
+    /// Major with lowered 7th, bluesy dominant sound.
     Mixolydian,
-    Aeolian, // Natural Minor
+    /// Natural minor scale (W-H-W-W-H-W-W).
+    Aeolian,
+    /// Diminished sound, rare and unstable.
     Locrian,
 }
 
 impl Mode {
+    /// Returns the semitone intervals from the root for each scale degree.
+    ///
+    /// The returned slice contains 7 values representing the semitone offset
+    /// from the root note for degrees 1-7 of the scale.
     pub fn intervals(&self) -> &[i32] {
         match self {
             Mode::Ionian => &[0, 2, 4, 5, 7, 9, 11],

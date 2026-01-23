@@ -1,17 +1,24 @@
+//! Audio output using the system's default audio device.
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
 use crate::module::Generator;
 use crate::signal::AudioSignal;
 
-/// DAC (Digital-to-Analog Converter) - the output node that sends audio to speakers
-/// In Eurorack terms, this is like the audio output jack
+/// Digital-to-Analog Converter that sends audio to the system output device.
+///
+/// Wraps the cpal library to provide cross-platform audio output.
+/// Supports F32, I16, and U16 sample formats.
 pub struct Dac {
     stream: Option<Stream>,
     sample_rate: u32,
 }
 
 impl Dac {
+    /// Creates a new DAC using the system's default output device.
+    ///
+    /// Returns an error if no output device is available.
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let host = cpal::default_host();
         let device = host
@@ -27,12 +34,15 @@ impl Dac {
         })
     }
 
+    /// Returns the sample rate of the output device.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
-    /// Start playing audio from the given generator
-    /// The generator should output AudioSignal samples
+    /// Starts audio playback from the given generator.
+    ///
+    /// The generator is called once per audio frame to produce samples.
+    /// Output is duplicated to all channels (mono to stereo conversion).
     pub fn start<G>(&mut self, mut generator: G) -> Result<(), Box<dyn std::error::Error>>
     where
         G: Generator<AudioSignal> + Send + 'static,
@@ -48,12 +58,10 @@ impl Dac {
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
                 self.build_stream::<f32>(&device, &config.into(), move |data: &mut [f32]| {
-                    // Process once per frame (not per sample)
                     for frame in data.chunks_mut(channels) {
                         generator.process();
                         let audio = generator.output();
                         let value = audio.value.clamp(-1.0, 1.0);
-                        // Write same value to all channels (mono -> stereo)
                         for sample in frame.iter_mut() {
                             *sample = value;
                         }
@@ -62,12 +70,10 @@ impl Dac {
             }
             cpal::SampleFormat::I16 => {
                 self.build_stream::<i16>(&device, &config.into(), move |data: &mut [i16]| {
-                    // Process once per frame (not per sample)
                     for frame in data.chunks_mut(channels) {
                         generator.process();
                         let audio = generator.output();
                         let value = (audio.value.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                        // Write same value to all channels (mono -> stereo)
                         for sample in frame.iter_mut() {
                             *sample = value;
                         }
@@ -76,13 +82,11 @@ impl Dac {
             }
             cpal::SampleFormat::U16 => {
                 self.build_stream::<u16>(&device, &config.into(), move |data: &mut [u16]| {
-                    // Process once per frame (not per sample)
                     for frame in data.chunks_mut(channels) {
                         generator.process();
                         let audio = generator.output();
                         let value =
                             ((audio.value.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16;
-                        // Write same value to all channels (mono -> stereo)
                         for sample in frame.iter_mut() {
                             *sample = value;
                         }
@@ -119,7 +123,7 @@ impl Dac {
         Ok(stream)
     }
 
-    /// Stop audio playback
+    /// Stops audio playback and releases the audio stream.
     pub fn stop(&mut self) {
         self.stream = None;
     }
