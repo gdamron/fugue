@@ -14,29 +14,63 @@ A Rust library for composing algorithmic and generative music, inspired by ChucK
 
 ## Quick Start
 
-### Declarative Approach (Recommended)
-
-Run a patch defined in JSON:
+### Run the Interactive Demo
 
 ```bash
-cargo run --example dorian_melody_declarative
+cargo run --example dorian_melody --release
 ```
 
-This loads `examples/dorian_melody.json` and runs the patch. You can control it with:
+This generates an infinite, randomly generated melody in D Dorian mode.
 
-- `1-7`: Toggle individual scale degrees on/off
-- `s/w/t/q`: Switch oscillators (Sine/Sawtooth/Triangle/Square)
-- `+/-`: Adjust tempo
-- `f/n`: Make notes faster or slower
-- `r`: Emphasize root and fifth notes
-- `x`: Exit
+### Interactive Controls
 
-### Programmatic Approach
+Once running, try these commands:
 
-Run the imperative example:
+- `s/w/t/q` - Switch waveforms (Sine/Sawtooth/Triangle/Square)
+- `1-7` - Toggle scale degrees on/off
+- `+/-` - Adjust tempo by 10 BPM
+- `f/n` - Change note duration (faster/slower)
+- `r` - Emphasize root and fifth notes
+- `x` - Exit
 
+### Your First Program
+
+Create `examples/my_melody.rs`:
+
+```rust
+use fugue::*;
+use std::thread;
+use std::time::Duration;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create a tempo
+    let tempo = Tempo::new(140.0);
+    
+    // Create a scale (C Major)
+    let root = Note::new(60);  // Middle C
+    let scale = Scale::new(root, Mode::Ionian);
+    
+    // Set up which scale degrees to use
+    let allowed_degrees = vec![0, 2, 4];  // I, III, V (major triad)
+    let params = MelodyParams::new(allowed_degrees);
+    
+    // Create the melody generator
+    let melody_gen = MelodyGenerator::new(scale, params.clone());
+    
+    // Start audio
+    let mut engine = AudioEngine::new()?;
+    engine.start_melody(melody_gen, tempo)?;
+    
+    println!("Playing C Major triad melody...");
+    thread::sleep(Duration::from_secs(10));
+    
+    Ok(())
+}
+```
+
+Run it:
 ```bash
-cargo run --example dorian_melody
+cargo run --example my_melody --release
 ```
 
 ## Two Ways to Build
@@ -142,6 +176,36 @@ The library emphasizes:
 2. **Live coding**: Parameters can be updated while audio is running
 3. **Modularity**: Components can be composed and reconfigured
 4. **Simplicity**: Start with basic building blocks, compose complexity
+
+## Musical Modes Reference
+
+Fugue supports all seven diatonic modes:
+
+- **Ionian** (Major) - Happy, bright
+- **Dorian** - Jazzy, balanced minor
+- **Phrygian** - Spanish, exotic minor
+- **Lydian** - Dreamy, floating major
+- **Mixolydian** - Bluesy, dominant major
+- **Aeolian** (Natural Minor) - Sad, dark
+- **Locrian** - Unstable, tense
+
+Example:
+```rust
+let scale = Scale::new(Note::new(60), Mode::Dorian);
+```
+
+## MIDI Notes Reference
+
+Common MIDI note numbers:
+
+- C4 (Middle C) = 60 = 261.63 Hz
+- D4 = 62 = 293.66 Hz
+- A4 (Concert pitch) = 69 = 440.00 Hz
+
+```rust
+let middle_c = Note::new(60);
+let freq = middle_c.frequency();  // 261.63 Hz
+```
 
 ## WebAssembly Support (Coming Soon)
 
