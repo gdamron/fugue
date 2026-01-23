@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "title": "Dorian Scale Melody",
-  "description": "A generative melody using the Dorian mode with probabilistic note selection",
+  "description": "A generative melody using the Dorian mode with ADSR envelopes and probabilistic note selection",
   "modules": [
     {
       "id": "clock",
@@ -27,26 +27,17 @@
       }
     },
     {
+      "id": "adsr",
+      "type": "adsr",
+      "config": {
+        "attack": 0.005,
+        "decay": 0.005,
+        "sustain": 0.5,
+        "release": 1.0
+      }
+    },
+    {
       "id": "voice",
-      "type": "voice",
-      "config": {
-        "oscillator_type": "sine"
-      }
-    },
-    {
-      "id": "melody_2",
-      "type": "melody",
-      "config": {
-        "root_note": 60,
-        "mode": "dorian",
-        "scale_degrees": [0, 1, 2, 3, 4, 5, 6],
-        "note_weights": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-        "note_duration": 4.0,
-        "oscillator_type": "sine"
-      }
-    },
-    {
-      "id": "voice_2",
       "type": "voice",
       "config": {
         "oscillator_type": "sine"
@@ -64,23 +55,15 @@
       "to": "melody"
     },
     {
-      "from": "clock",
-      "to": "melody_2"
+      "from": "melody",
+      "to": "adsr"
     },
     {
-      "from": "melody",
+      "from": "adsr",
       "to": "voice"
     },
     {
-      "from": "melody_2",
-      "to": "voice_2"
-    },
-    {
       "from": "voice",
-      "to": "dac"
-    },
-    {
-      "from": "voice_2",
       "to": "dac"
     }
   ]

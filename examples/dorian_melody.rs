@@ -20,6 +20,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let params = MelodyParams::new(allowed_degrees);
 
     // Build modular chain: Clock → Sequencer → Voice → DAC
+    // Note: For envelope control, use the declarative approach with ADSR modules
+    // (see dorian_melody.json and dorian_melody_declarative.rs)
     let clock = Clock::new(sample_rate, tempo.clone()).with_time_signature(4);
     let sequencer = MelodyGenerator::new(scale, params.clone(), sample_rate, tempo.clone());
 

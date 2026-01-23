@@ -12,6 +12,10 @@ use super::{MelodyParams, NoteSignal};
 /// Processes [`ClockSignal`] input and outputs [`NoteSignal`] with gate and
 /// frequency information. Note selection uses weighted random choice from
 /// the allowed scale degrees.
+///
+/// The gate output is a brief trigger pulse (1ms) at the start of each note,
+/// followed by immediate release. This allows downstream ADSR envelopes to
+/// control the full note duration and shape.
 pub struct MelodyGenerator {
     scale: Scale,
     params: MelodyParams,
@@ -87,25 +91,22 @@ impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
         let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
         let samples_per_note = (samples_per_beat * note_duration as f64) as u64;
 
+        // Trigger length: 1ms pulse at the start of each note
+        let trigger_samples = (self.sample_rate as f64 / 1000.0).max(1.0) as u64;
+
         if self.samples_since_note >= samples_per_note {
             self.current_note = self.next_note();
             self.samples_since_note = 0;
         }
 
-        // Simple attack-sustain-release envelope
-        let envelope = if self.samples_since_note < samples_per_note / 10 {
-            self.samples_since_note as f32 / (samples_per_note as f32 / 10.0)
-        } else if self.samples_since_note > samples_per_note * 9 / 10 {
-            1.0 - ((self.samples_since_note - samples_per_note * 9 / 10) as f32
-                / (samples_per_note as f32 / 10.0))
-        } else {
-            1.0
-        };
+        // Gate is high only for the brief trigger pulse at the start
+        // This mimics a clock/trigger signal: brief pulse followed by immediate release
+        let gate_on = self.samples_since_note < trigger_samples;
 
         self.samples_since_note += 1;
 
         NoteSignal {
-            gate: Audio::gate(true, envelope),
+            gate: Audio::gate(gate_on, 1.0),
             frequency: FrequencySignal::from_midi(self.current_note.midi_note),
         }
     }
