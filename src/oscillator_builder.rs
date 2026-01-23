@@ -1,20 +1,33 @@
+//! Patch builder for FM/AM oscillator synthesis patches.
+//!
+//! Handles patches containing only oscillators and a DAC (no clock, melody,
+//! or voice modules). Used for direct frequency/amplitude modulation synthesis.
+
 use crate::module::{Generator, Module};
 use crate::patch::{ModuleConfig, ModuleSpec, Patch};
 use crate::{Audio, Dac, ModulatedOscillator, ModulationInputs, OscillatorType};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Simple builder for oscillator-only patches (FM/AM synthesis)
-/// This handles patches with only oscillators and DAC, no clock/melody/voice
+/// Constructs runnable audio graphs from oscillator-only patches.
+///
+/// Use this builder for FM/AM synthesis patches where oscillators modulate
+/// each other directly without clock-driven sequencing. For sequenced patches,
+/// use [`PatchBuilder`](crate::PatchBuilder) instead.
 pub struct OscillatorPatchBuilder {
     sample_rate: u32,
 }
 
 impl OscillatorPatchBuilder {
+    /// Creates a new builder with the given sample rate.
     pub fn new(sample_rate: u32) -> Self {
         Self { sample_rate }
     }
 
+    /// Builds a runnable patch from an oscillator-only patch document.
+    ///
+    /// Parses the patch, creates oscillators with their modulation routing,
+    /// and returns an [`OscillatorPatchRuntime`] ready to be started.
     pub fn build_and_run(
         &self,
         patch: Patch,
@@ -74,6 +87,7 @@ impl OscillatorPatchBuilder {
         })
     }
 
+    /// Creates a modulated oscillator from a module configuration.
     fn build_oscillator(
         &self,
         config: &ModuleConfig,
@@ -89,6 +103,7 @@ impl OscillatorPatchBuilder {
             .with_am_amount(am_amount))
     }
 
+    /// Parses the oscillator type from a module configuration.
     fn parse_oscillator_type(
         &self,
         config: &ModuleConfig,
@@ -104,12 +119,19 @@ impl OscillatorPatchBuilder {
     }
 }
 
+/// Tracks which oscillators modulate another oscillator's inputs.
 #[derive(Default)]
 struct ModulationConnections {
+    /// ID of the oscillator providing frequency modulation, if any.
     frequency_source: Option<String>,
+    /// ID of the oscillator providing amplitude modulation, if any.
     amplitude_source: Option<String>,
 }
 
+/// A validated oscillator patch ready to be started.
+///
+/// Created by [`OscillatorPatchBuilder::build_and_run`]. Call
+/// [`start`](Self::start) to begin audio playback.
 pub struct OscillatorPatchRuntime {
     patch: Patch,
     oscillators: HashMap<String, Arc<Mutex<ModulatedOscillator>>>,
@@ -118,6 +140,7 @@ pub struct OscillatorPatchRuntime {
 }
 
 impl OscillatorPatchRuntime {
+    /// Starts audio playback and returns a handle to the running patch.
     pub fn start(self) -> Result<RunningOscillatorPatch, Box<dyn std::error::Error>> {
         let graph = OscillatorGraph {
             oscillators: self.oscillators,
@@ -138,11 +161,13 @@ impl OscillatorPatchRuntime {
         })
     }
 
+    /// Returns a reference to the patch document.
     pub fn patch(&self) -> &Patch {
         &self.patch
     }
 }
 
+/// Internal graph of oscillators with modulation routing.
 struct OscillatorGraph {
     oscillators: HashMap<String, Arc<Mutex<ModulatedOscillator>>>,
     modulation_map: HashMap<String, ModulationConnections>,
@@ -150,6 +175,7 @@ struct OscillatorGraph {
 }
 
 impl OscillatorGraph {
+    /// Processes all oscillators and returns the output audio sample.
     fn process_and_output(&self) -> Audio {
         // First, process all oscillators that are modulators
         let mut osc_outputs: HashMap<String, f32> = HashMap::new();
@@ -187,6 +213,7 @@ impl OscillatorGraph {
     }
 }
 
+/// Adapter that implements [`Generator`] for an [`OscillatorGraph`].
 struct OscillatorGraphGenerator {
     graph: Arc<Mutex<OscillatorGraph>>,
 }
@@ -208,16 +235,21 @@ impl Generator<Audio> for OscillatorGraphGenerator {
     }
 }
 
+/// A running oscillator patch with active audio output.
+///
+/// Call [`stop`](Self::stop) to end playback.
 pub struct RunningOscillatorPatch {
     patch: Patch,
     dac: Dac,
 }
 
 impl RunningOscillatorPatch {
+    /// Stops audio playback and releases the audio device.
     pub fn stop(mut self) {
         self.dac.stop();
     }
 
+    /// Returns a reference to the patch document.
     pub fn patch(&self) -> &Patch {
         &self.patch
     }

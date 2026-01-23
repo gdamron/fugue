@@ -78,3 +78,51 @@ Shared state uses `Arc<Mutex<T>>` for lock-free-ish updates between main/audio t
 params.set_oscillator_type(OscillatorType::Sawtooth);  // Main thread
 osc_type.get()  // Audio thread reads latest value
 ```
+
+## Declarative Patch System
+
+Fugue supports both declarative (JSON) and programmatic (Rust) approaches.
+
+### Load and Run a JSON Patch
+
+```rust
+let patch = Patch::from_file("my_patch.json")?;
+let dac = Dac::new()?;
+let builder = PatchBuilder::new(dac.sample_rate());
+let runtime = builder.build_and_run(patch)?;
+let running = runtime.start()?;
+
+// Control at runtime
+running.tempo().set_bpm(140.0);
+```
+
+### Supported Module Types
+
+- **clock** - Timing/tempo
+- **melody** - Algorithmic melody generation
+- **voice** - Note-to-audio with oscillator
+- **oscillator** - Standalone for FM/AM synthesis
+- **dac** - Audio output
+
+### FM/AM Synthesis with Named Ports
+
+```json
+{"from": "modulator", "to": "carrier", "to_port": "fm"}
+{"from": "lfo", "to": "carrier", "to_port": "am"}
+```
+
+### Multiple Parallel Voices
+
+Multiple paths automatically mix at the DAC:
+```json
+{
+  "connections": [
+    {"from": "clock", "to": "melody1"},
+    {"from": "clock", "to": "melody2"},
+    {"from": "melody1", "to": "voice1"},
+    {"from": "melody2", "to": "voice2"},
+    {"from": "voice1", "to": "dac"},
+    {"from": "voice2", "to": "dac"}
+  ]
+}
+```

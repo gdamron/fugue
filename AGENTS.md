@@ -112,6 +112,76 @@ let audio_gen = clock.connect(sequencer).connect(voice);
 | `Scale`/`Mode`/`Note` | `scale.rs` | Music theory (modes, MIDI↔frequency) |
 | `Dac` | `modular_audio.rs` | Audio output via cpal |
 
+## Declarative Patch System
+
+Fugue supports both declarative (JSON) and programmatic (Rust) approaches for building synthesis patches.
+
+### Declarative Approach (JSON)
+
+Load and run a patch from JSON:
+```rust
+let patch = Patch::from_file("my_patch.json")?;
+let dac = Dac::new()?;
+let builder = PatchBuilder::new(dac.sample_rate());
+let runtime = builder.build_and_run(patch)?;
+let running = runtime.start()?;
+
+// Control parameters at runtime
+running.tempo().set_bpm(140.0);
+running.melody_params().set_note_duration(0.5);
+```
+
+### Programmatic Approach
+
+Build modules and connect them in Rust code:
+```rust
+let clock = Clock::new(sample_rate, tempo.clone());
+let melody = MelodyGenerator::new(scale, params, sample_rate, tempo);
+let voice = Voice::new(sample_rate, OscillatorType::Sine);
+let audio_gen = clock.connect(melody).connect(voice);
+dac.start(audio_gen)?;
+```
+
+### Supported Patch Modules
+
+- **clock** - Timing and tempo
+- **melody** - Algorithmic melody generation
+- **voice** - Note-to-audio conversion with oscillator
+- **oscillator** - Standalone oscillator for FM/AM synthesis
+- **dac** - Audio output
+
+### FM/AM Synthesis
+
+Oscillators support named ports for modulation:
+```json
+{
+  "connections": [
+    {"from": "modulator", "to": "carrier", "to_port": "fm"},
+    {"from": "carrier", "to": "dac"}
+  ]
+}
+```
+
+Supported ports:
+- `"fm"` - Frequency modulation input
+- `"am"` - Amplitude modulation input
+
+### Multiple Voices / Parallel Paths
+
+The system supports multiple parallel signal paths that automatically mix at the DAC:
+```json
+{
+  "connections": [
+    {"from": "clock", "to": "melody1"},
+    {"from": "clock", "to": "melody2"},
+    {"from": "melody1", "to": "voice1"},
+    {"from": "melody2", "to": "voice2"},
+    {"from": "voice1", "to": "dac"},
+    {"from": "voice2", "to": "dac"}
+  ]
+}
+```
+
 ## Code Style Guidelines
 
 ### Imports
@@ -203,3 +273,26 @@ impl Processor<InputType, OutputType> for MyModule {
 - Reset phase accumulators using `%=` to prevent drift
 - Scale audio output to prevent clipping (e.g., `* 0.3`)
 - Use `Send` marker for thread-safe types
+
+## Music Theory Reference
+
+### Modes
+All 7 diatonic modes are supported:
+- **Ionian** (Major) - Happy, bright
+- **Dorian** - Jazzy, balanced minor
+- **Phrygian** - Spanish, exotic minor
+- **Lydian** - Dreamy, floating major
+- **Mixolydian** - Bluesy, dominant major
+- **Aeolian** (Natural Minor) - Sad, dark
+- **Locrian** - Unstable, tense
+
+### MIDI Notes
+- Middle C = MIDI note 60 = 261.63 Hz
+- Concert A = MIDI note 69 = 440 Hz
+- Use `Note::new(midi_number)` or `Note::from_frequency(hz)`
+
+### Oscillator Types
+- **Sine** - Pure, smooth, no overtones
+- **Square** - Hollow, retro, odd harmonics
+- **Sawtooth** - Bright, full harmonics
+- **Triangle** - Mellow, soft, odd harmonics

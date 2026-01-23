@@ -1,54 +1,44 @@
 use std::cell::RefCell;
 
-/// Module trait - the core abstraction for all modular components
-/// Like a Eurorack module that processes per-sample
+/// The core abstraction for all synthesis components.
+///
+/// Every module in the synthesis graph implements this trait.
+/// Modules process one sample at a time at audio rate.
 pub trait Module: Send {
-    /// Process one sample/step
-    /// Returns true if the module is still active, false if it should be removed
+    /// Processes one sample of audio.
+    ///
+    /// Returns `true` if the module is still active, `false` if it should be removed.
     fn process(&mut self) -> bool {
         true
     }
 
-    /// Get the module's name for debugging
+    /// Returns the module's name for debugging purposes.
     fn name(&self) -> &str {
         "Module"
     }
 }
 
-/// Generator trait - modules that produce signals without input
-/// Examples: oscillators, LFOs, clocks, sequencers
+/// A module that produces signals without requiring input.
+///
+/// Examples include oscillators, LFOs, clocks, and noise generators.
 pub trait Generator<T>: Module {
+    /// Generates and returns the next output sample.
     fn output(&mut self) -> T;
 }
 
-/// Processor trait - modules that transform signals
-/// Examples: filters, effects, envelopes
+/// A module that transforms an input signal into an output signal.
+///
+/// Examples include filters, effects, and envelopes.
 pub trait Processor<TIn, TOut>: Module {
+    /// Processes an input signal and returns the transformed output.
     fn process_signal(&mut self, input: TIn) -> TOut;
 }
 
-/// Connection - represents a signal path between modules
-/// This is like patching cables in Eurorack
-pub struct Connection<T> {
-    signal: T,
-}
-
-impl<T: Clone> Connection<T> {
-    pub fn new(signal: T) -> Self {
-        Self { signal }
-    }
-
-    pub fn read(&self) -> T {
-        self.signal.clone()
-    }
-
-    pub fn write(&mut self, signal: T) {
-        self.signal = signal;
-    }
-}
-
-/// Connect trait - allows modules to be connected with =>-style chaining
+/// Enables chaining modules together using the `connect` method.
+///
+/// This trait is automatically implemented for all [`Generator`] types.
 pub trait Connect<TOut>: Sized {
+    /// Connects this generator to a processor, creating a signal chain.
     fn connect<TIn, P>(self, processor: P) -> ConnectedProcessor<Self, P, TOut, TIn>
     where
         P: Processor<TOut, TIn>,
@@ -62,7 +52,10 @@ pub trait Connect<TOut>: Sized {
     }
 }
 
-/// A connected chain of generator -> processor(s)
+/// A chain of a generator connected to a processor.
+///
+/// This struct is created by [`Connect::connect`] and itself implements
+/// [`Generator`], allowing chains to be extended further.
 pub struct ConnectedProcessor<G, P, TOut, TIn> {
     source: RefCell<G>,
     processor: RefCell<P>,
@@ -76,6 +69,7 @@ where
     TOut: Clone + Send,
     TIn: Send,
 {
+    /// Generates output by pulling from the source and processing through the chain.
     pub fn output(&mut self) -> TIn {
         let signal = self.source.borrow_mut().output();
         self.processor.borrow_mut().process_signal(signal)
@@ -107,5 +101,4 @@ where
     }
 }
 
-// Implement Connect for all Generators
 impl<T, G> Connect<T> for G where G: Generator<T> {}

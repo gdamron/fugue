@@ -1,3 +1,5 @@
+//! Patch builder for constructing runnable audio graphs from patch documents.
+
 use crate::module::{Generator, Module, Processor};
 use crate::patch::{ModuleConfig, ModuleSpec, Patch};
 use crate::scale::{Mode, Note, Scale};
@@ -7,17 +9,24 @@ use crate::{Audio, Dac, MelodyGenerator, OscillatorType, Voice};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
-/// Builds a runnable audio graph from a patch document
+/// Constructs a runnable audio graph from a [`Patch`] document.
+///
+/// Validates the patch structure, builds the signal routing graph,
+/// and produces a [`PatchRuntime`] that can be started for playback.
 pub struct PatchBuilder {
     sample_rate: u32,
 }
 
 impl PatchBuilder {
+    /// Creates a new patch builder with the given sample rate.
     pub fn new(sample_rate: u32) -> Self {
         Self { sample_rate }
     }
 
-    /// Build and run a patch from a Patch document
+    /// Builds a runnable patch from a patch document.
+    ///
+    /// Validates the patch structure and constructs the signal graph.
+    /// Returns a [`PatchRuntime`] that can be started for audio playback.
     pub fn build_and_run(&self, patch: Patch) -> Result<PatchRuntime, Box<dyn std::error::Error>> {
         // Validate the patch
         self.validate_patch(&patch)?;
@@ -28,6 +37,10 @@ impl PatchBuilder {
         Ok(PatchRuntime { patch, chain })
     }
 
+    /// Validates the patch structure for correctness.
+    ///
+    /// Checks that all connections reference existing modules, the graph
+    /// is acyclic, there is exactly one source (clock) and one sink (DAC).
     fn validate_patch(&self, patch: &Patch) -> Result<(), Box<dyn std::error::Error>> {
         // Check that all connections reference existing modules
         let module_ids: HashSet<String> = patch.modules.iter().map(|m| m.id.clone()).collect();
@@ -103,6 +116,7 @@ impl PatchBuilder {
         Ok(())
     }
 
+    /// Detects cycles in the signal graph using depth-first search.
     fn has_cycle(
         &self,
         graph: &HashMap<String, Vec<String>>,
@@ -132,6 +146,7 @@ impl PatchBuilder {
         false
     }
 
+    /// Constructs the internal signal graph from the validated patch.
     fn build_graph(&self, patch: &Patch) -> Result<SignalGraph, Box<dyn std::error::Error>> {
         // Build connection maps
         let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
@@ -223,6 +238,10 @@ impl PatchBuilder {
         })
     }
 
+    /// Builds a voice chain from a clock source to a DAC input.
+    ///
+    /// Traces the path from source to target and constructs the
+    /// melody generator and voice modules along the way.
     fn build_voice_chain(
         &self,
         _patch: &Patch,
@@ -286,6 +305,7 @@ impl PatchBuilder {
         ))
     }
 
+    /// Finds the shortest path between two modules using breadth-first search.
     fn find_path(
         &self,
         start: &str,
@@ -329,11 +349,13 @@ impl PatchBuilder {
         Err(format!("No path from {} to {}", start, end).into())
     }
 
+    /// Creates a Tempo from the clock module's configuration.
     fn build_tempo(&self, config: &ModuleConfig) -> Result<Tempo, Box<dyn std::error::Error>> {
         let bpm = config.bpm.unwrap_or(120.0);
         Ok(Tempo::new(bpm))
     }
 
+    /// Creates a Scale and MelodyParams from a melody module's configuration.
     fn build_melody_config(
         &self,
         config: &ModuleConfig,
@@ -372,6 +394,7 @@ impl PatchBuilder {
         Ok((scale, params))
     }
 
+    /// Parses a mode string into a Mode enum value.
     fn parse_mode(&self, mode_str: &str) -> Result<Mode, Box<dyn std::error::Error>> {
         match mode_str.to_lowercase().as_str() {
             "ionian" | "major" => Ok(Mode::Ionian),
@@ -385,6 +408,7 @@ impl PatchBuilder {
         }
     }
 
+    /// Extracts and parses the oscillator type from a module configuration.
     fn parse_oscillator_type(
         &self,
         config: &ModuleConfig,
@@ -393,6 +417,7 @@ impl PatchBuilder {
         self.parse_oscillator_type_str(osc_str)
     }
 
+    /// Parses an oscillator type string into an OscillatorType enum value.
     fn parse_oscillator_type_str(
         &self,
         osc_str: &str,
@@ -407,13 +432,17 @@ impl PatchBuilder {
     }
 }
 
-/// A voice chain (melody -> voice)
+/// A single voice processing chain (melody generator → voice).
+///
+/// Processes clock input through melody generation and voice synthesis
+/// to produce audio output.
 struct VoiceChain {
     melody: Arc<Mutex<MelodyGenerator>>,
     voice: Arc<Mutex<Voice>>,
 }
 
 impl VoiceChain {
+    /// Processes one sample through the voice chain.
     fn process_and_output(&self, clock_signal: crate::ClockSignal) -> Audio {
         let mut melody = self.melody.lock().unwrap();
         let mut voice = self.voice.lock().unwrap();
@@ -426,7 +455,10 @@ impl VoiceChain {
     }
 }
 
-/// Internal representation of the signal graph
+/// Internal representation of the complete signal processing graph.
+///
+/// Contains the master clock and all voice chains. Processes the entire
+/// graph each sample and mixes the voices together.
 struct SignalGraph {
     clock: Arc<Mutex<Clock>>,
     voices: Vec<VoiceChain>,
@@ -435,6 +467,7 @@ struct SignalGraph {
 }
 
 impl SignalGraph {
+    /// Processes one sample through the entire graph and mixes all voices.
     fn process_and_output(&self) -> Audio {
         let mut clock = self.clock.lock().unwrap();
         clock.process();
@@ -461,14 +494,17 @@ impl SignalGraph {
     }
 }
 
-/// Runtime representation of a running patch
+/// A validated patch ready to be started.
+///
+/// Created by [`PatchBuilder::build_and_run`]. Call [`start`](Self::start)
+/// to begin audio playback.
 pub struct PatchRuntime {
     patch: Patch,
     chain: SignalGraph,
 }
 
 impl PatchRuntime {
-    /// Start the audio output
+    /// Starts audio playback and returns a handle to the running patch.
     pub fn start(self) -> Result<RunningPatch, Box<dyn std::error::Error>> {
         let tempo = self.chain.tempo.clone();
         let melody_params_list = self.chain.melody_params_list.clone();
@@ -493,7 +529,9 @@ impl PatchRuntime {
     }
 }
 
-/// Generator wrapper for SignalGraph
+/// Adapter that implements [`Generator`] for a [`SignalGraph`].
+///
+/// Allows the signal graph to be used as an audio source for the DAC.
 struct GraphGenerator {
     graph: Arc<Mutex<SignalGraph>>,
 }
@@ -515,7 +553,11 @@ impl Generator<Audio> for GraphGenerator {
     }
 }
 
-/// A running patch with audio output
+/// A running patch with active audio output.
+///
+/// Holds the DAC stream and provides access to runtime parameters
+/// like tempo and melody settings. Call [`stop`](Self::stop) to
+/// end playback.
 pub struct RunningPatch {
     patch: Patch,
     dac: Dac,
@@ -524,24 +566,29 @@ pub struct RunningPatch {
 }
 
 impl RunningPatch {
+    /// Stops audio playback and releases the audio device.
     pub fn stop(mut self) {
         self.dac.stop();
     }
 
+    /// Returns a reference to the patch document.
     pub fn patch(&self) -> &Patch {
         &self.patch
     }
 
+    /// Returns a reference to the tempo controller for BPM adjustments.
     pub fn tempo(&self) -> &Tempo {
         &self.tempo
     }
 
-    /// Get the first melody params (for backward compatibility)
+    /// Returns the melody parameters for the first voice.
+    ///
+    /// Use [`all_melody_params`](Self::all_melody_params) for multi-voice patches.
     pub fn melody_params(&self) -> &MelodyParams {
         &self.melody_params_list[0]
     }
 
-    /// Get all melody params
+    /// Returns melody parameters for all voices in the patch.
     pub fn all_melody_params(&self) -> &[MelodyParams] {
         &self.melody_params_list
     }
