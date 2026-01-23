@@ -125,6 +125,22 @@ pub struct ModuleConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resonance: Option<f32>,
 
+    /// ADSR attack time in seconds (for adsr modules).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attack: Option<f32>,
+
+    /// ADSR decay time in seconds (for adsr modules).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decay: Option<f32>,
+
+    /// ADSR sustain level 0.0-1.0 (for adsr modules).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sustain: Option<f32>,
+
+    /// ADSR release time in seconds (for adsr modules).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release: Option<f32>,
+
     /// Additional fields for extensibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,

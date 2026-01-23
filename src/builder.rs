@@ -3,9 +3,10 @@
 use crate::module::{Generator, Module, Processor};
 use crate::patch::{ModuleConfig, ModuleSpec, Patch};
 use crate::scale::{Mode, Note, Scale};
-use crate::sequencer::MelodyParams;
+use crate::sequencer::{MelodyParams, NoteSignal};
+use crate::synthesis::AdsrInput;
 use crate::time::{Clock, Tempo};
-use crate::{Audio, Dac, MelodyGenerator, OscillatorType, Voice};
+use crate::{Adsr, Audio, Dac, MelodyGenerator, OscillatorType, Voice};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -241,7 +242,7 @@ impl PatchBuilder {
     /// Builds a voice chain from a clock source to a DAC input.
     ///
     /// Traces the path from source to target and constructs the
-    /// melody generator and voice modules along the way.
+    /// melody generator, optional ADSR envelope, and voice modules along the way.
     fn build_voice_chain(
         &self,
         _patch: &Patch,
@@ -260,10 +261,15 @@ impl PatchBuilder {
             return Err(format!("Path too short: {:?}", path).into());
         }
 
-        // Expected pattern: clock -> melody -> voice
-        if path.len() != 3 {
+        // Expected patterns:
+        // - clock -> melody -> voice (3 modules, no ADSR)
+        // - clock -> melody -> adsr -> voice (4 modules, with ADSR)
+
+        let has_adsr = path.len() == 4;
+
+        if !has_adsr && path.len() != 3 {
             return Err(format!(
-                "Expected path length 3 (clock->melody->voice), got {}: {:?}",
+                "Expected path length 3 (clock->melody->voice) or 4 (clock->melody->adsr->voice), got {}: {:?}",
                 path.len(),
                 path
             )
@@ -271,15 +277,13 @@ impl PatchBuilder {
         }
 
         let melody_spec = module_map[&path[1]];
-        let voice_spec = module_map[&path[2]];
 
         if melody_spec.module_type != "melody" {
-            return Err(
-                format!("Expected melody module, found: {}", melody_spec.module_type).into(),
-            );
-        }
-        if voice_spec.module_type != "voice" {
-            return Err(format!("Expected voice module, found: {}", voice_spec.module_type).into());
+            return Err(format!(
+                "Expected melody module at position 1, found: {}",
+                melody_spec.module_type
+            )
+            .into());
         }
 
         // Build melody generator
@@ -291,7 +295,37 @@ impl PatchBuilder {
             tempo.clone(),
         );
 
-        // Build voice
+        // Build ADSR if present
+        let (adsr, adsr_params) = if has_adsr {
+            let adsr_spec = module_map[&path[2]];
+            if adsr_spec.module_type != "adsr" {
+                return Err(format!(
+                    "Expected adsr module at position 2, found: {}",
+                    adsr_spec.module_type
+                )
+                .into());
+            }
+
+            let params = self.build_adsr_params(&adsr_spec.config)?;
+            let adsr_module = Adsr::new(self.sample_rate);
+
+            (Some(Arc::new(Mutex::new(adsr_module))), Some(params))
+        } else {
+            (None, None)
+        };
+
+        // Build voice (at position 2 without ADSR, or position 3 with ADSR)
+        let voice_index = if has_adsr { 3 } else { 2 };
+        let voice_spec = module_map[&path[voice_index]];
+
+        if voice_spec.module_type != "voice" {
+            return Err(format!(
+                "Expected voice module at position {}, found: {}",
+                voice_index, voice_spec.module_type
+            )
+            .into());
+        }
+
         let osc_type = self.parse_oscillator_type(&voice_spec.config)?;
         let voice = Voice::new(self.sample_rate, osc_type)
             .with_osc_type_control(melody_params.oscillator_type.clone());
@@ -299,6 +333,8 @@ impl PatchBuilder {
         Ok((
             VoiceChain {
                 melody: Arc::new(Mutex::new(melody)),
+                adsr,
+                adsr_params,
                 voice: Arc::new(Mutex::new(voice)),
             },
             Some(melody_params),
@@ -394,6 +430,19 @@ impl PatchBuilder {
         Ok((scale, params))
     }
 
+    /// Creates AdsrParams from an ADSR module's configuration.
+    fn build_adsr_params(
+        &self,
+        config: &ModuleConfig,
+    ) -> Result<AdsrParams, Box<dyn std::error::Error>> {
+        Ok(AdsrParams {
+            attack: config.attack.unwrap_or(0.01),
+            decay: config.decay.unwrap_or(0.1),
+            sustain: config.sustain.unwrap_or(0.7),
+            release: config.release.unwrap_or(0.2),
+        })
+    }
+
     /// Parses a mode string into a Mode enum value.
     fn parse_mode(&self, mode_str: &str) -> Result<Mode, Box<dyn std::error::Error>> {
         match mode_str.to_lowercase().as_str() {
@@ -432,13 +481,24 @@ impl PatchBuilder {
     }
 }
 
-/// A single voice processing chain (melody generator → voice).
+/// A single voice processing chain (melody generator → adsr → voice).
 ///
-/// Processes clock input through melody generation and voice synthesis
-/// to produce audio output.
+/// Processes clock input through melody generation, ADSR envelope,
+/// and voice synthesis to produce audio output.
 struct VoiceChain {
     melody: Arc<Mutex<MelodyGenerator>>,
+    adsr: Option<Arc<Mutex<Adsr>>>,
+    adsr_params: Option<AdsrParams>,
     voice: Arc<Mutex<Voice>>,
+}
+
+/// ADSR parameter configuration
+#[derive(Clone)]
+struct AdsrParams {
+    attack: f32,
+    decay: f32,
+    sustain: f32,
+    release: f32,
 }
 
 impl VoiceChain {
@@ -451,7 +511,33 @@ impl VoiceChain {
         voice.process();
 
         let note_signal = melody.process_signal(clock_signal);
-        Audio::new(voice.process_signal(note_signal).value)
+
+        // Apply ADSR envelope if present
+        let envelope_value = if let (Some(adsr), Some(params)) = (&self.adsr, &self.adsr_params) {
+            let mut adsr = adsr.lock().unwrap();
+            adsr.process();
+
+            let adsr_input = AdsrInput {
+                gate: note_signal.gate,
+                attack: Audio::new(params.attack),
+                decay: Audio::new(params.decay),
+                sustain: Audio::new(params.sustain),
+                release: Audio::new(params.release),
+            };
+
+            adsr.process_signal(adsr_input).value
+        } else {
+            // No ADSR, use gate value directly
+            note_signal.gate.value
+        };
+
+        // Create modified note signal with envelope applied
+        let enveloped_note = NoteSignal {
+            gate: Audio::new(envelope_value),
+            frequency: note_signal.frequency,
+        };
+
+        Audio::new(voice.process_signal(enveloped_note).value)
     }
 }
 
