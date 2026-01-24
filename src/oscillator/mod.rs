@@ -11,7 +11,7 @@ mod oscillator_type;
 pub use modulation::{ModulatedOscillator, ModulationInputs};
 pub use oscillator_type::OscillatorType;
 
-use crate::module::{Generator, Module, Processor};
+use crate::module::{Generator, ModularModule, Module, Processor};
 use crate::signal::{AudioSignal, FrequencySignal};
 use std::f32::consts::PI;
 
@@ -150,5 +150,39 @@ impl Processor<FrequencySignal, AudioSignal> for Oscillator {
     fn process_signal(&mut self, input: FrequencySignal) -> AudioSignal {
         self.set_frequency(input.hz);
         AudioSignal::new(self.generate_sample())
+    }
+}
+
+impl ModularModule for Oscillator {
+    fn inputs(&self) -> &[&str] {
+        &["frequency", "fm", "am"]
+    }
+
+    fn outputs(&self) -> &[&str] {
+        &["audio"]
+    }
+
+    fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
+        match port {
+            "frequency" => {
+                self.set_frequency(value);
+                Ok(())
+            }
+            "fm" => Ok(()), // FM handled during output generation
+            "am" => Ok(()), // AM handled during output generation
+            _ => Err(format!("Unknown input port: {}", port)),
+        }
+    }
+
+    fn get_output(&mut self, port: &str) -> Result<f32, String> {
+        match port {
+            "audio" => Ok(self.generate_sample()),
+            _ => Err(format!("Unknown output port: {}", port)),
+        }
+    }
+
+    fn reset_inputs(&mut self) {
+        // Don't reset frequency - it should be stable
+        // Modulation inputs are handled differently (they need to be passed per-sample)
     }
 }

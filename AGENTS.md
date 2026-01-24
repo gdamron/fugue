@@ -110,24 +110,33 @@ The issue was discovered when trying to implement proper ADSR envelope control. 
 
 ### Implementation Status
 
-**Current state** (commit 7146cfa):
-- Type-based routing works for simple chains (clock → melody → voice)
-- `Connection` struct has `from_port`/`to_port` fields but they're unused
-- `PatchBuilder` hardcodes specific chain patterns
+**Completed**:
+- ✅ `ModularModule` trait created (`src/module/modular.rs`)
+- ✅ VCA module with named ports (`src/synthesis/vca.rs`)
+  - Inputs: `audio`, `cv`
+  - Outputs: `audio`
+- ✅ ModularAdsr module with named ports (`src/synthesis/modular_adsr.rs`)
+  - Inputs: `gate`, `attack`, `decay`, `sustain`, `release`
+  - Outputs: `envelope`
+- ✅ Clock module implements `ModularModule` (`src/time/clock.rs`)
+  - Inputs: none (it's a source)
+  - Outputs: `trigger`, `beat`, `phase`, `measure`
+- ✅ Oscillator implements `ModularModule` (`src/oscillator/mod.rs`)
+  - Inputs: `frequency`, `fm`, `am`
+  - Outputs: `audio`
+- ✅ MelodyGenerator implements `ModularModule` (`src/sequencer/melody_generator.rs`)
+  - Inputs: `beat`, `phase`
+  - Outputs: `frequency`, `gate`, `trigger`
+
+**Remaining work**:
+1. Update `PatchBuilder` (`src/builder.rs`) to route using port names when `from_port`/`to_port` are specified
+2. Update `Dac` to accept modular inputs (currently expects `Generator<Audio>`)
+3. Create example patch demonstrating ADSR envelope control
 
 **Migration plan**:
-1. Create new `ModularModule` trait alongside existing `Module`/`Generator`/`Processor`
-2. Implement named port system for new modules (ADSR, VCA)
-3. Gradually migrate existing modules
-4. Update `PatchBuilder` to use port-based routing
-5. Eventually deprecate type-based routing
-
-**Files to modify**:
-- `src/module/modular.rs` - New trait system (create this)
-- `src/signal/mod.rs` - Simplified signal types
-- `src/builder.rs` - Port-based routing logic
-- `src/patch.rs` - Make `from_port`/`to_port` required
-- Individual module files - Implement new traits
+- Old type-based system still works and should not be broken
+- New modular system coexists alongside old system
+- PatchBuilder should detect which system to use based on presence of port names in connections
 
 ### Migration Strategy
 

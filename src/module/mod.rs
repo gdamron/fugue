@@ -6,9 +6,12 @@
 //! - [`Processor`] - Modules that transform signals (filters, effects)
 //! - [`Connect`] - Trait for chaining modules together
 //! - [`Connection`] - Signal buffer between modules
+//! - [`ModularModule`] - Named port system for flexible signal routing (new)
 
 mod connection;
+mod modular;
 mod traits;
 
 pub use connection::Connection;
+pub use modular::{validate_port, ModularModule};
 pub use traits::{Connect, ConnectedProcessor, Generator, Module, Processor};

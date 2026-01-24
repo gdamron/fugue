@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::module::{Generator, Module};
+use crate::module::{Generator, ModularModule, Module};
 use crate::signal::ClockSignal;
 
 use super::Tempo;
@@ -96,5 +96,45 @@ impl Module for Clock {
 impl Generator<ClockSignal> for Clock {
     fn output(&mut self) -> ClockSignal {
         self.current_signal
+    }
+}
+
+impl ModularModule for Clock {
+    fn inputs(&self) -> &[&str] {
+        &[] // Clock has no inputs, it's a source
+    }
+
+    fn outputs(&self) -> &[&str] {
+        &["trigger", "beat", "phase", "measure"]
+    }
+
+    fn set_input(&mut self, port: &str, _value: f32) -> Result<(), String> {
+        Err(format!("Clock has no input ports, got: {}", port))
+    }
+
+    fn get_output(&mut self, port: &str) -> Result<f32, String> {
+        match port {
+            // Trigger: outputs 1.0 when phase resets (start of beat), 0.0 otherwise
+            "trigger" => {
+                let prev_phase = if self.sample_count == 0 {
+                    0.0
+                } else {
+                    let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
+                    (((self.sample_count - 1) as f64 % samples_per_beat) / samples_per_beat) as f32
+                };
+                Ok(if prev_phase > self.current_signal.phase {
+                    1.0
+                } else {
+                    0.0
+                })
+            }
+            // Beat: continuous beat position
+            "beat" => Ok(self.current_signal.beats as f32),
+            // Phase: 0.0-1.0 position within current beat
+            "phase" => Ok(self.current_signal.phase),
+            // Measure: current measure number
+            "measure" => Ok(self.current_signal.measure as f32),
+            _ => Err(format!("Unknown output port: {}", port)),
+        }
     }
 }
