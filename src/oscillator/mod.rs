@@ -27,6 +27,8 @@ pub struct Oscillator {
     sample_rate: u32,
     fm_amount: f32,
     am_amount: f32,
+    // Cached output for modular routing
+    cached_audio: f32,
 }
 
 impl Oscillator {
@@ -41,6 +43,7 @@ impl Oscillator {
             sample_rate,
             fm_amount: 0.0,
             am_amount: 0.0,
+            cached_audio: 0.0,
         }
     }
 
@@ -132,6 +135,8 @@ impl Oscillator {
 
 impl Module for Oscillator {
     fn process(&mut self) -> bool {
+        // Generate and cache the audio sample
+        self.cached_audio = self.generate_sample();
         true
     }
 
@@ -175,8 +180,9 @@ impl ModularModule for Oscillator {
     }
 
     fn get_output(&mut self, port: &str) -> Result<f32, String> {
+        // Just return cached value - NO state changes!
         match port {
-            "audio" => Ok(self.generate_sample()),
+            "audio" => Ok(self.cached_audio),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }

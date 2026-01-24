@@ -1,0 +1,98 @@
+{
+  "version": "1.0.0",
+  "title": "Dorian Melody with ADSR Envelope",
+  "description": "Demonstrates modular routing with clock → melody → oscillator → VCA with ADSR envelope control",
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 120.0,
+        "time_signature": {
+          "beats_per_measure": 4,
+          "beat_unit": 4
+        }
+      }
+    },
+    {
+      "id": "melody",
+      "type": "melody",
+      "config": {
+        "root_note": 60,
+        "mode": "dorian",
+        "scale_degrees": [0, 1, 2, 3, 4, 5, 6],
+        "note_weights": [1.0, 0.5, 1.0, 0.5, 1.5, 0.5, 1.0],
+        "note_duration": 0.5
+      }
+    },
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "sawtooth"
+      }
+    },
+    {
+      "id": "adsr",
+      "type": "adsr",
+      "config": {
+        "attack": 0.05,
+        "decay": 0.1,
+        "sustain": 0.7,
+        "release": 0.3
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "beat",
+      "to": "melody",
+      "to_port": "beat"
+    },
+    {
+      "from": "clock",
+      "from_port": "phase",
+      "to": "melody",
+      "to_port": "phase"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "osc",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody",
+      "from_port": "gate",
+      "to": "adsr",
+      "to_port": "gate"
+    },
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "adsr",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    },
+    {
+      "from": "vca",
+      "from_port": "audio",
+      "to": "dac",
+      "to_port": "audio"
+    }
+  ]
+}

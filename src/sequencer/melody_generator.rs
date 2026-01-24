@@ -27,6 +27,10 @@ pub struct MelodyGenerator {
     // Modular inputs
     beat_in: f32,
     phase_in: f32,
+    // Cached outputs (computed in process())
+    cached_frequency: f32,
+    cached_gate: f32,
+    cached_trigger: f32,
 }
 
 impl MelodyGenerator {
@@ -46,6 +50,9 @@ impl MelodyGenerator {
             tempo,
             beat_in: 0.0,
             phase_in: 0.0,
+            cached_frequency: current_note.frequency(),
+            cached_gate: 0.0,
+            cached_trigger: 0.0,
         }
     }
 
@@ -82,6 +89,31 @@ impl MelodyGenerator {
 
 impl Module for MelodyGenerator {
     fn process(&mut self) -> bool {
+        // Compute note timing
+        let note_duration = *self.params.note_duration.lock().unwrap();
+        let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
+        let samples_per_note = (samples_per_beat * note_duration as f64) as u64;
+
+        // Check if it's time for a new note
+        if self.samples_since_note >= samples_per_note {
+            self.current_note = self.next_note();
+            self.samples_since_note = 0;
+        }
+
+        // Compute outputs
+        // Gate: HIGH for entire note duration (for ADSR envelope)
+        let gate_on = true; // Always high during the note
+                            // Trigger: brief pulse at start of note (for triggering other modules)
+        let is_trigger = self.samples_since_note == 0;
+
+        // Cache all outputs (BEFORE incrementing sample counter!)
+        self.cached_frequency = self.current_note.frequency();
+        self.cached_gate = if gate_on { 1.0 } else { 0.0 };
+        self.cached_trigger = if is_trigger { 1.0 } else { 0.0 };
+
+        // Now increment counter (only once per sample!)
+        self.samples_since_note += 1;
+
         true
     }
 
@@ -119,7 +151,7 @@ impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
 
 impl ModularModule for MelodyGenerator {
     fn inputs(&self) -> &[&str] {
-        &["beat", "phase"]
+        &["beat"]
     }
 
     fn outputs(&self) -> &[&str] {
@@ -132,42 +164,22 @@ impl ModularModule for MelodyGenerator {
                 self.beat_in = value;
                 Ok(())
             }
-            "phase" => {
-                self.phase_in = value;
-                Ok(())
-            }
             _ => Err(format!("Unknown input port: {}", port)),
         }
     }
 
     fn get_output(&mut self, port: &str) -> Result<f32, String> {
-        let note_duration = *self.params.note_duration.lock().unwrap();
-        let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
-        let samples_per_note = (samples_per_beat * note_duration as f64) as u64;
-        let trigger_samples = (self.sample_rate as f64 / 1000.0).max(1.0) as u64;
-
-        if self.samples_since_note >= samples_per_note {
-            self.current_note = self.next_note();
-            self.samples_since_note = 0;
-        }
-
-        let gate_on = self.samples_since_note < trigger_samples;
-        self.samples_since_note += 1;
-
+        // Just return cached values - NO state changes!
         match port {
-            "frequency" => Ok(self.current_note.frequency()),
-            "gate" => Ok(if gate_on { 1.0 } else { 0.0 }),
-            "trigger" => Ok(if self.samples_since_note == 1 {
-                1.0
-            } else {
-                0.0
-            }),
+            "frequency" => Ok(self.cached_frequency),
+            "gate" => Ok(self.cached_gate),
+            "trigger" => Ok(self.cached_trigger),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }
 
     fn reset_inputs(&mut self) {
         self.beat_in = 0.0;
-        self.phase_in = 0.0;
+        // phase_in removed - not used
     }
 }

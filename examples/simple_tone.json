@@ -1,0 +1,67 @@
+{
+  "version": "1.0.0",
+  "title": "Simple 440Hz Tone with ADSR",
+  "description": "Minimal test: Clock PWM gate triggers ADSR envelope on 440Hz oscillator",
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 120.0,
+        "gate_duration": 0.5
+      }
+    },
+    {
+      "id": "adsr",
+      "type": "adsr",
+      "config": {
+        "attack": 0.01,
+        "decay": 0.1,
+        "sustain": 0.7,
+        "release": 0.3
+      }
+    },
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "frequency": 440.0,
+        "oscillator_type": "sine"
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "adsr",
+      "to_port": "gate"
+    },
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "adsr",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    },
+    {
+      "from": "vca",
+      "from_port": "audio",
+      "to": "dac",
+      "to_port": "audio"
+    }
+  ]
+}

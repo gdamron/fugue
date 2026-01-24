@@ -34,11 +34,11 @@ pub struct Vca {
 }
 
 impl Vca {
-    /// Creates a new VCA with inputs initialized to zero.
+    /// Creates a new VCA with CV defaulting to 1.0 (unity gain/passthrough).
     pub fn new() -> Self {
         Self {
             audio_in: 0.0,
-            cv_in: 0.0,
+            cv_in: 1.0,
         }
     }
 }
@@ -87,7 +87,8 @@ impl ModularModule for Vca {
 
     fn reset_inputs(&mut self) {
         self.audio_in = 0.0;
-        self.cv_in = 0.0;
+        // Don't reset cv_in - it should stay at its last value (or default 1.0)
+        // This allows VCA to act as passthrough when no CV is connected
     }
 }
 

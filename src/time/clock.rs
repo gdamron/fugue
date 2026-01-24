@@ -15,12 +15,18 @@ pub struct Clock {
     sample_count: u64,
     beats_per_measure: u32,
     current_signal: ClockSignal,
+    // Cached outputs for modular routing
+    cached_trigger: f32,
+    cached_beat: f32,
+    cached_gate: f32,
+    gate_duration: f64, // Gate duration as fraction of beat (0.0-1.0)
 }
 
 impl Clock {
     /// Creates a new clock with the given sample rate and tempo.
     ///
     /// Defaults to 4 beats per measure (4/4 time).
+    /// Gate duration defaults to 25% of each beat (balances envelope time with silence).
     pub fn new(sample_rate: u32, tempo: Tempo) -> Self {
         let mut clock = Self {
             sample_rate,
@@ -28,15 +34,29 @@ impl Clock {
             sample_count: 0,
             beats_per_measure: 4,
             current_signal: ClockSignal::new(0.0, 0.0, 0, 0),
+            cached_trigger: 0.0,
+            cached_beat: 0.0,
+            cached_gate: 0.0,
+            gate_duration: 0.25, // 25% duty cycle
         };
         clock.update_signal();
+        clock.update_cached_outputs();
         clock
+    }
+
+    /// Sets the gate duration as a fraction of the beat (0.0 to 1.0).
+    /// For example, 0.5 = gate HIGH for 50% of each beat.
+    pub fn with_gate_duration(mut self, duration: f64) -> Self {
+        self.gate_duration = duration.clamp(0.0, 1.0);
+        self.update_cached_outputs();
+        self
     }
 
     /// Sets the time signature by specifying beats per measure.
     pub fn with_time_signature(mut self, beats_per_measure: u32) -> Self {
         self.beats_per_measure = beats_per_measure;
         self.update_signal();
+        self.update_cached_outputs();
         self
     }
 
@@ -50,10 +70,39 @@ impl Clock {
         self.current_signal = ClockSignal::new(beats, phase as f32, measure, beat_in_measure);
     }
 
+    fn update_cached_outputs(&mut self) {
+        let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
+        let sample_in_beat = self.sample_count % (samples_per_beat as u64);
+        let gate_samples = (samples_per_beat * self.gate_duration) as u64;
+
+        // Trigger: 1.0 at start of beat (sample 0 of each beat), 0.0 otherwise
+        let prev_phase = if self.sample_count == 0 {
+            1.0 // Force trigger on first sample
+        } else {
+            (((self.sample_count - 1) as f64 % samples_per_beat) / samples_per_beat) as f32
+        };
+        self.cached_trigger = if prev_phase > self.current_signal.phase {
+            1.0
+        } else {
+            0.0
+        };
+
+        // Gate: PWM signal - HIGH for gate_duration% of each beat
+        self.cached_gate = if sample_in_beat < gate_samples {
+            1.0
+        } else {
+            0.0
+        };
+
+        // Beat: continuous beat position
+        self.cached_beat = self.current_signal.beats as f32;
+    }
+
     /// Advances the clock by one sample.
     pub fn tick(&mut self) {
         self.sample_count += 1;
         self.update_signal();
+        self.update_cached_outputs();
     }
 
     /// Returns the total number of samples elapsed since the clock started.
@@ -105,7 +154,7 @@ impl ModularModule for Clock {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["trigger", "beat", "phase", "measure"]
+        &["trigger", "beat", "gate"]
     }
 
     fn set_input(&mut self, port: &str, _value: f32) -> Result<(), String> {
@@ -113,27 +162,11 @@ impl ModularModule for Clock {
     }
 
     fn get_output(&mut self, port: &str) -> Result<f32, String> {
+        // Just return cached values - NO state changes or computations!
         match port {
-            // Trigger: outputs 1.0 when phase resets (start of beat), 0.0 otherwise
-            "trigger" => {
-                let prev_phase = if self.sample_count == 0 {
-                    0.0
-                } else {
-                    let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
-                    (((self.sample_count - 1) as f64 % samples_per_beat) / samples_per_beat) as f32
-                };
-                Ok(if prev_phase > self.current_signal.phase {
-                    1.0
-                } else {
-                    0.0
-                })
-            }
-            // Beat: continuous beat position
-            "beat" => Ok(self.current_signal.beats as f32),
-            // Phase: 0.0-1.0 position within current beat
-            "phase" => Ok(self.current_signal.phase),
-            // Measure: current measure number
-            "measure" => Ok(self.current_signal.measure as f32),
+            "trigger" => Ok(self.cached_trigger),
+            "beat" => Ok(self.cached_beat),
+            "gate" => Ok(self.cached_gate),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }

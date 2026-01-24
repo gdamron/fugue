@@ -141,6 +141,10 @@ pub struct ModuleConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release: Option<f32>,
 
+    /// Clock gate duration as fraction of beat 0.0-1.0 (for clock modules).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_duration: Option<f32>,
+
     /// Additional fields for extensibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,

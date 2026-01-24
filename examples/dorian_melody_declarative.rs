@@ -2,11 +2,11 @@ use fugue::*;
 use std::io::{self, Write};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Fugue - Declarative Patch Example");
-    println!("==================================\n");
+    println!("Fugue - Modular Declarative Patch Example");
+    println!("==========================================\n");
 
     // Load patch from JSON file
-    let patch = Patch::from_file("examples/dorian_melody.json")?;
+    let patch = Patch::from_file("examples/dorian_melody_modular.json")?;
 
     println!(
         "Loaded patch: {}",
@@ -17,24 +17,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    // Build the patch
-    let dac = Dac::new()?;
-    let sample_rate = dac.sample_rate();
+    // Build the modular patch
+    println!("Building modular patch...\n");
 
-    println!("Sample rate: {} Hz", sample_rate);
-    println!("Building patch...\n");
-
-    let builder = PatchBuilder::new(sample_rate);
-    let runtime = builder.build_and_run(patch)?;
+    let builder = ModularPatchBuilder::new(44100);
+    let runtime = builder.build(patch)?;
 
     // Display the signal chain
     println!("Signal chain:");
-    for (i, module) in runtime.patch().modules.iter().enumerate() {
-        if i > 0 {
-            println!("  ↓");
-        }
-        println!("  [{}] {}", module.module_type, module.id);
-    }
+    println!("  Clock → MelodyGenerator → Oscillator → VCA → DAC");
+    println!("         └─────────────────→ ADSR ───────┘");
     println!();
 
     // Start audio
