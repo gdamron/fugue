@@ -59,12 +59,6 @@
       "to_port": "beat"
     },
     {
-      "from": "clock",
-      "from_port": "phase",
-      "to": "melody",
-      "to_port": "phase"
-    },
-    {
       "from": "melody",
       "from_port": "frequency",
       "to": "osc",

@@ -14,17 +14,13 @@ wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["AudioContext", "AudioDestinationNode"] }
 
 [[example]]
-name = "dorian_melody"
-path = "examples/dorian_melody.rs"
+name = "simple_tone"
+path = "examples/simple_tone.rs"
+
+[[example]]
+name = "modular_adsr_melody"
+path = "examples/modular_adsr_melody.rs"
 
 [[example]]
 name = "dorian_melody_declarative"
 path = "examples/dorian_melody_declarative.rs"
-
-[[example]]
-name = "fm_synthesis_demo"
-path = "examples/fm_synthesis_demo.rs"
-
-[[example]]
-name = "am_synthesis_demo"
-path = "examples/am_synthesis_demo.rs"
