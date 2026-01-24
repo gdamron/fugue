@@ -67,6 +67,72 @@ cargo clippy --fix
 
 Fugue is a modular synthesis library for algorithmic music composition. It uses a signal-flow architecture inspired by Eurorack modular synthesizers.
 
+## IMPORTANT: Signal Routing Architecture (Current Redesign)
+
+**Status**: The codebase is undergoing a fundamental architectural change to enable flexible signal routing.
+
+### The Problem
+
+The original architecture used **type-based signal routing** via Rust generics:
+- `Generator<T>` and `Processor<TIn, TOut>` enforce signal compatibility at compile time
+- Connections between modules are implicit based on their types
+- This prevents flexible routing patterns common in modular synthesis
+
+**Example of what doesn't work**:
+- Routing a clock trigger to an ADSR gate input (type mismatch: `ClockSignal` vs `NoteSignal`)
+- Using an envelope to control a VCA (no way to route envelope output to amplitude control)
+- Arbitrary CV routing (e.g., LFO modulating filter cutoff)
+
+The issue was discovered when trying to implement proper ADSR envelope control. Sequencers output brief triggers, but envelopes need sustained gates. The type system prevented routing signals between these modules.
+
+### The Solution: Named Port Architecture
+
+**Design principle**: Like real modular synthesizers, all signals are just voltages (f32 values). Modules interpret them based on which input port receives them.
+
+**Key changes**:
+1. **Uniform signal type**: All signals become `f32` (or `Signal(f32)` wrapper)
+2. **Named ports**: Each module declares its inputs/outputs explicitly
+   ```rust
+   impl ModularModule for Oscillator {
+       fn inputs(&self) -> Vec<&str> { vec!["frequency", "fm", "am"] }
+       fn outputs(&self) -> Vec<&str> { vec!["audio"] }
+       fn set_input(&mut self, port: &str, value: f32) { ... }
+       fn get_output(&mut self, port: &str) -> f32 { ... }
+   }
+   ```
+3. **Explicit routing**: Connections must specify port names
+   ```json
+   {
+     "from": "clock", "from_port": "trigger",
+     "to": "adsr", "to_port": "gate"
+   }
+   ```
+
+### Implementation Status
+
+**Current state** (commit 7146cfa):
+- Type-based routing works for simple chains (clock → melody → voice)
+- `Connection` struct has `from_port`/`to_port` fields but they're unused
+- `PatchBuilder` hardcodes specific chain patterns
+
+**Migration plan**:
+1. Create new `ModularModule` trait alongside existing `Module`/`Generator`/`Processor`
+2. Implement named port system for new modules (ADSR, VCA)
+3. Gradually migrate existing modules
+4. Update `PatchBuilder` to use port-based routing
+5. Eventually deprecate type-based routing
+
+**Files to modify**:
+- `src/module/modular.rs` - New trait system (create this)
+- `src/signal/mod.rs` - Simplified signal types
+- `src/builder.rs` - Port-based routing logic
+- `src/patch.rs` - Make `from_port`/`to_port` required
+- Individual module files - Implement new traits
+
+### Migration Strategy
+
+**Don't break existing code!** The type-based system still works. New modules should use the named port system. Both can coexist during migration.
+
 ### Signal Types (`src/signal.rs`)
 
 Two fundamental signal categories:
