@@ -184,7 +184,7 @@ impl ModularModule for ModularAdsr {
     }
 
     fn reset_inputs(&mut self) {
-        self.gate_in = 0.0;
+        // Don't reset gate_in - it needs to persist for envelope state machine
         // Don't reset ADSR parameters - they should retain their values
     }
 }
