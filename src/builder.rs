@@ -288,12 +288,7 @@ impl PatchBuilder {
 
         // Build melody generator
         let (scale, melody_params) = self.build_melody_config(&melody_spec.config, tempo)?;
-        let melody = MelodyGenerator::new(
-            scale,
-            melody_params.clone(),
-            self.sample_rate,
-            tempo.clone(),
-        );
+        let melody = MelodyGenerator::new(scale, melody_params.clone());
 
         // Build ADSR if present
         let (adsr, adsr_params) = if has_adsr {
@@ -416,10 +411,6 @@ impl PatchBuilder {
 
         if let Some(weights) = &config.note_weights {
             params.set_note_weights(weights.clone());
-        }
-
-        if let Some(duration) = config.note_duration {
-            params.set_note_duration(duration);
         }
 
         if let Some(osc_str) = &config.oscillator_type {

@@ -62,8 +62,8 @@ mod tests {
         println!();
 
         // Trigger the envelope
-        let trigger = clock.get_output("trigger").unwrap();
-        adsr.set_input("gate", trigger).unwrap();
+        let gate = clock.get_output("gate").unwrap();
+        adsr.set_input("gate", gate).unwrap();
         adsr.process();
 
         let envelope = adsr.get_output("envelope").unwrap();
@@ -75,10 +75,10 @@ mod tests {
             clock.process();
             osc.process();
 
-            let trigger = clock.get_output("trigger").unwrap();
+            let gate = clock.get_output("gate").unwrap();
             let osc_audio = osc.get_output("audio").unwrap();
 
-            adsr.set_input("gate", trigger).unwrap();
+            adsr.set_input("gate", gate).unwrap();
             adsr.process();
             let envelope = adsr.get_output("envelope").unwrap();
 

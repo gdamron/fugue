@@ -21,8 +21,7 @@
         "root_note": 60,
         "mode": "dorian",
         "scale_degrees": [0, 1, 2, 3, 4, 5, 6],
-        "note_weights": [1.0, 0.5, 1.0, 0.5, 1.5, 0.5, 1.0],
-        "note_duration": 1.0
+        "note_weights": [1.0, 0.5, 1.0, 0.5, 1.5, 0.5, 1.0]
       }
     },
     {
@@ -54,9 +53,9 @@
   "connections": [
     {
       "from": "clock",
-      "from_port": "beat",
+      "from_port": "gate",
       "to": "melody",
-      "to_port": "beat"
+      "to_port": "gate"
     },
     {
       "from": "melody",
@@ -65,7 +64,7 @@
       "to_port": "frequency"
     },
     {
-      "from": "clock",
+      "from": "melody",
       "from_port": "gate",
       "to": "adsr",
       "to_port": "gate"

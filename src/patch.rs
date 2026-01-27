@@ -97,10 +97,6 @@ pub struct ModuleConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_weights: Option<Vec<f32>>,
 
-    /// Note duration in beats (for melody modules).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note_duration: Option<f32>,
-
     /// Oscillator waveform type (for voice/oscillator modules).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oscillator_type: Option<String>,

@@ -256,23 +256,8 @@ impl ModularPatchBuilder {
                     if let Some(weights) = &spec.config.note_weights {
                         params.set_note_weights(weights.clone());
                     }
-                    if let Some(duration) = spec.config.note_duration {
-                        params.set_note_duration(duration);
-                    }
 
-                    // Get tempo from clock (must be built first)
-                    let tempo = modules
-                        .get("clock")
-                        .and_then(|m| {
-                            if let ModuleInstance::Clock(clock) = m {
-                                Some(clock.lock().unwrap().tempo().clone())
-                            } else {
-                                None
-                            }
-                        })
-                        .ok_or("Clock must be defined before melody generator")?;
-
-                    let melody = MelodyGenerator::new(scale, params, self.sample_rate, tempo);
+                    let melody = MelodyGenerator::new(scale, params);
                     ModuleInstance::Melody(Arc::new(Mutex::new(melody)))
                 }
                 "oscillator" => {

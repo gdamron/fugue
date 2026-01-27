@@ -17,20 +17,19 @@ mod tests {
         println!("Initial state:");
         println!("  Clock samples_elapsed: {}", clock.samples_elapsed());
         println!(
-            "  Clock trigger (before first process): {:.2}",
-            clock.get_output("trigger").unwrap()
+            "  Clock gate (before first process): {:.2}",
+            clock.get_output("gate").unwrap()
         );
         println!();
 
         // Simulate a few samples
         for i in 0..10 {
             // Get outputs for THIS sample (before processing)
-            let trigger = clock.get_output("trigger").unwrap();
-            let beat = clock.get_output("beat").unwrap();
+            let gate = clock.get_output("gate").unwrap();
             let osc_audio = osc.get_output("audio").unwrap();
 
             // Route signals
-            adsr.set_input("gate", trigger).unwrap();
+            adsr.set_input("gate", gate).unwrap();
             adsr.process();
 
             let envelope = adsr.get_output("envelope").unwrap();
@@ -41,8 +40,8 @@ mod tests {
             let output = vca.get_output("audio").unwrap();
 
             println!(
-                "Sample {}: beat={:.4}, trigger={:.2}, envelope={:.4}, osc={:.4}, vca={:.4}",
-                i, beat, trigger, envelope, osc_audio, output
+                "Sample {}: gate={:.2}, envelope={:.4}, osc={:.4}, vca={:.4}",
+                i, gate, envelope, osc_audio, output
             );
 
             // Process modules to advance to NEXT sample

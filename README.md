@@ -141,7 +141,7 @@ let running = runtime.start()?;
 
 // Control parameters at runtime
 running.tempo().set_bpm(140.0);
-running.melody_params().set_note_duration(0.5);
+running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 ```
 
 See [DECLARATIVE.md](DECLARATIVE.md) for full documentation of the patch format.
@@ -161,7 +161,7 @@ let tempo = Tempo::new(120.0);
 let clock = Clock::new(sample_rate, tempo.clone());
 let scale = Scale::new(Note::new(60), Mode::Dorian);
 let params = MelodyParams::new(vec![0, 1, 2, 3, 4, 5, 6]);
-let melody = MelodyGenerator::new(scale, params.clone(), sample_rate, tempo.clone());
+let melody = MelodyGenerator::new(scale, params.clone());
 let voice = Voice::new(sample_rate, OscillatorType::Sine);
 
 // Connect the chain

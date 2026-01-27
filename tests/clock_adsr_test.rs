@@ -23,9 +23,9 @@ mod tests {
         let mut max_envelope = 0.0f32;
 
         // Run for 2 beats
+        let mut last_gate = 0.0f32;
         for i in 0..(samples_per_beat * 2) {
             let gate = clock.get_output("gate").unwrap();
-            let trigger = clock.get_output("trigger").unwrap();
 
             if gate > 0.5 {
                 gate_high_count += 1;
@@ -38,10 +38,10 @@ mod tests {
 
             max_envelope = max_envelope.max(envelope);
 
-            // Print key events
-            if trigger > 0.5 {
+            // Print key events (gate rising edge)
+            if gate > 0.5 && last_gate <= 0.5 {
                 println!(
-                    "Sample {}: TRIGGER! gate={:.1}, envelope={:.6}",
+                    "Sample {}: GATE ON! gate={:.1}, envelope={:.6}",
                     i, gate, envelope
                 );
             }
@@ -49,6 +49,8 @@ mod tests {
             if i % 5000 == 0 {
                 println!("Sample {}: gate={:.1}, envelope={:.6}", i, gate, envelope);
             }
+
+            last_gate = gate;
 
             // Advance clock
             clock.process();

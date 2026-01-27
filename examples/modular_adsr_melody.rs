@@ -48,10 +48,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!();
     println!("Current settings:");
     println!("  Tempo: {:.1} BPM", running.tempo().get_bpm());
-    println!(
-        "  Note duration: {:.2} beats",
-        *running.melody_params().note_duration.lock().unwrap()
-    );
     println!();
     println!("Listening... (ADSR envelope shapes each note)");
     println!();

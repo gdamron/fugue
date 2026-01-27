@@ -21,7 +21,3 @@ path = "examples/simple_tone.rs"
 [[example]]
 name = "modular_adsr_melody"
 path = "examples/modular_adsr_melody.rs"
-
-[[example]]
-name = "dorian_melody_declarative"
-path = "examples/dorian_melody_declarative.rs"

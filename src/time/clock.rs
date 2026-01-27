@@ -15,9 +15,7 @@ pub struct Clock {
     sample_count: u64,
     beats_per_measure: u32,
     current_signal: ClockSignal,
-    // Cached outputs for modular routing
-    cached_trigger: f32,
-    cached_beat: f32,
+    // Cached output for modular routing
     cached_gate: f32,
     gate_duration: f64,         // Gate duration as fraction of beat (0.0-1.0)
     last_processed_sample: u64, // For pull-based processing
@@ -35,8 +33,6 @@ impl Clock {
             sample_count: 0,
             beats_per_measure: 4,
             current_signal: ClockSignal::new(0.0, 0.0, 0, 0),
-            cached_trigger: 0.0,
-            cached_beat: 0.0,
             cached_gate: 0.0,
             gate_duration: 0.25, // 25% duty cycle
             last_processed_sample: 0,
@@ -77,27 +73,12 @@ impl Clock {
         let sample_in_beat = self.sample_count % (samples_per_beat as u64);
         let gate_samples = (samples_per_beat * self.gate_duration) as u64;
 
-        // Trigger: 1.0 at start of beat (sample 0 of each beat), 0.0 otherwise
-        let prev_phase = if self.sample_count == 0 {
-            1.0 // Force trigger on first sample
-        } else {
-            (((self.sample_count - 1) as f64 % samples_per_beat) / samples_per_beat) as f32
-        };
-        self.cached_trigger = if prev_phase > self.current_signal.phase {
-            1.0
-        } else {
-            0.0
-        };
-
         // Gate: PWM signal - HIGH for gate_duration% of each beat
         self.cached_gate = if sample_in_beat < gate_samples {
             1.0
         } else {
             0.0
         };
-
-        // Beat: continuous beat position
-        self.cached_beat = self.current_signal.beats as f32;
     }
 
     /// Advances the clock by one sample.
@@ -156,7 +137,7 @@ impl ModularModule for Clock {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["trigger", "beat", "gate"]
+        &["gate"]
     }
 
     fn set_input(&mut self, port: &str, _value: f32) -> Result<(), String> {
@@ -166,8 +147,6 @@ impl ModularModule for Clock {
     fn get_output(&mut self, port: &str) -> Result<f32, String> {
         // Just return cached values - NO state changes or computations!
         match port {
-            "trigger" => Ok(self.cached_trigger),
-            "beat" => Ok(self.cached_beat),
             "gate" => Ok(self.cached_gate),
             _ => Err(format!("Unknown output port: {}", port)),
         }
@@ -183,8 +162,6 @@ impl ModularModule for Clock {
 
     fn get_cached_output(&self, port: &str) -> Result<f32, String> {
         match port {
-            "trigger" => Ok(self.cached_trigger),
-            "beat" => Ok(self.cached_beat),
             "gate" => Ok(self.cached_gate),
             _ => Err(format!("Unknown output port: {}", port)),
         }

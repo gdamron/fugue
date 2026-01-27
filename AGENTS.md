@@ -89,7 +89,7 @@ Fugue is a modular synthesis library for algorithmic music composition. It uses 
 3. **Explicit routing**: Connections specify port names in JSON
    ```json
    {
-     "from": "clock", "from_port": "trigger",
+     "from": "clock", "from_port": "gate",
      "to": "adsr", "to_port": "gate"
    }
    ```
@@ -208,8 +208,8 @@ All modules implement the `ModularModule` trait:
 
 | Module | Location | Inputs | Outputs |
 |--------|----------|--------|---------|
-| `Clock` | `time/clock.rs` | _(none)_ | `trigger`, `beat`, `gate` |
-| `MelodyGenerator` | `sequencer/melody_generator.rs` | `beat` | `frequency`, `gate`, `trigger` |
+| `Clock` | `time/clock.rs` | _(none)_ | `gate` |
+| `MelodyGenerator` | `sequencer/melody_generator.rs` | `gate` | `frequency`, `gate` |
 | `Oscillator` | `oscillator/mod.rs` | `frequency`, `fm`, `am` | `audio` |
 | `ModularAdsr` | `synthesis/modular_adsr.rs` | `gate`, `attack`, `decay`, `sustain`, `release` | `envelope` |
 | `Vca` | `synthesis/vca.rs` | `audio`, `cv` | `audio` |
@@ -283,7 +283,7 @@ let running = runtime.start()?;
 
 // Control parameters at runtime
 running.tempo().set_bpm(140.0);
-running.melody_params().set_note_duration(0.5);
+running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 ```
 
 ### Programmatic Approach

@@ -1,7 +1,6 @@
 use crate::module::{ModularModule, Module, Processor};
 use crate::scale::{Note, Scale};
 use crate::signal::{Audio, ClockSignal, FrequencySignal};
-use crate::time::Tempo;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -9,27 +8,27 @@ use super::{MelodyParams, NoteSignal};
 
 /// Generates melodies by selecting notes from a scale based on weighted probabilities.
 ///
-/// Processes [`ClockSignal`] input and outputs [`NoteSignal`] with gate and
-/// frequency information. Note selection uses weighted random choice from
-/// the allowed scale degrees.
+/// Receives a `gate` input signal from the clock. On each rising edge of the gate,
+/// a new note is selected from the scale. The gate signal is passed through to
+/// the output, allowing downstream ADSR envelopes to shape the note.
 ///
-/// The gate output is a brief trigger pulse (1ms) at the start of each note,
-/// followed by immediate release. This allows downstream ADSR envelopes to
-/// control the full note duration and shape.
+/// # Inputs
+/// - `gate`: Gate signal from clock (rising edge triggers new note selection)
+///
+/// # Outputs
+/// - `frequency`: Current note frequency in Hz
+/// - `gate`: Pass-through of the input gate signal
 pub struct MelodyGenerator {
     scale: Scale,
     params: MelodyParams,
     rng: StdRng,
     current_note: Note,
-    samples_since_note: u64,
-    sample_rate: u32,
-    tempo: Tempo,
     // Modular inputs
-    beat_in: f32,
+    gate_in: f32,
+    last_gate: f32,
     // Cached outputs (computed in process())
     cached_frequency: f32,
     cached_gate: f32,
-    cached_trigger: f32,
     last_processed_sample: u64, // For pull-based processing
 }
 
@@ -37,21 +36,18 @@ impl MelodyGenerator {
     /// Creates a new melody generator.
     ///
     /// Notes are selected from the given scale according to the parameters.
-    /// The tempo controls note timing.
-    pub fn new(scale: Scale, params: MelodyParams, sample_rate: u32, tempo: Tempo) -> Self {
+    /// Note changes are triggered by the rising edge of the `gate` input.
+    pub fn new(scale: Scale, params: MelodyParams) -> Self {
         let current_note = Note::new(60);
         Self {
             scale,
             params,
             rng: StdRng::from_entropy(),
             current_note,
-            samples_since_note: 0,
-            sample_rate,
-            tempo,
-            beat_in: 0.0,
+            gate_in: 0.0,
+            last_gate: 0.0,
             cached_frequency: current_note.frequency(),
             cached_gate: 0.0,
-            cached_trigger: 0.0,
             last_processed_sample: 0,
         }
     }
@@ -89,30 +85,21 @@ impl MelodyGenerator {
 
 impl Module for MelodyGenerator {
     fn process(&mut self) -> bool {
-        // Compute note timing
-        let note_duration = *self.params.note_duration.lock().unwrap();
-        let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
-        let samples_per_note = (samples_per_beat * note_duration as f64) as u64;
+        // Detect rising edge of gate input
+        let gate_high = self.gate_in > 0.5;
+        let was_low = self.last_gate <= 0.5;
 
-        // Check if it's time for a new note
-        if self.samples_since_note >= samples_per_note {
+        if gate_high && was_low {
+            // Rising edge: select a new note
             self.current_note = self.next_note();
-            self.samples_since_note = 0;
         }
 
-        // Compute outputs
-        // Gate: HIGH for entire note duration (for ADSR envelope)
-        let gate_on = true; // Always high during the note
-                            // Trigger: brief pulse at start of note (for triggering other modules)
-        let is_trigger = self.samples_since_note == 0;
-
-        // Cache all outputs (BEFORE incrementing sample counter!)
+        // Cache outputs
         self.cached_frequency = self.current_note.frequency();
-        self.cached_gate = if gate_on { 1.0 } else { 0.0 };
-        self.cached_trigger = if is_trigger { 1.0 } else { 0.0 };
+        self.cached_gate = self.gate_in; // Pass through gate signal
 
-        // Now increment counter (only once per sample!)
-        self.samples_since_note += 1;
+        // Remember last gate state for edge detection
+        self.last_gate = self.gate_in;
 
         true
     }
@@ -123,27 +110,19 @@ impl Module for MelodyGenerator {
 }
 
 impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
-    fn process_signal(&mut self, _clock: ClockSignal) -> NoteSignal {
-        let note_duration = *self.params.note_duration.lock().unwrap();
-        let samples_per_beat = self.tempo.samples_per_beat(self.sample_rate);
-        let samples_per_note = (samples_per_beat * note_duration as f64) as u64;
+    fn process_signal(&mut self, clock: ClockSignal) -> NoteSignal {
+        // Use clock phase to detect beat boundaries
+        // Rising edge when phase wraps from high to low
+        let gate_high = clock.phase < 0.25; // Gate high for first 25% of beat
 
-        // Trigger length: 1ms pulse at the start of each note
-        let trigger_samples = (self.sample_rate as f64 / 1000.0).max(1.0) as u64;
-
-        if self.samples_since_note >= samples_per_note {
+        if gate_high && self.last_gate <= 0.5 {
             self.current_note = self.next_note();
-            self.samples_since_note = 0;
         }
 
-        // Gate is high only for the brief trigger pulse at the start
-        // This mimics a clock/trigger signal: brief pulse followed by immediate release
-        let gate_on = self.samples_since_note < trigger_samples;
-
-        self.samples_since_note += 1;
+        self.last_gate = if gate_high { 1.0 } else { 0.0 };
 
         NoteSignal {
-            gate: Audio::gate(gate_on, 1.0),
+            gate: Audio::gate(gate_high, 1.0),
             frequency: FrequencySignal::from_midi(self.current_note.midi_note),
         }
     }
@@ -151,17 +130,17 @@ impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
 
 impl ModularModule for MelodyGenerator {
     fn inputs(&self) -> &[&str] {
-        &["beat"]
+        &["gate"]
     }
 
     fn outputs(&self) -> &[&str] {
-        &["frequency", "gate", "trigger"]
+        &["frequency", "gate"]
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
-            "beat" => {
-                self.beat_in = value;
+            "gate" => {
+                self.gate_in = value;
                 Ok(())
             }
             _ => Err(format!("Unknown input port: {}", port)),
@@ -173,14 +152,12 @@ impl ModularModule for MelodyGenerator {
         match port {
             "frequency" => Ok(self.cached_frequency),
             "gate" => Ok(self.cached_gate),
-            "trigger" => Ok(self.cached_trigger),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }
 
     fn reset_inputs(&mut self) {
-        self.beat_in = 0.0;
-        // phase_in removed - not used
+        self.gate_in = 0.0;
     }
 
     fn last_processed_sample(&self) -> u64 {
@@ -195,7 +172,6 @@ impl ModularModule for MelodyGenerator {
         match port {
             "frequency" => Ok(self.cached_frequency),
             "gate" => Ok(self.cached_gate),
-            "trigger" => Ok(self.cached_trigger),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }

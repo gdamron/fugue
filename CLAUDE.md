@@ -171,12 +171,10 @@ Multiple paths automatically mix at the DAC:
 ```json
 {
   "connections": [
-    {"from": "clock", "to": "melody1"},
-    {"from": "clock", "to": "melody2"},
-    {"from": "melody1", "to": "voice1"},
-    {"from": "melody2", "to": "voice2"},
-    {"from": "voice1", "to": "dac"},
-    {"from": "voice2", "to": "dac"}
+    {"from": "melody1", "from_port": "frequency", "to": "voice1", "to_port": "frequency"},
+    {"from": "melody2", "from_port": "frequency", "to": "voice2", "to_port": "frequency"},
+    {"from": "voice1", "from_port": "audio", "to": "dac", "to_port": "audio"},
+    {"from": "voice2", "from_port": "audio", "to": "dac", "to_port": "audio"}
   ]
 }
 ```
