@@ -26,11 +26,11 @@ pub struct MelodyGenerator {
     tempo: Tempo,
     // Modular inputs
     beat_in: f32,
-    phase_in: f32,
     // Cached outputs (computed in process())
     cached_frequency: f32,
     cached_gate: f32,
     cached_trigger: f32,
+    last_processed_sample: u64, // For pull-based processing
 }
 
 impl MelodyGenerator {
@@ -49,10 +49,10 @@ impl MelodyGenerator {
             sample_rate,
             tempo,
             beat_in: 0.0,
-            phase_in: 0.0,
             cached_frequency: current_note.frequency(),
             cached_gate: 0.0,
             cached_trigger: 0.0,
+            last_processed_sample: 0,
         }
     }
 
@@ -181,5 +181,22 @@ impl ModularModule for MelodyGenerator {
     fn reset_inputs(&mut self) {
         self.beat_in = 0.0;
         // phase_in removed - not used
+    }
+
+    fn last_processed_sample(&self) -> u64 {
+        self.last_processed_sample
+    }
+
+    fn mark_processed(&mut self, sample: u64) {
+        self.last_processed_sample = sample;
+    }
+
+    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
+        match port {
+            "frequency" => Ok(self.cached_frequency),
+            "gate" => Ok(self.cached_gate),
+            "trigger" => Ok(self.cached_trigger),
+            _ => Err(format!("Unknown output port: {}", port)),
+        }
     }
 }

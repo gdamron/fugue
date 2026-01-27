@@ -2,43 +2,6 @@
 //!
 //! This is the new builder system that replaces type-based routing with
 //! explicit port-name routing for maximum flexibility.
-//!
-//! # Architecture Overview
-//!
-//! ## Signal Routing
-//!
-//! Unlike traditional type-based routing, this system uses **named ports** for connections:
-//! - Each module declares its inputs/outputs via the `ModularModule` trait
-//! - Connections specify port names: `{"from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate"}`
-//! - All signals are f32 values - modules interpret them based on which port receives them
-//!
-//! ## Processing Order
-//!
-//! The system builds a dependency graph and processes modules in the correct order each sample:
-//!
-//! 1. **Reset all inputs** - Clear inputs to default state (crucial for gate/trigger signals)
-//! 2. **Process source modules** - Modules with no inputs (Clock, Oscillator, etc.)
-//! 3. **Iteratively route and process** - Process modules when all their inputs are ready
-//! 4. **Mix to DAC** - Combine all DAC inputs and output the final sample
-//!
-//! ## Why IndexMap?
-//!
-//! **CRITICAL**: We use `IndexMap` instead of `HashMap` for deterministic iteration order.
-//!
-//! - HashMap has non-deterministic iteration order in Rust (depends on internal hash state)
-//! - This caused race conditions where ADSR envelopes would work ~50% of the time
-//! - IndexMap preserves insertion order (order from JSON definition), ensuring consistent behavior
-//! - While the dependency graph handles ordering for connected modules, IndexMap ensures
-//!   tie-breaking (when multiple valid orders exist) is deterministic across runs
-//!
-//! ## Reset Behavior
-//!
-//! The `reset_inputs()` call before each sample is essential:
-//!
-//! - **Control signals** (gates, triggers, CV) must reset to default values
-//! - **Parameters** (ADSR attack/decay, oscillator frequency) should NOT reset
-//! - Example: ADSR gate must reset to 0.0, otherwise old gate values persist incorrectly
-//! - This ensures clean state while preserving module configuration
 
 use crate::module::{ModularModule, Module};
 use crate::patch::Patch;
@@ -116,14 +79,14 @@ impl ModularPatchBuilder {
 
     fn validate_patch(&self, patch: &Patch) -> Result<(), Box<dyn std::error::Error>> {
         // Check all connections reference valid modules
-        let module_ids: std::collections::HashSet<String> =
-            patch.modules.iter().map(|m| m.id.clone()).collect();
+        let module_ids: IndexMap<String, ()> =
+            patch.modules.iter().map(|m| (m.id.clone(), ())).collect();
 
         for conn in &patch.connections {
-            if !module_ids.contains(&conn.from) {
+            if !module_ids.contains_key(&conn.from) {
                 return Err(format!("Unknown source module: {}", conn.from).into());
             }
-            if !module_ids.contains(&conn.to) {
+            if !module_ids.contains_key(&conn.to) {
                 return Err(format!("Unknown destination module: {}", conn.to).into());
             }
 
@@ -141,79 +104,7 @@ impl ModularPatchBuilder {
             return Err("No DAC module found".into());
         }
 
-        // Check for cycles in the dependency graph
-        self.validate_acyclic(patch)?;
-
         Ok(())
-    }
-
-    /// Validates that the patch contains no cycles (feedback loops).
-    ///
-    /// Uses depth-first search with a recursion stack to detect cycles.
-    /// Cycles would cause infinite recursion in the pull-based system.
-    fn validate_acyclic(&self, patch: &Patch) -> Result<(), Box<dyn std::error::Error>> {
-        // Build adjacency list (module -> modules it connects to)
-        let mut graph: std::collections::HashMap<String, Vec<String>> =
-            std::collections::HashMap::new();
-
-        for conn in &patch.connections {
-            // Don't include DAC in cycle detection (it's a sink)
-            if conn.to != "dac" {
-                graph
-                    .entry(conn.from.clone())
-                    .or_insert_with(Vec::new)
-                    .push(conn.to.clone());
-            }
-        }
-
-        // Check each module for cycles using DFS
-        let mut visited = std::collections::HashSet::new();
-        let mut rec_stack = std::collections::HashSet::new();
-
-        for module in &patch.modules {
-            if module.id != "dac" && !visited.contains(&module.id) {
-                if self.has_cycle_dfs(&module.id, &graph, &mut visited, &mut rec_stack) {
-                    return Err(format!(
-                        "Cycle detected in signal graph involving module '{}'",
-                        module.id
-                    )
-                    .into());
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Depth-first search to detect cycles.
-    ///
-    /// Returns true if a cycle is detected starting from `node`.
-    fn has_cycle_dfs(
-        &self,
-        node: &str,
-        graph: &std::collections::HashMap<String, Vec<String>>,
-        visited: &mut std::collections::HashSet<String>,
-        rec_stack: &mut std::collections::HashSet<String>,
-    ) -> bool {
-        visited.insert(node.to_string());
-        rec_stack.insert(node.to_string());
-
-        // Check all neighbors
-        if let Some(neighbors) = graph.get(node) {
-            for neighbor in neighbors {
-                if !visited.contains(neighbor) {
-                    if self.has_cycle_dfs(neighbor, graph, visited, rec_stack) {
-                        return true;
-                    }
-                } else if rec_stack.contains(neighbor) {
-                    // Found a back edge - cycle detected!
-                    return true;
-                }
-            }
-        }
-
-        rec_stack.remove(node);
-        false
     }
 
     fn build_modules(
@@ -292,22 +183,7 @@ impl ModularPatchBuilder {
                     ModuleInstance::Oscillator(Arc::new(Mutex::new(osc)))
                 }
                 "adsr" => {
-                    let mut adsr = ModularAdsr::new(self.sample_rate);
-
-                    // Apply config values if specified
-                    if let Some(attack) = spec.config.attack {
-                        let _ = adsr.set_input("attack", attack);
-                    }
-                    if let Some(decay) = spec.config.decay {
-                        let _ = adsr.set_input("decay", decay);
-                    }
-                    if let Some(sustain) = spec.config.sustain {
-                        let _ = adsr.set_input("sustain", sustain);
-                    }
-                    if let Some(release) = spec.config.release {
-                        let _ = adsr.set_input("release", release);
-                    }
-
+                    let adsr = ModularAdsr::new(self.sample_rate);
                     ModuleInstance::Adsr(Arc::new(Mutex::new(adsr)))
                 }
                 "vca" => {
@@ -462,23 +338,10 @@ pub struct ModularPatchRuntime {
 impl ModularPatchRuntime {
     /// Starts audio playback.
     pub fn start(self) -> Result<RunningModularPatch, Box<dyn std::error::Error>> {
-        // Build input map: for each module, collect all connections that feed into it
-        let mut input_map: std::collections::HashMap<String, Vec<RoutingConnection>> =
-            std::collections::HashMap::new();
-
-        for conn in &self.routing {
-            input_map
-                .entry(conn.to_module.clone())
-                .or_insert_with(Vec::new)
-                .push(conn.clone());
-        }
-
         let graph = ModularSignalGraph {
             modules: self.modules,
             routing: self.routing,
             dac_id: self.dac_id,
-            input_map,
-            current_sample: 0,
         };
 
         let graph_arc = Arc::new(Mutex::new(graph));
@@ -503,130 +366,119 @@ struct ModularSignalGraph {
     modules: IndexMap<String, ModuleInstance>,
     routing: Vec<RoutingConnection>,
     dac_id: String,
-    /// Maps module_id -> Vec of connections that feed into it (for pull-based processing)
-    input_map: std::collections::HashMap<String, Vec<RoutingConnection>>,
-    /// Current sample number (for caching)
-    current_sample: u64,
 }
 
 impl ModularSignalGraph {
-    /// Pulls an output value from a module using recursive dependency resolution.
-    ///
-    /// # Algorithm
-    ///
-    /// 1. Check if module already processed this sample (cache hit)
-    /// 2. If cached, return the cached output value
-    /// 3. Get all input connections for this module
-    /// 4. Recursively pull outputs from all dependencies
-    /// 5. Set all inputs on the module
-    /// 6. Process the module
-    /// 7. Mark as processed for this sample
-    /// 8. Return the requested output value
-    ///
-    /// This ensures correct processing order through depth-first traversal.
-    fn pull_output(&mut self, module_id: &str, port: &str) -> Result<f32, String> {
-        // Check if already processed this sample
-        if let Some(module) = self.modules.get(module_id) {
+    /// Processes one sample through the entire graph.
+    fn process_sample(&mut self) -> f32 {
+        // Reset all module inputs
+        for module in self.modules.values() {
             if let Some(m) = module.as_modular_module() {
-                let m_locked = m.lock().unwrap();
+                m.lock().unwrap().reset_inputs();
+            }
+        }
 
-                // Cache hit - return cached value
-                if m_locked.last_processed_sample() == self.current_sample {
-                    return m_locked.get_cached_output(port);
+        // Process modules in dependency order by iterating through routing connections
+        // For each connection: process source, route signal to destination
+        // This ensures modules are processed before their outputs are needed
+
+        // First pass: Process all source modules (those that appear as "from" but not as "to")
+        let mut processed: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // Find and process source modules (no inputs)
+        let destinations: std::collections::HashSet<String> = self
+            .routing
+            .iter()
+            .filter(|c| c.to_module != self.dac_id)
+            .map(|c| c.to_module.clone())
+            .collect();
+
+        for (id, module) in &self.modules {
+            if !destinations.contains(id) && id != &self.dac_id {
+                // This is a source module
+                if let Some(m) = module.as_modular_module() {
+                    m.lock().unwrap().process();
+                    processed.insert(id.clone());
                 }
+            }
+        }
 
-                // Cache miss - need to process this module
-                // First, recursively pull all inputs
+        // Now iteratively process modules whose inputs are ready
+        let max_iterations = self.modules.len() * 2; // Prevent infinite loops
+        for _ in 0..max_iterations {
+            let mut made_progress = false;
 
-                // Clone input connections to avoid borrow issues during recursion
-                let input_connections: Vec<RoutingConnection> =
-                    self.input_map.get(module_id).cloned().unwrap_or_default();
-
-                // Drop the lock before recursion
-                drop(m_locked);
-
-                // Recursively pull all inputs
-                for conn in &input_connections {
-                    let input_value = self
-                        .pull_output(&conn.from_module, &conn.from_port)
-                        .unwrap_or_else(|e| {
-                            eprintln!(
-                                "Warning: Failed to pull {}:{} - {}",
-                                conn.from_module, conn.from_port, e
-                            );
+            // Route signals from processed modules to unprocessed ones
+            for conn in &self.routing {
+                if processed.contains(&conn.from_module)
+                    && !processed.contains(&conn.to_module)
+                    && conn.to_module != self.dac_id
+                {
+                    // Get output from source
+                    let value = if let Some(from_module) = self.modules.get(&conn.from_module) {
+                        if let Some(m) = from_module.as_modular_module() {
+                            m.lock().unwrap().get_output(&conn.from_port).unwrap_or(0.0)
+                        } else {
                             0.0
-                        });
+                        }
+                    } else {
+                        0.0
+                    };
 
-                    // Set the input on this module
-                    if let Some(to_module) = self.modules.get(module_id) {
+                    // Set input on destination
+                    if let Some(to_module) = self.modules.get(&conn.to_module) {
                         if let Some(m) = to_module.as_modular_module() {
-                            let _ = m.lock().unwrap().set_input(&conn.to_port, input_value);
+                            let _ = m.lock().unwrap().set_input(&conn.to_port, value);
                         }
                     }
                 }
+            }
 
-                // Now process the module
-                if let Some(module) = self.modules.get(module_id) {
-                    if let Some(m) = module.as_modular_module() {
-                        let mut m_locked = m.lock().unwrap();
-                        m_locked.process();
-                        m_locked.mark_processed(self.current_sample);
+            // Process modules whose inputs have been set
+            for (id, module) in &self.modules {
+                if !processed.contains(id) && id != &self.dac_id {
+                    // Check if all inputs for this module have been provided
+                    let inputs_ready = self
+                        .routing
+                        .iter()
+                        .filter(|c| &c.to_module == id)
+                        .all(|c| processed.contains(&c.from_module));
 
-                        // Return the requested output
-                        return m_locked.get_cached_output(port);
+                    if inputs_ready {
+                        if let Some(m) = module.as_modular_module() {
+                            m.lock().unwrap().process();
+                            processed.insert(id.clone());
+                            made_progress = true;
+                        }
+                    }
+                }
+            }
+
+            if !made_progress {
+                break;
+            }
+        }
+
+        // Finally, collect and mix all signals going to DAC
+        let mut dac_signals = Vec::new();
+        for conn in &self.routing {
+            if conn.to_module == self.dac_id {
+                if let Some(from_module) = self.modules.get(&conn.from_module) {
+                    if let Some(m) = from_module.as_modular_module() {
+                        if let Ok(value) = m.lock().unwrap().get_output(&conn.from_port) {
+                            dac_signals.push(value);
+                        }
                     }
                 }
             }
         }
 
-        Err(format!("Module '{}' not found", module_id))
-    }
-
-    /// Processes one sample through the entire graph.
-    ///
-    /// # Pull-Based Processing Algorithm
-    ///
-    /// 1. **Increment sample counter**: Track which sample we're processing
-    /// 2. **Find DAC connections**: Determine what signals feed into the DAC
-    /// 3. **Pull outputs**: Recursively request each DAC input (triggers dependency chain)
-    /// 4. **Mix signals**: Combine all DAC inputs with gain compensation
-    /// 5. **Return sample**: Output the final mixed audio sample
-    ///
-    /// The pull-based approach ensures correct processing order through recursive
-    /// dependency resolution. Each module processes exactly once per sample via caching.
-    fn process_sample(&mut self) -> f32 {
-        // Increment sample counter for cache invalidation
-        self.current_sample += 1;
-
-        // Find all connections going to DAC
-        let dac_connections: Vec<RoutingConnection> = self
-            .routing
-            .iter()
-            .filter(|conn| conn.to_module == self.dac_id)
-            .cloned()
-            .collect();
-
-        // Pull each DAC input (triggers recursive processing)
-        let mut dac_signals = Vec::new();
-        for conn in &dac_connections {
-            match self.pull_output(&conn.from_module, &conn.from_port) {
-                Ok(value) => dac_signals.push(value),
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to pull DAC input from {}:{} - {}",
-                        conn.from_module, conn.from_port, e
-                    );
-                }
-            }
-        }
-
-        // Mix DAC inputs with gain compensation
+        // Mix DAC inputs
         if dac_signals.is_empty() {
             0.0
         } else if dac_signals.len() == 1 {
             dac_signals[0]
         } else {
-            // Use sqrt(N) gain compensation to prevent clipping
             let gain = 1.0 / (dac_signals.len() as f32).sqrt();
             dac_signals.iter().sum::<f32>() * gain
         }

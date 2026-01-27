@@ -6,7 +6,6 @@ use crate::signal::AudioSignal;
 /// Automatically applies gain adjustment based on the number of inputs
 /// to prevent clipping when mixing.
 pub struct Mixer {
-    num_inputs: usize,
     gain: f32,
 }
 
@@ -16,7 +15,6 @@ impl Mixer {
     /// Gain is automatically set to `1/sqrt(num_inputs)` to prevent clipping.
     pub fn new(num_inputs: usize) -> Self {
         Self {
-            num_inputs,
             gain: 1.0 / (num_inputs as f32).sqrt(),
         }
     }

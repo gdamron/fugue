@@ -19,7 +19,8 @@ pub struct Clock {
     cached_trigger: f32,
     cached_beat: f32,
     cached_gate: f32,
-    gate_duration: f64, // Gate duration as fraction of beat (0.0-1.0)
+    gate_duration: f64,         // Gate duration as fraction of beat (0.0-1.0)
+    last_processed_sample: u64, // For pull-based processing
 }
 
 impl Clock {
@@ -38,6 +39,7 @@ impl Clock {
             cached_beat: 0.0,
             cached_gate: 0.0,
             gate_duration: 0.25, // 25% duty cycle
+            last_processed_sample: 0,
         };
         clock.update_signal();
         clock.update_cached_outputs();
@@ -163,6 +165,23 @@ impl ModularModule for Clock {
 
     fn get_output(&mut self, port: &str) -> Result<f32, String> {
         // Just return cached values - NO state changes or computations!
+        match port {
+            "trigger" => Ok(self.cached_trigger),
+            "beat" => Ok(self.cached_beat),
+            "gate" => Ok(self.cached_gate),
+            _ => Err(format!("Unknown output port: {}", port)),
+        }
+    }
+
+    fn last_processed_sample(&self) -> u64 {
+        self.last_processed_sample
+    }
+
+    fn mark_processed(&mut self, sample: u64) {
+        self.last_processed_sample = sample;
+    }
+
+    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
         match port {
             "trigger" => Ok(self.cached_trigger),
             "beat" => Ok(self.cached_beat),

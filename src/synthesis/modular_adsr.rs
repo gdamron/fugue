@@ -44,6 +44,7 @@ pub struct ModularAdsr {
     envelope_value: f32,
     last_gate_high: bool,
     phase: EnvelopePhase,
+    last_processed_sample: u64, // For pull-based processing
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,6 +69,7 @@ impl ModularAdsr {
             envelope_value: 0.0,
             last_gate_high: false,
             phase: EnvelopePhase::Idle,
+            last_processed_sample: 0,
         }
     }
 
@@ -184,8 +186,23 @@ impl ModularModule for ModularAdsr {
     }
 
     fn reset_inputs(&mut self) {
-        // Don't reset gate_in - it needs to persist for envelope state machine
+        self.gate_in = 0.0;
         // Don't reset ADSR parameters - they should retain their values
+    }
+
+    fn last_processed_sample(&self) -> u64 {
+        self.last_processed_sample
+    }
+
+    fn mark_processed(&mut self, sample: u64) {
+        self.last_processed_sample = sample;
+    }
+
+    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
+        match port {
+            "envelope" => Ok(self.envelope_value.clamp(0.0, 1.0)),
+            _ => Err(format!("Unknown output port: {}", port)),
+        }
     }
 }
 

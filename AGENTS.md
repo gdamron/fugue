@@ -67,40 +67,26 @@ cargo clippy --fix
 
 Fugue is a modular synthesis library for algorithmic music composition. It uses a signal-flow architecture inspired by Eurorack modular synthesizers.
 
-## IMPORTANT: Signal Routing Architecture (Current Redesign)
+## IMPORTANT: Signal Routing Architecture
 
-**Status**: The codebase is undergoing a fundamental architectural change to enable flexible signal routing.
+**Status**: ✅ **Complete** - The codebase uses a **pull-based signal processing architecture** with named port routing.
 
-### The Problem
-
-The original architecture used **type-based signal routing** via Rust generics:
-- `Generator<T>` and `Processor<TIn, TOut>` enforce signal compatibility at compile time
-- Connections between modules are implicit based on their types
-- This prevents flexible routing patterns common in modular synthesis
-
-**Example of what doesn't work**:
-- Routing a clock trigger to an ADSR gate input (type mismatch: `ClockSignal` vs `NoteSignal`)
-- Using an envelope to control a VCA (no way to route envelope output to amplitude control)
-- Arbitrary CV routing (e.g., LFO modulating filter cutoff)
-
-The issue was discovered when trying to implement proper ADSR envelope control. Sequencers output brief triggers, but envelopes need sustained gates. The type system prevented routing signals between these modules.
-
-### The Solution: Named Port Architecture
+### Named Port Architecture
 
 **Design principle**: Like real modular synthesizers, all signals are just voltages (f32 values). Modules interpret them based on which input port receives them.
 
-**Key changes**:
-1. **Uniform signal type**: All signals become `f32` (or `Signal(f32)` wrapper)
+**Key features**:
+1. **Uniform signal type**: All signals are `f32` values
 2. **Named ports**: Each module declares its inputs/outputs explicitly
    ```rust
    impl ModularModule for Oscillator {
-       fn inputs(&self) -> Vec<&str> { vec!["frequency", "fm", "am"] }
-       fn outputs(&self) -> Vec<&str> { vec!["audio"] }
-       fn set_input(&mut self, port: &str, value: f32) { ... }
-       fn get_output(&mut self, port: &str) -> f32 { ... }
+       fn inputs(&self) -> &[&str] { &["frequency", "fm", "am"] }
+       fn outputs(&self) -> &[&str] { &["audio"] }
+       fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> { ... }
+       fn get_output(&self, port: &str) -> Result<f32, String> { ... }
    }
    ```
-3. **Explicit routing**: Connections must specify port names
+3. **Explicit routing**: Connections specify port names in JSON
    ```json
    {
      "from": "clock", "from_port": "trigger",
@@ -108,41 +94,135 @@ The issue was discovered when trying to implement proper ADSR envelope control. 
    }
    ```
 
-### Implementation Status
+### Pull-Based Signal Processing
 
-**Completed**:
-- ✅ `ModularModule` trait created (`src/module/modular.rs`)
-- ✅ VCA module with named ports (`src/synthesis/vca.rs`)
-  - Inputs: `audio`, `cv`
-  - Outputs: `audio`
-- ✅ ModularAdsr module with named ports (`src/synthesis/modular_adsr.rs`)
-  - Inputs: `gate`, `attack`, `decay`, `sustain`, `release`
-  - Outputs: `envelope`
-- ✅ Clock module implements `ModularModule` (`src/time/clock.rs`)
-  - Inputs: none (it's a source)
-  - Outputs: `trigger`, `beat`, `phase`, `measure`
-- ✅ Oscillator implements `ModularModule` (`src/oscillator/mod.rs`)
-  - Inputs: `frequency`, `fm`, `am`
-  - Outputs: `audio`
-- ✅ MelodyGenerator implements `ModularModule` (`src/sequencer/melody_generator.rs`)
-  - Inputs: `beat`, `phase`
-  - Outputs: `frequency`, `gate`, `trigger`
+The system uses **pull-based processing** where the DAC recursively requests inputs from connected modules:
 
-**Remaining work**:
-1. Update `PatchBuilder` (`src/builder.rs`) to route using port names when `from_port`/`to_port` are specified
-2. Update `Dac` to accept modular inputs (currently expects `Generator<Audio>`)
-3. Create example patch demonstrating ADSR envelope control
+**How it works**:
+1. DAC requests its inputs for the current sample
+2. Each module recursively pulls from its dependencies (depth-first traversal)
+3. Modules cache their outputs per sample to avoid reprocessing
+4. Natural dependency resolution ensures correct processing order
 
-**Migration plan**:
-- Old type-based system still works and should not be broken
-- New modular system coexists alongside old system
-- PatchBuilder should detect which system to use based on presence of port names in connections
+**Key advantages**:
+- **Correct ordering**: Recursive pull ensures modules process in dependency order
+- **Efficient**: Each module processes exactly once per sample (via caching)
+- **Simple**: No complex topological sorting or iterative scheduling
+- **Deterministic**: Same results every time (no push-based race conditions)
+
+**Architecture files**:
+- `src/module/modular.rs` - ModularModule trait with caching methods
+- `src/modular_builder.rs` - Pull-based signal graph implementation
+
+### Module Implementation Guide
+
+To implement the `ModularModule` trait for a new module:
+
+```rust
+use crate::module::ModularModule;
+
+pub struct MyModule {
+    // Your module state
+    input_value: f32,
+    output_value: f32,
+    
+    // Required for pull-based caching
+    last_processed_sample: u64,
+}
+
+impl ModularModule for MyModule {
+    fn inputs(&self) -> &[&str] {
+        &["input_port_name"]
+    }
+    
+    fn outputs(&self) -> &[&str] {
+        &["output_port_name"]
+    }
+    
+    fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
+        match port {
+            "input_port_name" => {
+                self.input_value = value;
+                Ok(())
+            }
+            _ => Err(format!("Unknown input port: {}", port))
+        }
+    }
+    
+    fn get_output(&self, port: &str) -> Result<f32, String> {
+        match port {
+            "output_port_name" => Ok(self.output_value),
+            _ => Err(format!("Unknown output port: {}", port))
+        }
+    }
+    
+    fn reset_inputs(&mut self) {
+        // Reset control signals (gates, triggers) to default
+        // Don't reset configuration parameters
+        self.input_value = 0.0;  // Example: gate resets to 0
+    }
+    
+    // Caching methods for pull-based processing
+    fn last_processed_sample(&self) -> u64 {
+        self.last_processed_sample
+    }
+    
+    fn mark_processed(&mut self, sample: u64) {
+        self.last_processed_sample = sample;
+    }
+    
+    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
+        // Usually just calls get_output()
+        self.get_output(port)
+    }
+}
+
+impl Module for MyModule {
+    fn process(&mut self) -> bool {
+        // Your DSP logic here
+        self.output_value = self.input_value * 2.0;  // Example
+        true
+    }
+    
+    fn name(&self) -> &str {
+        "MyModule"
+    }
+}
+```
+
+### Cycle Detection
+
+The system **only supports acyclic graphs** (no feedback loops). Cycles are detected during patch validation using depth-first search.
+
+**Why no cycles?**
+- Pull-based processing would cause infinite recursion
+- Future: Add delay modules for controlled feedback
+
+**Error handling**:
+- Validation fails with clear error message if cycle detected
+- Example: `"Cycle detected in signal graph involving module 'osc1'"`
+
+### Module Implementations
+
+All modules implement the `ModularModule` trait:
+
+| Module | Location | Inputs | Outputs |
+|--------|----------|--------|---------|
+| `Clock` | `time/clock.rs` | _(none)_ | `trigger`, `beat`, `gate` |
+| `MelodyGenerator` | `sequencer/melody_generator.rs` | `beat` | `frequency`, `gate`, `trigger` |
+| `Oscillator` | `oscillator/mod.rs` | `frequency`, `fm`, `am` | `audio` |
+| `ModularAdsr` | `synthesis/modular_adsr.rs` | `gate`, `attack`, `decay`, `sustain`, `release` | `envelope` |
+| `Vca` | `synthesis/vca.rs` | `audio`, `cv` | `audio` |
 
 ### Migration Strategy
 
-**Don't break existing code!** The type-based system still works. New modules should use the named port system. Both can coexist during migration.
+**Current state**: Both old type-based and new modular systems coexist.
+- Old system: `Generator<T>` and `Processor<TIn, TOut>` (legacy)
+- New system: `ModularModule` with pull-based processing (recommended)
 
-### Signal Types (`src/signal.rs`)
+**Don't break existing code!** Old examples still work.
+
+## Signal Types (`src/signal.rs`)
 
 Two fundamental signal categories:
 

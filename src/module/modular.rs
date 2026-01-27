@@ -90,7 +90,39 @@ pub trait ModularModule: Module {
     /// Called at the start of each sample to clear any unconnected inputs.
     /// Default implementation does nothing, but modules should override this
     /// if they need to handle unconnected inputs specially (e.g., default to 0.0).
+    ///
+    /// **Note:** This method is deprecated in the pull-based architecture and may
+    /// be removed in future versions. Modules should set sensible defaults in their
+    /// constructors instead.
     fn reset_inputs(&mut self) {}
+
+    /// Returns the sample number when this module was last processed.
+    ///
+    /// Used by the pull-based processing system to avoid reprocessing modules
+    /// multiple times within a single sample period. Modules should initialize
+    /// this to 0 and update it via `mark_processed()` after each processing cycle.
+    fn last_processed_sample(&self) -> u64;
+
+    /// Marks this module as processed for the given sample number.
+    ///
+    /// Called by the signal graph after processing the module. This enables
+    /// caching: if the same module's output is requested multiple times in
+    /// one sample, it returns cached values without reprocessing.
+    fn mark_processed(&mut self, sample: u64);
+
+    /// Gets cached output value without triggering processing.
+    ///
+    /// Returns the output value computed during the last `process()` call.
+    /// This method should never modify module state or trigger side effects.
+    ///
+    /// # Arguments
+    ///
+    /// * `port` - Name of the output port (must match one from `outputs()`)
+    ///
+    /// # Returns
+    ///
+    /// The cached output value, or an error if the port name is invalid.
+    fn get_cached_output(&self, port: &str) -> Result<f32, String>;
 }
 
 /// Helper for validating port names at module construction.
@@ -114,6 +146,7 @@ mod tests {
     struct TestModule {
         input_a: f32,
         input_b: f32,
+        last_processed_sample: u64,
     }
 
     impl Module for TestModule {
@@ -157,6 +190,22 @@ mod tests {
             self.input_a = 0.0;
             self.input_b = 0.0;
         }
+
+        fn last_processed_sample(&self) -> u64 {
+            self.last_processed_sample
+        }
+
+        fn mark_processed(&mut self, sample: u64) {
+            self.last_processed_sample = sample;
+        }
+
+        fn get_cached_output(&self, port: &str) -> Result<f32, String> {
+            match port {
+                "sum" => Ok(self.input_a + self.input_b),
+                "product" => Ok(self.input_a * self.input_b),
+                _ => Err(format!("Unknown output port: {}", port)),
+            }
+        }
     }
 
     #[test]
@@ -164,6 +213,7 @@ mod tests {
         let mut module = TestModule {
             input_a: 0.0,
             input_b: 0.0,
+            last_processed_sample: 0,
         };
 
         // Test setting inputs
@@ -179,6 +229,18 @@ mod tests {
         // Test reset
         module.reset_inputs();
         assert_eq!(module.get_output("sum").unwrap(), 0.0);
+
+        // Test sample tracking
+        assert_eq!(module.last_processed_sample(), 0);
+        module.mark_processed(42);
+        assert_eq!(module.last_processed_sample(), 42);
+
+        // Test cached output
+        module.set_input("a", 5.0).unwrap();
+        module.set_input("b", 6.0).unwrap();
+        assert_eq!(module.get_cached_output("sum").unwrap(), 11.0);
+        assert_eq!(module.get_cached_output("product").unwrap(), 30.0);
+        assert!(module.get_cached_output("invalid").is_err());
     }
 
     #[test]

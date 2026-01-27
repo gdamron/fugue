@@ -29,6 +29,7 @@ pub struct Oscillator {
     am_amount: f32,
     // Cached output for modular routing
     cached_audio: f32,
+    last_processed_sample: u64, // For pull-based processing
 }
 
 impl Oscillator {
@@ -44,6 +45,7 @@ impl Oscillator {
             fm_amount: 0.0,
             am_amount: 0.0,
             cached_audio: 0.0,
+            last_processed_sample: 0,
         }
     }
 
@@ -190,5 +192,20 @@ impl ModularModule for Oscillator {
     fn reset_inputs(&mut self) {
         // Don't reset frequency - it should be stable
         // Modulation inputs are handled differently (they need to be passed per-sample)
+    }
+
+    fn last_processed_sample(&self) -> u64 {
+        self.last_processed_sample
+    }
+
+    fn mark_processed(&mut self, sample: u64) {
+        self.last_processed_sample = sample;
+    }
+
+    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
+        match port {
+            "audio" => Ok(self.cached_audio),
+            _ => Err(format!("Unknown output port: {}", port)),
+        }
     }
 }

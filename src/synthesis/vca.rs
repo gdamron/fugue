@@ -31,6 +31,7 @@ use crate::module::{ModularModule, Module};
 pub struct Vca {
     audio_in: f32,
     cv_in: f32,
+    last_processed_sample: u64, // For pull-based processing
 }
 
 impl Vca {
@@ -39,6 +40,7 @@ impl Vca {
         Self {
             audio_in: 0.0,
             cv_in: 1.0,
+            last_processed_sample: 0,
         }
     }
 }
@@ -89,6 +91,21 @@ impl ModularModule for Vca {
         self.audio_in = 0.0;
         // Don't reset cv_in - it should stay at its last value (or default 1.0)
         // This allows VCA to act as passthrough when no CV is connected
+    }
+
+    fn last_processed_sample(&self) -> u64 {
+        self.last_processed_sample
+    }
+
+    fn mark_processed(&mut self, sample: u64) {
+        self.last_processed_sample = sample;
+    }
+
+    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
+        match port {
+            "audio" => Ok(self.audio_in * self.cv_in),
+            _ => Err(format!("Unknown output port: {}", port)),
+        }
     }
 }
 
