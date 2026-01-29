@@ -4,8 +4,8 @@
 //!
 //! ## Signal Routing
 //!
-//! Unlike traditional type-based routing, this system uses **named ports** for connections:
-//! - Each module declares its inputs/outputs via the `ModularModule` trait
+//! The system uses **named ports** for connections:
+//! - Each module declares its inputs/outputs via the `Module` trait
 //! - Connections specify port names: `{"from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate"}`
 //! - All signals are f32 values - modules interpret them based on which port receives them
 //!
@@ -28,9 +28,7 @@
 //! - While the dependency graph handles ordering for connected modules, IndexMap ensures
 //!   tie-breaking (when multiple valid orders exist) is deterministic across runs
 
-use crate::{Audio, Generator, Module};
 use indexmap::IndexMap;
-use std::sync::{Arc, Mutex};
 
 use super::runtime::ModuleInstance;
 
@@ -72,12 +70,12 @@ impl SignalGraph {
     fn pull_output(&mut self, module_id: &str, port: &str) -> Result<f32, String> {
         // Check if already processed this sample
         if let Some(module) = self.modules.get(module_id) {
-            if let Some(m) = module.as_modular_module() {
+            if let Some(m) = module.as_module() {
                 let m_locked = m.lock().unwrap();
 
                 // Cache hit - return cached value
                 if m_locked.last_processed_sample() == self.current_sample {
-                    return m_locked.get_cached_output(port);
+                    return m_locked.get_output(port);
                 }
 
                 // Cache miss - need to process this module
@@ -104,7 +102,7 @@ impl SignalGraph {
 
                     // Set the input on this module
                     if let Some(to_module) = self.modules.get(module_id) {
-                        if let Some(m) = to_module.as_modular_module() {
+                        if let Some(m) = to_module.as_module() {
                             let _ = m.lock().unwrap().set_input(&conn.to_port, input_value);
                         }
                     }
@@ -112,13 +110,13 @@ impl SignalGraph {
 
                 // Now process the module
                 if let Some(module) = self.modules.get(module_id) {
-                    if let Some(m) = module.as_modular_module() {
+                    if let Some(m) = module.as_module() {
                         let mut m_locked = m.lock().unwrap();
                         m_locked.process();
                         m_locked.mark_processed(self.current_sample);
 
                         // Return the requested output
-                        return m_locked.get_cached_output(port);
+                        return m_locked.get_output(port);
                     }
                 }
             }
@@ -175,27 +173,5 @@ impl SignalGraph {
             let gain = 1.0 / (dac_signals.len() as f32).sqrt();
             dac_signals.iter().sum::<f32>() * gain
         }
-    }
-}
-
-/// Generator adapter for SignalGraph.
-pub(crate) struct GraphGenerator {
-    pub(crate) graph: Arc<Mutex<SignalGraph>>,
-}
-
-impl Module for GraphGenerator {
-    fn process(&mut self) -> bool {
-        true
-    }
-
-    fn name(&self) -> &str {
-        "GraphGenerator"
-    }
-}
-
-impl Generator<Audio> for GraphGenerator {
-    fn output(&mut self) -> Audio {
-        let mut graph = self.graph.lock().unwrap();
-        Audio::new(graph.process_sample())
     }
 }

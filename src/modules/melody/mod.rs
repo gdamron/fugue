@@ -1,7 +1,7 @@
 //! Melody generation module.
 
 use crate::music::{Note, Scale};
-use crate::{Audio, ClockSignal, FrequencySignal, ModularModule, Module, NoteSignal, Processor};
+use crate::Module;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -87,6 +87,10 @@ impl MelodyGenerator {
 }
 
 impl Module for MelodyGenerator {
+    fn name(&self) -> &str {
+        "MelodyGenerator"
+    }
+
     fn process(&mut self) -> bool {
         // Detect rising edge of gate input
         let gate_high = self.gate_in > 0.5;
@@ -107,31 +111,6 @@ impl Module for MelodyGenerator {
         true
     }
 
-    fn name(&self) -> &str {
-        "MelodyGenerator"
-    }
-}
-
-impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
-    fn process_signal(&mut self, clock: ClockSignal) -> NoteSignal {
-        // Use clock phase to detect beat boundaries
-        // Rising edge when phase wraps from high to low
-        let gate_high = clock.phase < 0.25; // Gate high for first 25% of beat
-
-        if gate_high && self.last_gate <= 0.5 {
-            self.current_note = self.next_note();
-        }
-
-        self.last_gate = if gate_high { 1.0 } else { 0.0 };
-
-        NoteSignal {
-            gate: Audio::gate(gate_high, 1.0),
-            frequency: FrequencySignal::from_midi(self.current_note.midi_note),
-        }
-    }
-}
-
-impl ModularModule for MelodyGenerator {
     fn inputs(&self) -> &[&str] {
         &["gate"]
     }
@@ -150,17 +129,12 @@ impl ModularModule for MelodyGenerator {
         }
     }
 
-    fn get_output(&mut self, port: &str) -> Result<f32, String> {
-        // Just return cached values - NO state changes!
+    fn get_output(&self, port: &str) -> Result<f32, String> {
         match port {
             "frequency" => Ok(self.cached_frequency),
             "gate" => Ok(self.cached_gate),
             _ => Err(format!("Unknown output port: {}", port)),
         }
-    }
-
-    fn reset_inputs(&mut self) {
-        self.gate_in = 0.0;
     }
 
     fn last_processed_sample(&self) -> u64 {
@@ -169,13 +143,5 @@ impl ModularModule for MelodyGenerator {
 
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
-    }
-
-    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "frequency" => Ok(self.cached_frequency),
-            "gate" => Ok(self.cached_gate),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
     }
 }

@@ -1,11 +1,12 @@
 //! Patch runtime for executing modular synthesis patches.
 
 use crate::modules::{Adsr, Clock, Dac, MelodyGenerator, MelodyParams, Oscillator, Tempo, Vca};
-use crate::ModularModule;
+use crate::Module;
 use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
 
-use super::graph::{RoutingConnection, SignalGraph};
+use super::graph::RoutingConnection;
+use super::graph::SignalGraph;
 
 /// Runtime instance of a modular module.
 pub(crate) enum ModuleInstance {
@@ -18,15 +19,13 @@ pub(crate) enum ModuleInstance {
 }
 
 impl ModuleInstance {
-    pub(crate) fn as_modular_module(&self) -> Option<Arc<Mutex<dyn ModularModule + Send>>> {
+    pub(crate) fn as_module(&self) -> Option<Arc<Mutex<dyn Module + Send>>> {
         match self {
-            ModuleInstance::Clock(m) => Some(m.clone() as Arc<Mutex<dyn ModularModule + Send>>),
-            ModuleInstance::Melody(m) => Some(m.clone() as Arc<Mutex<dyn ModularModule + Send>>),
-            ModuleInstance::Oscillator(m) => {
-                Some(m.clone() as Arc<Mutex<dyn ModularModule + Send>>)
-            }
-            ModuleInstance::Adsr(m) => Some(m.clone() as Arc<Mutex<dyn ModularModule + Send>>),
-            ModuleInstance::Vca(m) => Some(m.clone() as Arc<Mutex<dyn ModularModule + Send>>),
+            ModuleInstance::Clock(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
+            ModuleInstance::Melody(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
+            ModuleInstance::Oscillator(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
+            ModuleInstance::Adsr(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
+            ModuleInstance::Vca(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
             ModuleInstance::Dac => None,
         }
     }
@@ -35,7 +34,7 @@ impl ModuleInstance {
         &self,
         port: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(module) = self.as_modular_module() {
+        if let Some(module) = self.as_module() {
             let m = module.lock().unwrap();
             if !m.outputs().contains(&port) {
                 return Err(format!(
@@ -50,7 +49,7 @@ impl ModuleInstance {
     }
 
     pub(crate) fn validate_input_port(&self, port: &str) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(module) = self.as_modular_module() {
+        if let Some(module) = self.as_module() {
             let m = module.lock().unwrap();
             if !m.inputs().contains(&port) {
                 return Err(format!(
@@ -84,7 +83,7 @@ impl PatchRuntime {
         for conn in &self.routing {
             input_map
                 .entry(conn.to_module.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(conn.clone());
         }
 
@@ -97,12 +96,12 @@ impl PatchRuntime {
         };
 
         let graph_arc = Arc::new(Mutex::new(graph));
-        let generator = super::graph::GraphGenerator {
-            graph: graph_arc.clone(),
-        };
 
         let mut dac = Dac::new()?;
-        dac.start(generator)?;
+
+        // Pass a closure that calls process_sample on the graph
+        let graph_clone = graph_arc.clone();
+        dac.start(move || graph_clone.lock().unwrap().process_sample())?;
 
         Ok(RunningPatch {
             dac,

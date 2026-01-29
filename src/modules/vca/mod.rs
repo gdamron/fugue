@@ -4,7 +4,7 @@
 //! amplitude control. Common uses include applying envelope shapes to sounds,
 //! tremolo effects, and level control.
 
-use crate::{ModularModule, Module};
+use crate::Module;
 
 /// A Voltage Controlled Amplifier that multiplies audio by a control voltage.
 ///
@@ -55,9 +55,11 @@ impl Module for Vca {
     fn name(&self) -> &str {
         "Vca"
     }
-}
 
-impl ModularModule for Vca {
+    fn process(&mut self) -> bool {
+        true
+    }
+
     fn inputs(&self) -> &[&str] {
         &["audio", "cv"]
     }
@@ -80,17 +82,11 @@ impl ModularModule for Vca {
         }
     }
 
-    fn get_output(&mut self, port: &str) -> Result<f32, String> {
+    fn get_output(&self, port: &str) -> Result<f32, String> {
         match port {
             "audio" => Ok(self.audio_in * self.cv_in),
             _ => Err(format!("Unknown output port: {}", port)),
         }
-    }
-
-    fn reset_inputs(&mut self) {
-        self.audio_in = 0.0;
-        // Don't reset cv_in - it should stay at its last value (or default 1.0)
-        // This allows VCA to act as passthrough when no CV is connected
     }
 
     fn last_processed_sample(&self) -> u64 {
@@ -99,13 +95,6 @@ impl ModularModule for Vca {
 
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
-    }
-
-    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "audio" => Ok(self.audio_in * self.cv_in),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
     }
 }
 
@@ -152,17 +141,5 @@ mod tests {
 
         assert!(vca.set_input("invalid", 0.5).is_err());
         assert!(vca.get_output("invalid").is_err());
-    }
-
-    #[test]
-    fn test_vca_reset() {
-        let mut vca = Vca::new();
-
-        vca.set_input("audio", 0.8).unwrap();
-        vca.set_input("cv", 0.6).unwrap();
-
-        vca.reset_inputs();
-
-        assert_eq!(vca.get_output("audio").unwrap(), 0.0);
     }
 }

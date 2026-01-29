@@ -27,37 +27,38 @@ cargo check
 
 Fugue is a Rust library for algorithmic/generative music composition using a modular synthesis approach inspired by Eurorack, ChucK, and WebAudio.
 
-## CRITICAL: Ongoing Architectural Redesign
+### Signal Philosophy
 
-**DO NOT use the old type-based routing system for new modules!** The codebase is transitioning to a named port architecture.
+**All signals are raw `f32` values** - like voltages in real modular synthesizers. Port names determine how modules interpret values:
 
-### Why the Change?
+- **`"audio"`** - Audio-rate waveforms
+- **`"gate"`** - Trigger signals (1.0 = on, 0.0 = off)
+- **`"frequency"`** - Pitch in Hz
+- **`"envelope"`** - Amplitude envelope (0.0-1.0)
+- **`"cv"`** - Control voltage for modulation
+- **`"fm"`** - Frequency modulation input
+- **`"am"`** - Amplitude modulation input
 
-The original type-based system (`Generator<T>`, `Processor<TIn, TOut>`) prevents flexible signal routing:
-- Clock triggers can't trigger ADSR envelopes (type mismatch)
-- Envelopes can't control VCA amplitude (no routing path)
-- Can't do arbitrary CV modulation (LFO → filter cutoff, etc.)
+This uniform approach enables flexible routing: any output can connect to any compatible input.
 
-**The insight**: In real modular synths, all signals are just voltages. Modules interpret them based on which INPUT PORT receives them, not based on the signal's "type".
+### Module System
 
-### New Architecture: Named Ports
-
-All signals are `f32` values. Modules declare their ports explicitly:
+All components implement the `Module` trait from `src/traits.rs`:
 
 ```rust
-// Old way (DON'T DO THIS for new modules)
-impl Processor<NoteSignal, Audio> for Voice { ... }
-
-// New way (DO THIS)
-impl ModularModule for VCA {
-    fn inputs(&self) -> &[&str] { &["audio", "cv"] }
-    fn outputs(&self) -> &[&str] { &["audio"] }
-    fn set_input(&mut self, port: &str, value: f32) { ... }
-    fn get_output(&mut self, port: &str) -> f32 { ... }
+pub trait Module: Send {
+    fn name(&self) -> &str;
+    fn process(&mut self) -> bool;
+    fn inputs(&self) -> &[&str];
+    fn outputs(&self) -> &[&str];
+    fn set_input(&mut self, port: &str, value: f32) -> Result<(), String>;
+    fn get_output(&self, port: &str) -> Result<f32, String>;
+    fn last_processed_sample(&self) -> u64;
+    fn mark_processed(&mut self, sample: u64);
 }
 ```
 
-Patches must specify port names:
+Modules declare explicit port names and connect via named ports in JSON patches:
 ```json
 {
   "connections": [
@@ -67,70 +68,41 @@ Patches must specify port names:
 }
 ```
 
-### Migration Status
-
-- `Connection` struct already has `from_port`/`to_port` fields (currently optional)
-- Old type-based system still works and should not be broken
-- New `ModularModule` trait will coexist with old traits during migration
-- Modules being added: ADSR, VCA (envelope control use case that revealed the issue)
-
-### If Adding New Modules
-
-1. Use the new `ModularModule` trait (see `src/module/modular.rs` if it exists)
-2. All inputs/outputs are `f32` values
-3. Declare explicit port names
-4. Don't worry about type compatibility - that's the point!
-
-### Signal Types
-
-Two fundamental signal types (see `src/signal.rs`):
-
-- **`Audio`** - Audio-rate signals (44.1kHz). Carries sound waveforms, CV, gates, triggers, envelopes. Like voltage flowing through Eurorack patch cables.
-- **`Control<T>`** - Thread-safe parameters (`Arc<Mutex<T>>`). User input like knob positions, button states, oscillator selection. Can be updated from UI thread while audio thread reads.
-
-Compound signal types:
-- `ClockSignal` - Timing info (beats, phase, measure)
-- `FrequencySignal` - Pitch in Hz
-- `NoteSignal` - Gate + frequency for musical notes
-
-### Module System
-
-All components implement traits from `src/module.rs`:
-
-- **`Module`** - Base trait with `process()` for per-sample advancement
-- **`Generator<T>`** - Creates signals without input (Clock, Oscillator, Sequencer)
-- **`Processor<TIn, TOut>`** - Transforms signals (Filter, Voice, effects)
-
-Modules connect using `.connect()` for signal chaining:
-```rust
-let audio_gen = clock.connect(sequencer).connect(voice);
-```
-
 ### Core Modules
 
-| Module | Location | Purpose |
-|--------|----------|---------|
-| `Clock` | `time.rs` | Tempo-driven timing, outputs `ClockSignal` |
-| `Tempo` | `time.rs` | Thread-safe BPM control |
-| `Oscillator` | `oscillator.rs` | Waveform generation (sine, square, saw, triangle) |
-| `Voice` | `synthesis.rs` | Converts `NoteSignal` to audio with envelope |
-| `MelodyGenerator` | `sequencer.rs` | Probabilistic note selection from scale |
-| `MelodyParams` | `sequencer.rs` | Thread-safe melody parameters |
-| `Scale`/`Mode`/`Note` | `scale.rs` | Music theory (modes, MIDI↔frequency) |
-| `Dac` | `modular_audio.rs` | Audio output via cpal |
+| Module | Location | Purpose | Key Ports |
+|--------|----------|---------|-----------|
+| `Clock` | `modules/clock/` | Tempo-driven timing | out: `gate` |
+| `Tempo` | `modules/clock/tempo.rs` | Thread-safe BPM control | (shared state) |
+| `Oscillator` | `modules/oscillator/` | Waveform generation | in: `frequency`, `fm`, `am`; out: `audio` |
+| `MelodyGenerator` | `modules/melody/` | Algorithmic note sequencing | in: `gate`; out: `frequency`, `gate` |
+| `Adsr` | `modules/adsr/` | ADSR envelope generator | in: `gate`; out: `envelope` |
+| `Vca` | `modules/vca/` | Voltage-controlled amplifier | in: `audio`, `cv`; out: `audio` |
+| `Dac` | `modules/dac/` | Audio output via cpal | in: `audio` (from closure) |
+| `Scale`/`Mode`/`Note` | `music/` | Music theory utilities | (data structures) |
 
-### Typical Signal Flow
+### Pull-Based Signal Processing
 
+The system uses **pull-based processing** where the DAC recursively requests inputs from connected modules:
+
+1. DAC requests its inputs for the current sample
+2. Each module recursively pulls from its dependencies (depth-first traversal)
+3. Modules cache their outputs per sample to avoid reprocessing
+4. Natural dependency resolution ensures correct processing order
+
+**Typical signal flow**:
 ```
-Clock (ClockSignal) → MelodyGenerator (NoteSignal) → Voice (Audio) → Dac
+Clock (gate) → MelodyGenerator (frequency+gate) → Oscillator (audio) → Dac
+                                                        ↓
+                                                    Adsr (envelope) → Vca → Dac
 ```
 
 ### Thread Safety Pattern
 
-Shared state uses `Arc<Mutex<T>>` for lock-free-ish updates between main/audio threads. The `Control<T>` type wraps this pattern. Example:
+Shared state uses `Arc<Mutex<T>>` for lock-free-ish updates between main/audio threads. Example:
 ```rust
-params.set_oscillator_type(OscillatorType::Sawtooth);  // Main thread
-osc_type.get()  // Audio thread reads latest value
+tempo.set_bpm(140.0);  // Main thread
+let bpm = tempo.get_bpm();  // Audio thread reads latest value
 ```
 
 ## Declarative Patch System

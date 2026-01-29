@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{ClockSignal, Generator, ModularModule, Module};
+use crate::Module;
 
 pub use self::tempo::Tempo;
 
@@ -8,14 +8,17 @@ mod tempo;
 
 /// A master clock that generates timing signals for tempo-synchronized modules.
 ///
-/// Outputs a [`ClockSignal`] containing beat and measure information
-/// that other modules can use for sequencing and synchronization.
+/// Outputs timing information via the `gate` port for triggering downstream modules.
 pub struct Clock {
     sample_rate: u32,
     tempo: Tempo,
     sample_count: u64,
     beats_per_measure: u32,
-    current_signal: ClockSignal,
+    // Timing state (previously in ClockSignal)
+    beats: f64,
+    phase: f32,
+    measure: u64,
+    beat_in_measure: u32,
     // Cached output for modular routing
     cached_gate: f32,
     gate_duration: f64,         // Gate duration as fraction of beat (0.0-1.0)
@@ -33,7 +36,10 @@ impl Clock {
             tempo,
             sample_count: 0,
             beats_per_measure: 4,
-            current_signal: ClockSignal::new(0.0, 0.0, 0, 0),
+            beats: 0.0,
+            phase: 0.0,
+            measure: 0,
+            beat_in_measure: 0,
             cached_gate: 0.0,
             gate_duration: 0.25, // 25% duty cycle
             last_processed_sample: 0,
@@ -66,7 +72,10 @@ impl Clock {
         let measure = (beats / self.beats_per_measure as f64).floor() as u64;
         let beat_in_measure = (beats % self.beats_per_measure as f64).floor() as u32;
 
-        self.current_signal = ClockSignal::new(beats, phase as f32, measure, beat_in_measure);
+        self.beats = beats;
+        self.phase = phase as f32;
+        self.measure = measure;
+        self.beat_in_measure = beat_in_measure;
     }
 
     fn update_cached_outputs(&mut self) {
@@ -116,23 +125,15 @@ impl Clock {
 }
 
 impl Module for Clock {
+    fn name(&self) -> &str {
+        "Clock"
+    }
+
     fn process(&mut self) -> bool {
         self.tick();
         true
     }
 
-    fn name(&self) -> &str {
-        "Clock"
-    }
-}
-
-impl Generator<ClockSignal> for Clock {
-    fn output(&mut self) -> ClockSignal {
-        self.current_signal
-    }
-}
-
-impl ModularModule for Clock {
     fn inputs(&self) -> &[&str] {
         &[] // Clock has no inputs, it's a source
     }
@@ -145,8 +146,7 @@ impl ModularModule for Clock {
         Err(format!("Clock has no input ports, got: {}", port))
     }
 
-    fn get_output(&mut self, port: &str) -> Result<f32, String> {
-        // Just return cached values - NO state changes or computations!
+    fn get_output(&self, port: &str) -> Result<f32, String> {
         match port {
             "gate" => Ok(self.cached_gate),
             _ => Err(format!("Unknown output port: {}", port)),
@@ -159,12 +159,5 @@ impl ModularModule for Clock {
 
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
-    }
-
-    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "gate" => Ok(self.cached_gate),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
     }
 }

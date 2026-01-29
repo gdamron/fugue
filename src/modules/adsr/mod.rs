@@ -1,6 +1,6 @@
 //! ADSR envelope generator module.
 
-use crate::{ModularModule, Module};
+use crate::Module;
 
 /// ADSR envelope generator with named ports for modular routing.
 ///
@@ -129,17 +129,15 @@ impl Adsr {
 }
 
 impl Module for Adsr {
+    fn name(&self) -> &str {
+        "Adsr"
+    }
+
     fn process(&mut self) -> bool {
         self.process_envelope();
         true
     }
 
-    fn name(&self) -> &str {
-        "Adsr"
-    }
-}
-
-impl ModularModule for Adsr {
     fn inputs(&self) -> &[&str] {
         &["gate", "attack", "decay", "sustain", "release"]
     }
@@ -174,16 +172,11 @@ impl ModularModule for Adsr {
         }
     }
 
-    fn get_output(&mut self, port: &str) -> Result<f32, String> {
+    fn get_output(&self, port: &str) -> Result<f32, String> {
         match port {
             "envelope" => Ok(self.envelope_value.clamp(0.0, 1.0)),
             _ => Err(format!("Unknown output port: {}", port)),
         }
-    }
-
-    fn reset_inputs(&mut self) {
-        self.gate_in = 0.0;
-        // Don't reset ADSR parameters - they should retain their values
     }
 
     fn last_processed_sample(&self) -> u64 {
@@ -192,13 +185,6 @@ impl ModularModule for Adsr {
 
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
-    }
-
-    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "envelope" => Ok(self.envelope_value.clamp(0.0, 1.0)),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
     }
 }
 
