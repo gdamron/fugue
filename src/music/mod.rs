@@ -4,11 +4,11 @@
 //! - [`Mode`] - Scale patterns (Ionian, Dorian, etc.)
 //! - [`Scale`] - A root note combined with a mode
 
+pub use self::mode::Mode;
+pub use self::note::Note;
+
 mod mode;
 mod note;
-
-pub use mode::Mode;
-pub use note::Note;
 
 /// A musical scale combining a root note with a mode.
 ///

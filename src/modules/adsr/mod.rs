@@ -1,15 +1,11 @@
-//! Modular ADSR envelope generator with named ports.
-//!
-//! This module provides a simplified ADSR envelope that uses the named port system,
-//! allowing flexible routing of gate signals and envelope outputs.
+//! ADSR envelope generator module.
 
-use crate::module::{ModularModule, Module};
+use crate::{ModularModule, Module};
 
 /// ADSR envelope generator with named ports for modular routing.
 ///
 /// Generates classic Attack-Decay-Sustain-Release envelope curves based on
-/// a gate input signal. Unlike the old type-based ADSR, this version works
-/// with simple f32 signals and can be connected to any gate source.
+/// a gate input signal.
 ///
 /// # Inputs
 /// - `gate`: Trigger/gate signal (>0.0 = on, 0.0 = off)
@@ -32,7 +28,7 @@ use crate::module::{ModularModule, Module};
 ///   ]
 /// }
 /// ```
-pub struct ModularAdsr {
+pub struct Adsr {
     sample_rate: u32,
     // Inputs
     gate_in: f32,
@@ -56,8 +52,8 @@ enum EnvelopePhase {
     Release,
 }
 
-impl ModularAdsr {
-    /// Creates a new modular ADSR envelope generator.
+impl Adsr {
+    /// Creates a new ADSR envelope generator.
     pub fn new(sample_rate: u32) -> Self {
         Self {
             sample_rate,
@@ -132,18 +128,18 @@ impl ModularAdsr {
     }
 }
 
-impl Module for ModularAdsr {
+impl Module for Adsr {
     fn process(&mut self) -> bool {
         self.process_envelope();
         true
     }
 
     fn name(&self) -> &str {
-        "ModularAdsr"
+        "Adsr"
     }
 }
 
-impl ModularModule for ModularAdsr {
+impl ModularModule for Adsr {
     fn inputs(&self) -> &[&str] {
         &["gate", "attack", "decay", "sustain", "release"]
     }
@@ -211,23 +207,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_modular_adsr_idle() {
-        let mut adsr = ModularAdsr::new(44100);
+    fn test_adsr_idle() {
+        let mut adsr = Adsr::new(44100);
         adsr.process();
         assert_eq!(adsr.get_output("envelope").unwrap(), 0.0);
     }
 
     #[test]
-    fn test_modular_adsr_gate_triggers_attack() {
-        let mut adsr = ModularAdsr::new(44100);
+    fn test_adsr_gate_triggers_attack() {
+        let mut adsr = Adsr::new(44100);
         adsr.set_input("gate", 1.0).unwrap();
         adsr.process();
         assert!(adsr.get_output("envelope").unwrap() > 0.0);
     }
 
     #[test]
-    fn test_modular_adsr_instant_attack() {
-        let mut adsr = ModularAdsr::new(44100);
+    fn test_adsr_instant_attack() {
+        let mut adsr = Adsr::new(44100);
         adsr.set_input("gate", 1.0).unwrap();
         adsr.set_input("attack", 0.0).unwrap();
         adsr.process();
@@ -235,8 +231,8 @@ mod tests {
     }
 
     #[test]
-    fn test_modular_adsr_sustain_level() {
-        let mut adsr = ModularAdsr::new(44100);
+    fn test_adsr_sustain_level() {
+        let mut adsr = Adsr::new(44100);
 
         // Set very short attack and decay
         adsr.set_input("attack", 0.0).unwrap();
@@ -254,8 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn test_modular_adsr_release() {
-        let mut adsr = ModularAdsr::new(44100);
+    fn test_adsr_release() {
+        let mut adsr = Adsr::new(44100);
 
         // Get to sustain phase
         adsr.set_input("attack", 0.0).unwrap();
@@ -282,8 +278,8 @@ mod tests {
     }
 
     #[test]
-    fn test_modular_adsr_invalid_ports() {
-        let mut adsr = ModularAdsr::new(44100);
+    fn test_adsr_invalid_ports() {
+        let mut adsr = Adsr::new(44100);
         assert!(adsr.set_input("invalid", 0.5).is_err());
         assert!(adsr.get_output("invalid").is_err());
     }

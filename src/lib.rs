@@ -1,28 +1,26 @@
-pub mod modular_audio;
-pub mod modular_builder;
-pub mod module;
-pub mod oscillator;
+pub mod modules;
+pub mod music;
 pub mod patch;
-pub mod scale;
-pub mod sequencer;
 pub mod signal;
-pub mod synthesis;
-pub mod time;
+pub mod traits;
+
+// Re-export core traits
+pub use traits::{Generator, Module, ModularModule, Processor, validate_port};
 
 // Re-export signal types
-pub use signal::{Audio, ClockSignal, FrequencySignal};
+pub use signal::{Audio, AudioSignal, ClockSignal, FrequencySignal, NoteSignal};
 
-// Legacy alias for backward compatibility
-pub use signal::AudioSignal;
+// Re-export modules
+pub use modules::{
+    Adsr, Clock, Dac, MelodyGenerator, MelodyParams, ModulatedOscillator, ModulationInputs,
+    Oscillator, OscillatorType, Tempo, Vca,
+};
 
-// Re-export module traits
-pub use module::{Generator, ModularModule, Module, Processor};
+// Re-export patch system
+pub use patch::{
+    Connection, ModuleConfig, ModuleSpec, Patch, PatchBuilder, PatchRuntime, RunningPatch,
+    TimeSignature,
+};
 
-pub use modular_audio::Dac;
-pub use modular_builder::{ModularPatchBuilder, ModularPatchRuntime, RunningModularPatch};
-pub use oscillator::{ModulatedOscillator, ModulationInputs, Oscillator, OscillatorType};
-pub use patch::{ModuleConfig, ModuleSpec, Patch, TimeSignature};
-pub use scale::{Mode, Note, Scale};
-pub use sequencer::{MelodyGenerator, MelodyParams, NoteSignal};
-pub use synthesis::{ModularAdsr, Vca};
-pub use time::{Clock, Tempo};
+// Re-export music theory
+pub use music::{Mode, Note, Scale};

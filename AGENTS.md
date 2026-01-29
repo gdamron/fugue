@@ -36,13 +36,11 @@ cargo test --quiet
 
 ### Running Examples
 ```bash
-# Run main example (Dorian melody with live controls)
-cargo run --example dorian_melody
+# Run modular ADSR melody example
+cargo run --example modular_adsr_melody
 
-# Run other examples
-cargo run --example modular_clock
-cargo run --example modular_chain
-cargo run --example modular_voice
+# Run simple tone example
+cargo run --example simple_tone
 ```
 
 ### Linting and Formatting
@@ -66,6 +64,38 @@ cargo clippy --fix
 ## Architecture Overview
 
 Fugue is a modular synthesis library for algorithmic music composition. It uses a signal-flow architecture inspired by Eurorack modular synthesizers.
+
+### Codebase Structure
+
+The codebase is organized by domain rather than technical concerns:
+
+```
+src/
+├── lib.rs                    # Main library exports
+├── traits.rs                 # Core traits: Module, Generator, Processor, ModularModule
+├── signal.rs                 # Signal types: Audio, ClockSignal, FrequencySignal, NoteSignal
+├── modules/                  # All synthesis modules
+│   ├── clock/                # Clock and Tempo
+│   ├── oscillator/           # Oscillator, ModulatedOscillator, OscillatorType
+│   ├── melody/               # MelodyGenerator, MelodyParams
+│   ├── adsr/                 # Adsr envelope generator
+│   ├── vca/                  # Vca (voltage-controlled amplifier)
+│   └── dac/                  # Dac (audio output)
+├── patch/                    # Declarative patch system
+│   ├── format.rs             # JSON patch format (Patch, ModuleSpec, Connection)
+│   ├── builder.rs            # PatchBuilder - constructs patches from JSON
+│   ├── runtime.rs            # PatchRuntime, RunningPatch - manages execution
+│   └── graph.rs              # SignalGraph - pull-based signal processing
+└── music/                    # Music theory utilities
+    ├── mod.rs                # Scale struct
+    ├── note.rs               # Note struct
+    └── mode.rs               # Mode enum
+```
+
+**Key naming conventions**:
+- All "Modular" prefixes have been removed (e.g., `ModularAdsr` → `Adsr`, `ModularPatchBuilder` → `PatchBuilder`)
+- Modules use directory-based organization with `mod.rs` as the main file
+- Related types are co-located in the same directory
 
 ## IMPORTANT: Signal Routing Architecture
 
@@ -111,15 +141,15 @@ The system uses **pull-based processing** where the DAC recursively requests inp
 - **Deterministic**: Same results every time (no push-based race conditions)
 
 **Architecture files**:
-- `src/module/modular.rs` - ModularModule trait with caching methods
-- `src/modular_builder.rs` - Pull-based signal graph implementation
+- `src/traits.rs` - ModularModule trait with caching methods
+- `src/patch/graph.rs` - Pull-based signal graph implementation
 
 ### Module Implementation Guide
 
 To implement the `ModularModule` trait for a new module:
 
 ```rust
-use crate::module::ModularModule;
+use crate::traits::{Module, ModularModule};
 
 pub struct MyModule {
     // Your module state
@@ -208,11 +238,11 @@ All modules implement the `ModularModule` trait:
 
 | Module | Location | Inputs | Outputs |
 |--------|----------|--------|---------|
-| `Clock` | `time/clock.rs` | _(none)_ | `gate` |
-| `MelodyGenerator` | `sequencer/melody_generator.rs` | `gate` | `frequency`, `gate` |
-| `Oscillator` | `oscillator/mod.rs` | `frequency`, `fm`, `am` | `audio` |
-| `ModularAdsr` | `synthesis/modular_adsr.rs` | `gate`, `attack`, `decay`, `sustain`, `release` | `envelope` |
-| `Vca` | `synthesis/vca.rs` | `audio`, `cv` | `audio` |
+| `Clock` | `modules/clock/mod.rs` | _(none)_ | `gate` |
+| `MelodyGenerator` | `modules/melody/mod.rs` | `gate` | `frequency`, `gate` |
+| `Oscillator` | `modules/oscillator/mod.rs` | `frequency`, `fm`, `am` | `audio` |
+| `Adsr` | `modules/adsr/mod.rs` | `gate`, `attack`, `decay`, `sustain`, `release` | `envelope` |
+| `Vca` | `modules/vca/mod.rs` | `audio`, `cv` | `audio` |
 
 ### Migration Strategy
 
@@ -258,14 +288,14 @@ let audio_gen = clock.connect(sequencer).connect(voice);
 
 | Module | Location | Purpose |
 |--------|----------|---------|
-| `Clock` | `time.rs` | Tempo-driven timing, outputs `ClockSignal` |
-| `Tempo` | `time.rs` | Thread-safe BPM control |
-| `Oscillator` | `oscillator.rs` | Waveform generation (sine, square, saw, triangle) |
-| `Voice` | `synthesis.rs` | Converts `NoteSignal` to audio with envelope |
-| `MelodyGenerator` | `sequencer.rs` | Probabilistic note selection from scale |
-| `Filter` | `synthesis.rs` | Low-pass filter for audio processing |
-| `Scale`/`Mode`/`Note` | `scale.rs` | Music theory (modes, MIDI↔frequency) |
-| `Dac` | `modular_audio.rs` | Audio output via cpal |
+| `Clock` | `modules/clock/` | Tempo-driven timing, outputs `ClockSignal` |
+| `Tempo` | `modules/clock/tempo.rs` | Thread-safe BPM control |
+| `Oscillator` | `modules/oscillator/` | Waveform generation (sine, square, saw, triangle) |
+| `MelodyGenerator` | `modules/melody/` | Probabilistic note selection from scale |
+| `Adsr` | `modules/adsr/` | ADSR envelope generator |
+| `Vca` | `modules/vca/` | Voltage-controlled amplifier |
+| `Dac` | `modules/dac/` | Audio output via cpal |
+| `Scale`/`Mode`/`Note` | `music/` | Music theory (modes, MIDI↔frequency) |
 
 ## Declarative Patch System
 

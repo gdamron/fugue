@@ -4,7 +4,7 @@
 //! correctly handles various graph topologies and edge cases.
 
 use fugue::patch::Patch;
-use fugue::ModularPatchBuilder;
+use fugue::PatchBuilder;
 
 /// Test a simple chain: Clock → ADSR
 #[test]
@@ -41,7 +41,7 @@ fn test_simple_chain() {
     "#;
 
     let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = ModularPatchBuilder::new(44100);
+    let builder = PatchBuilder::new(44100);
     let runtime = builder.build(patch).expect("Failed to build patch");
     let running = runtime.start().expect("Failed to start patch");
 
@@ -97,7 +97,7 @@ fn test_multi_input_vca() {
     "#;
 
     let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = ModularPatchBuilder::new(44100);
+    let builder = PatchBuilder::new(44100);
     let runtime = builder.build(patch).expect("Failed to build patch");
     let running = runtime.start().expect("Failed to start patch");
 
@@ -163,7 +163,7 @@ fn test_diamond_pattern() {
     "#;
 
     let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = ModularPatchBuilder::new(44100);
+    let builder = PatchBuilder::new(44100);
     let runtime = builder.build(patch).expect("Failed to build patch");
     let running = runtime.start().expect("Failed to start patch");
 
@@ -206,7 +206,7 @@ fn test_unconnected_inputs() {
     "#;
 
     let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = ModularPatchBuilder::new(44100);
+    let builder = PatchBuilder::new(44100);
     let runtime = builder.build(patch).expect("Failed to build patch");
     let running = runtime.start().expect("Failed to start patch");
 
@@ -245,7 +245,7 @@ fn test_cycle_detection() {
     "#;
 
     let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = ModularPatchBuilder::new(44100);
+    let builder = PatchBuilder::new(44100);
     let result = builder.build(patch);
 
     // Should fail with cycle detection error
@@ -318,7 +318,7 @@ fn test_complex_valid_graph() {
     "#;
 
     let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = ModularPatchBuilder::new(44100);
+    let builder = PatchBuilder::new(44100);
     let runtime = builder.build(patch).expect("Failed to build patch");
     let running = runtime.start().expect("Failed to start patch");
 

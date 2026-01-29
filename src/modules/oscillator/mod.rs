@@ -1,19 +1,13 @@
-//! Oscillators for waveform generation.
-//!
-//! - [`Oscillator`] - Basic waveform generator with FM/AM support
-//! - [`OscillatorType`] - Waveform shapes (sine, square, saw, triangle)
-//! - [`ModulatedOscillator`] - Oscillator with external modulation inputs
-//! - [`ModulationInputs`] - FM/AM modulation values
+//! Oscillator module for waveform generation.
 
-mod modulation;
-mod oscillator_type;
-
-pub use modulation::{ModulatedOscillator, ModulationInputs};
-pub use oscillator_type::OscillatorType;
-
-use crate::module::{Generator, ModularModule, Module, Processor};
-use crate::signal::{AudioSignal, FrequencySignal};
+use crate::{AudioSignal, FrequencySignal, Generator, ModularModule, Module, Processor};
 use std::f32::consts::PI;
+
+pub use self::modulated::{ModulatedOscillator, ModulationInputs};
+pub use self::waveform::OscillatorType;
+
+mod modulated;
+mod waveform;
 
 /// A waveform generator that produces audio signals.
 ///

@@ -7,9 +7,9 @@ mod tests {
     #[test]
     fn test_clock_pwm_gate() {
         let sample_rate = 44100;
-        let tempo = time::Tempo::new(120.0);
-        let mut clock = time::Clock::new(sample_rate, tempo.clone());
-        let mut adsr = synthesis::ModularAdsr::new(sample_rate);
+        let tempo = Tempo::new(120.0);
+        let mut clock = Clock::new(sample_rate, tempo.clone());
+        let mut adsr = Adsr::new(sample_rate);
 
         // At 120 BPM, one beat = 0.5 seconds = 22050 samples
         let samples_per_beat = tempo.samples_per_beat(sample_rate) as usize;

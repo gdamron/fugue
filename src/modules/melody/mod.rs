@@ -1,10 +1,13 @@
-use crate::module::{ModularModule, Module, Processor};
-use crate::scale::{Note, Scale};
-use crate::signal::{Audio, ClockSignal, FrequencySignal};
+//! Melody generation module.
+
+use crate::music::{Note, Scale};
+use crate::{Audio, ClockSignal, FrequencySignal, ModularModule, Module, NoteSignal, Processor};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use super::{MelodyParams, NoteSignal};
+pub use self::params::MelodyParams;
+
+mod params;
 
 /// Generates melodies by selecting notes from a scale based on weighted probabilities.
 ///
