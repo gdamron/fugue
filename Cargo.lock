@@ -213,6 +213,7 @@ name = "fugue"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "indexmap",
  "rand",
  "serde",
  "serde_json",

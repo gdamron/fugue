@@ -11,7 +11,7 @@ mod oscillator_type;
 pub use modulation::{ModulatedOscillator, ModulationInputs};
 pub use oscillator_type::OscillatorType;
 
-use crate::module::{Generator, Module, Processor};
+use crate::module::{Generator, ModularModule, Module, Processor};
 use crate::signal::{AudioSignal, FrequencySignal};
 use std::f32::consts::PI;
 
@@ -27,6 +27,9 @@ pub struct Oscillator {
     sample_rate: u32,
     fm_amount: f32,
     am_amount: f32,
+    // Cached output for modular routing
+    cached_audio: f32,
+    last_processed_sample: u64, // For pull-based processing
 }
 
 impl Oscillator {
@@ -41,6 +44,8 @@ impl Oscillator {
             sample_rate,
             fm_amount: 0.0,
             am_amount: 0.0,
+            cached_audio: 0.0,
+            last_processed_sample: 0,
         }
     }
 
@@ -132,6 +137,8 @@ impl Oscillator {
 
 impl Module for Oscillator {
     fn process(&mut self) -> bool {
+        // Generate and cache the audio sample
+        self.cached_audio = self.generate_sample();
         true
     }
 
@@ -150,5 +157,55 @@ impl Processor<FrequencySignal, AudioSignal> for Oscillator {
     fn process_signal(&mut self, input: FrequencySignal) -> AudioSignal {
         self.set_frequency(input.hz);
         AudioSignal::new(self.generate_sample())
+    }
+}
+
+impl ModularModule for Oscillator {
+    fn inputs(&self) -> &[&str] {
+        &["frequency", "fm", "am"]
+    }
+
+    fn outputs(&self) -> &[&str] {
+        &["audio"]
+    }
+
+    fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
+        match port {
+            "frequency" => {
+                self.set_frequency(value);
+                Ok(())
+            }
+            "fm" => Ok(()), // FM handled during output generation
+            "am" => Ok(()), // AM handled during output generation
+            _ => Err(format!("Unknown input port: {}", port)),
+        }
+    }
+
+    fn get_output(&mut self, port: &str) -> Result<f32, String> {
+        // Just return cached value - NO state changes!
+        match port {
+            "audio" => Ok(self.cached_audio),
+            _ => Err(format!("Unknown output port: {}", port)),
+        }
+    }
+
+    fn reset_inputs(&mut self) {
+        // Don't reset frequency - it should be stable
+        // Modulation inputs are handled differently (they need to be passed per-sample)
+    }
+
+    fn last_processed_sample(&self) -> u64 {
+        self.last_processed_sample
+    }
+
+    fn mark_processed(&mut self, sample: u64) {
+        self.last_processed_sample = sample;
+    }
+
+    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
+        match port {
+            "audio" => Ok(self.cached_audio),
+            _ => Err(format!("Unknown output port: {}", port)),
+        }
     }
 }

@@ -67,7 +67,162 @@ cargo clippy --fix
 
 Fugue is a modular synthesis library for algorithmic music composition. It uses a signal-flow architecture inspired by Eurorack modular synthesizers.
 
-### Signal Types (`src/signal.rs`)
+## IMPORTANT: Signal Routing Architecture
+
+**Status**: ✅ **Complete** - The codebase uses a **pull-based signal processing architecture** with named port routing.
+
+### Named Port Architecture
+
+**Design principle**: Like real modular synthesizers, all signals are just voltages (f32 values). Modules interpret them based on which input port receives them.
+
+**Key features**:
+1. **Uniform signal type**: All signals are `f32` values
+2. **Named ports**: Each module declares its inputs/outputs explicitly
+   ```rust
+   impl ModularModule for Oscillator {
+       fn inputs(&self) -> &[&str] { &["frequency", "fm", "am"] }
+       fn outputs(&self) -> &[&str] { &["audio"] }
+       fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> { ... }
+       fn get_output(&self, port: &str) -> Result<f32, String> { ... }
+   }
+   ```
+3. **Explicit routing**: Connections specify port names in JSON
+   ```json
+   {
+     "from": "clock", "from_port": "gate",
+     "to": "adsr", "to_port": "gate"
+   }
+   ```
+
+### Pull-Based Signal Processing
+
+The system uses **pull-based processing** where the DAC recursively requests inputs from connected modules:
+
+**How it works**:
+1. DAC requests its inputs for the current sample
+2. Each module recursively pulls from its dependencies (depth-first traversal)
+3. Modules cache their outputs per sample to avoid reprocessing
+4. Natural dependency resolution ensures correct processing order
+
+**Key advantages**:
+- **Correct ordering**: Recursive pull ensures modules process in dependency order
+- **Efficient**: Each module processes exactly once per sample (via caching)
+- **Simple**: No complex topological sorting or iterative scheduling
+- **Deterministic**: Same results every time (no push-based race conditions)
+
+**Architecture files**:
+- `src/module/modular.rs` - ModularModule trait with caching methods
+- `src/modular_builder.rs` - Pull-based signal graph implementation
+
+### Module Implementation Guide
+
+To implement the `ModularModule` trait for a new module:
+
+```rust
+use crate::module::ModularModule;
+
+pub struct MyModule {
+    // Your module state
+    input_value: f32,
+    output_value: f32,
+    
+    // Required for pull-based caching
+    last_processed_sample: u64,
+}
+
+impl ModularModule for MyModule {
+    fn inputs(&self) -> &[&str] {
+        &["input_port_name"]
+    }
+    
+    fn outputs(&self) -> &[&str] {
+        &["output_port_name"]
+    }
+    
+    fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
+        match port {
+            "input_port_name" => {
+                self.input_value = value;
+                Ok(())
+            }
+            _ => Err(format!("Unknown input port: {}", port))
+        }
+    }
+    
+    fn get_output(&self, port: &str) -> Result<f32, String> {
+        match port {
+            "output_port_name" => Ok(self.output_value),
+            _ => Err(format!("Unknown output port: {}", port))
+        }
+    }
+    
+    fn reset_inputs(&mut self) {
+        // Reset control signals (gates, triggers) to default
+        // Don't reset configuration parameters
+        self.input_value = 0.0;  // Example: gate resets to 0
+    }
+    
+    // Caching methods for pull-based processing
+    fn last_processed_sample(&self) -> u64 {
+        self.last_processed_sample
+    }
+    
+    fn mark_processed(&mut self, sample: u64) {
+        self.last_processed_sample = sample;
+    }
+    
+    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
+        // Usually just calls get_output()
+        self.get_output(port)
+    }
+}
+
+impl Module for MyModule {
+    fn process(&mut self) -> bool {
+        // Your DSP logic here
+        self.output_value = self.input_value * 2.0;  // Example
+        true
+    }
+    
+    fn name(&self) -> &str {
+        "MyModule"
+    }
+}
+```
+
+### Cycle Detection
+
+The system **only supports acyclic graphs** (no feedback loops). Cycles are detected during patch validation using depth-first search.
+
+**Why no cycles?**
+- Pull-based processing would cause infinite recursion
+- Future: Add delay modules for controlled feedback
+
+**Error handling**:
+- Validation fails with clear error message if cycle detected
+- Example: `"Cycle detected in signal graph involving module 'osc1'"`
+
+### Module Implementations
+
+All modules implement the `ModularModule` trait:
+
+| Module | Location | Inputs | Outputs |
+|--------|----------|--------|---------|
+| `Clock` | `time/clock.rs` | _(none)_ | `gate` |
+| `MelodyGenerator` | `sequencer/melody_generator.rs` | `gate` | `frequency`, `gate` |
+| `Oscillator` | `oscillator/mod.rs` | `frequency`, `fm`, `am` | `audio` |
+| `ModularAdsr` | `synthesis/modular_adsr.rs` | `gate`, `attack`, `decay`, `sustain`, `release` | `envelope` |
+| `Vca` | `synthesis/vca.rs` | `audio`, `cv` | `audio` |
+
+### Migration Strategy
+
+**Current state**: Both old type-based and new modular systems coexist.
+- Old system: `Generator<T>` and `Processor<TIn, TOut>` (legacy)
+- New system: `ModularModule` with pull-based processing (recommended)
+
+**Don't break existing code!** Old examples still work.
+
+## Signal Types (`src/signal.rs`)
 
 Two fundamental signal categories:
 
@@ -128,7 +283,7 @@ let running = runtime.start()?;
 
 // Control parameters at runtime
 running.tempo().set_bpm(140.0);
-running.melody_params().set_note_duration(0.5);
+running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 ```
 
 ### Programmatic Approach

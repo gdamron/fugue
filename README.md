@@ -14,18 +14,27 @@ A Rust library for composing algorithmic and generative music, inspired by ChucK
 
 ## Quick Start
 
-### Run the Interactive Demo
+### Run the Examples
 
+Fugue includes three examples demonstrating the modular routing system:
+
+**1. Simple Tone** - Minimal working example
 ```bash
-cargo run --example dorian_melody --release
+cargo run --example simple_tone
 ```
+Demonstrates: Clock (PWM gate) → ADSR → VCA + Oscillator(440Hz) → DAC
 
-This generates an infinite, randomly generated melody in D Dorian mode.
+**2. ADSR Melody** - Clean melody with envelope shaping
+```bash
+cargo run --example modular_adsr_melody
+```
+Demonstrates: Clock → MelodyGenerator → Oscillator → VCA with ADSR envelope control
 
-### Interactive Controls
-
-Once running, try these commands:
-
+**3. Interactive Dorian Melody** - Real-time control
+```bash
+cargo run --example dorian_melody_declarative
+```
+Generates an infinite melody in D Dorian mode with live controls:
 - `s/w/t/q` - Switch waveforms (Sine/Sawtooth/Triangle/Square)
 - `1-7` - Toggle scale degrees on/off
 - `+/-` - Adjust tempo by 10 BPM
@@ -132,7 +141,7 @@ let running = runtime.start()?;
 
 // Control parameters at runtime
 running.tempo().set_bpm(140.0);
-running.melody_params().set_note_duration(0.5);
+running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 ```
 
 See [DECLARATIVE.md](DECLARATIVE.md) for full documentation of the patch format.
@@ -152,7 +161,7 @@ let tempo = Tempo::new(120.0);
 let clock = Clock::new(sample_rate, tempo.clone());
 let scale = Scale::new(Note::new(60), Mode::Dorian);
 let params = MelodyParams::new(vec![0, 1, 2, 3, 4, 5, 6]);
-let melody = MelodyGenerator::new(scale, params.clone(), sample_rate, tempo.clone());
+let melody = MelodyGenerator::new(scale, params.clone());
 let voice = Voice::new(sample_rate, OscillatorType::Sine);
 
 // Connect the chain

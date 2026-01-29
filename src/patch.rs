@@ -97,10 +97,6 @@ pub struct ModuleConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_weights: Option<Vec<f32>>,
 
-    /// Note duration in beats (for melody modules).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note_duration: Option<f32>,
-
     /// Oscillator waveform type (for voice/oscillator modules).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oscillator_type: Option<String>,
@@ -117,14 +113,6 @@ pub struct ModuleConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub am_amount: Option<f32>,
 
-    /// Filter cutoff frequency in Hz (for filter modules).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cutoff: Option<f32>,
-
-    /// Filter resonance 0.0-1.0 (for filter modules).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resonance: Option<f32>,
-
     /// ADSR attack time in seconds (for adsr modules).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attack: Option<f32>,
@@ -140,6 +128,10 @@ pub struct ModuleConfig {
     /// ADSR release time in seconds (for adsr modules).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release: Option<f32>,
+
+    /// Clock gate duration as fraction of beat 0.0-1.0 (for clock modules).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_duration: Option<f32>,
 
     /// Additional fields for extensibility.
     #[serde(flatten)]

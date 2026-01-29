@@ -27,6 +27,60 @@ cargo check
 
 Fugue is a Rust library for algorithmic/generative music composition using a modular synthesis approach inspired by Eurorack, ChucK, and WebAudio.
 
+## CRITICAL: Ongoing Architectural Redesign
+
+**DO NOT use the old type-based routing system for new modules!** The codebase is transitioning to a named port architecture.
+
+### Why the Change?
+
+The original type-based system (`Generator<T>`, `Processor<TIn, TOut>`) prevents flexible signal routing:
+- Clock triggers can't trigger ADSR envelopes (type mismatch)
+- Envelopes can't control VCA amplitude (no routing path)
+- Can't do arbitrary CV modulation (LFO → filter cutoff, etc.)
+
+**The insight**: In real modular synths, all signals are just voltages. Modules interpret them based on which INPUT PORT receives them, not based on the signal's "type".
+
+### New Architecture: Named Ports
+
+All signals are `f32` values. Modules declare their ports explicitly:
+
+```rust
+// Old way (DON'T DO THIS for new modules)
+impl Processor<NoteSignal, Audio> for Voice { ... }
+
+// New way (DO THIS)
+impl ModularModule for VCA {
+    fn inputs(&self) -> &[&str] { &["audio", "cv"] }
+    fn outputs(&self) -> &[&str] { &["audio"] }
+    fn set_input(&mut self, port: &str, value: f32) { ... }
+    fn get_output(&mut self, port: &str) -> f32 { ... }
+}
+```
+
+Patches must specify port names:
+```json
+{
+  "connections": [
+    {"from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "cv"},
+    {"from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio"}
+  ]
+}
+```
+
+### Migration Status
+
+- `Connection` struct already has `from_port`/`to_port` fields (currently optional)
+- Old type-based system still works and should not be broken
+- New `ModularModule` trait will coexist with old traits during migration
+- Modules being added: ADSR, VCA (envelope control use case that revealed the issue)
+
+### If Adding New Modules
+
+1. Use the new `ModularModule` trait (see `src/module/modular.rs` if it exists)
+2. All inputs/outputs are `f32` values
+3. Declare explicit port names
+4. Don't worry about type compatibility - that's the point!
+
 ### Signal Types
 
 Two fundamental signal types (see `src/signal.rs`):
@@ -117,12 +171,10 @@ Multiple paths automatically mix at the DAC:
 ```json
 {
   "connections": [
-    {"from": "clock", "to": "melody1"},
-    {"from": "clock", "to": "melody2"},
-    {"from": "melody1", "to": "voice1"},
-    {"from": "melody2", "to": "voice2"},
-    {"from": "voice1", "to": "dac"},
-    {"from": "voice2", "to": "dac"}
+    {"from": "melody1", "from_port": "frequency", "to": "voice1", "to_port": "frequency"},
+    {"from": "melody2", "from_port": "frequency", "to": "voice2", "to_port": "frequency"},
+    {"from": "voice1", "from_port": "audio", "to": "dac", "to_port": "audio"},
+    {"from": "voice2", "from_port": "audio", "to": "dac", "to_port": "audio"}
   ]
 }
 ```

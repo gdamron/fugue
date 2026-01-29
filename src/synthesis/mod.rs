@@ -1,16 +1,10 @@
 //! Audio synthesis components for processing and combining signals.
 //!
-//! - [`Adsr`] - ADSR envelope generator
-//! - [`Mixer`] - Combines multiple audio signals
-//! - [`Filter`] - Low-pass filter for tonal shaping
-//! - [`Voice`] - Converts note signals to audio
+//! - [`ModularAdsr`] - ADSR envelope with named ports
+//! - [`Vca`] - Voltage Controlled Amplifier with named ports
 
-mod adsr;
-mod filter;
-mod mixer;
-mod voice;
+mod modular_adsr;
+mod vca;
 
-pub use adsr::{Adsr, AdsrInput};
-pub use filter::Filter;
-pub use mixer::Mixer;
-pub use voice::Voice;
+pub use modular_adsr::ModularAdsr;
+pub use vca::Vca;
