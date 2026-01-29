@@ -19,5 +19,5 @@ pub use adsr::Adsr;
 pub use clock::{Clock, Tempo};
 pub use dac::Dac;
 pub use melody::{MelodyGenerator, MelodyParams};
-pub use oscillator::{ModulatedOscillator, ModulationInputs, Oscillator, OscillatorType};
+pub use oscillator::{Oscillator, OscillatorType};
 pub use vca::Vca;

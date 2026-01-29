@@ -5,7 +5,7 @@ use crate::modules::{MelodyParams, OscillatorType};
 use crate::music::{Mode, Note, Scale};
 use crate::patch::format::{ModuleConfig, Patch};
 use crate::patch::runtime::{ModuleInstance, PatchRuntime};
-use crate::ModularModule;
+use crate::Module;
 use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
 
@@ -122,7 +122,7 @@ impl PatchBuilder {
             if conn.to != "dac" {
                 graph
                     .entry(conn.from.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(conn.to.clone());
             }
         }
@@ -132,14 +132,15 @@ impl PatchBuilder {
         let mut rec_stack = std::collections::HashSet::new();
 
         for module in &patch.modules {
-            if module.id != "dac" && !visited.contains(&module.id) {
-                if self.has_cycle_dfs(&module.id, &graph, &mut visited, &mut rec_stack) {
-                    return Err(format!(
-                        "Cycle detected in signal graph involving module '{}'",
-                        module.id
-                    )
-                    .into());
-                }
+            if module.id != "dac"
+                && !visited.contains(&module.id)
+                && self.has_cycle_dfs(&module.id, &graph, &mut visited, &mut rec_stack)
+            {
+                return Err(format!(
+                    "Cycle detected in signal graph involving module '{}'",
+                    module.id
+                )
+                .into());
             }
         }
 

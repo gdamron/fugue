@@ -72,11 +72,10 @@ The codebase is organized by domain rather than technical concerns:
 ```
 src/
 ├── lib.rs                    # Main library exports
-├── traits.rs                 # Core traits: Module, Generator, Processor, ModularModule
-├── signal.rs                 # Signal types: Audio, ClockSignal, FrequencySignal, NoteSignal
+├── traits.rs                 # Core Module trait
 ├── modules/                  # All synthesis modules
 │   ├── clock/                # Clock and Tempo
-│   ├── oscillator/           # Oscillator, ModulatedOscillator, OscillatorType
+│   ├── oscillator/           # Oscillator, OscillatorType
 │   ├── melody/               # MelodyGenerator, MelodyParams
 │   ├── adsr/                 # Adsr envelope generator
 │   ├── vca/                  # Vca (voltage-controlled amplifier)
@@ -109,11 +108,12 @@ src/
 1. **Uniform signal type**: All signals are `f32` values
 2. **Named ports**: Each module declares its inputs/outputs explicitly
    ```rust
-   impl ModularModule for Oscillator {
+   impl Module for Oscillator {
        fn inputs(&self) -> &[&str] { &["frequency", "fm", "am"] }
        fn outputs(&self) -> &[&str] { &["audio"] }
        fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> { ... }
        fn get_output(&self, port: &str) -> Result<f32, String> { ... }
+       // ... plus caching methods
    }
    ```
 3. **Explicit routing**: Connections specify port names in JSON
@@ -141,15 +141,15 @@ The system uses **pull-based processing** where the DAC recursively requests inp
 - **Deterministic**: Same results every time (no push-based race conditions)
 
 **Architecture files**:
-- `src/traits.rs` - ModularModule trait with caching methods
+- `src/traits.rs` - Module trait with caching methods
 - `src/patch/graph.rs` - Pull-based signal graph implementation
 
 ### Module Implementation Guide
 
-To implement the `ModularModule` trait for a new module:
+To implement the `Module` trait for a new module:
 
 ```rust
-use crate::traits::{Module, ModularModule};
+use crate::Module;
 
 pub struct MyModule {
     // Your module state
@@ -160,7 +160,17 @@ pub struct MyModule {
     last_processed_sample: u64,
 }
 
-impl ModularModule for MyModule {
+impl Module for MyModule {
+    fn name(&self) -> &str {
+        "MyModule"
+    }
+    
+    fn process(&mut self) -> bool {
+        // Your DSP logic here
+        self.output_value = self.input_value * 2.0;  // Example
+        true
+    }
+    
     fn inputs(&self) -> &[&str] {
         &["input_port_name"]
     }
@@ -186,12 +196,6 @@ impl ModularModule for MyModule {
         }
     }
     
-    fn reset_inputs(&mut self) {
-        // Reset control signals (gates, triggers) to default
-        // Don't reset configuration parameters
-        self.input_value = 0.0;  // Example: gate resets to 0
-    }
-    
     // Caching methods for pull-based processing
     fn last_processed_sample(&self) -> u64 {
         self.last_processed_sample
@@ -199,23 +203,6 @@ impl ModularModule for MyModule {
     
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
-    }
-    
-    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
-        // Usually just calls get_output()
-        self.get_output(port)
-    }
-}
-
-impl Module for MyModule {
-    fn process(&mut self) -> bool {
-        // Your DSP logic here
-        self.output_value = self.input_value * 2.0;  // Example
-        true
-    }
-    
-    fn name(&self) -> &str {
-        "MyModule"
     }
 }
 ```
@@ -234,7 +221,7 @@ The system **only supports acyclic graphs** (no feedback loops). Cycles are dete
 
 ### Module Implementations
 
-All modules implement the `ModularModule` trait:
+All modules implement the `Module` trait:
 
 | Module | Location | Inputs | Outputs |
 |--------|----------|--------|---------|
@@ -244,58 +231,32 @@ All modules implement the `ModularModule` trait:
 | `Adsr` | `modules/adsr/mod.rs` | `gate`, `attack`, `decay`, `sustain`, `release` | `envelope` |
 | `Vca` | `modules/vca/mod.rs` | `audio`, `cv` | `audio` |
 
-### Migration Strategy
+## Signal Philosophy
 
-**Current state**: Both old type-based and new modular systems coexist.
-- Old system: `Generator<T>` and `Processor<TIn, TOut>` (legacy)
-- New system: `ModularModule` with pull-based processing (recommended)
+**All signals are raw `f32` values** - like voltages in real modular synthesizers. Port names determine how modules interpret values:
 
-**Don't break existing code!** Old examples still work.
+- **`"audio"`** - Audio-rate waveforms
+- **`"gate"`** - Trigger signals (1.0 = on, 0.0 = off)
+- **`"frequency"`** - Pitch in Hz
+- **`"envelope"`** - Amplitude envelope (0.0-1.0)
+- **`"cv"`** - Control voltage for modulation
+- **`"fm"`** - Frequency modulation input
+- **`"am"`** - Amplitude modulation input
 
-## Signal Types (`src/signal.rs`)
-
-Two fundamental signal categories:
-
-1. **`Audio`** - Audio-rate signals (44.1kHz)
-   - Carries waveforms, CV, gates, triggers, envelopes
-   - Single `f32` value per sample
-   - Like voltage flowing through Eurorack patch cables
-
-2. **`Control<T>`** - Thread-safe parameters
-   - User input (knob positions, button states, etc.)
-   - Wrapped in `Arc<Mutex<T>>` for concurrent access
-   - Can be updated from UI thread while audio thread reads
-
-Compound signal types:
-- `ClockSignal` - Timing info (beats, phase, measure)
-- `FrequencySignal` - Pitch in Hz
-- `NoteSignal` - Gate + frequency for musical notes
-
-### Module System (`src/module.rs`)
-
-All components implement traits from `module.rs`:
-
-- **`Module`** - Base trait with `process()` for per-sample advancement
-- **`Generator<T>`** - Creates signals without input (Clock, Oscillator, Sequencer)
-- **`Processor<TIn, TOut>`** - Transforms signals (Filter, Voice, effects)
-
-Modules connect using `.connect()` for signal chaining:
-```rust
-let audio_gen = clock.connect(sequencer).connect(voice);
-```
+This uniform approach enables flexible routing: any output can connect to any compatible input.
 
 ### Core Modules
 
-| Module | Location | Purpose |
-|--------|----------|---------|
-| `Clock` | `modules/clock/` | Tempo-driven timing, outputs `ClockSignal` |
-| `Tempo` | `modules/clock/tempo.rs` | Thread-safe BPM control |
-| `Oscillator` | `modules/oscillator/` | Waveform generation (sine, square, saw, triangle) |
-| `MelodyGenerator` | `modules/melody/` | Probabilistic note selection from scale |
-| `Adsr` | `modules/adsr/` | ADSR envelope generator |
-| `Vca` | `modules/vca/` | Voltage-controlled amplifier |
-| `Dac` | `modules/dac/` | Audio output via cpal |
-| `Scale`/`Mode`/`Note` | `music/` | Music theory (modes, MIDI↔frequency) |
+| Module | Location | Purpose | Key Ports |
+|--------|----------|---------|-----------|
+| `Clock` | `modules/clock/` | Tempo-driven timing | out: `gate` |
+| `Tempo` | `modules/clock/tempo.rs` | Thread-safe BPM control | (shared state) |
+| `Oscillator` | `modules/oscillator/` | Waveform generation | in: `frequency`, `fm`, `am`; out: `audio` |
+| `MelodyGenerator` | `modules/melody/` | Algorithmic note sequencing | in: `gate`; out: `frequency`, `gate` |
+| `Adsr` | `modules/adsr/` | ADSR envelope generator | in: `gate`; out: `envelope` |
+| `Vca` | `modules/vca/` | Voltage-controlled amplifier | in: `audio`, `cv`; out: `audio` |
+| `Dac` | `modules/dac/` | Audio output via cpal | in: `audio` (from closure) |
+| `Scale`/`Mode`/`Note` | `music/` | Music theory utilities | (data structures) |
 
 ## Declarative Patch System
 
@@ -318,14 +279,7 @@ running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 
 ### Programmatic Approach
 
-Build modules and connect them in Rust code:
-```rust
-let clock = Clock::new(sample_rate, tempo.clone());
-let melody = MelodyGenerator::new(scale, params, sample_rate, tempo);
-let voice = Voice::new(sample_rate, OscillatorType::Sine);
-let audio_gen = clock.connect(melody).connect(voice);
-dac.start(audio_gen)?;
-```
+The declarative JSON approach is the primary API. The old programmatic API with `.connect()` chaining has been superseded by the module system.
 
 ### Supported Patch Modules
 
@@ -372,12 +326,9 @@ The system supports multiple parallel signal paths that automatically mix at the
 ### Imports
 - Use explicit imports, avoid glob imports except for preludes
 - Group imports: std library, external crates, then local crate modules
-- Example from `oscillator.rs`:
+- Example:
   ```rust
-  use crate::{
-      module::{Generator, Module, Processor},
-      AudioSignal, FrequencySignal,
-  };
+  use crate::Module;
   use std::f32::consts::PI;
   ```
 
@@ -425,28 +376,44 @@ The system supports multiple parallel signal paths that automatically mix at the
 
 ### Module Implementation Pattern
 ```rust
-// 1. Implement Module trait
 impl Module for MyModule {
-    fn process(&mut self) -> bool {
-        // Per-sample processing
-        true  // Return false to remove module from chain
-    }
-    
     fn name(&self) -> &str {
         "MyModule"
     }
-}
-
-// 2. Implement Generator OR Processor
-impl Generator<OutputType> for MyModule {
-    fn output(&mut self) -> OutputType {
-        // Generate signal
+    
+    fn process(&mut self) -> bool {
+        // Per-sample DSP processing
+        true
     }
-}
-// OR
-impl Processor<InputType, OutputType> for MyModule {
-    fn process_signal(&mut self, input: InputType) -> OutputType {
-        // Transform signal
+    
+    fn inputs(&self) -> &[&str] {
+        &["input_port"]
+    }
+    
+    fn outputs(&self) -> &[&str] {
+        &["output_port"]
+    }
+    
+    fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
+        match port {
+            "input_port" => { /* set value */ Ok(()) }
+            _ => Err(format!("Unknown port: {}", port))
+        }
+    }
+    
+    fn get_output(&self, port: &str) -> Result<f32, String> {
+        match port {
+            "output_port" => Ok(self.output_value),
+            _ => Err(format!("Unknown port: {}", port))
+        }
+    }
+    
+    fn last_processed_sample(&self) -> u64 {
+        self.last_processed_sample
+    }
+    
+    fn mark_processed(&mut self, sample: u64) {
+        self.last_processed_sample = sample;
     }
 }
 ```

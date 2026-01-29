@@ -3,8 +3,6 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
-use crate::{AudioSignal, Generator};
-
 /// Digital-to-Analog Converter that sends audio to the system output device.
 ///
 /// Wraps the cpal library to provide cross-platform audio output.
@@ -38,13 +36,13 @@ impl Dac {
         self.sample_rate
     }
 
-    /// Starts audio playback from the given generator.
+    /// Starts audio playback from the given sample function.
     ///
-    /// The generator is called once per audio frame to produce samples.
+    /// The sample function is called once per audio frame to produce samples.
     /// Output is duplicated to all channels (mono to stereo conversion).
-    pub fn start<G>(&mut self, mut generator: G) -> Result<(), Box<dyn std::error::Error>>
+    pub fn start<F>(&mut self, mut sample_fn: F) -> Result<(), Box<dyn std::error::Error>>
     where
-        G: Generator<AudioSignal> + Send + 'static,
+        F: FnMut() -> f32 + Send + 'static,
     {
         let host = cpal::default_host();
         let device = host
@@ -58,9 +56,7 @@ impl Dac {
             cpal::SampleFormat::F32 => {
                 self.build_stream::<f32>(&device, &config.into(), move |data: &mut [f32]| {
                     for frame in data.chunks_mut(channels) {
-                        generator.process();
-                        let audio = generator.output();
-                        let value = audio.value.clamp(-1.0, 1.0);
+                        let value = sample_fn().clamp(-1.0, 1.0);
                         for sample in frame.iter_mut() {
                             *sample = value;
                         }
@@ -70,9 +66,7 @@ impl Dac {
             cpal::SampleFormat::I16 => {
                 self.build_stream::<i16>(&device, &config.into(), move |data: &mut [i16]| {
                     for frame in data.chunks_mut(channels) {
-                        generator.process();
-                        let audio = generator.output();
-                        let value = (audio.value.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                        let value = (sample_fn().clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                         for sample in frame.iter_mut() {
                             *sample = value;
                         }
@@ -82,10 +76,8 @@ impl Dac {
             cpal::SampleFormat::U16 => {
                 self.build_stream::<u16>(&device, &config.into(), move |data: &mut [u16]| {
                     for frame in data.chunks_mut(channels) {
-                        generator.process();
-                        let audio = generator.output();
                         let value =
-                            ((audio.value.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16;
+                            ((sample_fn().clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16;
                         for sample in frame.iter_mut() {
                             *sample = value;
                         }

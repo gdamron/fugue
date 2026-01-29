@@ -1,12 +1,10 @@
 //! Oscillator module for waveform generation.
 
-use crate::{AudioSignal, Generator, ModularModule, Module};
+use crate::Module;
 use std::f32::consts::PI;
 
-pub use self::modulated::{ModulatedOscillator, ModulationInputs};
 pub use self::waveform::OscillatorType;
 
-mod modulated;
 mod waveform;
 
 /// A waveform generator that produces audio signals.
@@ -126,24 +124,16 @@ impl Oscillator {
 }
 
 impl Module for Oscillator {
+    fn name(&self) -> &str {
+        "Oscillator"
+    }
+
     fn process(&mut self) -> bool {
         // Generate and cache the audio sample
         self.cached_audio = self.generate_sample();
         true
     }
 
-    fn name(&self) -> &str {
-        "Oscillator"
-    }
-}
-
-impl Generator<AudioSignal> for Oscillator {
-    fn output(&mut self) -> AudioSignal {
-        AudioSignal::new(self.generate_sample())
-    }
-}
-
-impl ModularModule for Oscillator {
     fn inputs(&self) -> &[&str] {
         &["frequency", "fm", "am"]
     }
@@ -164,17 +154,11 @@ impl ModularModule for Oscillator {
         }
     }
 
-    fn get_output(&mut self, port: &str) -> Result<f32, String> {
-        // Just return cached value - NO state changes!
+    fn get_output(&self, port: &str) -> Result<f32, String> {
         match port {
             "audio" => Ok(self.cached_audio),
             _ => Err(format!("Unknown output port: {}", port)),
         }
-    }
-
-    fn reset_inputs(&mut self) {
-        // Don't reset frequency - it should be stable
-        // Modulation inputs are handled differently (they need to be passed per-sample)
     }
 
     fn last_processed_sample(&self) -> u64 {
@@ -183,12 +167,5 @@ impl ModularModule for Oscillator {
 
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
-    }
-
-    fn get_cached_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "audio" => Ok(self.cached_audio),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
     }
 }

@@ -1,56 +1,38 @@
 //! Core module traits and signal routing primitives.
 //!
-//! This module provides the fundamental abstractions for building synthesis graphs:
-//! - [`Module`] - Base trait for all audio processing components
-//! - [`Generator`] - Modules that produce signals (oscillators, clocks)
-//! - [`Processor`] - Modules that transform signals (filters, effects)
-//! - [`ModularModule`] - Named port system for flexible signal routing
+//! This module provides the fundamental abstraction for building synthesis graphs:
+//! - [`Module`] - The unified trait for all audio processing components with named ports
 
 /// The core abstraction for all synthesis components.
 ///
 /// Every module in the synthesis graph implements this trait.
-/// Modules process one sample at a time at audio rate.
-pub trait Module: Send {
-    /// Processes one sample of audio.
-    ///
-    /// Returns `true` if the module is still active, `false` if it should be removed.
-    fn process(&mut self) -> bool {
-        true
-    }
-
-    /// Returns the module's name for debugging purposes.
-    fn name(&self) -> &str {
-        "Module"
-    }
-}
-
-/// A module that produces signals without requiring input.
+/// Modules process one sample at a time at audio rate, with named input and output ports.
 ///
-/// Examples include oscillators, LFOs, clocks, and noise generators.
-pub trait Generator<T>: Module {
-    /// Generates and returns the next output sample.
-    fn output(&mut self) -> T;
-}
-
-/// A module with named input and output ports for flexible signal routing.
-///
-/// Unlike the type-based `Generator`/`Processor` traits, `ModularModule` treats
-/// all signals as uniform `f32` values. The meaning of a signal is determined
-/// by which port it connects to, not by its Rust type.
-///
-/// This design mirrors real modular synthesizers where everything is voltage.
+/// All signals are `f32` values. The meaning of a signal is determined by which port
+/// it connects to, not by its type. This design mirrors real modular synthesizers where
+/// everything is voltage.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use fugue::ModularModule;
+/// use fugue::Module;
 ///
-/// struct VCA {
+/// struct Vca {
 ///     audio_in: f32,
 ///     cv_in: f32,
+///     last_processed_sample: u64,
 /// }
 ///
-/// impl ModularModule for VCA {
+/// impl Module for Vca {
+///     fn name(&self) -> &str {
+///         "Vca"
+///     }
+///
+///     fn process(&mut self) -> bool {
+///         // Processing happens here
+///         true
+///     }
+///
 ///     fn inputs(&self) -> &[&str] {
 ///         &["audio", "cv"]
 ///     }
@@ -61,22 +43,37 @@ pub trait Generator<T>: Module {
 ///
 ///     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
 ///         match port {
-///             "audio" => self.audio_in = value,
-///             "cv" => self.cv_in = value,
-///             _ => return Err(format!("Unknown input port: {}", port)),
+///             "audio" => { self.audio_in = value; Ok(()) }
+///             "cv" => { self.cv_in = value; Ok(()) }
+///             _ => Err(format!("Unknown input port: {}", port))
 ///         }
-///         Ok(())
 ///     }
 ///
-///     fn get_output(&mut self, port: &str) -> Result<f32, String> {
+///     fn get_output(&self, port: &str) -> Result<f32, String> {
 ///         match port {
 ///             "audio" => Ok(self.audio_in * self.cv_in),
-///             _ => Err(format!("Unknown output port: {}", port)),
+///             _ => Err(format!("Unknown output port: {}", port))
 ///         }
+///     }
+///
+///     fn last_processed_sample(&self) -> u64 {
+///         self.last_processed_sample
+///     }
+///
+///     fn mark_processed(&mut self, sample: u64) {
+///         self.last_processed_sample = sample;
 ///     }
 /// }
 /// ```
-pub trait ModularModule: Module {
+pub trait Module: Send {
+    /// Returns the module's name for debugging purposes.
+    fn name(&self) -> &str;
+
+    /// Processes one sample of audio.
+    ///
+    /// Returns `true` if the module is still active, `false` if it should be removed.
+    fn process(&mut self) -> bool;
+
     /// Returns the names of all input ports this module accepts.
     ///
     /// Port names should be stable and descriptive (e.g., "frequency", "gate", "fm", "cv").
@@ -100,24 +97,13 @@ pub trait ModularModule: Module {
 
     /// Gets the current value from a named output port.
     ///
-    /// Called once per sample by the patch runtime for each connected output.
     /// Returns an error if the port name is not recognized.
+    /// This method should not modify module state - it only reads cached values.
     ///
     /// # Arguments
     ///
     /// * `port` - Name of the output port (must match one from `outputs()`)
-    fn get_output(&mut self, port: &str) -> Result<f32, String>;
-
-    /// Resets all inputs to their default values.
-    ///
-    /// Called at the start of each sample to clear any unconnected inputs.
-    /// Default implementation does nothing, but modules should override this
-    /// if they need to handle unconnected inputs specially (e.g., default to 0.0).
-    ///
-    /// **Note:** This method is deprecated in the pull-based architecture and may
-    /// be removed in future versions. Modules should set sensible defaults in their
-    /// constructors instead.
-    fn reset_inputs(&mut self) {}
+    fn get_output(&self, port: &str) -> Result<f32, String>;
 
     /// Returns the sample number when this module was last processed.
     ///
@@ -132,20 +118,6 @@ pub trait ModularModule: Module {
     /// caching: if the same module's output is requested multiple times in
     /// one sample, it returns cached values without reprocessing.
     fn mark_processed(&mut self, sample: u64);
-
-    /// Gets cached output value without triggering processing.
-    ///
-    /// Returns the output value computed during the last `process()` call.
-    /// This method should never modify module state or trigger side effects.
-    ///
-    /// # Arguments
-    ///
-    /// * `port` - Name of the output port (must match one from `outputs()`)
-    ///
-    /// # Returns
-    ///
-    /// The cached output value, or an error if the port name is invalid.
-    fn get_cached_output(&self, port: &str) -> Result<f32, String>;
 }
 
 /// Helper for validating port names at module construction.
@@ -176,9 +148,11 @@ mod tests {
         fn name(&self) -> &str {
             "TestModule"
         }
-    }
 
-    impl ModularModule for TestModule {
+        fn process(&mut self) -> bool {
+            true
+        }
+
         fn inputs(&self) -> &[&str] {
             &["a", "b"]
         }
@@ -201,17 +175,12 @@ mod tests {
             }
         }
 
-        fn get_output(&mut self, port: &str) -> Result<f32, String> {
+        fn get_output(&self, port: &str) -> Result<f32, String> {
             match port {
                 "sum" => Ok(self.input_a + self.input_b),
                 "product" => Ok(self.input_a * self.input_b),
                 _ => Err(format!("Unknown output port: {}", port)),
             }
-        }
-
-        fn reset_inputs(&mut self) {
-            self.input_a = 0.0;
-            self.input_b = 0.0;
         }
 
         fn last_processed_sample(&self) -> u64 {
@@ -221,18 +190,10 @@ mod tests {
         fn mark_processed(&mut self, sample: u64) {
             self.last_processed_sample = sample;
         }
-
-        fn get_cached_output(&self, port: &str) -> Result<f32, String> {
-            match port {
-                "sum" => Ok(self.input_a + self.input_b),
-                "product" => Ok(self.input_a * self.input_b),
-                _ => Err(format!("Unknown output port: {}", port)),
-            }
-        }
     }
 
     #[test]
-    fn test_modular_module() {
+    fn test_module() {
         let mut module = TestModule {
             input_a: 0.0,
             input_b: 0.0,
@@ -249,21 +210,17 @@ mod tests {
         assert_eq!(module.get_output("product").unwrap(), 12.0);
         assert!(module.get_output("invalid").is_err());
 
-        // Test reset
-        module.reset_inputs();
-        assert_eq!(module.get_output("sum").unwrap(), 0.0);
-
         // Test sample tracking
         assert_eq!(module.last_processed_sample(), 0);
         module.mark_processed(42);
         assert_eq!(module.last_processed_sample(), 42);
 
-        // Test cached output
+        // Test output after input change
         module.set_input("a", 5.0).unwrap();
         module.set_input("b", 6.0).unwrap();
-        assert_eq!(module.get_cached_output("sum").unwrap(), 11.0);
-        assert_eq!(module.get_cached_output("product").unwrap(), 30.0);
-        assert!(module.get_cached_output("invalid").is_err());
+        assert_eq!(module.get_output("sum").unwrap(), 11.0);
+        assert_eq!(module.get_output("product").unwrap(), 30.0);
+        assert!(module.get_output("invalid").is_err());
     }
 
     #[test]
