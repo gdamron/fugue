@@ -1,4 +1,4 @@
-use crate::oscillator::OscillatorType;
+use crate::modules::oscillator::OscillatorType;
 use std::sync::{Arc, Mutex};
 
 /// Thread-safe parameters for controlling melody generation.

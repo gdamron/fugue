@@ -3,8 +3,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
-use crate::module::Generator;
-use crate::signal::AudioSignal;
+use crate::{AudioSignal, Generator};
 
 /// Digital-to-Analog Converter that sends audio to the system output device.
 ///

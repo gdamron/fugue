@@ -1,5 +1,4 @@
-use crate::module::{Generator, Module};
-use crate::signal::AudioSignal;
+use crate::{AudioSignal, Generator, Module};
 
 use super::{Oscillator, OscillatorType};
 

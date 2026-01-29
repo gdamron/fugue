@@ -6,7 +6,7 @@
 //
 // Should produce a 440Hz tone that pulses on each beat with ADSR envelope shaping.
 
-use fugue::{ModularPatchBuilder, Patch};
+use fugue::{Patch, PatchBuilder};
 use std::error::Error;
 use std::io;
 
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!();
 
     // Build and start
-    let builder = ModularPatchBuilder::new(44100);
+    let builder = PatchBuilder::new(44100);
     let runtime = builder.build(patch)?;
     let running = runtime.start()?;
 

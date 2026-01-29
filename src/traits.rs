@@ -1,50 +1,44 @@
-//! Named port module system for flexible signal routing.
+//! Core module traits and signal routing primitives.
 //!
-//! This module provides an alternative to the type-based `Generator`/`Processor` system.
-//! Instead of using Rust's type system to enforce signal compatibility, modules declare
-//! named input and output ports, and all signals are uniform `f32` values.
-//!
-//! This approach mirrors real modular synthesizers where all signals are voltages,
-//! and the meaning of a signal is determined by which port it's connected to.
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use fugue::module::ModularModule;
-//!
-//! struct VCA {
-//!     audio_in: f32,
-//!     cv_in: f32,
-//! }
-//!
-//! impl ModularModule for VCA {
-//!     fn inputs(&self) -> &[&str] {
-//!         &["audio", "cv"]
-//!     }
-//!
-//!     fn outputs(&self) -> &[&str] {
-//!         &["audio"]
-//!     }
-//!
-//!     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-//!         match port {
-//!             "audio" => self.audio_in = value,
-//!             "cv" => self.cv_in = value,
-//!             _ => return Err(format!("Unknown input port: {}", port)),
-//!         }
-//!         Ok(())
-//!     }
-//!
-//!     fn get_output(&mut self, port: &str) -> Result<f32, String> {
-//!         match port {
-//!             "audio" => Ok(self.audio_in * self.cv_in),
-//!             _ => Err(format!("Unknown output port: {}", port)),
-//!         }
-//!     }
-//! }
-//! ```
+//! This module provides the fundamental abstractions for building synthesis graphs:
+//! - [`Module`] - Base trait for all audio processing components
+//! - [`Generator`] - Modules that produce signals (oscillators, clocks)
+//! - [`Processor`] - Modules that transform signals (filters, effects)
+//! - [`ModularModule`] - Named port system for flexible signal routing
 
-use super::Module;
+/// The core abstraction for all synthesis components.
+///
+/// Every module in the synthesis graph implements this trait.
+/// Modules process one sample at a time at audio rate.
+pub trait Module: Send {
+    /// Processes one sample of audio.
+    ///
+    /// Returns `true` if the module is still active, `false` if it should be removed.
+    fn process(&mut self) -> bool {
+        true
+    }
+
+    /// Returns the module's name for debugging purposes.
+    fn name(&self) -> &str {
+        "Module"
+    }
+}
+
+/// A module that produces signals without requiring input.
+///
+/// Examples include oscillators, LFOs, clocks, and noise generators.
+pub trait Generator<T>: Module {
+    /// Generates and returns the next output sample.
+    fn output(&mut self) -> T;
+}
+
+/// A module that transforms an input signal into an output signal.
+///
+/// Examples include filters, effects, and envelopes.
+pub trait Processor<TIn, TOut>: Module {
+    /// Processes an input signal and returns the transformed output.
+    fn process_signal(&mut self, input: TIn) -> TOut;
+}
 
 /// A module with named input and output ports for flexible signal routing.
 ///
@@ -53,6 +47,43 @@ use super::Module;
 /// by which port it connects to, not by its Rust type.
 ///
 /// This design mirrors real modular synthesizers where everything is voltage.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use fugue::ModularModule;
+///
+/// struct VCA {
+///     audio_in: f32,
+///     cv_in: f32,
+/// }
+///
+/// impl ModularModule for VCA {
+///     fn inputs(&self) -> &[&str] {
+///         &["audio", "cv"]
+///     }
+///
+///     fn outputs(&self) -> &[&str] {
+///         &["audio"]
+///     }
+///
+///     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
+///         match port {
+///             "audio" => self.audio_in = value,
+///             "cv" => self.cv_in = value,
+///             _ => return Err(format!("Unknown input port: {}", port)),
+///         }
+///         Ok(())
+///     }
+///
+///     fn get_output(&mut self, port: &str) -> Result<f32, String> {
+///         match port {
+///             "audio" => Ok(self.audio_in * self.cv_in),
+///             _ => Err(format!("Unknown output port: {}", port)),
+///         }
+///     }
+/// }
+/// ```
 pub trait ModularModule: Module {
     /// Returns the names of all input ports this module accepts.
     ///

@@ -4,7 +4,7 @@
 //! amplitude control. Common uses include applying envelope shapes to sounds,
 //! tremolo effects, and level control.
 
-use crate::module::{ModularModule, Module};
+use crate::{ModularModule, Module};
 
 /// A Voltage Controlled Amplifier that multiplies audio by a control voltage.
 ///

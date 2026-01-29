@@ -1,9 +1,10 @@
 use std::time::Duration;
 
-use crate::module::{Generator, ModularModule, Module};
-use crate::signal::ClockSignal;
+use crate::{ClockSignal, Generator, ModularModule, Module};
 
-use super::Tempo;
+pub use self::tempo::Tempo;
+
+mod tempo;
 
 /// A master clock that generates timing signals for tempo-synchronized modules.
 ///

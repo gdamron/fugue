@@ -8,11 +8,11 @@ mod tests {
     fn test_simple_signal_flow() {
         // Create modules
         let sample_rate = 44100;
-        let mut clock = time::Clock::new(sample_rate, time::Tempo::new(120.0));
-        let mut adsr = synthesis::ModularAdsr::new(sample_rate);
+        let mut clock = Clock::new(sample_rate, Tempo::new(120.0));
+        let mut adsr = Adsr::new(sample_rate);
         let mut osc = Oscillator::new(sample_rate, OscillatorType::Sine);
         osc.set_frequency(440.0);
-        let mut vca = synthesis::Vca::new();
+        let mut vca = Vca::new();
 
         println!("Initial state:");
         println!("  Clock samples_elapsed: {}", clock.samples_elapsed());

@@ -7,7 +7,7 @@
 // The ADSR envelope shapes the audio from the oscillator using a VCA,
 // allowing for proper attack/decay/sustain/release control.
 
-use fugue::{ModularPatchBuilder, Patch};
+use fugue::{Patch, PatchBuilder};
 use std::error::Error;
 use std::io;
 use std::thread;
@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!();
 
     // Build and start the modular patch
-    let builder = ModularPatchBuilder::new(44100);
+    let builder = PatchBuilder::new(44100);
     let runtime = builder.build(patch)?;
     let running = runtime.start()?;
 
