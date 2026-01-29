@@ -1,7 +1,7 @@
 //! Melody generation module.
 
 use crate::music::{Note, Scale};
-use crate::{Audio, ClockSignal, FrequencySignal, ModularModule, Module, NoteSignal, Processor};
+use crate::{ModularModule, Module};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -109,25 +109,6 @@ impl Module for MelodyGenerator {
 
     fn name(&self) -> &str {
         "MelodyGenerator"
-    }
-}
-
-impl Processor<ClockSignal, NoteSignal> for MelodyGenerator {
-    fn process_signal(&mut self, clock: ClockSignal) -> NoteSignal {
-        // Use clock phase to detect beat boundaries
-        // Rising edge when phase wraps from high to low
-        let gate_high = clock.phase < 0.25; // Gate high for first 25% of beat
-
-        if gate_high && self.last_gate <= 0.5 {
-            self.current_note = self.next_note();
-        }
-
-        self.last_gate = if gate_high { 1.0 } else { 0.0 };
-
-        NoteSignal {
-            gate: Audio::gate(gate_high, 1.0),
-            frequency: FrequencySignal::from_midi(self.current_note.midi_note),
-        }
     }
 }
 

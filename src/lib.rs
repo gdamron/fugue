@@ -5,7 +5,7 @@ pub mod signal;
 pub mod traits;
 
 // Re-export core traits
-pub use traits::{Generator, Module, ModularModule, Processor, validate_port};
+pub use traits::{validate_port, Generator, ModularModule, Module};
 
 // Re-export signal types
 pub use signal::{Audio, AudioSignal, ClockSignal, FrequencySignal, NoteSignal};

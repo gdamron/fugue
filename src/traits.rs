@@ -32,14 +32,6 @@ pub trait Generator<T>: Module {
     fn output(&mut self) -> T;
 }
 
-/// A module that transforms an input signal into an output signal.
-///
-/// Examples include filters, effects, and envelopes.
-pub trait Processor<TIn, TOut>: Module {
-    /// Processes an input signal and returns the transformed output.
-    fn process_signal(&mut self, input: TIn) -> TOut;
-}
-
 /// A module with named input and output ports for flexible signal routing.
 ///
 /// Unlike the type-based `Generator`/`Processor` traits, `ModularModule` treats

@@ -1,6 +1,6 @@
 //! Oscillator module for waveform generation.
 
-use crate::{AudioSignal, FrequencySignal, Generator, ModularModule, Module, Processor};
+use crate::{AudioSignal, Generator, ModularModule, Module};
 use std::f32::consts::PI;
 
 pub use self::modulated::{ModulatedOscillator, ModulationInputs};
@@ -10,10 +10,6 @@ mod modulated;
 mod waveform;
 
 /// A waveform generator that produces audio signals.
-///
-/// Can operate as a [`Generator`] with a fixed frequency, or as a
-/// [`Processor`] that accepts [`FrequencySignal`] input. Supports
-/// frequency modulation (FM) and amplitude modulation (AM).
 pub struct Oscillator {
     osc_type: OscillatorType,
     frequency: f32,
@@ -143,13 +139,6 @@ impl Module for Oscillator {
 
 impl Generator<AudioSignal> for Oscillator {
     fn output(&mut self) -> AudioSignal {
-        AudioSignal::new(self.generate_sample())
-    }
-}
-
-impl Processor<FrequencySignal, AudioSignal> for Oscillator {
-    fn process_signal(&mut self, input: FrequencySignal) -> AudioSignal {
-        self.set_frequency(input.hz);
         AudioSignal::new(self.generate_sample())
     }
 }
