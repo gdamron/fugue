@@ -113,14 +113,6 @@ pub struct ModuleConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub am_amount: Option<f32>,
 
-    /// Filter cutoff frequency in Hz (for filter modules).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cutoff: Option<f32>,
-
-    /// Filter resonance 0.0-1.0 (for filter modules).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resonance: Option<f32>,
-
     /// ADSR attack time in seconds (for adsr modules).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attack: Option<f32>,

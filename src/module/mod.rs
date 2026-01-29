@@ -4,14 +4,10 @@
 //! - [`Module`] - Base trait for all audio processing components
 //! - [`Generator`] - Modules that produce signals (oscillators, clocks)
 //! - [`Processor`] - Modules that transform signals (filters, effects)
-//! - [`Connect`] - Trait for chaining modules together
-//! - [`Connection`] - Signal buffer between modules
-//! - [`ModularModule`] - Named port system for flexible signal routing (new)
+//! - [`ModularModule`] - Named port system for flexible signal routing
 
-mod connection;
 mod modular;
 mod traits;
 
-pub use connection::Connection;
 pub use modular::{validate_port, ModularModule};
-pub use traits::{Connect, ConnectedProcessor, Generator, Module, Processor};
+pub use traits::{Generator, Module, Processor};
