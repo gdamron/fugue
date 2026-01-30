@@ -1,6 +1,45 @@
 //! ADSR envelope generator module.
 
+use std::sync::{Arc, Mutex};
+
+use crate::factory::{ModuleBuildResult, ModuleFactory};
 use crate::Module;
+
+/// Factory for constructing ADSR modules from configuration.
+pub struct AdsrFactory;
+
+impl ModuleFactory for AdsrFactory {
+    fn type_id(&self) -> &'static str {
+        "adsr"
+    }
+
+    fn build(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        let mut adsr = Adsr::new(sample_rate);
+
+        // Apply config values if specified
+        if let Some(attack) = config.get("attack").and_then(|v| v.as_f64()) {
+            let _ = adsr.set_input("attack", attack as f32);
+        }
+        if let Some(decay) = config.get("decay").and_then(|v| v.as_f64()) {
+            let _ = adsr.set_input("decay", decay as f32);
+        }
+        if let Some(sustain) = config.get("sustain").and_then(|v| v.as_f64()) {
+            let _ = adsr.set_input("sustain", sustain as f32);
+        }
+        if let Some(release) = config.get("release").and_then(|v| v.as_f64()) {
+            let _ = adsr.set_input("release", release as f32);
+        }
+
+        Ok(ModuleBuildResult {
+            module: Arc::new(Mutex::new(adsr)),
+            handles: vec![],
+        })
+    }
+}
 
 /// ADSR envelope generator with named ports for modular routing.
 ///

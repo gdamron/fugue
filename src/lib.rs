@@ -1,19 +1,26 @@
+pub mod factory;
 pub mod modules;
 pub mod music;
 pub mod patch;
+pub mod registry;
 pub mod traits;
 
 // Re-export core traits
 pub use traits::{validate_port, Module};
 
+// Re-export factory system
+pub use factory::{ModuleBuildResult, ModuleFactory};
+pub use registry::ModuleRegistry;
+
 // Re-export modules
 pub use modules::{
-    Adsr, Clock, Dac, MelodyGenerator, MelodyParams, Oscillator, OscillatorType, Tempo, Vca,
+    Adsr, AdsrFactory, Clock, ClockFactory, Dac, MelodyFactory, MelodyGenerator, MelodyParams,
+    Oscillator, OscillatorFactory, OscillatorType, Tempo, Vca, VcaFactory,
 };
 
 // Re-export patch system
 pub use patch::{
-    Connection, ModuleConfig, ModuleSpec, Patch, PatchBuilder, PatchRuntime, RunningPatch,
+    Connection, ModuleSpec, Patch, PatchBuilder, PatchHandles, PatchRuntime, RunningPatch,
     TimeSignature,
 };
 

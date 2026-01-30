@@ -1,6 +1,6 @@
 //! Patch runtime for executing modular synthesis patches.
 
-use crate::modules::{Adsr, Clock, Dac, MelodyGenerator, MelodyParams, Oscillator, Tempo, Vca};
+use crate::modules::Dac;
 use crate::Module;
 use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
@@ -8,60 +8,43 @@ use std::sync::{Arc, Mutex};
 use super::graph::RoutingConnection;
 use super::graph::SignalGraph;
 
-/// Runtime instance of a modular module.
-pub(crate) enum ModuleInstance {
-    Clock(Arc<Mutex<Clock>>),
-    Melody(Arc<Mutex<MelodyGenerator>>),
-    Oscillator(Arc<Mutex<Oscillator>>),
-    Adsr(Arc<Mutex<Adsr>>),
-    Vca(Arc<Mutex<Vca>>),
-    Dac, // Special case
+/// Type alias for module instances stored in the runtime.
+pub type ModuleInstance = Arc<Mutex<dyn Module + Send>>;
+
+/// Validates that a module has the specified output port.
+pub(crate) fn validate_output_port(
+    module: &ModuleInstance,
+    port: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = module.lock().unwrap();
+    if !m.outputs().contains(&port) {
+        return Err(format!(
+            "Module '{}' does not have output port '{}'. Available: {:?}",
+            m.name(),
+            port,
+            m.outputs()
+        )
+        .into());
+    }
+    Ok(())
 }
 
-impl ModuleInstance {
-    pub(crate) fn as_module(&self) -> Option<Arc<Mutex<dyn Module + Send>>> {
-        match self {
-            ModuleInstance::Clock(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
-            ModuleInstance::Melody(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
-            ModuleInstance::Oscillator(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
-            ModuleInstance::Adsr(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
-            ModuleInstance::Vca(m) => Some(m.clone() as Arc<Mutex<dyn Module + Send>>),
-            ModuleInstance::Dac => None,
-        }
+/// Validates that a module has the specified input port.
+pub(crate) fn validate_input_port(
+    module: &ModuleInstance,
+    port: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let m = module.lock().unwrap();
+    if !m.inputs().contains(&port) {
+        return Err(format!(
+            "Module '{}' does not have input port '{}'. Available: {:?}",
+            m.name(),
+            port,
+            m.inputs()
+        )
+        .into());
     }
-
-    pub(crate) fn validate_output_port(
-        &self,
-        port: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(module) = self.as_module() {
-            let m = module.lock().unwrap();
-            if !m.outputs().contains(&port) {
-                return Err(format!(
-                    "Module does not have output port '{}'. Available: {:?}",
-                    port,
-                    m.outputs()
-                )
-                .into());
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn validate_input_port(&self, port: &str) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(module) = self.as_module() {
-            let m = module.lock().unwrap();
-            if !m.inputs().contains(&port) {
-                return Err(format!(
-                    "Module does not have input port '{}'. Available: {:?}",
-                    port,
-                    m.inputs()
-                )
-                .into());
-            }
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 /// A prepared patch ready to run.
@@ -69,8 +52,6 @@ pub struct PatchRuntime {
     pub(crate) modules: IndexMap<String, ModuleInstance>,
     pub(crate) routing: Vec<RoutingConnection>,
     pub(crate) dac_id: String,
-    pub(crate) tempo: Tempo,
-    pub(crate) melody_params: Vec<MelodyParams>,
 }
 
 impl PatchRuntime {
@@ -105,8 +86,6 @@ impl PatchRuntime {
 
         Ok(RunningPatch {
             dac,
-            tempo: self.tempo,
-            melody_params: self.melody_params,
             _graph: graph_arc,
         })
     }
@@ -115,8 +94,6 @@ impl PatchRuntime {
 /// A running patch with audio output.
 pub struct RunningPatch {
     dac: Dac,
-    tempo: Tempo,
-    melody_params: Vec<MelodyParams>,
     _graph: Arc<Mutex<SignalGraph>>,
 }
 
@@ -124,20 +101,5 @@ impl RunningPatch {
     /// Stops audio playback.
     pub fn stop(mut self) {
         self.dac.stop();
-    }
-
-    /// Returns the tempo controller.
-    pub fn tempo(&self) -> &Tempo {
-        &self.tempo
-    }
-
-    /// Returns the melody parameters for the first voice.
-    pub fn melody_params(&self) -> &MelodyParams {
-        &self.melody_params[0]
-    }
-
-    /// Returns all melody parameters.
-    pub fn all_melody_params(&self) -> &[MelodyParams] {
-        &self.melody_params
     }
 }

@@ -1,13 +1,13 @@
 // Example: Modular ADSR Melody
 //
-// Demonstrates the new modular routing system with named ports.
-// Signal flow: Clock → MelodyGenerator → Oscillator → VCA
-//              Clock → MelodyGenerator → ADSR → VCA → DAC
+// Demonstrates the modular routing system with named ports.
+// Signal flow: Clock -> MelodyGenerator -> Oscillator -> VCA
+//              Clock -> MelodyGenerator -> ADSR -> VCA -> DAC
 //
 // The ADSR envelope shapes the audio from the oscillator using a VCA,
 // allowing for proper attack/decay/sustain/release control.
 
-use fugue::{Patch, PatchBuilder};
+use fugue::{Patch, PatchBuilder, Tempo};
 use std::error::Error;
 use std::io;
 use std::thread;
@@ -16,12 +16,12 @@ use std::time::Duration;
 fn main() -> Result<(), Box<dyn Error>> {
     println!("=== Fugue Modular ADSR Melody Example ===");
     println!();
-    println!("This example demonstrates the new modular routing system");
+    println!("This example demonstrates the modular routing system");
     println!("with named ports, enabling flexible signal routing.");
     println!();
     println!("Signal flow:");
-    println!("  Clock → MelodyGenerator → Oscillator → VCA → DAC");
-    println!("         └─────────────────→ ADSR ───────┘");
+    println!("  Clock -> MelodyGenerator -> Oscillator -> VCA -> DAC");
+    println!("         └─────────────────-> ADSR ───────┘");
     println!();
 
     // Load the modular patch
@@ -36,18 +36,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!();
 
-    // Build and start the modular patch
+    // Build the patch - returns both runtime and handles
     let builder = PatchBuilder::new(44100);
-    let runtime = builder.build(patch)?;
+    let (runtime, handles) = builder.build(patch)?;
+
+    // Get the tempo handle for runtime control
+    let tempo: Tempo = handles
+        .get("clock.tempo")
+        .expect("Patch should have a clock with tempo handle");
+
+    println!("Available handles:");
+    for key in handles.keys() {
+        println!("  - {}", key);
+    }
+    println!();
+
+    // Start the patch
     let running = runtime.start()?;
 
-    println!("✓ Patch started successfully!");
+    println!("Patch started successfully!");
     println!();
     println!("Controls:");
     println!("  [Enter] - Quit");
     println!();
     println!("Current settings:");
-    println!("  Tempo: {:.1} BPM", running.tempo().get_bpm());
+    println!("  Tempo: {:.1} BPM", tempo.get_bpm());
     println!();
     println!("Listening... (ADSR envelope shapes each note)");
     println!();

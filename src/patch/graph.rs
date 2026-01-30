@@ -70,55 +70,52 @@ impl SignalGraph {
     fn pull_output(&mut self, module_id: &str, port: &str) -> Result<f32, String> {
         // Check if already processed this sample
         if let Some(module) = self.modules.get(module_id) {
-            if let Some(m) = module.as_module() {
-                let m_locked = m.lock().unwrap();
+            let m_locked = module.lock().unwrap();
 
-                // Cache hit - return cached value
-                if m_locked.last_processed_sample() == self.current_sample {
-                    return m_locked.get_output(port);
+            // Cache hit - return cached value
+            if m_locked.last_processed_sample() == self.current_sample {
+                return m_locked.get_output(port);
+            }
+
+            // Cache miss - need to process this module
+            // First, recursively pull all inputs
+
+            // Clone input connections to avoid borrow issues during recursion
+            let input_connections: Vec<RoutingConnection> =
+                self.input_map.get(module_id).cloned().unwrap_or_default();
+
+            // Drop the lock before recursion
+            drop(m_locked);
+
+            // Recursively pull all inputs
+            for conn in &input_connections {
+                let input_value = self
+                    .pull_output(&conn.from_module, &conn.from_port)
+                    .unwrap_or_else(|e| {
+                        eprintln!(
+                            "Warning: Failed to pull {}:{} - {}",
+                            conn.from_module, conn.from_port, e
+                        );
+                        0.0
+                    });
+
+                // Set the input on this module
+                if let Some(to_module) = self.modules.get(module_id) {
+                    let _ = to_module
+                        .lock()
+                        .unwrap()
+                        .set_input(&conn.to_port, input_value);
                 }
+            }
 
-                // Cache miss - need to process this module
-                // First, recursively pull all inputs
+            // Now process the module
+            if let Some(module) = self.modules.get(module_id) {
+                let mut m_locked = module.lock().unwrap();
+                m_locked.process();
+                m_locked.mark_processed(self.current_sample);
 
-                // Clone input connections to avoid borrow issues during recursion
-                let input_connections: Vec<RoutingConnection> =
-                    self.input_map.get(module_id).cloned().unwrap_or_default();
-
-                // Drop the lock before recursion
-                drop(m_locked);
-
-                // Recursively pull all inputs
-                for conn in &input_connections {
-                    let input_value = self
-                        .pull_output(&conn.from_module, &conn.from_port)
-                        .unwrap_or_else(|e| {
-                            eprintln!(
-                                "Warning: Failed to pull {}:{} - {}",
-                                conn.from_module, conn.from_port, e
-                            );
-                            0.0
-                        });
-
-                    // Set the input on this module
-                    if let Some(to_module) = self.modules.get(module_id) {
-                        if let Some(m) = to_module.as_module() {
-                            let _ = m.lock().unwrap().set_input(&conn.to_port, input_value);
-                        }
-                    }
-                }
-
-                // Now process the module
-                if let Some(module) = self.modules.get(module_id) {
-                    if let Some(m) = module.as_module() {
-                        let mut m_locked = m.lock().unwrap();
-                        m_locked.process();
-                        m_locked.mark_processed(self.current_sample);
-
-                        // Return the requested output
-                        return m_locked.get_output(port);
-                    }
-                }
+                // Return the requested output
+                return m_locked.get_output(port);
             }
         }
 

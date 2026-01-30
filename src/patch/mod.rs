@@ -10,12 +10,15 @@
 //! - [`builder`] - Patch construction and validation
 //! - [`runtime`] - Patch execution and control
 //! - [`graph`] - Signal processing graph (pull-based)
+//! - [`handles`] - Runtime control handles
 
 pub mod builder;
 pub mod format;
 pub mod graph;
+pub mod handles;
 pub mod runtime;
 
 pub use builder::PatchBuilder;
-pub use format::{Connection, ModuleConfig, ModuleSpec, Patch, TimeSignature};
+pub use format::{Connection, ModuleSpec, Patch, TimeSignature};
+pub use handles::PatchHandles;
 pub use runtime::{PatchRuntime, RunningPatch};

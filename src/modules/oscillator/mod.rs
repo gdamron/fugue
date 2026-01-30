@@ -1,11 +1,64 @@
 //! Oscillator module for waveform generation.
 
+use std::sync::{Arc, Mutex};
+
+use crate::factory::{ModuleBuildResult, ModuleFactory};
 use crate::Module;
 use std::f32::consts::PI;
 
 pub use self::waveform::OscillatorType;
 
 mod waveform;
+
+/// Factory for constructing Oscillator modules from configuration.
+pub struct OscillatorFactory;
+
+impl ModuleFactory for OscillatorFactory {
+    fn type_id(&self) -> &'static str {
+        "oscillator"
+    }
+
+    fn build(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        let osc_type = parse_oscillator_type(
+            config
+                .get("oscillator_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("sine"),
+        )?;
+
+        let mut osc = Oscillator::new(sample_rate, osc_type);
+
+        if let Some(freq) = config.get("frequency").and_then(|v| v.as_f64()) {
+            osc.set_frequency(freq as f32);
+        }
+        if let Some(fm) = config.get("fm_amount").and_then(|v| v.as_f64()) {
+            osc.set_fm_amount(fm as f32);
+        }
+        if let Some(am) = config.get("am_amount").and_then(|v| v.as_f64()) {
+            osc.set_am_amount(am as f32);
+        }
+
+        Ok(ModuleBuildResult {
+            module: Arc::new(Mutex::new(osc)),
+            handles: vec![],
+        })
+    }
+}
+
+/// Parses an oscillator type string into an OscillatorType enum.
+fn parse_oscillator_type(s: &str) -> Result<OscillatorType, Box<dyn std::error::Error>> {
+    match s.to_lowercase().as_str() {
+        "sine" => Ok(OscillatorType::Sine),
+        "square" => Ok(OscillatorType::Square),
+        "sawtooth" | "saw" => Ok(OscillatorType::Sawtooth),
+        "triangle" | "tri" => Ok(OscillatorType::Triangle),
+        _ => Err(format!("Unknown oscillator type: {}", s).into()),
+    }
+}
 
 /// A waveform generator that produces audio signals.
 pub struct Oscillator {
