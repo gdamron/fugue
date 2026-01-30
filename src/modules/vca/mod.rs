@@ -4,7 +4,32 @@
 //! amplitude control. Common uses include applying envelope shapes to sounds,
 //! tremolo effects, and level control.
 
+use std::sync::{Arc, Mutex};
+
+use crate::factory::{ModuleBuildResult, ModuleFactory};
 use crate::Module;
+
+/// Factory for constructing VCA modules from configuration.
+pub struct VcaFactory;
+
+impl ModuleFactory for VcaFactory {
+    fn type_id(&self) -> &'static str {
+        "vca"
+    }
+
+    fn build(
+        &self,
+        _sample_rate: u32,
+        _config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        let vca = Vca::new();
+
+        Ok(ModuleBuildResult {
+            module: Arc::new(Mutex::new(vca)),
+            handles: vec![],
+        })
+    }
+}
 
 /// A Voltage Controlled Amplifier that multiplies audio by a control voltage.
 ///

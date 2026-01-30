@@ -1,35 +1,72 @@
 //! Patch builder for creating modular synthesis setups.
 
-use crate::modules::{Adsr, Clock, MelodyGenerator, Oscillator, Tempo, Vca};
-use crate::modules::{MelodyParams, OscillatorType};
-use crate::music::{Mode, Note, Scale};
-use crate::patch::format::{ModuleConfig, Patch};
-use crate::patch::runtime::{ModuleInstance, PatchRuntime};
-use crate::Module;
+use crate::patch::format::Patch;
+use crate::patch::handles::PatchHandles;
+use crate::patch::runtime::{
+    validate_input_port, validate_output_port, ModuleInstance, PatchRuntime,
+};
+use crate::registry::ModuleRegistry;
 use indexmap::IndexMap;
-use std::sync::{Arc, Mutex};
+use std::any::Any;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::graph::RoutingConnection;
 
 /// Patch builder that uses named port routing.
 ///
 /// Modules are connected via explicit port names rather than type-based routing.
+/// The builder uses a registry to construct modules from their type names.
 pub struct PatchBuilder {
     sample_rate: u32,
+    registry: ModuleRegistry,
 }
 
 impl PatchBuilder {
-    /// Creates a new patch builder.
+    /// Creates a new patch builder with the default module registry.
     pub fn new(sample_rate: u32) -> Self {
-        Self { sample_rate }
+        Self {
+            sample_rate,
+            registry: ModuleRegistry::default(),
+        }
+    }
+
+    /// Creates a new patch builder with a custom module registry.
+    pub fn with_registry(sample_rate: u32, registry: ModuleRegistry) -> Self {
+        Self {
+            sample_rate,
+            registry,
+        }
     }
 
     /// Builds and prepares a patch for execution.
-    pub fn build(&self, patch: Patch) -> Result<PatchRuntime, Box<dyn std::error::Error>> {
+    ///
+    /// Returns both the runtime (for starting audio) and handles (for runtime control).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let patch = Patch::from_file("my_patch.json")?;
+    /// let builder = PatchBuilder::new(44100);
+    /// let (runtime, handles) = builder.build(patch)?;
+    ///
+    /// // Get control handles before starting
+    /// let tempo: Tempo = handles.get("clock.tempo").expect("no tempo");
+    ///
+    /// // Start audio
+    /// let running = runtime.start()?;
+    ///
+    /// // Control while running
+    /// tempo.set_bpm(140.0);
+    /// ```
+    pub fn build(
+        &self,
+        patch: Patch,
+    ) -> Result<(PatchRuntime, PatchHandles), Box<dyn std::error::Error>> {
         self.validate_patch(&patch)?;
 
         // Build all module instances
-        let modules = self.build_modules(&patch)?;
+        let (modules, handles) = self.build_modules(&patch)?;
 
         // Build the routing graph
         let routing = self.build_routing(&patch, &modules)?;
@@ -43,36 +80,13 @@ impl PatchBuilder {
             .id
             .clone();
 
-        // Extract runtime controls (tempo, melody params)
-        let tempo = modules
-            .get("clock")
-            .and_then(|m| {
-                if let ModuleInstance::Clock(clock) = m {
-                    Some(clock.lock().unwrap().tempo().clone())
-                } else {
-                    None
-                }
-            })
-            .ok_or("No clock found for tempo control")?;
-
-        let melody_params: Vec<MelodyParams> = modules
-            .iter()
-            .filter_map(|(_, m)| {
-                if let ModuleInstance::Melody(melody) = m {
-                    Some(melody.lock().unwrap().params().clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(PatchRuntime {
+        let runtime = PatchRuntime {
             modules,
             routing,
             dac_id,
-            tempo,
-            melody_params,
-        })
+        };
+
+        Ok((runtime, handles))
     }
 
     fn validate_patch(&self, patch: &Patch) -> Result<(), Box<dyn std::error::Error>> {
@@ -134,7 +148,7 @@ impl PatchBuilder {
         for module in &patch.modules {
             if module.id != "dac"
                 && !visited.contains(&module.id)
-                && self.has_cycle_dfs(&module.id, &graph, &mut visited, &mut rec_stack)
+                && Self::has_cycle_dfs(&module.id, &graph, &mut visited, &mut rec_stack)
             {
                 return Err(format!(
                     "Cycle detected in signal graph involving module '{}'",
@@ -151,7 +165,6 @@ impl PatchBuilder {
     ///
     /// Returns true if a cycle is detected starting from `node`.
     fn has_cycle_dfs(
-        &self,
         node: &str,
         graph: &std::collections::HashMap<String, Vec<String>>,
         visited: &mut std::collections::HashSet<String>,
@@ -164,7 +177,7 @@ impl PatchBuilder {
         if let Some(neighbors) = graph.get(node) {
             for neighbor in neighbors {
                 if !visited.contains(neighbor) {
-                    if self.has_cycle_dfs(neighbor, graph, visited, rec_stack) {
+                    if Self::has_cycle_dfs(neighbor, graph, visited, rec_stack) {
                         return true;
                     }
                 } else if rec_stack.contains(neighbor) {
@@ -181,96 +194,31 @@ impl PatchBuilder {
     fn build_modules(
         &self,
         patch: &Patch,
-    ) -> Result<IndexMap<String, ModuleInstance>, Box<dyn std::error::Error>> {
+    ) -> Result<(IndexMap<String, ModuleInstance>, PatchHandles), Box<dyn std::error::Error>> {
         let mut modules = IndexMap::new();
+        let mut all_handles: HashMap<String, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
         for spec in &patch.modules {
-            let module = match spec.module_type.as_str() {
-                "clock" => {
-                    let tempo = Tempo::new(spec.config.bpm.unwrap_or(120.0));
-                    let mut clock = Clock::new(self.sample_rate, tempo).with_time_signature(
-                        spec.config
-                            .time_signature
-                            .as_ref()
-                            .map(|ts| ts.beats_per_measure)
-                            .unwrap_or(4),
-                    );
+            // DAC is handled specially - it's not built via factory
+            if spec.module_type == "dac" {
+                continue;
+            }
 
-                    // Apply gate_duration if specified
-                    if let Some(gate_dur) = spec.config.gate_duration {
-                        clock = clock.with_gate_duration(gate_dur as f64);
-                    }
+            // Build module via factory
+            let result = self
+                .registry
+                .build(&spec.module_type, self.sample_rate, &spec.config)?;
 
-                    ModuleInstance::Clock(Arc::new(Mutex::new(clock)))
-                }
-                "melody" => {
-                    let root = Note::new(spec.config.root_note.unwrap_or(60));
-                    let mode = self.parse_mode(spec.config.mode.as_deref().unwrap_or("dorian"))?;
-                    let scale = Scale::new(root, mode);
+            modules.insert(spec.id.clone(), result.module);
 
-                    let degrees = spec
-                        .config
-                        .scale_degrees
-                        .clone()
-                        .unwrap_or_else(|| vec![0, 1, 2, 3, 4, 5, 6]);
-                    let params = MelodyParams::new(degrees);
-
-                    if let Some(weights) = &spec.config.note_weights {
-                        params.set_note_weights(weights.clone());
-                    }
-
-                    let melody = MelodyGenerator::new(scale, params);
-                    ModuleInstance::Melody(Arc::new(Mutex::new(melody)))
-                }
-                "oscillator" => {
-                    let osc_type = self.parse_oscillator_type(&spec.config)?;
-                    let mut osc = Oscillator::new(self.sample_rate, osc_type);
-
-                    if let Some(freq) = spec.config.frequency {
-                        osc.set_frequency(freq);
-                    }
-                    if let Some(fm) = spec.config.fm_amount {
-                        osc.set_fm_amount(fm);
-                    }
-                    if let Some(am) = spec.config.am_amount {
-                        osc.set_am_amount(am);
-                    }
-
-                    ModuleInstance::Oscillator(Arc::new(Mutex::new(osc)))
-                }
-                "adsr" => {
-                    let mut adsr = Adsr::new(self.sample_rate);
-
-                    // Apply config values if specified
-                    if let Some(attack) = spec.config.attack {
-                        let _ = adsr.set_input("attack", attack);
-                    }
-                    if let Some(decay) = spec.config.decay {
-                        let _ = adsr.set_input("decay", decay);
-                    }
-                    if let Some(sustain) = spec.config.sustain {
-                        let _ = adsr.set_input("sustain", sustain);
-                    }
-                    if let Some(release) = spec.config.release {
-                        let _ = adsr.set_input("release", release);
-                    }
-
-                    ModuleInstance::Adsr(Arc::new(Mutex::new(adsr)))
-                }
-                "vca" => {
-                    let vca = Vca::new();
-                    ModuleInstance::Vca(Arc::new(Mutex::new(vca)))
-                }
-                "dac" => ModuleInstance::Dac, // DAC is handled specially
-                _ => {
-                    return Err(format!("Unknown module type: {}", spec.module_type).into());
-                }
-            };
-
-            modules.insert(spec.id.clone(), module);
+            // Collect handles with flat keys: "module_id.handle_name"
+            for (handle_name, handle) in result.handles {
+                let key = format!("{}.{}", spec.id, handle_name);
+                all_handles.insert(key, handle);
+            }
         }
 
-        Ok(modules)
+        Ok((modules, PatchHandles::new(all_handles)))
     }
 
     fn build_routing(
@@ -286,11 +234,11 @@ impl PatchBuilder {
 
             // Validate ports exist on modules
             if let Some(module) = modules.get(&conn.from) {
-                module.validate_output_port(&from_port)?;
+                validate_output_port(module, &from_port)?;
             }
             if let Some(module) = modules.get(&conn.to) {
                 if conn.to != "dac" {
-                    module.validate_input_port(&to_port)?;
+                    validate_input_port(module, &to_port)?;
                 }
             }
 
@@ -303,32 +251,5 @@ impl PatchBuilder {
         }
 
         Ok(routing)
-    }
-
-    fn parse_mode(&self, mode_str: &str) -> Result<Mode, Box<dyn std::error::Error>> {
-        match mode_str.to_lowercase().as_str() {
-            "ionian" | "major" => Ok(Mode::Ionian),
-            "dorian" => Ok(Mode::Dorian),
-            "phrygian" => Ok(Mode::Phrygian),
-            "lydian" => Ok(Mode::Lydian),
-            "mixolydian" => Ok(Mode::Mixolydian),
-            "aeolian" | "minor" => Ok(Mode::Aeolian),
-            "locrian" => Ok(Mode::Locrian),
-            _ => Err(format!("Unknown mode: {}", mode_str).into()),
-        }
-    }
-
-    fn parse_oscillator_type(
-        &self,
-        config: &ModuleConfig,
-    ) -> Result<OscillatorType, Box<dyn std::error::Error>> {
-        let osc_str = config.oscillator_type.as_deref().unwrap_or("sine");
-        match osc_str.to_lowercase().as_str() {
-            "sine" => Ok(OscillatorType::Sine),
-            "square" => Ok(OscillatorType::Square),
-            "sawtooth" | "saw" => Ok(OscillatorType::Sawtooth),
-            "triangle" | "tri" => Ok(OscillatorType::Triangle),
-            _ => Err(format!("Unknown oscillator type: {}", osc_str).into()),
-        }
     }
 }

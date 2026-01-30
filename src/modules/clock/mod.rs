@@ -1,10 +1,53 @@
+use std::any::Any;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::factory::{ModuleBuildResult, ModuleFactory};
 use crate::Module;
 
 pub use self::tempo::Tempo;
 
 mod tempo;
+
+/// Factory for constructing Clock modules from configuration.
+pub struct ClockFactory;
+
+impl ModuleFactory for ClockFactory {
+    fn type_id(&self) -> &'static str {
+        "clock"
+    }
+
+    fn build(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        let bpm = config.get("bpm").and_then(|v| v.as_f64()).unwrap_or(120.0);
+
+        let tempo = Tempo::new(bpm);
+        let mut clock = Clock::new(sample_rate, tempo.clone());
+
+        // Apply time signature if specified
+        if let Some(ts) = config.get("time_signature") {
+            if let Some(beats) = ts.get("beats_per_measure").and_then(|v| v.as_u64()) {
+                clock = clock.with_time_signature(beats as u32);
+            }
+        }
+
+        // Apply gate duration if specified
+        if let Some(gate_dur) = config.get("gate_duration").and_then(|v| v.as_f64()) {
+            clock = clock.with_gate_duration(gate_dur);
+        }
+
+        Ok(ModuleBuildResult {
+            module: Arc::new(Mutex::new(clock)),
+            handles: vec![(
+                "tempo".to_string(),
+                Arc::new(tempo) as Arc<dyn Any + Send + Sync>,
+            )],
+        })
+    }
+}
 
 /// A master clock that generates timing signals for tempo-synchronized modules.
 ///

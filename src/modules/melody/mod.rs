@@ -1,6 +1,10 @@
 //! Melody generation module.
 
-use crate::music::{Note, Scale};
+use std::any::Any;
+use std::sync::{Arc, Mutex};
+
+use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::music::{Mode, Note, Scale};
 use crate::Module;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -8,6 +12,81 @@ use rand::{Rng, SeedableRng};
 pub use self::params::MelodyParams;
 
 mod params;
+
+/// Factory for constructing MelodyGenerator modules from configuration.
+pub struct MelodyFactory;
+
+impl ModuleFactory for MelodyFactory {
+    fn type_id(&self) -> &'static str {
+        "melody"
+    }
+
+    fn build(
+        &self,
+        _sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        let root = Note::new(
+            config
+                .get("root_note")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(60) as u8,
+        );
+
+        let mode = parse_mode(
+            config
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("dorian"),
+        )?;
+
+        let scale = Scale::new(root, mode);
+
+        let degrees = config
+            .get("scale_degrees")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as usize))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec![0, 1, 2, 3, 4, 5, 6]);
+
+        let params = MelodyParams::new(degrees);
+
+        if let Some(weights) = config.get("note_weights").and_then(|v| v.as_array()) {
+            let weights: Vec<f32> = weights
+                .iter()
+                .filter_map(|v| v.as_f64().map(|n| n as f32))
+                .collect();
+            params.set_note_weights(weights);
+        }
+
+        let melody = MelodyGenerator::new(scale, params.clone());
+
+        Ok(ModuleBuildResult {
+            module: Arc::new(Mutex::new(melody)),
+            handles: vec![(
+                "params".to_string(),
+                Arc::new(params) as Arc<dyn Any + Send + Sync>,
+            )],
+        })
+    }
+}
+
+/// Parses a mode string into a Mode enum.
+fn parse_mode(mode_str: &str) -> Result<Mode, Box<dyn std::error::Error>> {
+    match mode_str.to_lowercase().as_str() {
+        "ionian" | "major" => Ok(Mode::Ionian),
+        "dorian" => Ok(Mode::Dorian),
+        "phrygian" => Ok(Mode::Phrygian),
+        "lydian" => Ok(Mode::Lydian),
+        "mixolydian" => Ok(Mode::Mixolydian),
+        "aeolian" | "minor" => Ok(Mode::Aeolian),
+        "locrian" => Ok(Mode::Locrian),
+        _ => Err(format!("Unknown mode: {}", mode_str).into()),
+    }
+}
 
 /// Generates melodies by selecting notes from a scale based on weighted probabilities.
 ///
