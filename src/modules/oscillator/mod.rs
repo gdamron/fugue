@@ -45,6 +45,7 @@ impl ModuleFactory for OscillatorFactory {
         Ok(ModuleBuildResult {
             module: Arc::new(Mutex::new(osc)),
             handles: vec![],
+            sink: None,
         })
     }
 }

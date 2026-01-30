@@ -27,6 +27,7 @@ impl ModuleFactory for VcaFactory {
         Ok(ModuleBuildResult {
             module: Arc::new(Mutex::new(vca)),
             handles: vec![],
+            sink: None,
         })
     }
 }

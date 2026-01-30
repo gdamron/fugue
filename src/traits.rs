@@ -2,6 +2,7 @@
 //!
 //! This module provides the fundamental abstraction for building synthesis graphs:
 //! - [`Module`] - The unified trait for all audio processing components with named ports
+//! - [`SinkModule`] - Trait for modules that output to external destinations (audio, file, network)
 
 /// The core abstraction for all synthesis components.
 ///
@@ -118,6 +119,55 @@ pub trait Module: Send {
     /// caching: if the same module's output is requested multiple times in
     /// one sample, it returns cached values without reprocessing.
     fn mark_processed(&mut self, sample: u64);
+}
+
+/// Output from a sink module.
+///
+/// Currently supports mono output. Designed to be extended for stereo
+/// and multichannel audio in the future.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SinkOutput {
+    /// The mono audio sample (or left channel for future stereo support).
+    pub sample: f32,
+}
+
+impl SinkOutput {
+    /// Creates a mono sink output.
+    pub fn mono(sample: f32) -> Self {
+        Self { sample }
+    }
+}
+
+/// A module that collects output for external destinations.
+///
+/// Sink modules are the final stage in signal chains, sending audio to
+/// destinations like audio devices (DAC), files, or network streams.
+/// They drive the pull-based processing: the signal graph pulls from
+/// all sink modules each sample, which triggers recursive processing
+/// of their upstream dependencies.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use fugue::{Module, SinkModule, SinkOutput};
+///
+/// struct DacModule {
+///     audio_in: f32,
+///     last_processed_sample: u64,
+/// }
+///
+/// impl SinkModule for DacModule {
+///     fn sink_output(&self) -> SinkOutput {
+///         SinkOutput::mono(self.audio_in)
+///     }
+/// }
+/// ```
+pub trait SinkModule: Module {
+    /// Returns the collected output after processing.
+    ///
+    /// Called by the signal graph after `process()` to collect the
+    /// final output sample for mixing to audio output.
+    fn sink_output(&self) -> SinkOutput;
 }
 
 /// Helper for validating port names at module construction.
