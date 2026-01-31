@@ -45,6 +45,7 @@ impl ModuleFactory for ClockFactory {
                 "tempo".to_string(),
                 Arc::new(tempo) as Arc<dyn Any + Send + Sync>,
             )],
+            sink: None,
         })
     }
 }

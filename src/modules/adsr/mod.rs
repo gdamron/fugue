@@ -37,6 +37,7 @@ impl ModuleFactory for AdsrFactory {
         Ok(ModuleBuildResult {
             module: Arc::new(Mutex::new(adsr)),
             handles: vec![],
+            sink: None,
         })
     }
 }

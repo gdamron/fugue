@@ -11,12 +11,13 @@
 //!
 //! ## Processing Order
 //!
-//! The system uses a **pull-based** approach where the DAC recursively requests inputs:
+//! The system uses a **pull-based** approach where sink modules drive processing:
 //!
-//! 1. **DAC requests inputs** - For each sample, the DAC pulls from connected modules
+//! 1. **Pull from sinks** - For each sample, pull from all sink module inputs
 //! 2. **Recursive dependency resolution** - Each module recursively pulls its inputs
 //! 3. **Caching** - Modules cache outputs per sample to avoid reprocessing
-//! 4. **Mix to DAC** - Combine all DAC inputs and output the final sample
+//! 4. **Process remaining** - Process any disconnected modules (for observable side effects)
+//! 5. **Mix outputs** - Combine all sink outputs and return the final sample
 //!
 //! ## Why IndexMap?
 //!
@@ -29,8 +30,14 @@
 //!   tie-breaking (when multiple valid orders exist) is deterministic across runs
 
 use indexmap::IndexMap;
+use std::sync::{Arc, Mutex};
+
+use crate::SinkModule;
 
 use super::runtime::ModuleInstance;
+
+/// Type alias for sink module instances.
+pub(crate) type SinkInstance = Arc<Mutex<dyn SinkModule + Send>>;
 
 /// A single routing connection in the signal graph.
 #[derive(Debug, Clone)]
@@ -43,9 +50,10 @@ pub(crate) struct RoutingConnection {
 
 /// The signal processing graph for modular routing.
 pub(crate) struct SignalGraph {
+    /// All modules in the graph (including sinks).
     pub(crate) modules: IndexMap<String, ModuleInstance>,
-    pub(crate) routing: Vec<RoutingConnection>,
-    pub(crate) dac_id: String,
+    /// Sink modules that drive processing and collect output.
+    pub(crate) sinks: IndexMap<String, SinkInstance>,
     /// Maps module_id -> Vec of connections that feed into it (for pull-based processing)
     pub(crate) input_map: std::collections::HashMap<String, Vec<RoutingConnection>>,
     /// Current sample number (for caching)
@@ -122,15 +130,47 @@ impl SignalGraph {
         Err(format!("Module '{}' not found", module_id))
     }
 
+    /// Pulls all inputs for a module without returning an output.
+    ///
+    /// Used for sink modules where we need to process dependencies
+    /// but the output comes from `sink_output()` instead.
+    fn pull_inputs_for_module(&mut self, module_id: &str) {
+        // Clone input connections to avoid borrow issues during recursion
+        let input_connections: Vec<RoutingConnection> =
+            self.input_map.get(module_id).cloned().unwrap_or_default();
+
+        // Recursively pull all inputs
+        for conn in &input_connections {
+            let input_value = self
+                .pull_output(&conn.from_module, &conn.from_port)
+                .unwrap_or_else(|e| {
+                    eprintln!(
+                        "Warning: Failed to pull {}:{} - {}",
+                        conn.from_module, conn.from_port, e
+                    );
+                    0.0
+                });
+
+            // Set the input on this module
+            if let Some(to_module) = self.modules.get(module_id) {
+                let _ = to_module
+                    .lock()
+                    .unwrap()
+                    .set_input(&conn.to_port, input_value);
+            }
+        }
+    }
+
     /// Processes one sample through the entire graph.
     ///
     /// # Pull-Based Processing Algorithm
     ///
     /// 1. **Increment sample counter**: Track which sample we're processing
-    /// 2. **Find DAC connections**: Determine what signals feed into the DAC
-    /// 3. **Pull outputs**: Recursively request each DAC input (triggers dependency chain)
-    /// 4. **Mix signals**: Combine all DAC inputs with gain compensation
-    /// 5. **Return sample**: Output the final mixed audio sample
+    /// 2. **Pull from sinks**: For each sink module, pull its inputs (triggers dependency chain)
+    /// 3. **Process sinks**: Process each sink and collect its output
+    /// 4. **Process remaining**: Process any modules not yet processed (disconnected modules)
+    /// 5. **Mix outputs**: Combine all sink outputs with gain compensation
+    /// 6. **Return sample**: Output the final mixed audio sample
     ///
     /// The pull-based approach ensures correct processing order through recursive
     /// dependency resolution. Each module processes exactly once per sample via caching.
@@ -138,37 +178,49 @@ impl SignalGraph {
         // Increment sample counter for cache invalidation
         self.current_sample += 1;
 
-        // Find all connections going to DAC
-        let dac_connections: Vec<RoutingConnection> = self
-            .routing
-            .iter()
-            .filter(|conn| conn.to_module == self.dac_id)
-            .cloned()
-            .collect();
+        // Collect sink outputs
+        let mut sink_outputs = Vec::new();
 
-        // Pull each DAC input (triggers recursive processing)
-        let mut dac_signals = Vec::new();
-        for conn in &dac_connections {
-            match self.pull_output(&conn.from_module, &conn.from_port) {
-                Ok(value) => dac_signals.push(value),
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to pull DAC input from {}:{} - {}",
-                        conn.from_module, conn.from_port, e
-                    );
-                }
+        // Clone sink IDs to avoid borrow issues
+        let sink_ids: Vec<String> = self.sinks.keys().cloned().collect();
+
+        for sink_id in &sink_ids {
+            // Pull all inputs for this sink (triggers recursive processing)
+            self.pull_inputs_for_module(sink_id);
+
+            // Process the sink and collect output
+            if let Some(sink) = self.sinks.get(sink_id) {
+                let mut s = sink.lock().unwrap();
+                s.process();
+                s.mark_processed(self.current_sample);
+                sink_outputs.push(s.sink_output().sample);
             }
         }
 
-        // Mix DAC inputs with gain compensation
-        if dac_signals.is_empty() {
+        // Process any modules not yet processed this sample
+        // This handles disconnected modules that may have observable side effects
+        for (_module_id, module) in &self.modules {
+            let mut m = module.lock().unwrap();
+            if m.last_processed_sample() != self.current_sample {
+                m.process();
+                m.mark_processed(self.current_sample);
+            }
+        }
+
+        // Mix sink outputs with gain compensation
+        Self::mix_outputs(&sink_outputs)
+    }
+
+    /// Mixes multiple audio signals with gain compensation.
+    fn mix_outputs(outputs: &[f32]) -> f32 {
+        if outputs.is_empty() {
             0.0
-        } else if dac_signals.len() == 1 {
-            dac_signals[0]
+        } else if outputs.len() == 1 {
+            outputs[0]
         } else {
             // Use sqrt(N) gain compensation to prevent clipping
-            let gain = 1.0 / (dac_signals.len() as f32).sqrt();
-            dac_signals.iter().sum::<f32>() * gain
+            let gain = 1.0 / (outputs.len() as f32).sqrt();
+            outputs.iter().sum::<f32>() * gain
         }
     }
 }

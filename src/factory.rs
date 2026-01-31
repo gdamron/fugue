@@ -4,7 +4,7 @@
 //! Each module type provides a factory implementation that knows how to construct
 //! instances from configuration.
 
-use crate::Module;
+use crate::{Module, SinkModule};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 ///         Ok(ModuleBuildResult {
 ///             module: Arc::new(Mutex::new(module)),
 ///             handles: vec![],
+///             sink: None,
 ///         })
 ///     }
 /// }
@@ -56,6 +57,17 @@ pub trait ModuleFactory: Send + Sync + 'static {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>>;
+
+    /// Returns true if this factory produces sink modules.
+    ///
+    /// Sink modules are final destinations in the signal chain (e.g., audio output,
+    /// file writer, network streamer). They drive pull-based processing and their
+    /// outputs are collected for external destinations.
+    ///
+    /// Default is `false`. Override to return `true` for sink module factories.
+    fn is_sink(&self) -> bool {
+        false
+    }
 }
 
 /// Result of building a module from a factory.
@@ -74,4 +86,11 @@ pub struct ModuleBuildResult {
     /// These will be combined with the module ID to form flat keys
     /// like "clock.tempo" or "melody1.params".
     pub handles: Vec<(String, Arc<dyn Any + Send + Sync>)>,
+
+    /// If this module is a sink, a reference to it as a SinkModule.
+    ///
+    /// This should point to the same instance as `module`. Sink modules
+    /// are final destinations that drive pull-based processing and collect
+    /// output for external destinations like audio devices.
+    pub sink: Option<Arc<Mutex<dyn SinkModule + Send>>>,
 }

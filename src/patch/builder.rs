@@ -11,7 +11,14 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::graph::RoutingConnection;
+use super::graph::{RoutingConnection, SinkInstance};
+
+/// Result type for building modules, containing modules, sinks, and handles.
+type BuildModulesResult = (
+    IndexMap<String, ModuleInstance>,
+    IndexMap<String, SinkInstance>,
+    PatchHandles,
+);
 
 /// Patch builder that uses named port routing.
 ///
@@ -65,25 +72,24 @@ impl PatchBuilder {
     ) -> Result<(PatchRuntime, PatchHandles), Box<dyn std::error::Error>> {
         self.validate_patch(&patch)?;
 
-        // Build all module instances
-        let (modules, handles) = self.build_modules(&patch)?;
+        // Build all module instances (including sinks)
+        let (modules, sinks, handles) = self.build_modules(&patch)?;
+
+        // Warn if no sink modules (patch will run but produce silence)
+        if sinks.is_empty() {
+            eprintln!(
+                "Warning: Patch '{}' has no sink modules. Audio output will be silent.",
+                patch.title.as_deref().unwrap_or("untitled")
+            );
+        }
 
         // Build the routing graph
         let routing = self.build_routing(&patch, &modules)?;
 
-        // Find the DAC module
-        let dac_id = patch
-            .modules
-            .iter()
-            .find(|m| m.module_type == "dac")
-            .ok_or("No DAC module found")?
-            .id
-            .clone();
-
         let runtime = PatchRuntime {
             modules,
+            sinks,
             routing,
-            dac_id,
         };
 
         Ok((runtime, handles))
@@ -111,11 +117,6 @@ impl PatchBuilder {
             }
         }
 
-        // Check for DAC
-        if !patch.modules.iter().any(|m| m.module_type == "dac") {
-            return Err("No DAC module found".into());
-        }
-
         // Check for cycles in the dependency graph
         self.validate_acyclic(patch)?;
 
@@ -128,12 +129,20 @@ impl PatchBuilder {
     /// Cycles would cause infinite recursion in the pull-based system.
     fn validate_acyclic(&self, patch: &Patch) -> Result<(), Box<dyn std::error::Error>> {
         // Build adjacency list (module -> modules it connects to)
+        // Exclude sink modules as destinations (they're terminals)
+        let sink_types: std::collections::HashSet<&str> = patch
+            .modules
+            .iter()
+            .filter(|m| self.registry.is_sink(&m.module_type))
+            .map(|m| m.id.as_str())
+            .collect();
+
         let mut graph: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
 
         for conn in &patch.connections {
-            // Don't include DAC in cycle detection (it's a sink)
-            if conn.to != "dac" {
+            // Don't include connections TO sinks in cycle detection (they're terminals)
+            if !sink_types.contains(conn.to.as_str()) {
                 graph
                     .entry(conn.from.clone())
                     .or_default()
@@ -146,8 +155,12 @@ impl PatchBuilder {
         let mut rec_stack = std::collections::HashSet::new();
 
         for module in &patch.modules {
-            if module.id != "dac"
-                && !visited.contains(&module.id)
+            // Skip sink modules in cycle detection (they're terminals)
+            if sink_types.contains(module.id.as_str()) {
+                continue;
+            }
+
+            if !visited.contains(&module.id)
                 && Self::has_cycle_dfs(&module.id, &graph, &mut visited, &mut rec_stack)
             {
                 return Err(format!(
@@ -194,22 +207,24 @@ impl PatchBuilder {
     fn build_modules(
         &self,
         patch: &Patch,
-    ) -> Result<(IndexMap<String, ModuleInstance>, PatchHandles), Box<dyn std::error::Error>> {
+    ) -> Result<BuildModulesResult, Box<dyn std::error::Error>> {
         let mut modules = IndexMap::new();
+        let mut sinks = IndexMap::new();
         let mut all_handles: HashMap<String, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
         for spec in &patch.modules {
-            // DAC is handled specially - it's not built via factory
-            if spec.module_type == "dac" {
-                continue;
-            }
-
             // Build module via factory
             let result = self
                 .registry
                 .build(&spec.module_type, self.sample_rate, &spec.config)?;
 
+            // Store in modules collection
             modules.insert(spec.id.clone(), result.module);
+
+            // If this is a sink, also store in sinks collection
+            if let Some(sink) = result.sink {
+                sinks.insert(spec.id.clone(), sink);
+            }
 
             // Collect handles with flat keys: "module_id.handle_name"
             for (handle_name, handle) in result.handles {
@@ -218,7 +233,7 @@ impl PatchBuilder {
             }
         }
 
-        Ok((modules, PatchHandles::new(all_handles)))
+        Ok((modules, sinks, PatchHandles::new(all_handles)))
     }
 
     fn build_routing(
@@ -237,9 +252,7 @@ impl PatchBuilder {
                 validate_output_port(module, &from_port)?;
             }
             if let Some(module) = modules.get(&conn.to) {
-                if conn.to != "dac" {
-                    validate_input_port(module, &to_port)?;
-                }
+                validate_input_port(module, &to_port)?;
             }
 
             routing.push(RoutingConnection {

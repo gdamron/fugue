@@ -6,7 +6,7 @@ pub mod registry;
 pub mod traits;
 
 // Re-export core traits
-pub use traits::{validate_port, Module};
+pub use traits::{validate_port, Module, SinkModule, SinkOutput};
 
 // Re-export factory system
 pub use factory::{ModuleBuildResult, ModuleFactory};
@@ -14,8 +14,9 @@ pub use registry::ModuleRegistry;
 
 // Re-export modules
 pub use modules::{
-    Adsr, AdsrFactory, Clock, ClockFactory, Dac, MelodyFactory, MelodyGenerator, MelodyParams,
-    Oscillator, OscillatorFactory, OscillatorType, Tempo, Vca, VcaFactory,
+    Adsr, AdsrFactory, AudioBackend, AudioDriver, Clock, ClockFactory, DacFactory, DacModule,
+    MelodyFactory, MelodyGenerator, MelodyParams, Oscillator, OscillatorFactory, OscillatorType,
+    Tempo, Vca, VcaFactory,
 };
 
 // Re-export patch system

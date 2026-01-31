@@ -70,6 +70,7 @@ impl ModuleFactory for MelodyFactory {
                 "params".to_string(),
                 Arc::new(params) as Arc<dyn Any + Send + Sync>,
             )],
+            sink: None,
         })
     }
 }

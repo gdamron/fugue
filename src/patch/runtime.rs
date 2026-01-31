@@ -1,12 +1,11 @@
 //! Patch runtime for executing modular synthesis patches.
 
-use crate::modules::Dac;
+use crate::modules::{AudioBackend, AudioDriver};
 use crate::Module;
 use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
 
-use super::graph::RoutingConnection;
-use super::graph::SignalGraph;
+use super::graph::{RoutingConnection, SignalGraph, SinkInstance};
 
 /// Type alias for module instances stored in the runtime.
 pub type ModuleInstance = Arc<Mutex<dyn Module + Send>>;
@@ -49,14 +48,37 @@ pub(crate) fn validate_input_port(
 
 /// A prepared patch ready to run.
 pub struct PatchRuntime {
+    /// All modules in the patch.
     pub(crate) modules: IndexMap<String, ModuleInstance>,
+    /// Sink modules that drive processing.
+    pub(crate) sinks: IndexMap<String, SinkInstance>,
+    /// Signal routing connections.
     pub(crate) routing: Vec<RoutingConnection>,
-    pub(crate) dac_id: String,
 }
 
 impl PatchRuntime {
-    /// Starts audio playback.
+    /// Starts audio playback using the default AudioDriver.
     pub fn start(self) -> Result<RunningPatch, Box<dyn std::error::Error>> {
+        let audio = AudioDriver::new()?;
+        self.start_with_backend(audio)
+    }
+
+    /// Starts audio playback with a custom audio backend.
+    ///
+    /// This allows using alternative audio backends such as file writers,
+    /// network streamers, or null outputs for testing.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Use a custom audio backend
+    /// let backend = MyCustomBackend::new();
+    /// let running = runtime.start_with_backend(backend)?;
+    /// ```
+    pub fn start_with_backend<B: AudioBackend + 'static>(
+        self,
+        mut backend: B,
+    ) -> Result<RunningPatch, Box<dyn std::error::Error>> {
         // Build input map: for each module, collect all connections that feed into it
         let mut input_map: std::collections::HashMap<String, Vec<RoutingConnection>> =
             std::collections::HashMap::new();
@@ -70,22 +92,21 @@ impl PatchRuntime {
 
         let graph = SignalGraph {
             modules: self.modules,
-            routing: self.routing,
-            dac_id: self.dac_id,
+            sinks: self.sinks,
             input_map,
             current_sample: 0,
         };
 
         let graph_arc = Arc::new(Mutex::new(graph));
 
-        let mut dac = Dac::new()?;
-
         // Pass a closure that calls process_sample on the graph
         let graph_clone = graph_arc.clone();
-        dac.start(move || graph_clone.lock().unwrap().process_sample())?;
+        backend.start(Box::new(move || {
+            graph_clone.lock().unwrap().process_sample()
+        }))?;
 
         Ok(RunningPatch {
-            dac,
+            backend: Box::new(backend),
             _graph: graph_arc,
         })
     }
@@ -93,13 +114,13 @@ impl PatchRuntime {
 
 /// A running patch with audio output.
 pub struct RunningPatch {
-    dac: Dac,
+    backend: Box<dyn AudioBackend>,
     _graph: Arc<Mutex<SignalGraph>>,
 }
 
 impl RunningPatch {
     /// Stops audio playback.
     pub fn stop(mut self) {
-        self.dac.stop();
+        self.backend.stop();
     }
 }

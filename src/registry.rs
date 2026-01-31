@@ -80,6 +80,17 @@ impl ModuleRegistry {
         self.factories.contains_key(type_id)
     }
 
+    /// Returns true if the given module type is a sink.
+    ///
+    /// Sink modules are final destinations that drive pull-based processing
+    /// and collect output for external destinations (audio devices, files, etc.).
+    pub fn is_sink(&self, type_id: &str) -> bool {
+        self.factories
+            .get(type_id)
+            .map(|f| f.is_sink())
+            .unwrap_or(false)
+    }
+
     /// Returns an iterator over registered type identifiers.
     pub fn types(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.factories.keys().copied()
@@ -90,7 +101,7 @@ impl Default for ModuleRegistry {
     /// Creates a registry with all built-in module factories.
     fn default() -> Self {
         use crate::modules::{
-            AdsrFactory, ClockFactory, MelodyFactory, OscillatorFactory, VcaFactory,
+            AdsrFactory, ClockFactory, DacFactory, MelodyFactory, OscillatorFactory, VcaFactory,
         };
 
         let mut reg = Self::new();
@@ -99,6 +110,7 @@ impl Default for ModuleRegistry {
         reg.register(AdsrFactory);
         reg.register(VcaFactory);
         reg.register(MelodyFactory);
+        reg.register(DacFactory);
         reg
     }
 }
