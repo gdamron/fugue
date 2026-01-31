@@ -1,0 +1,121 @@
+{
+  "version": "1.0.0",
+  "title": "Filter LFO Wah",
+  "description": "LFO modulating filter cutoff for wah-wah/auto-filter effect",
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 120.0,
+        "time_signature": {
+          "beats_per_measure": 4,
+          "beat_unit": 4
+        }
+      }
+    },
+    {
+      "id": "melody",
+      "type": "melody",
+      "config": {
+        "root_note": 48,
+        "mode": "mixolydian",
+        "scale_degrees": [0, 2, 4, 5, 7],
+        "note_weights": [1.5, 1.0, 0.8, 1.2, 0.8]
+      }
+    },
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "square"
+      }
+    },
+    {
+      "id": "filter_lfo",
+      "type": "lfo",
+      "config": {
+        "frequency": 2.0,
+        "waveform": "triangle"
+      }
+    },
+    {
+      "id": "filter",
+      "type": "filter",
+      "config": {
+        "filter_type": "lowpass",
+        "cutoff": 800.0,
+        "resonance": 0.7,
+        "cv_amount": 2000.0
+      }
+    },
+    {
+      "id": "adsr",
+      "type": "adsr",
+      "config": {
+        "attack": 0.01,
+        "decay": 0.1,
+        "sustain": 0.8,
+        "release": 0.3
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "melody",
+      "to_port": "gate"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "osc",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody",
+      "from_port": "gate",
+      "to": "adsr",
+      "to_port": "gate"
+    },
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "filter",
+      "to_port": "audio"
+    },
+    {
+      "from": "filter_lfo",
+      "from_port": "out_uni",
+      "to": "filter",
+      "to_port": "cutoff_cv"
+    },
+    {
+      "from": "filter",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "adsr",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    },
+    {
+      "from": "vca",
+      "from_port": "audio",
+      "to": "dac",
+      "to_port": "audio"
+    }
+  ]
+}
