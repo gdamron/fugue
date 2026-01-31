@@ -101,12 +101,14 @@ impl Default for ModuleRegistry {
     /// Creates a registry with all built-in module factories.
     fn default() -> Self {
         use crate::modules::{
-            AdsrFactory, ClockFactory, DacFactory, MelodyFactory, OscillatorFactory, VcaFactory,
+            AdsrFactory, ClockFactory, DacFactory, LfoFactory, MelodyFactory, OscillatorFactory,
+            VcaFactory,
         };
 
         let mut reg = Self::new();
         reg.register(ClockFactory);
         reg.register(OscillatorFactory);
+        reg.register(LfoFactory);
         reg.register(AdsrFactory);
         reg.register(VcaFactory);
         reg.register(MelodyFactory);

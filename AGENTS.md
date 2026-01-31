@@ -76,6 +76,7 @@ src/
 ├── modules/                  # All synthesis modules
 │   ├── clock/                # Clock and Tempo
 │   ├── oscillator/           # Oscillator, OscillatorType
+│   ├── lfo/                  # Lfo (low frequency oscillator for modulation)
 │   ├── melody/               # MelodyGenerator, MelodyParams
 │   ├── adsr/                 # Adsr envelope generator
 │   ├── vca/                  # Vca (voltage-controlled amplifier)
@@ -228,6 +229,7 @@ All modules implement the `Module` trait:
 | `Clock` | `modules/clock/mod.rs` | _(none)_ | `gate` |
 | `MelodyGenerator` | `modules/melody/mod.rs` | `gate` | `frequency`, `gate` |
 | `Oscillator` | `modules/oscillator/mod.rs` | `frequency`, `fm`, `am` | `audio` |
+| `Lfo` | `modules/lfo/mod.rs` | `sync`, `rate` | `out`, `out_uni` |
 | `Adsr` | `modules/adsr/mod.rs` | `gate`, `attack`, `decay`, `sustain`, `release` | `envelope` |
 | `Vca` | `modules/vca/mod.rs` | `audio`, `cv` | `audio` |
 
@@ -252,6 +254,7 @@ This uniform approach enables flexible routing: any output can connect to any co
 | `Clock` | `modules/clock/` | Tempo-driven timing | out: `gate` |
 | `Tempo` | `modules/clock/tempo.rs` | Thread-safe BPM control | (shared state) |
 | `Oscillator` | `modules/oscillator/` | Waveform generation | in: `frequency`, `fm`, `am`; out: `audio` |
+| `Lfo` | `modules/lfo/` | Low-frequency modulation | in: `sync`, `rate`; out: `out`, `out_uni` |
 | `MelodyGenerator` | `modules/melody/` | Algorithmic note sequencing | in: `gate`; out: `frequency`, `gate` |
 | `Adsr` | `modules/adsr/` | ADSR envelope generator | in: `gate`; out: `envelope` |
 | `Vca` | `modules/vca/` | Voltage-controlled amplifier | in: `audio`, `cv`; out: `audio` |

@@ -3,6 +3,7 @@
 //! This module contains all the building blocks for creating modular synthesis patches:
 //! - [`Clock`] / [`Tempo`] - Timing and tempo control
 //! - [`Oscillator`] / [`OscillatorType`] - Waveform generation
+//! - [`Lfo`] - Low frequency oscillator for modulation
 //! - [`MelodyGenerator`] / [`MelodyParams`] - Algorithmic melody generation
 //! - [`Adsr`] - Envelope generator
 //! - [`Vca`] - Voltage controlled amplifier
@@ -10,11 +11,12 @@
 //! - [`AudioDriver`] / [`AudioBackend`] - Audio output backends
 //!
 //! Each module also provides a factory for self-contained construction:
-//! - [`ClockFactory`], [`OscillatorFactory`], [`AdsrFactory`], [`VcaFactory`], [`MelodyFactory`], [`DacFactory`]
+//! - [`ClockFactory`], [`OscillatorFactory`], [`LfoFactory`], [`AdsrFactory`], [`VcaFactory`], [`MelodyFactory`], [`DacFactory`]
 
 pub mod adsr;
 pub mod clock;
 pub mod dac;
+pub mod lfo;
 pub mod melody;
 pub mod oscillator;
 pub mod vca;
@@ -23,6 +25,7 @@ pub mod vca;
 pub use adsr::Adsr;
 pub use clock::{Clock, Tempo};
 pub use dac::{AudioBackend, AudioDriver, DacModule};
+pub use lfo::Lfo;
 pub use melody::{MelodyGenerator, MelodyParams};
 pub use oscillator::{Oscillator, OscillatorType};
 pub use vca::Vca;
@@ -31,6 +34,7 @@ pub use vca::Vca;
 pub use adsr::AdsrFactory;
 pub use clock::ClockFactory;
 pub use dac::DacFactory;
+pub use lfo::LfoFactory;
 pub use melody::MelodyFactory;
 pub use oscillator::OscillatorFactory;
 pub use vca::VcaFactory;
