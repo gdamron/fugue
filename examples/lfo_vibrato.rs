@@ -1,11 +1,13 @@
-// Example: Modular ADSR Melody
+// Example: LFO Vibrato
 //
-// Demonstrates the modular routing system with named ports.
-// Signal flow: Clock -> MelodyGenerator -> Oscillator -> VCA
-//              Clock -> MelodyGenerator -> ADSR -> VCA -> DAC
+// Demonstrates LFO modulation for creating a vibrato effect.
+// Signal flow:
+//   Clock -> MelodyGenerator -> Oscillator -> VCA -> DAC
+//                               ^
+//                LFO (vibrato) -┘ (FM input)
 //
-// The ADSR envelope shapes the audio from the oscillator using a VCA,
-// allowing for proper attack/decay/sustain/release control.
+// The LFO modulates the oscillator's pitch at ~5.5Hz, creating
+// a subtle pitch wobble (vibrato) on each note.
 
 use fugue::{default_sample_rate, Patch, PatchBuilder, Tempo};
 use std::error::Error;
@@ -14,21 +16,23 @@ use std::thread;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("=== Fugue Modular ADSR Melody Example ===");
+    println!("=== Fugue LFO Vibrato Example ===");
     println!();
-    println!("This example demonstrates the modular routing system");
-    println!("with named ports, enabling flexible signal routing.");
+    println!("This example demonstrates LFO modulation for vibrato.");
     println!();
     println!("Signal flow:");
     println!("  Clock -> MelodyGenerator -> Oscillator -> VCA -> DAC");
-    println!("         └─────────────────-> ADSR ───────┘");
+    println!("                              ^");
+    println!("               LFO (vibrato) -┘ (FM input)");
+    println!();
+    println!("The 5.5Hz sine LFO creates a subtle pitch wobble.");
     println!();
 
     // Get the audio device's sample rate BEFORE building the patch
     let sample_rate = default_sample_rate()?;
 
-    // Load the modular patch
-    let patch = Patch::from_file("examples/modular_adsr_melody.json")?;
+    // Load the patch
+    let patch = Patch::from_file("examples/lfo_vibrato.json")?;
     println!(
         "Loaded patch: {}",
         patch.title.as_deref().unwrap_or("Untitled")
@@ -39,11 +43,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!();
 
-    // Build the patch with the correct sample rate
+    // Build and start the patch with the correct sample rate
     let builder = PatchBuilder::new(sample_rate);
     let (runtime, handles) = builder.build(patch)?;
 
-    // Get the tempo handle for runtime control
+    // Get tempo handle for display
     let tempo: Tempo = handles
         .get("clock.tempo")
         .expect("Patch should have a clock with tempo handle");
@@ -54,30 +58,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     println!();
 
-    // Start the patch
     let running = runtime.start()?;
 
-    println!("Patch started successfully!");
-    println!();
-    println!("Controls:");
-    println!("  [Enter] - Quit");
+    println!("Patch started!");
     println!();
     println!("Current settings:");
     println!("  Tempo: {:.1} BPM", tempo.get_bpm());
+    println!("  LFO: 5.5 Hz sine wave -> oscillator FM input");
+    println!("  FM Amount: 8 Hz deviation");
     println!();
-    println!("Listening... (ADSR envelope shapes each note)");
+    println!("Listen for the vibrato (pitch wobble) on each note.");
     println!();
+    println!("Press [Enter] to quit...");
 
-    // Wait for user input
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
 
     println!("Stopping...");
     running.stop();
 
-    // Give time for cleanup
     thread::sleep(Duration::from_millis(100));
-
     println!("Done!");
+
     Ok(())
 }

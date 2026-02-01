@@ -6,7 +6,7 @@
 //
 // Should produce a 440Hz tone that pulses on each beat with ADSR envelope shaping.
 
-use fugue::{Patch, PatchBuilder, Tempo};
+use fugue::{default_sample_rate, Patch, PatchBuilder, Tempo};
 use std::error::Error;
 use std::io;
 
@@ -21,6 +21,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("  Oscillator (440Hz) -> VCA -> DAC");
     println!();
 
+    // Get the audio device's sample rate BEFORE building the patch
+    let sample_rate = default_sample_rate()?;
+
     // Load the simple patch
     let patch = Patch::from_file("examples/simple_tone.json")?;
     println!(
@@ -29,8 +32,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!();
 
-    // Build the patch - returns both runtime and handles
-    let builder = PatchBuilder::new(44100);
+    // Build the patch with the correct sample rate
+    let builder = PatchBuilder::new(sample_rate);
     let (runtime, handles) = builder.build(patch)?;
 
     // Get tempo handle for display

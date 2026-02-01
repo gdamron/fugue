@@ -16,9 +16,15 @@ impl ModuleFactory for DacFactory {
     fn build(
         &self,
         _sample_rate: u32,
-        _config: &serde_json::Value,
+        config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let dac = DacModule::new();
+        let mut dac = DacModule::new();
+
+        // Optional: disable soft clipping (default is enabled)
+        if let Some(soft_clip) = config.get("soft_clip").and_then(|v| v.as_bool()) {
+            dac.soft_clip = soft_clip;
+        }
+
         let dac_arc = Arc::new(Mutex::new(dac));
 
         Ok(ModuleBuildResult {
@@ -39,6 +45,9 @@ impl ModuleFactory for DacFactory {
 /// Implements both `Module` (for signal graph integration) and `SinkModule`
 /// (for audio output collection).
 ///
+/// By default, applies soft clipping (tanh-based) to prevent harsh digital
+/// clipping when signals exceed the -1.0 to 1.0 range.
+///
 /// # Inputs
 /// - `audio`: The audio signal to output (typically -1.0 to 1.0)
 ///
@@ -50,26 +59,49 @@ impl ModuleFactory for DacFactory {
 /// ```json
 /// {
 ///   "id": "dac",
-///   "type": "dac"
+///   "type": "dac",
+///   "config": {
+///     "soft_clip": true
+///   }
 /// }
 /// ```
 pub struct DacModule {
     /// Input audio sample
     audio_in: f32,
-    /// Output audio sample (for pass-through)
+    /// Output audio sample (after processing)
     audio_out: f32,
+    /// Whether to apply soft clipping (default: true)
+    soft_clip: bool,
     /// Last processed sample number (for caching)
     last_processed_sample: u64,
 }
 
 impl DacModule {
-    /// Creates a new DacModule.
+    /// Creates a new DacModule with soft clipping enabled.
     pub fn new() -> Self {
         Self {
             audio_in: 0.0,
             audio_out: 0.0,
+            soft_clip: true,
             last_processed_sample: 0,
         }
+    }
+
+    /// Enables or disables soft clipping.
+    pub fn with_soft_clip(mut self, enabled: bool) -> Self {
+        self.soft_clip = enabled;
+        self
+    }
+
+    /// Applies soft clipping using tanh-based saturation.
+    ///
+    /// This provides a gentle rolloff as signals approach and exceed ±1.0,
+    /// which sounds more musical than hard clipping.
+    #[inline]
+    fn soft_clip_sample(sample: f32) -> f32 {
+        // tanh provides smooth saturation
+        // Scale input slightly to make the knee less aggressive
+        sample.tanh()
     }
 }
 
@@ -85,8 +117,11 @@ impl Module for DacModule {
     }
 
     fn process(&mut self) -> bool {
-        // Pass through the audio
-        self.audio_out = self.audio_in;
+        self.audio_out = if self.soft_clip {
+            Self::soft_clip_sample(self.audio_in)
+        } else {
+            self.audio_in
+        };
         true
     }
 
@@ -145,9 +180,52 @@ mod tests {
         dac.set_input("audio", 0.5).unwrap();
         dac.process();
 
-        // Check output
+        // Check output (soft clipping affects the value slightly)
+        let out = dac.get_output("audio").unwrap();
+        assert!((out - 0.4621).abs() < 0.01, "Expected ~0.462, got {}", out);
+        assert_eq!(dac.sink_output().sample, out);
+    }
+
+    #[test]
+    fn test_dac_module_without_soft_clip() {
+        let mut dac = DacModule::new().with_soft_clip(false);
+
+        dac.set_input("audio", 0.5).unwrap();
+        dac.process();
+
+        // Without soft clip, should be exact pass-through
         assert_eq!(dac.get_output("audio").unwrap(), 0.5);
-        assert_eq!(dac.sink_output().sample, 0.5);
+    }
+
+    #[test]
+    fn test_dac_soft_clip_prevents_clipping() {
+        let mut dac = DacModule::new();
+
+        // Very hot signal that would normally clip
+        dac.set_input("audio", 3.0).unwrap();
+        dac.process();
+
+        let out = dac.get_output("audio").unwrap();
+        // Should be limited below 1.0
+        assert!(out < 1.0, "Soft clip should limit output, got {}", out);
+        assert!(out > 0.99, "Should still be close to 1.0, got {}", out);
+    }
+
+    #[test]
+    fn test_dac_soft_clip_symmetrical() {
+        let mut dac = DacModule::new();
+
+        // Test positive
+        dac.set_input("audio", 2.0).unwrap();
+        dac.process();
+        let pos = dac.get_output("audio").unwrap();
+
+        // Test negative
+        dac.set_input("audio", -2.0).unwrap();
+        dac.process();
+        let neg = dac.get_output("audio").unwrap();
+
+        assert!((pos + neg).abs() < 0.001, "Soft clip should be symmetrical");
     }
 
     #[test]
@@ -179,5 +257,19 @@ mod tests {
             .expect("Failed to build DacModule");
 
         assert!(result.sink.is_some());
+    }
+
+    #[test]
+    fn test_dac_factory_soft_clip_config() {
+        let factory = DacFactory;
+
+        // Test with soft_clip disabled
+        let result = factory
+            .build(44100, &serde_json::json!({"soft_clip": false}))
+            .expect("Failed to build DacModule");
+
+        let mut module = result.module.lock().unwrap();
+        module.set_input("audio", 0.5).ok();
+        // Can't easily test the soft_clip field, but we can verify it builds
     }
 }

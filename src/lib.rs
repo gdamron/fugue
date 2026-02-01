@@ -14,9 +14,10 @@ pub use registry::ModuleRegistry;
 
 // Re-export modules
 pub use modules::{
-    Adsr, AdsrFactory, AudioBackend, AudioDriver, Clock, ClockFactory, DacFactory, DacModule,
-    MelodyFactory, MelodyGenerator, MelodyParams, Oscillator, OscillatorFactory, OscillatorType,
-    Tempo, Vca, VcaFactory,
+    default_sample_rate, Adsr, AdsrFactory, AudioBackend, AudioDriver, Clock, ClockFactory,
+    DacFactory, DacModule, Filter, FilterFactory, FilterType, Lfo, LfoFactory, MelodyFactory,
+    MelodyGenerator, MelodyParams, Mixer, MixerFactory, Oscillator, OscillatorFactory,
+    OscillatorType, Tempo, Vca, VcaFactory,
 };
 
 // Re-export patch system
