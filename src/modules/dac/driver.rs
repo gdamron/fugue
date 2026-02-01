@@ -3,6 +3,35 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
+/// Returns the sample rate of the default audio output device.
+///
+/// This should be called before building a patch to ensure modules
+/// are configured with the correct sample rate for the audio hardware.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use fugue::{default_sample_rate, Patch, PatchBuilder};
+///
+/// let sample_rate = default_sample_rate()?;
+/// let patch = Patch::from_file("my_patch.json")?;
+/// let builder = PatchBuilder::new(sample_rate);
+/// let (runtime, handles) = builder.build(patch)?;
+/// let running = runtime.start()?;
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if no audio output device is available.
+pub fn default_sample_rate() -> Result<u32, Box<dyn std::error::Error>> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or("No output device available")?;
+    let config = device.default_output_config()?;
+    Ok(config.sample_rate().0)
+}
+
 /// Trait for audio output backends.
 ///
 /// This abstraction allows different audio backends (cpal, file writer, network streamer, etc.)

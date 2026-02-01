@@ -7,7 +7,7 @@
 // The ADSR envelope shapes the audio from the oscillator using a VCA,
 // allowing for proper attack/decay/sustain/release control.
 
-use fugue::{Patch, PatchBuilder, Tempo};
+use fugue::{default_sample_rate, Patch, PatchBuilder, Tempo};
 use std::error::Error;
 use std::io;
 use std::thread;
@@ -24,6 +24,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("         └─────────────────-> ADSR ───────┘");
     println!();
 
+    // Get the audio device's sample rate BEFORE building the patch
+    let sample_rate = default_sample_rate()?;
+
     // Load the modular patch
     let patch = Patch::from_file("examples/modular_adsr_melody.json")?;
     println!(
@@ -36,8 +39,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!();
 
-    // Build the patch - returns both runtime and handles
-    let builder = PatchBuilder::new(44100);
+    // Build the patch with the correct sample rate
+    let builder = PatchBuilder::new(sample_rate);
     let (runtime, handles) = builder.build(patch)?;
 
     // Get the tempo handle for runtime control

@@ -11,7 +11,7 @@
 // The LFO resets its phase on each new note, creating a consistent
 // tremolo pattern that starts the same way for every note.
 
-use fugue::{Patch, PatchBuilder, Tempo};
+use fugue::{default_sample_rate, Patch, PatchBuilder, Tempo};
 use std::error::Error;
 use std::io;
 use std::thread;
@@ -32,6 +32,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("The LFO resets on each note for consistent tremolo patterns.");
     println!();
 
+    // Get the audio device's sample rate BEFORE building the patch
+    let sample_rate = default_sample_rate()?;
+
     // Load the patch
     let patch = Patch::from_file("examples/lfo_tremolo_sync.json")?;
     println!(
@@ -44,8 +47,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!();
 
-    // Build and start the patch
-    let builder = PatchBuilder::new(44100);
+    // Build and start the patch with the correct sample rate
+    let builder = PatchBuilder::new(sample_rate);
     let (runtime, handles) = builder.build(patch)?;
 
     let tempo: Tempo = handles
