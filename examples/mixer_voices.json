@@ -1,0 +1,144 @@
+{
+  "version": "1.0.0",
+  "title": "Multi-Voice Mixer",
+  "description": "Three oscillators with different waveforms mixed together for a rich layered sound",
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 90.0,
+        "time_signature": {
+          "beats_per_measure": 4,
+          "beat_unit": 4
+        }
+      }
+    },
+    {
+      "id": "melody",
+      "type": "melody",
+      "config": {
+        "root_note": 48,
+        "mode": "dorian",
+        "scale_degrees": [0, 2, 3, 5, 7],
+        "note_weights": [1.5, 1.0, 1.0, 0.8, 1.0]
+      }
+    },
+    {
+      "id": "osc_saw",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "sawtooth"
+      }
+    },
+    {
+      "id": "osc_square",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "square"
+      }
+    },
+    {
+      "id": "osc_sub",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "sine"
+      }
+    },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "config": {
+        "channels": 3,
+        "levels": [0.25, 0.2, 0.3],
+        "master": 0.5
+      }
+    },
+    {
+      "id": "amp_env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.005,
+        "decay": 0.1,
+        "sustain": 0.7,
+        "release": 0.5
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "melody",
+      "to_port": "gate"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "osc_saw",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "osc_square",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "osc_sub",
+      "to_port": "frequency"
+    },
+    {
+      "from": "osc_saw",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in1"
+    },
+    {
+      "from": "osc_square",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in2"
+    },
+    {
+      "from": "osc_sub",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in3"
+    },
+    {
+      "from": "mixer",
+      "from_port": "out",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "melody",
+      "from_port": "gate",
+      "to": "amp_env",
+      "to_port": "gate"
+    },
+    {
+      "from": "amp_env",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    },
+    {
+      "from": "vca",
+      "from_port": "audio",
+      "to": "dac",
+      "to_port": "audio"
+    }
+  ]
+}
