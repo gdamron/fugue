@@ -1,0 +1,108 @@
+{
+  "version": "1.0.0",
+  "title": "Step Sequencer Bass Line",
+  "description": "Demonstrates the step sequencer with a classic bass pattern using ADSR envelope",
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 120.0,
+        "time_signature": {
+          "beats_per_measure": 4,
+          "beat_unit": 4
+        }
+      }
+    },
+    {
+      "id": "seq",
+      "type": "step_sequencer",
+      "config": {
+        "base_note": 48,
+        "steps": 16,
+        "gate_length": 0.5,
+        "pattern": [
+          { "note": 0, "gate": 0.8 },
+          { "note": null },
+          { "note": 0, "gate": 0.3 },
+          { "note": null },
+          { "note": 0, "gate": 0.8 },
+          { "note": null },
+          { "note": 7, "gate": 0.5 },
+          { "note": null },
+          { "note": 0, "gate": 0.8 },
+          { "note": null },
+          { "note": 0, "gate": 0.3 },
+          { "note": 5, "gate": 0.5 },
+          { "note": 0, "gate": 0.8 },
+          { "note": null },
+          { "note": 3, "gate": 0.5 },
+          { "note": null }
+        ]
+      }
+    },
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "sawtooth"
+      }
+    },
+    {
+      "id": "adsr",
+      "type": "adsr",
+      "config": {
+        "attack": 0.01,
+        "decay": 0.1,
+        "sustain": 0.6,
+        "release": 0.15
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "seq",
+      "to_port": "gate"
+    },
+    {
+      "from": "seq",
+      "from_port": "frequency",
+      "to": "osc",
+      "to_port": "frequency"
+    },
+    {
+      "from": "seq",
+      "from_port": "gate",
+      "to": "adsr",
+      "to_port": "gate"
+    },
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "adsr",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    },
+    {
+      "from": "vca",
+      "from_port": "audio",
+      "to": "dac",
+      "to_port": "audio"
+    }
+  ]
+}
