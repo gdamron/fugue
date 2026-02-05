@@ -10,3 +10,33 @@ pub enum OscillatorType {
     /// Odd harmonics, softer than square.
     Triangle,
 }
+
+impl OscillatorType {
+    /// Converts oscillator type to f32 index.
+    ///
+    /// - Sine = 0.0
+    /// - Square = 1.0
+    /// - Sawtooth = 2.0
+    /// - Triangle = 3.0
+    pub fn to_index(self) -> f32 {
+        match self {
+            OscillatorType::Sine => 0.0,
+            OscillatorType::Square => 1.0,
+            OscillatorType::Sawtooth => 2.0,
+            OscillatorType::Triangle => 3.0,
+        }
+    }
+
+    /// Converts f32 index to oscillator type.
+    ///
+    /// Invalid indices default to Sine.
+    pub fn from_index(index: f32) -> OscillatorType {
+        match index.round() as i32 {
+            0 => OscillatorType::Sine,
+            1 => OscillatorType::Square,
+            2 => OscillatorType::Sawtooth,
+            3 => OscillatorType::Triangle,
+            _ => OscillatorType::Sine,
+        }
+    }
+}

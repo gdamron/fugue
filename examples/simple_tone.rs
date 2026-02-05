@@ -6,7 +6,7 @@
 //
 // Should produce a 440Hz tone that pulses on each beat with ADSR envelope shaping.
 
-use fugue::{default_sample_rate, Patch, PatchBuilder, Tempo};
+use fugue::{default_sample_rate, ClockControls, Patch, PatchBuilder};
 use std::error::Error;
 use std::io;
 
@@ -37,9 +37,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (runtime, handles) = builder.build(patch)?;
 
     // Get tempo handle for display
-    let tempo: Tempo = handles
-        .get("clock.tempo")
-        .expect("Patch should have a clock with tempo handle");
+    let tempo: ClockControls = handles
+        .get("clock.controls")
+        .expect("Patch should have a clock with controls handle");
 
     // Start the patch
     let running = runtime.start()?;

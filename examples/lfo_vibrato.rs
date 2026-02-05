@@ -9,7 +9,7 @@
 // The LFO modulates the oscillator's pitch at ~5.5Hz, creating
 // a subtle pitch wobble (vibrato) on each note.
 
-use fugue::{default_sample_rate, Patch, PatchBuilder, Tempo};
+use fugue::{default_sample_rate, ClockControls, Patch, PatchBuilder};
 use std::error::Error;
 use std::io;
 use std::thread;
@@ -48,9 +48,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (runtime, handles) = builder.build(patch)?;
 
     // Get tempo handle for display
-    let tempo: Tempo = handles
-        .get("clock.tempo")
-        .expect("Patch should have a clock with tempo handle");
+    let tempo: ClockControls = handles
+        .get("clock.controls")
+        .expect("Patch should have a clock with controls handle");
 
     println!("Available handles:");
     for key in handles.keys() {
