@@ -11,7 +11,7 @@
 // The LFO resets its phase on each new note, creating a consistent
 // tremolo pattern that starts the same way for every note.
 
-use fugue::{default_sample_rate, Patch, PatchBuilder, Tempo};
+use fugue::{default_sample_rate, ClockControls, Patch, PatchBuilder};
 use std::error::Error;
 use std::io;
 use std::thread;
@@ -51,9 +51,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let builder = PatchBuilder::new(sample_rate);
     let (runtime, handles) = builder.build(patch)?;
 
-    let tempo: Tempo = handles
-        .get("clock.tempo")
-        .expect("Patch should have a clock with tempo handle");
+    let tempo: ClockControls = handles
+        .get("clock.controls")
+        .expect("Patch should have a clock with controls handle");
 
     println!("Available handles:");
     for key in handles.keys() {

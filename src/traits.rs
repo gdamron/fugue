@@ -3,6 +3,75 @@
 //! This module provides the fundamental abstraction for building synthesis graphs:
 //! - [`Module`] - The unified trait for all audio processing components with named ports
 //! - [`SinkModule`] - Trait for modules that output to external destinations (audio, file, network)
+//! - [`ControlMeta`] - Metadata describing a module control for UI/REPL discovery
+
+/// Metadata about a single control exposed by a module.
+///
+/// Controls are parameters that can be adjusted at runtime via user interaction
+/// (knobs, sliders, buttons). This metadata enables UIs to display appropriate
+/// widgets with correct ranges and labels.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// ControlMeta {
+///     key: "attack".to_string(),
+///     description: "Attack time in seconds".to_string(),
+///     min: 0.0,
+///     max: 10.0,
+///     default: 0.01,
+///     variants: None,
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct ControlMeta {
+    /// The control key (e.g., "attack", "level.0", "type")
+    pub key: String,
+    /// Human-readable description
+    pub description: String,
+    /// Minimum valid value
+    pub min: f32,
+    /// Maximum valid value
+    pub max: f32,
+    /// Default value
+    pub default: f32,
+    /// For enum controls, the variant names in order (index 0.0, 1.0, etc.)
+    pub variants: Option<Vec<String>>,
+}
+
+impl ControlMeta {
+    /// Creates a new control metadata entry.
+    pub fn new(key: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            description: description.into(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.0,
+            variants: None,
+        }
+    }
+
+    /// Sets the range (min, max) for this control.
+    pub fn with_range(mut self, min: f32, max: f32) -> Self {
+        self.min = min;
+        self.max = max;
+        self
+    }
+
+    /// Sets the default value for this control.
+    pub fn with_default(mut self, default: f32) -> Self {
+        self.default = default;
+        self
+    }
+
+    /// Sets the variant names for an enum control.
+    pub fn with_variants(mut self, variants: Vec<String>) -> Self {
+        self.max = (variants.len() - 1) as f32;
+        self.variants = Some(variants);
+        self
+    }
+}
 
 /// The core abstraction for all synthesis components.
 ///
@@ -119,6 +188,46 @@ pub trait Module: Send {
     /// caching: if the same module's output is requested multiple times in
     /// one sample, it returns cached values without reprocessing.
     fn mark_processed(&mut self, sample: u64);
+
+    /// Returns metadata about all controls this module exposes.
+    ///
+    /// Controls are parameters that can be adjusted at runtime via user interaction.
+    /// Unlike signal inputs, controls persist their values and are used as defaults
+    /// when no signal is connected to the corresponding input.
+    ///
+    /// Default implementation returns an empty list (no controls).
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![]
+    }
+
+    /// Gets the current value of a control by key.
+    ///
+    /// Keys use dot notation for hierarchical access (e.g., "level.0" for
+    /// the first channel level on a mixer).
+    ///
+    /// Default implementation returns an error (no controls).
+    fn get_control(&self, _key: &str) -> Result<f32, String> {
+        Err("Module has no controls".to_string())
+    }
+
+    /// Sets the value of a control by key.
+    ///
+    /// Returns Ok(()) if successful, Err if the key is not recognized or
+    /// the value is invalid.
+    ///
+    /// Default implementation returns an error (no controls).
+    fn set_control(&mut self, _key: &str, _value: f32) -> Result<(), String> {
+        Err("Module has no controls".to_string())
+    }
+
+    /// Resets input "active" flags before each sample.
+    ///
+    /// Called by the signal graph before routing signals for each sample.
+    /// Modules use this to track which inputs received signals vs. using
+    /// control defaults.
+    ///
+    /// Default implementation does nothing.
+    fn reset_inputs(&mut self) {}
 }
 
 /// Output from a sink module.

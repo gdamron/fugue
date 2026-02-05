@@ -3,7 +3,7 @@
 //! These tests verify that the new pull-based signal processing system
 //! correctly handles various graph topologies and edge cases.
 
-use fugue::modules::Tempo;
+use fugue::modules::ClockControls;
 use fugue::patch::Patch;
 use fugue::PatchBuilder;
 
@@ -47,7 +47,7 @@ fn test_simple_chain() {
     let running = runtime.start().expect("Failed to start patch");
 
     // Should build without errors - actual audio playback not tested here
-    let tempo: Tempo = handles.get("clock.tempo").expect("No tempo handle");
+    let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
     assert_eq!(tempo.get_bpm(), 120.0);
     running.stop();
 }
@@ -104,7 +104,7 @@ fn test_multi_input_vca() {
     let running = runtime.start().expect("Failed to start patch");
 
     // Should build successfully - the pull-based system should handle this correctly
-    let tempo: Tempo = handles.get("clock.tempo").expect("No tempo handle");
+    let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
     assert_eq!(tempo.get_bpm(), 120.0);
     running.stop();
 }
@@ -171,7 +171,7 @@ fn test_diamond_pattern() {
     let running = runtime.start().expect("Failed to start patch");
 
     // Clock feeds melody, which feeds both ADSR (gate) and oscillator (frequency)
-    let tempo: Tempo = handles.get("clock.tempo").expect("No tempo handle");
+    let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
     assert_eq!(tempo.get_bpm(), 120.0);
     running.stop();
 }
@@ -327,7 +327,7 @@ fn test_complex_valid_graph() {
     let running = runtime.start().expect("Failed to start patch");
 
     // Two separate voices with shared ADSR should work correctly
-    let tempo: Tempo = handles.get("clock.tempo").expect("No tempo handle");
+    let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
     assert_eq!(tempo.get_bpm(), 140.0);
     running.stop();
 }

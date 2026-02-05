@@ -13,7 +13,7 @@
 // - Filter envelope: Fast attack, medium decay - creates the "pluck" character
 // - Amplitude envelope: Shapes the overall volume
 
-use fugue::{default_sample_rate, Patch, PatchBuilder, Tempo};
+use fugue::{default_sample_rate, ClockControls, Patch, PatchBuilder};
 use std::error::Error;
 use std::io;
 use std::thread;
@@ -51,9 +51,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let builder = PatchBuilder::new(sample_rate);
     let (runtime, handles) = builder.build(patch)?;
 
-    let tempo: Tempo = handles
-        .get("clock.tempo")
-        .expect("Patch should have a clock with tempo handle");
+    let tempo: ClockControls = handles
+        .get("clock.controls")
+        .expect("Patch should have a clock with controls handle");
 
     println!("Available handles:");
     for key in handles.keys() {

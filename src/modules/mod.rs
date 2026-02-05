@@ -1,15 +1,15 @@
 //! Modular synthesis components.
 //!
 //! This module contains all the building blocks for creating modular synthesis patches:
-//! - [`Clock`] / [`Tempo`] - Timing and tempo control
-//! - [`Oscillator`] / [`OscillatorType`] - Waveform generation
-//! - [`Lfo`] - Low frequency oscillator for modulation
-//! - [`Filter`] / [`FilterType`] - Resonant filter for subtractive synthesis
-//! - [`Mixer`] - Multi-channel audio mixer
-//! - [`MelodyGenerator`] / [`MelodyParams`] - Algorithmic melody generation
+//! - [`Clock`] / [`ClockControls`] - Timing and tempo control
+//! - [`Oscillator`] / [`OscillatorControls`] / [`OscillatorType`] - Waveform generation
+//! - [`Lfo`] / [`LfoControls`] - Low frequency oscillator for modulation
+//! - [`Filter`] / [`FilterControls`] / [`FilterType`] - Resonant filter for subtractive synthesis
+//! - [`Mixer`] / [`MixerControls`] - Multi-channel audio mixer
+//! - [`MelodyGenerator`] / [`MelodyControls`] - Algorithmic melody generation
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
-//! - [`Adsr`] - Envelope generator
-//! - [`Vca`] - Voltage controlled amplifier
+//! - [`Adsr`] / [`AdsrControls`] - Envelope generator
+//! - [`Vca`] / [`VcaControls`] - Voltage controlled amplifier
 //! - [`DacModule`] - Audio output sink module
 //! - [`AudioDriver`] / [`AudioBackend`] - Audio output backends
 //!
@@ -28,16 +28,24 @@ pub mod step_sequencer;
 pub mod vca;
 
 // Re-export module types
-pub use adsr::Adsr;
-pub use clock::{Clock, Tempo};
+pub use adsr::{Adsr, AdsrControls};
+pub use clock::{Clock, ClockControls};
+
+// Deprecated type alias for backward compatibility
+#[allow(deprecated)]
+pub use clock::Tempo;
 pub use dac::{default_sample_rate, AudioBackend, AudioDriver, DacModule};
-pub use filter::{Filter, FilterType};
-pub use lfo::Lfo;
-pub use melody::{MelodyGenerator, MelodyParams};
-pub use mixer::Mixer;
-pub use oscillator::{Oscillator, OscillatorType};
+pub use filter::{Filter, FilterControls, FilterType};
+pub use lfo::{Lfo, LfoControls};
+pub use melody::{MelodyControls, MelodyGenerator};
+
+// Deprecated type alias for backward compatibility
+#[allow(deprecated)]
+pub use melody::MelodyParams;
+pub use mixer::{Mixer, MixerControls};
+pub use oscillator::{Oscillator, OscillatorControls, OscillatorType};
 pub use step_sequencer::{Step, StepSequencer};
-pub use vca::Vca;
+pub use vca::{Vca, VcaControls};
 
 // Re-export factory types
 pub use adsr::AdsrFactory;

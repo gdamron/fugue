@@ -166,17 +166,24 @@ impl SignalGraph {
     /// # Pull-Based Processing Algorithm
     ///
     /// 1. **Increment sample counter**: Track which sample we're processing
-    /// 2. **Pull from sinks**: For each sink module, pull its inputs (triggers dependency chain)
-    /// 3. **Process sinks**: Process each sink and collect its output
-    /// 4. **Process remaining**: Process any modules not yet processed (disconnected modules)
-    /// 5. **Mix outputs**: Combine all sink outputs with gain compensation
-    /// 6. **Return sample**: Output the final mixed audio sample
+    /// 2. **Reset inputs**: Clear input "active" flags on all modules
+    /// 3. **Pull from sinks**: For each sink module, pull its inputs (triggers dependency chain)
+    /// 4. **Process sinks**: Process each sink and collect its output
+    /// 5. **Process remaining**: Process any modules not yet processed (disconnected modules)
+    /// 6. **Mix outputs**: Combine all sink outputs with gain compensation
+    /// 7. **Return sample**: Output the final mixed audio sample
     ///
     /// The pull-based approach ensures correct processing order through recursive
     /// dependency resolution. Each module processes exactly once per sample via caching.
     pub(crate) fn process_sample(&mut self) -> f32 {
         // Increment sample counter for cache invalidation
         self.current_sample += 1;
+
+        // Reset input "active" flags on all modules
+        // This allows modules to distinguish between signal inputs and control defaults
+        for (_module_id, module) in &self.modules {
+            module.lock().unwrap().reset_inputs();
+        }
 
         // Collect sink outputs
         let mut sink_outputs = Vec::new();

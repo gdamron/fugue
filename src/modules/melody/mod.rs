@@ -5,13 +5,18 @@ use std::sync::{Arc, Mutex};
 
 use crate::factory::{ModuleBuildResult, ModuleFactory};
 use crate::music::{Mode, Note, Scale};
+use crate::traits::ControlMeta;
 use crate::Module;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-pub use self::params::MelodyParams;
+pub use self::controls::MelodyControls;
 
-mod params;
+// Provide a deprecated type alias for backward compatibility
+#[allow(deprecated)]
+pub use self::controls::MelodyParams;
+
+mod controls;
 
 /// Factory for constructing MelodyGenerator modules from configuration.
 pub struct MelodyFactory;
@@ -52,23 +57,23 @@ impl ModuleFactory for MelodyFactory {
             })
             .unwrap_or_else(|| vec![0, 1, 2, 3, 4, 5, 6]);
 
-        let params = MelodyParams::new(degrees);
+        let controls = MelodyControls::new(degrees);
 
         if let Some(weights) = config.get("note_weights").and_then(|v| v.as_array()) {
             let weights: Vec<f32> = weights
                 .iter()
                 .filter_map(|v| v.as_f64().map(|n| n as f32))
                 .collect();
-            params.set_note_weights(weights);
+            controls.set_note_weights(weights);
         }
 
-        let melody = MelodyGenerator::new(scale, params.clone());
+        let melody = MelodyGenerator::new(scale, controls.clone());
 
         Ok(ModuleBuildResult {
             module: Arc::new(Mutex::new(melody)),
             handles: vec![(
-                "params".to_string(),
-                Arc::new(params) as Arc<dyn Any + Send + Sync>,
+                "controls".to_string(),
+                Arc::new(controls) as Arc<dyn Any + Send + Sync>,
             )],
             sink: None,
         })
@@ -101,9 +106,15 @@ fn parse_mode(mode_str: &str) -> Result<Mode, Box<dyn std::error::Error>> {
 /// # Outputs
 /// - `frequency`: Current note frequency in Hz
 /// - `gate`: Pass-through of the input gate signal
+///
+/// # Controls
+/// - `oscillator_type`: Waveform type (0=Sine, 1=Square, 2=Sawtooth, 3=Triangle)
+///
+/// Note: `allowed_degrees` and `note_weights` are complex Vec types accessed
+/// through typed methods on MelodyControls rather than the f32 API.
 pub struct MelodyGenerator {
     scale: Scale,
-    params: MelodyParams,
+    ctrl: MelodyControls,
     rng: StdRng,
     current_note: Note,
     // Modular inputs
@@ -118,13 +129,13 @@ pub struct MelodyGenerator {
 impl MelodyGenerator {
     /// Creates a new melody generator.
     ///
-    /// Notes are selected from the given scale according to the parameters.
+    /// Notes are selected from the given scale according to the controls.
     /// Note changes are triggered by the rising edge of the `gate` input.
-    pub fn new(scale: Scale, params: MelodyParams) -> Self {
+    pub fn new(scale: Scale, controls: MelodyControls) -> Self {
         let current_note = Note::new(60);
         Self {
             scale,
-            params,
+            ctrl: controls,
             rng: StdRng::from_entropy(),
             current_note,
             gate_in: 0.0,
@@ -139,8 +150,8 @@ impl MelodyGenerator {
     ///
     /// Returns middle C (MIDI 60) if no degrees are allowed.
     pub fn next_note(&mut self) -> Note {
-        let allowed = self.params.allowed_degrees.lock().unwrap();
-        let weights = self.params.note_weights.lock().unwrap();
+        let allowed = self.ctrl.allowed_degrees.lock().unwrap();
+        let weights = self.ctrl.note_weights.lock().unwrap();
 
         if allowed.is_empty() {
             return Note::new(60);
@@ -160,9 +171,9 @@ impl MelodyGenerator {
         self.scale.get_note(allowed[0])
     }
 
-    /// Returns a reference to the melody parameters.
-    pub fn params(&self) -> &MelodyParams {
-        &self.params
+    /// Returns a reference to the melody controls.
+    pub fn controls(&self) -> &MelodyControls {
+        &self.ctrl
     }
 }
 
@@ -223,5 +234,35 @@ impl Module for MelodyGenerator {
 
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
+    }
+
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![
+            ControlMeta::new("oscillator_type", "Waveform type for voice oscillator")
+                .with_default(0.0)
+                .with_variants(vec![
+                    "Sine".to_string(),
+                    "Square".to_string(),
+                    "Sawtooth".to_string(),
+                    "Triangle".to_string(),
+                ]),
+        ]
+    }
+
+    fn get_control(&self, key: &str) -> Result<f32, String> {
+        match key {
+            "oscillator_type" => Ok(self.ctrl.oscillator_type_index()),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        match key {
+            "oscillator_type" => {
+                self.ctrl.set_oscillator_type_index(value);
+                Ok(())
+            }
+            _ => Err(format!("Unknown control: {}", key)),
+        }
     }
 }

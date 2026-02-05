@@ -27,10 +27,16 @@
 //! }
 //! ```
 
+use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::traits::ControlMeta;
 use crate::Module;
+
+pub use self::controls::MixerControls;
+
+mod controls;
 
 /// Maximum number of mixer channels supported.
 pub const MAX_CHANNELS: usize = 8;
@@ -52,6 +58,11 @@ pub const MAX_CHANNELS: usize = 8;
 ///
 /// - `out` - Mixed audio output
 ///
+/// # Controls
+///
+/// - `level.0` through `level.7` - Per-channel base levels
+/// - `master` - Master output level
+///
 /// # Example
 ///
 /// ```rust,ignore
@@ -64,13 +75,16 @@ pub const MAX_CHANNELS: usize = 8;
 /// ```
 pub struct Mixer {
     channels: usize,
-    levels: [f32; MAX_CHANNELS],
-    master: f32,
+    ctrl: MixerControls,
 
     // Input values
     inputs: [f32; MAX_CHANNELS],
     level_cvs: [f32; MAX_CHANNELS],
     master_cv: f32,
+
+    // Active flags for signal override
+    level_cv_active: [bool; MAX_CHANNELS],
+    master_cv_active: bool,
 
     // For dynamic port lists
     input_names: Vec<&'static str>,
@@ -86,6 +100,13 @@ impl Mixer {
     /// Channel count is clamped to 1-8. Default levels are 1.0 (unity gain).
     pub fn new(channels: usize) -> Self {
         let channels = channels.clamp(1, MAX_CHANNELS);
+        let controls = MixerControls::new(channels);
+        Self::new_with_controls(channels, controls)
+    }
+
+    /// Creates a new mixer with the given controls.
+    pub fn new_with_controls(channels: usize, controls: MixerControls) -> Self {
+        let channels = channels.clamp(1, MAX_CHANNELS);
 
         // Build input port names based on channel count
         let mut input_names = Vec::with_capacity(channels * 2 + 1);
@@ -99,11 +120,12 @@ impl Mixer {
 
         Self {
             channels,
-            levels: [1.0; MAX_CHANNELS],
-            master: 1.0,
+            ctrl: controls,
             inputs: [0.0; MAX_CHANNELS],
             level_cvs: [1.0; MAX_CHANNELS], // Default CV is unity (no change)
             master_cv: 1.0,
+            level_cv_active: [false; MAX_CHANNELS],
+            master_cv_active: false,
             input_names,
             output_names: vec!["out"],
             last_processed_sample: 0,
@@ -111,29 +133,25 @@ impl Mixer {
     }
 
     /// Sets the level for a specific channel (0-indexed).
-    pub fn with_level(mut self, channel: usize, level: f32) -> Self {
-        if channel < self.channels {
-            self.levels[channel] = level.clamp(0.0, 2.0); // Allow some boost
-        }
+    pub fn with_level(self, channel: usize, level: f32) -> Self {
+        self.ctrl.set_level(channel, level);
         self
     }
 
     /// Sets the master output level.
-    pub fn with_master(mut self, level: f32) -> Self {
-        self.master = level.clamp(0.0, 2.0);
+    pub fn with_master(self, level: f32) -> Self {
+        self.ctrl.set_master(level);
         self
     }
 
     /// Sets the level for a specific channel.
     pub fn set_level(&mut self, channel: usize, level: f32) {
-        if channel < self.channels {
-            self.levels[channel] = level.clamp(0.0, 2.0);
-        }
+        self.ctrl.set_level(channel, level);
     }
 
     /// Sets the master output level.
     pub fn set_master(&mut self, level: f32) {
-        self.master = level.clamp(0.0, 2.0);
+        self.ctrl.set_master(level);
     }
 
     /// Returns the number of channels.
@@ -141,18 +159,38 @@ impl Mixer {
         self.channels
     }
 
+    /// Returns a reference to the controls.
+    pub fn controls(&self) -> &MixerControls {
+        &self.ctrl
+    }
+
     /// Mixes all inputs and returns the output sample.
     fn mix(&self) -> f32 {
         let mut sum = 0.0;
+        let levels = self.ctrl.levels.lock().unwrap();
 
         for i in 0..self.channels {
+            // Use CV if active, otherwise use control level
+            let level_cv = if self.level_cv_active[i] {
+                self.level_cvs[i]
+            } else {
+                1.0 // Unity when no CV connected
+            };
             // Channel output = input * base_level * level_cv
-            let channel_out = self.inputs[i] * self.levels[i] * self.level_cvs[i];
+            let channel_out = self.inputs[i] * levels[i] * level_cv;
             sum += channel_out;
         }
 
+        // Use master CV if active, otherwise use control master
+        let master_level = self.ctrl.master();
+        let master_cv = if self.master_cv_active {
+            self.master_cv
+        } else {
+            1.0 // Unity when no CV connected
+        };
+
         // Apply master level
-        sum * self.master * self.master_cv
+        sum * master_level * master_cv
     }
 }
 
@@ -200,6 +238,7 @@ impl Module for Mixer {
                 if idx < self.channels {
                     // CV is typically 0-1, but we allow it to boost slightly
                     self.level_cvs[idx] = value.clamp(0.0, 2.0);
+                    self.level_cv_active[idx] = true;
                     return Ok(());
                 }
             }
@@ -208,6 +247,7 @@ impl Module for Mixer {
         // Check for master
         if port == "master" {
             self.master_cv = value.clamp(0.0, 2.0);
+            self.master_cv_active = true;
             return Ok(());
         }
 
@@ -227,6 +267,66 @@ impl Module for Mixer {
 
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
+    }
+
+    fn reset_inputs(&mut self) {
+        self.level_cv_active = [false; MAX_CHANNELS];
+        self.master_cv_active = false;
+        // Note: audio inputs don't have control fallbacks
+    }
+
+    fn controls(&self) -> Vec<ControlMeta> {
+        let mut controls = Vec::with_capacity(self.channels + 1);
+
+        for i in 0..self.channels {
+            controls.push(
+                ControlMeta::new(format!("level.{}", i), format!("Channel {} level", i + 1))
+                    .with_range(0.0, 2.0)
+                    .with_default(1.0),
+            );
+        }
+
+        controls.push(
+            ControlMeta::new("master", "Master output level")
+                .with_range(0.0, 2.0)
+                .with_default(1.0),
+        );
+
+        controls
+    }
+
+    fn get_control(&self, key: &str) -> Result<f32, String> {
+        if key == "master" {
+            return Ok(self.ctrl.master());
+        }
+
+        if let Some(rest) = key.strip_prefix("level.") {
+            if let Ok(idx) = rest.parse::<usize>() {
+                if idx < self.channels {
+                    return Ok(self.ctrl.level(idx));
+                }
+            }
+        }
+
+        Err(format!("Unknown control: {}", key))
+    }
+
+    fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        if key == "master" {
+            self.ctrl.set_master(value);
+            return Ok(());
+        }
+
+        if let Some(rest) = key.strip_prefix("level.") {
+            if let Ok(idx) = rest.parse::<usize>() {
+                if idx < self.channels {
+                    self.ctrl.set_level(idx, value);
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(format!("Unknown control: {}", key))
     }
 }
 
@@ -269,27 +369,30 @@ impl ModuleFactory for MixerFactory {
             .map(|v| v as usize)
             .unwrap_or(4);
 
-        let mut mixer = Mixer::new(channels);
+        let master = config
+            .get("master")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0) as f32;
 
-        // Set individual channel levels
-        if let Some(levels) = config.get("levels").and_then(|v| v.as_array()) {
-            for (i, level) in levels.iter().enumerate() {
-                if i < channels {
-                    if let Some(l) = level.as_f64() {
-                        mixer = mixer.with_level(i, l as f32);
-                    }
-                }
-            }
-        }
+        let levels: Vec<f32> = config
+            .get("levels")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_f64().map(|n| n as f32))
+                    .collect()
+            })
+            .unwrap_or_else(Vec::new);
 
-        // Set master level
-        if let Some(master) = config.get("master").and_then(|v| v.as_f64()) {
-            mixer = mixer.with_master(master as f32);
-        }
+        let controls = MixerControls::new_with_levels(channels, &levels, master);
+        let mixer = Mixer::new_with_controls(channels, controls.clone());
 
         Ok(ModuleBuildResult {
             module: Arc::new(Mutex::new(mixer)),
-            handles: vec![],
+            handles: vec![(
+                "controls".to_string(),
+                Arc::new(controls) as Arc<dyn Any + Send + Sync>,
+            )],
             sink: None,
         })
     }
@@ -411,7 +514,7 @@ mod tests {
     #[test]
     fn test_mixer_factory() {
         let factory = MixerFactory;
-        assert_eq!(factory.type_id(), "mixer");
+        assert_eq!(ModuleFactory::type_id(&factory), "mixer");
 
         let config = serde_json::json!({
             "channels": 3,
@@ -454,5 +557,28 @@ mod tests {
             "Expected ~0 (signals cancel), got {}",
             out
         );
+    }
+
+    #[test]
+    fn test_mixer_controls() {
+        let mut mixer = Mixer::new(2);
+
+        // Test control metadata
+        let control_meta = Module::controls(&mixer);
+        assert_eq!(control_meta.len(), 3); // level.0, level.1, master
+        assert_eq!(control_meta[0].key, "level.0");
+        assert_eq!(control_meta[1].key, "level.1");
+        assert_eq!(control_meta[2].key, "master");
+
+        // Test get/set controls
+        mixer.set_control("level.0", 0.5).unwrap();
+        assert_eq!(mixer.get_control("level.0").unwrap(), 0.5);
+
+        mixer.set_control("master", 0.8).unwrap();
+        assert_eq!(mixer.get_control("master").unwrap(), 0.8);
+
+        // Test invalid control
+        assert!(mixer.get_control("invalid").is_err());
+        assert!(mixer.get_control("level.5").is_err()); // Only 2 channels
     }
 }
