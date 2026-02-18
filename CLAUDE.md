@@ -58,7 +58,7 @@ pub trait Module: Send {
 }
 ```
 
-Modules declare explicit port names and connect via named ports in JSON patches:
+Modules declare explicit port names and connect via named ports in JSON inventions:
 ```json
 {
   "connections": [
@@ -105,17 +105,17 @@ tempo.set_bpm(140.0);  // Main thread
 let bpm = tempo.get_bpm();  // Audio thread reads latest value
 ```
 
-## Declarative Patch System
+## Declarative Invention System
 
 Fugue supports both declarative (JSON) and programmatic (Rust) approaches.
 
-### Load and Run a JSON Patch
+### Load and Run a JSON Invention
 
 ```rust
-let patch = Patch::from_file("my_patch.json")?;
+let invention = Invention::from_file("my_invention.json")?;
 let dac = Dac::new()?;
-let builder = PatchBuilder::new(dac.sample_rate());
-let runtime = builder.build_and_run(patch)?;
+let builder = InventionBuilder::new(dac.sample_rate());
+let runtime = builder.build_and_run(invention)?;
 let running = runtime.start()?;
 
 // Control at runtime

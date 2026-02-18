@@ -8,7 +8,7 @@
 // gate lengths. Unlike the MelodyGenerator which uses random selection,
 // the step sequencer plays the exact same pattern every time.
 
-use fugue::{default_sample_rate, ClockControls, Patch, PatchBuilder};
+use fugue::{default_sample_rate, ClockControls, Invention, InventionBuilder};
 use std::error::Error;
 use std::io;
 use std::thread;
@@ -25,29 +25,29 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("                        └-> ADSR ───────┘");
     println!();
 
-    // Get the audio device's sample rate BEFORE building the patch
+    // Get the audio device's sample rate BEFORE building the invention
     let sample_rate = default_sample_rate()?;
 
-    // Load the step sequencer patch
-    let patch = Patch::from_file("examples/step_sequencer.json")?;
+    // Load the step sequencer invention
+    let invention = Invention::from_file("examples/step_sequencer.json")?;
     println!(
-        "Loaded patch: {}",
-        patch.title.as_deref().unwrap_or("Untitled")
+        "Loaded invention: {}",
+        invention.title.as_deref().unwrap_or("Untitled")
     );
     println!(
         "Description: {}",
-        patch.description.as_deref().unwrap_or("")
+        invention.description.as_deref().unwrap_or("")
     );
     println!();
 
-    // Build the patch with the correct sample rate
-    let builder = PatchBuilder::new(sample_rate);
-    let (runtime, handles) = builder.build(patch)?;
+    // Build the invention with the correct sample rate
+    let builder = InventionBuilder::new(sample_rate);
+    let (runtime, handles) = builder.build(invention)?;
 
     // Get the tempo handle for runtime control
     let tempo: ClockControls = handles
         .get("clock.controls")
-        .expect("Patch should have a clock with controls handle");
+        .expect("Invention should have a clock with controls handle");
 
     println!("Available handles:");
     for key in handles.keys() {
@@ -55,10 +55,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     println!();
 
-    // Start the patch
+    // Start the invention
     let running = runtime.start()?;
 
-    println!("Patch started successfully!");
+    println!("Invention started successfully!");
     println!();
     println!("Controls:");
     println!("  [Enter] - Quit");

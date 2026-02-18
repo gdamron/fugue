@@ -1,31 +1,31 @@
-//! Declarative patch file format for defining synthesis setups.
+//! Declarative invention file format for defining synthesis setups.
 //!
-//! Patches are JSON documents that describe modules and their connections.
+//! Inventions are JSON documents that describe modules and their connections.
 
 use serde::{Deserialize, Serialize};
 
-/// A complete patch document defining a modular synthesis setup.
+/// A complete invention document defining a modular synthesis setup.
 ///
-/// Patches can be loaded from JSON files or strings and define
+/// Inventions can be loaded from JSON files or strings and define
 /// the modules to instantiate and how they connect together.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Patch {
-    /// Version of the patch format.
+pub struct Invention {
+    /// Version of the invention format.
     #[serde(default = "default_version")]
     pub version: String,
 
-    /// Optional title for the patch.
+    /// Optional title for the invention.
     #[serde(default)]
     pub title: Option<String>,
 
-    /// Optional description of the patch.
+    /// Optional description of the invention.
     #[serde(default)]
     pub description: Option<String>,
 
-    /// The modules in this patch.
+    /// The modules in this invention.
     pub modules: Vec<ModuleSpec>,
 
-    /// Connections between modules (patch cables).
+    /// Connections between modules.
     pub connections: Vec<Connection>,
 }
 
@@ -33,25 +33,25 @@ fn default_version() -> String {
     "1.0.0".to_string()
 }
 
-impl Patch {
-    /// Parses a patch from a JSON string.
+impl Invention {
+    /// Parses an invention from a JSON string.
     pub fn from_json(json: &str) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(serde_json::from_str(json)?)
     }
 
-    /// Loads a patch from a JSON file.
+    /// Loads an invention from a JSON file.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let json = std::fs::read_to_string(path)?;
         Self::from_json(&json)
     }
 
-    /// Serializes the patch to a JSON string.
+    /// Serializes the invention to a JSON string.
     pub fn to_json(&self) -> Result<String, Box<dyn std::error::Error>> {
         Ok(serde_json::to_string_pretty(self)?)
     }
 }
 
-/// Specification for a single module in a patch.
+/// Specification for a single module in an invention.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleSpec {
     /// Unique identifier for this module instance.
@@ -65,7 +65,7 @@ pub struct ModuleSpec {
     ///
     /// Each module factory knows how to parse its own configuration.
     /// This allows modules to define their own config structure without
-    /// requiring changes to the patch format.
+    /// requiring changes to the invention format.
     #[serde(default)]
     pub config: serde_json::Value,
 }
@@ -88,7 +88,7 @@ impl Default for TimeSignature {
     }
 }
 
-/// A connection between two modules in a patch.
+/// A connection between two modules in an invention.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Connection {
     /// Source module ID.
@@ -111,11 +111,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_basic_patch() {
+    fn test_parse_basic_invention() {
         let json = r#"
         {
             "version": "1.0.0",
-            "title": "Test Patch",
+            "title": "Test Invention",
             "modules": [
                 {
                     "id": "clock1",
@@ -133,19 +133,19 @@ mod tests {
         }
         "#;
 
-        let patch = Patch::from_json(json).unwrap();
-        assert_eq!(patch.version, "1.0.0");
-        assert_eq!(patch.title, Some("Test Patch".to_string()));
-        assert_eq!(patch.modules.len(), 1);
-        assert_eq!(patch.modules[0].id, "clock1");
-        assert_eq!(patch.modules[0].module_type, "clock");
+        let invention = Invention::from_json(json).unwrap();
+        assert_eq!(invention.version, "1.0.0");
+        assert_eq!(invention.title, Some("Test Invention".to_string()));
+        assert_eq!(invention.modules.len(), 1);
+        assert_eq!(invention.modules[0].id, "clock1");
+        assert_eq!(invention.modules[0].module_type, "clock");
 
         // Config is now generic JSON
-        assert_eq!(patch.modules[0].config["bpm"], 120.0);
+        assert_eq!(invention.modules[0].config["bpm"], 120.0);
     }
 
     #[test]
-    fn test_parse_patch_with_empty_config() {
+    fn test_parse_invention_with_empty_config() {
         let json = r#"
         {
             "modules": [
@@ -158,8 +158,8 @@ mod tests {
         }
         "#;
 
-        let patch = Patch::from_json(json).unwrap();
-        assert_eq!(patch.modules[0].id, "vca1");
-        assert!(patch.modules[0].config.is_null());
+        let invention = Invention::from_json(json).unwrap();
+        assert_eq!(invention.modules[0].id, "vca1");
+        assert!(invention.modules[0].config.is_null());
     }
 }

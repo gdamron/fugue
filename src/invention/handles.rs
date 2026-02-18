@@ -1,4 +1,4 @@
-//! Runtime control handles for a built patch.
+//! Runtime control handles for a built invention.
 //!
 //! Provides type-safe access to module runtime controls like tempo and melody parameters.
 
@@ -6,7 +6,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Collection of runtime control handles from a built patch.
+/// Collection of runtime control handles from a built invention.
 ///
 /// Handles are stored with flat keys in the format `"module_id.handle_name"`,
 /// for example `"clock.tempo"` or `"melody1.params"`.
@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// # Example
 ///
 /// ```rust,ignore
-/// let (runtime, handles) = builder.build(patch)?;
+/// let (runtime, handles) = builder.build(invention)?;
 ///
 /// // Get a specific handle
 /// let tempo: Tempo = handles.get("clock.tempo").expect("no tempo");
@@ -27,12 +27,12 @@ use std::sync::Arc;
 ///     println!("Available: {}", key);
 /// }
 /// ```
-pub struct PatchHandles {
+pub struct InventionHandles {
     handles: HashMap<String, Arc<dyn Any + Send + Sync>>,
 }
 
-impl PatchHandles {
-    /// Creates a new PatchHandles from a map of handles.
+impl InventionHandles {
+    /// Creates a new InventionHandles from a map of handles.
     pub(crate) fn new(handles: HashMap<String, Arc<dyn Any + Send + Sync>>) -> Self {
         Self { handles }
     }
@@ -103,7 +103,7 @@ impl PatchHandles {
 
     /// List all available handle keys.
     ///
-    /// Useful for discovering what handles are available in a patch.
+    /// Useful for discovering what handles are available in an invention.
     ///
     /// # Example
     ///

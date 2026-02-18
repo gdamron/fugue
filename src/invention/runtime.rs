@@ -1,4 +1,4 @@
-//! Patch runtime for executing modular synthesis patches.
+//! Invention runtime for executing modular synthesis inventions.
 
 use crate::modules::{AudioBackend, AudioDriver};
 use crate::Module;
@@ -46,9 +46,9 @@ pub(crate) fn validate_input_port(
     Ok(())
 }
 
-/// A prepared patch ready to run.
-pub struct PatchRuntime {
-    /// All modules in the patch.
+/// A prepared invention ready to run.
+pub struct InventionRuntime {
+    /// All modules in the invention.
     pub(crate) modules: IndexMap<String, ModuleInstance>,
     /// Sink modules that drive processing.
     pub(crate) sinks: IndexMap<String, SinkInstance>,
@@ -56,9 +56,9 @@ pub struct PatchRuntime {
     pub(crate) routing: Vec<RoutingConnection>,
 }
 
-impl PatchRuntime {
+impl InventionRuntime {
     /// Starts audio playback using the default AudioDriver.
-    pub fn start(self) -> Result<RunningPatch, Box<dyn std::error::Error>> {
+    pub fn start(self) -> Result<RunningInvention, Box<dyn std::error::Error>> {
         let audio = AudioDriver::new()?;
         self.start_with_backend(audio)
     }
@@ -78,7 +78,7 @@ impl PatchRuntime {
     pub fn start_with_backend<B: AudioBackend + 'static>(
         self,
         mut backend: B,
-    ) -> Result<RunningPatch, Box<dyn std::error::Error>> {
+    ) -> Result<RunningInvention, Box<dyn std::error::Error>> {
         // Build input map: for each module, collect all connections that feed into it
         let mut input_map: std::collections::HashMap<String, Vec<RoutingConnection>> =
             std::collections::HashMap::new();
@@ -105,20 +105,20 @@ impl PatchRuntime {
             graph_clone.lock().unwrap().process_sample()
         }))?;
 
-        Ok(RunningPatch {
+        Ok(RunningInvention {
             backend: Box::new(backend),
             _graph: graph_arc,
         })
     }
 }
 
-/// A running patch with audio output.
-pub struct RunningPatch {
+/// A running invention with audio output.
+pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
     _graph: Arc<Mutex<SignalGraph>>,
 }
 
-impl RunningPatch {
+impl RunningInvention {
     /// Stops audio playback.
     pub fn stop(mut self) {
         self.backend.stop();
