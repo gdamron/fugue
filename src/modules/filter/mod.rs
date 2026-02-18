@@ -17,7 +17,7 @@
 //! - CV inputs for cutoff and resonance modulation
 //! - State-variable filter design for stability and musicality
 //!
-//! # Example Patch
+//! # Example Invention
 //!
 //! ```json
 //! {

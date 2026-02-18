@@ -10,7 +10,7 @@ A Rust library for composing algorithmic and generative music, inspired by ChucK
 - 🎹 **Music theory**: Scale and mode support (Dorian, Ionian, Phrygian, etc.)
 - 🎲 **Algorithmic composition**: Probabilistic melody generation with live parameter updates
 - 🎚️ **Live control**: Update scales, rhythms, and synthesis parameters in real-time
-- 📄 **Declarative inventions**: Define synthesis setups using JSON documents
+- 📄 **Inventions**: Define synthesis setups using JSON documents
 
 ## Quick Start
 
@@ -84,9 +84,9 @@ cargo run --example my_melody --release
 
 ## Two Ways to Build
 
-Fugue supports both declarative and programmatic approaches to building synthesis inventions.
+Fugue supports both declarative and programmatic approaches to building synthesis setups.
 
-### Declarative (JSON Inventions)
+### Declarative (JSON)
 
 Define your invention in a JSON file:
 
@@ -148,7 +148,7 @@ See [DECLARATIVE.md](DECLARATIVE.md) for full documentation of the invention for
 
 ### Programmatic (Rust Code)
 
-Build inventions imperatively in code:
+Build setups imperatively in code:
 
 ```rust
 use fugue::*;
@@ -234,7 +234,7 @@ The library is designed for WebAssembly support. Future versions will include:
 - [ ] WebAssembly: Browser support
 - [ ] Visualization: Waveform and spectrum display
 - [ ] Saving/loading: Export audio and save compositions
-- [ ] Business logic injection in inventions (custom code hooks)
+- [ ] Business logic injection in invention files (custom code hooks)
 - [ ] Real-time control mapping and automation
 
 ## License

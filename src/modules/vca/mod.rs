@@ -63,7 +63,7 @@ impl ModuleFactory for VcaFactory {
 ///
 /// ```rust,ignore
 /// // Connect an envelope to control a VCA
-/// // In patch JSON:
+/// // In invention JSON:
 /// {
 ///   "connections": [
 ///     {"from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio"},

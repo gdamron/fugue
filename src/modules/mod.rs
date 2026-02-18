@@ -1,6 +1,6 @@
 //! Modular synthesis components.
 //!
-//! This module contains all the building blocks for creating modular synthesis patches:
+//! This module contains all the building blocks for creating modular synthesis setups:
 //! - [`Clock`] / [`ClockControls`] - Timing and tempo control
 //! - [`Oscillator`] / [`OscillatorControls`] / [`OscillatorType`] - Waveform generation
 //! - [`Lfo`] / [`LfoControls`] - Low frequency oscillator for modulation
