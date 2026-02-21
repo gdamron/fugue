@@ -4,8 +4,8 @@
 //! correctly handles various graph topologies and edge cases.
 
 use fugue::modules::ClockControls;
-use fugue::patch::Patch;
-use fugue::PatchBuilder;
+use fugue::invention::Invention;
+use fugue::InventionBuilder;
 
 /// Test a simple chain: Clock → ADSR
 #[test]
@@ -41,10 +41,10 @@ fn test_simple_chain() {
     }
     "#;
 
-    let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = PatchBuilder::new(44100);
-    let (runtime, handles) = builder.build(patch).expect("Failed to build patch");
-    let running = runtime.start().expect("Failed to start patch");
+    let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
+    let builder = InventionBuilder::new(44100);
+    let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
+    let running = runtime.start().expect("Failed to start invention");
 
     // Should build without errors - actual audio playback not tested here
     let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
@@ -53,7 +53,7 @@ fn test_simple_chain() {
 }
 
 /// Test multi-input: Oscillator + ADSR → VCA
-/// This is the simple_tone patch structure
+/// This is the simple_tone invention structure
 #[test]
 fn test_multi_input_vca() {
     let json = r#"
@@ -98,10 +98,10 @@ fn test_multi_input_vca() {
     }
     "#;
 
-    let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = PatchBuilder::new(44100);
-    let (runtime, handles) = builder.build(patch).expect("Failed to build patch");
-    let running = runtime.start().expect("Failed to start patch");
+    let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
+    let builder = InventionBuilder::new(44100);
+    let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
+    let running = runtime.start().expect("Failed to start invention");
 
     // Should build successfully - the pull-based system should handle this correctly
     let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
@@ -165,10 +165,10 @@ fn test_diamond_pattern() {
     }
     "#;
 
-    let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = PatchBuilder::new(44100);
-    let (runtime, handles) = builder.build(patch).expect("Failed to build patch");
-    let running = runtime.start().expect("Failed to start patch");
+    let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
+    let builder = InventionBuilder::new(44100);
+    let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
+    let running = runtime.start().expect("Failed to start invention");
 
     // Clock feeds melody, which feeds both ADSR (gate) and oscillator (frequency)
     let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
@@ -209,10 +209,10 @@ fn test_unconnected_inputs() {
     }
     "#;
 
-    let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = PatchBuilder::new(44100);
-    let (runtime, _handles) = builder.build(patch).expect("Failed to build patch");
-    let running = runtime.start().expect("Failed to start patch");
+    let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
+    let builder = InventionBuilder::new(44100);
+    let (runtime, _handles) = builder.build(invention).expect("Failed to build invention");
+    let running = runtime.start().expect("Failed to start invention");
 
     // VCA cv input is unconnected - should default to 1.0 (passthrough)
     // Clock is also unconnected but present (required for runtime)
@@ -220,7 +220,7 @@ fn test_unconnected_inputs() {
     running.stop();
 }
 
-/// Test cycle detection: Patch with a cycle should fail validation
+/// Test cycle detection: Invention with a cycle should fail validation
 #[test]
 fn test_cycle_detection() {
     let json = r#"
@@ -248,9 +248,9 @@ fn test_cycle_detection() {
     }
     "#;
 
-    let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = PatchBuilder::new(44100);
-    let result = builder.build(patch);
+    let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
+    let builder = InventionBuilder::new(44100);
+    let result = builder.build(invention);
 
     // Should fail with cycle detection error
     assert!(result.is_err());
@@ -321,10 +321,10 @@ fn test_complex_valid_graph() {
     }
     "#;
 
-    let patch: Patch = serde_json::from_str(json).expect("Failed to parse patch");
-    let builder = PatchBuilder::new(44100);
-    let (runtime, handles) = builder.build(patch).expect("Failed to build patch");
-    let running = runtime.start().expect("Failed to start patch");
+    let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
+    let builder = InventionBuilder::new(44100);
+    let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
+    let running = runtime.start().expect("Failed to start invention");
 
     // Two separate voices with shared ADSR should work correctly
     let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");

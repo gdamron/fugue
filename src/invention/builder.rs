@@ -1,9 +1,9 @@
-//! Patch builder for creating modular synthesis setups.
+//! Invention builder for creating modular synthesis setups.
 
-use crate::patch::format::Patch;
-use crate::patch::handles::PatchHandles;
-use crate::patch::runtime::{
-    validate_input_port, validate_output_port, ModuleInstance, PatchRuntime,
+use crate::invention::format::Invention;
+use crate::invention::handles::InventionHandles;
+use crate::invention::runtime::{
+    validate_input_port, validate_output_port, ModuleInstance, InventionRuntime,
 };
 use crate::registry::ModuleRegistry;
 use indexmap::IndexMap;
@@ -17,20 +17,20 @@ use super::graph::{RoutingConnection, SinkInstance};
 type BuildModulesResult = (
     IndexMap<String, ModuleInstance>,
     IndexMap<String, SinkInstance>,
-    PatchHandles,
+    InventionHandles,
 );
 
-/// Patch builder that uses named port routing.
+/// Invention builder that uses named port routing.
 ///
 /// Modules are connected via explicit port names rather than type-based routing.
 /// The builder uses a registry to construct modules from their type names.
-pub struct PatchBuilder {
+pub struct InventionBuilder {
     sample_rate: u32,
     registry: ModuleRegistry,
 }
 
-impl PatchBuilder {
-    /// Creates a new patch builder with the default module registry.
+impl InventionBuilder {
+    /// Creates a new invention builder with the default module registry.
     pub fn new(sample_rate: u32) -> Self {
         Self {
             sample_rate,
@@ -38,7 +38,7 @@ impl PatchBuilder {
         }
     }
 
-    /// Creates a new patch builder with a custom module registry.
+    /// Creates a new invention builder with a custom module registry.
     pub fn with_registry(sample_rate: u32, registry: ModuleRegistry) -> Self {
         Self {
             sample_rate,
@@ -46,16 +46,16 @@ impl PatchBuilder {
         }
     }
 
-    /// Builds and prepares a patch for execution.
+    /// Builds and prepares an invention for execution.
     ///
     /// Returns both the runtime (for starting audio) and handles (for runtime control).
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// let patch = Patch::from_file("my_patch.json")?;
-    /// let builder = PatchBuilder::new(44100);
-    /// let (runtime, handles) = builder.build(patch)?;
+    /// let invention = Invention::from_file("my_invention.json")?;
+    /// let builder = InventionBuilder::new(44100);
+    /// let (runtime, handles) = builder.build(invention)?;
     ///
     /// // Get control handles before starting
     /// let tempo: Tempo = handles.get("clock.tempo").expect("no tempo");
@@ -68,25 +68,25 @@ impl PatchBuilder {
     /// ```
     pub fn build(
         &self,
-        patch: Patch,
-    ) -> Result<(PatchRuntime, PatchHandles), Box<dyn std::error::Error>> {
-        self.validate_patch(&patch)?;
+        invention: Invention,
+    ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
+        self.validate_invention(&invention)?;
 
         // Build all module instances (including sinks)
-        let (modules, sinks, handles) = self.build_modules(&patch)?;
+        let (modules, sinks, handles) = self.build_modules(&invention)?;
 
-        // Warn if no sink modules (patch will run but produce silence)
+        // Warn if no sink modules (invention will run but produce silence)
         if sinks.is_empty() {
             eprintln!(
-                "Warning: Patch '{}' has no sink modules. Audio output will be silent.",
-                patch.title.as_deref().unwrap_or("untitled")
+                "Warning: Invention '{}' has no sink modules. Audio output will be silent.",
+                invention.title.as_deref().unwrap_or("untitled")
             );
         }
 
         // Build the routing graph
-        let routing = self.build_routing(&patch, &modules)?;
+        let routing = self.build_routing(&invention, &modules)?;
 
-        let runtime = PatchRuntime {
+        let runtime = InventionRuntime {
             modules,
             sinks,
             routing,
@@ -95,12 +95,12 @@ impl PatchBuilder {
         Ok((runtime, handles))
     }
 
-    fn validate_patch(&self, patch: &Patch) -> Result<(), Box<dyn std::error::Error>> {
+    fn validate_invention(&self, invention: &Invention) -> Result<(), Box<dyn std::error::Error>> {
         // Check all connections reference valid modules
         let module_ids: std::collections::HashSet<String> =
-            patch.modules.iter().map(|m| m.id.clone()).collect();
+            invention.modules.iter().map(|m| m.id.clone()).collect();
 
-        for conn in &patch.connections {
+        for conn in &invention.connections {
             if !module_ids.contains(&conn.from) {
                 return Err(format!("Unknown source module: {}", conn.from).into());
             }
@@ -118,19 +118,19 @@ impl PatchBuilder {
         }
 
         // Check for cycles in the dependency graph
-        self.validate_acyclic(patch)?;
+        self.validate_acyclic(invention)?;
 
         Ok(())
     }
 
-    /// Validates that the patch contains no cycles (feedback loops).
+    /// Validates that the invention contains no cycles (feedback loops).
     ///
     /// Uses depth-first search with a recursion stack to detect cycles.
     /// Cycles would cause infinite recursion in the pull-based system.
-    fn validate_acyclic(&self, patch: &Patch) -> Result<(), Box<dyn std::error::Error>> {
+    fn validate_acyclic(&self, invention: &Invention) -> Result<(), Box<dyn std::error::Error>> {
         // Build adjacency list (module -> modules it connects to)
         // Exclude sink modules as destinations (they're terminals)
-        let sink_types: std::collections::HashSet<&str> = patch
+        let sink_types: std::collections::HashSet<&str> = invention
             .modules
             .iter()
             .filter(|m| self.registry.is_sink(&m.module_type))
@@ -140,7 +140,7 @@ impl PatchBuilder {
         let mut graph: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
 
-        for conn in &patch.connections {
+        for conn in &invention.connections {
             // Don't include connections TO sinks in cycle detection (they're terminals)
             if !sink_types.contains(conn.to.as_str()) {
                 graph
@@ -154,7 +154,7 @@ impl PatchBuilder {
         let mut visited = std::collections::HashSet::new();
         let mut rec_stack = std::collections::HashSet::new();
 
-        for module in &patch.modules {
+        for module in &invention.modules {
             // Skip sink modules in cycle detection (they're terminals)
             if sink_types.contains(module.id.as_str()) {
                 continue;
@@ -206,13 +206,13 @@ impl PatchBuilder {
 
     fn build_modules(
         &self,
-        patch: &Patch,
+        invention: &Invention,
     ) -> Result<BuildModulesResult, Box<dyn std::error::Error>> {
         let mut modules = IndexMap::new();
         let mut sinks = IndexMap::new();
         let mut all_handles: HashMap<String, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
-        for spec in &patch.modules {
+        for spec in &invention.modules {
             // Build module via factory
             let result = self
                 .registry
@@ -233,17 +233,17 @@ impl PatchBuilder {
             }
         }
 
-        Ok((modules, sinks, PatchHandles::new(all_handles)))
+        Ok((modules, sinks, InventionHandles::new(all_handles)))
     }
 
     fn build_routing(
         &self,
-        patch: &Patch,
+        invention: &Invention,
         modules: &IndexMap<String, ModuleInstance>,
     ) -> Result<Vec<RoutingConnection>, Box<dyn std::error::Error>> {
         let mut routing = Vec::new();
 
-        for conn in &patch.connections {
+        for conn in &invention.connections {
             let from_port = conn.from_port.as_ref().ok_or("Missing from_port")?.clone();
             let to_port = conn.to_port.as_ref().ok_or("Missing to_port")?.clone();
 

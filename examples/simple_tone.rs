@@ -6,7 +6,7 @@
 //
 // Should produce a 440Hz tone that pulses on each beat with ADSR envelope shaping.
 
-use fugue::{default_sample_rate, ClockControls, Patch, PatchBuilder};
+use fugue::{default_sample_rate, ClockControls, Invention, InventionBuilder};
 use std::error::Error;
 use std::io;
 
@@ -21,30 +21,30 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("  Oscillator (440Hz) -> VCA -> DAC");
     println!();
 
-    // Get the audio device's sample rate BEFORE building the patch
+    // Get the audio device's sample rate BEFORE building the invention
     let sample_rate = default_sample_rate()?;
 
-    // Load the simple patch
-    let patch = Patch::from_file("examples/simple_tone.json")?;
+    // Load the simple invention
+    let invention = Invention::from_file("examples/simple_tone.json")?;
     println!(
-        "Loaded patch: {}",
-        patch.title.as_deref().unwrap_or("Untitled")
+        "Loaded invention: {}",
+        invention.title.as_deref().unwrap_or("Untitled")
     );
     println!();
 
-    // Build the patch with the correct sample rate
-    let builder = PatchBuilder::new(sample_rate);
-    let (runtime, handles) = builder.build(patch)?;
+    // Build the invention with the correct sample rate
+    let builder = InventionBuilder::new(sample_rate);
+    let (runtime, handles) = builder.build(invention)?;
 
     // Get tempo handle for display
     let tempo: ClockControls = handles
         .get("clock.controls")
-        .expect("Patch should have a clock with controls handle");
+        .expect("Invention should have a clock with controls handle");
 
-    // Start the patch
+    // Start the invention
     let running = runtime.start()?;
 
-    println!("Patch started!");
+    println!("Invention started!");
     println!();
     println!(
         "You should hear a 440Hz tone pulsing at {:.0} BPM",

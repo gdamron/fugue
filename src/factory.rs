@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex};
 pub trait ModuleFactory: Send + Sync + 'static {
     /// Returns the type identifier for this module type.
     ///
-    /// This must match the "type" field in JSON patch files.
+    /// This must match the "type" field in invention JSON files.
     /// Examples: "clock", "oscillator", "adsr", "vca", "melody"
     fn type_id(&self) -> &'static str;
 

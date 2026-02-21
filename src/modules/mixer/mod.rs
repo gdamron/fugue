@@ -11,7 +11,7 @@
 //! - Master output level
 //! - CV inputs for dynamic level control
 //!
-//! # Example Patch
+//! # Example Invention
 //!
 //! ```json
 //! {

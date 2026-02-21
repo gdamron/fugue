@@ -87,10 +87,10 @@ src/
 │   ├── adsr/                 # Adsr envelope generator
 │   ├── vca/                  # Vca (voltage-controlled amplifier)
 │   └── dac/                  # Dac (audio output)
-├── patch/                    # Declarative patch system
-│   ├── format.rs             # JSON patch format (Patch, ModuleSpec, Connection)
-│   ├── builder.rs            # PatchBuilder - constructs patches from JSON
-│   ├── runtime.rs            # PatchRuntime, RunningPatch - manages execution
+├── invention/                # Declarative invention system
+│   ├── format.rs             # JSON invention format (Invention, ModuleSpec, Connection)
+│   ├── builder.rs            # InventionBuilder - constructs inventions from JSON
+│   ├── runtime.rs            # InventionRuntime, RunningInvention - manages execution
 │   └── graph.rs              # SignalGraph - pull-based signal processing
 └── music/                    # Music theory utilities
     ├── mod.rs                # Scale struct
@@ -100,7 +100,7 @@ src/
 
 **Key naming conventions**:
 
-- All "Modular" prefixes have been removed (e.g., `ModularAdsr` → `Adsr`, `ModularPatchBuilder` → `PatchBuilder`)
+- All "Modular" prefixes have been removed (e.g., `ModularAdsr` → `Adsr`, `ModularInventionBuilder` → `InventionBuilder`)
 - Modules use directory-based organization with `mod.rs` as the main file
 - Related types are co-located in the same directory
 
@@ -156,7 +156,7 @@ The system uses **pull-based processing** where the DAC recursively requests inp
 **Architecture files**:
 
 - `src/traits.rs` - Module trait with caching methods
-- `src/patch/graph.rs` - Pull-based signal graph implementation
+- `src/invention/graph.rs` - Pull-based signal graph implementation
 
 ### Module Implementation Guide
 
@@ -223,7 +223,7 @@ impl Module for MyModule {
 
 ### Cycle Detection
 
-The system **only supports acyclic graphs** (no feedback loops). Cycles are detected during patch validation using depth-first search.
+The system **only supports acyclic graphs** (no feedback loops). Cycles are detected during invention validation using depth-first search.
 
 **Why no cycles?**
 
@@ -280,19 +280,19 @@ This uniform approach enables flexible routing: any output can connect to any co
 | `Dac`                 | `modules/dac/`           | Audio output via cpal        | in: `audio` (from closure)                                    |
 | `Scale`/`Mode`/`Note` | `music/`                 | Music theory utilities       | (data structures)                                             |
 
-## Declarative Patch System
+## Declarative Invention System
 
-Fugue supports both declarative (JSON) and programmatic (Rust) approaches for building synthesis patches.
+Fugue supports both declarative (JSON) and programmatic (Rust) approaches for building synthesis inventions.
 
 ### Declarative Approach (JSON)
 
-Load and run a patch from JSON:
+Load and run an invention from JSON:
 
 ```rust
-let patch = Patch::from_file("my_patch.json")?;
+let invention = Invention::from_file("my_invention.json")?;
 let dac = Dac::new()?;
-let builder = PatchBuilder::new(dac.sample_rate());
-let runtime = builder.build_and_run(patch)?;
+let builder = InventionBuilder::new(dac.sample_rate());
+let runtime = builder.build_and_run(invention)?;
 let running = runtime.start()?;
 
 // Control parameters at runtime
@@ -304,7 +304,7 @@ running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 
 The declarative JSON approach is the primary API. The old programmatic API with `.connect()` chaining has been superseded by the module system.
 
-### Supported Patch Modules
+### Supported Invention Modules
 
 - **clock** - Timing and tempo
 - **melody** - Algorithmic melody generation

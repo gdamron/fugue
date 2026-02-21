@@ -156,7 +156,7 @@ pub trait Module: Send {
 
     /// Sets the value for a named input port.
     ///
-    /// Called once per sample by the patch runtime for each connected input.
+    /// Called once per sample by the invention runtime for each connected input.
     /// Returns an error if the port name is not recognized.
     ///
     /// # Arguments

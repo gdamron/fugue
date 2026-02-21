@@ -12,7 +12,7 @@
 //! - Sync input to reset phase on trigger
 //! - Rate modulation input for complex rhythmic effects
 //!
-//! # Example Patch
+//! # Example Invention
 //!
 //! ```json
 //! {

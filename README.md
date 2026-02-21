@@ -10,7 +10,7 @@ A Rust library for composing algorithmic and generative music, inspired by ChucK
 - 🎹 **Music theory**: Scale and mode support (Dorian, Ionian, Phrygian, etc.)
 - 🎲 **Algorithmic composition**: Probabilistic melody generation with live parameter updates
 - 🎚️ **Live control**: Update scales, rhythms, and synthesis parameters in real-time
-- 📄 **Declarative patches**: Define synthesis setups using JSON documents
+- 📄 **Inventions**: Define synthesis setups using JSON documents
 
 ## Quick Start
 
@@ -84,16 +84,16 @@ cargo run --example my_melody --release
 
 ## Two Ways to Build
 
-Fugue supports both declarative and programmatic approaches to building synthesis patches.
+Fugue supports both declarative and programmatic approaches to building synthesis setups.
 
-### Declarative (JSON Patches)
+### Declarative (JSON)
 
-Define your patch in a JSON file:
+Define your invention in a JSON file:
 
 ```json
 {
   "version": "1.0.0",
-  "title": "My Patch",
+  "title": "My Invention",
   "modules": [
     {
       "id": "clock",
@@ -133,10 +133,10 @@ Load and run it:
 ```rust
 use fugue::*;
 
-let patch = Patch::from_file("my_patch.json")?;
+let invention = Invention::from_file("my_invention.json")?;
 let dac = Dac::new()?;
-let builder = PatchBuilder::new(dac.sample_rate());
-let runtime = builder.build_and_run(patch)?;
+let builder = InventionBuilder::new(dac.sample_rate());
+let runtime = builder.build_and_run(invention)?;
 let running = runtime.start()?;
 
 // Control parameters at runtime
@@ -144,11 +144,11 @@ running.tempo().set_bpm(140.0);
 running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 ```
 
-See [DECLARATIVE.md](DECLARATIVE.md) for full documentation of the patch format.
+See [DECLARATIVE.md](DECLARATIVE.md) for full documentation of the invention format.
 
 ### Programmatic (Rust Code)
 
-Build patches imperatively in code:
+Build setups imperatively in code:
 
 ```rust
 use fugue::*;
@@ -226,7 +226,7 @@ The library is designed for WebAssembly support. Future versions will include:
 
 ## Roadmap
 
-- [x] Declarative patch system with JSON format
+- [x] Declarative invention system with JSON format
 - [ ] Additional synthesis: FM synthesis, noise generators, envelopes
 - [ ] Effects: Reverb, delay, distortion
 - [ ] MIDI support: Input and output
@@ -234,7 +234,7 @@ The library is designed for WebAssembly support. Future versions will include:
 - [ ] WebAssembly: Browser support
 - [ ] Visualization: Waveform and spectrum display
 - [ ] Saving/loading: Export audio and save compositions
-- [ ] Business logic injection in patches (custom code hooks)
+- [ ] Business logic injection in invention files (custom code hooks)
 - [ ] Real-time control mapping and automation
 
 ## License

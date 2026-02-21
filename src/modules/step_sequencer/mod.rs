@@ -13,7 +13,7 @@
 //! - Reset input for pattern restart
 //! - Step output for visualization/sync
 //!
-//! # Example Patch
+//! # Example Invention
 //!
 //! ```json
 //! {

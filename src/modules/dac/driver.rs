@@ -5,18 +5,18 @@ use cpal::Stream;
 
 /// Returns the sample rate of the default audio output device.
 ///
-/// This should be called before building a patch to ensure modules
+/// This should be called before building an invention to ensure modules
 /// are configured with the correct sample rate for the audio hardware.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use fugue::{default_sample_rate, Patch, PatchBuilder};
+/// use fugue::{default_sample_rate, Invention, InventionBuilder};
 ///
 /// let sample_rate = default_sample_rate()?;
-/// let patch = Patch::from_file("my_patch.json")?;
-/// let builder = PatchBuilder::new(sample_rate);
-/// let (runtime, handles) = builder.build(patch)?;
+/// let invention = Invention::from_file("my_invention.json")?;
+/// let builder = InventionBuilder::new(sample_rate);
+/// let (runtime, handles) = builder.build(invention)?;
 /// let running = runtime.start()?;
 /// ```
 ///
@@ -35,7 +35,7 @@ pub fn default_sample_rate() -> Result<u32, Box<dyn std::error::Error>> {
 /// Trait for audio output backends.
 ///
 /// This abstraction allows different audio backends (cpal, file writer, network streamer, etc.)
-/// to be used interchangeably with the patch runtime.
+/// to be used interchangeably with the invention runtime.
 ///
 /// # Example
 ///

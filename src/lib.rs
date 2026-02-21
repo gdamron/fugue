@@ -1,7 +1,7 @@
 pub mod factory;
+pub mod invention;
 pub mod modules;
 pub mod music;
-pub mod patch;
 pub mod registry;
 pub mod traits;
 
@@ -25,10 +25,10 @@ pub use modules::{
 #[allow(deprecated)]
 pub use modules::{MelodyParams, Tempo};
 
-// Re-export patch system
-pub use patch::{
-    Connection, ModuleSpec, Patch, PatchBuilder, PatchHandles, PatchRuntime, RunningPatch,
-    TimeSignature,
+// Re-export invention system
+pub use invention::{
+    Connection, Invention, InventionBuilder, InventionHandles, InventionRuntime, ModuleSpec,
+    RunningInvention, TimeSignature,
 };
 
 // Re-export music theory
