@@ -135,6 +135,10 @@ pub enum GraphCommandError {
     UnknownModuleType(String),
     /// The module factory failed to build the module.
     ModuleBuildFailed(String),
+    /// The referenced module does not exist in the graph.
+    UnknownModule(String),
+    /// The referenced port does not exist on the module.
+    InvalidPort(String),
 }
 
 impl std::fmt::Display for GraphCommandError {
@@ -149,6 +153,12 @@ impl std::fmt::Display for GraphCommandError {
             GraphCommandError::ModuleBuildFailed(msg) => {
                 write!(f, "module build failed: {}", msg)
             }
+            GraphCommandError::UnknownModule(id) => {
+                write!(f, "unknown module: {}", id)
+            }
+            GraphCommandError::InvalidPort(msg) => {
+                write!(f, "invalid port: {}", msg)
+            }
         }
     }
 }
@@ -158,7 +168,6 @@ impl std::error::Error for GraphCommandError {}
 /// A running invention with audio output.
 pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
-    #[allow(dead_code)]
     graph: Arc<Mutex<SignalGraph>>,
     command_tx: mpsc::Sender<GraphCommand>,
     registry: ModuleRegistry,
@@ -234,6 +243,84 @@ impl RunningInvention {
         })?;
 
         Ok(InventionHandles::new(handle_map))
+    }
+
+    /// Adds a connection between two modules in the running graph.
+    ///
+    /// Validates that both modules exist and have the specified ports before
+    /// sending the command to the audio thread. This gives callers immediate,
+    /// actionable errors.
+    pub fn connect(
+        &self,
+        from_module: &str,
+        from_port: &str,
+        to_module: &str,
+        to_port: &str,
+    ) -> Result<(), GraphCommandError> {
+        // Lock graph to validate modules and ports
+        {
+            let graph = self.graph.lock().unwrap();
+
+            // Validate source module exists and has the output port
+            let source = graph
+                .modules
+                .get(from_module)
+                .ok_or_else(|| GraphCommandError::UnknownModule(from_module.to_string()))?;
+            {
+                let m = source.lock().unwrap();
+                if !m.outputs().contains(&from_port) {
+                    return Err(GraphCommandError::InvalidPort(format!(
+                        "module '{}' does not have output port '{}' (available: {:?})",
+                        from_module,
+                        from_port,
+                        m.outputs()
+                    )));
+                }
+            }
+
+            // Validate dest module exists and has the input port
+            let dest = graph
+                .modules
+                .get(to_module)
+                .ok_or_else(|| GraphCommandError::UnknownModule(to_module.to_string()))?;
+            {
+                let m = dest.lock().unwrap();
+                if !m.inputs().contains(&to_port) {
+                    return Err(GraphCommandError::InvalidPort(format!(
+                        "module '{}' does not have input port '{}' (available: {:?})",
+                        to_module,
+                        to_port,
+                        m.inputs()
+                    )));
+                }
+            }
+        }
+
+        self.send_command(GraphCommand::AddConnection {
+            from_module: from_module.to_string(),
+            from_port: from_port.to_string(),
+            to_module: to_module.to_string(),
+            to_port: to_port.to_string(),
+        })
+    }
+
+    /// Disconnects two modules in the running graph.
+    ///
+    /// This is fire-and-forget: if the connection doesn't exist, the command is
+    /// silently ignored on the audio thread.
+    pub fn disconnect(
+        &self,
+        from_module: &str,
+        from_port: &str,
+        to_module: &str,
+        to_port: &str,
+    ) -> Result<(), GraphCommandError> {
+        self.send_command(GraphCommand::RemoveConnection {
+            from_module: from_module.to_string(),
+            from_port: from_port.to_string(),
+            to_module: to_module.to_string(),
+            to_port: to_port.to_string(),
+        })
     }
 
     /// Removes a module from the running graph.

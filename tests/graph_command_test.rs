@@ -122,3 +122,96 @@ fn test_add_then_remove_module() {
     assert!(remove_result.is_ok());
     running.stop();
 }
+
+// --- Connection management tests ---
+
+#[test]
+fn test_connect_succeeds() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.connect("osc", "audio", "dac", "audio");
+    assert!(result.is_ok());
+    running.stop();
+}
+
+#[test]
+fn test_connect_unknown_source_module_fails() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.connect("nonexistent", "audio", "dac", "audio");
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        fugue::GraphCommandError::UnknownModule(id) => assert_eq!(id, "nonexistent"),
+        other => panic!("Expected UnknownModule, got: {:?}", other),
+    }
+    running.stop();
+}
+
+#[test]
+fn test_connect_unknown_dest_module_fails() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.connect("osc", "audio", "nonexistent", "audio");
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        fugue::GraphCommandError::UnknownModule(id) => assert_eq!(id, "nonexistent"),
+        other => panic!("Expected UnknownModule, got: {:?}", other),
+    }
+    running.stop();
+}
+
+#[test]
+fn test_connect_invalid_output_port_fails() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.connect("osc", "bad_port", "dac", "audio");
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        fugue::GraphCommandError::InvalidPort(msg) => {
+            assert!(msg.contains("bad_port"), "Error should mention the bad port: {}", msg);
+        }
+        other => panic!("Expected InvalidPort, got: {:?}", other),
+    }
+    running.stop();
+}
+
+#[test]
+fn test_connect_invalid_input_port_fails() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.connect("osc", "audio", "dac", "bad_port");
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        fugue::GraphCommandError::InvalidPort(msg) => {
+            assert!(msg.contains("bad_port"), "Error should mention the bad port: {}", msg);
+        }
+        other => panic!("Expected InvalidPort, got: {:?}", other),
+    }
+    running.stop();
+}
+
+#[test]
+fn test_disconnect_succeeds() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.disconnect("osc", "audio", "dac", "audio");
+    assert!(result.is_ok());
+    running.stop();
+}
+
+#[test]
+fn test_disconnect_nonexistent_succeeds() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.disconnect("nonexistent", "audio", "dac", "audio");
+    assert!(result.is_ok());
+    running.stop();
+}
+
+#[test]
+fn test_add_module_then_connect() {
+    let (running, _handles) = build_simple_invention();
+    let config = serde_json::json!({"frequency": 220.0});
+    let _handles2 = running
+        .add_module("osc2", "oscillator", &config)
+        .expect("Failed to add oscillator");
+    // Wait for the audio thread to process the AddModule command
+    // so that connect() can find the module in the graph.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let result = running.connect("osc2", "audio", "dac", "audio");
+    assert!(result.is_ok());
+    running.stop();
+}
