@@ -220,12 +220,15 @@ fn test_unconnected_inputs() {
     running.stop();
 }
 
-/// Test cycle detection: Invention with a cycle should fail validation
+/// Test that cycles (feedback loops) are allowed and process safely.
+///
+/// Mutual FM between two oscillators is a common synthesis technique.
+/// The pull-based engine handles this via one-sample feedback delay.
 #[test]
-fn test_cycle_detection() {
+fn test_cycle_is_safe() {
     let json = r#"
     {
-        "name": "Cycle Test (should fail)",
+        "name": "Cycle Test (feedback loop)",
         "modules": [
             {
                 "id": "osc1",
@@ -250,18 +253,14 @@ fn test_cycle_detection() {
 
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
-    let result = builder.build(invention);
+    let (runtime, _handles) = builder.build(invention).expect("Cycle should be allowed");
+    let running = runtime.start().expect("Failed to start invention");
 
-    // Should fail with cycle detection error
-    assert!(result.is_err());
-    if let Err(e) = result {
-        let err_msg = e.to_string();
-        assert!(
-            err_msg.contains("Cycle") || err_msg.contains("cycle"),
-            "Expected cycle error, got: {}",
-            err_msg
-        );
-    }
+    // Let the audio thread process several samples with the feedback loop
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // If we get here without panic or hang, the cycle is safe
+    running.stop();
 }
 
 /// Test complex valid graph: Multiple sources, converging paths

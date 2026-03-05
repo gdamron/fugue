@@ -30,6 +30,7 @@
 //!   tie-breaking (when multiple valid orders exist) is deterministic across runs
 
 use indexmap::IndexMap;
+use std::collections::HashSet;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -93,6 +94,8 @@ pub(crate) struct SignalGraph {
     pub(crate) input_map: std::collections::HashMap<String, Vec<RoutingConnection>>,
     /// Current sample number (for caching)
     pub(crate) current_sample: u64,
+    /// Modules currently being pulled (cycle detection during recursive traversal).
+    pub(crate) pulling: HashSet<String>,
     /// Receiver for commands from the main thread.
     pub(crate) command_rx: mpsc::Receiver<GraphCommand>,
 }
@@ -193,6 +196,13 @@ impl SignalGraph {
                 return m_locked.get_output(port);
             }
 
+            // Cycle detection: if this module is already being pulled in the
+            // current traversal, return its current (stale) output to break
+            // the cycle — analogous to one-sample feedback delay in analog.
+            if self.pulling.contains(module_id) {
+                return m_locked.get_output(port);
+            }
+
             // Cache miss - need to process this module
             // First, recursively pull all inputs
 
@@ -202,6 +212,9 @@ impl SignalGraph {
 
             // Drop the lock before recursion
             drop(m_locked);
+
+            // Mark this module as currently being pulled
+            self.pulling.insert(module_id.to_string());
 
             // Recursively pull all inputs
             for conn in &input_connections {
@@ -223,6 +236,9 @@ impl SignalGraph {
                         .set_input(&conn.to_port, input_value);
                 }
             }
+
+            // Done pulling inputs — remove from pulling set
+            self.pulling.remove(module_id);
 
             // Now process the module
             if let Some(module) = self.modules.get(module_id) {
@@ -286,6 +302,9 @@ impl SignalGraph {
     pub(crate) fn process_sample(&mut self) -> f32 {
         // Drain any pending commands from the main thread
         self.drain_commands();
+
+        // Defensive: ensure pulling set is clear at the start of each sample
+        self.pulling.clear();
 
         // Increment sample counter for cache invalidation
         self.current_sample += 1;

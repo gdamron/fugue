@@ -105,6 +105,7 @@ impl InventionRuntime {
             sinks: self.sinks,
             input_map,
             current_sample: 0,
+            pulling: std::collections::HashSet::new(),
             command_rx,
         };
 

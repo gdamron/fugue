@@ -216,6 +216,36 @@ fn test_add_module_then_connect() {
     running.stop();
 }
 
+// --- Cycle safety tests ---
+
+#[test]
+fn test_runtime_cycle_is_safe() {
+    let (running, _handles) = build_simple_invention();
+
+    // Add a second oscillator
+    let config = serde_json::json!({"frequency": 220.0});
+    running
+        .add_module("osc2", "oscillator", &config)
+        .expect("Failed to add osc2");
+
+    // Wait for audio thread to process the AddModule command
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // Create a cycle: osc → osc2.fm, osc2 → osc.fm
+    running
+        .connect("osc", "audio", "osc2", "fm")
+        .expect("Failed to connect osc→osc2");
+    running
+        .connect("osc2", "audio", "osc", "fm")
+        .expect("Failed to connect osc2→osc");
+
+    // Let the audio thread process several samples with the feedback loop
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // If we get here without panic or hang, runtime cycles are safe
+    running.stop();
+}
+
 // --- Control value API tests ---
 
 #[test]
