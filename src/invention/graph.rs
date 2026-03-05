@@ -30,11 +30,22 @@
 //!   tie-breaking (when multiple valid orders exist) is deterministic across runs
 
 use indexmap::IndexMap;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use crate::SinkModule;
 
 use super::runtime::ModuleInstance;
+
+/// A command that can be sent to the audio thread for graph mutation.
+pub(crate) enum GraphCommand {
+    /// Set a module's input port to a specific value.
+    SetModuleInput {
+        module_id: String,
+        port: String,
+        value: f32,
+    },
+}
 
 /// Type alias for sink module instances.
 pub(crate) type SinkInstance = Arc<Mutex<dyn SinkModule + Send>>;
@@ -58,9 +69,33 @@ pub(crate) struct SignalGraph {
     pub(crate) input_map: std::collections::HashMap<String, Vec<RoutingConnection>>,
     /// Current sample number (for caching)
     pub(crate) current_sample: u64,
+    /// Receiver for commands from the main thread.
+    pub(crate) command_rx: mpsc::Receiver<GraphCommand>,
 }
 
 impl SignalGraph {
+    /// Drains all pending commands from the main thread and applies them.
+    fn drain_commands(&mut self) {
+        while let Ok(cmd) = self.command_rx.try_recv() {
+            self.apply_command(cmd);
+        }
+    }
+
+    /// Applies a single command to the graph.
+    fn apply_command(&mut self, cmd: GraphCommand) {
+        match cmd {
+            GraphCommand::SetModuleInput {
+                module_id,
+                port,
+                value,
+            } => {
+                if let Some(module) = self.modules.get(&module_id) {
+                    let _ = module.lock().unwrap().set_input(&port, value);
+                }
+            }
+        }
+    }
+
     /// Pulls an output value from a module using recursive dependency resolution.
     ///
     /// # Algorithm
@@ -176,6 +211,9 @@ impl SignalGraph {
     /// The pull-based approach ensures correct processing order through recursive
     /// dependency resolution. Each module processes exactly once per sample via caching.
     pub(crate) fn process_sample(&mut self) -> f32 {
+        // Drain any pending commands from the main thread
+        self.drain_commands();
+
         // Increment sample counter for cache invalidation
         self.current_sample += 1;
 
