@@ -3,9 +3,10 @@
 use crate::modules::{AudioBackend, AudioDriver};
 use crate::Module;
 use indexmap::IndexMap;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use super::graph::{RoutingConnection, SignalGraph, SinkInstance};
+use super::graph::{GraphCommand, RoutingConnection, SignalGraph, SinkInstance};
 
 /// Type alias for module instances stored in the runtime.
 pub type ModuleInstance = Arc<Mutex<dyn Module + Send>>;
@@ -90,11 +91,14 @@ impl InventionRuntime {
                 .push(conn.clone());
         }
 
+        let (command_tx, command_rx) = mpsc::channel();
+
         let graph = SignalGraph {
             modules: self.modules,
             sinks: self.sinks,
             input_map,
             current_sample: 0,
+            command_rx,
         };
 
         let graph_arc = Arc::new(Mutex::new(graph));
@@ -107,20 +111,67 @@ impl InventionRuntime {
 
         Ok(RunningInvention {
             backend: Box::new(backend),
-            _graph: graph_arc,
+            graph: graph_arc,
+            command_tx,
         })
     }
 }
 
+/// Error type for graph command operations.
+#[derive(Debug)]
+pub enum GraphCommandError {
+    /// The audio thread has stopped, so commands can no longer be delivered.
+    AudioThreadStopped,
+}
+
+impl std::fmt::Display for GraphCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GraphCommandError::AudioThreadStopped => {
+                write!(f, "audio thread has stopped; command not delivered")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GraphCommandError {}
+
 /// A running invention with audio output.
 pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
-    _graph: Arc<Mutex<SignalGraph>>,
+    #[allow(dead_code)]
+    graph: Arc<Mutex<SignalGraph>>,
+    command_tx: mpsc::Sender<GraphCommand>,
 }
 
 impl RunningInvention {
     /// Stops audio playback.
     pub fn stop(mut self) {
         self.backend.stop();
+    }
+
+    /// Sends a command to the audio thread for graph mutation.
+    pub(crate) fn send_command(&self, cmd: GraphCommand) -> Result<(), GraphCommandError> {
+        self.command_tx
+            .send(cmd)
+            .map_err(|_| GraphCommandError::AudioThreadStopped)
+    }
+
+    /// Sets a module's input port to a specific value.
+    ///
+    /// The command is sent to the audio thread and applied at the start of the
+    /// next sample. This is fire-and-forget: if the module or port doesn't exist,
+    /// the command is silently ignored on the audio thread.
+    pub fn set_module_input(
+        &self,
+        module_id: impl Into<String>,
+        port: impl Into<String>,
+        value: f32,
+    ) -> Result<(), GraphCommandError> {
+        self.send_command(GraphCommand::SetModuleInput {
+            module_id: module_id.into(),
+            port: port.into(),
+            value,
+        })
     }
 }
