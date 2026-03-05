@@ -55,6 +55,20 @@ pub(crate) enum GraphCommand {
     RemoveModule {
         module_id: String,
     },
+    /// Add a connection between two modules.
+    AddConnection {
+        from_module: String,
+        from_port: String,
+        to_module: String,
+        to_port: String,
+    },
+    /// Remove a connection between two modules (fire-and-forget).
+    RemoveConnection {
+        from_module: String,
+        from_port: String,
+        to_module: String,
+        to_port: String,
+    },
 }
 
 /// Type alias for sink module instances.
@@ -120,6 +134,36 @@ impl SignalGraph {
                 // Remove connections referencing this module from all other input maps
                 for connections in self.input_map.values_mut() {
                     connections.retain(|conn| conn.from_module != module_id);
+                }
+            }
+            GraphCommand::AddConnection {
+                from_module,
+                from_port,
+                to_module,
+                to_port,
+            } => {
+                self.input_map
+                    .entry(to_module.clone())
+                    .or_default()
+                    .push(RoutingConnection {
+                        from_module,
+                        from_port,
+                        to_module,
+                        to_port,
+                    });
+            }
+            GraphCommand::RemoveConnection {
+                from_module,
+                from_port,
+                to_module,
+                to_port,
+            } => {
+                if let Some(connections) = self.input_map.get_mut(&to_module) {
+                    connections.retain(|conn| {
+                        !(conn.from_module == from_module
+                            && conn.from_port == from_port
+                            && conn.to_port == to_port)
+                    });
                 }
             }
         }
