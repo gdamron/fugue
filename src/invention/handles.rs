@@ -27,6 +27,14 @@ use std::sync::Arc;
 ///     println!("Available: {}", key);
 /// }
 /// ```
+impl std::fmt::Debug for InventionHandles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InventionHandles")
+            .field("keys", &self.handles.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
 pub struct InventionHandles {
     handles: HashMap<String, Arc<dyn Any + Send + Sync>>,
 }
@@ -125,5 +133,13 @@ impl InventionHandles {
     /// Returns the number of handles.
     pub fn len(&self) -> usize {
         self.handles.len()
+    }
+
+    /// Merges another set of handles into this one.
+    ///
+    /// Useful for accumulating handles from multiple `add_module` calls.
+    /// If both sets contain the same key, the value from `other` wins.
+    pub fn merge(&mut self, other: InventionHandles) {
+        self.handles.extend(other.handles);
     }
 }

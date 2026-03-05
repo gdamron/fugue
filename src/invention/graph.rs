@@ -45,6 +45,16 @@ pub(crate) enum GraphCommand {
         port: String,
         value: f32,
     },
+    /// Add a new module to the graph (overwrites if duplicate ID).
+    AddModule {
+        module_id: String,
+        module: ModuleInstance,
+        sink: Option<SinkInstance>,
+    },
+    /// Remove a module from the graph (fire-and-forget).
+    RemoveModule {
+        module_id: String,
+    },
 }
 
 /// Type alias for sink module instances.
@@ -91,6 +101,25 @@ impl SignalGraph {
             } => {
                 if let Some(module) = self.modules.get(&module_id) {
                     let _ = module.lock().unwrap().set_input(&port, value);
+                }
+            }
+            GraphCommand::AddModule {
+                module_id,
+                module,
+                sink,
+            } => {
+                self.modules.insert(module_id.clone(), module);
+                if let Some(sink) = sink {
+                    self.sinks.insert(module_id, sink);
+                }
+            }
+            GraphCommand::RemoveModule { module_id } => {
+                self.modules.swap_remove(&module_id);
+                self.sinks.swap_remove(&module_id);
+                self.input_map.remove(&module_id);
+                // Remove connections referencing this module from all other input maps
+                for connections in self.input_map.values_mut() {
+                    connections.retain(|conn| conn.from_module != module_id);
                 }
             }
         }
