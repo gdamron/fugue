@@ -1,12 +1,15 @@
 //! Invention runtime for executing modular synthesis inventions.
 
 use crate::modules::{AudioBackend, AudioDriver};
+use crate::registry::ModuleRegistry;
 use crate::Module;
 use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use super::graph::{GraphCommand, RoutingConnection, SignalGraph, SinkInstance};
+use super::handles::InventionHandles;
 
 /// Type alias for module instances stored in the runtime.
 pub type ModuleInstance = Arc<Mutex<dyn Module + Send>>;
@@ -55,6 +58,10 @@ pub struct InventionRuntime {
     pub(crate) sinks: IndexMap<String, SinkInstance>,
     /// Signal routing connections.
     pub(crate) routing: Vec<RoutingConnection>,
+    /// Module registry for building new modules at runtime.
+    pub(crate) registry: ModuleRegistry,
+    /// Sample rate for building new modules at runtime.
+    pub(crate) sample_rate: u32,
 }
 
 impl InventionRuntime {
@@ -113,6 +120,8 @@ impl InventionRuntime {
             backend: Box::new(backend),
             graph: graph_arc,
             command_tx,
+            registry: self.registry,
+            sample_rate: self.sample_rate,
         })
     }
 }
@@ -122,6 +131,10 @@ impl InventionRuntime {
 pub enum GraphCommandError {
     /// The audio thread has stopped, so commands can no longer be delivered.
     AudioThreadStopped,
+    /// The requested module type is not registered.
+    UnknownModuleType(String),
+    /// The module factory failed to build the module.
+    ModuleBuildFailed(String),
 }
 
 impl std::fmt::Display for GraphCommandError {
@@ -129,6 +142,12 @@ impl std::fmt::Display for GraphCommandError {
         match self {
             GraphCommandError::AudioThreadStopped => {
                 write!(f, "audio thread has stopped; command not delivered")
+            }
+            GraphCommandError::UnknownModuleType(t) => {
+                write!(f, "unknown module type: {}", t)
+            }
+            GraphCommandError::ModuleBuildFailed(msg) => {
+                write!(f, "module build failed: {}", msg)
             }
         }
     }
@@ -142,6 +161,8 @@ pub struct RunningInvention {
     #[allow(dead_code)]
     graph: Arc<Mutex<SignalGraph>>,
     command_tx: mpsc::Sender<GraphCommand>,
+    registry: ModuleRegistry,
+    sample_rate: u32,
 }
 
 impl RunningInvention {
@@ -172,6 +193,60 @@ impl RunningInvention {
             module_id: module_id.into(),
             port: port.into(),
             value,
+        })
+    }
+
+    /// Adds a new module to the running graph.
+    ///
+    /// The module is built on the main thread using the registry, then sent
+    /// to the audio thread via the command queue. Handles are returned immediately
+    /// (they use `Arc<Mutex<T>>` internally and work regardless of graph state).
+    ///
+    /// If `module_id` already exists, the old module is replaced (hot-swap).
+    pub fn add_module(
+        &self,
+        module_id: impl Into<String>,
+        module_type: &str,
+        config: &serde_json::Value,
+    ) -> Result<InventionHandles, GraphCommandError> {
+        if !self.registry.has_type(module_type) {
+            return Err(GraphCommandError::UnknownModuleType(module_type.to_string()));
+        }
+
+        let result = self
+            .registry
+            .build(module_type, self.sample_rate, config)
+            .map_err(|e| GraphCommandError::ModuleBuildFailed(e.to_string()))?;
+
+        let module_id = module_id.into();
+
+        // Collect handles with flat keys: "module_id.handle_name"
+        let mut handle_map = HashMap::new();
+        for (handle_name, handle) in result.handles {
+            let key = format!("{}.{}", module_id, handle_name);
+            handle_map.insert(key, handle);
+        }
+
+        self.send_command(GraphCommand::AddModule {
+            module_id,
+            module: result.module,
+            sink: result.sink,
+        })?;
+
+        Ok(InventionHandles::new(handle_map))
+    }
+
+    /// Removes a module from the running graph.
+    ///
+    /// This is fire-and-forget: if the module doesn't exist, the command is
+    /// silently ignored on the audio thread. All connections referencing the
+    /// removed module are cleaned up.
+    pub fn remove_module(
+        &self,
+        module_id: impl Into<String>,
+    ) -> Result<(), GraphCommandError> {
+        self.send_command(GraphCommand::RemoveModule {
+            module_id: module_id.into(),
         })
     }
 }

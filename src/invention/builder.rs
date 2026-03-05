@@ -67,7 +67,7 @@ impl InventionBuilder {
     /// tempo.set_bpm(140.0);
     /// ```
     pub fn build(
-        &self,
+        self,
         invention: Invention,
     ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
         self.validate_invention(&invention)?;
@@ -90,6 +90,8 @@ impl InventionBuilder {
             modules,
             sinks,
             routing,
+            registry: self.registry,
+            sample_rate: self.sample_rate,
         };
 
         Ok((runtime, handles))
