@@ -2,7 +2,7 @@
 
 use crate::modules::{AudioBackend, AudioDriver};
 use crate::registry::ModuleRegistry;
-use crate::Module;
+use crate::{ControlMeta, Module};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::mpsc;
@@ -139,6 +139,8 @@ pub enum GraphCommandError {
     UnknownModule(String),
     /// The referenced port does not exist on the module.
     InvalidPort(String),
+    /// A module control operation failed (invalid key, etc.).
+    ControlError(String),
 }
 
 impl std::fmt::Display for GraphCommandError {
@@ -158,6 +160,9 @@ impl std::fmt::Display for GraphCommandError {
             }
             GraphCommandError::InvalidPort(msg) => {
                 write!(f, "invalid port: {}", msg)
+            }
+            GraphCommandError::ControlError(msg) => {
+                write!(f, "control error: {}", msg)
             }
         }
     }
@@ -321,6 +326,68 @@ impl RunningInvention {
             to_module: to_module.to_string(),
             to_port: to_port.to_string(),
         })
+    }
+
+    /// Lists the controls available on a specific module.
+    pub fn list_controls(
+        &self,
+        module_id: &str,
+    ) -> Result<Vec<ControlMeta>, GraphCommandError> {
+        let graph = self.graph.lock().unwrap();
+        let module = graph
+            .modules
+            .get(module_id)
+            .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
+        let m = module.lock().unwrap();
+        Ok(m.controls())
+    }
+
+    /// Lists controls for all modules in the graph.
+    ///
+    /// Returns a vec of `(module_id, controls)` pairs, skipping modules with no controls.
+    pub fn list_all_controls(&self) -> Vec<(String, Vec<ControlMeta>)> {
+        let graph = self.graph.lock().unwrap();
+        let mut result = Vec::new();
+        for (id, module) in &graph.modules {
+            let m = module.lock().unwrap();
+            let controls = m.controls();
+            if !controls.is_empty() {
+                result.push((id.clone(), controls));
+            }
+        }
+        result
+    }
+
+    /// Gets the current value of a module control.
+    pub fn get_control(
+        &self,
+        module_id: &str,
+        key: &str,
+    ) -> Result<f32, GraphCommandError> {
+        let graph = self.graph.lock().unwrap();
+        let module = graph
+            .modules
+            .get(module_id)
+            .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
+        let m = module.lock().unwrap();
+        m.get_control(key).map_err(GraphCommandError::ControlError)
+    }
+
+    /// Sets the value of a module control.
+    pub fn set_control(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: f32,
+    ) -> Result<(), GraphCommandError> {
+        let graph = self.graph.lock().unwrap();
+        let module = graph
+            .modules
+            .get(module_id)
+            .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
+        let mut m = module.lock().unwrap();
+        m.set_control(key, value)
+            .map_err(GraphCommandError::ControlError)
     }
 
     /// Removes a module from the running graph.

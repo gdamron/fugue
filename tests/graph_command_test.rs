@@ -215,3 +215,114 @@ fn test_add_module_then_connect() {
     assert!(result.is_ok());
     running.stop();
 }
+
+// --- Control value API tests ---
+
+#[test]
+fn test_list_controls_succeeds() {
+    let (running, _handles) = build_simple_invention();
+    let controls = running.list_controls("osc").expect("Failed to list controls");
+    let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
+    assert!(keys.contains(&"frequency"), "Expected 'frequency' control, got: {:?}", keys);
+    assert!(keys.contains(&"type"), "Expected 'type' control, got: {:?}", keys);
+    running.stop();
+}
+
+#[test]
+fn test_list_controls_unknown_module_fails() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.list_controls("nonexistent");
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        fugue::GraphCommandError::UnknownModule(id) => assert_eq!(id, "nonexistent"),
+        other => panic!("Expected UnknownModule, got: {:?}", other),
+    }
+    running.stop();
+}
+
+#[test]
+fn test_list_all_controls() {
+    let (running, _handles) = build_simple_invention();
+    let all = running.list_all_controls();
+    let module_ids: Vec<&str> = all.iter().map(|(id, _)| id.as_str()).collect();
+    assert!(module_ids.contains(&"osc"), "Expected 'osc' in module list, got: {:?}", module_ids);
+    running.stop();
+}
+
+#[test]
+fn test_get_control_succeeds() {
+    let (running, _handles) = build_simple_invention();
+    let value = running.get_control("osc", "frequency").expect("Failed to get control");
+    assert!(value > 0.0, "Expected positive frequency, got: {}", value);
+    running.stop();
+}
+
+#[test]
+fn test_get_control_unknown_module_fails() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.get_control("nonexistent", "frequency");
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        fugue::GraphCommandError::UnknownModule(id) => assert_eq!(id, "nonexistent"),
+        other => panic!("Expected UnknownModule, got: {:?}", other),
+    }
+    running.stop();
+}
+
+#[test]
+fn test_get_control_invalid_key_fails() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.get_control("osc", "bad_key");
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        fugue::GraphCommandError::ControlError(_) => {}
+        other => panic!("Expected ControlError, got: {:?}", other),
+    }
+    running.stop();
+}
+
+#[test]
+fn test_set_control_succeeds() {
+    let (running, _handles) = build_simple_invention();
+    running.set_control("osc", "frequency", 880.0).expect("Failed to set control");
+    let value = running.get_control("osc", "frequency").expect("Failed to get control");
+    assert!((value - 880.0).abs() < f32::EPSILON, "Expected 880.0, got: {}", value);
+    running.stop();
+}
+
+#[test]
+fn test_set_control_unknown_module_fails() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.set_control("nonexistent", "frequency", 440.0);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        fugue::GraphCommandError::UnknownModule(id) => assert_eq!(id, "nonexistent"),
+        other => panic!("Expected UnknownModule, got: {:?}", other),
+    }
+    running.stop();
+}
+
+#[test]
+fn test_set_control_invalid_key_fails() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.set_control("osc", "bad_key", 1.0);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        fugue::GraphCommandError::ControlError(_) => {}
+        other => panic!("Expected ControlError, got: {:?}", other),
+    }
+    running.stop();
+}
+
+#[test]
+fn test_add_module_then_control() {
+    let (running, _handles) = build_simple_invention();
+    let config = serde_json::json!({"frequency": 440.0});
+    running.add_module("osc2", "oscillator", &config).expect("Failed to add module");
+    // Wait for the audio thread to process the AddModule command
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    running.set_control("osc2", "frequency", 220.0).expect("Failed to set control");
+    let value = running.get_control("osc2", "frequency").expect("Failed to get control");
+    assert!((value - 220.0).abs() < f32::EPSILON, "Expected 220.0, got: {}", value);
+    running.stop();
+}
