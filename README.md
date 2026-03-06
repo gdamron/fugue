@@ -172,6 +172,45 @@ let audio_gen = clock.connect(melody).connect(voice);
 dac.start(audio_gen)?;
 ```
 
+## REPL (Interactive Terminal)
+
+Fugue includes a terminal REPL for interactively building and tweaking inventions while audio plays.
+
+### Build and Run
+
+```bash
+cargo run --features repl --bin fugue-repl
+```
+
+### Example Session
+
+```
+fugue> new My Jam
+Created invention 'My Jam' with DAC.
+fugue> add clock1 clock
+Added clock 'clock1'.
+fugue> add melody1 melody
+Added melody 'melody1'.
+fugue> add osc1 oscillator
+Added oscillator 'osc1'.
+fugue> connect clock1 gate melody1 gate
+Connected clock1:gate -> melody1:gate
+fugue> connect melody1 frequency osc1 frequency
+Connected melody1:frequency -> osc1:frequency
+fugue> connect osc1 audio dac audio
+Connected osc1:audio -> dac:audio
+fugue> set clock1 bpm 140
+clock1.bpm = 140
+fugue> controls clock1
+clock1:
+    bpm                 120  (60 - 300, default: 120) Tempo in beats per minute
+fugue> types
+(lists all module types with ports and controls)
+fugue> quit
+```
+
+Type `help` for the full command reference.
+
 ## MCP Server (AI-Driven Composition)
 
 Fugue includes an MCP server that exposes the full runtime API as tools, letting LLM agents like Claude create and manipulate inventions through natural conversation.
