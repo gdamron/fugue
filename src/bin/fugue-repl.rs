@@ -1,6 +1,6 @@
 use fugue::{
-    default_sample_rate, ControlMeta, Invention, InventionBuilder, ModuleRegistry, ModuleSpec,
-    RunningInvention,
+    default_sample_rate, Connection, ControlMeta, Invention, InventionBuilder, ModuleRegistry,
+    ModuleSpec, RunningInvention,
 };
 use indexmap::IndexMap;
 use rustyline::error::ReadlineError;
@@ -13,6 +13,7 @@ use rustyline::DefaultEditor;
 struct ModuleInfo {
     id: String,
     module_type: String,
+    config: serde_json::Value,
 }
 
 struct ConnectionInfo {
@@ -26,6 +27,7 @@ struct FugueRepl {
     running: Option<RunningInvention>,
     modules: IndexMap<String, ModuleInfo>,
     connections: Vec<ConnectionInfo>,
+    title: Option<String>,
     sample_rate: u32,
 }
 
@@ -35,6 +37,7 @@ impl FugueRepl {
             running: None,
             modules: IndexMap::new(),
             connections: Vec::new(),
+            title: None,
             sample_rate,
         }
     }
@@ -45,6 +48,34 @@ impl FugueRepl {
         }
         self.modules.clear();
         self.connections.clear();
+        self.title = None;
+    }
+
+    fn to_invention(&self) -> Invention {
+        Invention {
+            version: "1.0.0".to_string(),
+            title: self.title.clone(),
+            description: None,
+            modules: self
+                .modules
+                .values()
+                .map(|m| ModuleSpec {
+                    id: m.id.clone(),
+                    module_type: m.module_type.clone(),
+                    config: m.config.clone(),
+                })
+                .collect(),
+            connections: self
+                .connections
+                .iter()
+                .map(|c| Connection {
+                    from: c.from.clone(),
+                    to: c.to.clone(),
+                    from_port: Some(c.from_port.clone()),
+                    to_port: Some(c.to_port.clone()),
+                })
+                .collect(),
+        }
     }
 
     fn require_running(&self) -> Result<&RunningInvention, String> {
@@ -83,6 +114,7 @@ fn execute(repl: &mut FugueRepl, line: &str) -> Result<String, String> {
         "set" => cmd_set(repl, rest),
         "get" => cmd_get(repl, rest),
         "controls" => cmd_controls(repl, rest),
+        "save" => cmd_save(repl, rest),
         "types" => cmd_types(repl),
         "help" => Ok(help_text()),
         "quit" | "exit" => {
@@ -127,9 +159,11 @@ fn cmd_new(repl: &mut FugueRepl, rest: &str) -> Result<String, String> {
         ModuleInfo {
             id: "dac".to_string(),
             module_type: "dac".to_string(),
+            config: serde_json::Value::Null,
         },
     );
     repl.running = Some(running);
+    repl.title = title.clone();
 
     let name = title.as_deref().unwrap_or("untitled");
     Ok(format!("Created invention '{}' with DAC.", name))
@@ -155,12 +189,14 @@ fn start_invention(repl: &mut FugueRepl, invention: Invention) -> Result<String,
     repl.stop_current();
 
     // Populate shadow state
+    repl.title = invention.title.clone();
     for spec in &invention.modules {
         repl.modules.insert(
             spec.id.clone(),
             ModuleInfo {
                 id: spec.id.clone(),
                 module_type: spec.module_type.clone(),
+                config: spec.config.clone(),
             },
         );
     }
@@ -212,6 +248,21 @@ fn cmd_status(repl: &FugueRepl) -> Result<String, String> {
     }
 }
 
+fn cmd_save(repl: &FugueRepl, rest: &str) -> Result<String, String> {
+    if rest.is_empty() {
+        return Err("Usage: save <path>".to_string());
+    }
+    if repl.modules.is_empty() {
+        return Err("Nothing to save. No modules in current state.".to_string());
+    }
+
+    let invention = repl.to_invention();
+    let json = invention.to_json().map_err(|e| e.to_string())?;
+    std::fs::write(rest, &json).map_err(|e| e.to_string())?;
+
+    Ok(format!("Saved to {}.", rest))
+}
+
 // ---------------------------------------------------------------------------
 // Module commands
 // ---------------------------------------------------------------------------
@@ -242,6 +293,7 @@ fn cmd_add(repl: &mut FugueRepl, rest: &str) -> Result<String, String> {
         ModuleInfo {
             id: id.to_string(),
             module_type: module_type.to_string(),
+            config: config.clone(),
         },
     );
 
@@ -489,6 +541,7 @@ Lifecycle:
   new [title]                        Create a new invention (DAC only)
   load <path>                        Load invention from JSON file
   load-json <json>                   Load invention from inline JSON
+  save <path>                        Save invention to JSON file
   stop                               Stop playback
   status                             Show running state
 
