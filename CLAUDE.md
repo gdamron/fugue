@@ -16,6 +16,12 @@ cargo run --example modular_clock
 cargo run --example modular_chain
 cargo run --example modular_voice
 
+# Build the REPL (requires repl feature)
+cargo build --features repl --bin fugue-repl
+
+# Run the REPL
+cargo run --features repl --bin fugue-repl
+
 # Build the MCP server (requires mcp feature)
 cargo build --features mcp --bin fugue-mcp
 
