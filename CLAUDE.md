@@ -16,6 +16,12 @@ cargo run --example modular_clock
 cargo run --example modular_chain
 cargo run --example modular_voice
 
+# Build the MCP server (requires mcp feature)
+cargo build --features mcp --bin fugue-mcp
+
+# Run the MCP server
+cargo run --features mcp --bin fugue-mcp
+
 # Run tests
 cargo test
 
@@ -150,3 +156,94 @@ Multiple paths automatically mix at the DAC:
   ]
 }
 ```
+
+## MCP Server
+
+Fugue includes an MCP (Model Context Protocol) server that lets LLM agents create and manipulate inventions in real time. The server is built with `rmcp` and communicates over stdio.
+
+### Building
+
+The MCP server is gated behind the `mcp` cargo feature to keep the core library lean:
+
+```bash
+cargo build --features mcp --bin fugue-mcp
+```
+
+### Claude Desktop Configuration
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "fugue": {
+      "command": "cargo",
+      "args": ["run", "--features", "mcp", "--bin", "fugue-mcp"],
+      "cwd": "/path/to/fugue"
+    }
+  }
+}
+```
+
+Or with a pre-built binary:
+
+```json
+{
+  "mcpServers": {
+    "fugue": {
+      "command": "/path/to/fugue/target/release/fugue-mcp"
+    }
+  }
+}
+```
+
+### Claude Code Configuration
+
+Add to `.mcp.json` in the project root or `~/.claude/mcp.json` globally:
+
+```json
+{
+  "mcpServers": {
+    "fugue": {
+      "command": "cargo",
+      "args": ["run", "--features", "mcp", "--bin", "fugue-mcp"],
+      "cwd": "/path/to/fugue"
+    }
+  }
+}
+```
+
+### Available Tools (14)
+
+**Lifecycle:**
+- `create_invention(title?)` — Creates a minimal invention (DAC only) and starts playback
+- `load_invention(json)` — Loads a full invention from a JSON string
+- `stop_invention()` — Stops playback
+- `get_status()` — Returns running state, module count, connection count
+
+**Modules:**
+- `add_module(id, module_type, config?)` — Adds a module to the running invention
+- `remove_module(id)` — Removes a module and its connections
+- `list_modules()` — Lists all modules with their types
+
+**Connections:**
+- `connect(from, from_port, to, to_port)` — Connects two module ports
+- `disconnect(from, from_port, to, to_port)` — Removes a connection
+- `list_connections()` — Lists all connections
+
+**Controls:**
+- `set_control(module_id, key, value)` — Sets a control value (e.g. BPM, attack time)
+- `get_control(module_id, key)` — Reads the current value of a control
+- `list_controls(module_id?)` — Lists controls with descriptions, ranges, and defaults
+
+**Discovery:**
+- `describe_module_types()` — Lists all module types with their ports and controls. Call this first to understand available modules.
+
+### Typical LLM Workflow
+
+1. Call `describe_module_types` to discover available modules, ports, and controls
+2. Call `create_invention` to start with a blank canvas (DAC only)
+3. Add modules: `add_module("clock1", "clock")`, `add_module("osc1", "oscillator")`, etc.
+4. Wire them up: `connect("clock1", "gate", "melody1", "gate")`
+5. Adjust parameters: `set_control("clock1", "bpm", 140.0)`
+6. Iterate — add/remove modules, change connections and controls in real time

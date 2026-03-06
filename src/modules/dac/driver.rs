@@ -49,7 +49,7 @@ pub fn default_sample_rate() -> Result<u32, Box<dyn std::error::Error>> {
 ///     0.0
 /// }))?;
 /// ```
-pub trait AudioBackend {
+pub trait AudioBackend: Send {
     /// Returns the sample rate of the audio backend in Hz.
     fn sample_rate(&self) -> u32;
 
@@ -74,6 +74,12 @@ pub struct AudioDriver {
     stream: Option<Stream>,
     sample_rate: u32,
 }
+
+/// Safety: AudioDriver is safe to send between threads. The contained cpal::Stream
+/// uses `PhantomData<*mut ()>` which prevents auto-impl of Send, but the stream's
+/// audio callback runs on its own dedicated thread regardless of which thread
+/// owns the Stream handle. We only call play() and drop() on it.
+unsafe impl Send for AudioDriver {}
 
 impl AudioDriver {
     /// Creates a new AudioDriver using the system's default output device.

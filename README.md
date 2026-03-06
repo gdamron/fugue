@@ -11,6 +11,7 @@ A Rust library for composing algorithmic and generative music, inspired by ChucK
 - 🎲 **Algorithmic composition**: Probabilistic melody generation with live parameter updates
 - 🎚️ **Live control**: Update scales, rhythms, and synthesis parameters in real-time
 - 📄 **Inventions**: Define synthesis setups using JSON documents
+- 🤖 **MCP Server**: Let LLM agents compose and perform music via the Model Context Protocol
 
 ## Quick Start
 
@@ -171,6 +172,73 @@ let audio_gen = clock.connect(melody).connect(voice);
 dac.start(audio_gen)?;
 ```
 
+## MCP Server (AI-Driven Composition)
+
+Fugue includes an MCP server that exposes the full runtime API as tools, letting LLM agents like Claude create and manipulate inventions through natural conversation.
+
+### Setup
+
+Build with the `mcp` feature:
+
+```bash
+cargo build --features mcp --bin fugue-mcp --release
+```
+
+### Use with Claude Desktop
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "fugue": {
+      "command": "/path/to/fugue/target/release/fugue-mcp"
+    }
+  }
+}
+```
+
+### Use with Claude Code
+
+Add to `.mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "fugue": {
+      "command": "cargo",
+      "args": ["run", "--features", "mcp", "--release", "--bin", "fugue-mcp"],
+      "cwd": "/path/to/fugue"
+    }
+  }
+}
+```
+
+### What Can the LLM Do?
+
+The server provides 14 tools across four categories:
+
+| Category | Tools | Description |
+|----------|-------|-------------|
+| **Lifecycle** | `create_invention`, `load_invention`, `stop_invention`, `get_status` | Start/stop inventions |
+| **Modules** | `add_module`, `remove_module`, `list_modules` | Build the synthesis graph |
+| **Connections** | `connect`, `disconnect`, `list_connections` | Wire modules together via named ports |
+| **Controls** | `set_control`, `get_control`, `list_controls` | Adjust parameters in real time |
+
+Plus `describe_module_types` for full introspection of available modules, ports, and controls.
+
+### Example Conversation
+
+> **You:** Make me a simple melody in D Dorian
+>
+> **Claude:** *calls `create_invention`, adds a clock, melody generator, oscillator, ADSR, VCA, connects them all to the DAC, sets the root note to D and the mode to Dorian*
+>
+> **You:** Make it faster and switch to a sawtooth wave
+>
+> **Claude:** *calls `set_control("clock1", "bpm", 160.0)` and `set_control("osc1", "type", 1.0)`*
+
+The LLM calls `describe_module_types` first to discover all available modules, their input/output ports, and control parameters with valid ranges — then builds and adjusts the synthesis graph through natural language.
+
 ## Design Philosophy
 
 Fugue draws inspiration from:
@@ -227,6 +295,7 @@ The library is designed for WebAssembly support. Future versions will include:
 ## Roadmap
 
 - [x] Declarative invention system with JSON format
+- [x] MCP server for AI-driven composition
 - [ ] Additional synthesis: FM synthesis, noise generators, envelopes
 - [ ] Effects: Reverb, delay, distortion
 - [ ] MIDI support: Input and output
