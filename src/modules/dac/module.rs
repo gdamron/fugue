@@ -133,10 +133,14 @@ impl Module for DacModule {
         &["audio"]
     }
 
+    fn reset_inputs(&mut self) {
+        self.audio_in = 0.0;
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
             "audio" => {
-                self.audio_in = value;
+                self.audio_in += value;
                 Ok(())
             }
             _ => Err(format!("Unknown input port: {}", port)),
@@ -216,11 +220,13 @@ mod tests {
         let mut dac = DacModule::new();
 
         // Test positive
+        dac.reset_inputs();
         dac.set_input("audio", 2.0).unwrap();
         dac.process();
         let pos = dac.get_output("audio").unwrap();
 
         // Test negative
+        dac.reset_inputs();
         dac.set_input("audio", -2.0).unwrap();
         dac.process();
         let neg = dac.get_output("audio").unwrap();
