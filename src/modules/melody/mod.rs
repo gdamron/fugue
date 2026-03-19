@@ -17,6 +17,7 @@ pub use self::controls::MelodyControls;
 pub use self::controls::MelodyParams;
 
 mod controls;
+mod inputs;
 
 /// Factory for constructing MelodyGenerator modules from configuration.
 pub struct MelodyFactory;
@@ -117,7 +118,7 @@ pub struct MelodyGenerator {
     rng: StdRng,
     current_note: Note,
     // Modular inputs
-    gate_in: f32,
+    inputs: inputs::MelodyInputs,
     last_gate: f32,
     // Cached outputs (computed in process())
     cached_frequency: f32,
@@ -137,7 +138,7 @@ impl MelodyGenerator {
             ctrl: controls,
             rng: StdRng::from_entropy(),
             current_note,
-            gate_in: 0.0,
+            inputs: inputs::MelodyInputs::new(),
             last_gate: 0.0,
             cached_frequency: current_note.frequency(),
             cached_gate: 0.0,
@@ -183,7 +184,7 @@ impl Module for MelodyGenerator {
 
     fn process(&mut self) -> bool {
         // Detect rising edge of gate input
-        let gate_high = self.gate_in > 0.5;
+        let gate_high = self.inputs.gate() > 0.5;
         let was_low = self.last_gate <= 0.5;
 
         if gate_high && was_low {
@@ -193,16 +194,16 @@ impl Module for MelodyGenerator {
 
         // Cache outputs
         self.cached_frequency = self.current_note.frequency();
-        self.cached_gate = self.gate_in; // Pass through gate signal
+        self.cached_gate = self.inputs.gate(); // Pass through gate signal
 
         // Remember last gate state for edge detection
-        self.last_gate = self.gate_in;
+        self.last_gate = self.inputs.gate();
 
         true
     }
 
     fn inputs(&self) -> &[&str] {
-        &["gate"]
+        &inputs::INPUTS
     }
 
     fn outputs(&self) -> &[&str] {
@@ -210,13 +211,7 @@ impl Module for MelodyGenerator {
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-        match port {
-            "gate" => {
-                self.gate_in = value;
-                Ok(())
-            }
-            _ => Err(format!("Unknown input port: {}", port)),
-        }
+        self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
@@ -248,9 +243,12 @@ impl Module for MelodyGenerator {
 
         for i in 0..degree_count {
             controls.push(
-                ControlMeta::new(format!("degree.{}", i), format!("Scale degree at position {}", i))
-                    .with_range(0.0, 127.0)
-                    .with_default(i as f32),
+                ControlMeta::new(
+                    format!("degree.{}", i),
+                    format!("Scale degree at position {}", i),
+                )
+                .with_range(0.0, 127.0)
+                .with_default(i as f32),
             );
             controls.push(
                 ControlMeta::new(
@@ -403,5 +401,4 @@ mod tests {
 
         assert!(melody.get_control("unknown").is_err());
     }
-
 }

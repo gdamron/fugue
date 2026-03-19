@@ -3,8 +3,8 @@
 //! These tests verify that the new pull-based signal processing system
 //! correctly handles various graph topologies and edge cases.
 
-use fugue::modules::ClockControls;
 use fugue::invention::Invention;
+use fugue::modules::ClockControls;
 use fugue::InventionBuilder;
 
 /// Test a simple chain: Clock → ADSR

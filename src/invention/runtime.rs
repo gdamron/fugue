@@ -225,7 +225,9 @@ impl RunningInvention {
         config: &serde_json::Value,
     ) -> Result<InventionHandles, GraphCommandError> {
         if !self.registry.has_type(module_type) {
-            return Err(GraphCommandError::UnknownModuleType(module_type.to_string()));
+            return Err(GraphCommandError::UnknownModuleType(
+                module_type.to_string(),
+            ));
         }
 
         let result = self
@@ -330,10 +332,7 @@ impl RunningInvention {
     }
 
     /// Lists the controls available on a specific module.
-    pub fn list_controls(
-        &self,
-        module_id: &str,
-    ) -> Result<Vec<ControlMeta>, GraphCommandError> {
+    pub fn list_controls(&self, module_id: &str) -> Result<Vec<ControlMeta>, GraphCommandError> {
         let graph = self.graph.lock().unwrap();
         let module = graph
             .modules
@@ -360,11 +359,7 @@ impl RunningInvention {
     }
 
     /// Gets the current value of a module control.
-    pub fn get_control(
-        &self,
-        module_id: &str,
-        key: &str,
-    ) -> Result<f32, GraphCommandError> {
+    pub fn get_control(&self, module_id: &str, key: &str) -> Result<f32, GraphCommandError> {
         let graph = self.graph.lock().unwrap();
         let module = graph
             .modules
@@ -396,10 +391,7 @@ impl RunningInvention {
     /// This is fire-and-forget: if the module doesn't exist, the command is
     /// silently ignored on the audio thread. All connections referencing the
     /// removed module are cleaned up.
-    pub fn remove_module(
-        &self,
-        module_id: impl Into<String>,
-    ) -> Result<(), GraphCommandError> {
+    pub fn remove_module(&self, module_id: impl Into<String>) -> Result<(), GraphCommandError> {
         self.send_command(GraphCommand::RemoveModule {
             module_id: module_id.into(),
         })

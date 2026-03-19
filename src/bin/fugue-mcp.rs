@@ -290,8 +290,7 @@ impl FugueMcp {
         state.modules.clear();
         state.connections.clear();
 
-        let invention =
-            Invention::from_json(&params.json).map_err(|e| mcp_error(e.to_string()))?;
+        let invention = Invention::from_json(&params.json).map_err(|e| mcp_error(e.to_string()))?;
 
         // Populate shadow state from parsed invention
         for spec in &invention.modules {
@@ -461,7 +460,9 @@ impl FugueMcp {
         ))]))
     }
 
-    #[tool(description = "Disconnect two modules by removing the connection between specific ports.")]
+    #[tool(
+        description = "Disconnect two modules by removing the connection between specific ports."
+    )]
     async fn disconnect(
         &self,
         Parameters(params): Parameters<DisconnectParams>,
@@ -636,10 +637,7 @@ impl FugueMcp {
 impl ServerHandler for FugueMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "fugue-mcp",
-                env!("CARGO_PKG_VERSION"),
-            ))
+            .with_server_info(Implementation::new("fugue-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Fugue modular synthesis server. Create inventions, add modules (oscillators, \
                  filters, envelopes, etc.), connect them via named ports, and adjust controls \

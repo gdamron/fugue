@@ -164,7 +164,11 @@ fn test_connect_invalid_output_port_fails() {
     assert!(result.is_err());
     match result.unwrap_err() {
         fugue::GraphCommandError::InvalidPort(msg) => {
-            assert!(msg.contains("bad_port"), "Error should mention the bad port: {}", msg);
+            assert!(
+                msg.contains("bad_port"),
+                "Error should mention the bad port: {}",
+                msg
+            );
         }
         other => panic!("Expected InvalidPort, got: {:?}", other),
     }
@@ -178,7 +182,11 @@ fn test_connect_invalid_input_port_fails() {
     assert!(result.is_err());
     match result.unwrap_err() {
         fugue::GraphCommandError::InvalidPort(msg) => {
-            assert!(msg.contains("bad_port"), "Error should mention the bad port: {}", msg);
+            assert!(
+                msg.contains("bad_port"),
+                "Error should mention the bad port: {}",
+                msg
+            );
         }
         other => panic!("Expected InvalidPort, got: {:?}", other),
     }
@@ -251,10 +259,20 @@ fn test_runtime_cycle_is_safe() {
 #[test]
 fn test_list_controls_succeeds() {
     let (running, _handles) = build_simple_invention();
-    let controls = running.list_controls("osc").expect("Failed to list controls");
+    let controls = running
+        .list_controls("osc")
+        .expect("Failed to list controls");
     let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
-    assert!(keys.contains(&"frequency"), "Expected 'frequency' control, got: {:?}", keys);
-    assert!(keys.contains(&"type"), "Expected 'type' control, got: {:?}", keys);
+    assert!(
+        keys.contains(&"frequency"),
+        "Expected 'frequency' control, got: {:?}",
+        keys
+    );
+    assert!(
+        keys.contains(&"type"),
+        "Expected 'type' control, got: {:?}",
+        keys
+    );
     running.stop();
 }
 
@@ -275,14 +293,20 @@ fn test_list_all_controls() {
     let (running, _handles) = build_simple_invention();
     let all = running.list_all_controls();
     let module_ids: Vec<&str> = all.iter().map(|(id, _)| id.as_str()).collect();
-    assert!(module_ids.contains(&"osc"), "Expected 'osc' in module list, got: {:?}", module_ids);
+    assert!(
+        module_ids.contains(&"osc"),
+        "Expected 'osc' in module list, got: {:?}",
+        module_ids
+    );
     running.stop();
 }
 
 #[test]
 fn test_get_control_succeeds() {
     let (running, _handles) = build_simple_invention();
-    let value = running.get_control("osc", "frequency").expect("Failed to get control");
+    let value = running
+        .get_control("osc", "frequency")
+        .expect("Failed to get control");
     assert!(value > 0.0, "Expected positive frequency, got: {}", value);
     running.stop();
 }
@@ -314,9 +338,17 @@ fn test_get_control_invalid_key_fails() {
 #[test]
 fn test_set_control_succeeds() {
     let (running, _handles) = build_simple_invention();
-    running.set_control("osc", "frequency", 880.0).expect("Failed to set control");
-    let value = running.get_control("osc", "frequency").expect("Failed to get control");
-    assert!((value - 880.0).abs() < f32::EPSILON, "Expected 880.0, got: {}", value);
+    running
+        .set_control("osc", "frequency", 880.0)
+        .expect("Failed to set control");
+    let value = running
+        .get_control("osc", "frequency")
+        .expect("Failed to get control");
+    assert!(
+        (value - 880.0).abs() < f32::EPSILON,
+        "Expected 880.0, got: {}",
+        value
+    );
     running.stop();
 }
 
@@ -348,11 +380,21 @@ fn test_set_control_invalid_key_fails() {
 fn test_add_module_then_control() {
     let (running, _handles) = build_simple_invention();
     let config = serde_json::json!({"frequency": 440.0});
-    running.add_module("osc2", "oscillator", &config).expect("Failed to add module");
+    running
+        .add_module("osc2", "oscillator", &config)
+        .expect("Failed to add module");
     // Wait for the audio thread to process the AddModule command
     std::thread::sleep(std::time::Duration::from_millis(50));
-    running.set_control("osc2", "frequency", 220.0).expect("Failed to set control");
-    let value = running.get_control("osc2", "frequency").expect("Failed to get control");
-    assert!((value - 220.0).abs() < f32::EPSILON, "Expected 220.0, got: {}", value);
+    running
+        .set_control("osc2", "frequency", 220.0)
+        .expect("Failed to set control");
+    let value = running
+        .get_control("osc2", "frequency")
+        .expect("Failed to get control");
+    assert!(
+        (value - 220.0).abs() < f32::EPSILON,
+        "Expected 220.0, got: {}",
+        value
+    );
     running.stop();
 }

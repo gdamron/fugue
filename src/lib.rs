@@ -27,8 +27,8 @@ pub use modules::{MelodyParams, Tempo};
 
 // Re-export invention system
 pub use invention::{
-    Connection, GraphCommandError, Invention, InventionBuilder, InventionHandles,
-    InventionRuntime, ModuleSpec, RunningInvention, TimeSignature,
+    Connection, GraphCommandError, Invention, InventionBuilder, InventionHandles, InventionRuntime,
+    ModuleSpec, RunningInvention, TimeSignature,
 };
 
 // Re-export music theory

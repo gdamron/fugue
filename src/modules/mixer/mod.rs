@@ -37,6 +37,7 @@ use crate::Module;
 pub use self::controls::MixerControls;
 
 mod controls;
+mod inputs;
 
 /// Maximum number of mixer channels supported.
 pub const MAX_CHANNELS: usize = 8;
@@ -76,18 +77,7 @@ pub const MAX_CHANNELS: usize = 8;
 pub struct Mixer {
     channels: usize,
     ctrl: MixerControls,
-
-    // Input values
-    inputs: [f32; MAX_CHANNELS],
-    level_cvs: [f32; MAX_CHANNELS],
-    master_cv: f32,
-
-    // Active flags for signal override
-    level_cv_active: [bool; MAX_CHANNELS],
-    master_cv_active: bool,
-
-    // For dynamic port lists
-    input_names: Vec<&'static str>,
+    input_state: inputs::MixerInputs,
     output_names: Vec<&'static str>,
 
     // Pull-based processing
@@ -108,25 +98,10 @@ impl Mixer {
     pub fn new_with_controls(channels: usize, controls: MixerControls) -> Self {
         let channels = channels.clamp(1, MAX_CHANNELS);
 
-        // Build input port names based on channel count
-        let mut input_names = Vec::with_capacity(channels * 2 + 1);
-        for name in INPUT_NAMES.iter().take(channels) {
-            input_names.push(*name);
-        }
-        for name in LEVEL_NAMES.iter().take(channels) {
-            input_names.push(*name);
-        }
-        input_names.push("master");
-
         Self {
             channels,
             ctrl: controls,
-            inputs: [0.0; MAX_CHANNELS],
-            level_cvs: [1.0; MAX_CHANNELS], // Default CV is unity (no change)
-            master_cv: 1.0,
-            level_cv_active: [false; MAX_CHANNELS],
-            master_cv_active: false,
-            input_names,
+            input_state: inputs::MixerInputs::new(channels),
             output_names: vec!["out"],
             last_processed_sample: 0,
         }
@@ -171,34 +146,20 @@ impl Mixer {
 
         for i in 0..self.channels {
             // Use CV if active, otherwise use control level
-            let level_cv = if self.level_cv_active[i] {
-                self.level_cvs[i]
-            } else {
-                1.0 // Unity when no CV connected
-            };
+            let level_cv = self.input_state.level_cv(i);
             // Channel output = input * base_level * level_cv
-            let channel_out = self.inputs[i] * levels[i] * level_cv;
+            let channel_out = self.input_state.audio(i) * levels[i] * level_cv;
             sum += channel_out;
         }
 
         // Use master CV if active, otherwise use control master
         let master_level = self.ctrl.master();
-        let master_cv = if self.master_cv_active {
-            self.master_cv
-        } else {
-            1.0 // Unity when no CV connected
-        };
+        let master_cv = self.input_state.master_cv();
 
         // Apply master level
         sum * master_level * master_cv
     }
 }
-
-// Static port name arrays for lifetime management
-static INPUT_NAMES: [&str; MAX_CHANNELS] = ["in1", "in2", "in3", "in4", "in5", "in6", "in7", "in8"];
-static LEVEL_NAMES: [&str; MAX_CHANNELS] = [
-    "level1", "level2", "level3", "level4", "level5", "level6", "level7", "level8",
-];
 
 impl Module for Mixer {
     fn name(&self) -> &str {
@@ -212,7 +173,7 @@ impl Module for Mixer {
     }
 
     fn inputs(&self) -> &[&str] {
-        &self.input_names
+        self.input_state.names()
     }
 
     fn outputs(&self) -> &[&str] {
@@ -220,38 +181,7 @@ impl Module for Mixer {
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-        // Check for audio inputs (in1-in8)
-        if let Some(rest) = port.strip_prefix("in") {
-            if let Ok(num) = rest.parse::<usize>() {
-                let idx = num - 1; // Convert 1-indexed to 0-indexed
-                if idx < self.channels {
-                    self.inputs[idx] = value;
-                    return Ok(());
-                }
-            }
-        }
-
-        // Check for level CVs (level1-level8)
-        if let Some(rest) = port.strip_prefix("level") {
-            if let Ok(num) = rest.parse::<usize>() {
-                let idx = num - 1;
-                if idx < self.channels {
-                    // CV is typically 0-1, but we allow it to boost slightly
-                    self.level_cvs[idx] = value.clamp(0.0, 2.0);
-                    self.level_cv_active[idx] = true;
-                    return Ok(());
-                }
-            }
-        }
-
-        // Check for master
-        if port == "master" {
-            self.master_cv = value.clamp(0.0, 2.0);
-            self.master_cv_active = true;
-            return Ok(());
-        }
-
-        Err(format!("Unknown input port: {}", port))
+        self.input_state.set(self.channels, port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
@@ -270,9 +200,7 @@ impl Module for Mixer {
     }
 
     fn reset_inputs(&mut self) {
-        self.level_cv_active = [false; MAX_CHANNELS];
-        self.master_cv_active = false;
-        // Note: audio inputs don't have control fallbacks
+        self.input_state.reset();
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -369,10 +297,7 @@ impl ModuleFactory for MixerFactory {
             .map(|v| v as usize)
             .unwrap_or(4);
 
-        let master = config
-            .get("master")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1.0) as f32;
+        let master = config.get("master").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
 
         let levels: Vec<f32> = config
             .get("levels")

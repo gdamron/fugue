@@ -38,6 +38,7 @@ use crate::Module;
 pub use self::controls::LfoControls;
 
 mod controls;
+mod inputs;
 
 /// Converts oscillator type to f32 index.
 fn waveform_to_index(waveform: OscillatorType) -> f32 {
@@ -88,8 +89,7 @@ pub struct Lfo {
     ctrl: LfoControls,
 
     // Input values
-    sync_in: f32,
-    rate_mod: f32,
+    inputs: inputs::LfoInputs,
     prev_sync: f32,
 
     // Cached outputs
@@ -113,8 +113,7 @@ impl Lfo {
             phase: 0.0,
             sample_rate,
             ctrl: controls,
-            sync_in: 0.0,
-            rate_mod: 0.0,
+            inputs: inputs::LfoInputs::new(),
             prev_sync: 0.0,
             cached_out: 0.0,
             cached_out_uni: 0.5,
@@ -152,16 +151,16 @@ impl Lfo {
     /// Generates the next sample based on current waveform and phase.
     fn generate(&mut self) -> f32 {
         // Check for sync trigger (rising edge detection)
-        if self.sync_in > 0.5 && self.prev_sync <= 0.5 {
+        if self.inputs.sync() > 0.5 && self.prev_sync <= 0.5 {
             self.phase = 0.0;
         }
-        self.prev_sync = self.sync_in;
+        self.prev_sync = self.inputs.sync();
 
         let base_freq = self.ctrl.frequency();
         let waveform = self.ctrl.waveform();
 
         // Calculate effective frequency with modulation
-        let effective_freq = (base_freq + self.rate_mod).clamp(0.001, 100.0);
+        let effective_freq = (base_freq + self.inputs.rate()).clamp(0.001, 100.0);
 
         // Generate waveform (bipolar: -1.0 to +1.0)
         let sample = match waveform {
@@ -198,7 +197,7 @@ impl Module for Lfo {
     }
 
     fn inputs(&self) -> &[&str] {
-        &["sync", "rate"]
+        &inputs::INPUTS
     }
 
     fn outputs(&self) -> &[&str] {
@@ -206,17 +205,7 @@ impl Module for Lfo {
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-        match port {
-            "sync" => {
-                self.sync_in = value;
-                Ok(())
-            }
-            "rate" => {
-                self.rate_mod = value;
-                Ok(())
-            }
-            _ => Err(format!("Unknown input port: {}", port)),
-        }
+        self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {

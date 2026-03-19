@@ -8,6 +8,7 @@
 //! - [`default_sample_rate`] - Get the system's audio sample rate
 
 mod driver;
+mod inputs;
 mod module;
 
 pub use driver::{default_sample_rate, AudioBackend, AudioDriver};
