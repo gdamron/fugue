@@ -63,6 +63,7 @@ pub use self::controls::StepSequencerControls;
 
 mod controls;
 mod inputs;
+mod outputs;
 
 /// Default number of steps in a pattern.
 pub const DEFAULT_STEPS: usize = 16;
@@ -174,9 +175,7 @@ pub struct StepSequencer {
     inputs: inputs::StepSequencerInputs,
 
     // Cached outputs
-    cached_frequency: f32,
-    cached_gate: f32,
-    cached_step: f32,
+    outputs: outputs::StepSequencerOutputs,
 
     // Pull-based processing
     last_processed_sample: u64,
@@ -197,9 +196,7 @@ impl StepSequencer {
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
-            cached_frequency: 0.0,
-            cached_gate: 0.0,
-            cached_step: 0.0,
+            outputs: outputs::StepSequencerOutputs::new(),
             last_processed_sample: 0,
         }
     }
@@ -218,9 +215,7 @@ impl StepSequencer {
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
-            cached_frequency: 0.0,
-            cached_gate: 0.0,
-            cached_step: 0.0,
+            outputs: outputs::StepSequencerOutputs::new(),
             last_processed_sample: 0,
         }
     }
@@ -368,13 +363,15 @@ impl StepSequencer {
         }
 
         // Update cached outputs
-        self.cached_frequency = self.calculate_frequency();
-        self.cached_gate = if self.gate_samples_remaining > 0 {
-            1.0
-        } else {
-            0.0
-        };
-        self.cached_step = self.current_step as f32;
+        self.outputs.set(
+            self.calculate_frequency(),
+            if self.gate_samples_remaining > 0 {
+                1.0
+            } else {
+                0.0
+            },
+            self.current_step as f32,
+        );
 
         // Store for edge detection
         self.last_gate_in = self.inputs.gate();
@@ -397,7 +394,7 @@ impl Module for StepSequencer {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["frequency", "gate", "step"]
+        &outputs::OUTPUTS
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -405,12 +402,7 @@ impl Module for StepSequencer {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "frequency" => Ok(self.cached_frequency),
-            "gate" => Ok(self.cached_gate),
-            "step" => Ok(self.cached_step),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        self.outputs.get(port)
     }
 
     fn last_processed_sample(&self) -> u64 {

@@ -14,6 +14,7 @@ pub use self::controls::Tempo;
 
 mod controls;
 mod inputs;
+mod outputs;
 
 /// Factory for constructing Clock modules from configuration.
 pub struct ClockFactory;
@@ -69,7 +70,7 @@ pub struct Clock {
     measure: u64,
     beat_in_measure: u32,
     // Cached output for modular routing
-    cached_gate: f32,
+    outputs: outputs::ClockOutputs,
     last_processed_sample: u64, // For pull-based processing
 }
 
@@ -87,7 +88,7 @@ impl Clock {
             phase: 0.0,
             measure: 0,
             beat_in_measure: 0,
-            cached_gate: 0.0,
+            outputs: outputs::ClockOutputs::new(),
             last_processed_sample: 0,
         };
         clock.update_signal();
@@ -123,11 +124,11 @@ impl Clock {
         let gate_samples = (samples_per_beat * gate_duration) as u64;
 
         // Gate: PWM signal - HIGH for gate_duration% of each beat
-        self.cached_gate = if sample_in_beat < gate_samples {
+        self.outputs.set_gate(if sample_in_beat < gate_samples {
             1.0
         } else {
             0.0
-        };
+        });
     }
 
     /// Advances the clock by one sample.
@@ -178,7 +179,7 @@ impl Module for Clock {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["gate"]
+        &outputs::OUTPUTS
     }
 
     fn set_input(&mut self, port: &str, _value: f32) -> Result<(), String> {
@@ -186,10 +187,7 @@ impl Module for Clock {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "gate" => Ok(self.cached_gate),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        self.outputs.get(port)
     }
 
     fn last_processed_sample(&self) -> u64 {

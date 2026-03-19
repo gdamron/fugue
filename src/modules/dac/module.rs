@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::factory::{ModuleBuildResult, ModuleFactory};
 use crate::modules::dac::inputs;
+use crate::modules::dac::outputs;
 use crate::{Module, SinkModule, SinkOutput};
 
 /// Factory for constructing DacModule instances from configuration.
@@ -70,7 +71,7 @@ pub struct DacModule {
     /// Input audio sample
     inputs: inputs::DacInputs,
     /// Output audio sample (after processing)
-    audio_out: f32,
+    outputs: outputs::DacOutputs,
     /// Whether to apply soft clipping (default: true)
     soft_clip: bool,
     /// Last processed sample number (for caching)
@@ -82,7 +83,7 @@ impl DacModule {
     pub fn new() -> Self {
         Self {
             inputs: inputs::DacInputs::new(),
-            audio_out: 0.0,
+            outputs: outputs::DacOutputs::new(),
             soft_clip: true,
             last_processed_sample: 0,
         }
@@ -118,11 +119,12 @@ impl Module for DacModule {
     }
 
     fn process(&mut self) -> bool {
-        self.audio_out = if self.soft_clip {
+        let audio = if self.soft_clip {
             Self::soft_clip_sample(self.inputs.audio())
         } else {
             self.inputs.audio()
         };
+        self.outputs.set_audio(audio);
         true
     }
 
@@ -131,7 +133,7 @@ impl Module for DacModule {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["audio"]
+        &outputs::OUTPUTS
     }
 
     fn reset_inputs(&mut self) {
@@ -143,10 +145,7 @@ impl Module for DacModule {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "audio" => Ok(self.audio_out),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        self.outputs.get(port)
     }
 
     fn last_processed_sample(&self) -> u64 {
@@ -160,7 +159,7 @@ impl Module for DacModule {
 
 impl SinkModule for DacModule {
     fn sink_output(&self) -> SinkOutput {
-        SinkOutput::mono(self.audio_out)
+        SinkOutput::mono(self.outputs.audio())
     }
 }
 

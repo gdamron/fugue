@@ -15,6 +15,7 @@ pub use self::controls::VcaControls;
 
 mod controls;
 mod inputs;
+mod outputs;
 
 /// Factory for constructing VCA modules from configuration.
 pub struct VcaFactory;
@@ -122,7 +123,7 @@ impl Module for Vca {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["audio"]
+        &outputs::OUTPUTS
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -130,10 +131,7 @@ impl Module for Vca {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "audio" => Ok(self.inputs.audio() * self.effective_cv()),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        outputs::VcaOutputs::get(port, self.inputs.audio() * self.effective_cv())
     }
 
     fn last_processed_sample(&self) -> u64 {

@@ -18,6 +18,7 @@ pub use self::controls::MelodyParams;
 
 mod controls;
 mod inputs;
+mod outputs;
 
 /// Factory for constructing MelodyGenerator modules from configuration.
 pub struct MelodyFactory;
@@ -121,8 +122,7 @@ pub struct MelodyGenerator {
     inputs: inputs::MelodyInputs,
     last_gate: f32,
     // Cached outputs (computed in process())
-    cached_frequency: f32,
-    cached_gate: f32,
+    outputs: outputs::MelodyOutputs,
     last_processed_sample: u64, // For pull-based processing
 }
 
@@ -140,8 +140,7 @@ impl MelodyGenerator {
             current_note,
             inputs: inputs::MelodyInputs::new(),
             last_gate: 0.0,
-            cached_frequency: current_note.frequency(),
-            cached_gate: 0.0,
+            outputs: outputs::MelodyOutputs::new(current_note.frequency()),
             last_processed_sample: 0,
         }
     }
@@ -193,8 +192,8 @@ impl Module for MelodyGenerator {
         }
 
         // Cache outputs
-        self.cached_frequency = self.current_note.frequency();
-        self.cached_gate = self.inputs.gate(); // Pass through gate signal
+        self.outputs
+            .set(self.current_note.frequency(), self.inputs.gate());
 
         // Remember last gate state for edge detection
         self.last_gate = self.inputs.gate();
@@ -207,7 +206,7 @@ impl Module for MelodyGenerator {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["frequency", "gate"]
+        &outputs::OUTPUTS
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -215,11 +214,7 @@ impl Module for MelodyGenerator {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "frequency" => Ok(self.cached_frequency),
-            "gate" => Ok(self.cached_gate),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        self.outputs.get(port)
     }
 
     fn last_processed_sample(&self) -> u64 {
