@@ -45,6 +45,7 @@ pub use self::controls::FilterControls;
 
 mod controls;
 mod inputs;
+mod outputs;
 
 /// Filter type selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -114,7 +115,7 @@ pub struct Filter {
     inputs: inputs::FilterInputs,
 
     // Cached output
-    cached_audio: f32,
+    outputs: outputs::FilterOutputs,
 
     // Pull-based processing
     last_processed_sample: u64,
@@ -135,7 +136,7 @@ impl Filter {
             low: 0.0,
             band: 0.0,
             inputs: inputs::FilterInputs::new(),
-            cached_audio: 0.0,
+            outputs: outputs::FilterOutputs::new(),
             last_processed_sample: 0,
         }
     }
@@ -235,7 +236,8 @@ impl Module for Filter {
     }
 
     fn process(&mut self) -> bool {
-        self.cached_audio = self.process_sample();
+        let audio = self.process_sample();
+        self.outputs.set_audio(audio);
         true
     }
 
@@ -244,7 +246,7 @@ impl Module for Filter {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["audio"]
+        &outputs::OUTPUTS
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -252,10 +254,7 @@ impl Module for Filter {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "audio" => Ok(self.cached_audio),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        self.outputs.get(port)
     }
 
     fn last_processed_sample(&self) -> u64 {

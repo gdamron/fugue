@@ -10,6 +10,7 @@
 mod driver;
 mod inputs;
 mod module;
+mod outputs;
 
 pub use driver::{default_sample_rate, AudioBackend, AudioDriver};
 pub use module::{DacFactory, DacModule};

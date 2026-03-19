@@ -38,6 +38,7 @@ pub use self::controls::MixerControls;
 
 mod controls;
 mod inputs;
+mod outputs;
 
 /// Maximum number of mixer channels supported.
 pub const MAX_CHANNELS: usize = 8;
@@ -78,7 +79,6 @@ pub struct Mixer {
     channels: usize,
     ctrl: MixerControls,
     input_state: inputs::MixerInputs,
-    output_names: Vec<&'static str>,
 
     // Pull-based processing
     last_processed_sample: u64,
@@ -102,7 +102,6 @@ impl Mixer {
             channels,
             ctrl: controls,
             input_state: inputs::MixerInputs::new(channels),
-            output_names: vec!["out"],
             last_processed_sample: 0,
         }
     }
@@ -177,7 +176,7 @@ impl Module for Mixer {
     }
 
     fn outputs(&self) -> &[&str] {
-        &self.output_names
+        &outputs::OUTPUTS
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -185,10 +184,7 @@ impl Module for Mixer {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "out" => Ok(self.mix()),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        outputs::MixerOutputs::get(port, self.mix())
     }
 
     fn last_processed_sample(&self) -> u64 {

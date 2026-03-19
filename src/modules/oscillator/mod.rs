@@ -13,6 +13,7 @@ pub use self::waveform::OscillatorType;
 
 mod controls;
 mod inputs;
+mod outputs;
 mod waveform;
 
 /// Factory for constructing Oscillator modules from configuration.
@@ -99,7 +100,7 @@ pub struct Oscillator {
     inputs: inputs::OscillatorInputs,
 
     // Cached output
-    cached_audio: f32,
+    outputs: outputs::OscillatorOutputs,
     last_processed_sample: u64,
 }
 
@@ -117,7 +118,7 @@ impl Oscillator {
             sample_rate,
             ctrl: controls,
             inputs: inputs::OscillatorInputs::new(),
-            cached_audio: 0.0,
+            outputs: outputs::OscillatorOutputs::new(),
             last_processed_sample: 0,
         }
     }
@@ -221,7 +222,8 @@ impl Module for Oscillator {
     }
 
     fn process(&mut self) -> bool {
-        self.cached_audio = self.generate_sample();
+        let audio = self.generate_sample();
+        self.outputs.set_audio(audio);
         true
     }
 
@@ -230,7 +232,7 @@ impl Module for Oscillator {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["audio"]
+        &outputs::OUTPUTS
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -238,10 +240,7 @@ impl Module for Oscillator {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "audio" => Ok(self.cached_audio),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        self.outputs.get(port)
     }
 
     fn last_processed_sample(&self) -> u64 {

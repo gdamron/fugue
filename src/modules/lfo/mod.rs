@@ -39,6 +39,7 @@ pub use self::controls::LfoControls;
 
 mod controls;
 mod inputs;
+mod outputs;
 
 /// Converts oscillator type to f32 index.
 fn waveform_to_index(waveform: OscillatorType) -> f32 {
@@ -93,8 +94,7 @@ pub struct Lfo {
     prev_sync: f32,
 
     // Cached outputs
-    cached_out: f32,
-    cached_out_uni: f32,
+    outputs: outputs::LfoOutputs,
 
     // Pull-based processing
     last_processed_sample: u64,
@@ -115,8 +115,7 @@ impl Lfo {
             ctrl: controls,
             inputs: inputs::LfoInputs::new(),
             prev_sync: 0.0,
-            cached_out: 0.0,
-            cached_out_uni: 0.5,
+            outputs: outputs::LfoOutputs::new(),
             last_processed_sample: 0,
         }
     }
@@ -190,9 +189,8 @@ impl Module for Lfo {
     }
 
     fn process(&mut self) -> bool {
-        self.cached_out = self.generate();
-        // Convert bipolar (-1 to +1) to unipolar (0 to +1)
-        self.cached_out_uni = (self.cached_out + 1.0) * 0.5;
+        let out = self.generate();
+        self.outputs.set_bipolar(out);
         true
     }
 
@@ -201,7 +199,7 @@ impl Module for Lfo {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["out", "out_uni"]
+        &outputs::OUTPUTS
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -209,11 +207,7 @@ impl Module for Lfo {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "out" => Ok(self.cached_out),
-            "out_uni" => Ok(self.cached_out_uni),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        self.outputs.get(port)
     }
 
     fn last_processed_sample(&self) -> u64 {

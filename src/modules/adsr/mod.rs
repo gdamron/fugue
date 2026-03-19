@@ -11,6 +11,7 @@ pub use self::controls::AdsrControls;
 
 mod controls;
 mod inputs;
+mod outputs;
 
 /// Factory for constructing ADSR modules from configuration.
 pub struct AdsrFactory;
@@ -232,7 +233,7 @@ impl Module for Adsr {
     }
 
     fn outputs(&self) -> &[&str] {
-        &["envelope"]
+        &outputs::OUTPUTS
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -240,10 +241,7 @@ impl Module for Adsr {
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        match port {
-            "envelope" => Ok(self.envelope_value.clamp(0.0, 1.0)),
-            _ => Err(format!("Unknown output port: {}", port)),
-        }
+        outputs::AdsrOutputs::get(port, self.envelope_value)
     }
 
     fn last_processed_sample(&self) -> u64 {
