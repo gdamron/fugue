@@ -56,7 +56,12 @@ use std::sync::{Arc, Mutex};
 
 use crate::factory::{ModuleBuildResult, ModuleFactory};
 use crate::music::Note;
+use crate::traits::ControlMeta;
 use crate::Module;
+
+pub use self::controls::StepSequencerControls;
+
+mod controls;
 
 /// Default number of steps in a pattern.
 pub const DEFAULT_STEPS: usize = 16;
@@ -143,12 +148,8 @@ impl Default for Step {
 pub struct StepSequencer {
     #[allow(dead_code)] // Reserved for future use (e.g., sample-accurate timing)
     sample_rate: u32,
-    /// Base MIDI note added to step values.
-    base_note: u8,
-    /// Number of steps in the pattern (pattern loops after this).
-    steps: usize,
-    /// Default gate length as ratio of step duration.
-    default_gate_length: f32,
+    /// Thread-safe controls for base_note, steps, and gate_length.
+    ctrl: StepSequencerControls,
     /// The pattern of steps.
     pattern: Vec<Step>,
 
@@ -186,9 +187,7 @@ impl StepSequencer {
     pub fn new(sample_rate: u32) -> Self {
         Self {
             sample_rate,
-            base_note: DEFAULT_BASE_NOTE,
-            steps: DEFAULT_STEPS,
-            default_gate_length: DEFAULT_GATE_LENGTH,
+            ctrl: StepSequencerControls::new(),
             pattern: Vec::new(),
             current_step: 0,
             gate_samples_remaining: 0,
@@ -206,21 +205,43 @@ impl StepSequencer {
         }
     }
 
+    /// Creates a new step sequencer with the given sample rate and controls.
+    pub fn new_with_controls(sample_rate: u32, controls: StepSequencerControls) -> Self {
+        Self {
+            sample_rate,
+            ctrl: controls,
+            pattern: Vec::new(),
+            current_step: 0,
+            gate_samples_remaining: 0,
+            step_duration_samples: sample_rate / 2,
+            samples_since_gate: 0,
+            first_gate_received: false,
+            last_gate_in: 0.0,
+            last_reset_in: 0.0,
+            gate_in: 0.0,
+            reset_in: 0.0,
+            cached_frequency: 0.0,
+            cached_gate: 0.0,
+            cached_step: 0.0,
+            last_processed_sample: 0,
+        }
+    }
+
     /// Sets the base MIDI note.
-    pub fn with_base_note(mut self, base_note: u8) -> Self {
-        self.base_note = base_note;
+    pub fn with_base_note(self, base_note: u8) -> Self {
+        self.ctrl.set_base_note(base_note);
         self
     }
 
     /// Sets the number of steps in the pattern.
-    pub fn with_steps(mut self, steps: usize) -> Self {
-        self.steps = steps.max(1);
+    pub fn with_steps(self, steps: usize) -> Self {
+        self.ctrl.set_steps(steps);
         self
     }
 
     /// Sets the default gate length (ratio of step duration, 0.0-1.0).
-    pub fn with_gate_length(mut self, gate_length: f32) -> Self {
-        self.default_gate_length = gate_length.clamp(0.0, 1.0);
+    pub fn with_gate_length(self, gate_length: f32) -> Self {
+        self.ctrl.set_gate_length(gate_length);
         self
     }
 
@@ -232,17 +253,17 @@ impl StepSequencer {
 
     /// Sets the base MIDI note.
     pub fn set_base_note(&mut self, base_note: u8) {
-        self.base_note = base_note;
+        self.ctrl.set_base_note(base_note);
     }
 
     /// Sets the number of steps.
     pub fn set_steps(&mut self, steps: usize) {
-        self.steps = steps.max(1);
+        self.ctrl.set_steps(steps);
     }
 
     /// Sets the default gate length.
     pub fn set_gate_length(&mut self, gate_length: f32) {
-        self.default_gate_length = gate_length.clamp(0.0, 1.0);
+        self.ctrl.set_gate_length(gate_length);
     }
 
     /// Sets the pattern.
@@ -257,7 +278,12 @@ impl StepSequencer {
 
     /// Returns the number of steps.
     pub fn step_count(&self) -> usize {
-        self.steps
+        self.ctrl.steps()
+    }
+
+    /// Returns a reference to the step sequencer controls.
+    pub fn controls(&self) -> &StepSequencerControls {
+        &self.ctrl
     }
 
     /// Gets the step at the given index, returning a rest if out of bounds.
@@ -270,7 +296,8 @@ impl StepSequencer {
         let step = self.get_step(self.current_step);
         match step.note {
             Some(offset) => {
-                let midi_note = (self.base_note as i16 + offset as i16).clamp(0, 127) as u8;
+                let base = self.ctrl.base_note();
+                let midi_note = (base as i16 + offset as i16).clamp(0, 127) as u8;
                 Note::new(midi_note).frequency()
             }
             None => 0.0, // Rest - no frequency
@@ -282,7 +309,7 @@ impl StepSequencer {
         let step = self.get_step(self.current_step);
 
         // Use per-step gate length if specified, otherwise default
-        let gate_length = step.gate_length.unwrap_or(self.default_gate_length);
+        let gate_length = step.gate_length.unwrap_or(self.ctrl.gate_length());
 
         // Calculate gate duration as fraction of step duration
         (self.step_duration_samples as f32 * gate_length) as u32
@@ -290,7 +317,7 @@ impl StepSequencer {
 
     /// Advances to the next step.
     fn advance_step(&mut self) {
-        self.current_step = (self.current_step + 1) % self.steps;
+        self.current_step = (self.current_step + 1) % self.ctrl.steps();
     }
 
     /// Resets to step 0.
@@ -405,6 +432,47 @@ impl Module for StepSequencer {
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
     }
+
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![
+            ControlMeta::new("base_note", "Base MIDI note")
+                .with_range(0.0, 127.0)
+                .with_default(DEFAULT_BASE_NOTE as f32),
+            ControlMeta::new("steps", "Number of steps in pattern")
+                .with_range(1.0, 64.0)
+                .with_default(DEFAULT_STEPS as f32),
+            ControlMeta::new("gate_length", "Default gate length ratio")
+                .with_range(0.0, 1.0)
+                .with_default(DEFAULT_GATE_LENGTH),
+        ]
+    }
+
+    fn get_control(&self, key: &str) -> Result<f32, String> {
+        match key {
+            "base_note" => Ok(self.ctrl.base_note() as f32),
+            "steps" => Ok(self.ctrl.steps() as f32),
+            "gate_length" => Ok(self.ctrl.gate_length()),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        match key {
+            "base_note" => {
+                self.ctrl.set_base_note(value as u8);
+                Ok(())
+            }
+            "steps" => {
+                self.ctrl.set_steps(value as usize);
+                Ok(())
+            }
+            "gate_length" => {
+                self.ctrl.set_gate_length(value);
+                Ok(())
+            }
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
 }
 
 /// Factory for constructing StepSequencer modules from configuration.
@@ -475,15 +543,17 @@ impl ModuleFactory for StepSequencerFactory {
 
         let pattern = parse_pattern(config.get("pattern"))?;
 
-        let seq = StepSequencer::new(sample_rate)
-            .with_base_note(base_note)
-            .with_steps(steps)
-            .with_gate_length(gate_length)
+        let controls = StepSequencerControls::new_with_values(base_note, steps, gate_length);
+
+        let seq = StepSequencer::new_with_controls(sample_rate, controls.clone())
             .with_pattern(pattern);
 
         Ok(ModuleBuildResult {
             module: Arc::new(Mutex::new(seq)),
-            handles: vec![],
+            handles: vec![(
+                "controls".to_string(),
+                Arc::new(controls) as Arc<dyn std::any::Any + Send + Sync>,
+            )],
             sink: None,
         })
     }
@@ -745,5 +815,88 @@ mod tests {
         let freq = seq.get_output("frequency").unwrap();
         let expected = Note::new(48).frequency(); // C3
         assert!((freq - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_step_sequencer_controls() {
+        let mut seq = StepSequencer::new(44100);
+
+        // Verify default control values
+        assert_eq!(seq.get_control("base_note").unwrap(), DEFAULT_BASE_NOTE as f32);
+        assert_eq!(seq.get_control("steps").unwrap(), DEFAULT_STEPS as f32);
+        assert_eq!(seq.get_control("gate_length").unwrap(), DEFAULT_GATE_LENGTH);
+
+        // Set controls
+        seq.set_control("base_note", 60.0).unwrap();
+        assert_eq!(seq.get_control("base_note").unwrap(), 60.0);
+
+        seq.set_control("steps", 8.0).unwrap();
+        assert_eq!(seq.get_control("steps").unwrap(), 8.0);
+
+        seq.set_control("gate_length", 0.75).unwrap();
+        assert_eq!(seq.get_control("gate_length").unwrap(), 0.75);
+
+        // Unknown control returns error
+        assert!(seq.get_control("unknown").is_err());
+        assert!(seq.set_control("unknown", 1.0).is_err());
+    }
+
+    #[test]
+    fn test_step_sequencer_controls_metadata() {
+        let seq = StepSequencer::new(44100);
+        let controls = Module::controls(&seq);
+
+        assert_eq!(controls.len(), 3);
+
+        let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
+        assert!(keys.contains(&"base_note"));
+        assert!(keys.contains(&"steps"));
+        assert!(keys.contains(&"gate_length"));
+    }
+
+    #[test]
+    fn test_step_sequencer_controls_affect_processing() {
+        let mut seq = StepSequencer::new(44100)
+            .with_pattern(vec![Step::note(0)]);
+
+        // Set base_note via control and verify it affects output
+        seq.set_control("base_note", 60.0).unwrap();
+        seq.set_input("gate", 1.0).unwrap();
+        seq.process();
+
+        let freq = seq.get_output("frequency").unwrap();
+        let expected = Note::new(60).frequency();
+        assert!((freq - expected).abs() < 0.01);
+
+        // Change base_note and verify output changes
+        seq.set_control("base_note", 72.0).unwrap();
+        seq.process();
+
+        let freq = seq.get_output("frequency").unwrap();
+        let expected = Note::new(72).frequency();
+        assert!((freq - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_step_sequencer_factory_returns_handles() {
+        let factory = StepSequencerFactory;
+        let config = serde_json::json!({
+            "base_note": 36,
+            "steps": 8,
+            "gate_length": 0.75,
+        });
+
+        let result = factory.build(44100, &config).unwrap();
+        assert_eq!(result.handles.len(), 1);
+        assert_eq!(result.handles[0].0, "controls");
+
+        // Verify the handle can be downcast
+        let controls = result.handles[0]
+            .1
+            .downcast_ref::<StepSequencerControls>()
+            .unwrap();
+        assert_eq!(controls.base_note(), 36);
+        assert_eq!(controls.steps(), 8);
+        assert!((controls.gate_length() - 0.75).abs() < f32::EPSILON);
     }
 }

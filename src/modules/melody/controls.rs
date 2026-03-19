@@ -1,6 +1,5 @@
 //! Thread-safe controls for the MelodyGenerator module.
 
-use crate::modules::oscillator::OscillatorType;
 use std::sync::{Arc, Mutex};
 
 /// Thread-safe controls for the MelodyGenerator module.
@@ -19,7 +18,6 @@ use std::sync::{Arc, Mutex};
 /// // Adjust melody parameters in real-time
 /// controls.set_allowed_degrees(vec![0, 2, 4, 5, 7]); // Pentatonic subset
 /// controls.set_note_weights(vec![1.0, 0.5, 0.8, 0.3, 1.0]);
-/// controls.set_oscillator_type(OscillatorType::Square);
 /// ```
 #[derive(Clone)]
 pub struct MelodyControls {
@@ -27,8 +25,6 @@ pub struct MelodyControls {
     pub(crate) allowed_degrees: Arc<Mutex<Vec<usize>>>,
     /// Probability weights for each allowed degree.
     pub(crate) note_weights: Arc<Mutex<Vec<f32>>>,
-    /// Waveform type for the voice oscillator.
-    pub(crate) oscillator_type: Arc<Mutex<OscillatorType>>,
 }
 
 impl MelodyControls {
@@ -41,7 +37,6 @@ impl MelodyControls {
         Self {
             allowed_degrees: Arc::new(Mutex::new(allowed_degrees)),
             note_weights: Arc::new(Mutex::new(weights)),
-            oscillator_type: Arc::new(Mutex::new(OscillatorType::Sine)),
         }
     }
 
@@ -73,24 +68,78 @@ impl MelodyControls {
         *self.note_weights.lock().unwrap() = weights;
     }
 
-    /// Gets the oscillator type.
-    pub fn oscillator_type(&self) -> OscillatorType {
-        *self.oscillator_type.lock().unwrap()
+    /// Gets the number of allowed degrees.
+    pub fn degree_count(&self) -> usize {
+        self.allowed_degrees.lock().unwrap().len()
     }
 
-    /// Sets the oscillator waveform type.
-    pub fn set_oscillator_type(&self, osc_type: OscillatorType) {
-        *self.oscillator_type.lock().unwrap() = osc_type;
+    /// Sets the number of allowed degrees.
+    ///
+    /// If growing, new entries use sequential degree indices and weight 1.0.
+    /// If shrinking, truncates both allowed_degrees and note_weights.
+    pub fn set_degree_count(&self, count: usize) {
+        let count = count.clamp(1, 128);
+        let mut degrees = self.allowed_degrees.lock().unwrap();
+        let mut weights = self.note_weights.lock().unwrap();
+
+        let old_len = degrees.len();
+        if count > old_len {
+            // Append sequential degrees starting after the last existing degree
+            let next_degree = degrees.last().map(|&d| d + 1).unwrap_or(0);
+            for i in 0..(count - old_len) {
+                degrees.push(next_degree + i);
+            }
+            weights.resize(count, 1.0);
+        } else {
+            degrees.truncate(count);
+            weights.truncate(count);
+        }
     }
 
-    /// Gets the oscillator type as an f32 index.
-    pub fn oscillator_type_index(&self) -> f32 {
-        self.oscillator_type().to_index()
+    /// Gets the scale degree at position `index`.
+    pub fn degree(&self, index: usize) -> Result<usize, String> {
+        let degrees = self.allowed_degrees.lock().unwrap();
+        degrees
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("Degree index {} out of range (count: {})", index, degrees.len()))
     }
 
-    /// Sets the oscillator type from an f32 index.
-    pub fn set_oscillator_type_index(&self, index: f32) {
-        self.set_oscillator_type(OscillatorType::from_index(index));
+    /// Sets the scale degree at position `index`.
+    pub fn set_degree(&self, index: usize, value: usize) -> Result<(), String> {
+        let mut degrees = self.allowed_degrees.lock().unwrap();
+        if index >= degrees.len() {
+            return Err(format!(
+                "Degree index {} out of range (count: {})",
+                index,
+                degrees.len()
+            ));
+        }
+        degrees[index] = value.min(127);
+        Ok(())
+    }
+
+    /// Gets the note weight at position `index`.
+    pub fn note_weight(&self, index: usize) -> Result<f32, String> {
+        let weights = self.note_weights.lock().unwrap();
+        weights
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("Weight index {} out of range (count: {})", index, weights.len()))
+    }
+
+    /// Sets the note weight at position `index`.
+    pub fn set_note_weight(&self, index: usize, value: f32) -> Result<(), String> {
+        let mut weights = self.note_weights.lock().unwrap();
+        if index >= weights.len() {
+            return Err(format!(
+                "Weight index {} out of range (count: {})",
+                index,
+                weights.len()
+            ));
+        }
+        weights[index] = value.clamp(0.0, 10.0);
+        Ok(())
     }
 }
 
