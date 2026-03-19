@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "fugue": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "--release",
+        "--features",
+        "mcp",
+        "--bin",
+        "fugue-mcp"
+      ],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
