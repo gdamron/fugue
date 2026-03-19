@@ -1,0 +1,39 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v4
+
+      - name: Install Stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Tests
+        run: cargo test --lib --tests
+
+      - name: Build Library
+        if: github.event_name == 'pull_request'
+        run: cargo build --lib
+
+      - name: Build REPL Binary
+        if: github.event_name == 'pull_request'
+        run: cargo build --features repl --bin fugue-repl
+
+      - name: Build MCP Binary
+        if: github.event_name == 'pull_request'
+        run: cargo build --features mcp --bin fugue-mcp

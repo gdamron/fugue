@@ -1,7 +1,10 @@
 //! Integration tests for the graph command queue (runtime mutation).
 
+mod support;
+
 use fugue::invention::Invention;
 use fugue::InventionBuilder;
+use support::NullAudioBackend;
 
 fn build_simple_invention() -> (fugue::RunningInvention, fugue::InventionHandles) {
     let json = r#"
@@ -27,7 +30,9 @@ fn build_simple_invention() -> (fugue::RunningInvention, fugue::InventionHandles
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
     let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
-    let running = runtime.start().expect("Failed to start invention");
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(44100))
+        .expect("Failed to start invention");
     (running, handles)
 }
 

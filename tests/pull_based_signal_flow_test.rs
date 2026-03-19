@@ -3,9 +3,12 @@
 //! These tests verify that the new pull-based signal processing system
 //! correctly handles various graph topologies and edge cases.
 
+mod support;
+
 use fugue::invention::Invention;
 use fugue::modules::ClockControls;
 use fugue::InventionBuilder;
+use support::NullAudioBackend;
 
 /// Test a simple chain: Clock → ADSR
 #[test]
@@ -44,7 +47,9 @@ fn test_simple_chain() {
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
     let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
-    let running = runtime.start().expect("Failed to start invention");
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(44100))
+        .expect("Failed to start invention");
 
     // Should build without errors - actual audio playback not tested here
     let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
@@ -101,7 +106,9 @@ fn test_multi_input_vca() {
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
     let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
-    let running = runtime.start().expect("Failed to start invention");
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(44100))
+        .expect("Failed to start invention");
 
     // Should build successfully - the pull-based system should handle this correctly
     let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
@@ -168,7 +175,9 @@ fn test_diamond_pattern() {
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
     let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
-    let running = runtime.start().expect("Failed to start invention");
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(44100))
+        .expect("Failed to start invention");
 
     // Clock feeds melody, which feeds both ADSR (gate) and oscillator (frequency)
     let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
@@ -212,7 +221,9 @@ fn test_unconnected_inputs() {
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
     let (runtime, _handles) = builder.build(invention).expect("Failed to build invention");
-    let running = runtime.start().expect("Failed to start invention");
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(44100))
+        .expect("Failed to start invention");
 
     // VCA cv input is unconnected - should default to 1.0 (passthrough)
     // Clock is also unconnected but present (required for runtime)
@@ -254,7 +265,9 @@ fn test_cycle_is_safe() {
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
     let (runtime, _handles) = builder.build(invention).expect("Cycle should be allowed");
-    let running = runtime.start().expect("Failed to start invention");
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(44100))
+        .expect("Failed to start invention");
 
     // Let the audio thread process several samples with the feedback loop
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -323,7 +336,9 @@ fn test_complex_valid_graph() {
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
     let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
-    let running = runtime.start().expect("Failed to start invention");
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(44100))
+        .expect("Failed to start invention");
 
     // Two separate voices with shared ADSR should work correctly
     let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
