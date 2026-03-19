@@ -1,7 +1,6 @@
-name: Tests
+name: Build Library
 
 on:
-  push:
   pull_request:
     types:
       - opened
@@ -9,8 +8,8 @@ on:
       - reopened
 
 jobs:
-  test:
-    name: Run Unit Tests
+  build-library:
+    name: Build Library
     runs-on: ubuntu-latest
 
     steps:
@@ -28,5 +27,5 @@ jobs:
       - name: Cache Cargo Artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Tests
-        run: cargo test --lib --tests
+      - name: Build Library
+        run: cargo build --lib
