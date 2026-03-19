@@ -13,6 +13,7 @@ pub use self::controls::ClockControls;
 pub use self::controls::Tempo;
 
 mod controls;
+mod inputs;
 
 /// Factory for constructing Clock modules from configuration.
 pub struct ClockFactory;
@@ -173,7 +174,7 @@ impl Module for Clock {
     }
 
     fn inputs(&self) -> &[&str] {
-        &[] // Clock has no inputs, it's a source
+        &inputs::INPUTS
     }
 
     fn outputs(&self) -> &[&str] {
@@ -181,7 +182,7 @@ impl Module for Clock {
     }
 
     fn set_input(&mut self, port: &str, _value: f32) -> Result<(), String> {
-        Err(format!("Clock has no input ports, got: {}", port))
+        inputs::ClockInputs::set(port)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {

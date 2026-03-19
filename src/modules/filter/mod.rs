@@ -44,6 +44,7 @@ use crate::Module;
 pub use self::controls::FilterControls;
 
 mod controls;
+mod inputs;
 
 /// Filter type selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -110,14 +111,7 @@ pub struct Filter {
     band: f32,
 
     // Signal inputs
-    audio_in: f32,
-    cutoff_in: f32,
-    cutoff_cv: f32,
-    resonance_in: f32,
-
-    // Active flags
-    cutoff_active: bool,
-    resonance_active: bool,
+    inputs: inputs::FilterInputs,
 
     // Cached output
     cached_audio: f32,
@@ -140,12 +134,7 @@ impl Filter {
             ctrl: controls,
             low: 0.0,
             band: 0.0,
-            audio_in: 0.0,
-            cutoff_in: 0.0,
-            cutoff_cv: 0.0,
-            resonance_in: 0.0,
-            cutoff_active: false,
-            resonance_active: false,
+            inputs: inputs::FilterInputs::new(),
             cached_audio: 0.0,
             last_processed_sample: 0,
         }
@@ -153,20 +142,12 @@ impl Filter {
 
     /// Returns the effective cutoff (signal or control).
     fn effective_cutoff(&self) -> f32 {
-        if self.cutoff_active {
-            self.cutoff_in
-        } else {
-            self.ctrl.cutoff()
-        }
+        self.inputs.cutoff(self.ctrl.cutoff())
     }
 
     /// Returns the effective resonance (signal or control).
     fn effective_resonance(&self) -> f32 {
-        if self.resonance_active {
-            self.resonance_in
-        } else {
-            self.ctrl.resonance()
-        }
+        self.inputs.resonance(self.ctrl.resonance())
     }
 
     /// Sets the filter type (legacy API).
@@ -216,7 +197,8 @@ impl Filter {
         let filter_type = self.ctrl.filter_type();
 
         // Calculate effective cutoff with CV modulation
-        let effective_cutoff = (base_cutoff + self.cutoff_cv * cv_amount).clamp(20.0, 20000.0);
+        let effective_cutoff =
+            (base_cutoff + self.inputs.cutoff_cv() * cv_amount).clamp(20.0, 20000.0);
 
         // Calculate effective resonance
         let effective_resonance = base_resonance.clamp(0.0, 0.99);
@@ -229,7 +211,7 @@ impl Filter {
 
         // State-variable filter iteration
         self.low += f * self.band;
-        let high = self.audio_in - self.low - q * self.band;
+        let high = self.inputs.audio() - self.low - q * self.band;
         self.band += f * high;
 
         // Select output based on filter type
@@ -258,7 +240,7 @@ impl Module for Filter {
     }
 
     fn inputs(&self) -> &[&str] {
-        &["audio", "cutoff", "cutoff_cv", "resonance"]
+        &inputs::INPUTS
     }
 
     fn outputs(&self) -> &[&str] {
@@ -266,27 +248,7 @@ impl Module for Filter {
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-        match port {
-            "audio" => {
-                self.audio_in = value;
-                Ok(())
-            }
-            "cutoff" => {
-                self.cutoff_in = value.clamp(20.0, 20000.0);
-                self.cutoff_active = true;
-                Ok(())
-            }
-            "cutoff_cv" => {
-                self.cutoff_cv = value;
-                Ok(())
-            }
-            "resonance" => {
-                self.resonance_in = value.clamp(0.0, 1.0);
-                self.resonance_active = true;
-                Ok(())
-            }
-            _ => Err(format!("Unknown input port: {}", port)),
-        }
+        self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
@@ -305,8 +267,7 @@ impl Module for Filter {
     }
 
     fn reset_inputs(&mut self) {
-        self.cutoff_active = false;
-        self.resonance_active = false;
+        self.inputs.reset();
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -452,7 +413,9 @@ mod tests {
 
         let mut output_sum = 0.0f32;
         for i in 0..1000 {
-            filter.audio_in = if i % 2 == 0 { 1.0 } else { -1.0 };
+            filter
+                .set_input("audio", if i % 2 == 0 { 1.0 } else { -1.0 })
+                .unwrap();
             filter.process();
             output_sum += filter.get_output("audio").unwrap().abs();
         }

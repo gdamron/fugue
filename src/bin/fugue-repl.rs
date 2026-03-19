@@ -121,7 +121,10 @@ fn execute(repl: &mut FugueRepl, line: &str) -> Result<String, String> {
             repl.stop_current();
             std::process::exit(0);
         }
-        _ => Err(format!("Unknown command: '{}'. Type 'help' for usage.", cmd)),
+        _ => Err(format!(
+            "Unknown command: '{}'. Type 'help' for usage.",
+            cmd
+        )),
     }
 }
 
@@ -308,8 +311,7 @@ fn cmd_remove(repl: &mut FugueRepl, rest: &str) -> Result<String, String> {
     running.remove_module(id).map_err(|e| e.to_string())?;
 
     repl.modules.shift_remove(id);
-    repl.connections
-        .retain(|c| c.from != id && c.to != id);
+    repl.connections.retain(|c| c.from != id && c.to != id);
 
     Ok(format!("Removed '{}'.", id))
 }

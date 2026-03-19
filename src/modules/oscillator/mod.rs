@@ -12,6 +12,7 @@ pub use self::controls::OscillatorControls;
 pub use self::waveform::OscillatorType;
 
 mod controls;
+mod inputs;
 mod waveform;
 
 /// Factory for constructing Oscillator modules from configuration.
@@ -72,8 +73,6 @@ fn parse_oscillator_type(s: &str) -> Result<OscillatorType, Box<dyn std::error::
     }
 }
 
-
-
 /// A waveform generator that produces audio signals.
 ///
 /// # Inputs
@@ -97,12 +96,7 @@ pub struct Oscillator {
     ctrl: OscillatorControls,
 
     // Signal inputs
-    frequency_in: f32,
-    fm_in: f32,
-    am_in: f32,
-
-    // Active flags
-    frequency_active: bool,
+    inputs: inputs::OscillatorInputs,
 
     // Cached output
     cached_audio: f32,
@@ -122,10 +116,7 @@ impl Oscillator {
             phase: 0.0,
             sample_rate,
             ctrl: controls,
-            frequency_in: 0.0,
-            fm_in: 0.0,
-            am_in: 0.0,
-            frequency_active: false,
+            inputs: inputs::OscillatorInputs::new(),
             cached_audio: 0.0,
             last_processed_sample: 0,
         }
@@ -133,11 +124,7 @@ impl Oscillator {
 
     /// Returns the effective frequency (signal or control).
     fn effective_frequency(&self) -> f32 {
-        if self.frequency_active {
-            self.frequency_in
-        } else {
-            self.ctrl.frequency()
-        }
+        self.inputs.frequency(self.ctrl.frequency())
     }
 
     /// Sets the oscillator frequency in Hz (legacy API).
@@ -214,7 +201,7 @@ impl Oscillator {
     }
 
     pub(crate) fn generate_sample(&mut self) -> f32 {
-        self.generate_sample_with_modulation(self.fm_in, self.am_in)
+        self.generate_sample_with_modulation(self.inputs.fm(), self.inputs.am())
     }
 
     /// Resets the oscillator phase to zero.
@@ -239,7 +226,7 @@ impl Module for Oscillator {
     }
 
     fn inputs(&self) -> &[&str] {
-        &["frequency", "fm", "am"]
+        &inputs::INPUTS
     }
 
     fn outputs(&self) -> &[&str] {
@@ -247,22 +234,7 @@ impl Module for Oscillator {
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-        match port {
-            "frequency" => {
-                self.frequency_in = value;
-                self.frequency_active = true;
-                Ok(())
-            }
-            "fm" => {
-                self.fm_in = value;
-                Ok(())
-            }
-            "am" => {
-                self.am_in = value;
-                Ok(())
-            }
-            _ => Err(format!("Unknown input port: {}", port)),
-        }
+        self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
@@ -281,8 +253,7 @@ impl Module for Oscillator {
     }
 
     fn reset_inputs(&mut self) {
-        self.frequency_active = false;
-        // fm_in and am_in don't have control fallbacks, they're pure modulation
+        self.inputs.reset();
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -324,7 +295,8 @@ impl Module for Oscillator {
                 Ok(())
             }
             "type" => {
-                self.ctrl.set_oscillator_type(OscillatorType::from_index(value));
+                self.ctrl
+                    .set_oscillator_type(OscillatorType::from_index(value));
                 Ok(())
             }
             "fm_amount" => {
@@ -374,12 +346,10 @@ mod tests {
 
         // Signal input should override
         osc.set_input("frequency", 880.0).unwrap();
-        assert!(osc.frequency_active);
         assert_eq!(osc.effective_frequency(), 880.0);
 
         // After reset_inputs, should use control again
         osc.reset_inputs();
-        assert!(!osc.frequency_active);
         assert_eq!(osc.effective_frequency(), 440.0);
     }
 }

@@ -53,9 +53,7 @@ pub(crate) enum GraphCommand {
         sink: Option<SinkInstance>,
     },
     /// Remove a module from the graph (fire-and-forget).
-    RemoveModule {
-        module_id: String,
-    },
+    RemoveModule { module_id: String },
     /// Add a connection between two modules.
     AddConnection {
         from_module: String,

@@ -10,6 +10,7 @@ use crate::Module;
 pub use self::controls::AdsrControls;
 
 mod controls;
+mod inputs;
 
 /// Factory for constructing ADSR modules from configuration.
 pub struct AdsrFactory;
@@ -25,10 +26,19 @@ impl ModuleFactory for AdsrFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         // Parse config values with defaults
-        let attack = config.get("attack").and_then(|v| v.as_f64()).unwrap_or(0.01) as f32;
+        let attack = config
+            .get("attack")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.01) as f32;
         let decay = config.get("decay").and_then(|v| v.as_f64()).unwrap_or(0.1) as f32;
-        let sustain = config.get("sustain").and_then(|v| v.as_f64()).unwrap_or(0.7) as f32;
-        let release = config.get("release").and_then(|v| v.as_f64()).unwrap_or(0.2) as f32;
+        let sustain = config
+            .get("sustain")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.7) as f32;
+        let release = config
+            .get("release")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.2) as f32;
 
         // Create controls with initial values
         let controls = AdsrControls::new(attack, decay, sustain, release);
@@ -84,17 +94,7 @@ pub struct Adsr {
     ctrl: AdsrControls,
 
     // Signal inputs (set each sample when connected)
-    gate_in: f32,
-    attack_in: f32,
-    decay_in: f32,
-    sustain_in: f32,
-    release_in: f32,
-
-    // Flags for whether signal was received this sample
-    attack_active: bool,
-    decay_active: bool,
-    sustain_active: bool,
-    release_active: bool,
+    inputs: inputs::AdsrInputs,
 
     // State
     envelope_value: f32,
@@ -124,15 +124,7 @@ impl Adsr {
         Self {
             sample_rate,
             ctrl: controls,
-            gate_in: 0.0,
-            attack_in: 0.0,
-            decay_in: 0.0,
-            sustain_in: 0.0,
-            release_in: 0.0,
-            attack_active: false,
-            decay_active: false,
-            sustain_active: false,
-            release_active: false,
+            inputs: inputs::AdsrInputs::new(),
             envelope_value: 0.0,
             last_gate_high: false,
             phase: EnvelopePhase::Idle,
@@ -142,38 +134,22 @@ impl Adsr {
 
     /// Returns the effective attack time (signal or control).
     fn effective_attack(&self) -> f32 {
-        if self.attack_active {
-            self.attack_in
-        } else {
-            self.ctrl.attack()
-        }
+        self.inputs.attack(self.ctrl.attack())
     }
 
     /// Returns the effective decay time (signal or control).
     fn effective_decay(&self) -> f32 {
-        if self.decay_active {
-            self.decay_in
-        } else {
-            self.ctrl.decay()
-        }
+        self.inputs.decay(self.ctrl.decay())
     }
 
     /// Returns the effective sustain level (signal or control).
     fn effective_sustain(&self) -> f32 {
-        if self.sustain_active {
-            self.sustain_in
-        } else {
-            self.ctrl.sustain()
-        }
+        self.inputs.sustain(self.ctrl.sustain())
     }
 
     /// Returns the effective release time (signal or control).
     fn effective_release(&self) -> f32 {
-        if self.release_active {
-            self.release_in
-        } else {
-            self.ctrl.release()
-        }
+        self.inputs.release(self.ctrl.release())
     }
 
     /// Computes rate of change per sample for a given time duration.
@@ -186,7 +162,7 @@ impl Adsr {
 
     /// Processes one sample of the envelope.
     fn process_envelope(&mut self) {
-        let gate_high = self.gate_in > 0.0;
+        let gate_high = self.inputs.gate() > 0.0;
         let gate_triggered = gate_high && !self.last_gate_high;
         let gate_released = !gate_high && self.last_gate_high;
 
@@ -252,7 +228,7 @@ impl Module for Adsr {
     }
 
     fn inputs(&self) -> &[&str] {
-        &["gate", "attack", "decay", "sustain", "release"]
+        &inputs::INPUTS
     }
 
     fn outputs(&self) -> &[&str] {
@@ -260,33 +236,7 @@ impl Module for Adsr {
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-        match port {
-            "gate" => {
-                self.gate_in = value;
-                Ok(())
-            }
-            "attack" => {
-                self.attack_in = value.max(0.0);
-                self.attack_active = true;
-                Ok(())
-            }
-            "decay" => {
-                self.decay_in = value.max(0.0);
-                self.decay_active = true;
-                Ok(())
-            }
-            "sustain" => {
-                self.sustain_in = value.clamp(0.0, 1.0);
-                self.sustain_active = true;
-                Ok(())
-            }
-            "release" => {
-                self.release_in = value.max(0.0);
-                self.release_active = true;
-                Ok(())
-            }
-            _ => Err(format!("Unknown input port: {}", port)),
-        }
+        self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
@@ -305,10 +255,7 @@ impl Module for Adsr {
     }
 
     fn reset_inputs(&mut self) {
-        self.attack_active = false;
-        self.decay_active = false;
-        self.sustain_active = false;
-        self.release_active = false;
+        self.inputs.reset();
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -476,10 +423,10 @@ mod tests {
 
         // Signal input should override
         adsr.set_input("attack", 0.1).unwrap();
-        assert!(adsr.attack_active);
+        assert_eq!(adsr.effective_attack(), 0.1);
 
         // After reset_inputs, should use control again
         adsr.reset_inputs();
-        assert!(!adsr.attack_active);
+        assert_eq!(adsr.effective_attack(), 0.5);
     }
 }

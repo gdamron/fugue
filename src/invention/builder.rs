@@ -3,7 +3,7 @@
 use crate::invention::format::Invention;
 use crate::invention::handles::InventionHandles;
 use crate::invention::runtime::{
-    validate_input_port, validate_output_port, ModuleInstance, InventionRuntime,
+    validate_input_port, validate_output_port, InventionRuntime, ModuleInstance,
 };
 use crate::registry::ModuleRegistry;
 use indexmap::IndexMap;

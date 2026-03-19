@@ -99,10 +99,13 @@ impl MelodyControls {
     /// Gets the scale degree at position `index`.
     pub fn degree(&self, index: usize) -> Result<usize, String> {
         let degrees = self.allowed_degrees.lock().unwrap();
-        degrees
-            .get(index)
-            .copied()
-            .ok_or_else(|| format!("Degree index {} out of range (count: {})", index, degrees.len()))
+        degrees.get(index).copied().ok_or_else(|| {
+            format!(
+                "Degree index {} out of range (count: {})",
+                index,
+                degrees.len()
+            )
+        })
     }
 
     /// Sets the scale degree at position `index`.
@@ -122,10 +125,13 @@ impl MelodyControls {
     /// Gets the note weight at position `index`.
     pub fn note_weight(&self, index: usize) -> Result<f32, String> {
         let weights = self.note_weights.lock().unwrap();
-        weights
-            .get(index)
-            .copied()
-            .ok_or_else(|| format!("Weight index {} out of range (count: {})", index, weights.len()))
+        weights.get(index).copied().ok_or_else(|| {
+            format!(
+                "Weight index {} out of range (count: {})",
+                index,
+                weights.len()
+            )
+        })
     }
 
     /// Sets the note weight at position `index`.

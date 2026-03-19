@@ -62,6 +62,7 @@ use crate::Module;
 pub use self::controls::StepSequencerControls;
 
 mod controls;
+mod inputs;
 
 /// Default number of steps in a pattern.
 pub const DEFAULT_STEPS: usize = 16;
@@ -170,8 +171,7 @@ pub struct StepSequencer {
     last_reset_in: f32,
 
     // Input values
-    gate_in: f32,
-    reset_in: f32,
+    inputs: inputs::StepSequencerInputs,
 
     // Cached outputs
     cached_frequency: f32,
@@ -196,8 +196,7 @@ impl StepSequencer {
             first_gate_received: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
-            gate_in: 0.0,
-            reset_in: 0.0,
+            inputs: inputs::StepSequencerInputs::new(),
             cached_frequency: 0.0,
             cached_gate: 0.0,
             cached_step: 0.0,
@@ -218,8 +217,7 @@ impl StepSequencer {
             first_gate_received: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
-            gate_in: 0.0,
-            reset_in: 0.0,
+            inputs: inputs::StepSequencerInputs::new(),
             cached_frequency: 0.0,
             cached_gate: 0.0,
             cached_step: 0.0,
@@ -329,8 +327,8 @@ impl StepSequencer {
     /// Processes one sample.
     fn process_sample(&mut self) {
         // Detect rising edges
-        let gate_rising = self.gate_in > 0.5 && self.last_gate_in <= 0.5;
-        let reset_rising = self.reset_in > 0.5 && self.last_reset_in <= 0.5;
+        let gate_rising = self.inputs.gate() > 0.5 && self.last_gate_in <= 0.5;
+        let reset_rising = self.inputs.reset() > 0.5 && self.last_reset_in <= 0.5;
 
         // Handle reset (takes priority)
         if reset_rising {
@@ -379,8 +377,8 @@ impl StepSequencer {
         self.cached_step = self.current_step as f32;
 
         // Store for edge detection
-        self.last_gate_in = self.gate_in;
-        self.last_reset_in = self.reset_in;
+        self.last_gate_in = self.inputs.gate();
+        self.last_reset_in = self.inputs.reset();
     }
 }
 
@@ -395,7 +393,7 @@ impl Module for StepSequencer {
     }
 
     fn inputs(&self) -> &[&str] {
-        &["gate", "reset"]
+        &inputs::INPUTS
     }
 
     fn outputs(&self) -> &[&str] {
@@ -403,17 +401,7 @@ impl Module for StepSequencer {
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-        match port {
-            "gate" => {
-                self.gate_in = value;
-                Ok(())
-            }
-            "reset" => {
-                self.reset_in = value;
-                Ok(())
-            }
-            _ => Err(format!("Unknown input port: {}", port)),
-        }
+        self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
@@ -545,8 +533,8 @@ impl ModuleFactory for StepSequencerFactory {
 
         let controls = StepSequencerControls::new_with_values(base_note, steps, gate_length);
 
-        let seq = StepSequencer::new_with_controls(sample_rate, controls.clone())
-            .with_pattern(pattern);
+        let seq =
+            StepSequencer::new_with_controls(sample_rate, controls.clone()).with_pattern(pattern);
 
         Ok(ModuleBuildResult {
             module: Arc::new(Mutex::new(seq)),
@@ -822,7 +810,10 @@ mod tests {
         let mut seq = StepSequencer::new(44100);
 
         // Verify default control values
-        assert_eq!(seq.get_control("base_note").unwrap(), DEFAULT_BASE_NOTE as f32);
+        assert_eq!(
+            seq.get_control("base_note").unwrap(),
+            DEFAULT_BASE_NOTE as f32
+        );
         assert_eq!(seq.get_control("steps").unwrap(), DEFAULT_STEPS as f32);
         assert_eq!(seq.get_control("gate_length").unwrap(), DEFAULT_GATE_LENGTH);
 
@@ -856,8 +847,7 @@ mod tests {
 
     #[test]
     fn test_step_sequencer_controls_affect_processing() {
-        let mut seq = StepSequencer::new(44100)
-            .with_pattern(vec![Step::note(0)]);
+        let mut seq = StepSequencer::new(44100).with_pattern(vec![Step::note(0)]);
 
         // Set base_note via control and verify it affects output
         seq.set_control("base_note", 60.0).unwrap();

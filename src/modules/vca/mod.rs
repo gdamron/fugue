@@ -14,6 +14,7 @@ use crate::Module;
 pub use self::controls::VcaControls;
 
 mod controls;
+mod inputs;
 
 /// Factory for constructing VCA modules from configuration.
 pub struct VcaFactory;
@@ -28,10 +29,7 @@ impl ModuleFactory for VcaFactory {
         _sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let cv = config
-            .get("cv")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1.0) as f32;
+        let cv = config.get("cv").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
 
         let controls = VcaControls::new(cv);
         let vca = Vca::new_with_controls(controls.clone());
@@ -74,9 +72,7 @@ impl ModuleFactory for VcaFactory {
 /// ```
 pub struct Vca {
     ctrl: VcaControls,
-    audio_in: f32,
-    cv_in: f32,
-    cv_active: bool,
+    inputs: inputs::VcaInputs,
     last_processed_sample: u64, // For pull-based processing
 }
 
@@ -90,20 +86,14 @@ impl Vca {
     pub fn new_with_controls(controls: VcaControls) -> Self {
         Self {
             ctrl: controls,
-            audio_in: 0.0,
-            cv_in: 1.0,
-            cv_active: false,
+            inputs: inputs::VcaInputs::new(),
             last_processed_sample: 0,
         }
     }
 
     /// Returns the effective CV (signal or control).
     fn effective_cv(&self) -> f32 {
-        if self.cv_active {
-            self.cv_in
-        } else {
-            self.ctrl.cv()
-        }
+        self.inputs.cv(self.ctrl.cv())
     }
 
     /// Returns a reference to the controls.
@@ -128,7 +118,7 @@ impl Module for Vca {
     }
 
     fn inputs(&self) -> &[&str] {
-        &["audio", "cv"]
+        &inputs::INPUTS
     }
 
     fn outputs(&self) -> &[&str] {
@@ -136,23 +126,12 @@ impl Module for Vca {
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-        match port {
-            "audio" => {
-                self.audio_in = value;
-                Ok(())
-            }
-            "cv" => {
-                self.cv_in = value.clamp(0.0, 1.0);
-                self.cv_active = true;
-                Ok(())
-            }
-            _ => Err(format!("Unknown input port: {}", port)),
-        }
+        self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         match port {
-            "audio" => Ok(self.audio_in * self.effective_cv()),
+            "audio" => Ok(self.inputs.audio() * self.effective_cv()),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }
@@ -166,14 +145,15 @@ impl Module for Vca {
     }
 
     fn reset_inputs(&mut self) {
-        self.cv_active = false;
-        // audio_in doesn't have a control fallback
+        self.inputs.reset();
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
-        vec![ControlMeta::new("cv", "Default CV level (when no signal connected)")
-            .with_range(0.0, 1.0)
-            .with_default(1.0)]
+        vec![
+            ControlMeta::new("cv", "Default CV level (when no signal connected)")
+                .with_range(0.0, 1.0)
+                .with_default(1.0),
+        ]
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {

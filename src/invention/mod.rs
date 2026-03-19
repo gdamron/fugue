@@ -19,6 +19,6 @@ pub mod handles;
 pub mod runtime;
 
 pub use builder::InventionBuilder;
-pub use format::{Connection, ModuleSpec, Invention, TimeSignature};
+pub use format::{Connection, Invention, ModuleSpec, TimeSignature};
 pub use handles::InventionHandles;
 pub use runtime::{GraphCommandError, InventionRuntime, RunningInvention};
