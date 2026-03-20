@@ -13,10 +13,10 @@
 //!
 //! The system uses a **topological sort** computed when the graph topology changes:
 //!
-//! 1. **Topo sort** - Kahn's algorithm determines dependency order (runs only on topology change)
+//! 1. **Topo sort** - DFS-based sort determines dependency order (runs only on topology change)
 //! 2. **Linear iteration** - Each sample iterates the sorted order, setting inputs from upstream outputs
 //! 3. **No recursion** - All modules processed in a single pass with zero per-sample allocations
-//! 4. **Cycle handling** - Modules in cycles are appended last; they read one-sample-delayed values
+//! 4. **Cycle handling** - Back-edges are skipped during DFS; those edges read one-sample-delayed values
 //! 5. **Mix outputs** - Combine all sink outputs and return the final sample
 //!
 //! ## Why IndexMap?
@@ -176,34 +176,24 @@ impl SignalGraph {
         }
     }
 
-    /// Recomputes the topological processing order using Kahn's algorithm.
+    /// Recomputes the topological processing order using iterative DFS.
     ///
     /// Called only when topology changes (module/connection add/remove), never
-    /// on the audio hot path. Modules involved in cycles are appended at the
-    /// end — they'll read one-sample-delayed values from upstream.
+    /// on the audio hot path. Produces a reverse post-order traversal which
+    /// gives a valid topological ordering. Back-edges (cycles) are detected
+    /// and skipped — those edges become one-sample delay points. Unlike Kahn's
+    /// algorithm, DFS visits **all** nodes, so modules downstream of cycles
+    /// are correctly ordered after their dependencies.
     fn recompute_process_order(&mut self) {
         let module_ids: Vec<String> = self.modules.keys().cloned().collect();
 
-        // Compute in-degree for each module
-        let mut in_degree: HashMap<&str, usize> = HashMap::new();
-        for id in &module_ids {
-            in_degree.insert(id.as_str(), 0);
-        }
-        for connections in self.input_map.values() {
-            for conn in connections {
-                if self.modules.contains_key(&conn.to_module) && self.modules.contains_key(&conn.from_module) {
-                    if let Some(deg) = in_degree.get_mut(conn.to_module.as_str()) {
-                        *deg += 1;
-                    }
-                }
-            }
-        }
-
-        // Build adjacency: module -> list of modules it feeds into
+        // Build adjacency: module -> modules it feeds into (downstream)
         let mut downstream: HashMap<&str, Vec<&str>> = HashMap::new();
         for connections in self.input_map.values() {
             for conn in connections {
-                if self.modules.contains_key(&conn.to_module) && self.modules.contains_key(&conn.from_module) {
+                if self.modules.contains_key(&conn.to_module)
+                    && self.modules.contains_key(&conn.from_module)
+                {
                     downstream
                         .entry(conn.from_module.as_str())
                         .or_default()
@@ -212,41 +202,63 @@ impl SignalGraph {
             }
         }
 
-        // Kahn's algorithm
-        let mut queue: Vec<&str> = Vec::new();
-        for (id, &deg) in &in_degree {
-            if deg == 0 {
-                queue.push(id);
-            }
+        // Iterative DFS producing reverse post-order (topological order)
+        // State: 0 = unvisited, 1 = on stack (in progress), 2 = finished
+        let mut state: HashMap<&str, u8> = HashMap::new();
+        for id in &module_ids {
+            state.insert(id.as_str(), 0);
         }
-        // Sort the initial queue for deterministic order
-        queue.sort();
 
         let mut order: Vec<String> = Vec::with_capacity(module_ids.len());
-        while let Some(id) = queue.pop() {
-            order.push(id.to_string());
-            if let Some(targets) = downstream.get(id) {
-                for &target in targets {
-                    if let Some(deg) = in_degree.get_mut(target) {
-                        *deg -= 1;
-                        if *deg == 0 {
-                            queue.push(target);
-                            // Keep queue sorted for deterministic processing
-                            queue.sort();
+
+        // Visit nodes in deterministic (IndexMap insertion) order
+        for start in &module_ids {
+            if state[start.as_str()] != 0 {
+                continue;
+            }
+
+            // Iterative DFS using an explicit stack
+            // Each entry: (node, index into its downstream neighbors)
+            let mut stack: Vec<(&str, usize)> = vec![(start.as_str(), 0)];
+            *state.get_mut(start.as_str()).unwrap() = 1; // on stack
+
+            while let Some((node, idx)) = stack.last_mut() {
+                let neighbors = downstream.get(*node).map(|v| v.as_slice()).unwrap_or(&[]);
+                if *idx < neighbors.len() {
+                    let next = neighbors[*idx];
+                    *idx += 1;
+                    match state.get(next) {
+                        Some(0) => {
+                            // Unvisited — push onto stack
+                            *state.get_mut(next).unwrap() = 1;
+                            stack.push((next, 0));
+                        }
+                        Some(1) => {
+                            // Back-edge (cycle) — skip, this becomes
+                            // the one-sample delay point
+                        }
+                        _ => {
+                            // Already finished — skip (cross/forward edge)
                         }
                     }
+                } else {
+                    // All neighbors visited — finish this node (post-order)
+                    let (finished, _) = stack.pop().unwrap();
+                    *state.get_mut(finished).unwrap() = 2;
+                    order.push(finished.to_string());
                 }
             }
         }
 
-        // Append any remaining modules (involved in cycles) at the end
-        for id in &module_ids {
-            if !order.contains(id) {
-                order.push(id.clone());
-            }
-        }
-
+        // Reverse post-order = topological order
+        order.reverse();
         self.process_order = order;
+    }
+
+    /// Returns the current processing order (for testing).
+    #[cfg(test)]
+    fn process_order(&self) -> &[String] {
+        &self.process_order
     }
 
     /// Processes one sample through the entire graph — allocation-free.
@@ -320,5 +332,98 @@ impl SignalGraph {
             output *= 1.0 / (sink_count as f32).sqrt();
         }
         output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    /// Creates a minimal SignalGraph for testing process order.
+    /// Modules are stub oscillators — we only care about the topology.
+    fn test_graph(
+        module_ids: &[&str],
+        connections: &[(&str, &str)],
+    ) -> SignalGraph {
+        let (_tx, rx) = mpsc::channel();
+
+        let registry = crate::ModuleRegistry::default();
+        let null_config = serde_json::Value::Null;
+
+        let mut modules = IndexMap::new();
+        for &id in module_ids {
+            let result = registry.build("oscillator", 44100, &null_config)
+                .expect("oscillator is a valid type");
+            modules.insert(id.to_string(), result.module);
+        }
+
+        let mut input_map: HashMap<String, Vec<RoutingConnection>> = HashMap::new();
+        for &(from, to) in connections {
+            input_map.entry(to.to_string()).or_default().push(RoutingConnection {
+                from_module: from.to_string(),
+                from_port: "audio".to_string(),
+                to_module: to.to_string(),
+                to_port: "fm".to_string(),
+            });
+        }
+
+        let mut graph = SignalGraph {
+            modules,
+            sinks: IndexMap::new(),
+            input_map,
+            current_sample: 0,
+            command_rx: rx,
+            process_order: Vec::new(),
+            topo_dirty: true,
+        };
+        graph.recompute_process_order();
+        graph
+    }
+
+    /// Helper: returns the position of `id` in the process order.
+    fn pos(graph: &SignalGraph, id: &str) -> usize {
+        graph
+            .process_order()
+            .iter()
+            .position(|s| s == id)
+            .unwrap_or_else(|| panic!("{id} not found in process_order"))
+    }
+
+    #[test]
+    fn test_cycle_downstream_ordering() {
+        // osc1 ↔ osc2 (cycle), osc1 → dac
+        // All three nodes must be visited (Kahn's would strand dac).
+        // dac must appear after osc1 (its direct dependency).
+        let graph = test_graph(
+            &["osc1", "osc2", "dac"],
+            &[("osc1", "osc2"), ("osc2", "osc1"), ("osc1", "dac")],
+        );
+
+        let order = graph.process_order();
+        assert_eq!(order.len(), 3, "all modules must be visited");
+        assert!(
+            pos(&graph, "dac") > pos(&graph, "osc1"),
+            "dac must come after its dependency osc1, got order: {:?}",
+            order,
+        );
+    }
+
+    #[test]
+    fn test_linear_chain_ordering() {
+        // a → b → c — strict dependency order
+        let graph = test_graph(&["a", "b", "c"], &[("a", "b"), ("b", "c")]);
+        assert_eq!(graph.process_order(), &["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_three_node_cycle_all_visited() {
+        // a → b → c → a (cycle) — all three must appear in process order
+        let graph = test_graph(&["a", "b", "c"], &[("a", "b"), ("b", "c"), ("c", "a")]);
+        let order = graph.process_order();
+        assert_eq!(order.len(), 3);
+        // a should come before b, b before c (back-edge is c→a)
+        assert!(pos(&graph, "a") < pos(&graph, "b"), "order: {:?}", order);
+        assert!(pos(&graph, "b") < pos(&graph, "c"), "order: {:?}", order);
     }
 }
