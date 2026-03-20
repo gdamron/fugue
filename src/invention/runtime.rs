@@ -105,8 +105,9 @@ impl InventionRuntime {
             sinks: self.sinks,
             input_map,
             current_sample: 0,
-            pulling: std::collections::HashSet::new(),
             command_rx,
+            process_order: Vec::new(),
+            topo_dirty: true,
         };
 
         let graph_arc = Arc::new(Mutex::new(graph));

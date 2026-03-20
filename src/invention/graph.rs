@@ -1,4 +1,4 @@
-//! Signal processing graph for pull-based modular routing.
+//! Signal processing graph with pre-computed topological processing order.
 //!
 //! # Architecture Overview
 //!
@@ -11,12 +11,12 @@
 //!
 //! ## Processing Order
 //!
-//! The system uses a **pull-based** approach where sink modules drive processing:
+//! The system uses a **topological sort** computed when the graph topology changes:
 //!
-//! 1. **Pull from sinks** - For each sample, pull from all sink module inputs
-//! 2. **Recursive dependency resolution** - Each module recursively pulls its inputs
-//! 3. **Caching** - Modules cache outputs per sample to avoid reprocessing
-//! 4. **Process remaining** - Process any disconnected modules (for observable side effects)
+//! 1. **Topo sort** - Kahn's algorithm determines dependency order (runs only on topology change)
+//! 2. **Linear iteration** - Each sample iterates the sorted order, setting inputs from upstream outputs
+//! 3. **No recursion** - All modules processed in a single pass with zero per-sample allocations
+//! 4. **Cycle handling** - Modules in cycles are appended last; they read one-sample-delayed values
 //! 5. **Mix outputs** - Combine all sink outputs and return the final sample
 //!
 //! ## Why IndexMap?
@@ -30,7 +30,7 @@
 //!   tie-breaking (when multiple valid orders exist) is deterministic across runs
 
 use indexmap::IndexMap;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -88,14 +88,16 @@ pub(crate) struct SignalGraph {
     pub(crate) modules: IndexMap<String, ModuleInstance>,
     /// Sink modules that drive processing and collect output.
     pub(crate) sinks: IndexMap<String, SinkInstance>,
-    /// Maps module_id -> Vec of connections that feed into it (for pull-based processing)
-    pub(crate) input_map: std::collections::HashMap<String, Vec<RoutingConnection>>,
+    /// Maps module_id -> Vec of connections that feed into it
+    pub(crate) input_map: HashMap<String, Vec<RoutingConnection>>,
     /// Current sample number (for caching)
     pub(crate) current_sample: u64,
-    /// Modules currently being pulled (cycle detection during recursive traversal).
-    pub(crate) pulling: HashSet<String>,
     /// Receiver for commands from the main thread.
     pub(crate) command_rx: mpsc::Receiver<GraphCommand>,
+    /// Pre-computed topological processing order.
+    pub(crate) process_order: Vec<String>,
+    /// Flag indicating topology changed and process_order needs recomputation.
+    pub(crate) topo_dirty: bool,
 }
 
 impl SignalGraph {
@@ -127,6 +129,7 @@ impl SignalGraph {
                 if let Some(sink) = sink {
                     self.sinks.insert(module_id, sink);
                 }
+                self.topo_dirty = true;
             }
             GraphCommand::RemoveModule { module_id } => {
                 self.modules.swap_remove(&module_id);
@@ -136,6 +139,7 @@ impl SignalGraph {
                 for connections in self.input_map.values_mut() {
                     connections.retain(|conn| conn.from_module != module_id);
                 }
+                self.topo_dirty = true;
             }
             GraphCommand::AddConnection {
                 from_module,
@@ -152,6 +156,7 @@ impl SignalGraph {
                         to_module,
                         to_port,
                     });
+                self.topo_dirty = true;
             }
             GraphCommand::RemoveConnection {
                 from_module,
@@ -166,196 +171,154 @@ impl SignalGraph {
                             && conn.to_port == to_port)
                     });
                 }
+                self.topo_dirty = true;
             }
         }
     }
 
-    /// Pulls an output value from a module using recursive dependency resolution.
+    /// Recomputes the topological processing order using Kahn's algorithm.
     ///
-    /// # Algorithm
-    ///
-    /// 1. Check if module already processed this sample (cache hit)
-    /// 2. If cached, return the cached output value
-    /// 3. Get all input connections for this module
-    /// 4. Recursively pull outputs from all dependencies
-    /// 5. Set all inputs on the module
-    /// 6. Process the module
-    /// 7. Mark as processed for this sample
-    /// 8. Return the requested output value
-    ///
-    /// This ensures correct processing order through depth-first traversal.
-    fn pull_output(&mut self, module_id: &str, port: &str) -> Result<f32, String> {
-        // Check if already processed this sample
-        if let Some(module) = self.modules.get(module_id) {
-            let m_locked = module.lock().unwrap();
+    /// Called only when topology changes (module/connection add/remove), never
+    /// on the audio hot path. Modules involved in cycles are appended at the
+    /// end — they'll read one-sample-delayed values from upstream.
+    fn recompute_process_order(&mut self) {
+        let module_ids: Vec<String> = self.modules.keys().cloned().collect();
 
-            // Cache hit - return cached value
-            if m_locked.last_processed_sample() == self.current_sample {
-                return m_locked.get_output(port);
-            }
-
-            // Cycle detection: if this module is already being pulled in the
-            // current traversal, return its current (stale) output to break
-            // the cycle — analogous to one-sample feedback delay in analog.
-            if self.pulling.contains(module_id) {
-                return m_locked.get_output(port);
-            }
-
-            // Cache miss - need to process this module
-            // First, recursively pull all inputs
-
-            // Clone input connections to avoid borrow issues during recursion
-            let input_connections: Vec<RoutingConnection> =
-                self.input_map.get(module_id).cloned().unwrap_or_default();
-
-            // Drop the lock before recursion
-            drop(m_locked);
-
-            // Mark this module as currently being pulled
-            self.pulling.insert(module_id.to_string());
-
-            // Recursively pull all inputs
-            for conn in &input_connections {
-                let input_value = self
-                    .pull_output(&conn.from_module, &conn.from_port)
-                    .unwrap_or_else(|e| {
-                        eprintln!(
-                            "Warning: Failed to pull {}:{} - {}",
-                            conn.from_module, conn.from_port, e
-                        );
-                        0.0
-                    });
-
-                // Set the input on this module
-                if let Some(to_module) = self.modules.get(module_id) {
-                    let _ = to_module
-                        .lock()
-                        .unwrap()
-                        .set_input(&conn.to_port, input_value);
+        // Compute in-degree for each module
+        let mut in_degree: HashMap<&str, usize> = HashMap::new();
+        for id in &module_ids {
+            in_degree.insert(id.as_str(), 0);
+        }
+        for connections in self.input_map.values() {
+            for conn in connections {
+                if self.modules.contains_key(&conn.to_module) && self.modules.contains_key(&conn.from_module) {
+                    if let Some(deg) = in_degree.get_mut(conn.to_module.as_str()) {
+                        *deg += 1;
+                    }
                 }
             }
+        }
 
-            // Done pulling inputs — remove from pulling set
-            self.pulling.remove(module_id);
-
-            // Now process the module
-            if let Some(module) = self.modules.get(module_id) {
-                let mut m_locked = module.lock().unwrap();
-                m_locked.process();
-                m_locked.mark_processed(self.current_sample);
-
-                // Return the requested output
-                return m_locked.get_output(port);
+        // Build adjacency: module -> list of modules it feeds into
+        let mut downstream: HashMap<&str, Vec<&str>> = HashMap::new();
+        for connections in self.input_map.values() {
+            for conn in connections {
+                if self.modules.contains_key(&conn.to_module) && self.modules.contains_key(&conn.from_module) {
+                    downstream
+                        .entry(conn.from_module.as_str())
+                        .or_default()
+                        .push(conn.to_module.as_str());
+                }
             }
         }
 
-        Err(format!("Module '{}' not found", module_id))
-    }
-
-    /// Pulls all inputs for a module without returning an output.
-    ///
-    /// Used for sink modules where we need to process dependencies
-    /// but the output comes from `sink_output()` instead.
-    fn pull_inputs_for_module(&mut self, module_id: &str) {
-        // Clone input connections to avoid borrow issues during recursion
-        let input_connections: Vec<RoutingConnection> =
-            self.input_map.get(module_id).cloned().unwrap_or_default();
-
-        // Recursively pull all inputs
-        for conn in &input_connections {
-            let input_value = self
-                .pull_output(&conn.from_module, &conn.from_port)
-                .unwrap_or_else(|e| {
-                    eprintln!(
-                        "Warning: Failed to pull {}:{} - {}",
-                        conn.from_module, conn.from_port, e
-                    );
-                    0.0
-                });
-
-            // Set the input on this module
-            if let Some(to_module) = self.modules.get(module_id) {
-                let _ = to_module
-                    .lock()
-                    .unwrap()
-                    .set_input(&conn.to_port, input_value);
+        // Kahn's algorithm
+        let mut queue: Vec<&str> = Vec::new();
+        for (id, &deg) in &in_degree {
+            if deg == 0 {
+                queue.push(id);
             }
         }
+        // Sort the initial queue for deterministic order
+        queue.sort();
+
+        let mut order: Vec<String> = Vec::with_capacity(module_ids.len());
+        while let Some(id) = queue.pop() {
+            order.push(id.to_string());
+            if let Some(targets) = downstream.get(id) {
+                for &target in targets {
+                    if let Some(deg) = in_degree.get_mut(target) {
+                        *deg -= 1;
+                        if *deg == 0 {
+                            queue.push(target);
+                            // Keep queue sorted for deterministic processing
+                            queue.sort();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Append any remaining modules (involved in cycles) at the end
+        for id in &module_ids {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+
+        self.process_order = order;
     }
 
-    /// Processes one sample through the entire graph.
+    /// Processes one sample through the entire graph — allocation-free.
     ///
-    /// # Pull-Based Processing Algorithm
+    /// # Linear Processing Algorithm
     ///
-    /// 1. **Increment sample counter**: Track which sample we're processing
-    /// 2. **Reset inputs**: Clear input "active" flags on all modules
-    /// 3. **Pull from sinks**: For each sink module, pull its inputs (triggers dependency chain)
-    /// 4. **Process sinks**: Process each sink and collect its output
-    /// 5. **Process remaining**: Process any modules not yet processed (disconnected modules)
-    /// 6. **Mix outputs**: Combine all sink outputs with gain compensation
+    /// 1. **Drain commands**: Apply any pending topology/parameter changes
+    /// 2. **Recompute order**: If topology changed, run topo sort (allocates, but rare)
+    /// 3. **Increment sample counter**: Track which sample we're processing
+    /// 4. **Reset inputs**: Clear input "active" flags on all modules
+    /// 5. **Linear iteration**: Process modules in topological order, setting inputs
+    ///    from already-computed upstream outputs
+    /// 6. **Collect sink output**: Sum sink outputs with gain compensation
     /// 7. **Return sample**: Output the final mixed audio sample
     ///
-    /// The pull-based approach ensures correct processing order through recursive
-    /// dependency resolution. Each module processes exactly once per sample via caching.
+    /// The pre-computed topological order guarantees dependencies are processed
+    /// before their dependents. Zero heap allocations per sample.
     pub(crate) fn process_sample(&mut self) -> f32 {
-        // Drain any pending commands from the main thread
         self.drain_commands();
 
-        // Defensive: ensure pulling set is clear at the start of each sample
-        self.pulling.clear();
+        if self.topo_dirty {
+            self.recompute_process_order();
+            self.topo_dirty = false;
+        }
 
-        // Increment sample counter for cache invalidation
         self.current_sample += 1;
 
         // Reset input "active" flags on all modules
-        // This allows modules to distinguish between signal inputs and control defaults
-        for (_module_id, module) in &self.modules {
+        for module in self.modules.values() {
             module.lock().unwrap().reset_inputs();
         }
 
-        // Collect sink outputs
-        let mut sink_outputs = Vec::new();
+        // Process modules in topological order
+        for i in 0..self.process_order.len() {
+            let module_id = &self.process_order[i];
 
-        // Clone sink IDs to avoid borrow issues
-        let sink_ids: Vec<String> = self.sinks.keys().cloned().collect();
-
-        for sink_id in &sink_ids {
-            // Pull all inputs for this sink (triggers recursive processing)
-            self.pull_inputs_for_module(sink_id);
-
-            // Process the sink and collect output
-            if let Some(sink) = self.sinks.get(sink_id) {
-                let mut s = sink.lock().unwrap();
-                s.process();
-                s.mark_processed(self.current_sample);
-                sink_outputs.push(s.sink_output().sample);
+            // Set inputs from already-processed upstream modules
+            if let Some(connections) = self.input_map.get(module_id.as_str()) {
+                for conn in connections {
+                    let input_value = self
+                        .modules
+                        .get(&conn.from_module)
+                        .map(|m| m.lock().unwrap().get_output(&conn.from_port).unwrap_or(0.0))
+                        .unwrap_or(0.0);
+                    if let Some(module) = self.modules.get(module_id.as_str()) {
+                        let _ = module.lock().unwrap().set_input(&conn.to_port, input_value);
+                    }
+                }
             }
-        }
 
-        // Process any modules not yet processed this sample
-        // This handles disconnected modules that may have observable side effects
-        for (_module_id, module) in &self.modules {
-            let mut m = module.lock().unwrap();
-            if m.last_processed_sample() != self.current_sample {
+            // Process the module
+            if let Some(module) = self.modules.get(module_id.as_str()) {
+                let mut m = module.lock().unwrap();
                 m.process();
                 m.mark_processed(self.current_sample);
             }
         }
 
-        // Mix sink outputs with gain compensation
-        Self::mix_outputs(&sink_outputs)
-    }
-
-    /// Mixes multiple audio signals with gain compensation.
-    fn mix_outputs(outputs: &[f32]) -> f32 {
-        if outputs.is_empty() {
-            0.0
-        } else if outputs.len() == 1 {
-            outputs[0]
-        } else {
-            // Use sqrt(N) gain compensation to prevent clipping
-            let gain = 1.0 / (outputs.len() as f32).sqrt();
-            outputs.iter().sum::<f32>() * gain
+        // Collect sink outputs — no allocation, just accumulate
+        let sink_count = self.sinks.len();
+        if sink_count == 0 {
+            return 0.0;
         }
+
+        let mut output = 0.0f32;
+        for sink in self.sinks.values() {
+            output += sink.lock().unwrap().sink_output().sample;
+        }
+
+        if sink_count > 1 {
+            output *= 1.0 / (sink_count as f32).sqrt();
+        }
+        output
     }
 }
