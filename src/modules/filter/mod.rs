@@ -208,7 +208,7 @@ impl Filter {
         let f = (2.0 * (PI * effective_cutoff / self.sample_rate as f32).sin()).min(0.99);
 
         // Convert resonance to Q factor
-        let q = 1.0 - effective_resonance;
+        let q = 2.0 * (1.0 - effective_resonance);
 
         // State-variable filter iteration
         self.low += f * self.band;
