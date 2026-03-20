@@ -65,7 +65,7 @@ impl SampleData {
 }
 
 impl SamplePlayerControls {
-    pub fn new(sample_rate: u32, source: Option<&str>) -> Result<Self, String> {
+    pub fn new(sample_rate: u32, source: Option<&str>, play: Option<bool>, loop_enabled: Option<bool>) -> Result<Self, String> {
         let controls = Self {
             shared: Arc::new(Mutex::new(SamplePlayerShared {
                 source: String::new(),
@@ -81,6 +81,14 @@ impl SamplePlayerControls {
             if !source.is_empty() {
                 controls.set_source(source)?;
             }
+        }
+
+        if let Some(play) = play {
+            controls.set_play(play);
+        }
+
+        if let Some(loop_enabled) = loop_enabled {
+            controls.set_loop_enabled(loop_enabled);
         }
 
         Ok(controls)

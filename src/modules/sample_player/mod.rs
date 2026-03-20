@@ -25,7 +25,11 @@ impl ModuleFactory for SamplePlayerFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let source = config.get("source").and_then(|value| value.as_str());
-        let controls = SamplePlayerControls::new(sample_rate, source)?;
+        let play = config.get("play").and_then(|value| value.as_bool());
+        let loop_enabled = config.get("loop_enabled").and_then(|value| value.as_bool());
+        let controls = SamplePlayerControls::new(
+            sample_rate, source, play, loop_enabled
+        )?;
         let player = SamplePlayer::new_with_controls(controls.clone());
 
         Ok(ModuleBuildResult {
