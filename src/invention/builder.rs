@@ -3,7 +3,8 @@
 use crate::invention::format::Invention;
 use crate::invention::handles::InventionHandles;
 use crate::invention::runtime::{
-    validate_input_port, validate_output_port, InventionRuntime, ModuleInstance,
+    validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
+    ModuleInstance,
 };
 use crate::registry::ModuleRegistry;
 use indexmap::IndexMap;
@@ -17,6 +18,7 @@ use super::graph::{RoutingConnection, SinkInstance};
 type BuildModulesResult = (
     IndexMap<String, ModuleInstance>,
     IndexMap<String, SinkInstance>,
+    IndexMap<String, ControlSurfaceInstance>,
     InventionHandles,
 );
 
@@ -73,7 +75,7 @@ impl InventionBuilder {
         self.validate_invention(&invention)?;
 
         // Build all module instances (including sinks)
-        let (modules, sinks, handles) = self.build_modules(&invention)?;
+        let (modules, sinks, control_surfaces, handles) = self.build_modules(&invention)?;
 
         // Warn if no sink modules (invention will run but produce silence)
         if sinks.is_empty() {
@@ -89,6 +91,7 @@ impl InventionBuilder {
         let runtime = InventionRuntime {
             modules,
             sinks,
+            control_surfaces,
             routing,
             registry: self.registry,
             sample_rate: self.sample_rate,
@@ -128,6 +131,7 @@ impl InventionBuilder {
     ) -> Result<BuildModulesResult, Box<dyn std::error::Error>> {
         let mut modules = IndexMap::new();
         let mut sinks = IndexMap::new();
+        let mut control_surfaces = IndexMap::new();
         let mut all_handles: HashMap<String, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
         for spec in &invention.modules {
@@ -144,6 +148,10 @@ impl InventionBuilder {
                 sinks.insert(spec.id.clone(), sink);
             }
 
+            if let Some(control_surface) = result.control_surface {
+                control_surfaces.insert(spec.id.clone(), control_surface);
+            }
+
             // Collect handles with flat keys: "module_id.handle_name"
             for (handle_name, handle) in result.handles {
                 let key = format!("{}.{}", spec.id, handle_name);
@@ -151,7 +159,12 @@ impl InventionBuilder {
             }
         }
 
-        Ok((modules, sinks, InventionHandles::new(all_handles)))
+        Ok((
+            modules,
+            sinks,
+            control_surfaces,
+            InventionHandles::new(all_handles),
+        ))
     }
 
     fn build_routing(

@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::{ControlMeta, ControlSurface, ControlValue};
+
 /// Thread-safe controls for the MelodyGenerator module.
 ///
 /// All fields are wrapped in `Arc<Mutex<_>>` for real-time adjustment
@@ -153,3 +155,85 @@ impl MelodyControls {
 /// Deprecated: Use [`MelodyControls`] instead.
 #[deprecated(since = "0.2.0", note = "Renamed to MelodyControls for consistency")]
 pub type MelodyParams = MelodyControls;
+
+impl ControlSurface for MelodyControls {
+    fn controls(&self) -> Vec<ControlMeta> {
+        let degree_count = self.degree_count();
+        let mut controls = Vec::with_capacity(2 + degree_count * 2);
+        controls.push(
+            ControlMeta::number("degree_count", "Number of active scale degrees")
+                .with_range(1.0, 128.0)
+                .with_default(degree_count as f32),
+        );
+
+        for i in 0..degree_count {
+            controls.push(
+                ControlMeta::number(
+                    format!("degree.{}", i),
+                    format!("Scale degree at position {}", i),
+                )
+                .with_range(0.0, 127.0)
+                .with_default(self.degree(i).unwrap_or(i) as f32),
+            );
+            controls.push(
+                ControlMeta::number(
+                    format!("note_weight.{}", i),
+                    format!("Probability weight for degree {}", i),
+                )
+                .with_range(0.0, 10.0)
+                .with_default(self.note_weight(i).unwrap_or(1.0)),
+            );
+        }
+
+        controls
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        match key {
+            "degree_count" => Ok((self.degree_count() as f32).into()),
+            _ => {
+                if let Some(rest) = key.strip_prefix("degree.") {
+                    return Ok((self.degree(rest.parse::<usize>().map_err(|_| {
+                        format!("Invalid degree index in control key: {}", key)
+                    })?)? as f32)
+                        .into());
+                }
+                if let Some(rest) = key.strip_prefix("note_weight.") {
+                    return Ok(self
+                        .note_weight(rest.parse::<usize>().map_err(|_| {
+                            format!("Invalid weight index in control key: {}", key)
+                        })?)?
+                        .into());
+                }
+                Err(format!("Unknown control: {}", key))
+            }
+        }
+    }
+
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        let value = value.as_number()?;
+        match key {
+            "degree_count" => {
+                self.set_degree_count(value as usize);
+                Ok(())
+            }
+            _ => {
+                if let Some(rest) = key.strip_prefix("degree.") {
+                    return self.set_degree(
+                        rest.parse::<usize>()
+                            .map_err(|_| format!("Invalid degree index in control key: {}", key))?,
+                        value as usize,
+                    );
+                }
+                if let Some(rest) = key.strip_prefix("note_weight.") {
+                    return self.set_note_weight(
+                        rest.parse::<usize>()
+                            .map_err(|_| format!("Invalid weight index in control key: {}", key))?,
+                        value,
+                    );
+                }
+                Err(format!("Unknown control: {}", key))
+            }
+        }
+    }
+}

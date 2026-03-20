@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::{ControlMeta, ControlSurface, ControlValue};
 use crate::modules::OscillatorType;
 
 /// Thread-safe controls for the LFO.
@@ -51,5 +52,40 @@ impl LfoControls {
     /// Sets the waveform type.
     pub fn set_waveform(&self, value: OscillatorType) {
         *self.waveform.lock().unwrap() = value;
+    }
+}
+
+impl ControlSurface for LfoControls {
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![
+            ControlMeta::number("frequency", "LFO rate in Hz")
+                .with_range(0.001, 100.0)
+                .with_default(self.frequency()),
+            ControlMeta::string("waveform", "Waveform type")
+                .with_default(self.waveform().as_str())
+                .with_options(vec![
+                    "sine".to_string(),
+                    "square".to_string(),
+                    "sawtooth".to_string(),
+                    "triangle".to_string(),
+                ]),
+        ]
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        match key {
+            "frequency" => Ok(self.frequency().into()),
+            "waveform" => Ok(self.waveform().as_str().into()),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        match key {
+            "frequency" => self.set_frequency(value.as_number()?),
+            "waveform" => self.set_waveform(OscillatorType::parse(value.as_string()?)?),
+            _ => return Err(format!("Unknown control: {}", key)),
+        }
+        Ok(())
     }
 }

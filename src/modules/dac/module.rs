@@ -32,6 +32,7 @@ impl ModuleFactory for DacFactory {
         Ok(ModuleBuildResult {
             module: dac_arc.clone(),
             handles: vec![],
+            control_surface: None,
             sink: Some(dac_arc),
         })
     }
@@ -51,10 +52,14 @@ impl ModuleFactory for DacFactory {
 /// clipping when signals exceed the -1.0 to 1.0 range.
 ///
 /// # Inputs
-/// - `audio`: The audio signal to output (typically -1.0 to 1.0)
+/// - `audio`: Mono signal summed equally into left and right
+/// - `audio_left`: Left channel input
+/// - `audio_right`: Right channel input
 ///
 /// # Outputs
-/// - `audio`: Pass-through of the input (for potential downstream chaining)
+/// - `audio`: Mono monitor output (average of left and right)
+/// - `audio_left`: Left output
+/// - `audio_right`: Right output
 ///
 /// # Example
 ///
@@ -128,12 +133,12 @@ impl Module for DacModule {
     }
 
     fn process(&mut self) -> bool {
-        let audio = if self.soft_clip {
-            Self::soft_clip_sample(self.inputs.audio())
-        } else {
-            self.inputs.audio()
-        };
-        self.outputs.set_audio(audio);
+        let (mut left, mut right) = (self.inputs.audio_left(), self.inputs.audio_right());
+        if self.soft_clip {
+            left = Self::soft_clip_sample(left);
+            right = Self::soft_clip_sample(right);
+        }
+        self.outputs.set(left, right);
         true
     }
 
@@ -168,7 +173,7 @@ impl Module for DacModule {
 
 impl SinkModule for DacModule {
     fn sink_output(&self) -> SinkOutput {
-        SinkOutput::mono(self.outputs.audio())
+        SinkOutput::stereo(self.outputs.audio_left(), self.outputs.audio_right())
     }
 }
 
@@ -190,18 +195,20 @@ mod tests {
         // Below knee (0.95), soft clip is linear pass-through
         let out = dac.get_output("audio").unwrap();
         assert_eq!(out, 0.5, "Below knee, should be exact pass-through, got {}", out);
-        assert_eq!(dac.sink_output().sample, out);
+        assert_eq!(dac.sink_output().left, out);
+        assert_eq!(dac.sink_output().right, out);
     }
 
     #[test]
     fn test_dac_module_without_soft_clip() {
         let mut dac = DacModule::new().with_soft_clip(false);
 
-        dac.set_input("audio", 0.5).unwrap();
+        dac.set_input("audio_left", 0.25).unwrap();
+        dac.set_input("audio_right", 0.75).unwrap();
         dac.process();
 
-        // Without soft clip, should be exact pass-through
-        assert_eq!(dac.get_output("audio").unwrap(), 0.5);
+        assert_eq!(dac.get_output("audio_left").unwrap(), 0.25);
+        assert_eq!(dac.get_output("audio_right").unwrap(), 0.75);
     }
 
     #[test]

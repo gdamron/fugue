@@ -1,6 +1,6 @@
 use fugue::{
-    default_sample_rate, Connection, ControlMeta, Invention, InventionBuilder, ModuleRegistry,
-    ModuleSpec, RunningInvention,
+    default_sample_rate, Connection, ControlKind, ControlMeta, ControlValue, Invention,
+    InventionBuilder, ModuleRegistry, ModuleSpec, RunningInvention,
 };
 use indexmap::IndexMap;
 use rustyline::error::ReadlineError;
@@ -402,20 +402,19 @@ fn cmd_connections(repl: &FugueRepl) -> Result<String, String> {
 fn cmd_set(repl: &FugueRepl, rest: &str) -> Result<String, String> {
     let running = repl.require_running()?;
 
-    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let parts: Vec<&str> = rest.splitn(3, char::is_whitespace).collect();
     if parts.len() != 3 {
         return Err("Usage: set <module_id> <key> <value>".to_string());
     }
 
-    let value: f32 = parts[2]
-        .parse()
-        .map_err(|_| format!("Invalid number: '{}'", parts[2]))?;
+    let value: ControlValue = serde_json::from_str(parts[2])
+        .map_err(|e| format!("Invalid control value JSON: {}", e))?;
 
     running
         .set_control(parts[0], parts[1], value)
         .map_err(|e| e.to_string())?;
 
-    Ok(format!("{}.{} = {}", parts[0], parts[1], value))
+    Ok(format!("{}.{} updated", parts[0], parts[1]))
 }
 
 fn cmd_get(repl: &FugueRepl, rest: &str) -> Result<String, String> {
@@ -430,7 +429,12 @@ fn cmd_get(repl: &FugueRepl, rest: &str) -> Result<String, String> {
         .get_control(parts[0], parts[1])
         .map_err(|e| e.to_string())?;
 
-    Ok(format!("{}.{} = {}", parts[0], parts[1], value))
+    Ok(format!(
+        "{}.{} = {}",
+        parts[0],
+        parts[1],
+        serde_json::to_string(&value).map_err(|e| e.to_string())?
+    ))
 }
 
 fn cmd_controls(repl: &FugueRepl, rest: &str) -> Result<String, String> {
@@ -465,19 +469,23 @@ fn cmd_controls(repl: &FugueRepl, rest: &str) -> Result<String, String> {
 }
 
 fn format_control(c: &ControlMeta) -> String {
-    let range = format!("({} - {}, default: {})", c.min, c.max, c.default);
-    let variants = c
-        .variants
-        .as_ref()
-        .map(|v| format!(" [{}]", v.join(", ")))
-        .unwrap_or_default();
+    let default = serde_json::to_string(&c.default).unwrap_or_else(|_| "null".to_string());
+    let details = match &c.kind {
+        ControlKind::Number { min, max } => format!("range {}..{}, default {}", min, max, default),
+        ControlKind::Bool => format!("bool, default {}", default),
+        ControlKind::String { options } => {
+            let options = options
+                .as_ref()
+                .map(|values| format!(" [{}]", values.join(", ")))
+                .unwrap_or_default();
+            format!("string{}, default {}", options, default)
+        }
+    };
     format!(
-        "    {:<14} {:>8}  {} {}{}\n",
+        "    {:<14} {:<28} {}\n",
         c.key,
-        format!("{}", c.default),
-        range,
+        details,
         c.description,
-        variants,
     )
 }
 
@@ -498,7 +506,11 @@ fn cmd_types(repl: &FugueRepl) -> Result<String, String> {
                 let module = result.module.lock().unwrap();
                 let inputs: Vec<&str> = module.inputs().to_vec();
                 let outputs: Vec<&str> = module.outputs().to_vec();
-                let controls = module.controls();
+                let controls = result
+                    .control_surface
+                    .as_ref()
+                    .map(|surface| surface.controls())
+                    .unwrap_or_default();
 
                 out.push_str(&format!("{}:\n", type_name));
                 if !inputs.is_empty() {
@@ -510,15 +522,7 @@ fn cmd_types(repl: &FugueRepl) -> Result<String, String> {
                 if !controls.is_empty() {
                     out.push_str("  controls:\n");
                     for c in &controls {
-                        let variants = c
-                            .variants
-                            .as_ref()
-                            .map(|v| format!(" [{}]", v.join(", ")))
-                            .unwrap_or_default();
-                        out.push_str(&format!(
-                            "    {:<14} {} - {}  {}{}\n",
-                            c.key, c.min, c.max, c.description, variants,
-                        ));
+                        out.push_str(&format_control(c));
                     }
                 }
                 out.push('\n');

@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::{ControlMeta, ControlSurface, ControlValue};
+
 use super::{DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS};
 
 /// Thread-safe controls for the StepSequencer module.
@@ -81,5 +83,41 @@ impl StepSequencerControls {
 impl Default for StepSequencerControls {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ControlSurface for StepSequencerControls {
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![
+            ControlMeta::number("base_note", "Base MIDI note")
+                .with_range(0.0, 127.0)
+                .with_default(self.base_note() as f32),
+            ControlMeta::number("steps", "Number of steps in pattern")
+                .with_range(1.0, 64.0)
+                .with_default(self.steps() as f32),
+            ControlMeta::number("gate_length", "Default gate length ratio")
+                .with_range(0.0, 1.0)
+                .with_default(self.gate_length()),
+        ]
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        match key {
+            "base_note" => Ok((self.base_note() as f32).into()),
+            "steps" => Ok((self.steps() as f32).into()),
+            "gate_length" => Ok(self.gate_length().into()),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        let value = value.as_number()?;
+        match key {
+            "base_note" => self.set_base_note(value as u8),
+            "steps" => self.set_steps(value as usize),
+            "gate_length" => self.set_gate_length(value),
+            _ => return Err(format!("Unknown control: {}", key)),
+        }
+        Ok(())
     }
 }

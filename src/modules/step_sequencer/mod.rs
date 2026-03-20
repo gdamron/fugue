@@ -532,8 +532,9 @@ impl ModuleFactory for StepSequencerFactory {
             module: Arc::new(Mutex::new(seq)),
             handles: vec![(
                 "controls".to_string(),
-                Arc::new(controls) as Arc<dyn std::any::Any + Send + Sync>,
+                Arc::new(controls.clone()) as Arc<dyn std::any::Any + Send + Sync>,
             )],
+            control_surface: Some(Arc::new(controls)),
             sink: None,
         })
     }
