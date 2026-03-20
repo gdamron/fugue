@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use fugue::{
-    default_sample_rate, ControlMeta, Invention, InventionBuilder, ModuleRegistry, ModuleSpec,
-    RunningInvention,
+    default_sample_rate, ControlMeta, ControlValue, Invention, InventionBuilder, ModuleRegistry,
+    ModuleSpec, RunningInvention,
 };
 use indexmap::IndexMap;
 use rmcp::{
@@ -136,7 +136,7 @@ struct SetControlParams {
     )]
     key: String,
     #[schemars(description = "New value for the control")]
-    value: f32,
+    value: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -170,38 +170,28 @@ struct ModuleTypeInfo {
     type_name: String,
     inputs: Vec<String>,
     outputs: Vec<String>,
-    controls: Vec<ControlMetaSer>,
+    controls: Vec<ControlMeta>,
     is_sink: bool,
-}
-
-#[derive(Serialize)]
-struct ControlMetaSer {
-    key: String,
-    description: String,
-    min: f32,
-    max: f32,
-    default: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    variants: Option<Vec<String>>,
-}
-
-impl From<ControlMeta> for ControlMetaSer {
-    fn from(c: ControlMeta) -> Self {
-        Self {
-            key: c.key,
-            description: c.description,
-            min: c.min,
-            max: c.max,
-            default: c.default,
-            variants: c.variants,
-        }
-    }
 }
 
 #[derive(Serialize)]
 struct ControlEntry {
     module_id: String,
-    controls: Vec<ControlMetaSer>,
+    controls: Vec<ControlMeta>,
+}
+
+fn parse_control_value(value: serde_json::Value) -> Result<ControlValue, ErrorData> {
+    match value {
+        serde_json::Value::Bool(value) => Ok(ControlValue::Bool(value)),
+        serde_json::Value::Number(value) => value
+            .as_f64()
+            .map(|value| ControlValue::Number(value as f32))
+            .ok_or_else(|| mcp_error("Numeric control values must fit in f32")),
+        serde_json::Value::String(value) => Ok(ControlValue::String(value)),
+        _ => Err(mcp_error(
+            "Control value must be a JSON number, boolean, or string",
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -512,12 +502,16 @@ impl FugueMcp {
             .ok_or_else(|| mcp_error("No invention is running."))?;
 
         running
-            .set_control(&params.module_id, &params.key, params.value)
+            .set_control(
+                &params.module_id,
+                &params.key,
+                parse_control_value(params.value.clone())?,
+            )
             .map_err(graph_err)?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Set {}.{} = {}",
-            params.module_id, params.key, params.value
+            "Set {}.{}",
+            params.module_id, params.key
         ))]))
     }
 
@@ -538,7 +532,9 @@ impl FugueMcp {
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "{}.{} = {}",
-            params.module_id, params.key, value
+            params.module_id,
+            params.key,
+            serde_json::to_string(&value).map_err(|e| mcp_error(e.to_string()))?
         ))]))
     }
 
@@ -559,7 +555,7 @@ impl FugueMcp {
             let controls = running.list_controls(module_id).map_err(graph_err)?;
             let entry = ControlEntry {
                 module_id: module_id.clone(),
-                controls: controls.into_iter().map(ControlMetaSer::from).collect(),
+                controls,
             };
             json_result(&vec![entry])
         } else {
@@ -568,7 +564,7 @@ impl FugueMcp {
                 .into_iter()
                 .map(|(id, controls)| ControlEntry {
                     module_id: id,
-                    controls: controls.into_iter().map(ControlMetaSer::from).collect(),
+                    controls,
                 })
                 .collect();
             json_result(&entries)
@@ -598,11 +594,11 @@ impl FugueMcp {
                         module.inputs().iter().map(|s| s.to_string()).collect();
                     let outputs: Vec<String> =
                         module.outputs().iter().map(|s| s.to_string()).collect();
-                    let controls: Vec<ControlMetaSer> = module
-                        .controls()
-                        .into_iter()
-                        .map(ControlMetaSer::from)
-                        .collect();
+                    let controls = result
+                        .control_surface
+                        .as_ref()
+                        .map(|surface| surface.controls())
+                        .unwrap_or_default();
 
                     types.push(ModuleTypeInfo {
                         type_name: type_name.to_string(),

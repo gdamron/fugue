@@ -312,6 +312,10 @@ fn test_get_control_succeeds() {
     let value = running
         .get_control("osc", "frequency")
         .expect("Failed to get control");
+    let value = match value {
+        ControlValue::Number(value) => value,
+        other => panic!("Expected numeric frequency, got {:?}", other),
+    };
     assert!(value > 0.0, "Expected positive frequency, got: {}", value);
     running.stop();
 }
@@ -344,11 +348,15 @@ fn test_get_control_invalid_key_fails() {
 fn test_set_control_succeeds() {
     let (running, _handles) = build_simple_invention();
     running
-        .set_control("osc", "frequency", 880.0)
+        .set_control("osc", "frequency", ControlValue::Number(880.0))
         .expect("Failed to set control");
     let value = running
         .get_control("osc", "frequency")
         .expect("Failed to get control");
+    let value = match value {
+        ControlValue::Number(value) => value,
+        other => panic!("Expected numeric frequency, got {:?}", other),
+    };
     assert!(
         (value - 880.0).abs() < f32::EPSILON,
         "Expected 880.0, got: {}",
@@ -360,7 +368,7 @@ fn test_set_control_succeeds() {
 #[test]
 fn test_set_control_unknown_module_fails() {
     let (running, _handles) = build_simple_invention();
-    let result = running.set_control("nonexistent", "frequency", 440.0);
+    let result = running.set_control("nonexistent", "frequency", ControlValue::Number(440.0));
     assert!(result.is_err());
     match result.unwrap_err() {
         fugue::GraphCommandError::UnknownModule(id) => assert_eq!(id, "nonexistent"),
@@ -372,7 +380,7 @@ fn test_set_control_unknown_module_fails() {
 #[test]
 fn test_set_control_invalid_key_fails() {
     let (running, _handles) = build_simple_invention();
-    let result = running.set_control("osc", "bad_key", 1.0);
+    let result = running.set_control("osc", "bad_key", ControlValue::Number(1.0));
     assert!(result.is_err());
     match result.unwrap_err() {
         fugue::GraphCommandError::ControlError(_) => {}
@@ -391,11 +399,15 @@ fn test_add_module_then_control() {
     // Wait for the audio thread to process the AddModule command
     std::thread::sleep(std::time::Duration::from_millis(50));
     running
-        .set_control("osc2", "frequency", 220.0)
+        .set_control("osc2", "frequency", ControlValue::Number(220.0))
         .expect("Failed to set control");
     let value = running
         .get_control("osc2", "frequency")
         .expect("Failed to get control");
+    let value = match value {
+        ControlValue::Number(value) => value,
+        other => panic!("Expected numeric frequency, got {:?}", other),
+    };
     assert!(
         (value - 220.0).abs() < f32::EPSILON,
         "Expected 220.0, got: {}",
@@ -403,3 +415,4 @@ fn test_add_module_then_control() {
     );
     running.stop();
 }
+use fugue::ControlValue;

@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::{ControlMeta, ControlSurface, ControlValue};
+
 /// Thread-safe controls for the Vca module.
 ///
 /// The VCA has a single control `cv` which is used as the amplitude multiplier
@@ -44,5 +46,32 @@ impl VcaControls {
 impl Default for VcaControls {
     fn default() -> Self {
         Self::new(1.0)
+    }
+}
+
+impl ControlSurface for VcaControls {
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![
+            ControlMeta::number("cv", "Default CV level (when no signal connected)")
+                .with_range(0.0, 1.0)
+                .with_default(self.cv()),
+        ]
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        match key {
+            "cv" => Ok(self.cv().into()),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        match key {
+            "cv" => {
+                self.set_cv(value.as_number()?);
+                Ok(())
+            }
+            _ => Err(format!("Unknown control: {}", key)),
+        }
     }
 }

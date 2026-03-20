@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::{ControlMeta, ControlSurface, ControlValue};
+
 /// Thread-safe controls for the ADSR envelope generator.
 ///
 /// All fields are wrapped in `Arc<Mutex<_>>` for real-time adjustment
@@ -75,5 +77,46 @@ impl AdsrControls {
     /// Sets the release time in seconds.
     pub fn set_release(&self, value: f32) {
         *self.release.lock().unwrap() = value.max(0.0);
+    }
+}
+
+impl ControlSurface for AdsrControls {
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![
+            ControlMeta::number("attack", "Attack time in seconds")
+                .with_range(0.0, 10.0)
+                .with_default(self.attack()),
+            ControlMeta::number("decay", "Decay time in seconds")
+                .with_range(0.0, 10.0)
+                .with_default(self.decay()),
+            ControlMeta::number("sustain", "Sustain level")
+                .with_range(0.0, 1.0)
+                .with_default(self.sustain()),
+            ControlMeta::number("release", "Release time in seconds")
+                .with_range(0.0, 10.0)
+                .with_default(self.release()),
+        ]
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        match key {
+            "attack" => Ok(self.attack().into()),
+            "decay" => Ok(self.decay().into()),
+            "sustain" => Ok(self.sustain().into()),
+            "release" => Ok(self.release().into()),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        let value = value.as_number()?;
+        match key {
+            "attack" => self.set_attack(value),
+            "decay" => self.set_decay(value),
+            "sustain" => self.set_sustain(value),
+            "release" => self.set_release(value),
+            _ => return Err(format!("Unknown control: {}", key)),
+        }
+        Ok(())
     }
 }

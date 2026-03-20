@@ -4,6 +4,71 @@
 //! - [`Module`] - The unified trait for all audio processing components with named ports
 //! - [`SinkModule`] - Trait for modules that output to external destinations (audio, file, network)
 //! - [`ControlMeta`] - Metadata describing a module control for UI/REPL discovery
+use serde::{Deserialize, Serialize};
+
+/// Runtime value for a module control.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ControlValue {
+    Number(f32),
+    Bool(bool),
+    String(String),
+}
+
+impl ControlValue {
+    pub fn as_number(&self) -> Result<f32, String> {
+        match self {
+            Self::Number(value) => Ok(*value),
+            _ => Err("Expected numeric control value".to_string()),
+        }
+    }
+
+    pub fn as_bool(&self) -> Result<bool, String> {
+        match self {
+            Self::Bool(value) => Ok(*value),
+            _ => Err("Expected boolean control value".to_string()),
+        }
+    }
+
+    pub fn as_string(&self) -> Result<&str, String> {
+        match self {
+            Self::String(value) => Ok(value),
+            _ => Err("Expected string control value".to_string()),
+        }
+    }
+}
+
+impl From<f32> for ControlValue {
+    fn from(value: f32) -> Self {
+        Self::Number(value)
+    }
+}
+
+impl From<bool> for ControlValue {
+    fn from(value: bool) -> Self {
+        Self::Bool(value)
+    }
+}
+
+impl From<String> for ControlValue {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<&str> for ControlValue {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+/// Type-specific metadata describing a control value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ControlKind {
+    Number { min: f32, max: f32 },
+    Bool,
+    String { options: Option<Vec<String>> },
+}
 
 /// Metadata about a single control exposed by a module.
 ///
@@ -17,60 +82,93 @@
 /// ControlMeta {
 ///     key: "attack".to_string(),
 ///     description: "Attack time in seconds".to_string(),
-///     min: 0.0,
-///     max: 10.0,
-///     default: 0.01,
-///     variants: None,
+///     default: ControlValue::Number(0.01),
+///     kind: ControlKind::Number { min: 0.0, max: 10.0 },
 /// }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ControlMeta {
     /// The control key (e.g., "attack", "level.0", "type")
     pub key: String,
     /// Human-readable description
     pub description: String,
-    /// Minimum valid value
-    pub min: f32,
-    /// Maximum valid value
-    pub max: f32,
     /// Default value
-    pub default: f32,
-    /// For enum controls, the variant names in order (index 0.0, 1.0, etc.)
-    pub variants: Option<Vec<String>>,
+    pub default: ControlValue,
+    /// Value constraints and editor hints
+    pub kind: ControlKind,
 }
 
 impl ControlMeta {
-    /// Creates a new control metadata entry.
+    /// Legacy alias for creating a numeric control metadata entry.
     pub fn new(key: impl Into<String>, description: impl Into<String>) -> Self {
+        Self::number(key, description)
+    }
+
+    /// Creates a numeric control metadata entry.
+    pub fn number(key: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             key: key.into(),
             description: description.into(),
-            min: 0.0,
-            max: 1.0,
-            default: 0.0,
-            variants: None,
+            default: ControlValue::Number(0.0),
+            kind: ControlKind::Number { min: 0.0, max: 1.0 },
         }
     }
 
     /// Sets the range (min, max) for this control.
     pub fn with_range(mut self, min: f32, max: f32) -> Self {
-        self.min = min;
-        self.max = max;
+        self.kind = ControlKind::Number { min, max };
         self
     }
 
     /// Sets the default value for this control.
-    pub fn with_default(mut self, default: f32) -> Self {
-        self.default = default;
+    pub fn with_default(mut self, default: impl Into<ControlValue>) -> Self {
+        self.default = default.into();
         self
     }
 
-    /// Sets the variant names for an enum control.
-    pub fn with_variants(mut self, variants: Vec<String>) -> Self {
-        self.max = (variants.len() - 1) as f32;
-        self.variants = Some(variants);
+    /// Creates a boolean control metadata entry.
+    pub fn boolean(key: impl Into<String>, description: impl Into<String>, default: bool) -> Self {
+        Self {
+            key: key.into(),
+            description: description.into(),
+            default: ControlValue::Bool(default),
+            kind: ControlKind::Bool,
+        }
+    }
+
+    /// Creates a string control metadata entry.
+    pub fn string(key: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            description: description.into(),
+            default: ControlValue::String(String::new()),
+            kind: ControlKind::String { options: None },
+        }
+    }
+
+    /// Sets the allowed values for a string control.
+    pub fn with_options(mut self, options: Vec<String>) -> Self {
+        let default_option = options.first().cloned().unwrap_or_else(String::new);
+        self.kind = ControlKind::String {
+            options: Some(options),
+        };
+        if !matches!(self.default, ControlValue::String(_)) {
+            self.default = ControlValue::String(default_option);
+        }
         self
     }
+
+    /// Legacy alias for enumerated controls.
+    pub fn with_variants(self, variants: Vec<String>) -> Self {
+        self.with_options(variants)
+    }
+}
+
+/// Shared runtime control surface for a module.
+pub trait ControlSurface: Send + Sync {
+    fn controls(&self) -> Vec<ControlMeta>;
+    fn get_control(&self, key: &str) -> Result<ControlValue, String>;
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String>;
 }
 
 /// The core abstraction for all synthesis components.
@@ -189,37 +287,6 @@ pub trait Module: Send {
     /// one sample, it returns cached values without reprocessing.
     fn mark_processed(&mut self, sample: u64);
 
-    /// Returns metadata about all controls this module exposes.
-    ///
-    /// Controls are parameters that can be adjusted at runtime via user interaction.
-    /// Unlike signal inputs, controls persist their values and are used as defaults
-    /// when no signal is connected to the corresponding input.
-    ///
-    /// Default implementation returns an empty list (no controls).
-    fn controls(&self) -> Vec<ControlMeta> {
-        vec![]
-    }
-
-    /// Gets the current value of a control by key.
-    ///
-    /// Keys use dot notation for hierarchical access (e.g., "level.0" for
-    /// the first channel level on a mixer).
-    ///
-    /// Default implementation returns an error (no controls).
-    fn get_control(&self, _key: &str) -> Result<f32, String> {
-        Err("Module has no controls".to_string())
-    }
-
-    /// Sets the value of a control by key.
-    ///
-    /// Returns Ok(()) if successful, Err if the key is not recognized or
-    /// the value is invalid.
-    ///
-    /// Default implementation returns an error (no controls).
-    fn set_control(&mut self, _key: &str, _value: f32) -> Result<(), String> {
-        Err("Module has no controls".to_string())
-    }
-
     /// Resets input "active" flags before each sample.
     ///
     /// Called by the signal graph before routing signals for each sample.
@@ -228,22 +295,44 @@ pub trait Module: Send {
     ///
     /// Default implementation does nothing.
     fn reset_inputs(&mut self) {}
+
+    /// Legacy module-local control metadata surface.
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![]
+    }
+
+    /// Legacy module-local numeric control getter.
+    fn get_control(&self, _key: &str) -> Result<f32, String> {
+        Err("Module has no controls".to_string())
+    }
+
+    /// Legacy module-local numeric control setter.
+    fn set_control(&mut self, _key: &str, _value: f32) -> Result<(), String> {
+        Err("Module has no controls".to_string())
+    }
 }
 
 /// Output from a sink module.
 ///
-/// Currently supports mono output. Designed to be extended for stereo
-/// and multichannel audio in the future.
+/// Supports stereo output. Mono sources should use [`SinkOutput::mono`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SinkOutput {
-    /// The mono audio sample (or left channel for future stereo support).
-    pub sample: f32,
+    pub left: f32,
+    pub right: f32,
 }
 
 impl SinkOutput {
     /// Creates a mono sink output.
     pub fn mono(sample: f32) -> Self {
-        Self { sample }
+        Self {
+            left: sample,
+            right: sample,
+        }
+    }
+
+    /// Creates a stereo sink output.
+    pub fn stereo(left: f32, right: f32) -> Self {
+        Self { left, right }
     }
 }
 

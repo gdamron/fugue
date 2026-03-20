@@ -12,6 +12,25 @@ pub enum OscillatorType {
 }
 
 impl OscillatorType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OscillatorType::Sine => "sine",
+            OscillatorType::Square => "square",
+            OscillatorType::Sawtooth => "sawtooth",
+            OscillatorType::Triangle => "triangle",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.to_lowercase().as_str() {
+            "sine" => Ok(Self::Sine),
+            "square" => Ok(Self::Square),
+            "sawtooth" | "saw" => Ok(Self::Sawtooth),
+            "triangle" | "tri" => Ok(Self::Triangle),
+            _ => Err(format!("Unknown oscillator type: {}", value)),
+        }
+    }
+
     /// Converts oscillator type to f32 index.
     ///
     /// - Sine = 0.0

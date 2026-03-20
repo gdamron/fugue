@@ -12,10 +12,6 @@ use rand::{Rng, SeedableRng};
 
 pub use self::controls::MelodyControls;
 
-// Provide a deprecated type alias for backward compatibility
-#[allow(deprecated)]
-pub use self::controls::MelodyParams;
-
 mod controls;
 mod inputs;
 mod outputs;
@@ -75,8 +71,9 @@ impl ModuleFactory for MelodyFactory {
             module: Arc::new(Mutex::new(melody)),
             handles: vec![(
                 "controls".to_string(),
-                Arc::new(controls) as Arc<dyn Any + Send + Sync>,
+                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
             )],
+            control_surface: Some(Arc::new(controls)),
             sink: None,
         })
     }

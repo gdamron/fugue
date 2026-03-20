@@ -4,7 +4,7 @@
 //! Each module type provides a factory implementation that knows how to construct
 //! instances from configuration.
 
-use crate::{Module, SinkModule};
+use crate::{ControlSurface, Module, SinkModule};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
@@ -86,6 +86,9 @@ pub struct ModuleBuildResult {
     /// These will be combined with the module ID to form flat keys
     /// like "clock.tempo" or "melody1.params".
     pub handles: Vec<(String, Arc<dyn Any + Send + Sync>)>,
+
+    /// Shared typed control surface for runtime control, if the module exposes one.
+    pub control_surface: Option<Arc<dyn ControlSurface + Send + Sync>>,
 
     /// If this module is a sink, a reference to it as a SinkModule.
     ///

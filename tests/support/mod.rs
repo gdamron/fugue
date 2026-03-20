@@ -1,4 +1,4 @@
-use fugue::AudioBackend;
+use fugue::{AudioBackend, SinkOutput};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -27,7 +27,7 @@ impl AudioBackend for NullAudioBackend {
 
     fn start(
         &mut self,
-        mut sample_fn: Box<dyn FnMut() -> f32 + Send>,
+        mut sample_fn: Box<dyn FnMut() -> SinkOutput + Send>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let running = self.running.clone();
         running.store(true, Ordering::SeqCst);

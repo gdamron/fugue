@@ -24,6 +24,7 @@ pub mod lfo;
 pub mod melody;
 pub mod mixer;
 pub mod oscillator;
+pub mod sample_player;
 pub mod step_sequencer;
 pub mod vca;
 
@@ -33,17 +34,14 @@ pub use clock::{Clock, ClockControls};
 
 // Deprecated type alias for backward compatibility
 #[allow(deprecated)]
-pub use clock::Tempo;
 pub use dac::{default_sample_rate, AudioBackend, AudioDriver, DacModule};
 pub use filter::{Filter, FilterControls, FilterType};
 pub use lfo::{Lfo, LfoControls};
 pub use melody::{MelodyControls, MelodyGenerator};
 
-// Deprecated type alias for backward compatibility
-#[allow(deprecated)]
-pub use melody::MelodyParams;
 pub use mixer::{Mixer, MixerControls};
 pub use oscillator::{Oscillator, OscillatorControls, OscillatorType};
+pub use sample_player::{SamplePlayer, SamplePlayerControls};
 pub use step_sequencer::{Step, StepSequencer};
 pub use vca::{Vca, VcaControls};
 
@@ -56,5 +54,6 @@ pub use lfo::LfoFactory;
 pub use melody::MelodyFactory;
 pub use mixer::MixerFactory;
 pub use oscillator::OscillatorFactory;
+pub use sample_player::SamplePlayerFactory;
 pub use step_sequencer::StepSequencerFactory;
 pub use vca::VcaFactory;

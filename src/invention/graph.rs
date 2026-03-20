@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use crate::SinkModule;
+use crate::{SinkModule, SinkOutput};
 
 use super::runtime::ModuleInstance;
 
@@ -272,11 +272,11 @@ impl SignalGraph {
     /// 5. **Linear iteration**: Process modules in topological order, setting inputs
     ///    from already-computed upstream outputs
     /// 6. **Collect sink output**: Sum sink outputs with gain compensation
-    /// 7. **Return sample**: Output the final mixed audio sample
+    /// 7. **Return sample**: Output the final mixed stereo frame
     ///
     /// The pre-computed topological order guarantees dependencies are processed
     /// before their dependents. Zero heap allocations per sample.
-    pub(crate) fn process_sample(&mut self) -> f32 {
+    pub(crate) fn process_sample(&mut self) -> SinkOutput {
         self.drain_commands();
 
         if self.topo_dirty {
@@ -320,16 +320,20 @@ impl SignalGraph {
         // Collect sink outputs — no allocation, just accumulate
         let sink_count = self.sinks.len();
         if sink_count == 0 {
-            return 0.0;
+            return SinkOutput::default();
         }
 
-        let mut output = 0.0f32;
+        let mut output = SinkOutput::default();
         for sink in self.sinks.values() {
-            output += sink.lock().unwrap().sink_output().sample;
+            let frame = sink.lock().unwrap().sink_output();
+            output.left += frame.left;
+            output.right += frame.right;
         }
 
         if sink_count > 1 {
-            output *= 1.0 / (sink_count as f32).sqrt();
+            let gain = 1.0 / (sink_count as f32).sqrt();
+            output.left *= gain;
+            output.right *= gain;
         }
         output
     }

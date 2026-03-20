@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::{ControlMeta, ControlSurface, ControlValue};
+
 use super::FilterType;
 
 /// Thread-safe controls for the Filter.
@@ -76,5 +78,68 @@ impl FilterControls {
     /// Sets the CV modulation amount in Hz.
     pub fn set_cv_amount(&self, value: f32) {
         *self.cv_amount.lock().unwrap() = value.max(0.0);
+    }
+}
+
+impl FilterControls {
+    fn filter_type_name(value: FilterType) -> &'static str {
+        match value {
+            FilterType::LowPass => "lowpass",
+            FilterType::HighPass => "highpass",
+            FilterType::BandPass => "bandpass",
+        }
+    }
+
+    fn parse_filter_type(value: &str) -> Result<FilterType, String> {
+        match value.to_lowercase().as_str() {
+            "lowpass" | "low_pass" | "lpf" => Ok(FilterType::LowPass),
+            "highpass" | "high_pass" | "hpf" => Ok(FilterType::HighPass),
+            "bandpass" | "band_pass" | "bpf" => Ok(FilterType::BandPass),
+            _ => Err(format!("Unknown filter type: {}", value)),
+        }
+    }
+}
+
+impl ControlSurface for FilterControls {
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![
+            ControlMeta::number("cutoff", "Cutoff frequency in Hz")
+                .with_range(20.0, 20000.0)
+                .with_default(self.cutoff()),
+            ControlMeta::number("resonance", "Resonance/Q")
+                .with_range(0.0, 1.0)
+                .with_default(self.resonance()),
+            ControlMeta::string("type", "Filter type")
+                .with_default(Self::filter_type_name(self.filter_type()))
+                .with_options(vec![
+                    "lowpass".to_string(),
+                    "highpass".to_string(),
+                    "bandpass".to_string(),
+                ]),
+            ControlMeta::number("cv_amount", "CV modulation depth in Hz")
+                .with_range(0.0, 20000.0)
+                .with_default(self.cv_amount()),
+        ]
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        match key {
+            "cutoff" => Ok(self.cutoff().into()),
+            "resonance" => Ok(self.resonance().into()),
+            "type" => Ok(Self::filter_type_name(self.filter_type()).into()),
+            "cv_amount" => Ok(self.cv_amount().into()),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        match key {
+            "cutoff" => self.set_cutoff(value.as_number()?),
+            "resonance" => self.set_resonance(value.as_number()?),
+            "type" => self.set_filter_type(Self::parse_filter_type(value.as_string()?)?),
+            "cv_amount" => self.set_cv_amount(value.as_number()?),
+            _ => return Err(format!("Unknown control: {}", key)),
+        }
+        Ok(())
     }
 }

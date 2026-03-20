@@ -8,10 +8,6 @@ use crate::Module;
 
 pub use self::controls::ClockControls;
 
-// Re-export Tempo as deprecated alias
-#[allow(deprecated)]
-pub use self::controls::Tempo;
-
 mod controls;
 mod inputs;
 mod outputs;
@@ -49,8 +45,9 @@ impl ModuleFactory for ClockFactory {
             module: Arc::new(Mutex::new(clock)),
             handles: vec![(
                 "controls".to_string(),
-                Arc::new(controls) as Arc<dyn Any + Send + Sync>,
+                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
             )],
+            control_surface: Some(Arc::new(controls)),
             sink: None,
         })
     }

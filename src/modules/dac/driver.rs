@@ -1,5 +1,6 @@
 //! Audio output backend abstraction and default cpal-based implementation.
 
+use crate::SinkOutput;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
@@ -59,7 +60,7 @@ pub trait AudioBackend: Send {
     /// It will be called from the audio thread.
     fn start(
         &mut self,
-        sample_fn: Box<dyn FnMut() -> f32 + Send>,
+        sample_fn: Box<dyn FnMut() -> SinkOutput + Send>,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
     /// Stops audio output.
@@ -108,7 +109,7 @@ impl AudioBackend for AudioDriver {
 
     fn start(
         &mut self,
-        mut sample_fn: Box<dyn FnMut() -> f32 + Send>,
+        mut sample_fn: Box<dyn FnMut() -> SinkOutput + Send>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let host = cpal::default_host();
         let device = host
@@ -122,31 +123,24 @@ impl AudioBackend for AudioDriver {
             cpal::SampleFormat::F32 => {
                 Self::build_stream::<f32>(&device, &config.into(), move |data: &mut [f32]| {
                     for frame in data.chunks_mut(channels) {
-                        let value = sample_fn().clamp(-1.0, 1.0);
-                        for sample in frame.iter_mut() {
-                            *sample = value;
-                        }
+                        let output = sample_fn();
+                        Self::write_frame_f32(frame, output);
                     }
                 })?
             }
             cpal::SampleFormat::I16 => {
                 Self::build_stream::<i16>(&device, &config.into(), move |data: &mut [i16]| {
                     for frame in data.chunks_mut(channels) {
-                        let value = (sample_fn().clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                        for sample in frame.iter_mut() {
-                            *sample = value;
-                        }
+                        let output = sample_fn();
+                        Self::write_frame_i16(frame, output);
                     }
                 })?
             }
             cpal::SampleFormat::U16 => {
                 Self::build_stream::<u16>(&device, &config.into(), move |data: &mut [u16]| {
                     for frame in data.chunks_mut(channels) {
-                        let value =
-                            ((sample_fn().clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16;
-                        for sample in frame.iter_mut() {
-                            *sample = value;
-                        }
+                        let output = sample_fn();
+                        Self::write_frame_u16(frame, output);
                     }
                 })?
             }
@@ -165,6 +159,57 @@ impl AudioBackend for AudioDriver {
 }
 
 impl AudioDriver {
+    fn stereo_values(output: SinkOutput) -> (f32, f32) {
+        (output.left.clamp(-1.0, 1.0), output.right.clamp(-1.0, 1.0))
+    }
+
+    fn write_channels<T: Copy>(frame: &mut [T], left: T, right: T) {
+        match frame.len() {
+            0 => {}
+            1 => frame[0] = left,
+            _ => {
+                for (index, sample) in frame.iter_mut().enumerate() {
+                    *sample = if index % 2 == 0 { left } else { right };
+                }
+            }
+        }
+    }
+
+    fn write_frame_f32(frame: &mut [f32], output: SinkOutput) {
+        let (left, right) = Self::stereo_values(output);
+        if frame.len() == 1 {
+            frame[0] = (left + right) * 0.5;
+            return;
+        }
+        Self::write_channels(frame, left, right);
+    }
+
+    fn write_frame_i16(frame: &mut [i16], output: SinkOutput) {
+        let (left, right) = Self::stereo_values(output);
+        if frame.len() == 1 {
+            frame[0] = (((left + right) * 0.5) * i16::MAX as f32) as i16;
+            return;
+        }
+        Self::write_channels(
+            frame,
+            (left * i16::MAX as f32) as i16,
+            (right * i16::MAX as f32) as i16,
+        );
+    }
+
+    fn write_frame_u16(frame: &mut [u16], output: SinkOutput) {
+        let (left, right) = Self::stereo_values(output);
+        if frame.len() == 1 {
+            frame[0] = ((((left + right) * 0.5) + 1.0) * 0.5 * u16::MAX as f32) as u16;
+            return;
+        }
+        Self::write_channels(
+            frame,
+            ((left + 1.0) * 0.5 * u16::MAX as f32) as u16,
+            ((right + 1.0) * 0.5 * u16::MAX as f32) as u16,
+        );
+    }
+
     fn build_stream<T>(
         device: &cpal::Device,
         config: &cpal::StreamConfig,

@@ -6,7 +6,10 @@ pub mod registry;
 pub mod traits;
 
 // Re-export core traits
-pub use traits::{validate_port, ControlMeta, Module, SinkModule, SinkOutput};
+pub use traits::{
+    validate_port, ControlKind, ControlMeta, ControlSurface, ControlValue, Module, SinkModule,
+    SinkOutput,
+};
 
 // Re-export factory system
 pub use factory::{ModuleBuildResult, ModuleFactory};
@@ -18,12 +21,9 @@ pub use modules::{
     ClockControls, ClockFactory, DacFactory, DacModule, Filter, FilterControls, FilterFactory,
     FilterType, Lfo, LfoControls, LfoFactory, MelodyControls, MelodyFactory, MelodyGenerator,
     Mixer, MixerControls, MixerFactory, Oscillator, OscillatorControls, OscillatorFactory,
-    OscillatorType, Vca, VcaControls, VcaFactory,
+    OscillatorType, SamplePlayer, SamplePlayerControls, SamplePlayerFactory, Vca, VcaControls,
+    VcaFactory,
 };
-
-// Deprecated type aliases for backward compatibility
-#[allow(deprecated)]
-pub use modules::{MelodyParams, Tempo};
 
 // Re-export invention system
 pub use invention::{

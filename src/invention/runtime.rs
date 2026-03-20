@@ -2,7 +2,7 @@
 
 use crate::modules::{AudioBackend, AudioDriver};
 use crate::registry::ModuleRegistry;
-use crate::{ControlMeta, Module};
+use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::mpsc;
@@ -13,6 +13,7 @@ use super::handles::InventionHandles;
 
 /// Type alias for module instances stored in the runtime.
 pub type ModuleInstance = Arc<Mutex<dyn Module + Send>>;
+pub type ControlSurfaceInstance = Arc<dyn ControlSurface + Send + Sync>;
 
 /// Validates that a module has the specified output port.
 pub(crate) fn validate_output_port(
@@ -56,6 +57,8 @@ pub struct InventionRuntime {
     pub(crate) modules: IndexMap<String, ModuleInstance>,
     /// Sink modules that drive processing.
     pub(crate) sinks: IndexMap<String, SinkInstance>,
+    /// Shared runtime control surfaces keyed by module id.
+    pub(crate) control_surfaces: IndexMap<String, ControlSurfaceInstance>,
     /// Signal routing connections.
     pub(crate) routing: Vec<RoutingConnection>,
     /// Module registry for building new modules at runtime.
@@ -111,6 +114,7 @@ impl InventionRuntime {
         };
 
         let graph_arc = Arc::new(Mutex::new(graph));
+        let control_surfaces = Arc::new(Mutex::new(self.control_surfaces));
 
         // Pass a closure that calls process_sample on the graph
         let graph_clone = graph_arc.clone();
@@ -121,6 +125,7 @@ impl InventionRuntime {
         Ok(RunningInvention {
             backend: Box::new(backend),
             graph: graph_arc,
+            control_surfaces,
             command_tx,
             registry: self.registry,
             sample_rate: self.sample_rate,
@@ -176,6 +181,7 @@ impl std::error::Error for GraphCommandError {}
 pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
     graph: Arc<Mutex<SignalGraph>>,
+    control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     command_tx: mpsc::Sender<GraphCommand>,
     registry: ModuleRegistry,
     sample_rate: u32,
@@ -243,6 +249,13 @@ impl RunningInvention {
         for (handle_name, handle) in result.handles {
             let key = format!("{}.{}", module_id, handle_name);
             handle_map.insert(key, handle);
+        }
+
+        if let Some(control_surface) = result.control_surface {
+            self.control_surfaces
+                .lock()
+                .unwrap()
+                .insert(module_id.clone(), control_surface);
         }
 
         self.send_command(GraphCommand::AddModule {
@@ -334,40 +347,37 @@ impl RunningInvention {
 
     /// Lists the controls available on a specific module.
     pub fn list_controls(&self, module_id: &str) -> Result<Vec<ControlMeta>, GraphCommandError> {
-        let graph = self.graph.lock().unwrap();
-        let module = graph
-            .modules
+        let controls = self.control_surfaces.lock().unwrap();
+        let control_surface = controls
             .get(module_id)
             .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
-        let m = module.lock().unwrap();
-        Ok(m.controls())
+        Ok(control_surface.controls())
     }
 
     /// Lists controls for all modules in the graph.
     ///
     /// Returns a vec of `(module_id, controls)` pairs, skipping modules with no controls.
     pub fn list_all_controls(&self) -> Vec<(String, Vec<ControlMeta>)> {
-        let graph = self.graph.lock().unwrap();
+        let controls = self.control_surfaces.lock().unwrap();
         let mut result = Vec::new();
-        for (id, module) in &graph.modules {
-            let m = module.lock().unwrap();
-            let controls = m.controls();
-            if !controls.is_empty() {
-                result.push((id.clone(), controls));
+        for (id, control_surface) in controls.iter() {
+            let metadata = control_surface.controls();
+            if !metadata.is_empty() {
+                result.push((id.clone(), metadata));
             }
         }
         result
     }
 
     /// Gets the current value of a module control.
-    pub fn get_control(&self, module_id: &str, key: &str) -> Result<f32, GraphCommandError> {
-        let graph = self.graph.lock().unwrap();
-        let module = graph
-            .modules
+    pub fn get_control(&self, module_id: &str, key: &str) -> Result<ControlValue, GraphCommandError> {
+        let controls = self.control_surfaces.lock().unwrap();
+        let control_surface = controls
             .get(module_id)
             .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
-        let m = module.lock().unwrap();
-        m.get_control(key).map_err(GraphCommandError::ControlError)
+        control_surface
+            .get_control(key)
+            .map_err(GraphCommandError::ControlError)
     }
 
     /// Sets the value of a module control.
@@ -375,15 +385,14 @@ impl RunningInvention {
         &self,
         module_id: &str,
         key: &str,
-        value: f32,
+        value: ControlValue,
     ) -> Result<(), GraphCommandError> {
-        let graph = self.graph.lock().unwrap();
-        let module = graph
-            .modules
+        let controls = self.control_surfaces.lock().unwrap();
+        let control_surface = controls
             .get(module_id)
             .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
-        let mut m = module.lock().unwrap();
-        m.set_control(key, value)
+        control_surface
+            .set_control(key, value)
             .map_err(GraphCommandError::ControlError)
     }
 
@@ -393,8 +402,10 @@ impl RunningInvention {
     /// silently ignored on the audio thread. All connections referencing the
     /// removed module are cleaned up.
     pub fn remove_module(&self, module_id: impl Into<String>) -> Result<(), GraphCommandError> {
+        let module_id = module_id.into();
+        self.control_surfaces.lock().unwrap().shift_remove(&module_id);
         self.send_command(GraphCommand::RemoveModule {
-            module_id: module_id.into(),
+            module_id,
         })
     }
 }

@@ -289,8 +289,9 @@ impl ModuleFactory for LfoFactory {
             module: Arc::new(Mutex::new(lfo)),
             handles: vec![(
                 "controls".to_string(),
-                Arc::new(controls) as Arc<dyn Any + Send + Sync>,
+                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
             )],
+            control_surface: Some(Arc::new(controls)),
             sink: None,
         })
     }

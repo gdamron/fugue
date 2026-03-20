@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::{ControlMeta, ControlSurface, ControlValue};
+
 /// Thread-safe controls for the Clock module.
 ///
 /// All fields are wrapped in `Arc<Mutex<_>>` for real-time adjustment
@@ -75,7 +77,38 @@ impl ClockControls {
     }
 }
 
-// Provide a type alias for backward compatibility
-/// Deprecated: Use [`ClockControls`] instead.
-#[deprecated(since = "0.2.0", note = "Renamed to ClockControls for consistency")]
-pub type Tempo = ClockControls;
+impl ControlSurface for ClockControls {
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![
+            ControlMeta::number("bpm", "Tempo in beats per minute")
+                .with_range(60.0, 300.0)
+                .with_default(self.bpm() as f32),
+            ControlMeta::number("gate_duration", "Gate duration as fraction of beat")
+                .with_range(0.0, 1.0)
+                .with_default(self.gate_duration() as f32),
+        ]
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        match key {
+            "bpm" => Ok(ControlValue::Number(self.bpm() as f32)),
+            "gate_duration" => Ok(ControlValue::Number(self.gate_duration() as f32)),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        let value = value.as_number()?;
+        match key {
+            "bpm" => {
+                self.set_bpm(value as f64);
+                Ok(())
+            }
+            "gate_duration" => {
+                self.set_gate_duration(value as f64);
+                Ok(())
+            }
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+}

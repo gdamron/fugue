@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::{ControlMeta, ControlSurface, ControlValue};
+
 use super::MAX_CHANNELS;
 
 /// Thread-safe controls for the Mixer module.
@@ -83,5 +85,59 @@ impl MixerControls {
     /// Sets the master level.
     pub fn set_master(&self, level: f32) {
         *self.master.lock().unwrap() = level.clamp(0.0, 2.0);
+    }
+}
+
+impl ControlSurface for MixerControls {
+    fn controls(&self) -> Vec<ControlMeta> {
+        let mut controls = Vec::with_capacity(self.channels + 1);
+        for i in 0..self.channels {
+            controls.push(
+                ControlMeta::number(format!("level.{}", i), format!("Channel {} level", i + 1))
+                    .with_range(0.0, 2.0)
+                    .with_default(self.level(i)),
+            );
+        }
+        controls.push(
+            ControlMeta::number("master", "Master output level")
+                .with_range(0.0, 2.0)
+                .with_default(self.master()),
+        );
+        controls
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        if key == "master" {
+            return Ok(self.master().into());
+        }
+
+        if let Some(rest) = key.strip_prefix("level.") {
+            if let Ok(index) = rest.parse::<usize>() {
+                if index < self.channels {
+                    return Ok(self.level(index).into());
+                }
+            }
+        }
+
+        Err(format!("Unknown control: {}", key))
+    }
+
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        let value = value.as_number()?;
+        if key == "master" {
+            self.set_master(value);
+            return Ok(());
+        }
+
+        if let Some(rest) = key.strip_prefix("level.") {
+            if let Ok(index) = rest.parse::<usize>() {
+                if index < self.channels {
+                    self.set_level(index, value);
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(format!("Unknown control: {}", key))
     }
 }

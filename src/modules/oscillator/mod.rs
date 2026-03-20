@@ -56,8 +56,9 @@ impl ModuleFactory for OscillatorFactory {
             module: Arc::new(Mutex::new(osc)),
             handles: vec![(
                 "controls".to_string(),
-                Arc::new(controls) as Arc<dyn Any + Send + Sync>,
+                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
             )],
+            control_surface: Some(Arc::new(controls)),
             sink: None,
         })
     }
