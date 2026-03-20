@@ -95,15 +95,24 @@ impl DacModule {
         self
     }
 
-    /// Applies soft clipping using tanh-based saturation.
-    ///
-    /// This provides a gentle rolloff as signals approach and exceed ±1.0,
-    /// which sounds more musical than hard clipping.
+    /// Soft-clips audio that exceeds ±1.0 while preserving signals below the
+    /// knee. Linear below `KNEE`, then smoothly compresses toward ±1.0 using
+    /// `x/(1+x)` saturation on the excess. The function is C1-continuous at
+    /// the knee (derivative = 1.0 from both sides), so no audible artifacts
+    /// at the transition.
     #[inline]
     fn soft_clip_sample(sample: f32) -> f32 {
-        // tanh provides smooth saturation
-        // Scale input slightly to make the knee less aggressive
-        sample.tanh()
+        const KNEE: f32 = 0.95;
+        const HEADROOM: f32 = 1.0 - KNEE; // 0.05
+
+        let abs = sample.abs();
+        if abs <= KNEE {
+            sample
+        } else {
+            let excess = (abs - KNEE) / HEADROOM;
+            let compressed = KNEE + HEADROOM * excess / (1.0 + excess);
+            sample.signum() * compressed
+        }
     }
 }
 
@@ -178,9 +187,9 @@ mod tests {
         dac.set_input("audio", 0.5).unwrap();
         dac.process();
 
-        // Check output (soft clipping affects the value slightly)
+        // Below knee (0.95), soft clip is linear pass-through
         let out = dac.get_output("audio").unwrap();
-        assert!((out - 0.4621).abs() < 0.01, "Expected ~0.462, got {}", out);
+        assert_eq!(out, 0.5, "Below knee, should be exact pass-through, got {}", out);
         assert_eq!(dac.sink_output().sample, out);
     }
 
