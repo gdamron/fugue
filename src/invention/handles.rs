@@ -20,7 +20,7 @@ use std::sync::Arc;
 /// let tempo: Tempo = handles.get("clock.tempo").expect("no tempo");
 ///
 /// // Get all handles of a type
-/// let all_params: Vec<(String, MelodyParams)> = handles.all::<MelodyParams>();
+/// let all_params: Vec<(String, MelodyControls)> = handles.all::<MelodyControls>();
 ///
 /// // Discover available handles
 /// for key in handles.keys() {
@@ -76,7 +76,7 @@ impl InventionHandles {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let all_params: Vec<(String, MelodyParams)> = handles.all::<MelodyParams>();
+    /// let all_params: Vec<(String, MelodyControls)> = handles.all::<MelodyControls>();
     /// for (key, params) in all_params {
     ///     println!("{}: {:?}", key, params);
     /// }

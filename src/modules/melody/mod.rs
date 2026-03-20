@@ -12,10 +12,6 @@ use rand::{Rng, SeedableRng};
 
 pub use self::controls::MelodyControls;
 
-// Provide a deprecated type alias for backward compatibility
-#[allow(deprecated)]
-pub use self::controls::MelodyParams;
-
 mod controls;
 mod inputs;
 mod outputs;

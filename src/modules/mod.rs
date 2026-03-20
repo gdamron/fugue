@@ -34,15 +34,11 @@ pub use clock::{Clock, ClockControls};
 
 // Deprecated type alias for backward compatibility
 #[allow(deprecated)]
-pub use clock::Tempo;
 pub use dac::{default_sample_rate, AudioBackend, AudioDriver, DacModule};
 pub use filter::{Filter, FilterControls, FilterType};
 pub use lfo::{Lfo, LfoControls};
 pub use melody::{MelodyControls, MelodyGenerator};
 
-// Deprecated type alias for backward compatibility
-#[allow(deprecated)]
-pub use melody::MelodyParams;
 pub use mixer::{Mixer, MixerControls};
 pub use oscillator::{Oscillator, OscillatorControls, OscillatorType};
 pub use sample_player::{SamplePlayer, SamplePlayerControls};

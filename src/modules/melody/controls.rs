@@ -151,11 +151,6 @@ impl MelodyControls {
     }
 }
 
-// Provide a type alias for backward compatibility
-/// Deprecated: Use [`MelodyControls`] instead.
-#[deprecated(since = "0.2.0", note = "Renamed to MelodyControls for consistency")]
-pub type MelodyParams = MelodyControls;
-
 impl ControlSurface for MelodyControls {
     fn controls(&self) -> Vec<ControlMeta> {
         let degree_count = self.degree_count();

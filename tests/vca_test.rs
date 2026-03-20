@@ -52,7 +52,7 @@ mod tests {
     fn test_vca_with_envelope() {
         // Create modules
         let sample_rate = 44100;
-        let mut clock = Clock::new(sample_rate, Tempo::new(120.0));
+        let mut clock = Clock::new(sample_rate, ClockControls::new(120.0));
         let mut adsr = Adsr::new(sample_rate);
         let mut osc = Oscillator::new(sample_rate, OscillatorType::Sine);
         osc.set_frequency(440.0);

@@ -239,7 +239,12 @@ mod tests {
             &[[0.25, -0.25], [0.5, -0.5], [0.75, -0.75]],
         );
 
-        let controls = SamplePlayerControls::new(44_100, Some(path.to_str().unwrap())).unwrap();
+        let controls = SamplePlayerControls::new(
+            44_100,
+            Some(path.to_str().unwrap()),
+            Some(false), 
+            Some(false)
+        ).unwrap();
         let mut player = SamplePlayer::new_with_controls(controls.clone());
 
         controls
@@ -263,7 +268,12 @@ mod tests {
     #[test]
     fn test_sample_player_loop_input_overrides_control() {
         let path = write_test_wav(44_100, 1, &[[0.1, 0.0], [0.2, 0.0]]);
-        let controls = SamplePlayerControls::new(44_100, Some(path.to_str().unwrap())).unwrap();
+        let controls = SamplePlayerControls::new(
+            44_100,
+            Some(path.to_str().unwrap()),
+            Some(false), 
+            Some(false)
+        ).unwrap();
         let mut player = SamplePlayer::new_with_controls(controls.clone());
 
         controls.set_play(true);
@@ -282,7 +292,12 @@ mod tests {
     #[test]
     fn test_sample_player_failed_reload_keeps_previous_sample() {
         let path = write_test_wav(44_100, 1, &[[0.3, 0.0]]);
-        let controls = SamplePlayerControls::new(44_100, Some(path.to_str().unwrap())).unwrap();
+        let controls = SamplePlayerControls::new(
+            44_100,
+            Some(path.to_str().unwrap()),
+            Some(false), 
+            Some(false)
+        ).unwrap();
         let mut player = SamplePlayer::new_with_controls(controls.clone());
 
         let bad = controls.set_source("/definitely/missing.wav");
@@ -303,7 +318,12 @@ mod tests {
             1,
             &[[0.0, 0.0], [0.5, 0.0], [1.0, 0.0], [0.5, 0.0]],
         );
-        let controls = SamplePlayerControls::new(44_100, Some(path.to_str().unwrap())).unwrap();
+        let controls = SamplePlayerControls::new(
+            44_100,
+            Some(path.to_str().unwrap()),
+            Some(false), 
+            Some(false)
+        ).unwrap();
         let sample_len = controls
             .shared
             .lock()

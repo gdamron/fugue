@@ -112,8 +112,3 @@ impl ControlSurface for ClockControls {
         }
     }
 }
-
-// Provide a type alias for backward compatibility
-/// Deprecated: Use [`ClockControls`] instead.
-#[deprecated(since = "0.2.0", note = "Renamed to ClockControls for consistency")]
-pub type Tempo = ClockControls;

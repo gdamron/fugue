@@ -8,10 +8,6 @@ use crate::Module;
 
 pub use self::controls::ClockControls;
 
-// Re-export Tempo as deprecated alias
-#[allow(deprecated)]
-pub use self::controls::Tempo;
-
 mod controls;
 mod inputs;
 mod outputs;

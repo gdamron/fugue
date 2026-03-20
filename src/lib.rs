@@ -25,10 +25,6 @@ pub use modules::{
     VcaFactory,
 };
 
-// Deprecated type aliases for backward compatibility
-#[allow(deprecated)]
-pub use modules::{MelodyParams, Tempo};
-
 // Re-export invention system
 pub use invention::{
     Connection, GraphCommandError, Invention, InventionBuilder, InventionHandles, InventionRuntime,
