@@ -118,6 +118,7 @@ fn execute(repl: &mut FugueRepl, line: &str) -> Result<String, String> {
         "types" => cmd_types(repl),
         "help" => Ok(help_text()),
         "quit" | "exit" => {
+            dev_save_state(repl);
             repl.stop_current();
             std::process::exit(0);
         }
@@ -589,6 +590,20 @@ fn main() {
         let _ = rl.load_history(path);
     }
 
+    // Dev auto-restore: if FUGUE_DEV_STATE is set and the file exists, load it
+    let dev_state_path = std::env::var("FUGUE_DEV_STATE").ok();
+    if let Some(ref path) = dev_state_path {
+        if std::path::Path::new(path).exists() {
+            match Invention::from_file(path) {
+                Ok(invention) => match start_invention(&mut repl, invention) {
+                    Ok(msg) => println!("[dev] Auto-restored: {}", msg),
+                    Err(e) => eprintln!("[dev] Restore failed: {}", e),
+                },
+                Err(e) => eprintln!("[dev] Failed to read state file: {}", e),
+            }
+        }
+    }
+
     println!("Fugue REPL (type 'help' for commands, 'quit' to exit)");
 
     loop {
@@ -615,6 +630,7 @@ fn main() {
                 println!("^C (use 'quit' to exit)");
             }
             Err(ReadlineError::Eof) => {
+                dev_save_state(&repl);
                 repl.stop_current();
                 break;
             }
@@ -627,6 +643,20 @@ fn main() {
 
     if let Some(ref path) = history_path {
         let _ = rl.save_history(path);
+    }
+}
+
+fn dev_save_state(repl: &FugueRepl) {
+    if let Ok(path) = std::env::var("FUGUE_DEV_STATE") {
+        if !repl.modules.is_empty() {
+            let invention = repl.to_invention();
+            if let Ok(json) = invention.to_json() {
+                match std::fs::write(&path, &json) {
+                    Ok(_) => eprintln!("[dev] State saved to {}", path),
+                    Err(e) => eprintln!("[dev] Failed to save state: {}", e),
+                }
+            }
+        }
     }
 }
 
