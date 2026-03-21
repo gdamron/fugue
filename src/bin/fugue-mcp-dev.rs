@@ -95,7 +95,7 @@ impl McpChild {
     async fn spawn() -> Result<Self, Box<dyn std::error::Error>> {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
         let mut process = Command::new(cargo)
-            .args(["run", "--features", "mcp", "--bin", "fugue-mcp"])
+            .args(["run", "--release", "--features", "mcp", "--bin", "fugue-mcp"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit()) // Build/runtime output visible to developer
@@ -291,7 +291,7 @@ async fn rebuild() -> Result<(), Box<dyn std::error::Error>> {
 
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let status = Command::new(cargo)
-        .args(["build", "--features", "mcp", "--bin", "fugue-mcp"])
+        .args(["build", "--release", "--features", "mcp", "--bin", "fugue-mcp"])
         .stderr(Stdio::inherit())
         .stdout(Stdio::inherit())
         .status()
