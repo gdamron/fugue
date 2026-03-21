@@ -13,5 +13,16 @@
         "fugue-mcp"
       ],
     },
+    "fugue-dev": {
+      "type": "local",
+      "command": [
+        "cargo",
+        "run",
+        "--features",
+        "dev",
+        "--bin",
+        "fugue-mcp-dev"
+      ],
+    },
   },
 }
