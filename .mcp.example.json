@@ -11,17 +11,6 @@
         "fugue-mcp"
       ],
       "cwd": "${workspaceFolder}"
-    },
-    "fugue-dev": {
-      "command": "cargo",
-      "args": [
-        "run",
-        "--features",
-        "dev",
-        "--bin",
-        "fugue-mcp-dev"
-      ],
-      "cwd": "${workspaceFolder}"
     }
   }
 }
