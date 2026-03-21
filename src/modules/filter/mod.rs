@@ -107,9 +107,9 @@ pub struct Filter {
     // Controls (shared with FilterControls handle)
     ctrl: FilterControls,
 
-    // State-variable filter state
-    low: f32,
-    band: f32,
+    // TPT SVF integrator state
+    ic1eq: f32,
+    ic2eq: f32,
 
     // Signal inputs
     inputs: inputs::FilterInputs,
@@ -133,8 +133,8 @@ impl Filter {
         Self {
             sample_rate,
             ctrl: controls,
-            low: 0.0,
-            band: 0.0,
+            ic1eq: 0.0,
+            ic2eq: 0.0,
             inputs: inputs::FilterInputs::new(),
             outputs: outputs::FilterOutputs::new(),
             last_processed_sample: 0,
@@ -190,7 +190,8 @@ impl Filter {
         self.ctrl.set_resonance(resonance);
     }
 
-    /// Processes one sample through the filter.
+    /// Processes one sample through the filter using the trapezoidal integrated
+    /// SVF (Andrew Simper / Cytomic). Unconditionally stable at all frequencies.
     fn process_sample(&mut self) -> f32 {
         let base_cutoff = self.effective_cutoff();
         let cv_amount = self.ctrl.cv_amount();
@@ -204,29 +205,36 @@ impl Filter {
         // Calculate effective resonance
         let effective_resonance = base_resonance.clamp(0.0, 0.99);
 
-        // Convert cutoff to filter coefficient
-        let f = (2.0 * (PI * effective_cutoff / self.sample_rate as f32).sin()).min(0.99);
+        // TPT SVF coefficients
+        let g = (PI * effective_cutoff / self.sample_rate as f32).tan();
+        let k = 2.0 * (1.0 - effective_resonance);
+        let a1 = 1.0 / (1.0 + g * (g + k));
+        let a2 = g * a1;
+        let a3 = g * a2;
 
-        // Convert resonance to Q factor
-        let q = 2.0 * (1.0 - effective_resonance);
+        let input = self.inputs.audio();
 
-        // State-variable filter iteration
-        self.low += f * self.band;
-        let high = self.inputs.audio() - self.low - q * self.band;
-        self.band += f * high;
+        // TPT SVF tick
+        let v3 = input - self.ic2eq;
+        let v1 = a1 * self.ic1eq + a2 * v3;
+        let v2 = self.ic2eq + a2 * self.ic1eq + a3 * v3;
+
+        // Update integrator state
+        self.ic1eq = 2.0 * v1 - self.ic1eq;
+        self.ic2eq = 2.0 * v2 - self.ic2eq;
 
         // Select output based on filter type
         match filter_type {
-            FilterType::LowPass => self.low,
-            FilterType::HighPass => high,
-            FilterType::BandPass => self.band,
+            FilterType::LowPass => v2,
+            FilterType::HighPass => input - k * v1 - v2,
+            FilterType::BandPass => v1,
         }
     }
 
     /// Resets the filter state.
     pub fn reset(&mut self) {
-        self.low = 0.0;
-        self.band = 0.0;
+        self.ic1eq = 0.0;
+        self.ic2eq = 0.0;
     }
 }
 
