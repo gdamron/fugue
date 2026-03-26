@@ -19,8 +19,7 @@
       "type": "melody",
       "config": {
         "root_note": 48,
-        "mode": "phrygian",
-        "scale_degrees": [0, 1, 3, 4, 5, 7],
+        "scale_degrees": [0, 1, 5, 7, 8, 12],
         "note_weights": [1.5, 0.8, 1.0, 0.5, 1.0, 0.8]
       }
     },

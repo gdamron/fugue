@@ -32,4 +32,4 @@ pub use invention::{
 };
 
 // Re-export music theory
-pub use music::{Mode, Note, Scale};
+pub use music::{Note, Scale};

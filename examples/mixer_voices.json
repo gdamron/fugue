@@ -19,8 +19,7 @@
       "type": "melody",
       "config": {
         "root_note": 48,
-        "mode": "dorian",
-        "scale_degrees": [0, 2, 3, 5, 7],
+        "scale_degrees": [0, 3, 5, 9, 12],
         "note_weights": [1.5, 1.0, 1.0, 0.8, 1.0]
       }
     },

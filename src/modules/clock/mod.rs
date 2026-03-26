@@ -198,7 +198,7 @@ impl Module for Clock {
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
             ControlMeta::new("bpm", "Tempo in beats per minute")
-                .with_range(20.0, 300.0)
+                .with_range(1.0, 300.0)
                 .with_default(120.0),
             ControlMeta::new("gate_duration", "Gate duration as fraction of beat")
                 .with_range(0.0, 1.0)
