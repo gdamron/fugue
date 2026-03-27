@@ -95,7 +95,14 @@ impl McpChild {
     async fn spawn() -> Result<Self, Box<dyn std::error::Error>> {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
         let mut process = Command::new(cargo)
-            .args(["run", "--release", "--features", "mcp", "--bin", "fugue-mcp"])
+            .args([
+                "run",
+                "--release",
+                "--features",
+                "mcp",
+                "--bin",
+                "fugue-mcp",
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit()) // Build/runtime output visible to developer
@@ -233,9 +240,7 @@ async fn restore_state(
     let (resp, _) = child.call(id, &req).await?;
 
     if resp.get("error").is_some() {
-        let err_msg = resp["error"]["message"]
-            .as_str()
-            .unwrap_or("unknown error");
+        let err_msg = resp["error"]["message"].as_str().unwrap_or("unknown error");
         eprintln!("[dev] Warning: state restore failed: {}", err_msg);
     } else {
         let text = extract_text_content(&resp).unwrap_or_default();
@@ -268,16 +273,22 @@ fn setup_watcher(
     tx: mpsc::UnboundedSender<()>,
 ) -> Result<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>, Box<dyn std::error::Error>>
 {
-    let debouncer = new_debouncer(Duration::from_millis(500), move |events: Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {
-        if let Ok(events) = events {
-            let dominated_by_close_write = events.iter().any(|e| {
-                matches!(e.kind, DebouncedEventKind::Any | DebouncedEventKind::AnyContinuous)
-            });
-            if dominated_by_close_write {
-                let _ = tx.send(());
+    let debouncer = new_debouncer(
+        Duration::from_millis(500),
+        move |events: Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {
+            if let Ok(events) = events {
+                let dominated_by_close_write = events.iter().any(|e| {
+                    matches!(
+                        e.kind,
+                        DebouncedEventKind::Any | DebouncedEventKind::AnyContinuous
+                    )
+                });
+                if dominated_by_close_write {
+                    let _ = tx.send(());
+                }
             }
-        }
-    })?;
+        },
+    )?;
 
     Ok(debouncer)
 }
@@ -291,7 +302,14 @@ async fn rebuild() -> Result<(), Box<dyn std::error::Error>> {
 
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let status = Command::new(cargo)
-        .args(["build", "--release", "--features", "mcp", "--bin", "fugue-mcp"])
+        .args([
+            "build",
+            "--release",
+            "--features",
+            "mcp",
+            "--bin",
+            "fugue-mcp",
+        ])
         .stderr(Stdio::inherit())
         .stdout(Stdio::inherit())
         .status()
@@ -334,7 +352,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for dir in &["examples", "tests"] {
         let p = Path::new(dir);
         if p.exists() {
-            let _ = debouncer.watcher().watch(p, notify::RecursiveMode::Recursive);
+            let _ = debouncer
+                .watcher()
+                .watch(p, notify::RecursiveMode::Recursive);
         }
     }
 

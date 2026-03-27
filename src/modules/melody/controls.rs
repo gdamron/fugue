@@ -188,9 +188,10 @@ impl ControlSurface for MelodyControls {
             "degree_count" => Ok((self.degree_count() as f32).into()),
             _ => {
                 if let Some(rest) = key.strip_prefix("degree.") {
-                    return Ok((self.degree(rest.parse::<usize>().map_err(|_| {
-                        format!("Invalid degree index in control key: {}", key)
-                    })?)? as f32)
+                    return Ok((self
+                        .degree(rest.parse::<usize>().map_err(|_| {
+                            format!("Invalid degree index in control key: {}", key)
+                        })?)? as f32)
                         .into());
                 }
                 if let Some(rest) = key.strip_prefix("note_weight.") {

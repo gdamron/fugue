@@ -370,7 +370,11 @@ impl RunningInvention {
     }
 
     /// Gets the current value of a module control.
-    pub fn get_control(&self, module_id: &str, key: &str) -> Result<ControlValue, GraphCommandError> {
+    pub fn get_control(
+        &self,
+        module_id: &str,
+        key: &str,
+    ) -> Result<ControlValue, GraphCommandError> {
         let controls = self.control_surfaces.lock().unwrap();
         let control_surface = controls
             .get(module_id)
@@ -403,9 +407,10 @@ impl RunningInvention {
     /// removed module are cleaned up.
     pub fn remove_module(&self, module_id: impl Into<String>) -> Result<(), GraphCommandError> {
         let module_id = module_id.into();
-        self.control_surfaces.lock().unwrap().shift_remove(&module_id);
-        self.send_command(GraphCommand::RemoveModule {
-            module_id,
-        })
+        self.control_surfaces
+            .lock()
+            .unwrap()
+            .shift_remove(&module_id);
+        self.send_command(GraphCommand::RemoveModule { module_id })
     }
 }

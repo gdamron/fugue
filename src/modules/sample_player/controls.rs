@@ -65,7 +65,12 @@ impl SampleData {
 }
 
 impl SamplePlayerControls {
-    pub fn new(sample_rate: u32, source: Option<&str>, play: Option<bool>, loop_enabled: Option<bool>) -> Result<Self, String> {
+    pub fn new(
+        sample_rate: u32,
+        source: Option<&str>,
+        play: Option<bool>,
+        loop_enabled: Option<bool>,
+    ) -> Result<Self, String> {
         let controls = Self {
             shared: Arc::new(Mutex::new(SamplePlayerShared {
                 source: String::new(),
@@ -158,7 +163,8 @@ impl ControlSurface for SamplePlayerControls {
 
 fn load_sample(source: &str, target_sample_rate: u32) -> Result<SampleData, String> {
     let (reader, remote) = open_source(source)?;
-    let wav = hound::WavReader::new(reader).map_err(|err| format!("Failed to decode WAV: {}", err))?;
+    let wav =
+        hound::WavReader::new(reader).map_err(|err| format!("Failed to decode WAV: {}", err))?;
     let spec = wav.spec();
     let channels = spec.channels.max(1) as usize;
     let sample_rate = spec.sample_rate;
@@ -201,7 +207,11 @@ fn decode_samples<R: Read>(mut wav: hound::WavReader<R>) -> Result<Vec<f32>, Str
             let shift = spec.bits_per_sample.saturating_sub(1) as u32;
             let scale = (1_i64 << shift) as f32;
             wav.samples::<i32>()
-                .map(|sample| sample.map(|value| (value as f32 / scale).clamp(-1.0, 1.0)).map_err(|err| err.to_string()))
+                .map(|sample| {
+                    sample
+                        .map(|value| (value as f32 / scale).clamp(-1.0, 1.0))
+                        .map_err(|err| err.to_string())
+                })
                 .collect()
         }
     }

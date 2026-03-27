@@ -408,8 +408,8 @@ fn cmd_set(repl: &FugueRepl, rest: &str) -> Result<String, String> {
         return Err("Usage: set <module_id> <key> <value>".to_string());
     }
 
-    let value: ControlValue = serde_json::from_str(parts[2])
-        .map_err(|e| format!("Invalid control value JSON: {}", e))?;
+    let value: ControlValue =
+        serde_json::from_str(parts[2]).map_err(|e| format!("Invalid control value JSON: {}", e))?;
 
     running
         .set_control(parts[0], parts[1], value)
@@ -482,12 +482,7 @@ fn format_control(c: &ControlMeta) -> String {
             format!("string{}, default {}", options, default)
         }
     };
-    format!(
-        "    {:<14} {:<28} {}\n",
-        c.key,
-        details,
-        c.description,
-    )
+    format!("    {:<14} {:<28} {}\n", c.key, details, c.description,)
 }
 
 // ---------------------------------------------------------------------------

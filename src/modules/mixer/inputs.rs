@@ -7,23 +7,31 @@ pub static INPUT_NAMES: [&str; MAX_CHANNELS] =
 pub static LEVEL_NAMES: [&str; MAX_CHANNELS] = [
     "level1", "level2", "level3", "level4", "level5", "level6", "level7", "level8",
 ];
+pub static PAN_NAMES: [&str; MAX_CHANNELS] = [
+    "pan1", "pan2", "pan3", "pan4", "pan5", "pan6", "pan7", "pan8",
+];
 
 pub struct MixerInputs {
     names: Vec<&'static str>,
     audio: [f32; MAX_CHANNELS],
     level_cvs: [f32; MAX_CHANNELS],
+    pan_mods: [f32; MAX_CHANNELS],
     master_cv: f32,
     level_cv_active: [bool; MAX_CHANNELS],
+    pan_mod_active: [bool; MAX_CHANNELS],
     master_cv_active: bool,
 }
 
 impl MixerInputs {
     pub fn new(channels: usize) -> Self {
-        let mut names = Vec::with_capacity(channels * 2 + 1);
+        let mut names = Vec::with_capacity(channels * 3 + 1);
         for name in INPUT_NAMES.iter().take(channels) {
             names.push(*name);
         }
         for name in LEVEL_NAMES.iter().take(channels) {
+            names.push(*name);
+        }
+        for name in PAN_NAMES.iter().take(channels) {
             names.push(*name);
         }
         names.push("master");
@@ -32,8 +40,10 @@ impl MixerInputs {
             names,
             audio: [0.0; MAX_CHANNELS],
             level_cvs: [1.0; MAX_CHANNELS],
+            pan_mods: [0.0; MAX_CHANNELS],
             master_cv: 1.0,
             level_cv_active: [false; MAX_CHANNELS],
+            pan_mod_active: [false; MAX_CHANNELS],
             master_cv_active: false,
         }
     }
@@ -64,6 +74,17 @@ impl MixerInputs {
             }
         }
 
+        if let Some(rest) = port.strip_prefix("pan") {
+            if let Ok(num) = rest.parse::<usize>() {
+                let idx = num - 1;
+                if idx < channels {
+                    self.pan_mods[idx] = value.clamp(-1.0, 1.0);
+                    self.pan_mod_active[idx] = true;
+                    return Ok(());
+                }
+            }
+        }
+
         if port == "master" {
             self.master_cv = value.clamp(0.0, 2.0);
             self.master_cv_active = true;
@@ -75,6 +96,7 @@ impl MixerInputs {
 
     pub fn reset(&mut self) {
         self.level_cv_active = [false; MAX_CHANNELS];
+        self.pan_mod_active = [false; MAX_CHANNELS];
         self.master_cv_active = false;
     }
 
@@ -95,6 +117,14 @@ impl MixerInputs {
             self.master_cv
         } else {
             1.0
+        }
+    }
+
+    pub fn pan_mod(&self, channel: usize) -> f32 {
+        if self.pan_mod_active[channel] {
+            self.pan_mods[channel]
+        } else {
+            0.0
         }
     }
 }

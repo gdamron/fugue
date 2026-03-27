@@ -2,8 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::{ControlMeta, ControlSurface, ControlValue};
 use crate::modules::OscillatorType;
+use crate::{ControlMeta, ControlSurface, ControlValue};
 
 /// Thread-safe controls for the LFO.
 ///
