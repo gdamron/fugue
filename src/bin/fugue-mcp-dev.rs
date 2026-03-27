@@ -180,9 +180,17 @@ impl McpChild {
 // State capture and restore
 // ---------------------------------------------------------------------------
 
+/// Captured invention state including module graph and runtime control values.
+struct CapturedState {
+    /// Invention JSON (modules + connections) for load_invention.
+    invention_json: String,
+    /// Per-module control values: (module_id, key, value).
+    control_values: Vec<(String, String, serde_json::Value)>,
+}
+
 /// Captures the current invention state from the running child via MCP tool calls.
-/// Returns the invention JSON string if an invention is running, None otherwise.
-async fn capture_state(child: &mut McpChild) -> Option<String> {
+/// Returns the invention JSON and all current control values if an invention is running.
+async fn capture_state(child: &mut McpChild) -> Option<CapturedState> {
     // Check status
     let (id, req) = make_tool_call("get_status", serde_json::json!({}));
     let (resp, _) = child.call(id, &req).await.ok()?;
@@ -205,6 +213,66 @@ async fn capture_state(child: &mut McpChild) -> Option<String> {
     let connections_text = extract_text_content(&resp)?;
     let connections: Vec<serde_json::Value> = serde_json::from_str(&connections_text).ok()?;
 
+    // Capture current control values for all modules
+    let mut control_values = Vec::new();
+
+    // Get all controls metadata
+    let (id, req) = make_tool_call("list_controls", serde_json::json!({}));
+    if let Ok((resp, _)) = child.call(id, &req).await {
+        if let Some(controls_text) = extract_text_content(&resp) {
+            if let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&controls_text) {
+                for entry in &entries {
+                    let module_id = match entry.get("module_id").and_then(|v| v.as_str()) {
+                        Some(id) => id,
+                        None => continue,
+                    };
+                    let controls = match entry.get("controls").and_then(|v| v.as_array()) {
+                        Some(c) => c,
+                        None => continue,
+                    };
+
+                    for control in controls {
+                        let key = match control.get("key").and_then(|v| v.as_str()) {
+                            Some(k) => k,
+                            None => continue,
+                        };
+
+                        // Read current value
+                        let (id, req) = make_tool_call(
+                            "get_control",
+                            serde_json::json!({
+                                "module_id": module_id,
+                                "key": key,
+                            }),
+                        );
+                        if let Ok((resp, _)) = child.call(id, &req).await {
+                            if let Some(text) = extract_text_content(&resp) {
+                                // Response format: "module.key = value"
+                                if let Some(eq_pos) = text.rfind(" = ") {
+                                    let val_str = &text[eq_pos + 3..];
+                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(val_str) {
+                                        control_values.push((
+                                            module_id.to_string(),
+                                            key.to_string(),
+                                            val,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "[dev] Captured state: {} modules, {} connections, {} control values.",
+        modules.len(),
+        connections.len(),
+        control_values.len()
+    );
+
     // Build invention JSON
     let invention = serde_json::json!({
         "version": "1.0.0",
@@ -225,27 +293,64 @@ async fn capture_state(child: &mut McpChild) -> Option<String> {
         }).collect::<Vec<_>>(),
     });
 
-    Some(serde_json::to_string(&invention).unwrap())
+    Some(CapturedState {
+        invention_json: serde_json::to_string(&invention).unwrap(),
+        control_values,
+    })
 }
 
-/// Restores invention state on the new child by calling load_invention.
+/// Restores invention state on the new child by calling load_invention,
+/// then replays all captured control values.
 async fn restore_state(
     child: &mut McpChild,
-    invention_json: &str,
+    state: &CapturedState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Load invention (modules + connections)
     let (id, req) = make_tool_call(
         "load_invention",
-        serde_json::json!({ "json": invention_json }),
+        serde_json::json!({ "json": state.invention_json }),
     );
     let (resp, _) = child.call(id, &req).await?;
 
     if resp.get("error").is_some() {
         let err_msg = resp["error"]["message"].as_str().unwrap_or("unknown error");
         eprintln!("[dev] Warning: state restore failed: {}", err_msg);
+        return Ok(());
     } else {
         let text = extract_text_content(&resp).unwrap_or_default();
         eprintln!("[dev] State restored: {}", text);
     }
+
+    // Replay control values
+    let mut applied = 0;
+    let mut failed = 0;
+    for (module_id, key, value) in &state.control_values {
+        let (id, req) = make_tool_call(
+            "set_control",
+            serde_json::json!({
+                "module_id": module_id,
+                "key": key,
+                "value": value,
+            }),
+        );
+        match child.call(id, &req).await {
+            Ok((resp, _)) => {
+                if resp.get("error").is_some() {
+                    failed += 1;
+                } else {
+                    applied += 1;
+                }
+            }
+            Err(_) => {
+                failed += 1;
+            }
+        }
+    }
+
+    eprintln!(
+        "[dev] Replayed {} control values ({} failed).",
+        applied, failed
+    );
     Ok(())
 }
 
@@ -523,8 +628,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 // Restore state
-                if let Some(ref state_json) = state {
-                    let _ = restore_state(&mut child, state_json).await;
+                if let Some(ref captured) = state {
+                    let _ = restore_state(&mut child, captured).await;
                 }
 
                 eprintln!("[dev] Hot-reload complete.");
