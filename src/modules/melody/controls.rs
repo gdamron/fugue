@@ -23,6 +23,8 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 /// ```
 #[derive(Clone)]
 pub struct MelodyControls {
+    /// Root MIDI note number (0-127).
+    pub(crate) root_note: Arc<Mutex<u8>>,
     /// Scale degrees (semitone offsets) that can be selected for notes.
     /// Negative values go below the root note.
     pub(crate) allowed_degrees: Arc<Mutex<Vec<i32>>>,
@@ -34,12 +36,23 @@ impl MelodyControls {
     /// Creates new melody controls with the given allowed scale degrees.
     ///
     /// All degrees start with equal probability weight.
-    pub fn new(allowed_degrees: Vec<i32>) -> Self {
+    pub fn new(root_note: u8, allowed_degrees: Vec<i32>) -> Self {
         let weights = vec![1.0; allowed_degrees.len()];
         Self {
+            root_note: Arc::new(Mutex::new(root_note)),
             allowed_degrees: Arc::new(Mutex::new(allowed_degrees)),
             note_weights: Arc::new(Mutex::new(weights)),
         }
+    }
+
+    /// Gets the root MIDI note number.
+    pub fn root_note(&self) -> u8 {
+        *self.root_note.lock().unwrap()
+    }
+
+    /// Sets the root MIDI note number (clamped to 0-127).
+    pub fn set_root_note(&self, value: u8) {
+        *self.root_note.lock().unwrap() = value.min(127);
     }
 
     /// Gets the allowed scale degrees.
@@ -154,7 +167,12 @@ impl MelodyControls {
 impl ControlSurface for MelodyControls {
     fn controls(&self) -> Vec<ControlMeta> {
         let degree_count = self.degree_count();
-        let mut controls = Vec::with_capacity(2 + degree_count * 2);
+        let mut controls = Vec::with_capacity(3 + degree_count * 2);
+        controls.push(
+            ControlMeta::number("root_note", "Root MIDI note number")
+                .with_range(0.0, 127.0)
+                .with_default(self.root_note() as f32),
+        );
         controls.push(
             ControlMeta::number("degree_count", "Number of active scale degrees")
                 .with_range(1.0, 128.0)
@@ -185,6 +203,7 @@ impl ControlSurface for MelodyControls {
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
+            "root_note" => Ok((self.root_note() as f32).into()),
             "degree_count" => Ok((self.degree_count() as f32).into()),
             _ => {
                 if let Some(rest) = key.strip_prefix("degree.") {
@@ -209,6 +228,10 @@ impl ControlSurface for MelodyControls {
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         let value = value.as_number()?;
         match key {
+            "root_note" => {
+                self.set_root_note(value as u8);
+                Ok(())
+            }
             "degree_count" => {
                 self.set_degree_count(value as usize);
                 Ok(())
