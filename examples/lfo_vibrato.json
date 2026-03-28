@@ -19,8 +19,7 @@
       "type": "melody",
       "config": {
         "root_note": 60,
-        "mode": "lydian",
-        "scale_degrees": [0, 2, 4, 6, 7],
+        "scale_degrees": [0, 4, 7, 11, 12],
         "note_weights": [1.5, 1.0, 1.0, 0.5, 1.0]
       }
     },

@@ -23,8 +23,11 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 /// ```
 #[derive(Clone)]
 pub struct MelodyControls {
-    /// Scale degrees that can be selected for notes.
-    pub(crate) allowed_degrees: Arc<Mutex<Vec<usize>>>,
+    /// Root MIDI note number (0-127).
+    pub(crate) root_note: Arc<Mutex<u8>>,
+    /// Scale degrees (semitone offsets) that can be selected for notes.
+    /// Negative values go below the root note.
+    pub(crate) allowed_degrees: Arc<Mutex<Vec<i32>>>,
     /// Probability weights for each allowed degree.
     pub(crate) note_weights: Arc<Mutex<Vec<f32>>>,
 }
@@ -33,24 +36,34 @@ impl MelodyControls {
     /// Creates new melody controls with the given allowed scale degrees.
     ///
     /// All degrees start with equal probability weight.
-    /// Oscillator type defaults to sine.
-    pub fn new(allowed_degrees: Vec<usize>) -> Self {
+    pub fn new(root_note: u8, allowed_degrees: Vec<i32>) -> Self {
         let weights = vec![1.0; allowed_degrees.len()];
         Self {
+            root_note: Arc::new(Mutex::new(root_note)),
             allowed_degrees: Arc::new(Mutex::new(allowed_degrees)),
             note_weights: Arc::new(Mutex::new(weights)),
         }
     }
 
+    /// Gets the root MIDI note number.
+    pub fn root_note(&self) -> u8 {
+        *self.root_note.lock().unwrap()
+    }
+
+    /// Sets the root MIDI note number (clamped to 0-127).
+    pub fn set_root_note(&self, value: u8) {
+        *self.root_note.lock().unwrap() = value.min(127);
+    }
+
     /// Gets the allowed scale degrees.
-    pub fn allowed_degrees(&self) -> Vec<usize> {
+    pub fn allowed_degrees(&self) -> Vec<i32> {
         self.allowed_degrees.lock().unwrap().clone()
     }
 
     /// Sets which scale degrees can be used for note selection.
     ///
     /// Also resizes the weights vector to match.
-    pub fn set_allowed_degrees(&self, degrees: Vec<usize>) {
+    pub fn set_allowed_degrees(&self, degrees: Vec<i32>) {
         let mut allowed = self.allowed_degrees.lock().unwrap();
         *allowed = degrees.clone();
 
@@ -89,7 +102,7 @@ impl MelodyControls {
             // Append sequential degrees starting after the last existing degree
             let next_degree = degrees.last().map(|&d| d + 1).unwrap_or(0);
             for i in 0..(count - old_len) {
-                degrees.push(next_degree + i);
+                degrees.push(next_degree + i as i32);
             }
             weights.resize(count, 1.0);
         } else {
@@ -99,7 +112,7 @@ impl MelodyControls {
     }
 
     /// Gets the scale degree at position `index`.
-    pub fn degree(&self, index: usize) -> Result<usize, String> {
+    pub fn degree(&self, index: usize) -> Result<i32, String> {
         let degrees = self.allowed_degrees.lock().unwrap();
         degrees.get(index).copied().ok_or_else(|| {
             format!(
@@ -111,7 +124,7 @@ impl MelodyControls {
     }
 
     /// Sets the scale degree at position `index`.
-    pub fn set_degree(&self, index: usize, value: usize) -> Result<(), String> {
+    pub fn set_degree(&self, index: usize, value: i32) -> Result<(), String> {
         let mut degrees = self.allowed_degrees.lock().unwrap();
         if index >= degrees.len() {
             return Err(format!(
@@ -120,7 +133,7 @@ impl MelodyControls {
                 degrees.len()
             ));
         }
-        degrees[index] = value.min(127);
+        degrees[index] = value.clamp(-127, 127);
         Ok(())
     }
 
@@ -154,7 +167,12 @@ impl MelodyControls {
 impl ControlSurface for MelodyControls {
     fn controls(&self) -> Vec<ControlMeta> {
         let degree_count = self.degree_count();
-        let mut controls = Vec::with_capacity(2 + degree_count * 2);
+        let mut controls = Vec::with_capacity(3 + degree_count * 2);
+        controls.push(
+            ControlMeta::number("root_note", "Root MIDI note number")
+                .with_range(0.0, 127.0)
+                .with_default(self.root_note() as f32),
+        );
         controls.push(
             ControlMeta::number("degree_count", "Number of active scale degrees")
                 .with_range(1.0, 128.0)
@@ -167,8 +185,8 @@ impl ControlSurface for MelodyControls {
                     format!("degree.{}", i),
                     format!("Scale degree at position {}", i),
                 )
-                .with_range(0.0, 127.0)
-                .with_default(self.degree(i).unwrap_or(i) as f32),
+                .with_range(-127.0, 127.0)
+                .with_default(self.degree(i).unwrap_or(i as i32) as f32),
             );
             controls.push(
                 ControlMeta::number(
@@ -185,12 +203,14 @@ impl ControlSurface for MelodyControls {
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
+            "root_note" => Ok((self.root_note() as f32).into()),
             "degree_count" => Ok((self.degree_count() as f32).into()),
             _ => {
                 if let Some(rest) = key.strip_prefix("degree.") {
-                    return Ok((self.degree(rest.parse::<usize>().map_err(|_| {
-                        format!("Invalid degree index in control key: {}", key)
-                    })?)? as f32)
+                    return Ok((self
+                        .degree(rest.parse::<usize>().map_err(|_| {
+                            format!("Invalid degree index in control key: {}", key)
+                        })?)? as f32)
                         .into());
                 }
                 if let Some(rest) = key.strip_prefix("note_weight.") {
@@ -208,6 +228,10 @@ impl ControlSurface for MelodyControls {
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         let value = value.as_number()?;
         match key {
+            "root_note" => {
+                self.set_root_note(value as u8);
+                Ok(())
+            }
             "degree_count" => {
                 self.set_degree_count(value as usize);
                 Ok(())
@@ -217,7 +241,7 @@ impl ControlSurface for MelodyControls {
                     return self.set_degree(
                         rest.parse::<usize>()
                             .map_err(|_| format!("Invalid degree index in control key: {}", key))?,
-                        value as usize,
+                        value as i32,
                     );
                 }
                 if let Some(rest) = key.strip_prefix("note_weight.") {

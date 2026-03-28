@@ -1,47 +1,31 @@
 //! Musical scale and note primitives.
 //!
 //! - [`Note`] - A single pitch as a MIDI note number
-//! - [`Mode`] - Scale patterns (Ionian, Dorian, etc.)
-//! - [`Scale`] - A root note combined with a mode
+//! - [`Scale`] - A root note; degrees are semitone offsets
 
-pub use self::mode::Mode;
 pub use self::note::Note;
 
-mod mode;
 mod note;
 
-/// A musical scale combining a root note with a mode.
+/// A musical scale rooted on a given note.
 ///
-/// Provides methods to retrieve notes at specific scale degrees,
-/// automatically handling octave wrapping.
+/// Degrees are semitone offsets from the root: degree 0 is the root,
+/// degree 7 is a perfect fifth, degree 12 is one octave up, etc.
 pub struct Scale {
     root: Note,
-    mode: Mode,
 }
 
 impl Scale {
-    /// Creates a new scale with the given root note and mode.
-    pub fn new(root: Note, mode: Mode) -> Self {
-        Self { root, mode }
+    /// Creates a new scale with the given root note.
+    pub fn new(root: Note) -> Self {
+        Self { root }
     }
 
-    /// Returns the note at the given scale degree.
+    /// Returns the note at the given semitone offset from the root.
     ///
-    /// Degree 0 is the root note. Degrees beyond the octave (7+)
-    /// automatically wrap into higher octaves.
-    pub fn get_note(&self, degree: usize) -> Note {
-        let intervals = self.mode.intervals();
-        let octave = degree / intervals.len();
-        let degree_in_octave = degree % intervals.len();
-
-        let midi_note =
-            self.root.midi_note as i32 + (octave as i32 * 12) + intervals[degree_in_octave];
-
-        Note::new(midi_note as u8)
-    }
-
-    /// Returns the number of degrees in one octave (typically 7).
-    pub fn degrees_in_octave(&self) -> usize {
-        self.mode.intervals().len()
+    /// Negative degrees go below the root. The result is clamped to MIDI 0-127.
+    pub fn get_note(&self, degree: i32) -> Note {
+        let midi = (self.root.midi_note as i32 + degree).clamp(0, 127);
+        Note::new(midi as u8)
     }
 }

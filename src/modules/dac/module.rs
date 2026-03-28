@@ -194,7 +194,11 @@ mod tests {
 
         // Below knee (0.95), soft clip is linear pass-through
         let out = dac.get_output("audio").unwrap();
-        assert_eq!(out, 0.5, "Below knee, should be exact pass-through, got {}", out);
+        assert_eq!(
+            out, 0.5,
+            "Below knee, should be exact pass-through, got {}",
+            out
+        );
         assert_eq!(dac.sink_output().left, out);
         assert_eq!(dac.sink_output().right, out);
     }

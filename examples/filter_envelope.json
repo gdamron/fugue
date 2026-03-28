@@ -19,8 +19,7 @@
       "type": "melody",
       "config": {
         "root_note": 36,
-        "mode": "aeolian",
-        "scale_degrees": [0, 2, 3, 5, 7],
+        "scale_degrees": [0, 3, 5, 8, 12],
         "note_weights": [1.5, 0.8, 1.0, 1.0, 0.6]
       }
     },

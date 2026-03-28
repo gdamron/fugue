@@ -4,7 +4,7 @@ use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 use crate::factory::{ModuleBuildResult, ModuleFactory};
-use crate::music::{Mode, Note, Scale};
+use crate::music::{Note, Scale};
 use crate::traits::ControlMeta;
 use crate::Module;
 use rand::rngs::StdRng;
@@ -29,33 +29,22 @@ impl ModuleFactory for MelodyFactory {
         _sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let root = Note::new(
-            config
-                .get("root_note")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(60) as u8,
-        );
-
-        let mode = parse_mode(
-            config
-                .get("mode")
-                .and_then(|v| v.as_str())
-                .unwrap_or("dorian"),
-        )?;
-
-        let scale = Scale::new(root, mode);
+        let root_note = config
+            .get("root_note")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(60) as u8;
 
         let degrees = config
             .get("scale_degrees")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|v| v.as_u64().map(|n| n as usize))
+                    .filter_map(|v| v.as_i64().map(|n| n as i32))
                     .collect()
             })
-            .unwrap_or_else(|| vec![0, 1, 2, 3, 4, 5, 6]);
+            .unwrap_or_else(|| vec![0, 2, 4, 5, 7, 9, 11]);
 
-        let controls = MelodyControls::new(degrees);
+        let controls = MelodyControls::new(root_note, degrees);
 
         if let Some(weights) = config.get("note_weights").and_then(|v| v.as_array()) {
             let weights: Vec<f32> = weights
@@ -65,7 +54,7 @@ impl ModuleFactory for MelodyFactory {
             controls.set_note_weights(weights);
         }
 
-        let melody = MelodyGenerator::new(scale, controls.clone());
+        let melody = MelodyGenerator::new(controls.clone());
 
         Ok(ModuleBuildResult {
             module: Arc::new(Mutex::new(melody)),
@@ -76,20 +65,6 @@ impl ModuleFactory for MelodyFactory {
             control_surface: Some(Arc::new(controls)),
             sink: None,
         })
-    }
-}
-
-/// Parses a mode string into a Mode enum.
-fn parse_mode(mode_str: &str) -> Result<Mode, Box<dyn std::error::Error>> {
-    match mode_str.to_lowercase().as_str() {
-        "ionian" | "major" => Ok(Mode::Ionian),
-        "dorian" => Ok(Mode::Dorian),
-        "phrygian" => Ok(Mode::Phrygian),
-        "lydian" => Ok(Mode::Lydian),
-        "mixolydian" => Ok(Mode::Mixolydian),
-        "aeolian" | "minor" => Ok(Mode::Aeolian),
-        "locrian" => Ok(Mode::Locrian),
-        _ => Err(format!("Unknown mode: {}", mode_str).into()),
     }
 }
 
@@ -111,7 +86,6 @@ fn parse_mode(mode_str: &str) -> Result<Mode, Box<dyn std::error::Error>> {
 /// - `degree.{n}`: Scale degree index at position n (0-127)
 /// - `note_weight.{n}`: Probability weight for degree n (0.0-10.0)
 pub struct MelodyGenerator {
-    scale: Scale,
     ctrl: MelodyControls,
     rng: StdRng,
     current_note: Note,
@@ -128,10 +102,9 @@ impl MelodyGenerator {
     ///
     /// Notes are selected from the given scale according to the controls.
     /// Note changes are triggered by the rising edge of the `gate` input.
-    pub fn new(scale: Scale, controls: MelodyControls) -> Self {
+    pub fn new(controls: MelodyControls) -> Self {
         let current_note = Note::new(60);
         Self {
-            scale,
             ctrl: controls,
             rng: StdRng::from_entropy(),
             current_note,
@@ -148,6 +121,7 @@ impl MelodyGenerator {
     pub fn next_note(&mut self) -> Note {
         let allowed = self.ctrl.allowed_degrees.lock().unwrap();
         let weights = self.ctrl.note_weights.lock().unwrap();
+        let scale = Scale::new(Note::new(self.ctrl.root_note()));
 
         if allowed.is_empty() {
             return Note::new(60);
@@ -159,12 +133,12 @@ impl MelodyGenerator {
         for (i, &degree) in allowed.iter().enumerate() {
             let weight = weights.get(i).unwrap_or(&1.0);
             if random_value < *weight {
-                return self.scale.get_note(degree);
+                return scale.get_note(degree);
             }
             random_value -= weight;
         }
 
-        self.scale.get_note(allowed[0])
+        scale.get_note(allowed[0])
     }
 
     /// Returns a reference to the melody controls.
@@ -225,8 +199,13 @@ impl Module for MelodyGenerator {
     fn controls(&self) -> Vec<ControlMeta> {
         let degree_count = self.ctrl.degree_count();
 
-        let mut controls = Vec::with_capacity(2 + degree_count * 2);
+        let mut controls = Vec::with_capacity(3 + degree_count * 2);
 
+        controls.push(
+            ControlMeta::new("root_note", "Root MIDI note number")
+                .with_range(0.0, 127.0)
+                .with_default(self.ctrl.root_note() as f32),
+        );
         controls.push(
             ControlMeta::new("degree_count", "Number of active scale degrees")
                 .with_range(1.0, 128.0)
@@ -239,7 +218,7 @@ impl Module for MelodyGenerator {
                     format!("degree.{}", i),
                     format!("Scale degree at position {}", i),
                 )
-                .with_range(0.0, 127.0)
+                .with_range(-127.0, 127.0)
                 .with_default(i as f32),
             );
             controls.push(
@@ -257,6 +236,7 @@ impl Module for MelodyGenerator {
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
         match key {
+            "root_note" => Ok(self.ctrl.root_note() as f32),
             "degree_count" => Ok(self.ctrl.degree_count() as f32),
             _ => {
                 if let Some(rest) = key.strip_prefix("degree.") {
@@ -276,6 +256,10 @@ impl Module for MelodyGenerator {
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
         match key {
+            "root_note" => {
+                self.ctrl.set_root_note(value as u8);
+                Ok(())
+            }
             "degree_count" => {
                 self.ctrl.set_degree_count(value as usize);
                 Ok(())
@@ -283,7 +267,7 @@ impl Module for MelodyGenerator {
             _ => {
                 if let Some(rest) = key.strip_prefix("degree.") {
                     if let Ok(idx) = rest.parse::<usize>() {
-                        return self.ctrl.set_degree(idx, value as usize);
+                        return self.ctrl.set_degree(idx, value as i32);
                     }
                 }
                 if let Some(rest) = key.strip_prefix("note_weight.") {
@@ -302,9 +286,8 @@ mod tests {
     use super::*;
 
     fn make_melody() -> MelodyGenerator {
-        let scale = Scale::new(Note::new(60), Mode::Dorian);
-        let controls = MelodyControls::new(vec![0, 1, 2, 3, 4, 5, 6]);
-        MelodyGenerator::new(scale, controls)
+        let controls = MelodyControls::new(60, vec![0, 2, 3, 5, 7, 9, 10]);
+        MelodyGenerator::new(controls)
     }
 
     #[test]
@@ -312,10 +295,11 @@ mod tests {
         let melody = make_melody();
         let controls = Module::controls(&melody);
 
-        // degree_count + 7 degrees + 7 weights = 15
-        assert_eq!(controls.len(), 15);
+        // root_note + degree_count + 7 degrees + 7 weights = 16
+        assert_eq!(controls.len(), 16);
 
         let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
+        assert!(keys.contains(&"root_note"));
         assert!(keys.contains(&"degree_count"));
         assert!(keys.contains(&"degree.0"));
         assert!(keys.contains(&"degree.6"));
@@ -329,7 +313,7 @@ mod tests {
 
         assert_eq!(melody.get_control("degree_count").unwrap(), 7.0);
         assert_eq!(melody.get_control("degree.0").unwrap(), 0.0);
-        assert_eq!(melody.get_control("degree.3").unwrap(), 3.0);
+        assert_eq!(melody.get_control("degree.3").unwrap(), 5.0);
         assert_eq!(melody.get_control("note_weight.0").unwrap(), 1.0);
     }
 
@@ -353,9 +337,9 @@ mod tests {
         melody.set_control("degree_count", 9.0).unwrap();
         assert_eq!(melody.get_control("degree_count").unwrap(), 9.0);
 
-        // New degrees should be sequential after last existing degree (6)
-        assert_eq!(melody.get_control("degree.7").unwrap(), 7.0);
-        assert_eq!(melody.get_control("degree.8").unwrap(), 8.0);
+        // New degrees should be sequential after last existing degree (10)
+        assert_eq!(melody.get_control("degree.7").unwrap(), 11.0);
+        assert_eq!(melody.get_control("degree.8").unwrap(), 12.0);
 
         // New weights default to 1.0
         assert_eq!(melody.get_control("note_weight.7").unwrap(), 1.0);
@@ -363,8 +347,8 @@ mod tests {
 
         // Controls metadata should reflect new count
         let controls = Module::controls(&melody);
-        // degree_count + 9 degrees + 9 weights = 19
-        assert_eq!(controls.len(), 19);
+        // root_note + degree_count + 9 degrees + 9 weights = 20
+        assert_eq!(controls.len(), 20);
     }
 
     #[test]
@@ -392,5 +376,24 @@ mod tests {
         let melody = make_melody();
 
         assert!(melody.get_control("unknown").is_err());
+    }
+
+    #[test]
+    fn test_melody_negative_degrees() {
+        let controls = MelodyControls::new(60, vec![-2, 0, 2, 5]);
+        let melody = MelodyGenerator::new(controls);
+
+        assert_eq!(melody.get_control("degree.0").unwrap(), -2.0);
+        assert_eq!(melody.get_control("degree.1").unwrap(), 0.0);
+        assert_eq!(melody.get_control("degree.2").unwrap(), 2.0);
+        assert_eq!(melody.get_control("degree.3").unwrap(), 5.0);
+    }
+
+    #[test]
+    fn test_melody_set_negative_degree() {
+        let mut melody = make_melody();
+
+        melody.set_control("degree.0", -3.0).unwrap();
+        assert_eq!(melody.get_control("degree.0").unwrap(), -3.0);
     }
 }

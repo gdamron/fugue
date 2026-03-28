@@ -346,10 +346,7 @@ mod tests {
 
     /// Creates a minimal SignalGraph for testing process order.
     /// Modules are stub oscillators — we only care about the topology.
-    fn test_graph(
-        module_ids: &[&str],
-        connections: &[(&str, &str)],
-    ) -> SignalGraph {
+    fn test_graph(module_ids: &[&str], connections: &[(&str, &str)]) -> SignalGraph {
         let (_tx, rx) = mpsc::channel();
 
         let registry = crate::ModuleRegistry::default();
@@ -357,19 +354,23 @@ mod tests {
 
         let mut modules = IndexMap::new();
         for &id in module_ids {
-            let result = registry.build("oscillator", 44100, &null_config)
+            let result = registry
+                .build("oscillator", 44100, &null_config)
                 .expect("oscillator is a valid type");
             modules.insert(id.to_string(), result.module);
         }
 
         let mut input_map: HashMap<String, Vec<RoutingConnection>> = HashMap::new();
         for &(from, to) in connections {
-            input_map.entry(to.to_string()).or_default().push(RoutingConnection {
-                from_module: from.to_string(),
-                from_port: "audio".to_string(),
-                to_module: to.to_string(),
-                to_port: "fm".to_string(),
-            });
+            input_map
+                .entry(to.to_string())
+                .or_default()
+                .push(RoutingConnection {
+                    from_module: from.to_string(),
+                    from_port: "audio".to_string(),
+                    to_module: to.to_string(),
+                    to_port: "fm".to_string(),
+                });
         }
 
         let mut graph = SignalGraph {

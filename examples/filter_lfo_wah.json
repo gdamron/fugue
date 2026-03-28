@@ -19,8 +19,7 @@
       "type": "melody",
       "config": {
         "root_note": 48,
-        "mode": "mixolydian",
-        "scale_degrees": [0, 2, 4, 5, 7],
+        "scale_degrees": [0, 4, 7, 9, 12],
         "note_weights": [1.5, 1.0, 0.8, 1.2, 0.8]
       }
     },

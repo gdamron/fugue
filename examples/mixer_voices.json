@@ -19,9 +19,20 @@
       "type": "melody",
       "config": {
         "root_note": 48,
-        "mode": "dorian",
-        "scale_degrees": [0, 2, 3, 5, 7],
-        "note_weights": [1.5, 1.0, 1.0, 0.8, 1.0]
+        "scale_degrees": [
+          0,
+          3,
+          5,
+          9,
+          12
+        ],
+        "note_weights": [
+          1.5,
+          1.0,
+          1.0,
+          0.8,
+          1.0
+        ]
       }
     },
     {
@@ -50,7 +61,16 @@
       "type": "mixer",
       "config": {
         "channels": 3,
-        "levels": [0.25, 0.2, 0.3],
+        "levels": [
+          0.25,
+          0.2,
+          0.3
+        ],
+        "pans": [
+          -0.8,
+          0.0,
+          0.8
+        ],
         "master": 0.5
       }
     },
@@ -63,10 +83,6 @@
         "sustain": 0.7,
         "release": 0.5
       }
-    },
-    {
-      "id": "vca",
-      "type": "vca"
     },
     {
       "id": "dac",
@@ -118,9 +134,15 @@
     },
     {
       "from": "mixer",
-      "from_port": "out",
-      "to": "vca",
-      "to_port": "audio"
+      "from_port": "left",
+      "to": "dac",
+      "to_port": "audio_left"
+    },
+    {
+      "from": "mixer",
+      "from_port": "right",
+      "to": "dac",
+      "to_port": "audio_right"
     },
     {
       "from": "melody",
@@ -131,14 +153,8 @@
     {
       "from": "amp_env",
       "from_port": "envelope",
-      "to": "vca",
-      "to_port": "cv"
-    },
-    {
-      "from": "vca",
-      "from_port": "audio",
-      "to": "dac",
-      "to_port": "audio"
+      "to": "mixer",
+      "to_port": "master"
     }
   ]
 }

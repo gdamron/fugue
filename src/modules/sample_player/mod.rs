@@ -27,9 +27,7 @@ impl ModuleFactory for SamplePlayerFactory {
         let source = config.get("source").and_then(|value| value.as_str());
         let play = config.get("play").and_then(|value| value.as_bool());
         let loop_enabled = config.get("loop_enabled").and_then(|value| value.as_bool());
-        let controls = SamplePlayerControls::new(
-            sample_rate, source, play, loop_enabled
-        )?;
+        let controls = SamplePlayerControls::new(sample_rate, source, play, loop_enabled)?;
         let player = SamplePlayer::new_with_controls(controls.clone());
 
         Ok(ModuleBuildResult {
@@ -77,7 +75,11 @@ impl SamplePlayer {
 
     fn restart(&mut self) {
         self.frame_index = 0;
-        self.playing = self.sample.as_ref().map(|sample| sample.len() > 0).unwrap_or(false);
+        self.playing = self
+            .sample
+            .as_ref()
+            .map(|sample| sample.len() > 0)
+            .unwrap_or(false);
         self.pending_start_gate = self.playing;
     }
 }
@@ -204,11 +206,7 @@ mod tests {
         std::env::temp_dir().join(format!("fugue-{}-{}.wav", name, nanos))
     }
 
-    fn write_test_wav(
-        sample_rate: u32,
-        channels: u16,
-        frames: &[[f32; 2]],
-    ) -> PathBuf {
+    fn write_test_wav(sample_rate: u32, channels: u16, frames: &[[f32; 2]]) -> PathBuf {
         let path = temp_wav_path("sample-player");
         let spec = hound::WavSpec {
             channels,
@@ -233,18 +231,15 @@ mod tests {
 
     #[test]
     fn test_sample_player_load_and_playback() {
-        let path = write_test_wav(
-            44_100,
-            2,
-            &[[0.25, -0.25], [0.5, -0.5], [0.75, -0.75]],
-        );
+        let path = write_test_wav(44_100, 2, &[[0.25, -0.25], [0.5, -0.5], [0.75, -0.75]]);
 
         let controls = SamplePlayerControls::new(
             44_100,
             Some(path.to_str().unwrap()),
-            Some(false), 
-            Some(false)
-        ).unwrap();
+            Some(false),
+            Some(false),
+        )
+        .unwrap();
         let mut player = SamplePlayer::new_with_controls(controls.clone());
 
         controls
@@ -271,9 +266,10 @@ mod tests {
         let controls = SamplePlayerControls::new(
             44_100,
             Some(path.to_str().unwrap()),
-            Some(false), 
-            Some(false)
-        ).unwrap();
+            Some(false),
+            Some(false),
+        )
+        .unwrap();
         let mut player = SamplePlayer::new_with_controls(controls.clone());
 
         controls.set_play(true);
@@ -295,9 +291,10 @@ mod tests {
         let controls = SamplePlayerControls::new(
             44_100,
             Some(path.to_str().unwrap()),
-            Some(false), 
-            Some(false)
-        ).unwrap();
+            Some(false),
+            Some(false),
+        )
+        .unwrap();
         let mut player = SamplePlayer::new_with_controls(controls.clone());
 
         let bad = controls.set_source("/definitely/missing.wav");
@@ -313,17 +310,14 @@ mod tests {
 
     #[test]
     fn test_sample_player_resamples_on_load() {
-        let path = write_test_wav(
-            22_050,
-            1,
-            &[[0.0, 0.0], [0.5, 0.0], [1.0, 0.0], [0.5, 0.0]],
-        );
+        let path = write_test_wav(22_050, 1, &[[0.0, 0.0], [0.5, 0.0], [1.0, 0.0], [0.5, 0.0]]);
         let controls = SamplePlayerControls::new(
             44_100,
             Some(path.to_str().unwrap()),
-            Some(false), 
-            Some(false)
-        ).unwrap();
+            Some(false),
+            Some(false),
+        )
+        .unwrap();
         let sample_len = controls
             .shared
             .lock()
@@ -332,7 +326,11 @@ mod tests {
             .as_ref()
             .unwrap()
             .len();
-        assert!(sample_len >= 7, "expected resampled buffer, got {}", sample_len);
+        assert!(
+            sample_len >= 7,
+            "expected resampled buffer, got {}",
+            sample_len
+        );
 
         let _ = std::fs::remove_file(path);
     }

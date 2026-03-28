@@ -81,7 +81,7 @@ impl ControlSurface for ClockControls {
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
             ControlMeta::number("bpm", "Tempo in beats per minute")
-                .with_range(60.0, 300.0)
+                .with_range(1.0, 300.0)
                 .with_default(self.bpm() as f32),
             ControlMeta::number("gate_duration", "Gate duration as fraction of beat")
                 .with_range(0.0, 1.0)
