@@ -180,20 +180,29 @@ fn load_sample(source: &str, target_sample_rate: u32) -> Result<SampleData, Stri
 }
 
 fn open_source(source: &str) -> Result<(Box<dyn Read>, bool), String> {
-    if source.starts_with("https://") {
-        let response = ureq::get(source)
-            .call()
-            .map_err(|err| format!("Failed to download sample: {}", err))?;
-        return Ok((Box::new(response.into_reader()), true));
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = source;
+        Err("Sample loading is not available on wasm32".to_string())
     }
 
-    if source.starts_with("http://") {
-        return Err("Only https:// URLs are supported".to_string());
-    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if source.starts_with("https://") {
+            let response = ureq::get(source)
+                .call()
+                .map_err(|err| format!("Failed to download sample: {}", err))?;
+            return Ok((Box::new(response.into_reader()), true));
+        }
 
-    let file = std::fs::File::open(source)
-        .map_err(|err| format!("Failed to open sample '{}': {}", source, err))?;
-    Ok((Box::new(file), false))
+        if source.starts_with("http://") {
+            return Err("Only https:// URLs are supported".to_string());
+        }
+
+        let file = std::fs::File::open(source)
+            .map_err(|err| format!("Failed to open sample '{}': {}", source, err))?;
+        Ok((Box::new(file), false))
+    }
 }
 
 fn decode_samples<R: Read>(mut wav: hound::WavReader<R>) -> Result<Vec<f32>, String> {

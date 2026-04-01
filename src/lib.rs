@@ -1,9 +1,13 @@
 pub mod factory;
+#[cfg(feature = "ffi")]
+pub mod ffi;
 pub mod invention;
 pub mod modules;
 pub mod music;
 pub mod registry;
 pub mod traits;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
 // Re-export core traits
 pub use traits::{
@@ -28,7 +32,7 @@ pub use modules::{
 // Re-export invention system
 pub use invention::{
     Connection, GraphCommandError, Invention, InventionBuilder, InventionHandles, InventionRuntime,
-    ModuleSpec, RunningInvention, TimeSignature,
+    ModuleSpec, RenderEngine, RunningInvention, TimeSignature,
 };
 
 // Re-export music theory
