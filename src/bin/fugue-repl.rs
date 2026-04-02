@@ -599,6 +599,16 @@ fn main() {
         }
     }
 
+    if let Some(path) = parse_invention_flag() {
+        match Invention::from_file(&path) {
+            Ok(invention) => match start_invention(&mut repl, invention) {
+                Ok(msg) => println!("{}", msg),
+                Err(e) => eprintln!("Error loading invention: {}", e),
+            },
+            Err(e) => eprintln!("Error reading invention file '{}': {}", path, e),
+        }
+    }
+
     println!("Fugue REPL (type 'help' for commands, 'quit' to exit)");
 
     loop {
@@ -639,6 +649,18 @@ fn main() {
     if let Some(ref path) = history_path {
         let _ = rl.save_history(path);
     }
+}
+
+fn parse_invention_flag() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut iter = args.iter().skip(1);
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--invention" | "-i" => return iter.next().cloned(),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn dev_save_state(repl: &FugueRepl) {
