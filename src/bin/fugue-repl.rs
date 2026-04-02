@@ -5,6 +5,7 @@ use fugue::{
 use indexmap::IndexMap;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Shadow state (mirrors fugue-mcp pattern)
@@ -175,9 +176,10 @@ fn cmd_new(repl: &mut FugueRepl, rest: &str) -> Result<String, String> {
 
 fn cmd_load(repl: &mut FugueRepl, rest: &str) -> Result<String, String> {
     if rest.is_empty() {
-        return Err("Usage: load <path>".to_string());
+        return Err("Usage: load <name>".to_string());
     }
-    let invention = Invention::from_file(rest).map_err(|e| e.to_string())?;
+    let path = resolve_invention_path(rest);
+    let invention = Invention::from_file(&path.to_string_lossy()).map_err(|e| e.to_string())?;
     start_invention(repl, invention)
 }
 
@@ -254,17 +256,33 @@ fn cmd_status(repl: &FugueRepl) -> Result<String, String> {
 
 fn cmd_save(repl: &FugueRepl, rest: &str) -> Result<String, String> {
     if rest.is_empty() {
-        return Err("Usage: save <path>".to_string());
+        return Err("Usage: save <name>".to_string());
     }
     if repl.modules.is_empty() {
         return Err("Nothing to save. No modules in current state.".to_string());
     }
 
+    let p = PathBuf::from(rest);
+    let has_dir = p.parent().map(|par| par != Path::new("")).unwrap_or(false);
+    let save_path = if p.is_absolute() || has_dir {
+        if p.extension().is_none() {
+            p.with_extension("json")
+        } else {
+            p
+        }
+    } else {
+        let mut dest = inventions_dir().join(rest);
+        if dest.extension().is_none() {
+            dest.set_extension("json");
+        }
+        dest
+    };
+
     let invention = repl.to_invention();
     let json = invention.to_json().map_err(|e| e.to_string())?;
-    std::fs::write(rest, &json).map_err(|e| e.to_string())?;
+    std::fs::write(&save_path, &json).map_err(|e| e.to_string())?;
 
-    Ok(format!("Saved to {}.", rest))
+    Ok(format!("Saved to {}.", save_path.display()))
 }
 
 // ---------------------------------------------------------------------------
@@ -575,6 +593,57 @@ Discovery:
 // ---------------------------------------------------------------------------
 
 fn main() {
+    ensure_workspace();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(|s| s.as_str()) {
+        Some("play") => {
+            let name = args.get(1).unwrap_or_else(|| {
+                eprintln!("Usage: fugue play <invention>");
+                std::process::exit(1);
+            });
+            run_play(name);
+        }
+        _ => run_repl(),
+    }
+}
+
+fn run_play(name: &str) {
+    let path = resolve_invention_path(name);
+    let sample_rate = default_sample_rate().unwrap_or(44100);
+
+    let invention = Invention::from_file(&path.to_string_lossy()).unwrap_or_else(|e| {
+        eprintln!("Error loading '{}': {}", path.display(), e);
+        std::process::exit(1);
+    });
+
+    let title = invention
+        .title
+        .clone()
+        .unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("untitled")
+                .to_string()
+        });
+
+    let builder = InventionBuilder::new(sample_rate);
+    let (runtime, _handles) = builder.build(invention).unwrap_or_else(|e| {
+        eprintln!("Error building invention: {}", e);
+        std::process::exit(1);
+    });
+
+    let _running = runtime.start().unwrap_or_else(|e| {
+        eprintln!("Error starting playback: {}", e);
+        std::process::exit(1);
+    });
+
+    println!("Playing '{}' — Ctrl+C to stop", title);
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+    }
+}
+
+fn run_repl() {
     let sample_rate = default_sample_rate().unwrap_or(44100);
     let mut repl = FugueRepl::new(sample_rate);
 
@@ -588,7 +657,7 @@ fn main() {
     // Dev auto-restore: if FUGUE_DEV_STATE is set and the file exists, load it
     let dev_state_path = std::env::var("FUGUE_DEV_STATE").ok();
     if let Some(ref path) = dev_state_path {
-        if std::path::Path::new(path).exists() {
+        if Path::new(path).exists() {
             match Invention::from_file(path) {
                 Ok(invention) => match start_invention(&mut repl, invention) {
                     Ok(msg) => println!("[dev] Auto-restored: {}", msg),
@@ -599,13 +668,14 @@ fn main() {
         }
     }
 
-    if let Some(path) = parse_invention_flag() {
-        match Invention::from_file(&path) {
+    if let Some(name) = parse_invention_flag() {
+        let path = resolve_invention_path(&name);
+        match Invention::from_file(&path.to_string_lossy()) {
             Ok(invention) => match start_invention(&mut repl, invention) {
                 Ok(msg) => println!("{}", msg),
                 Err(e) => eprintln!("Error loading invention: {}", e),
             },
-            Err(e) => eprintln!("Error reading invention file '{}': {}", path, e),
+            Err(e) => eprintln!("Error reading invention file '{}': {}", path.display(), e),
         }
     }
 
@@ -685,4 +755,48 @@ fn dirs_home() -> Option<String> {
     std::env::var("HOME")
         .ok()
         .or_else(|| std::env::var("USERPROFILE").ok())
+}
+
+fn fugue_workspace() -> PathBuf {
+    PathBuf::from(dirs_home().expect("Could not determine home directory")).join(".fugue")
+}
+
+fn inventions_dir() -> PathBuf {
+    fugue_workspace().join("inventions")
+}
+
+fn ensure_workspace() {
+    let _ = std::fs::create_dir_all(inventions_dir());
+}
+
+fn resolve_invention_path(name: &str) -> PathBuf {
+    let p = PathBuf::from(name);
+    let has_dir = p.parent().map(|par| par != Path::new("")).unwrap_or(false);
+    let has_ext = p.extension().is_some();
+
+    let mut candidates: Vec<PathBuf> = vec![];
+
+    if p.is_absolute() || has_dir {
+        candidates.push(p.clone());
+        if !has_ext {
+            candidates.push(p.with_extension("json"));
+        }
+    } else {
+        let inv = inventions_dir();
+        if !has_ext {
+            candidates.push(inv.join(format!("{}.json", name)));
+        }
+        candidates.push(inv.join(name));
+        if !has_ext {
+            candidates.push(p.with_extension("json"));
+        }
+        candidates.push(p);
+    }
+
+    for c in &candidates {
+        if c.exists() {
+            return c.clone();
+        }
+    }
+    candidates.remove(0)
 }

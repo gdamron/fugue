@@ -34,7 +34,7 @@ path = "src/bin/fugue-mcp.rs"
 required-features = ["mcp"]
 
 [[bin]]
-name = "fugue-repl"
+name = "fugue"
 path = "src/bin/fugue-repl.rs"
 required-features = ["repl"]
 
