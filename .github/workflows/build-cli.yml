@@ -1,4 +1,4 @@
-name: Build REPL
+name: Build CLI
 
 on:
   pull_request:
@@ -8,8 +8,8 @@ on:
       - reopened
 
 jobs:
-  build-repl:
-    name: Build REPL
+  build-cli:
+    name: Build CLI
     runs-on: ubuntu-latest
 
     steps:
@@ -27,5 +27,5 @@ jobs:
       - name: Cache Cargo Artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Build REPL Binary
-        run: cargo build --features repl --bin fugue-repl
+      - name: Build CLI Binary
+        run: cargo build --features repl --bin fugue
