@@ -1,0 +1,63 @@
+{
+  "version": "1.0.0",
+  "title": "File-Based Development Patch",
+  "description": "Loads a reusable development from a sibling JSON file.",
+  "developments": [
+    {
+      "name": "voice",
+      "path": "development_voice.json"
+    }
+  ],
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 96.0
+      }
+    },
+    {
+      "id": "melody",
+      "type": "melody",
+      "config": {
+        "root_note": 45,
+        "scale_degrees": [0, 3, 5, 7, 10],
+        "note_weights": [1.4, 0.8, 1.0, 0.9, 0.7]
+      }
+    },
+    {
+      "id": "bass",
+      "type": "voice"
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "melody",
+      "to_port": "gate"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "bass",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody",
+      "from_port": "gate",
+      "to": "bass",
+      "to_port": "gate"
+    },
+    {
+      "from": "bass",
+      "from_port": "audio",
+      "to": "dac",
+      "to_port": "audio"
+    }
+  ]
+}

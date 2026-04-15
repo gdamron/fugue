@@ -234,12 +234,17 @@ impl FugueMcp {
             version: "1.0.0".to_string(),
             title: params.title.clone(),
             description: None,
+            developments: vec![],
             modules: vec![ModuleSpec {
                 id: "dac".to_string(),
                 module_type: "dac".to_string(),
                 config: serde_json::Value::Null,
             }],
             connections: vec![],
+            inputs: vec![],
+            outputs: vec![],
+            controls: vec![],
+            source_path: None,
         };
 
         let builder = InventionBuilder::new(state.sample_rate);

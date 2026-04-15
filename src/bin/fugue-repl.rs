@@ -1,6 +1,6 @@
 use fugue::{
-    default_sample_rate, Connection, ControlKind, ControlMeta, ControlValue, Invention,
-    InventionBuilder, ModuleRegistry, ModuleSpec, RunningInvention,
+    default_sample_rate, Connection, ControlKind, ControlMeta, ControlValue, DevelopmentSpec,
+    Invention, InventionBuilder, ModuleRegistry, ModuleSpec, RunningInvention,
 };
 use indexmap::IndexMap;
 use rustyline::error::ReadlineError;
@@ -26,6 +26,7 @@ struct ConnectionInfo {
 
 struct FugueRepl {
     running: Option<RunningInvention>,
+    developments: Vec<DevelopmentSpec>,
     modules: IndexMap<String, ModuleInfo>,
     connections: Vec<ConnectionInfo>,
     title: Option<String>,
@@ -36,6 +37,7 @@ impl FugueRepl {
     fn new(sample_rate: u32) -> Self {
         Self {
             running: None,
+            developments: Vec::new(),
             modules: IndexMap::new(),
             connections: Vec::new(),
             title: None,
@@ -47,6 +49,7 @@ impl FugueRepl {
         if let Some(running) = self.running.take() {
             running.stop();
         }
+        self.developments.clear();
         self.modules.clear();
         self.connections.clear();
         self.title = None;
@@ -57,6 +60,7 @@ impl FugueRepl {
             version: "1.0.0".to_string(),
             title: self.title.clone(),
             description: None,
+            developments: self.developments.clone(),
             modules: self
                 .modules
                 .values()
@@ -76,6 +80,10 @@ impl FugueRepl {
                     to_port: Some(c.to_port.clone()),
                 })
                 .collect(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            controls: Vec::new(),
+            source_path: None,
         }
     }
 
@@ -147,12 +155,17 @@ fn cmd_new(repl: &mut FugueRepl, rest: &str) -> Result<String, String> {
         version: "1.0.0".to_string(),
         title: title.clone(),
         description: None,
+        developments: Vec::new(),
         modules: vec![ModuleSpec {
             id: "dac".to_string(),
             module_type: "dac".to_string(),
             config: serde_json::Value::Null,
         }],
         connections: vec![],
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        controls: Vec::new(),
+        source_path: None,
     };
 
     let builder = InventionBuilder::new(repl.sample_rate);
@@ -196,6 +209,7 @@ fn start_invention(repl: &mut FugueRepl, invention: Invention) -> Result<String,
 
     // Populate shadow state
     repl.title = invention.title.clone();
+    repl.developments = invention.developments.clone();
     for spec in &invention.modules {
         repl.modules.insert(
             spec.id.clone(),
@@ -616,15 +630,12 @@ fn run_play(name: &str) {
         std::process::exit(1);
     });
 
-    let title = invention
-        .title
-        .clone()
-        .unwrap_or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("untitled")
-                .to_string()
-        });
+    let title = invention.title.clone().unwrap_or_else(|| {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("untitled")
+            .to_string()
+    });
 
     let builder = InventionBuilder::new(sample_rate);
     let (runtime, _handles) = builder.build(invention).unwrap_or_else(|e| {

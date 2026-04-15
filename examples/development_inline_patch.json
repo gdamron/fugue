@@ -1,0 +1,130 @@
+{
+  "version": "1.0.0",
+  "title": "Inline Development Patch",
+  "description": "Registers an inline development and instantiates it like a normal module.",
+  "developments": [
+    {
+      "name": "voice",
+      "definition": {
+        "version": "1.0.0",
+        "title": "Inline Voice",
+        "modules": [
+          {
+            "id": "osc",
+            "type": "oscillator",
+            "config": {
+              "frequency": 220.0,
+              "waveform": "square"
+            }
+          },
+          {
+            "id": "env",
+            "type": "adsr",
+            "config": {
+              "attack": 0.005,
+              "decay": 0.08,
+              "sustain": 0.55,
+              "release": 0.18
+            }
+          },
+          {
+            "id": "vca",
+            "type": "vca"
+          }
+        ],
+        "connections": [
+          {
+            "from": "osc",
+            "from_port": "audio",
+            "to": "vca",
+            "to_port": "audio"
+          },
+          {
+            "from": "env",
+            "from_port": "envelope",
+            "to": "vca",
+            "to_port": "cv"
+          }
+        ],
+        "inputs": [
+          {
+            "name": "frequency",
+            "to": "osc",
+            "to_port": "frequency"
+          },
+          {
+            "name": "gate",
+            "to": "env",
+            "to_port": "gate"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "audio",
+            "from": "vca",
+            "from_port": "audio"
+          }
+        ],
+        "controls": [
+          {
+            "key": "waveform",
+            "module": "osc",
+            "control": "type"
+          }
+        ]
+      }
+    }
+  ],
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 118.0
+      }
+    },
+    {
+      "id": "melody",
+      "type": "melody",
+      "config": {
+        "root_note": 50,
+        "scale_degrees": [0, 2, 3, 5, 7],
+        "note_weights": [1.2, 1.0, 0.8, 1.0, 0.7]
+      }
+    },
+    {
+      "id": "lead",
+      "type": "voice"
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "melody",
+      "to_port": "gate"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "lead",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody",
+      "from_port": "gate",
+      "to": "lead",
+      "to_port": "gate"
+    },
+    {
+      "from": "lead",
+      "from_port": "audio",
+      "to": "dac",
+      "to_port": "audio"
+    }
+  ]
+}
