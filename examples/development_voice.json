@@ -1,0 +1,74 @@
+{
+  "version": "1.0.0",
+  "title": "Development Voice",
+  "description": "A reusable voice development with exposed frequency, gate, audio, and waveform control.",
+  "modules": [
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "frequency": 220.0,
+        "waveform": "sawtooth"
+      }
+    },
+    {
+      "id": "env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.01,
+        "decay": 0.12,
+        "sustain": 0.65,
+        "release": 0.2
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    }
+  ],
+  "connections": [
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "frequency",
+      "to": "osc",
+      "to_port": "frequency"
+    },
+    {
+      "name": "gate",
+      "to": "env",
+      "to_port": "gate"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "audio",
+      "from": "vca",
+      "from_port": "audio"
+    }
+  ],
+  "controls": [
+    {
+      "key": "waveform",
+      "module": "osc",
+      "control": "type"
+    },
+    {
+      "key": "attack",
+      "module": "env",
+      "control": "attack"
+    }
+  ]
+}

@@ -101,6 +101,47 @@ pub(crate) struct SignalGraph {
 }
 
 impl SignalGraph {
+    pub(crate) fn ensure_process_order(&mut self) {
+        self.drain_commands();
+        if self.topo_dirty {
+            self.recompute_process_order();
+            self.topo_dirty = false;
+        }
+    }
+
+    pub(crate) fn process_modules(&mut self) {
+        self.ensure_process_order();
+
+        self.current_sample += 1;
+
+        for module in self.modules.values() {
+            module.lock().unwrap().reset_inputs();
+        }
+
+        for i in 0..self.process_order.len() {
+            let module_id = &self.process_order[i];
+
+            if let Some(connections) = self.input_map.get(module_id.as_str()) {
+                for conn in connections {
+                    let input_value = self
+                        .modules
+                        .get(&conn.from_module)
+                        .map(|m| m.lock().unwrap().get_output(&conn.from_port).unwrap_or(0.0))
+                        .unwrap_or(0.0);
+                    if let Some(module) = self.modules.get(module_id.as_str()) {
+                        let _ = module.lock().unwrap().set_input(&conn.to_port, input_value);
+                    }
+                }
+            }
+
+            if let Some(module) = self.modules.get(module_id.as_str()) {
+                let mut m = module.lock().unwrap();
+                m.process();
+                m.mark_processed(self.current_sample);
+            }
+        }
+    }
+
     /// Drains all pending commands from the main thread and applies them.
     fn drain_commands(&mut self) {
         while let Ok(cmd) = self.command_rx.try_recv() {
@@ -277,45 +318,7 @@ impl SignalGraph {
     /// The pre-computed topological order guarantees dependencies are processed
     /// before their dependents. Zero heap allocations per sample.
     pub(crate) fn process_sample(&mut self) -> SinkOutput {
-        self.drain_commands();
-
-        if self.topo_dirty {
-            self.recompute_process_order();
-            self.topo_dirty = false;
-        }
-
-        self.current_sample += 1;
-
-        // Reset input "active" flags on all modules
-        for module in self.modules.values() {
-            module.lock().unwrap().reset_inputs();
-        }
-
-        // Process modules in topological order
-        for i in 0..self.process_order.len() {
-            let module_id = &self.process_order[i];
-
-            // Set inputs from already-processed upstream modules
-            if let Some(connections) = self.input_map.get(module_id.as_str()) {
-                for conn in connections {
-                    let input_value = self
-                        .modules
-                        .get(&conn.from_module)
-                        .map(|m| m.lock().unwrap().get_output(&conn.from_port).unwrap_or(0.0))
-                        .unwrap_or(0.0);
-                    if let Some(module) = self.modules.get(module_id.as_str()) {
-                        let _ = module.lock().unwrap().set_input(&conn.to_port, input_value);
-                    }
-                }
-            }
-
-            // Process the module
-            if let Some(module) = self.modules.get(module_id.as_str()) {
-                let mut m = module.lock().unwrap();
-                m.process();
-                m.mark_processed(self.current_sample);
-            }
-        }
+        self.process_modules();
 
         // Collect sink outputs — no allocation, just accumulate
         let sink_count = self.sinks.len();

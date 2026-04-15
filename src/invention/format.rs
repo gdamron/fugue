@@ -3,6 +3,7 @@
 //! Inventions are JSON documents that describe modules and their connections.
 
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// A complete invention document defining a modular synthesis setup.
 ///
@@ -22,11 +23,31 @@ pub struct Invention {
     #[serde(default)]
     pub description: Option<String>,
 
+    /// Development definitions available to modules in this document.
+    #[serde(default)]
+    pub developments: Vec<DevelopmentSpec>,
+
     /// The modules in this invention.
     pub modules: Vec<ModuleSpec>,
 
     /// Connections between modules.
     pub connections: Vec<Connection>,
+
+    /// Exposed input ports when this document is used as a development.
+    #[serde(default)]
+    pub inputs: Vec<DevelopmentInput>,
+
+    /// Exposed output ports when this document is used as a development.
+    #[serde(default)]
+    pub outputs: Vec<DevelopmentOutput>,
+
+    /// Exposed runtime controls when this document is used as a development.
+    #[serde(default)]
+    pub controls: Vec<DevelopmentControl>,
+
+    /// Source file path used for resolving relative development imports.
+    #[serde(skip)]
+    pub source_path: Option<PathBuf>,
 }
 
 fn default_version() -> String {
@@ -36,19 +57,66 @@ fn default_version() -> String {
 impl Invention {
     /// Parses an invention from a JSON string.
     pub fn from_json(json: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(serde_json::from_str(json)?)
+        let mut invention: Self = serde_json::from_str(json)?;
+        invention.source_path = None;
+        Ok(invention)
     }
 
     /// Loads an invention from a JSON file.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let json = std::fs::read_to_string(path)?;
-        Self::from_json(&json)
+        let mut invention = Self::from_json(&json)?;
+        invention.source_path = Some(Path::new(path).to_path_buf());
+        Ok(invention)
     }
 
     /// Serializes the invention to a JSON string.
     pub fn to_json(&self) -> Result<String, Box<dyn std::error::Error>> {
         Ok(serde_json::to_string_pretty(self)?)
     }
+
+    pub fn is_development(&self) -> bool {
+        !self.inputs.is_empty() || !self.outputs.is_empty() || !self.controls.is_empty()
+    }
+}
+
+/// A named development registered for use as a module type within an invention.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevelopmentSpec {
+    /// Module type name used when instantiating this development.
+    pub name: String,
+
+    /// Optional JSON file path to a development document.
+    #[serde(default)]
+    pub path: Option<String>,
+
+    /// Optional inline development definition.
+    #[serde(default)]
+    pub definition: Option<Box<Invention>>,
+}
+
+/// Maps an exposed development input to an internal module input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevelopmentInput {
+    pub name: String,
+    pub to: String,
+    pub to_port: String,
+}
+
+/// Maps an exposed development output to an internal module output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevelopmentOutput {
+    pub name: String,
+    pub from: String,
+    pub from_port: String,
+}
+
+/// Maps an exposed development control to an internal module control.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevelopmentControl {
+    pub key: String,
+    pub module: String,
+    pub control: String,
 }
 
 /// Specification for a single module in an invention.
@@ -139,6 +207,10 @@ mod tests {
         assert_eq!(invention.modules.len(), 1);
         assert_eq!(invention.modules[0].id, "clock1");
         assert_eq!(invention.modules[0].module_type, "clock");
+        assert!(invention.developments.is_empty());
+        assert!(invention.inputs.is_empty());
+        assert!(invention.outputs.is_empty());
+        assert!(invention.controls.is_empty());
 
         // Config is now generic JSON
         assert_eq!(invention.modules[0].config["bpm"], 120.0);
@@ -161,5 +233,32 @@ mod tests {
         let invention = Invention::from_json(json).unwrap();
         assert_eq!(invention.modules[0].id, "vca1");
         assert!(invention.modules[0].config.is_null());
+    }
+
+    #[test]
+    fn test_parse_development_document() {
+        let json = r#"
+        {
+            "modules": [
+                { "id": "osc", "type": "oscillator" }
+            ],
+            "connections": [],
+            "inputs": [
+                { "name": "frequency", "to": "osc", "to_port": "frequency" }
+            ],
+            "outputs": [
+                { "name": "audio", "from": "osc", "from_port": "audio" }
+            ],
+            "controls": [
+                { "key": "type", "module": "osc", "control": "type" }
+            ]
+        }
+        "#;
+
+        let invention = Invention::from_json(json).unwrap();
+        assert!(invention.is_development());
+        assert_eq!(invention.inputs[0].name, "frequency");
+        assert_eq!(invention.outputs[0].name, "audio");
+        assert_eq!(invention.controls[0].key, "type");
     }
 }

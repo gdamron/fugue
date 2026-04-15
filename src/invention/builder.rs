@@ -7,11 +7,14 @@ use crate::invention::runtime::{
     ModuleInstance,
 };
 use crate::registry::ModuleRegistry;
+use crate::ModuleFactory;
 use indexmap::IndexMap;
 use std::any::Any;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
+use super::development::DevelopmentFactory;
 use super::graph::{RoutingConnection, SinkInstance};
 
 /// Result type for building modules, containing modules, sinks, and handles.
@@ -29,6 +32,7 @@ type BuildModulesResult = (
 pub struct InventionBuilder {
     sample_rate: u32,
     registry: ModuleRegistry,
+    registered: Arc<Mutex<HashSet<String>>>,
 }
 
 impl InventionBuilder {
@@ -37,6 +41,7 @@ impl InventionBuilder {
         Self {
             sample_rate,
             registry: ModuleRegistry::default(),
+            registered: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -45,6 +50,21 @@ impl InventionBuilder {
         Self {
             sample_rate,
             registry,
+            registered: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    /// Creates a new invention builder sharing the given registered-developments set.
+    /// Used internally by `DevelopmentFactory` so nested builds share the same guard.
+    pub(crate) fn with_registry_and_registered(
+        sample_rate: u32,
+        registry: ModuleRegistry,
+        registered: Arc<Mutex<HashSet<String>>>,
+    ) -> Self {
+        Self {
+            sample_rate,
+            registry,
+            registered,
         }
     }
 
@@ -69,18 +89,19 @@ impl InventionBuilder {
     /// tempo.set_bpm(140.0);
     /// ```
     pub fn build(
-        self,
+        mut self,
         invention: Invention,
     ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
+        self.register_developments(&invention)?;
         self.validate_invention(&invention)?;
 
         // Build all module instances (including sinks)
         let (modules, sinks, control_surfaces, handles) = self.build_modules(&invention)?;
 
         // Warn if no sink modules (invention will run but produce silence)
-        if sinks.is_empty() {
+        if sinks.is_empty() && invention.outputs.is_empty() {
             eprintln!(
-                "Warning: Invention '{}' has no sink modules. Audio output will be silent.",
+                "Warning: Invention '{}' has no sink modules or outputs. Audio output will be silent.",
                 invention.title.as_deref().unwrap_or("untitled")
             );
         }
@@ -195,5 +216,293 @@ impl InventionBuilder {
         }
 
         Ok(routing)
+    }
+
+    fn register_developments(
+        &mut self,
+        invention: &Invention,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for development in &invention.developments {
+            {
+                let mut registered = self.registered.lock().unwrap();
+                if registered.contains(&development.name) {
+                    continue;
+                }
+                registered.insert(development.name.clone());
+            }
+
+            let definition = self.load_development_definition(invention, development)?;
+            let factory = DevelopmentFactory {
+                name: development.name.clone(),
+                definition,
+                registry: self.registry.clone(),
+                registered: self.registered.clone(),
+            };
+            self.registry.register_boxed(
+                development.name.clone(),
+                Arc::new(factory) as Arc<dyn ModuleFactory>,
+            );
+        }
+
+        Ok(())
+    }
+
+    fn load_development_definition(
+        &self,
+        invention: &Invention,
+        development: &super::format::DevelopmentSpec,
+    ) -> Result<Invention, Box<dyn std::error::Error>> {
+        match (&development.path, &development.definition) {
+            (Some(path), None) => {
+                let resolved = resolve_development_path(invention.source_path.as_deref(), path)?;
+                Invention::from_file(&resolved.to_string_lossy())
+            }
+            (None, Some(definition)) => Ok((**definition).clone()),
+            (Some(_), Some(_)) => Err(format!(
+                "Development '{}' must set either 'path' or 'definition', not both",
+                development.name
+            )
+            .into()),
+            (None, None) => Err(format!(
+                "Development '{}' must set either 'path' or 'definition'",
+                development.name
+            )
+            .into()),
+        }
+    }
+}
+
+fn resolve_development_path(
+    source_path: Option<&Path>,
+    path: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        return Ok(candidate);
+    }
+
+    let Some(source_path) = source_path else {
+        return Err(format!(
+            "Relative development path '{}' requires the parent invention to be loaded from a file",
+            path
+        )
+        .into());
+    };
+
+    let base_dir = source_path.parent().unwrap_or_else(|| Path::new("."));
+    Ok(base_dir.join(candidate))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ControlValue, DevelopmentControl, DevelopmentInput, DevelopmentOutput, DevelopmentSpec,
+    };
+
+    fn voice_development() -> Invention {
+        Invention {
+            version: "1.0.0".to_string(),
+            title: Some("voice".to_string()),
+            description: None,
+            developments: vec![],
+            modules: vec![
+                crate::ModuleSpec {
+                    id: "osc".to_string(),
+                    module_type: "oscillator".to_string(),
+                    config: serde_json::json!({"frequency": 220.0}),
+                },
+                crate::ModuleSpec {
+                    id: "vca".to_string(),
+                    module_type: "vca".to_string(),
+                    config: serde_json::json!({"level": 1.0}),
+                },
+            ],
+            connections: vec![crate::Connection {
+                from: "osc".to_string(),
+                to: "vca".to_string(),
+                from_port: Some("audio".to_string()),
+                to_port: Some("audio".to_string()),
+            }],
+            inputs: vec![DevelopmentInput {
+                name: "frequency".to_string(),
+                to: "osc".to_string(),
+                to_port: "frequency".to_string(),
+            }],
+            outputs: vec![DevelopmentOutput {
+                name: "audio".to_string(),
+                from: "vca".to_string(),
+                from_port: "audio".to_string(),
+            }],
+            controls: vec![DevelopmentControl {
+                key: "type".to_string(),
+                module: "osc".to_string(),
+                control: "type".to_string(),
+            }],
+            source_path: None,
+        }
+    }
+
+    fn root_invention_with_voice(voice: DevelopmentSpec) -> Invention {
+        Invention {
+            version: "1.0.0".to_string(),
+            title: Some("root".to_string()),
+            description: None,
+            developments: vec![voice],
+            modules: vec![
+                crate::ModuleSpec {
+                    id: "lead".to_string(),
+                    module_type: "voice".to_string(),
+                    config: serde_json::Value::Null,
+                },
+                crate::ModuleSpec {
+                    id: "dac".to_string(),
+                    module_type: "dac".to_string(),
+                    config: serde_json::Value::Null,
+                },
+            ],
+            connections: vec![crate::Connection {
+                from: "lead".to_string(),
+                to: "dac".to_string(),
+                from_port: Some("audio".to_string()),
+                to_port: Some("audio".to_string()),
+            }],
+            inputs: vec![],
+            outputs: vec![],
+            controls: vec![],
+            source_path: None,
+        }
+    }
+
+    #[test]
+    fn builds_inline_development_as_module() {
+        let invention = root_invention_with_voice(DevelopmentSpec {
+            name: "voice".to_string(),
+            path: None,
+            definition: Some(Box::new(voice_development())),
+        });
+
+        let builder = InventionBuilder::new(44_100);
+        let (runtime, _) = builder.build(invention).unwrap();
+
+        let module = runtime.modules.get("lead").unwrap();
+        assert!(module.lock().unwrap().inputs().contains(&"frequency"));
+        assert!(module.lock().unwrap().outputs().contains(&"audio"));
+
+        let controls = runtime.control_surfaces.get("lead").unwrap().controls();
+        assert_eq!(controls.len(), 1);
+        assert_eq!(controls[0].key, "type");
+    }
+
+    #[test]
+    fn development_controls_alias_internal_surface() {
+        let invention = root_invention_with_voice(DevelopmentSpec {
+            name: "voice".to_string(),
+            path: None,
+            definition: Some(Box::new(voice_development())),
+        });
+
+        let builder = InventionBuilder::new(44_100);
+        let (runtime, _) = builder.build(invention).unwrap();
+        let surface = runtime.control_surfaces.get("lead").unwrap();
+
+        surface
+            .set_control("type", ControlValue::String("square".to_string()))
+            .unwrap();
+        assert_eq!(
+            surface.get_control("type").unwrap(),
+            ControlValue::String("square".to_string())
+        );
+    }
+
+    #[test]
+    fn resolves_relative_development_paths() {
+        let unique = format!(
+            "fugue-development-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let development_path = dir.join("voice.json");
+        std::fs::write(&development_path, voice_development().to_json().unwrap()).unwrap();
+
+        let root = root_invention_with_voice(DevelopmentSpec {
+            name: "voice".to_string(),
+            path: Some("voice.json".to_string()),
+            definition: None,
+        });
+        let root_path = dir.join("root.json");
+        std::fs::write(&root_path, root.to_json().unwrap()).unwrap();
+
+        let invention = Invention::from_file(&root_path.to_string_lossy()).unwrap();
+        let builder = InventionBuilder::new(44_100);
+        let (runtime, _) = builder.build(invention).unwrap();
+
+        assert!(runtime.modules.contains_key("lead"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn supports_nested_developments() {
+        let inner = Invention {
+            version: "1.0.0".to_string(),
+            title: Some("inner".to_string()),
+            description: None,
+            developments: vec![],
+            modules: vec![crate::ModuleSpec {
+                id: "osc".to_string(),
+                module_type: "oscillator".to_string(),
+                config: serde_json::json!({"frequency": 440.0}),
+            }],
+            connections: vec![],
+            inputs: vec![],
+            outputs: vec![DevelopmentOutput {
+                name: "audio".to_string(),
+                from: "osc".to_string(),
+                from_port: "audio".to_string(),
+            }],
+            controls: vec![],
+            source_path: None,
+        };
+        let outer = Invention {
+            version: "1.0.0".to_string(),
+            title: Some("outer".to_string()),
+            description: None,
+            developments: vec![DevelopmentSpec {
+                name: "inner_voice".to_string(),
+                path: None,
+                definition: Some(Box::new(inner)),
+            }],
+            modules: vec![crate::ModuleSpec {
+                id: "voice".to_string(),
+                module_type: "inner_voice".to_string(),
+                config: serde_json::Value::Null,
+            }],
+            connections: vec![],
+            inputs: vec![],
+            outputs: vec![DevelopmentOutput {
+                name: "audio".to_string(),
+                from: "voice".to_string(),
+                from_port: "audio".to_string(),
+            }],
+            controls: vec![],
+            source_path: None,
+        };
+        let root = root_invention_with_voice(DevelopmentSpec {
+            name: "voice".to_string(),
+            path: None,
+            definition: Some(Box::new(outer)),
+        });
+
+        let builder = InventionBuilder::new(44_100);
+        let (runtime, _) = builder.build(root).unwrap();
+
+        assert!(runtime.modules.contains_key("lead"));
     }
 }

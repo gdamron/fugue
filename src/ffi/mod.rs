@@ -291,7 +291,10 @@ mod tests {
                 fugue_engine_set_control_number(engine, module.as_ptr(), key.as_ptr(), 0.5),
                 1
             );
-            assert_eq!(fugue_engine_render_interleaved(engine, output.as_mut_ptr(), 8), 8);
+            assert_eq!(
+                fugue_engine_render_interleaved(engine, output.as_mut_ptr(), 8),
+                8
+            );
             assert!(output.iter().any(|sample| sample.abs() > 0.0));
             fugue_engine_free(engine);
         }

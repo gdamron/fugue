@@ -250,7 +250,9 @@ async fn capture_state(child: &mut McpChild) -> Option<CapturedState> {
                                 // Response format: "module.key = value"
                                 if let Some(eq_pos) = text.rfind(" = ") {
                                     let val_str = &text[eq_pos + 3..];
-                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(val_str) {
+                                    if let Ok(val) =
+                                        serde_json::from_str::<serde_json::Value>(val_str)
+                                    {
                                         control_values.push((
                                             module_id.to_string(),
                                             key.to_string(),

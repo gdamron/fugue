@@ -13,6 +13,7 @@
 //! - [`handles`] - Runtime control handles
 
 pub mod builder;
+pub mod development;
 pub mod format;
 pub mod graph;
 pub mod handles;
@@ -20,7 +21,10 @@ pub mod render;
 pub mod runtime;
 
 pub use builder::InventionBuilder;
-pub use format::{Connection, Invention, ModuleSpec, TimeSignature};
+pub use format::{
+    Connection, DevelopmentControl, DevelopmentInput, DevelopmentOutput, DevelopmentSpec,
+    Invention, ModuleSpec, TimeSignature,
+};
 pub use handles::InventionHandles;
 pub use render::RenderEngine;
 pub use runtime::{GraphCommandError, InventionRuntime, RunningInvention};

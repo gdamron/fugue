@@ -45,12 +45,7 @@ impl WasmFugueEngine {
     }
 
     #[wasm_bindgen(js_name = setControlBool)]
-    pub fn set_control_bool(
-        &self,
-        module_id: &str,
-        key: &str,
-        value: bool,
-    ) -> Result<(), JsValue> {
+    pub fn set_control_bool(&self, module_id: &str, key: &str, value: bool) -> Result<(), JsValue> {
         self.inner
             .set_control(module_id, key, ControlValue::Bool(value))
             .map_err(to_js_error)

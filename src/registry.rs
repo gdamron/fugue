@@ -5,6 +5,7 @@
 
 use crate::factory::{ModuleBuildResult, ModuleFactory};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Registry of module factories for lookup by type name.
 ///
@@ -31,8 +32,9 @@ use std::collections::HashMap;
 /// registry.register(ClockFactory);
 /// registry.register(OscillatorFactory);
 /// ```
+#[derive(Clone)]
 pub struct ModuleRegistry {
-    factories: HashMap<&'static str, Box<dyn ModuleFactory>>,
+    factories: HashMap<String, Arc<dyn ModuleFactory>>,
 }
 
 impl ModuleRegistry {
@@ -48,7 +50,13 @@ impl ModuleRegistry {
     /// The factory's `type_id()` is used as the key for lookup.
     /// If a factory with the same type_id already exists, it will be replaced.
     pub fn register<F: ModuleFactory>(&mut self, factory: F) {
-        self.factories.insert(factory.type_id(), Box::new(factory));
+        self.factories
+            .insert(factory.type_id().to_string(), Arc::new(factory));
+    }
+
+    /// Registers a boxed factory with a runtime-provided type id.
+    pub fn register_boxed(&mut self, type_id: impl Into<String>, factory: Arc<dyn ModuleFactory>) {
+        self.factories.insert(type_id.into(), factory);
     }
 
     /// Builds a module by type name.
@@ -92,8 +100,8 @@ impl ModuleRegistry {
     }
 
     /// Returns an iterator over registered type identifiers.
-    pub fn types(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.factories.keys().copied()
+    pub fn types(&self) -> impl Iterator<Item = &str> + '_ {
+        self.factories.keys().map(String::as_str)
     }
 }
 

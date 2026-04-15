@@ -21,6 +21,14 @@ cargo run --example simple_tone
 ```
 Demonstrates: Clock (PWM gate) → ADSR → VCA + Oscillator(440Hz) → DAC
 
+### Development Examples
+
+JSON examples for the new development format live in `examples/`:
+
+- `examples/development_voice.json`: a reusable development document
+- `examples/development_inline_patch.json`: registers a development inline
+- `examples/development_file_patch.json`: registers a development from a file path
+
 ### Run an Invention
 
 Define your invention in a JSON file:
