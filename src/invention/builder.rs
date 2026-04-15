@@ -10,9 +10,9 @@ use crate::registry::ModuleRegistry;
 use crate::ModuleFactory;
 use indexmap::IndexMap;
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::development::DevelopmentFactory;
 use super::graph::{RoutingConnection, SinkInstance};
@@ -32,6 +32,7 @@ type BuildModulesResult = (
 pub struct InventionBuilder {
     sample_rate: u32,
     registry: ModuleRegistry,
+    registered: Arc<Mutex<HashSet<String>>>,
 }
 
 impl InventionBuilder {
@@ -40,6 +41,7 @@ impl InventionBuilder {
         Self {
             sample_rate,
             registry: ModuleRegistry::default(),
+            registered: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -48,6 +50,21 @@ impl InventionBuilder {
         Self {
             sample_rate,
             registry,
+            registered: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    /// Creates a new invention builder sharing the given registered-developments set.
+    /// Used internally by `DevelopmentFactory` so nested builds share the same guard.
+    pub(crate) fn with_registry_and_registered(
+        sample_rate: u32,
+        registry: ModuleRegistry,
+        registered: Arc<Mutex<HashSet<String>>>,
+    ) -> Self {
+        Self {
+            sample_rate,
+            registry,
+            registered,
         }
     }
 
@@ -206,11 +223,20 @@ impl InventionBuilder {
         invention: &Invention,
     ) -> Result<(), Box<dyn std::error::Error>> {
         for development in &invention.developments {
+            {
+                let mut registered = self.registered.lock().unwrap();
+                if registered.contains(&development.name) {
+                    continue;
+                }
+                registered.insert(development.name.clone());
+            }
+
             let definition = self.load_development_definition(invention, development)?;
             let factory = DevelopmentFactory {
                 name: development.name.clone(),
                 definition,
                 registry: self.registry.clone(),
+                registered: self.registered.clone(),
             };
             self.registry.register_boxed(
                 development.name.clone(),

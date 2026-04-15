@@ -6,7 +6,7 @@ use crate::invention::runtime::{
 use crate::{ControlMeta, ControlSurface, ControlValue, Invention, Module, ModuleRegistry};
 use indexmap::IndexMap;
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -16,6 +16,7 @@ pub(crate) struct DevelopmentFactory {
     pub(crate) name: String,
     pub(crate) definition: Invention,
     pub(crate) registry: ModuleRegistry,
+    pub(crate) registered: Arc<Mutex<HashSet<String>>>,
 }
 
 impl ModuleFactory for DevelopmentFactory {
@@ -28,7 +29,11 @@ impl ModuleFactory for DevelopmentFactory {
         sample_rate: u32,
         _config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let builder = InventionBuilder::with_registry(sample_rate, self.registry.clone());
+        let builder = InventionBuilder::with_registry_and_registered(
+            sample_rate,
+            self.registry.clone(),
+            self.registered.clone(),
+        );
         let (runtime, _handles) = builder.build(self.definition.clone())?;
         let (module, control_surface) =
             DevelopmentModule::new(&self.name, runtime, &self.definition)?;
