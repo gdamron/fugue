@@ -611,7 +611,7 @@ mod tests {
                 "code1",
                 "code",
                 &serde_json::json!({
-                    "script": "globalThis.init = function () { graph.addModule('osc_live', 'oscillator', { waveform: 'sine', frequency: 220.0 }) }"
+                    "script": "function init() { graph.addModule('osc_live', 'oscillator', { waveform: 'sine', frequency: 220.0 }) }"
                 }),
             )
             .unwrap();
@@ -643,7 +643,7 @@ mod tests {
                         "type": "code",
                         "config": {
                             "tick_hz": 20.0,
-                            "script": "globalThis.tick = function () { graph.setControl('code1', 'last_error', 'tick-ran') }"
+                            "script": "function tick() { graph.setControl('code1', 'last_error', 'tick-ran') }"
                         }
                     },
                     { "id": "dac", "type": "dac" }
@@ -664,6 +664,76 @@ mod tests {
             running.get_control("code1", "last_error").unwrap(),
             ControlValue::String("tick-ran".to_string())
         );
+
+        running.stop();
+    }
+
+    #[test]
+    fn running_invention_supports_returned_lifecycle_object() {
+        let invention = Invention::from_json(
+            r#"{
+                "version": "1.0.0",
+                "modules": [
+                    {
+                        "id": "code1",
+                        "type": "code",
+                        "config": {
+                            "script": "(() => ({ init() { graph.addModule('osc_from_object_live', 'oscillator', { waveform: 'sine', frequency: 330.0 }) } }))()"
+                        }
+                    },
+                    { "id": "dac", "type": "dac" }
+                ],
+                "connections": []
+            }"#,
+        )
+        .unwrap();
+
+        let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+        let running = runtime
+            .start_with_backend(TickBackend::new(48_000))
+            .unwrap();
+
+        thread::sleep(Duration::from_millis(50));
+
+        assert!(running
+            .list_modules()
+            .into_iter()
+            .any(|module| module.id == "osc_from_object_live"));
+
+        running.stop();
+    }
+
+    #[test]
+    fn running_invention_keeps_legacy_globalthis_hooks_working() {
+        let invention = Invention::from_json(
+            r#"{
+                "version": "1.0.0",
+                "modules": [
+                    {
+                        "id": "code1",
+                        "type": "code",
+                        "config": {
+                            "script": "globalThis.init = function () { graph.addModule('osc_from_legacy_live', 'oscillator', { waveform: 'sine', frequency: 260.0 }) }"
+                        }
+                    },
+                    { "id": "dac", "type": "dac" }
+                ],
+                "connections": []
+            }"#,
+        )
+        .unwrap();
+
+        let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+        let running = runtime
+            .start_with_backend(TickBackend::new(48_000))
+            .unwrap();
+
+        thread::sleep(Duration::from_millis(50));
+
+        assert!(running
+            .list_modules()
+            .into_iter()
+            .any(|module| module.id == "osc_from_legacy_live"));
 
         running.stop();
     }

@@ -102,15 +102,38 @@ fn run_host(
         .unwrap_or("init")
         .to_string();
 
-    if let Err(err) = context.eval(Source::from_bytes(script.as_bytes())) {
-        set_error(&controller, &module_id, &err.to_string());
-        return;
+    match context.eval(Source::from_bytes(script.as_bytes())) {
+        Ok(result) => {
+            if let Err(err) = context.register_global_property(
+                js_string!("__fugue_result"),
+                result,
+                Attribute::all(),
+            ) {
+                set_error(&controller, &module_id, &err.to_string());
+                return;
+            }
+        }
+        Err(err) => {
+            set_error(&controller, &module_id, &err.to_string());
+            return;
+        }
     }
 
-    if let Err(err) = call_hook(&entrypoint, &mut context) {
-        set_error(&controller, &module_id, &err.to_string());
-        return;
+    match call_hook(&entrypoint, &mut context) {
+        Ok(true) => {}
+        Ok(false) if entrypoint != "init" => {
+            if let Err(err) = call_hook("init", &mut context) {
+                set_error(&controller, &module_id, &err);
+                return;
+            }
+        }
+        Ok(false) => {}
+        Err(err) => {
+            set_error(&controller, &module_id, &err);
+            return;
+        }
     }
+
     set_status(&controller, &module_id, "running");
 
     loop {
@@ -136,13 +159,13 @@ fn run_host(
             Ok(HostCommand::Reset) => {
                 clear_error(&controller, &module_id);
                 if let Err(err) = call_hook("reset", &mut context) {
-                    set_error(&controller, &module_id, &err.to_string());
+                    set_error(&controller, &module_id, &err);
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
                 if enabled && tick_hz > 0.0 {
                     if let Err(err) = call_hook("tick", &mut context) {
-                        set_error(&controller, &module_id, &err.to_string());
+                        set_error(&controller, &module_id, &err);
                     }
                 }
             }
@@ -321,17 +344,38 @@ fn install_graph_api(
     Ok(())
 }
 
-fn call_hook(name: &str, context: &mut Context) -> Result<(), String> {
+fn call_hook(name: &str, context: &mut Context) -> Result<bool, String> {
     let escaped = name.replace('\\', "\\\\").replace('\'', "\\'");
     context
         .eval(Source::from_bytes(
             format!(
-                "typeof globalThis['{escaped}'] === 'function' ? globalThis['{escaped}']() : undefined"
+                r#"(() => {{
+                    let __fugue_hook;
+                    if (
+                        typeof __fugue_result === 'object' &&
+                        __fugue_result !== null &&
+                        typeof __fugue_result['{escaped}'] === 'function'
+                    ) {{
+                        __fugue_hook = __fugue_result['{escaped}'];
+                    }} else if (typeof globalThis['{escaped}'] === 'function') {{
+                        __fugue_hook = globalThis['{escaped}'];
+                    }}
+
+                    if (typeof __fugue_hook === 'function') {{
+                        __fugue_hook();
+                        return true;
+                    }}
+
+                    return false;
+                }})()"#
             )
             .as_bytes(),
         ))
-        .map(|_| ())
         .map_err(|err| err.to_string())
+        .and_then(|value| match value.to_boolean() {
+            true => Ok(true),
+            false => Ok(false),
+        })
 }
 
 fn string_arg(value: Option<&JsValue>, context: &mut Context, name: &str) -> JsResult<String> {

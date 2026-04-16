@@ -14,7 +14,9 @@ mod outputs;
 ///
 /// The module itself does not generate audio. It anchors a script into the
 /// graph and exposes a control surface used by the platform-specific script
-/// host.
+/// host. Scripts may define plain top-level `init`, `tick`, and `reset`
+/// functions, return a lifecycle object as their final expression, or use the
+/// legacy `globalThis.*` hook style.
 pub struct CodeFactory;
 
 struct CodeConfig {

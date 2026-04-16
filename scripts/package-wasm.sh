@@ -29,7 +29,8 @@ Use the exported \`FugueEngine\` class to load invention JSON, inspect and mutat
 the graph (\`listModules\`, \`addModule\`, \`connect\`, etc.), set controls, and
 render interleaved stereo sample blocks inside a Web Audio host. \`code\` modules
 are orchestration-only on web and should be run with the packaged
-\`WasmCodeHost\` helper from \`fugue-code-host.js\`.
+\`WasmCodeHost\` helper from \`fugue-code-host.js\`. Preferred script style is
+plain top-level lifecycle functions like \`function init() {}\`.
 EOF
 
 tar -C "$OUT_DIR" -czf "$OUT_DIR/fugue-$VERSION-web.tar.gz" "$(basename "$STAGE_DIR")"

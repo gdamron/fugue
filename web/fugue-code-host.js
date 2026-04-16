@@ -139,10 +139,12 @@ export class WasmCodeHost {
     this.stopModule(moduleConfig.id);
 
     const graph = this.createGraphApi(moduleConfig.id);
+    const escapedScript = JSON.stringify(moduleConfig.script);
+    const escapedEntrypoint = JSON.stringify(moduleConfig.entrypoint);
     const factory = new Function(
       "graph",
       "fetch",
-      `const globalThis = Object.create(null);\n${moduleConfig.script}\nreturn {\n  init: typeof globalThis.init === 'function' ? globalThis.init : undefined,\n  reset: typeof globalThis.reset === 'function' ? globalThis.reset : undefined,\n  tick: typeof globalThis.tick === 'function' ? globalThis.tick : undefined,\n  entrypoint: typeof globalThis[${JSON.stringify(moduleConfig.entrypoint)}] === 'function' ? globalThis[${JSON.stringify(moduleConfig.entrypoint)}] : undefined\n};`
+      `const __fugue_legacy = Object.create(null);\nconst globalThis = __fugue_legacy;\nconst __fugue_result = eval(${escapedScript});\nconst __fugue_resolve = (name) => {\n  if (typeof __fugue_result === 'object' && __fugue_result !== null && typeof __fugue_result[name] === 'function') {\n    return __fugue_result[name];\n  }\n  try {\n    const candidate = eval(name);\n    if (typeof candidate === 'function') {\n      return candidate;\n    }\n  } catch (_error) {}\n  if (typeof __fugue_legacy[name] === 'function') {\n    return __fugue_legacy[name];\n  }\n  return undefined;\n};\nreturn {\n  init: __fugue_resolve('init'),\n  reset: __fugue_resolve('reset'),\n  tick: __fugue_resolve('tick'),\n  entrypoint: __fugue_resolve(${escapedEntrypoint}),\n};`
     );
 
     let hooks;

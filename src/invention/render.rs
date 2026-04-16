@@ -588,7 +588,7 @@ mod tests {
                         "id": "code1",
                         "type": "code",
                         "config": {
-                            "script": "globalThis.init = function () { graph.addModule('osc_from_code', 'oscillator', { waveform: 'sine', frequency: 330.0 }) }"
+                            "script": "function init() { graph.addModule('osc_from_code', 'oscillator', { waveform: 'sine', frequency: 330.0 }) }"
                         }
                     },
                     { "id": "dac", "type": "dac" }
@@ -617,7 +617,7 @@ mod tests {
                         "id": "code1",
                         "type": "code",
                         "config": {
-                            "script": "globalThis.init = function () {}",
+                            "script": "function init() {}",
                             "entrypoint": "init",
                             "enabled": true,
                             "tick_hz": 8.0
@@ -642,5 +642,93 @@ mod tests {
                 ..
             } if id == "code1" && entrypoint == "init" && *enabled && (*tick_hz - 8.0).abs() < f32::EPSILON
         ));
+    }
+
+    #[test]
+    fn render_engine_supports_returned_lifecycle_object() {
+        let mut engine = RenderEngine::new(48_000);
+        engine
+            .load_json(
+                r#"{
+                "version": "1.0.0",
+                "modules": [
+                    {
+                        "id": "code1",
+                        "type": "code",
+                        "config": {
+                            "script": "(() => ({ init() { graph.addModule('osc_from_object', 'oscillator', { waveform: 'sine', frequency: 440.0 }) } }))()"
+                        }
+                    },
+                    { "id": "dac", "type": "dac" }
+                ],
+                "connections": []
+            }"#,
+            )
+            .unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(engine
+            .list_modules()
+            .into_iter()
+            .any(|module| module.id == "osc_from_object"));
+    }
+
+    #[test]
+    fn render_engine_supports_custom_entrypoint_function() {
+        let mut engine = RenderEngine::new(48_000);
+        engine
+            .load_json(
+                r#"{
+                "version": "1.0.0",
+                "modules": [
+                    {
+                        "id": "code1",
+                        "type": "code",
+                        "config": {
+                            "entrypoint": "boot",
+                            "script": "function boot() { graph.addModule('osc_from_boot', 'oscillator', { waveform: 'sine', frequency: 660.0 }) }"
+                        }
+                    },
+                    { "id": "dac", "type": "dac" }
+                ],
+                "connections": []
+            }"#,
+            )
+            .unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(engine
+            .list_modules()
+            .into_iter()
+            .any(|module| module.id == "osc_from_boot"));
+    }
+
+    #[test]
+    fn render_engine_keeps_legacy_globalthis_hooks_working() {
+        let mut engine = RenderEngine::new(48_000);
+        engine
+            .load_json(
+                r#"{
+                "version": "1.0.0",
+                "modules": [
+                    {
+                        "id": "code1",
+                        "type": "code",
+                        "config": {
+                            "script": "globalThis.init = function () { graph.addModule('osc_from_legacy', 'oscillator', { waveform: 'sine', frequency: 550.0 }) }"
+                        }
+                    },
+                    { "id": "dac", "type": "dac" }
+                ],
+                "connections": []
+            }"#,
+            )
+            .unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(engine
+            .list_modules()
+            .into_iter()
+            .any(|module| module.id == "osc_from_legacy"));
     }
 }
