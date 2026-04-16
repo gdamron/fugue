@@ -96,6 +96,20 @@ impl WasmFugueEngine {
             .map_err(|err| JsValue::from_str(&err.to_string()))
     }
 
+    #[wasm_bindgen(js_name = listCodeModules)]
+    /// Returns discovered `code` modules and their runtime config as JSON.
+    pub fn list_code_modules(&self) -> Result<String, JsValue> {
+        let modules = self.inner.list_code_modules().map_err(to_graph_error)?;
+        serde_json::to_string(&modules).map_err(|err| JsValue::from_str(&err.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = getCodeModuleConfig)]
+    /// Returns one `code` module's runtime config as JSON.
+    pub fn get_code_module_config(&self, id: &str) -> Result<String, JsValue> {
+        let module = self.inner.get_code_module(id).map_err(to_graph_error)?;
+        serde_json::to_string(&module).map_err(|err| JsValue::from_str(&err.to_string()))
+    }
+
     #[wasm_bindgen(js_name = addModule)]
     /// Adds a module to the loaded graph.
     pub fn add_module(
@@ -114,6 +128,22 @@ impl WasmFugueEngine {
     /// Removes a module from the loaded graph.
     pub fn remove_module(&self, id: &str) -> Result<(), JsValue> {
         self.inner.remove_module(id).map_err(to_graph_error)
+    }
+
+    #[wasm_bindgen(js_name = setCodeModuleStatus)]
+    /// Updates the runtime status string for a `code` module.
+    pub fn set_code_module_status(&self, id: &str, status: &str) -> Result<(), JsValue> {
+        self.inner
+            .set_code_module_status(id, status)
+            .map_err(to_graph_error)
+    }
+
+    #[wasm_bindgen(js_name = setCodeModuleError)]
+    /// Updates the last-error string for a `code` module.
+    pub fn set_code_module_error(&self, id: &str, error: &str) -> Result<(), JsValue> {
+        self.inner
+            .set_code_module_error(id, error)
+            .map_err(to_graph_error)
     }
 
     /// Connects two module ports.

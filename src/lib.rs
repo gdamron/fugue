@@ -32,10 +32,11 @@ pub use modules::{
 
 // Re-export invention system
 pub use invention::{
-    Connection, DevelopmentControl, DevelopmentInput, DevelopmentOutput, DevelopmentSpec,
-    GraphCommandError, Invention, InventionBuilder, InventionHandles, InventionRuntime, ModuleSpec,
-    OrchestrationRuntime, RenderEngine, RunningInvention, RuntimeConnectionInfo, RuntimeController,
-    RuntimeModuleInfo, RuntimeSnapshot, RuntimeState, RuntimeStatus, TimeSignature,
+    CodeModuleRuntimeInfo, Connection, DevelopmentControl, DevelopmentInput, DevelopmentOutput,
+    DevelopmentSpec, GraphCommandError, Invention, InventionBuilder, InventionHandles,
+    InventionRuntime, ModuleSpec, OrchestrationRuntime, RenderEngine, RunningInvention,
+    RuntimeConnectionInfo, RuntimeController, RuntimeModuleInfo, RuntimeSnapshot, RuntimeState,
+    RuntimeStatus, TimeSignature,
 };
 
 // Re-export music theory

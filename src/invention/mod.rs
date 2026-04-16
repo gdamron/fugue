@@ -29,6 +29,6 @@ pub use format::{
 };
 pub use handles::InventionHandles;
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
-pub use render::RenderEngine;
+pub use render::{CodeModuleRuntimeInfo, RenderEngine};
 pub use runtime::{GraphCommandError, InventionRuntime, RunningInvention};
 pub use state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
