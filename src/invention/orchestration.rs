@@ -13,15 +13,22 @@ use std::sync::{Arc, Mutex};
 
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
+/// Read/write orchestration surface shared by live and render runtimes.
 pub trait OrchestrationRuntime {
+    /// Returns the current runtime status.
     fn status(&self) -> RuntimeStatus;
+    /// Returns the current module snapshot.
     fn list_modules(&self) -> Vec<RuntimeModuleInfo>;
+    /// Returns the current connection snapshot.
     fn list_connections(&self) -> Vec<RuntimeConnectionInfo>;
+    /// Returns control metadata for one module or for all modules with controls.
     fn list_controls(
         &self,
         module_id: Option<&str>,
     ) -> Result<Vec<(String, Vec<ControlMeta>)>, GraphCommandError>;
+    /// Reads a control value from a specific module.
     fn get_control(&self, module_id: &str, key: &str) -> Result<ControlValue, GraphCommandError>;
+    /// Updates a control value on a specific module.
     fn set_control(
         &self,
         module_id: &str,
@@ -30,12 +37,17 @@ pub trait OrchestrationRuntime {
     ) -> Result<(), GraphCommandError>;
 }
 
+/// Cloneable read-oriented view over runtime state and control surfaces.
 #[derive(Clone)]
 pub struct RuntimeSnapshot {
     pub state: Arc<Mutex<RuntimeState>>,
     pub control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
 }
 
+/// Cloneable mutation handle used by orchestration hosts and external APIs.
+///
+/// Live runtimes route mutations through the audio-thread command queue, while
+/// render runtimes apply the same commands directly to the in-memory graph.
 #[derive(Clone)]
 pub struct RuntimeController {
     pub(crate) snapshot: RuntimeSnapshot,
@@ -46,10 +58,12 @@ pub struct RuntimeController {
 }
 
 impl RuntimeSnapshot {
+    /// Returns aggregate status for the current invention.
     pub fn status(&self) -> RuntimeStatus {
         self.state.lock().unwrap().status()
     }
 
+    /// Returns a copy of the current module snapshot.
     pub fn list_modules(&self) -> Vec<RuntimeModuleInfo> {
         self.state
             .lock()
@@ -60,10 +74,12 @@ impl RuntimeSnapshot {
             .collect()
     }
 
+    /// Returns a copy of the current connection snapshot.
     pub fn list_connections(&self) -> Vec<RuntimeConnectionInfo> {
         self.state.lock().unwrap().connections.clone()
     }
 
+    /// Lists controls for a single module or all modules with control surfaces.
     pub fn list_controls(
         &self,
         module_id: Option<&str>,
@@ -86,6 +102,7 @@ impl RuntimeSnapshot {
         Ok(result)
     }
 
+    /// Reads the current value of a module control.
     pub fn get_control(
         &self,
         module_id: &str,
@@ -100,6 +117,7 @@ impl RuntimeSnapshot {
             .map_err(GraphCommandError::ControlError)
     }
 
+    /// Sets the current value of a module control.
     pub fn set_control(
         &self,
         module_id: &str,
@@ -128,6 +146,10 @@ impl RuntimeController {
         }
     }
 
+    /// Builds and inserts a module into the current graph.
+    ///
+    /// Returned handles are flattened as `<module_id>.<handle_name>` to match
+    /// the runtime's existing handle naming scheme.
     pub fn add_module(
         &self,
         module_id: &str,
@@ -179,6 +201,7 @@ impl RuntimeController {
             .collect())
     }
 
+    /// Removes a module and any connections that reference it.
     pub fn remove_module(&self, module_id: &str) -> Result<(), GraphCommandError> {
         self.snapshot
             .control_surfaces
@@ -196,6 +219,7 @@ impl RuntimeController {
         Ok(())
     }
 
+    /// Connects an output port to an input port after validating both ends.
     pub fn connect(
         &self,
         from_module: &str,
@@ -240,6 +264,7 @@ impl RuntimeController {
         Ok(())
     }
 
+    /// Removes a connection between two ports if present.
     pub fn disconnect(
         &self,
         from_module: &str,

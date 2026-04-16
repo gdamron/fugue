@@ -2,6 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
+/// Shared control surface for the orchestration-only `code` module.
+///
+/// Runtime hosts use these controls to communicate enabled state, status, and
+/// last error back into the graph.
 #[derive(Clone)]
 pub struct CodeControls {
     shared: Arc<Mutex<CodeState>>,
@@ -18,6 +22,7 @@ struct CodeState {
 }
 
 impl CodeControls {
+    /// Creates a new control surface from static module config.
     pub fn new(enabled: bool, tick_hz: f32, script: String, entrypoint: Option<String>) -> Self {
         Self {
             shared: Arc::new(Mutex::new(CodeState {
@@ -31,42 +36,52 @@ impl CodeControls {
         }
     }
 
+    /// Returns whether the script host should be active.
     pub fn enabled(&self) -> bool {
         self.shared.lock().unwrap().enabled
     }
 
+    /// Enables or disables script execution.
     pub fn set_enabled(&self, enabled: bool) {
         self.shared.lock().unwrap().enabled = enabled;
     }
 
+    /// Returns the current runtime status string.
     pub fn status(&self) -> String {
         self.shared.lock().unwrap().status.clone()
     }
 
+    /// Updates the current runtime status string.
     pub fn set_status(&self, status: impl Into<String>) {
         self.shared.lock().unwrap().status = status.into();
     }
 
+    /// Returns the last runtime error reported by the script host.
     pub fn last_error(&self) -> String {
         self.shared.lock().unwrap().last_error.clone()
     }
 
+    /// Stores the last runtime error reported by the script host.
     pub fn set_last_error(&self, last_error: impl Into<String>) {
         self.shared.lock().unwrap().last_error = last_error.into();
     }
 
+    /// Returns the configured periodic tick rate in Hz.
     pub fn tick_hz(&self) -> f32 {
         self.shared.lock().unwrap().tick_hz
     }
 
+    /// Updates the periodic tick rate in Hz, clamping it to zero or greater.
     pub fn set_tick_hz(&self, tick_hz: f32) {
         self.shared.lock().unwrap().tick_hz = tick_hz.max(0.0);
     }
 
+    /// Returns the immutable script source captured from module config.
     pub fn script(&self) -> String {
         self.shared.lock().unwrap().script.clone()
     }
 
+    /// Returns the configured startup entrypoint name.
     pub fn entrypoint(&self) -> String {
         self.shared.lock().unwrap().entrypoint.clone()
     }

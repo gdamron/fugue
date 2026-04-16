@@ -10,6 +10,11 @@ mod controls;
 mod inputs;
 mod outputs;
 
+/// Factory for the orchestration-only `code` module type.
+///
+/// The module itself does not generate audio. It anchors a script into the
+/// graph and exposes a control surface used by the platform-specific script
+/// host.
 pub struct CodeFactory;
 
 struct CodeConfig {
@@ -52,6 +57,7 @@ impl ModuleFactory for CodeFactory {
     }
 }
 
+/// Parses the minimal v1 config accepted by the `code` module.
 fn parse_config(config: &serde_json::Value) -> Result<CodeConfig, Box<dyn std::error::Error>> {
     let script = config
         .get("script")
@@ -79,6 +85,11 @@ fn parse_config(config: &serde_json::Value) -> Result<CodeConfig, Box<dyn std::e
     })
 }
 
+/// Graph-resident shell for orchestration scripts.
+///
+/// This module intentionally performs no DSP work in `process()`. Script
+/// execution happens on a host-managed thread or in the surrounding JS host for
+/// wasm builds.
 pub struct CodeModule {
     controls: CodeControls,
     last_processed_sample: u64,

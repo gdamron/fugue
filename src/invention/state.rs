@@ -1,13 +1,18 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+/// Serializable description of a module in a running invention.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeModuleInfo {
+    /// Stable instance id inside the graph.
     pub id: String,
+    /// Registered module type used to build this instance.
     pub module_type: String,
+    /// Original config payload used to construct the module.
     pub config: serde_json::Value,
 }
 
+/// Serializable description of a routed connection in a running invention.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeConnectionInfo {
     pub from: String,
@@ -16,6 +21,7 @@ pub struct RuntimeConnectionInfo {
     pub to_port: String,
 }
 
+/// Lightweight runtime status used by orchestration and external APIs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeStatus {
     pub running: bool,
@@ -24,6 +30,7 @@ pub struct RuntimeStatus {
     pub connection_count: usize,
 }
 
+/// Authoritative runtime-owned snapshot of modules, connections, and status.
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeState {
     pub modules: IndexMap<String, RuntimeModuleInfo>,
@@ -33,6 +40,7 @@ pub struct RuntimeState {
 }
 
 impl RuntimeState {
+    /// Builds a summary view suitable for tooling and scripting APIs.
     pub fn status(&self) -> RuntimeStatus {
         RuntimeStatus {
             running: self.running,
