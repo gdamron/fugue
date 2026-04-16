@@ -23,8 +23,10 @@ Contents:
 - \`.wasm\` binary
 - \`LICENSE\`
 
-Use the exported \`FugueEngine\` class to load invention JSON, set controls, and
-render interleaved stereo sample blocks inside a Web Audio host.
+Use the exported \`FugueEngine\` class to load invention JSON, inspect and mutate
+the graph (\`listModules\`, \`addModule\`, \`connect\`, etc.), set controls, and
+render interleaved stereo sample blocks inside a Web Audio host. \`code\` modules
+are orchestration-only on web and are expected to run in the surrounding JS host.
 EOF
 
 tar -C "$OUT_DIR" -czf "$OUT_DIR/fugue-$VERSION-web.tar.gz" "$(basename "$STAGE_DIR")"

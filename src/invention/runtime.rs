@@ -2,6 +2,7 @@
 
 use crate::modules::{AudioBackend, AudioDriver};
 use crate::registry::ModuleRegistry;
+use crate::scripting::ScriptManager;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -10,6 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use super::graph::{GraphCommand, RoutingConnection, SignalGraph, SinkInstance};
 use super::handles::InventionHandles;
+use super::orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
+use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
 /// Type alias for module instances stored in the runtime.
 pub type ModuleInstance = Arc<Mutex<dyn Module + Send>>;
@@ -65,6 +68,8 @@ pub struct InventionRuntime {
     pub(crate) registry: ModuleRegistry,
     /// Sample rate for building new modules at runtime.
     pub(crate) sample_rate: u32,
+    /// Shared runtime snapshot for orchestration and introspection.
+    pub(crate) state: Arc<Mutex<RuntimeState>>,
 }
 
 impl InventionRuntime {
@@ -122,14 +127,22 @@ impl InventionRuntime {
             graph_clone.lock().unwrap().process_sample()
         }))?;
 
-        Ok(RunningInvention {
+        {
+            self.state.lock().unwrap().running = true;
+        }
+
+        let running = RunningInvention {
             backend: Box::new(backend),
             graph: graph_arc,
             control_surfaces,
             command_tx,
             registry: self.registry,
             sample_rate: self.sample_rate,
-        })
+            state: self.state,
+            scripts: ScriptManager::default(),
+        };
+        running.scripts.start_all(running.controller());
+        Ok(running)
     }
 }
 
@@ -185,12 +198,33 @@ pub struct RunningInvention {
     command_tx: mpsc::Sender<GraphCommand>,
     registry: ModuleRegistry,
     sample_rate: u32,
+    state: Arc<Mutex<RuntimeState>>,
+    scripts: ScriptManager,
 }
 
 impl RunningInvention {
     /// Stops audio playback.
     pub fn stop(mut self) {
+        self.scripts.stop_all();
+        self.state.lock().unwrap().running = false;
         self.backend.stop();
+    }
+
+    pub fn snapshot(&self) -> RuntimeSnapshot {
+        RuntimeSnapshot {
+            state: self.state.clone(),
+            control_surfaces: self.control_surfaces.clone(),
+        }
+    }
+
+    pub fn controller(&self) -> RuntimeController {
+        RuntimeController {
+            snapshot: self.snapshot(),
+            registry: self.registry.clone(),
+            sample_rate: self.sample_rate,
+            graph: self.graph.clone(),
+            command_tx: Some(self.command_tx.clone()),
+        }
     }
 
     /// Sends a command to the audio thread for graph mutation.
@@ -259,10 +293,30 @@ impl RunningInvention {
         }
 
         self.send_command(GraphCommand::AddModule {
-            module_id,
+            module_id: module_id.clone(),
             module: result.module,
             sink: result.sink,
         })?;
+
+        self.state.lock().unwrap().modules.insert(
+            module_id.clone(),
+            RuntimeModuleInfo {
+                id: module_id.clone(),
+                module_type: module_type.to_string(),
+                config: config.clone(),
+            },
+        );
+
+        if module_type == "code" {
+            self.scripts.start_module(
+                self.controller(),
+                RuntimeModuleInfo {
+                    id: module_id.clone(),
+                    module_type: module_type.to_string(),
+                    config: config.clone(),
+                },
+            );
+        }
 
         Ok(InventionHandles::new(handle_map))
     }
@@ -323,7 +377,20 @@ impl RunningInvention {
             from_port: from_port.to_string(),
             to_module: to_module.to_string(),
             to_port: to_port.to_string(),
-        })
+        })?;
+
+        self.state
+            .lock()
+            .unwrap()
+            .connections
+            .push(RuntimeConnectionInfo {
+                from: from_module.to_string(),
+                from_port: from_port.to_string(),
+                to: to_module.to_string(),
+                to_port: to_port.to_string(),
+            });
+
+        Ok(())
     }
 
     /// Disconnects two modules in the running graph.
@@ -342,7 +409,16 @@ impl RunningInvention {
             from_port: from_port.to_string(),
             to_module: to_module.to_string(),
             to_port: to_port.to_string(),
-        })
+        })?;
+
+        self.state.lock().unwrap().connections.retain(|conn| {
+            !(conn.from == from_module
+                && conn.from_port == from_port
+                && conn.to == to_module
+                && conn.to_port == to_port)
+        });
+
+        Ok(())
     }
 
     /// Lists the controls available on a specific module.
@@ -407,10 +483,188 @@ impl RunningInvention {
     /// removed module are cleaned up.
     pub fn remove_module(&self, module_id: impl Into<String>) -> Result<(), GraphCommandError> {
         let module_id = module_id.into();
+        self.scripts.stop_module(&module_id);
         self.control_surfaces
             .lock()
             .unwrap()
             .shift_remove(&module_id);
-        self.send_command(GraphCommand::RemoveModule { module_id })
+        self.send_command(GraphCommand::RemoveModule {
+            module_id: module_id.clone(),
+        })?;
+        let mut state = self.state.lock().unwrap();
+        state.modules.shift_remove(&module_id);
+        state
+            .connections
+            .retain(|conn| conn.from != module_id && conn.to != module_id);
+        Ok(())
+    }
+}
+
+impl OrchestrationRuntime for RunningInvention {
+    fn status(&self) -> RuntimeStatus {
+        self.snapshot().status()
+    }
+
+    fn list_modules(&self) -> Vec<RuntimeModuleInfo> {
+        self.snapshot().list_modules()
+    }
+
+    fn list_connections(&self) -> Vec<RuntimeConnectionInfo> {
+        self.snapshot().list_connections()
+    }
+
+    fn list_controls(
+        &self,
+        module_id: Option<&str>,
+    ) -> Result<Vec<(String, Vec<ControlMeta>)>, GraphCommandError> {
+        self.snapshot().list_controls(module_id)
+    }
+
+    fn get_control(&self, module_id: &str, key: &str) -> Result<ControlValue, GraphCommandError> {
+        self.snapshot().get_control(module_id, key)
+    }
+
+    fn set_control(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+    ) -> Result<(), GraphCommandError> {
+        self.snapshot().set_control(module_id, key, value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::invention::builder::InventionBuilder;
+    use crate::invention::format::Invention;
+    use crate::SinkOutput;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
+
+    struct TickBackend {
+        sample_rate: u32,
+        stop: Arc<AtomicBool>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    impl TickBackend {
+        fn new(sample_rate: u32) -> Self {
+            Self {
+                sample_rate,
+                stop: Arc::new(AtomicBool::new(false)),
+                worker: None,
+            }
+        }
+    }
+
+    impl AudioBackend for TickBackend {
+        fn sample_rate(&self) -> u32 {
+            self.sample_rate
+        }
+
+        fn start(
+            &mut self,
+            mut sample_fn: Box<dyn FnMut() -> SinkOutput + Send>,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            let stop = self.stop.clone();
+            self.worker = Some(thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = sample_fn();
+                    thread::sleep(Duration::from_millis(2));
+                }
+            }));
+            Ok(())
+        }
+
+        fn stop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    #[test]
+    fn running_invention_tracks_runtime_module_mutations() {
+        let invention = Invention::from_json(
+            r#"{
+                "version": "1.0.0",
+                "modules": [
+                    { "id": "dac", "type": "dac" }
+                ],
+                "connections": []
+            }"#,
+        )
+        .unwrap();
+
+        let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+        let running = runtime
+            .start_with_backend(TickBackend::new(48_000))
+            .unwrap();
+
+        assert_eq!(running.list_modules().len(), 1);
+        running
+            .add_module(
+                "code1",
+                "code",
+                &serde_json::json!({
+                    "script": "globalThis.init = function () { graph.addModule('osc_live', 'oscillator', { waveform: 'sine', frequency: 220.0 }) }"
+                }),
+            )
+            .unwrap();
+
+        thread::sleep(Duration::from_millis(50));
+
+        assert!(running
+            .list_modules()
+            .into_iter()
+            .any(|module| module.id == "osc_live"));
+
+        running.remove_module("osc_live").unwrap();
+        assert!(!running
+            .list_modules()
+            .into_iter()
+            .any(|module| module.id == "osc_live"));
+
+        running.stop();
+    }
+
+    #[test]
+    fn running_invention_code_tick_updates_controls() {
+        let invention = Invention::from_json(
+            r#"{
+                "version": "1.0.0",
+                "modules": [
+                    {
+                        "id": "code1",
+                        "type": "code",
+                        "config": {
+                            "tick_hz": 20.0,
+                            "script": "globalThis.tick = function () { graph.setControl('code1', 'last_error', 'tick-ran') }"
+                        }
+                    },
+                    { "id": "dac", "type": "dac" }
+                ],
+                "connections": []
+            }"#,
+        )
+        .unwrap();
+
+        let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+        let running = runtime
+            .start_with_backend(TickBackend::new(48_000))
+            .unwrap();
+
+        thread::sleep(Duration::from_millis(120));
+
+        assert_eq!(
+            running.get_control("code1", "last_error").unwrap(),
+            ControlValue::String("tick-ran".to_string())
+        );
+
+        running.stop();
     }
 }
