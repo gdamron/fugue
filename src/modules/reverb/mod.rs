@@ -318,7 +318,11 @@ impl Reverb {
         let width = self.ctrl.width();
 
         let input_l = self.inputs.left();
-        let input_r = self.inputs.right();
+        let input_r = if self.inputs.right_active() {
+            self.inputs.right()
+        } else {
+            input_l
+        };
         let input = (input_l + input_r) * 0.5;
 
         // Compute room-dependent parameters
@@ -457,6 +461,10 @@ impl Module for Reverb {
 
     fn mark_processed(&mut self, sample: u64) {
         self.last_processed_sample = sample;
+    }
+
+    fn reset_inputs(&mut self) {
+        self.inputs.reset();
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
