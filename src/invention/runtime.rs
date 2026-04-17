@@ -1,5 +1,6 @@
 //! Invention runtime for executing modular synthesis inventions.
 
+use crate::agents::AgentManager;
 use crate::modules::{AudioBackend, AudioDriver};
 use crate::registry::ModuleRegistry;
 use crate::scripting::ScriptManager;
@@ -140,8 +141,10 @@ impl InventionRuntime {
             sample_rate: self.sample_rate,
             state: self.state,
             scripts: ScriptManager::default(),
+            agents: AgentManager::default(),
         };
         running.scripts.start_all(running.controller());
+        running.agents.start_all(running.controller());
         Ok(running)
     }
 }
@@ -200,12 +203,14 @@ pub struct RunningInvention {
     sample_rate: u32,
     state: Arc<Mutex<RuntimeState>>,
     scripts: ScriptManager,
+    agents: AgentManager,
 }
 
 impl RunningInvention {
     /// Stops audio playback.
     pub fn stop(mut self) {
         self.scripts.stop_all();
+        self.agents.stop_all();
         self.state.lock().unwrap().running = false;
         self.backend.stop();
     }
@@ -309,6 +314,16 @@ impl RunningInvention {
 
         if module_type == "code" {
             self.scripts.start_module(
+                self.controller(),
+                RuntimeModuleInfo {
+                    id: module_id.clone(),
+                    module_type: module_type.to_string(),
+                    config: config.clone(),
+                },
+            );
+        }
+        if module_type == "agent" {
+            self.agents.start_module(
                 self.controller(),
                 RuntimeModuleInfo {
                     id: module_id.clone(),
@@ -484,6 +499,7 @@ impl RunningInvention {
     pub fn remove_module(&self, module_id: impl Into<String>) -> Result<(), GraphCommandError> {
         let module_id = module_id.into();
         self.scripts.stop_module(&module_id);
+        self.agents.stop_module(&module_id);
         self.control_surfaces
             .lock()
             .unwrap()

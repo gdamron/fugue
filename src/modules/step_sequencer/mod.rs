@@ -52,6 +52,7 @@
 //! }
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 use crate::factory::{ModuleBuildResult, ModuleFactory};
@@ -75,12 +76,13 @@ pub const DEFAULT_GATE_LENGTH: f32 = 0.5;
 pub const DEFAULT_BASE_NOTE: u8 = 48;
 
 /// A single step in the sequencer pattern.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
     /// Note offset from base_note. None = rest (no note).
     pub note: Option<i8>,
     /// Gate length for this step as ratio of step duration (0.0-1.0).
     /// If None, uses the sequencer's default gate_length.
+    #[serde(rename = "gate", default, skip_serializing_if = "Option::is_none")]
     pub gate_length: Option<f32>,
 }
 
@@ -152,9 +154,6 @@ pub struct StepSequencer {
     sample_rate: u32,
     /// Thread-safe controls for base_note, steps, and gate_length.
     ctrl: StepSequencerControls,
-    /// The pattern of steps.
-    pattern: Vec<Step>,
-
     // State
     /// Current step index (0 to steps-1).
     current_step: usize,
@@ -187,7 +186,6 @@ impl StepSequencer {
         Self {
             sample_rate,
             ctrl: StepSequencerControls::new(),
-            pattern: Vec::new(),
             current_step: 0,
             gate_samples_remaining: 0,
             step_duration_samples: sample_rate / 2, // Default ~120 BPM
@@ -206,7 +204,6 @@ impl StepSequencer {
         Self {
             sample_rate,
             ctrl: controls,
-            pattern: Vec::new(),
             current_step: 0,
             gate_samples_remaining: 0,
             step_duration_samples: sample_rate / 2,
@@ -239,8 +236,8 @@ impl StepSequencer {
     }
 
     /// Sets the pattern.
-    pub fn with_pattern(mut self, pattern: Vec<Step>) -> Self {
-        self.pattern = pattern;
+    pub fn with_pattern(self, pattern: Vec<Step>) -> Self {
+        self.ctrl.set_pattern(pattern);
         self
     }
 
@@ -261,7 +258,7 @@ impl StepSequencer {
 
     /// Sets the pattern.
     pub fn set_pattern(&mut self, pattern: Vec<Step>) {
-        self.pattern = pattern;
+        self.ctrl.set_pattern(pattern);
     }
 
     /// Returns the current step index.
@@ -281,7 +278,7 @@ impl StepSequencer {
 
     /// Gets the step at the given index, returning a rest if out of bounds.
     fn get_step(&self, index: usize) -> Step {
-        self.pattern.get(index).cloned().unwrap_or_default()
+        self.ctrl.pattern().get(index).cloned().unwrap_or_default()
     }
 
     /// Calculates the frequency for the current step.

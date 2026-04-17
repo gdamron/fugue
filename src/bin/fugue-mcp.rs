@@ -64,7 +64,7 @@ struct AddModuleParams {
     )]
     id: String,
     #[schemars(
-        description = "Module type: clock, oscillator, lfo, filter, mixer, adsr, vca, melody, step_sequencer, dac"
+        description = "Module type: agent, clock, oscillator, lfo, filter, mixer, adsr, vca, melody, step_sequencer, dac"
     )]
     module_type: String,
     #[schemars(description = "Optional JSON config object specific to the module type")]
@@ -309,7 +309,7 @@ impl FugueMcp {
     // -- Modules --
 
     #[tool(
-        description = "Add a module to the running invention. Common types: clock (tempo/gate output), oscillator (waveform generator), melody (algorithmic note sequencer), adsr (envelope generator), vca (voltage-controlled amplifier), lfo (low-frequency oscillator), filter (low/high/band-pass), mixer (multi-input mixer), step_sequencer (step-based sequencer), dac (audio output sink). Use describe_module_types for full port and control details."
+        description = "Add a module to the running invention. Common types: agent (triggered LLM orchestration), clock (tempo/gate output), oscillator (waveform generator), melody (algorithmic note sequencer), adsr (envelope generator), vca (voltage-controlled amplifier), lfo (low-frequency oscillator), filter (low/high/band-pass), mixer (multi-input mixer), step_sequencer (step-based sequencer), dac (audio output sink). Use describe_module_types for full port and control details."
     )]
     async fn add_module(
         &self,

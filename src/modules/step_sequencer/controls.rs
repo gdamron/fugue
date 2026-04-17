@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
-use super::{DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS};
+use super::{Step, DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS};
 
 /// Thread-safe controls for the StepSequencer module.
 ///
@@ -28,6 +28,7 @@ pub struct StepSequencerControls {
     pub(crate) base_note: Arc<Mutex<u8>>,
     pub(crate) steps: Arc<Mutex<usize>>,
     pub(crate) gate_length: Arc<Mutex<f32>>,
+    pub(crate) pattern: Arc<Mutex<Vec<Step>>>,
 }
 
 impl StepSequencerControls {
@@ -37,6 +38,7 @@ impl StepSequencerControls {
             base_note: Arc::new(Mutex::new(DEFAULT_BASE_NOTE)),
             steps: Arc::new(Mutex::new(DEFAULT_STEPS)),
             gate_length: Arc::new(Mutex::new(DEFAULT_GATE_LENGTH)),
+            pattern: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -46,6 +48,7 @@ impl StepSequencerControls {
             base_note: Arc::new(Mutex::new(base_note.min(127))),
             steps: Arc::new(Mutex::new(steps.clamp(1, 64))),
             gate_length: Arc::new(Mutex::new(gate_length.clamp(0.0, 1.0))),
+            pattern: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -78,6 +81,31 @@ impl StepSequencerControls {
     pub fn set_gate_length(&self, length: f32) {
         *self.gate_length.lock().unwrap() = length.clamp(0.0, 1.0);
     }
+
+    /// Gets the current pattern.
+    pub fn pattern(&self) -> Vec<Step> {
+        self.pattern.lock().unwrap().clone()
+    }
+
+    /// Sets the current pattern.
+    pub fn set_pattern(&self, pattern: Vec<Step>) {
+        *self.pattern.lock().unwrap() = pattern;
+    }
+
+    /// Gets the current pattern as JSON.
+    pub fn pattern_json(&self) -> String {
+        serde_json::to_string(&self.pattern()).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Sets the current pattern from JSON.
+    pub fn set_pattern_json(&self, value: &str) -> Result<(), String> {
+        let pattern: Vec<Step> = serde_json::from_str(value).map_err(|err| err.to_string())?;
+        if pattern.len() > 64 {
+            return Err("pattern_json may not contain more than 64 steps".to_string());
+        }
+        self.set_pattern(pattern);
+        Ok(())
+    }
 }
 
 impl Default for StepSequencerControls {
@@ -98,6 +126,8 @@ impl ControlSurface for StepSequencerControls {
             ControlMeta::number("gate_length", "Default gate length ratio")
                 .with_range(0.0, 1.0)
                 .with_default(self.gate_length()),
+            ControlMeta::string("pattern_json", "Step pattern as JSON")
+                .with_default(self.pattern_json()),
         ]
     }
 
@@ -106,16 +136,17 @@ impl ControlSurface for StepSequencerControls {
             "base_note" => Ok((self.base_note() as f32).into()),
             "steps" => Ok((self.steps() as f32).into()),
             "gate_length" => Ok(self.gate_length().into()),
+            "pattern_json" => Ok(self.pattern_json().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        let value = value.as_number()?;
         match key {
-            "base_note" => self.set_base_note(value as u8),
-            "steps" => self.set_steps(value as usize),
-            "gate_length" => self.set_gate_length(value),
+            "base_note" => self.set_base_note(value.as_number()? as u8),
+            "steps" => self.set_steps(value.as_number()? as usize),
+            "gate_length" => self.set_gate_length(value.as_number()?),
+            "pattern_json" => self.set_pattern_json(value.as_string()?)?,
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
