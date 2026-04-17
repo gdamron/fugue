@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use fugue::{
     default_sample_rate, ControlMeta, ControlValue, Invention, InventionBuilder, ModuleRegistry,
-    ModuleSpec, RunningInvention,
+    ModuleSpec, OrchestrationRuntime, RunningInvention,
 };
-use indexmap::IndexMap;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
@@ -13,29 +12,8 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-// ---------------------------------------------------------------------------
-// Shadow state types (RunningInvention doesn't expose list APIs)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Serialize)]
-struct ModuleInfo {
-    id: String,
-    module_type: String,
-    config: serde_json::Value,
-}
-
-#[derive(Clone, Serialize)]
-struct ConnectionInfo {
-    from: String,
-    from_port: String,
-    to: String,
-    to_port: String,
-}
-
 struct FugueState {
     running: Option<RunningInvention>,
-    modules: IndexMap<String, ModuleInfo>,
-    connections: Vec<ConnectionInfo>,
     sample_rate: u32,
 }
 
@@ -204,8 +182,6 @@ impl FugueMcp {
         Self {
             state: Arc::new(tokio::sync::Mutex::new(FugueState {
                 running: None,
-                modules: IndexMap::new(),
-                connections: Vec::new(),
                 sample_rate,
             })),
             tool_router: Self::tool_router(),
@@ -227,9 +203,6 @@ impl FugueMcp {
         if let Some(running) = state.running.take() {
             running.stop();
         }
-        state.modules.clear();
-        state.connections.clear();
-
         let invention = Invention {
             version: "1.0.0".to_string(),
             title: params.title.clone(),
@@ -253,14 +226,6 @@ impl FugueMcp {
             .map_err(|e| mcp_error(e.to_string()))?;
         let running = runtime.start().map_err(|e| mcp_error(e.to_string()))?;
 
-        state.modules.insert(
-            "dac".to_string(),
-            ModuleInfo {
-                id: "dac".to_string(),
-                module_type: "dac".to_string(),
-                config: serde_json::Value::Null,
-            },
-        );
         state.running = Some(running);
 
         let title = params.title.as_deref().unwrap_or("untitled");
@@ -282,30 +247,7 @@ impl FugueMcp {
         if let Some(running) = state.running.take() {
             running.stop();
         }
-        state.modules.clear();
-        state.connections.clear();
-
         let invention = Invention::from_json(&params.json).map_err(|e| mcp_error(e.to_string()))?;
-
-        // Populate shadow state from parsed invention
-        for spec in &invention.modules {
-            state.modules.insert(
-                spec.id.clone(),
-                ModuleInfo {
-                    id: spec.id.clone(),
-                    module_type: spec.module_type.clone(),
-                    config: spec.config.clone(),
-                },
-            );
-        }
-        for conn in &invention.connections {
-            state.connections.push(ConnectionInfo {
-                from: conn.from.clone(),
-                from_port: conn.from_port.clone().unwrap_or_default(),
-                to: conn.to.clone(),
-                to_port: conn.to_port.clone().unwrap_or_default(),
-            });
-        }
 
         let title = invention.title.clone().unwrap_or("untitled".to_string());
         let module_count = invention.modules.len();
@@ -329,8 +271,6 @@ impl FugueMcp {
         let mut state = self.state.lock().await;
         if let Some(running) = state.running.take() {
             running.stop();
-            state.modules.clear();
-            state.connections.clear();
             Ok(CallToolResult::success(vec![Content::text(
                 "Invention stopped.",
             )]))
@@ -346,11 +286,22 @@ impl FugueMcp {
     )]
     async fn get_status(&self) -> Result<CallToolResult, ErrorData> {
         let state = self.state.lock().await;
-        let resp = StatusResponse {
-            running: state.running.is_some(),
-            module_count: state.modules.len(),
-            connection_count: state.connections.len(),
-            modules: state.modules.keys().cloned().collect(),
+        let resp = match state.running.as_ref() {
+            Some(running) => {
+                let status = running.status();
+                StatusResponse {
+                    running: status.running,
+                    module_count: status.module_count,
+                    connection_count: status.connection_count,
+                    modules: running.list_modules().into_iter().map(|module| module.id).collect(),
+                }
+            }
+            None => StatusResponse {
+                running: false,
+                module_count: 0,
+                connection_count: 0,
+                modules: Vec::new(),
+            },
         };
         json_result(&resp)
     }
@@ -364,7 +315,7 @@ impl FugueMcp {
         &self,
         Parameters(params): Parameters<AddModuleParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
         let running = state
             .running
             .as_ref()
@@ -374,15 +325,6 @@ impl FugueMcp {
         running
             .add_module(&params.id, &params.module_type, &config)
             .map_err(graph_err)?;
-
-        state.modules.insert(
-            params.id.clone(),
-            ModuleInfo {
-                id: params.id.clone(),
-                module_type: params.module_type.clone(),
-                config,
-            },
-        );
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Added {} module '{}'.",
@@ -397,18 +339,13 @@ impl FugueMcp {
         &self,
         Parameters(params): Parameters<RemoveModuleParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
         let running = state
             .running
             .as_ref()
             .ok_or_else(|| mcp_error("No invention is running."))?;
 
         running.remove_module(&params.id).map_err(graph_err)?;
-
-        state.modules.shift_remove(&params.id);
-        state
-            .connections
-            .retain(|c| c.from != params.id && c.to != params.id);
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Removed module '{}'.",
@@ -419,8 +356,11 @@ impl FugueMcp {
     #[tool(description = "List all modules currently in the invention with their types.")]
     async fn list_modules(&self) -> Result<CallToolResult, ErrorData> {
         let state = self.state.lock().await;
-        let modules: Vec<&ModuleInfo> = state.modules.values().collect();
-        json_result(&modules)
+        let running = state
+            .running
+            .as_ref()
+            .ok_or_else(|| mcp_error("No invention is running."))?;
+        json_result(&running.list_modules())
     }
 
     // -- Connections --
@@ -432,7 +372,7 @@ impl FugueMcp {
         &self,
         Parameters(params): Parameters<ConnectParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
         let running = state
             .running
             .as_ref()
@@ -441,13 +381,6 @@ impl FugueMcp {
         running
             .connect(&params.from, &params.from_port, &params.to, &params.to_port)
             .map_err(graph_err)?;
-
-        state.connections.push(ConnectionInfo {
-            from: params.from.clone(),
-            from_port: params.from_port.clone(),
-            to: params.to.clone(),
-            to_port: params.to_port.clone(),
-        });
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Connected {}:{} -> {}:{}",
@@ -462,7 +395,7 @@ impl FugueMcp {
         &self,
         Parameters(params): Parameters<DisconnectParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
         let running = state
             .running
             .as_ref()
@@ -471,13 +404,6 @@ impl FugueMcp {
         running
             .disconnect(&params.from, &params.from_port, &params.to, &params.to_port)
             .map_err(graph_err)?;
-
-        state.connections.retain(|c| {
-            !(c.from == params.from
-                && c.from_port == params.from_port
-                && c.to == params.to
-                && c.to_port == params.to_port)
-        });
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Disconnected {}:{} -> {}:{}",
@@ -488,7 +414,11 @@ impl FugueMcp {
     #[tool(description = "List all connections in the current invention.")]
     async fn list_connections(&self) -> Result<CallToolResult, ErrorData> {
         let state = self.state.lock().await;
-        json_result(&state.connections)
+        let running = state
+            .running
+            .as_ref()
+            .ok_or_else(|| mcp_error("No invention is running."))?;
+        json_result(&running.list_connections())
     }
 
     // -- Controls --
@@ -557,15 +487,21 @@ impl FugueMcp {
             .ok_or_else(|| mcp_error("No invention is running."))?;
 
         if let Some(module_id) = &params.module_id {
-            let controls = running.list_controls(module_id).map_err(graph_err)?;
-            let entry = ControlEntry {
-                module_id: module_id.clone(),
-                controls,
-            };
-            json_result(&vec![entry])
+            let entries: Vec<ControlEntry> = <RunningInvention as OrchestrationRuntime>::list_controls(
+                running,
+                Some(module_id),
+            )
+                .map_err(graph_err)?
+                .into_iter()
+                .map(|(module_id, controls)| ControlEntry { module_id, controls })
+                .collect();
+            json_result(&entries)
         } else {
-            let all = running.list_all_controls();
-            let entries: Vec<ControlEntry> = all
+            let entries: Vec<ControlEntry> = <RunningInvention as OrchestrationRuntime>::list_controls(
+                running,
+                None,
+            )
+                .map_err(graph_err)?
                 .into_iter()
                 .map(|(id, controls)| ControlEntry {
                     module_id: id,

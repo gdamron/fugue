@@ -150,7 +150,7 @@ impl SignalGraph {
     }
 
     /// Applies a single command to the graph.
-    fn apply_command(&mut self, cmd: GraphCommand) {
+    pub(crate) fn apply_command(&mut self, cmd: GraphCommand) {
         match cmd {
             GraphCommand::SetModuleInput {
                 module_id,

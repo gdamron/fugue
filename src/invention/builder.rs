@@ -6,6 +6,7 @@ use crate::invention::runtime::{
     validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
     ModuleInstance,
 };
+use crate::invention::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
 use crate::registry::ModuleRegistry;
 use crate::ModuleFactory;
 use indexmap::IndexMap;
@@ -109,6 +110,8 @@ impl InventionBuilder {
         // Build the routing graph
         let routing = self.build_routing(&invention, &modules)?;
 
+        let state = Arc::new(Mutex::new(self.build_runtime_state(&invention)));
+
         let runtime = InventionRuntime {
             modules,
             sinks,
@@ -116,9 +119,44 @@ impl InventionBuilder {
             routing,
             registry: self.registry,
             sample_rate: self.sample_rate,
+            state,
         };
 
         Ok((runtime, handles))
+    }
+
+    fn build_runtime_state(&self, invention: &Invention) -> RuntimeState {
+        let mut modules = IndexMap::new();
+        for spec in &invention.modules {
+            modules.insert(
+                spec.id.clone(),
+                RuntimeModuleInfo {
+                    id: spec.id.clone(),
+                    module_type: spec.module_type.clone(),
+                    config: spec.config.clone(),
+                },
+            );
+        }
+
+        let connections = invention
+            .connections
+            .iter()
+            .filter_map(|conn| {
+                Some(RuntimeConnectionInfo {
+                    from: conn.from.clone(),
+                    from_port: conn.from_port.clone()?,
+                    to: conn.to.clone(),
+                    to_port: conn.to_port.clone()?,
+                })
+            })
+            .collect();
+
+        RuntimeState {
+            modules,
+            connections,
+            sample_rate: self.sample_rate,
+            running: false,
+        }
     }
 
     fn validate_invention(&self, invention: &Invention) -> Result<(), Box<dyn std::error::Error>> {

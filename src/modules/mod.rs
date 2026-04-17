@@ -18,6 +18,7 @@
 
 pub mod adsr;
 pub mod clock;
+pub mod code;
 pub mod dac;
 pub mod filter;
 pub mod lfo;
@@ -31,6 +32,7 @@ pub mod vca;
 // Re-export module types
 pub use adsr::{Adsr, AdsrControls};
 pub use clock::{Clock, ClockControls};
+pub use code::CodeControls;
 
 // Deprecated type alias for backward compatibility
 #[allow(deprecated)]
@@ -48,6 +50,7 @@ pub use vca::{Vca, VcaControls};
 // Re-export factory types
 pub use adsr::AdsrFactory;
 pub use clock::ClockFactory;
+pub use code::CodeFactory;
 pub use dac::DacFactory;
 pub use filter::FilterFactory;
 pub use lfo::LfoFactory;

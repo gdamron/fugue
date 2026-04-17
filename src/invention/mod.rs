@@ -17,8 +17,10 @@ pub mod development;
 pub mod format;
 pub mod graph;
 pub mod handles;
+pub mod orchestration;
 pub mod render;
 pub mod runtime;
+pub mod state;
 
 pub use builder::InventionBuilder;
 pub use format::{
@@ -26,5 +28,7 @@ pub use format::{
     Invention, ModuleSpec, TimeSignature,
 };
 pub use handles::InventionHandles;
-pub use render::RenderEngine;
+pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
+pub use render::{CodeModuleRuntimeInfo, RenderEngine};
 pub use runtime::{GraphCommandError, InventionRuntime, RunningInvention};
+pub use state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
