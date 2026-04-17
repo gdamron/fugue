@@ -1,3 +1,4 @@
+pub mod dsp;
 pub mod factory;
 #[cfg(feature = "ffi")]
 pub mod ffi;
