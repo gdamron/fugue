@@ -93,11 +93,18 @@ impl StepSequencerControls {
     }
 
     /// Gets the current pattern as JSON.
+    ///
+    /// This is primarily used by orchestration surfaces such as `agent`, MCP,
+    /// and scripts. Fugue's generic control value type does not currently have
+    /// a JSON variant, so rich pattern data is exposed as a string control.
     pub fn pattern_json(&self) -> String {
         serde_json::to_string(&self.pattern()).unwrap_or_else(|_| "[]".to_string())
     }
 
     /// Sets the current pattern from JSON.
+    ///
+    /// The accepted format is the same step array accepted by the module
+    /// config, for example `[{"note":0,"gate":0.5},{"note":null}]`.
     pub fn set_pattern_json(&self, value: &str) -> Result<(), String> {
         let pattern: Vec<Step> = serde_json::from_str(value).map_err(|err| err.to_string())?;
         if pattern.len() > 64 {

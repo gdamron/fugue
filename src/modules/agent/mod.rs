@@ -1,4 +1,10 @@
 //! Orchestration-only agent module.
+//!
+//! An agent is a graph-resident trigger point for LLM-backed orchestration. It
+//! has normal Fugue input ports, so clocks, sequencers, or scripts can trigger
+//! it, but it performs no LLM work in [`Module::process`]. Instead, trigger and
+//! reset edges increment shared counters that are drained by the runtime
+//! [`crate::agents::AgentManager`] on background threads.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -12,6 +18,11 @@ mod controls;
 mod inputs;
 mod outputs;
 
+/// Factory for constructing `agent` modules from invention config.
+///
+/// The factory stores orchestration config in the runtime snapshot and exposes a
+/// shared [`AgentControls`] surface. The worker reads both immutable config and
+/// mutable controls when servicing each trigger.
 pub struct AgentFactory;
 
 struct AgentConfig {
@@ -87,6 +98,10 @@ fn parse_config(config: &serde_json::Value) -> AgentConfig {
     }
 }
 
+/// Audio-graph shell for an agent worker.
+///
+/// This module intentionally has no outputs and no heavy processing. Its only
+/// audio-rate behavior is rising-edge detection for `trigger` and `reset`.
 pub struct AgentModule {
     controls: AgentControls,
     inputs: inputs::AgentInputs,

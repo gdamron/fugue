@@ -1,4 +1,11 @@
 //! Runtime workers for graph-resident `agent` modules.
+//!
+//! Agent modules live in the audio graph so inventions can trigger them like
+//! any other module, but all expensive work happens here on non-audio threads.
+//! The audio module only increments trigger/reset counters; these workers
+//! observe those counters, build bounded context packets from runtime snapshots,
+//! call configured backends, and optionally write validated results back through
+//! normal graph controls.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
@@ -24,12 +31,20 @@ mod native {
         join: JoinHandle<()>,
     }
 
+    /// Manages one background worker per running `agent` module.
+    ///
+    /// This mirrors the script host lifecycle used by `code` modules. Workers
+    /// are started when an invention starts or an `agent` module is added at
+    /// runtime, and stopped when their module or invention is removed. Keeping
+    /// this manager outside the audio graph avoids network calls, process
+    /// spawning, JSON parsing, and history allocation on the audio thread.
     #[derive(Default)]
     pub struct AgentManager {
         hosts: Mutex<HashMap<String, AgentHost>>,
     }
 
     impl AgentManager {
+        /// Starts workers for every `agent` module in the current runtime.
         pub fn start_all(&self, controller: RuntimeController) {
             for module in controller.snapshot.list_modules() {
                 if module.module_type == "agent" {
@@ -38,6 +53,12 @@ mod native {
             }
         }
 
+        /// Starts or restarts the worker for a single `agent` module.
+        ///
+        /// The module's original config is kept as the static orchestration
+        /// spec. Mutable controls such as `prompt`, `backend`, and `enabled`
+        /// are read from the runtime control surface each time a request is
+        /// serviced.
         pub fn start_module(&self, controller: RuntimeController, module: RuntimeModuleInfo) {
             if module.module_type != "agent" {
                 return;
@@ -54,6 +75,7 @@ mod native {
                 .insert(module.id, AgentHost { command_tx, join });
         }
 
+        /// Stops the worker associated with `module_id`, if one is running.
         pub fn stop_module(&self, module_id: &str) {
             if let Some(host) = self.hosts.lock().unwrap().remove(module_id) {
                 let _ = host.command_tx.send(HostCommand::Stop);
@@ -61,6 +83,7 @@ mod native {
             }
         }
 
+        /// Stops all running agent workers.
         pub fn stop_all(&self) {
             let module_ids: Vec<String> = self.hosts.lock().unwrap().keys().cloned().collect();
             for module_id in module_ids {
@@ -141,6 +164,12 @@ mod native {
         }
     }
 
+    /// Services one queued trigger for an agent module.
+    ///
+    /// The request lifecycle is: build context, call backend, parse and
+    /// validate response, apply configured writes, then append bounded history.
+    /// Any failure is surfaced via the module's status/error controls rather
+    /// than panicking the runtime.
     fn service_request(
         module_id: &str,
         config: &Value,
@@ -216,6 +245,11 @@ mod native {
         Ok(())
     }
 
+    /// Builds the structured packet sent to local/API backends.
+    ///
+    /// The packet separates task text, explicit context bindings, optional
+    /// graph summary, bounded history, and response instructions so adapters do
+    /// not need to scrape prose to recover structured data.
     fn build_request_packet(
         module_id: &str,
         config: &Value,
@@ -250,6 +284,11 @@ mod native {
         Ok(packet)
     }
 
+    /// Resolves explicit context bindings against the runtime.
+    ///
+    /// Supported sources are original module config, a single control, or a set
+    /// of controls matched by exact key or simple suffix wildcard such as
+    /// `degree.*`.
     fn build_context(config: &Value, controller: &RuntimeController) -> Result<Value, String> {
         let mut map = serde_json::Map::new();
         let Some(bindings) = config.get("context").and_then(Value::as_array) else {
@@ -348,6 +387,12 @@ mod native {
         })
     }
 
+    /// Dispatches a request packet to the configured backend.
+    ///
+    /// `test:*` backends are deterministic in-process fakes for tests,
+    /// `local_command` reads config-defined commands over stdin/stdout,
+    /// `local:auto` uses logged-in local harnesses (`claude`, then `codex`),
+    /// and provider backends use API keys from the environment.
     fn call_backend(
         backend: &str,
         config: &Value,
@@ -615,6 +660,13 @@ mod native {
         })
     }
 
+    /// Validates the parsed response before any graph writes occur.
+    ///
+    /// For `json` responses, Fugue expects the standard envelope
+    /// `{ kind, summary, payload, confidence, warnings }`. Full JSON Schema
+    /// validation is intentionally not implemented yet; v1 validates the
+    /// built-in `fugue.step_pattern.v1` preset and preserves user schemas in the
+    /// request packet for backend-side structured output.
     fn validate_response(response_config: &Value, response: &Value) -> Result<(), String> {
         let format = response_config
             .get("format")
@@ -671,6 +723,11 @@ mod native {
         Ok(())
     }
 
+    /// Applies validated JSON response fields to configured target controls.
+    ///
+    /// Writes are explicit and opt-in. The agent never infers graph mutations
+    /// from model output; each write must name a source JSON path, destination
+    /// module, control key, and value type.
     fn apply_response(
         module_id: &str,
         config: &Value,

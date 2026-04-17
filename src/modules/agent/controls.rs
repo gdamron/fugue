@@ -1,9 +1,20 @@
 //! Thread-safe controls for the orchestration-only Agent module.
+//!
+//! These controls are the bridge between graph/UI APIs and the background agent
+//! worker. User-facing controls configure prompts and expose results, while
+//! `trigger_count` and `reset_count` are internal counters incremented by the
+//! audio module and polled by the worker.
 
 use std::sync::{Arc, Mutex};
 
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
+/// Shared runtime state for an `agent` module.
+///
+/// The type is cloneable so the audio graph, runtime APIs, and background
+/// worker can all hold handles to the same state. Access is mutex-protected
+/// because it is never used for DSP math; the audio module only performs small
+/// counter updates.
 #[derive(Clone)]
 pub struct AgentControls {
     shared: Arc<Mutex<AgentState>>,
@@ -55,11 +66,19 @@ impl AgentControls {
         }
     }
 
+    /// Records a rising edge on the `trigger` input.
+    ///
+    /// The background worker observes this monotonically increasing counter and
+    /// services each new value outside the audio thread.
     pub fn increment_trigger(&self) {
         let mut state = self.shared.lock().unwrap();
         state.trigger_count = state.trigger_count.saturating_add(1);
     }
 
+    /// Records a rising edge on the `reset` input.
+    ///
+    /// The worker uses this counter to clear history and errors without doing
+    /// that allocation-heavy work in [`crate::Module::process`].
     pub fn increment_reset(&self) {
         let mut state = self.shared.lock().unwrap();
         state.reset_count = state.reset_count.saturating_add(1);
