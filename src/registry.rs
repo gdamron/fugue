@@ -110,7 +110,7 @@ impl Default for ModuleRegistry {
     fn default() -> Self {
         use crate::modules::{
             AdsrFactory, ClockFactory, CodeFactory, DacFactory, FilterFactory, LfoFactory,
-            MelodyFactory, MixerFactory, OscillatorFactory, SamplePlayerFactory,
+            MelodyFactory, MixerFactory, OscillatorFactory, ReverbFactory, SamplePlayerFactory,
             StepSequencerFactory, VcaFactory,
         };
 
@@ -124,6 +124,7 @@ impl Default for ModuleRegistry {
         reg.register(AdsrFactory);
         reg.register(VcaFactory);
         reg.register(MelodyFactory);
+        reg.register(ReverbFactory);
         reg.register(SamplePlayerFactory);
         reg.register(StepSequencerFactory);
         reg.register(DacFactory);

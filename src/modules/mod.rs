@@ -27,6 +27,7 @@ pub mod mixer;
 pub mod oscillator;
 pub mod sample_player;
 pub mod step_sequencer;
+pub mod reverb;
 pub mod vca;
 
 // Re-export module types
@@ -43,6 +44,7 @@ pub use melody::{MelodyControls, MelodyGenerator};
 
 pub use mixer::{Mixer, MixerControls};
 pub use oscillator::{Oscillator, OscillatorControls, OscillatorType};
+pub use reverb::{Reverb, ReverbControls};
 pub use sample_player::{SamplePlayer, SamplePlayerControls};
 pub use step_sequencer::{Step, StepSequencer};
 pub use vca::{Vca, VcaControls};
@@ -57,6 +59,7 @@ pub use lfo::LfoFactory;
 pub use melody::MelodyFactory;
 pub use mixer::MixerFactory;
 pub use oscillator::OscillatorFactory;
+pub use reverb::ReverbFactory;
 pub use sample_player::SamplePlayerFactory;
 pub use step_sequencer::StepSequencerFactory;
 pub use vca::VcaFactory;

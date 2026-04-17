@@ -7,7 +7,7 @@
       "id": "clock",
       "type": "clock",
       "config": {
-        "bpm": 120.0,
+        "bpm": 60.0,
         "time_signature": {
           "beats_per_measure": 4,
           "beat_unit": 4
@@ -36,13 +36,23 @@
       "config": {
         "attack": 0.05,
         "decay": 0.1,
-        "sustain": 0.7,
-        "release": 0.3
+        "sustain": 0.6,
+        "release": 0.8
       }
     },
     {
       "id": "vca",
       "type": "vca"
+    },
+    {
+      "id": "reverb",
+      "type": "reverb",
+      "config": {
+        "room_size": 0.8,
+        "damping": 0.4,
+        "wet": 0.5,
+        "dry": 0.2
+      }
     },
     {
       "id": "dac",
@@ -83,8 +93,26 @@
     {
       "from": "vca",
       "from_port": "audio",
+      "to": "reverb",
+      "to_port": "left"
+    },
+    {
+      "from": "vca",
+      "from_port": "audio",
+      "to": "reverb",
+      "to_port": "right"
+    },
+    {
+      "from": "reverb",
+      "from_port": "left",
       "to": "dac",
-      "to_port": "audio"
+      "to_port": "audio_left"
+    },
+    {
+      "from": "reverb",
+      "from_port": "right",
+      "to": "dac",
+      "to_port": "audio_right"
     }
   ]
 }
