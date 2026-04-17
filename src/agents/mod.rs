@@ -105,6 +105,13 @@ mod native {
         model: Option<String>,
     }
 
+    #[derive(Clone, Copy, Debug)]
+    struct LocalHarness {
+        name: &'static str,
+        command: &'static str,
+        build_args: fn(&Value) -> Vec<String>,
+    }
+
     fn run_host(
         module_id: String,
         config: Value,
@@ -391,8 +398,8 @@ mod native {
     ///
     /// `test:*` backends are deterministic in-process fakes for tests,
     /// `local_command` reads config-defined commands over stdin/stdout,
-    /// `local:auto` uses logged-in local harnesses (`claude`, then `codex`),
-    /// and provider backends use API keys from the environment.
+    /// `local:*` uses named local harness presets such as `local:claude` or
+    /// `local:codex`, and provider backends use API keys from the environment.
     fn call_backend(
         backend: &str,
         config: &Value,
@@ -413,7 +420,7 @@ mod native {
 
         match backend {
             "local_command" => call_local_command(config, packet),
-            "local:auto" => call_local_auto(packet),
+            backend if backend.starts_with("local:") => call_local_harness_backend(backend, packet),
             "openai" | "anthropic" | "provider_api" => call_provider_api(backend, config, packet),
             other => Err(format!("unknown agent backend '{}'", other)),
         }
@@ -437,34 +444,74 @@ mod native {
         run_command(command, &args, Some(&packet.to_string()), "local_command")
     }
 
-    fn call_local_auto(packet: &Value) -> Result<BackendResult, String> {
-        let prompt = packet.to_string();
-        if command_available("claude") {
-            return run_command(
-                "claude",
-                &[
-                    "-p".to_string(),
-                    prompt,
-                    "--output-format".to_string(),
-                    "text".to_string(),
-                ],
-                None,
-                "claude-code",
-            );
+    fn call_local_harness_backend(backend: &str, packet: &Value) -> Result<BackendResult, String> {
+        let harness_name = backend.trim_start_matches("local:");
+        if harness_name == "auto" {
+            for harness in local_harnesses().iter().copied() {
+                if command_available(harness.command) {
+                    return call_local_harness(harness, packet);
+                }
+            }
+            let tried = local_harnesses()
+                .iter()
+                .map(|harness| harness.name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "no supported local agent command found (tried {})",
+                tried
+            ));
         }
-        if command_available("codex") {
-            return run_command(
-                "codex",
-                &[
-                    "exec".to_string(),
-                    "--skip-git-repo-check".to_string(),
-                    prompt,
-                ],
-                None,
-                "codex",
-            );
+
+        let harness = local_harnesses()
+            .iter()
+            .copied()
+            .find(|harness| harness.name == harness_name)
+            .ok_or_else(|| format!("unknown local agent harness '{}'", harness_name))?;
+        if !command_available(harness.command) {
+            return Err(format!(
+                "local agent harness '{}' is not available (missing command '{}')",
+                harness.name, harness.command
+            ));
         }
-        Err("no supported local agent command found (tried claude, codex)".to_string())
+        call_local_harness(harness, packet)
+    }
+
+    fn call_local_harness(harness: LocalHarness, packet: &Value) -> Result<BackendResult, String> {
+        let args = (harness.build_args)(packet);
+        run_command(harness.command, &args, None, harness.name)
+    }
+
+    fn local_harnesses() -> &'static [LocalHarness] {
+        &[
+            LocalHarness {
+                name: "claude",
+                command: "claude",
+                build_args: claude_args,
+            },
+            LocalHarness {
+                name: "codex",
+                command: "codex",
+                build_args: codex_args,
+            },
+        ]
+    }
+
+    fn claude_args(packet: &Value) -> Vec<String> {
+        vec![
+            "-p".to_string(),
+            packet.to_string(),
+            "--output-format".to_string(),
+            "text".to_string(),
+        ]
+    }
+
+    fn codex_args(packet: &Value) -> Vec<String> {
+        vec![
+            "exec".to_string(),
+            "--skip-git-repo-check".to_string(),
+            packet.to_string(),
+        ]
     }
 
     fn call_provider_api(

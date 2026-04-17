@@ -138,3 +138,48 @@ fn step_sequencer_pattern_json_round_trips() {
 
     running.stop();
 }
+
+#[test]
+fn named_local_harness_reports_missing_command_cleanly() {
+    let invention = Invention::from_json(
+        r#"{
+            "version": "1.0.0",
+            "modules": [
+                {
+                    "id": "agent",
+                    "type": "agent",
+                    "config": {
+                        "backend": "local:__missing_harness_for_test__",
+                        "prompt": "test"
+                    }
+                },
+                { "id": "dac", "type": "dac" }
+            ],
+            "connections": []
+        }"#,
+    )
+    .unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(48_000))
+        .unwrap();
+
+    running.set_module_input("agent", "trigger", 1.0).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let error = running.get_control("agent", "last_error").unwrap();
+        if let ControlValue::String(error) = error {
+            if error.contains("unknown local agent harness") {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "agent did not report backend error"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    running.stop();
+}
