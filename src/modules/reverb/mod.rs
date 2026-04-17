@@ -32,6 +32,7 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
+use crate::dsp::{Allpass, Damper, DelayLine};
 use crate::factory::{ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -65,12 +66,12 @@ const TAP_FRACTIONS: [f32; FDN_ORDER] = [0.41, 0.30, 0.155, 0.0];
 /// Offset added to each tap position (samples).
 const TAP_OFFSET: usize = 5;
 
-/// Diffuser base sizes (relative units, scaled by diffscale).
+/// Allpass base sizes (relative units, scaled by diffscale).
 const INPUT_DIFF_SIZE: f32 = 210.0;
 const OUTPUT_DIFF_SIZES: [f32; 3] = [159.0, 562.0, 1341.0];
 const DIFF_SIZE_TOTAL: f32 = 1341.0;
 
-/// Diffuser allpass coefficients.
+/// Allpass allpass coefficients.
 const INPUT_DIFF_COEFF: f32 = 0.75;
 const OUTPUT_DIFF_COEFFS: [f32; 3] = [0.75, 0.625, 0.625];
 
@@ -85,85 +86,6 @@ const MAX_RT60: f32 = 15.0;
 
 /// Target attenuation for RT60 calculation (60 dB).
 const ALPHA_BASE: f32 = 0.001; // 10^(-60/20)
-
-// --- DSP primitives ---
-
-/// Circular delay buffer with indexed read. Pre-allocated at construction.
-struct DelayLine {
-    buffer: Vec<f32>,
-    index: usize,
-}
-
-impl DelayLine {
-    fn new(length: usize) -> Self {
-        Self {
-            buffer: vec![0.0; length.max(1)],
-            index: 0,
-        }
-    }
-
-    /// Reads from the delay line at `offset` samples in the past.
-    #[inline]
-    fn read(&self, offset: usize) -> f32 {
-        let len = self.buffer.len();
-        let pos = (self.index + len - offset) % len;
-        self.buffer[pos]
-    }
-
-    /// Writes a value at the current position and advances the write head.
-    #[inline]
-    fn write_and_advance(&mut self, value: f32) {
-        self.buffer[self.index] = value;
-        self.index += 1;
-        if self.index >= self.buffer.len() {
-            self.index = 0;
-        }
-    }
-}
-
-/// One-pole lowpass filter (damper).
-struct Damper {
-    state: f32,
-}
-
-impl Damper {
-    fn new() -> Self {
-        Self { state: 0.0 }
-    }
-
-    /// Processes one sample. `coeff` is the damping amount (0 = no filtering, 1 = full).
-    #[inline]
-    fn tick(&mut self, input: f32, coeff: f32) -> f32 {
-        self.state = input * (1.0 - coeff) + self.state * coeff;
-        self.state
-    }
-}
-
-/// Schroeder allpass diffuser with configurable feedback coefficient.
-struct Diffuser {
-    delay: DelayLine,
-    size: usize,
-    coeff: f32,
-}
-
-impl Diffuser {
-    fn new(size: usize, coeff: f32) -> Self {
-        Self {
-            delay: DelayLine::new(size.max(1)),
-            size: size.max(1),
-            coeff,
-        }
-    }
-
-    #[inline]
-    fn tick(&mut self, input: f32) -> f32 {
-        let delayed = self.delay.read(self.size - 1);
-        let w = input - delayed * self.coeff;
-        let output = delayed + w * self.coeff;
-        self.delay.write_and_advance(w);
-        output
-    }
-}
 
 // --- Hadamard 4x4 matrix ---
 
@@ -229,7 +151,7 @@ pub struct Reverb {
 
     // Input processing
     input_damper: Damper,
-    input_diffuser: Diffuser,
+    input_diffuser: Allpass,
 
     // Tapped delay for early reflections
     tap_delay: DelayLine,
@@ -241,8 +163,8 @@ pub struct Reverb {
     max_fdn_lengths: [usize; FDN_ORDER],
 
     // Output diffusers (3 per channel)
-    left_diffusers: [Diffuser; 3],
-    right_diffusers: [Diffuser; 3],
+    left_diffusers: [Allpass; 3],
+    right_diffusers: [Allpass; 3],
 
     inputs: inputs::ReverbInputs,
     outputs: outputs::ReverbOutputs,
@@ -272,21 +194,21 @@ impl Reverb {
         let max_tap_delay_len = max_largest_delay + TAP_OFFSET + 1;
         let tap_delay = DelayLine::new(max_tap_delay_len);
 
-        // Diffuser sizing based on max FDN length
+        // Allpass sizing based on max FDN length
         let diff_scale = max_fdn_lengths[3] as f32 / DIFF_SIZE_TOTAL;
 
         let input_diff_size = (INPUT_DIFF_SIZE * diff_scale).ceil() as usize;
-        let input_diffuser = Diffuser::new(input_diff_size, INPUT_DIFF_COEFF);
+        let input_diffuser = Allpass::new(input_diff_size, INPUT_DIFF_COEFF);
 
         let left_diffusers = std::array::from_fn(|i| {
             let size =
                 ((OUTPUT_DIFF_SIZES[i] + STEREO_SPREAD) * diff_scale).ceil() as usize;
-            Diffuser::new(size, OUTPUT_DIFF_COEFFS[i])
+            Allpass::new(size, OUTPUT_DIFF_COEFFS[i])
         });
         let right_diffusers = std::array::from_fn(|i| {
             let size =
                 ((OUTPUT_DIFF_SIZES[i] - STEREO_SPREAD) * diff_scale).ceil() as usize;
-            Diffuser::new(size.max(1), OUTPUT_DIFF_COEFFS[i])
+            Allpass::new(size.max(1), OUTPUT_DIFF_COEFFS[i])
         });
 
         Self {
