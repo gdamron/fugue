@@ -17,6 +17,7 @@
 //! - [`ClockFactory`], [`OscillatorFactory`], [`LfoFactory`], [`FilterFactory`], [`MixerFactory`], [`AdsrFactory`], [`VcaFactory`], [`MelodyFactory`], [`StepSequencerFactory`], [`DacFactory`]
 
 pub mod adsr;
+pub mod agent;
 pub mod clock;
 pub mod code;
 pub mod dac;
@@ -25,13 +26,14 @@ pub mod lfo;
 pub mod melody;
 pub mod mixer;
 pub mod oscillator;
+pub mod reverb;
 pub mod sample_player;
 pub mod step_sequencer;
-pub mod reverb;
 pub mod vca;
 
 // Re-export module types
 pub use adsr::{Adsr, AdsrControls};
+pub use agent::AgentControls;
 pub use clock::{Clock, ClockControls};
 pub use code::CodeControls;
 
@@ -51,6 +53,7 @@ pub use vca::{Vca, VcaControls};
 
 // Re-export factory types
 pub use adsr::AdsrFactory;
+pub use agent::AgentFactory;
 pub use clock::ClockFactory;
 pub use code::CodeFactory;
 pub use dac::DacFactory;

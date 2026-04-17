@@ -4,6 +4,7 @@ use indexmap::IndexMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+use crate::agents::AgentManager;
 use crate::scripting::ScriptManager;
 use crate::{ControlValue, Invention, InventionBuilder, ModuleRegistry};
 
@@ -27,6 +28,7 @@ pub struct RenderEngine {
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     source_json: Option<String>,
     scripts: ScriptManager,
+    agents: AgentManager,
 }
 
 /// Serializable config/state view for a `code` module.
@@ -53,6 +55,7 @@ impl RenderEngine {
             control_surfaces: Arc::new(Mutex::new(IndexMap::new())),
             source_json: None,
             scripts: ScriptManager::default(),
+            agents: AgentManager::default(),
         }
     }
 
@@ -309,6 +312,16 @@ impl RenderEngine {
                 },
             );
         }
+        if module_type == "agent" {
+            self.agents.start_module(
+                self.controller().expect("render controller available"),
+                RuntimeModuleInfo {
+                    id: module_id.to_string(),
+                    module_type: module_type.to_string(),
+                    config: config.clone(),
+                },
+            );
+        }
 
         Ok(())
     }
@@ -319,6 +332,7 @@ impl RenderEngine {
             .as_ref()
             .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))?;
         self.scripts.stop_module(module_id);
+        self.agents.stop_module(module_id);
         self.control_surfaces
             .lock()
             .unwrap()
@@ -416,6 +430,7 @@ impl RenderEngine {
 
     fn install_runtime(&mut self, runtime: super::runtime::InventionRuntime) {
         self.scripts.stop_all();
+        self.agents.stop_all();
         let mut input_map: std::collections::HashMap<String, Vec<RoutingConnection>> =
             std::collections::HashMap::new();
 
@@ -443,7 +458,8 @@ impl RenderEngine {
         self.state = runtime.state;
         *self.control_surfaces.lock().unwrap() = runtime.control_surfaces;
         if let Some(controller) = self.controller() {
-            self.scripts.start_all(controller);
+            self.scripts.start_all(controller.clone());
+            self.agents.start_all(controller);
         }
     }
 }
