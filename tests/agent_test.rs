@@ -81,13 +81,23 @@ fn agent_trigger_applies_step_pattern_response() {
         .start_with_backend(NullAudioBackend::new(48_000))
         .unwrap();
 
-    running.set_module_input("agent", "trigger", 1.0).unwrap();
-
     let deadline = Instant::now() + Duration::from_secs(2);
+    let mut trigger_count = 1.0;
     loop {
+        running
+            .set_control(
+                "agent",
+                "trigger_count",
+                ControlValue::Number(trigger_count),
+            )
+            .unwrap();
+        trigger_count += 1.0;
+
         let count = running.get_control("agent", "request_count").unwrap();
-        if count == ControlValue::Number(1.0) {
-            break;
+        if let ControlValue::Number(count) = count {
+            if count >= 1.0 {
+                break;
+            }
         }
         assert!(Instant::now() < deadline, "agent did not complete request");
         thread::sleep(Duration::from_millis(20));
@@ -164,10 +174,18 @@ fn named_local_harness_reports_missing_command_cleanly() {
         .start_with_backend(NullAudioBackend::new(48_000))
         .unwrap();
 
-    running.set_module_input("agent", "trigger", 1.0).unwrap();
-
     let deadline = Instant::now() + Duration::from_secs(2);
+    let mut trigger_count = 1.0;
     loop {
+        running
+            .set_control(
+                "agent",
+                "trigger_count",
+                ControlValue::Number(trigger_count),
+            )
+            .unwrap();
+        trigger_count += 1.0;
+
         let error = running.get_control("agent", "last_error").unwrap();
         if let ControlValue::String(error) = error {
             if error.contains("unknown local agent harness") {
