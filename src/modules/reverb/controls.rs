@@ -11,6 +11,7 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 #[derive(Clone)]
 pub struct ReverbControls {
     pub(crate) room_size: Arc<Mutex<f32>>,
+    pub(crate) decay: Arc<Mutex<f32>>,
     pub(crate) damping: Arc<Mutex<f32>>,
     pub(crate) wet: Arc<Mutex<f32>>,
     pub(crate) dry: Arc<Mutex<f32>>,
@@ -22,6 +23,7 @@ impl ReverbControls {
     /// Creates new reverb controls with the given initial values.
     pub fn new(
         room_size: f32,
+        decay: f32,
         damping: f32,
         wet: f32,
         dry: f32,
@@ -30,6 +32,7 @@ impl ReverbControls {
     ) -> Self {
         Self {
             room_size: Arc::new(Mutex::new(room_size.clamp(0.0, 1.0))),
+            decay: Arc::new(Mutex::new(decay.clamp(0.0, 1.0))),
             damping: Arc::new(Mutex::new(damping.clamp(0.0, 1.0))),
             wet: Arc::new(Mutex::new(wet.clamp(0.0, 1.0))),
             dry: Arc::new(Mutex::new(dry.clamp(0.0, 1.0))),
@@ -44,6 +47,14 @@ impl ReverbControls {
 
     pub fn set_room_size(&self, value: f32) {
         *self.room_size.lock().unwrap() = value.clamp(0.0, 1.0);
+    }
+
+    pub fn decay(&self) -> f32 {
+        *self.decay.lock().unwrap()
+    }
+
+    pub fn set_decay(&self, value: f32) {
+        *self.decay.lock().unwrap() = value.clamp(0.0, 1.0);
     }
 
     pub fn damping(&self) -> f32 {
@@ -90,9 +101,12 @@ impl ReverbControls {
 impl ControlSurface for ReverbControls {
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::number("room_size", "Room size / decay length")
+            ControlMeta::number("room_size", "Room size")
                 .with_range(0.0, 1.0)
                 .with_default(self.room_size()),
+            ControlMeta::number("decay", "Reverb decay time")
+                .with_range(0.0, 1.0)
+                .with_default(self.decay()),
             ControlMeta::number("damping", "High-frequency damping")
                 .with_range(0.0, 1.0)
                 .with_default(self.damping()),
@@ -112,6 +126,7 @@ impl ControlSurface for ReverbControls {
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
             "room_size" => Ok(self.room_size().into()),
+            "decay" => Ok(self.decay().into()),
             "damping" => Ok(self.damping().into()),
             "wet" => Ok(self.wet().into()),
             "dry" => Ok(self.dry().into()),
@@ -124,6 +139,7 @@ impl ControlSurface for ReverbControls {
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
             "room_size" => self.set_room_size(value.as_number()?),
+            "decay" => self.set_decay(value.as_number()?),
             "damping" => self.set_damping(value.as_number()?),
             "wet" => self.set_wet(value.as_number()?),
             "dry" => self.set_dry(value.as_number()?),

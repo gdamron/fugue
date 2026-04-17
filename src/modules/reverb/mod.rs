@@ -1,13 +1,14 @@
-//! Freeverb reverb module.
+//! GVerb reverb module.
 //!
-//! An implementation of the Freeverb algorithm (Jezar at Dreampoint) providing
-//! a classic algorithmic reverb. The architecture uses 8 parallel comb filters
-//! feeding into 4 cascaded allpass filters per stereo channel.
+//! A reverb based on the GVerb algorithm, using a 4-order
+//! Feedback Delay Network with Hadamard matrix coupling, tapped delay early
+//! reflections, and cascaded allpass diffusers for stereo output.
 //!
 //! # Features
 //!
 //! - Stereo in/out with configurable width
-//! - Room size, damping, wet/dry mix controls
+//! - Separate early reflections and reverb tail
+//! - Room size, decay time, damping controls
 //! - Freeze mode for infinite sustain
 //! - All delay buffers pre-allocated at construction (allocation-free processing)
 //!
@@ -17,7 +18,7 @@
 //! {
 //!   "modules": [
 //!     { "id": "osc", "type": "oscillator", "config": { "oscillator_type": "sawtooth" } },
-//!     { "id": "reverb", "type": "reverb", "config": { "room_size": 0.7, "damping": 0.4, "wet": 0.5, "dry": 0.8 } },
+//!     { "id": "reverb", "type": "reverb", "config": { "room_size": 0.5, "decay": 0.6, "wet": 0.4, "dry": 0.8 } },
 //!     { "id": "dac", "type": "dac" }
 //!   ],
 //!   "connections": [
@@ -41,22 +42,53 @@ mod controls;
 mod inputs;
 mod outputs;
 
-// --- Freeverb tuning constants ---
+// --- GVerb constants ---
 
-const FIXED_GAIN: f32 = 0.015;
-const SCALE_WET: f32 = 3.0;
-const SCALE_DAMPING: f32 = 0.4;
-const SCALE_ROOM: f32 = 0.28;
-const OFFSET_ROOM: f32 = 0.7;
-const STEREO_SPREAD: usize = 23;
-const ALLPASS_FEEDBACK: f32 = 0.5;
+/// Number of parallel delay lines in the FDN.
+const FDN_ORDER: usize = 4;
 
-const COMB_SIZES: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
-const ALLPASS_SIZES: [usize; 4] = [556, 441, 341, 225];
+/// Speed of sound in meters per second (for room size → delay conversion).
+const SPEED_OF_SOUND: f32 = 340.0;
+
+/// Maximum room size in meters (determines max delay allocation).
+const MAX_ROOM_M: f32 = 100.0;
+
+/// Minimum room size in meters.
+const MIN_ROOM_M: f32 = 1.0;
+
+/// FDN delay length ratios relative to the largest delay.
+const FDN_RATIOS: [f32; FDN_ORDER] = [1.0, 0.816490, 0.707100, 0.632450];
+
+/// Early reflection tap positions as fractions of largest delay.
+const TAP_FRACTIONS: [f32; FDN_ORDER] = [0.41, 0.30, 0.155, 0.0];
+
+/// Offset added to each tap position (samples).
+const TAP_OFFSET: usize = 5;
+
+/// Diffuser base sizes (relative units, scaled by diffscale).
+const INPUT_DIFF_SIZE: f32 = 210.0;
+const OUTPUT_DIFF_SIZES: [f32; 3] = [159.0, 562.0, 1341.0];
+const DIFF_SIZE_TOTAL: f32 = 1341.0;
+
+/// Diffuser allpass coefficients.
+const INPUT_DIFF_COEFF: f32 = 0.75;
+const OUTPUT_DIFF_COEFFS: [f32; 3] = [0.75, 0.625, 0.625];
+
+/// Stereo spread in samples (decorrelates left/right diffusers).
+const STEREO_SPREAD: f32 = 13.0;
+
+/// Minimum RT60 in seconds.
+const MIN_RT60: f32 = 0.2;
+
+/// Maximum RT60 in seconds.
+const MAX_RT60: f32 = 15.0;
+
+/// Target attenuation for RT60 calculation (60 dB).
+const ALPHA_BASE: f32 = 0.001; // 10^(-60/20)
 
 // --- DSP primitives ---
 
-/// Circular delay buffer. Pre-allocated at construction.
+/// Circular delay buffer with indexed read. Pre-allocated at construction.
 struct DelayLine {
     buffer: Vec<f32>,
     index: usize,
@@ -65,16 +97,20 @@ struct DelayLine {
 impl DelayLine {
     fn new(length: usize) -> Self {
         Self {
-            buffer: vec![0.0; length],
+            buffer: vec![0.0; length.max(1)],
             index: 0,
         }
     }
 
+    /// Reads from the delay line at `offset` samples in the past.
     #[inline]
-    fn read(&self) -> f32 {
-        self.buffer[self.index]
+    fn read(&self, offset: usize) -> f32 {
+        let len = self.buffer.len();
+        let pos = (self.index + len - offset) % len;
+        self.buffer[pos]
     }
 
+    /// Writes a value at the current position and advances the write head.
     #[inline]
     fn write_and_advance(&mut self, value: f32) {
         self.buffer[self.index] = value;
@@ -85,59 +121,88 @@ impl DelayLine {
     }
 }
 
-/// Lowpass-feedback comb filter.
-struct CombFilter {
-    delay: DelayLine,
-    filter_state: f32,
+/// One-pole lowpass filter (damper).
+struct Damper {
+    state: f32,
 }
 
-impl CombFilter {
-    fn new(length: usize) -> Self {
-        Self {
-            delay: DelayLine::new(length),
-            filter_state: 0.0,
-        }
+impl Damper {
+    fn new() -> Self {
+        Self { state: 0.0 }
     }
 
+    /// Processes one sample. `coeff` is the damping amount (0 = no filtering, 1 = full).
     #[inline]
-    fn tick(&mut self, input: f32, feedback: f32, damping: f32) -> f32 {
-        let output = self.delay.read();
-        self.filter_state = output * (1.0 - damping) + self.filter_state * damping;
-        self.delay.write_and_advance(input + self.filter_state * feedback);
-        output
+    fn tick(&mut self, input: f32, coeff: f32) -> f32 {
+        self.state = input * (1.0 - coeff) + self.state * coeff;
+        self.state
     }
 }
 
-/// Schroeder allpass filter with fixed 0.5 feedback.
-struct AllpassFilter {
+/// Schroeder allpass diffuser with configurable feedback coefficient.
+struct Diffuser {
     delay: DelayLine,
+    size: usize,
+    coeff: f32,
 }
 
-impl AllpassFilter {
-    fn new(length: usize) -> Self {
+impl Diffuser {
+    fn new(size: usize, coeff: f32) -> Self {
         Self {
-            delay: DelayLine::new(length),
+            delay: DelayLine::new(size.max(1)),
+            size: size.max(1),
+            coeff,
         }
     }
 
     #[inline]
     fn tick(&mut self, input: f32) -> f32 {
-        let delayed = self.delay.read();
-        let output = -input + delayed;
-        self.delay
-            .write_and_advance(input + delayed * ALLPASS_FEEDBACK);
+        let delayed = self.delay.read(self.size - 1);
+        let w = input - delayed * self.coeff;
+        let output = delayed + w * self.coeff;
+        self.delay.write_and_advance(w);
         output
     }
 }
 
-// --- Main reverb module ---
+// --- Hadamard 4x4 matrix ---
 
-/// Scales a base delay length for the given sample rate.
-fn scale_length(base: usize, sample_rate: u32) -> usize {
-    ((base as u64 * sample_rate as u64) / 44100).max(1) as usize
+/// Applies the 4x4 Hadamard feedback matrix in-place.
+/// b[0] = 0.5 * (+d0 + d1 - d2 - d3)
+/// b[1] = 0.5 * (+d0 - d1 - d2 + d3)
+/// b[2] = 0.5 * (-d0 + d1 - d2 + d3)
+/// b[3] = 0.5 * (+d0 + d1 + d2 + d3)
+#[inline]
+fn hadamard4(d: &[f32; FDN_ORDER]) -> [f32; FDN_ORDER] {
+    [
+        0.5 * (d[0] + d[1] - d[2] - d[3]),
+        0.5 * (d[0] - d[1] - d[2] + d[3]),
+        0.5 * (-d[0] + d[1] - d[2] + d[3]),
+        0.5 * (d[0] + d[1] + d[2] + d[3]),
+    ]
 }
 
-/// A stereo reverb effect using the Freeverb algorithm.
+// --- Parameter mapping helpers ---
+
+/// Maps room_size control (0–1) to meters.
+fn room_size_to_meters(ctrl: f32) -> f32 {
+    MIN_ROOM_M + ctrl * (MAX_ROOM_M - MIN_ROOM_M)
+}
+
+/// Maps decay control (0–1) to RT60 in seconds.
+fn decay_to_rt60(ctrl: f32) -> f32 {
+    MIN_RT60 + ctrl * (MAX_RT60 - MIN_RT60)
+}
+
+/// Computes per-sample decay alpha from RT60 and sample rate.
+/// alpha = ALPHA_BASE ^ (1 / (rt60 * sample_rate))
+fn compute_alpha(rt60: f32, sample_rate: u32) -> f32 {
+    ALPHA_BASE.powf(1.0 / (rt60 * sample_rate as f32))
+}
+
+// --- Main reverb module ---
+
+/// A stereo reverb effect using the GVerb (CCRMA) algorithm.
 ///
 /// # Inputs
 ///
@@ -151,22 +216,33 @@ fn scale_length(base: usize, sample_rate: u32) -> usize {
 ///
 /// # Controls
 ///
-/// - `room_size` - Room size / decay length (0.0–1.0, default 0.5)
+/// - `room_size` - Room size (0.0–1.0, maps to 1–100m, default 0.5)
+/// - `decay` - Reverb decay time (0.0–1.0, maps to RT60 0.2–15s, default 0.5)
 /// - `damping` - High-frequency damping (0.0–1.0, default 0.5)
 /// - `wet` - Wet signal level (0.0–1.0, default 0.33)
 /// - `dry` - Dry signal level (0.0–1.0, default 1.0)
 /// - `width` - Stereo width (0.0–1.0, default 1.0)
 /// - `freeze` - Infinite hold mode (bool, default false)
 pub struct Reverb {
+    sample_rate: u32,
     ctrl: ReverbControls,
 
-    // 8 comb filters per channel
-    combs_l: [CombFilter; 8],
-    combs_r: [CombFilter; 8],
+    // Input processing
+    input_damper: Damper,
+    input_diffuser: Diffuser,
 
-    // 4 allpass filters per channel
-    allpasses_l: [AllpassFilter; 4],
-    allpasses_r: [AllpassFilter; 4],
+    // Tapped delay for early reflections
+    tap_delay: DelayLine,
+    max_tap_delay_len: usize,
+
+    // FDN delay lines and dampers
+    fdn_delays: [DelayLine; FDN_ORDER],
+    fdn_dampers: [Damper; FDN_ORDER],
+    max_fdn_lengths: [usize; FDN_ORDER],
+
+    // Output diffusers (3 per channel)
+    left_diffusers: [Diffuser; 3],
+    right_diffusers: [Diffuser; 3],
 
     inputs: inputs::ReverbInputs,
     outputs: outputs::ReverbOutputs,
@@ -176,31 +252,55 @@ pub struct Reverb {
 impl Reverb {
     /// Creates a new Reverb with default controls.
     pub fn new(sample_rate: u32) -> Self {
-        let controls = ReverbControls::new(0.5, 0.5, 0.33, 1.0, 1.0, false);
+        let controls = ReverbControls::new(0.5, 0.5, 0.5, 0.33, 1.0, 1.0, false);
         Self::new_with_controls(sample_rate, controls)
     }
 
     /// Creates a new Reverb with the given controls.
     pub fn new_with_controls(sample_rate: u32, controls: ReverbControls) -> Self {
-        let combs_l = std::array::from_fn(|i| {
-            CombFilter::new(scale_length(COMB_SIZES[i], sample_rate))
+        // Allocate at max room size to avoid runtime allocation
+        let max_largest_delay =
+            (sample_rate as f32 * MAX_ROOM_M / SPEED_OF_SOUND).ceil() as usize + 1;
+
+        // FDN delay lines (allocated at max size)
+        let max_fdn_lengths: [usize; FDN_ORDER] =
+            std::array::from_fn(|i| (max_largest_delay as f32 * FDN_RATIOS[i]).ceil() as usize);
+        let fdn_delays = std::array::from_fn(|i| DelayLine::new(max_fdn_lengths[i] + 1));
+        let fdn_dampers = std::array::from_fn(|_| Damper::new());
+
+        // Tap delay (needs to hold at least max_largest_delay)
+        let max_tap_delay_len = max_largest_delay + TAP_OFFSET + 1;
+        let tap_delay = DelayLine::new(max_tap_delay_len);
+
+        // Diffuser sizing based on max FDN length
+        let diff_scale = max_fdn_lengths[3] as f32 / DIFF_SIZE_TOTAL;
+
+        let input_diff_size = (INPUT_DIFF_SIZE * diff_scale).ceil() as usize;
+        let input_diffuser = Diffuser::new(input_diff_size, INPUT_DIFF_COEFF);
+
+        let left_diffusers = std::array::from_fn(|i| {
+            let size =
+                ((OUTPUT_DIFF_SIZES[i] + STEREO_SPREAD) * diff_scale).ceil() as usize;
+            Diffuser::new(size, OUTPUT_DIFF_COEFFS[i])
         });
-        let combs_r = std::array::from_fn(|i| {
-            CombFilter::new(scale_length(COMB_SIZES[i] + STEREO_SPREAD, sample_rate))
-        });
-        let allpasses_l = std::array::from_fn(|i| {
-            AllpassFilter::new(scale_length(ALLPASS_SIZES[i], sample_rate))
-        });
-        let allpasses_r = std::array::from_fn(|i| {
-            AllpassFilter::new(scale_length(ALLPASS_SIZES[i] + STEREO_SPREAD, sample_rate))
+        let right_diffusers = std::array::from_fn(|i| {
+            let size =
+                ((OUTPUT_DIFF_SIZES[i] - STEREO_SPREAD) * diff_scale).ceil() as usize;
+            Diffuser::new(size.max(1), OUTPUT_DIFF_COEFFS[i])
         });
 
         Self {
+            sample_rate,
             ctrl: controls,
-            combs_l,
-            combs_r,
-            allpasses_l,
-            allpasses_r,
+            input_damper: Damper::new(),
+            input_diffuser,
+            tap_delay,
+            max_tap_delay_len,
+            fdn_delays,
+            fdn_dampers,
+            max_fdn_lengths,
+            left_diffusers,
+            right_diffusers,
             inputs: inputs::ReverbInputs::new(),
             outputs: outputs::ReverbOutputs::new(),
             last_processed_sample: 0,
@@ -210,52 +310,116 @@ impl Reverb {
     /// Processes one stereo sample through the reverb.
     fn process_sample(&mut self) {
         let frozen = self.ctrl.freeze();
-        let input_gain = if frozen { 0.0 } else { 1.0 };
-
-        let feedback = if frozen {
-            1.0
-        } else {
-            self.ctrl.room_size() * SCALE_ROOM + OFFSET_ROOM
-        };
-        let damping = if frozen {
-            0.0
-        } else {
-            self.ctrl.damping() * SCALE_DAMPING
-        };
-
+        let room_size_ctrl = self.ctrl.room_size();
+        let decay_ctrl = self.ctrl.decay();
+        let damping = self.ctrl.damping();
         let wet_ctrl = self.ctrl.wet();
         let dry = self.ctrl.dry();
         let width = self.ctrl.width();
 
         let input_l = self.inputs.left();
         let input_r = self.inputs.right();
-        let mixed = (input_l + input_r) * FIXED_GAIN * input_gain;
+        let input = (input_l + input_r) * 0.5;
 
-        // Parallel comb filters
-        let mut out_l = 0.0f32;
-        let mut out_r = 0.0f32;
-        for comb in &mut self.combs_l {
-            out_l += comb.tick(mixed, feedback, damping);
+        // Compute room-dependent parameters
+        let room_m = room_size_to_meters(room_size_ctrl);
+        let largest_delay =
+            ((self.sample_rate as f32 * room_m / SPEED_OF_SOUND) as usize).max(1);
+
+        let rt60 = decay_to_rt60(decay_ctrl);
+        let alpha = compute_alpha(rt60, self.sample_rate);
+
+        // FDN lengths (clamped to allocated max)
+        let fdn_lens: [usize; FDN_ORDER] = std::array::from_fn(|i| {
+            ((largest_delay as f32 * FDN_RATIOS[i]) as usize)
+                .max(1)
+                .min(self.max_fdn_lengths[i])
+        });
+
+        // FDN gains from alpha
+        let fdn_gains: [f32; FDN_ORDER] = if frozen {
+            [-1.0; FDN_ORDER]
+        } else {
+            std::array::from_fn(|i| -(alpha.powi(fdn_lens[i] as i32)))
+        };
+
+        // Tap positions and gains
+        let tap_positions: [usize; FDN_ORDER] = std::array::from_fn(|i| {
+            let pos = (TAP_FRACTIONS[i] * largest_delay as f32) as usize + TAP_OFFSET;
+            pos.min(self.max_tap_delay_len - 1)
+        });
+        let tap_gains: [f32; FDN_ORDER] = if frozen {
+            [0.0; FDN_ORDER]
+        } else {
+            std::array::from_fn(|i| alpha.powi(tap_positions[i] as i32))
+        };
+
+        // Input gain (zero when frozen to prevent new input)
+        let input_gain = if frozen { 0.0 } else { 1.0 };
+
+        // 1. Input damping (bandwidth control)
+        let z = self.input_damper.tick(input * input_gain, damping);
+
+        // 2. Input diffusion
+        let z = self.input_diffuser.tick(z);
+
+        // 3. Read early reflection taps
+        let early: [f32; FDN_ORDER] =
+            std::array::from_fn(|i| tap_gains[i] * self.tap_delay.read(tap_positions[i]));
+
+        // 4. Write into tap delay
+        self.tap_delay.write_and_advance(z);
+
+        // 5. Read FDN with damping in feedback path
+        let fdn_damping = if frozen { 0.0 } else { damping };
+        let d: [f32; FDN_ORDER] = std::array::from_fn(|i| {
+            let raw = self.fdn_delays[i].read(fdn_lens[i]);
+            let damped = self.fdn_dampers[i].tick(raw, fdn_damping);
+            fdn_gains[i] * damped
+        });
+
+        // 6. Mix early reflections + tail
+        let early_level = 0.4;
+        let tail_level = 0.6;
+        let mut sum = input * input_gain * early_level;
+        let mut sign = 1.0f32;
+        for i in 0..FDN_ORDER {
+            sum += sign * (tail_level * d[i] + early_level * early[i]);
+            sign = -sign;
         }
-        for comb in &mut self.combs_r {
-            out_r += comb.tick(mixed, feedback, damping);
+        let mut lsum = sum;
+        let mut rsum = sum;
+
+        // 7. Hadamard matrix feedback mixing
+        let f = hadamard4(&d);
+
+        // 8. Write FDN feedback (early reflections + mixed FDN)
+        for i in 0..FDN_ORDER {
+            self.fdn_delays[i].write_and_advance(early[i] + f[i]);
         }
 
-        // Cascaded allpass filters
-        for ap in &mut self.allpasses_l {
-            out_l = ap.tick(out_l);
+        // 9. Output diffusion (separate L/R chains for stereo)
+        for diff in &mut self.left_diffusers {
+            lsum = diff.tick(lsum);
         }
-        for ap in &mut self.allpasses_r {
-            out_r = ap.tick(out_r);
+        for diff in &mut self.right_diffusers {
+            rsum = diff.tick(rsum);
         }
 
-        // Stereo width mixing
-        let wet = wet_ctrl * SCALE_WET;
-        let wet_g0 = wet * (width * 0.5 + 0.5);
-        let wet_g1 = wet * ((1.0 - width) * 0.5);
+        // 10. Stereo width crossmix + dry blend
+        let wet_g0 = wet_ctrl * (width * 0.5 + 0.5);
+        let wet_g1 = wet_ctrl * ((1.0 - width) * 0.5);
 
-        let left_out = out_l * wet_g0 + out_r * wet_g1 + input_l * dry;
-        let right_out = out_r * wet_g0 + out_l * wet_g1 + input_r * dry;
+        let left_out = lsum * wet_g0 + rsum * wet_g1 + input_l * dry;
+        let right_out = rsum * wet_g0 + lsum * wet_g1 + input_r * dry;
+
+        // Denormal protection
+        let left_out = if left_out.is_finite() { left_out } else { 0.0 };
+        let right_out = if right_out.is_finite() {
+            right_out
+        } else {
+            0.0
+        };
 
         self.outputs.set(left_out, right_out);
     }
@@ -297,7 +461,10 @@ impl Module for Reverb {
 
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::new("room_size", "Room size / decay length")
+            ControlMeta::new("room_size", "Room size")
+                .with_range(0.0, 1.0)
+                .with_default(0.5),
+            ControlMeta::new("decay", "Reverb decay time")
                 .with_range(0.0, 1.0)
                 .with_default(0.5),
             ControlMeta::new("damping", "High-frequency damping")
@@ -321,6 +488,7 @@ impl Module for Reverb {
     fn get_control(&self, key: &str) -> Result<f32, String> {
         match key {
             "room_size" => Ok(self.ctrl.room_size()),
+            "decay" => Ok(self.ctrl.decay()),
             "damping" => Ok(self.ctrl.damping()),
             "wet" => Ok(self.ctrl.wet()),
             "dry" => Ok(self.ctrl.dry()),
@@ -333,6 +501,7 @@ impl Module for Reverb {
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
         match key {
             "room_size" => self.ctrl.set_room_size(value),
+            "decay" => self.ctrl.set_decay(value),
             "damping" => self.ctrl.set_damping(value),
             "wet" => self.ctrl.set_wet(value),
             "dry" => self.ctrl.set_dry(value),
@@ -361,6 +530,10 @@ impl ModuleFactory for ReverbFactory {
             .get("room_size")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.5) as f32;
+        let decay = config
+            .get("decay")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.5) as f32;
         let damping = config
             .get("damping")
             .and_then(|v| v.as_f64())
@@ -382,7 +555,8 @@ impl ModuleFactory for ReverbFactory {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let controls = ReverbControls::new(room_size, damping, wet, dry, width, freeze);
+        let controls =
+            ReverbControls::new(room_size, decay, damping, wet, dry, width, freeze);
         let reverb = Reverb::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
@@ -404,7 +578,7 @@ mod tests {
     #[test]
     fn test_silence_in_silence_out() {
         let mut reverb = Reverb::new(44100);
-        for _ in 0..1000 {
+        for _ in 0..2000 {
             reverb.process();
             let l = reverb.get_output("left").unwrap();
             let r = reverb.get_output("right").unwrap();
@@ -426,9 +600,9 @@ mod tests {
         reverb.process();
         reverb.set_input("left", 0.0).unwrap();
 
-        // Check for non-zero output in the tail (after comb delay times)
+        // Check for non-zero output in the tail
         let mut found_output = false;
-        for _ in 0..4000 {
+        for _ in 0..8000 {
             reverb.process();
             let l = reverb.get_output("left").unwrap();
             let r = reverb.get_output("right").unwrap();
@@ -480,7 +654,7 @@ mod tests {
         // Enable freeze
         reverb.set_control("freeze", 1.0).unwrap();
 
-        // After many samples the output should remain non-zero (frozen feedback = 1.0)
+        // Output should remain non-zero (frozen feedback)
         let mut energy = 0.0f32;
         for _ in 0..4000 {
             reverb.process();
@@ -494,16 +668,53 @@ mod tests {
     }
 
     #[test]
+    fn test_no_denormal_explosion() {
+        let mut reverb = Reverb::new(44100);
+        reverb.set_control("wet", 1.0).unwrap();
+        reverb.set_control("decay", 0.9).unwrap();
+
+        // Feed a brief signal then silence
+        for _ in 0..100 {
+            reverb.set_input("left", 0.1).unwrap();
+            reverb.process();
+        }
+        reverb.set_input("left", 0.0).unwrap();
+
+        // Run many samples of silence — output should stay bounded
+        for i in 0..50000 {
+            reverb.process();
+            let l = reverb.get_output("left").unwrap();
+            let r = reverb.get_output("right").unwrap();
+            assert!(
+                l.abs() < 100.0,
+                "Left output exploded at sample {}: {}",
+                i,
+                l
+            );
+            assert!(
+                r.abs() < 100.0,
+                "Right output exploded at sample {}: {}",
+                i,
+                r
+            );
+        }
+    }
+
+    #[test]
     fn test_controls() {
         let mut reverb = Reverb::new(44100);
 
         let controls = reverb.controls();
-        assert_eq!(controls.len(), 6);
+        assert_eq!(controls.len(), 7);
         assert_eq!(controls[0].key, "room_size");
-        assert_eq!(controls[5].key, "freeze");
+        assert_eq!(controls[1].key, "decay");
+        assert_eq!(controls[6].key, "freeze");
 
         reverb.set_control("room_size", 0.8).unwrap();
         assert!((reverb.get_control("room_size").unwrap() - 0.8).abs() < 1e-6);
+
+        reverb.set_control("decay", 0.7).unwrap();
+        assert!((reverb.get_control("decay").unwrap() - 0.7).abs() < 1e-6);
 
         reverb.set_control("freeze", 1.0).unwrap();
         assert!((reverb.get_control("freeze").unwrap() - 1.0).abs() < 1e-6);
@@ -516,6 +727,7 @@ mod tests {
 
         let config = serde_json::json!({
             "room_size": 0.7,
+            "decay": 0.6,
             "damping": 0.4,
             "wet": 0.5,
             "dry": 0.8,
