@@ -116,16 +116,33 @@ impl Clock {
 
     fn update_cached_outputs(&mut self) {
         let samples_per_beat = self.ctrl.samples_per_beat(self.sample_rate);
-        let sample_in_beat = self.sample_count % (samples_per_beat as u64);
         let gate_duration = self.ctrl.gate_duration();
-        let gate_samples = (samples_per_beat * gate_duration) as u64;
+        let sample_count = self.sample_count;
 
-        // Gate: PWM signal - HIGH for gate_duration% of each beat
-        self.outputs.set_gate(if sample_in_beat < gate_samples {
-            1.0
-        } else {
-            0.0
-        });
+        // PWM gate at a given subdivision period (in samples). Duty cycle
+        // scales with the period so a shorter note still has a proportional
+        // gap between pulses at any `gate_duration`. Period stays in f64 so
+        // fractional sample boundaries (e.g. 16th notes at 120 BPM) don't
+        // accumulate drift over many pulses.
+        let pwm = |period_samples: f64| -> f32 {
+            let period = period_samples.max(1.0);
+            let in_period = (sample_count as f64) % period;
+            let high_samples = period * gate_duration;
+            if in_period < high_samples {
+                1.0
+            } else {
+                0.0
+            }
+        };
+
+        let beat = samples_per_beat;
+        self.outputs.set_all(
+            pwm(beat),       // gate: beat rate
+            pwm(beat * 4.0), // gate_d4: whole note (¼× beat rate)
+            pwm(beat * 2.0), // gate_d2: half note (½× beat rate)
+            pwm(beat / 2.0), // gate_x2: 8th note (2× beat rate)
+            pwm(beat / 4.0), // gate_x4: 16th note (4× beat rate)
+        );
     }
 
     /// Advances the clock by one sample.
