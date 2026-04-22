@@ -2,6 +2,7 @@
 name = "fugue"
 version = "0.1.0"
 edition = "2021"
+autoexamples = false
 
 [lib]
 crate-type = ["rlib", "staticlib", "cdylib"]
@@ -53,9 +54,5 @@ path = "src/bin/fugue-mcp-dev.rs"
 required-features = ["dev"]
 
 [[example]]
-name = "simple_tone"
-path = "examples/simple_tone.rs"
-
-[[example]]
-name = "modular_adsr_melody"
-path = "examples/modular_adsr_melody.rs"
+name = "examples"
+path = "examples/examples.rs"

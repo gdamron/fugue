@@ -13,13 +13,30 @@ A system for composing algorithmic and generative music.
 
 ### Run the Examples
 
-Fugue includes three examples demonstrating the modular routing system:
+Fugue ships with one example runner that can play the curated JSON inventions in `examples/`.
 
-**1. Simple Tone** - Minimal working example
+Start the interactive selector:
 ```bash
-cargo run --example simple_tone
+cargo run --example examples
 ```
-Demonstrates: Clock (PWM gate) → ADSR → VCA + Oscillator(440Hz) → DAC
+
+Run a specific invention directly by JSON filename:
+```bash
+cargo run --example examples -- --example simple_tone.json
+```
+
+Current playable examples include:
+
+- `simple_tone.json`
+- `modular_adsr_melody.json`
+- `filter_envelope.json`
+- `filter_lfo_wah.json`
+- `lfo_vibrato.json`
+- `lfo_tremolo_sync.json`
+- `mixer_voices.json`
+- `step_sequencer.json`
+- `development_file_patch.json`
+- `development_inline_patch.json`
 
 ### Development Examples
 

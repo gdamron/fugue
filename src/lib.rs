@@ -1,5 +1,7 @@
 pub mod agents;
 pub mod dsp;
+#[cfg(test)]
+mod example_catalog;
 pub mod factory;
 #[cfg(feature = "ffi")]
 pub mod ffi;
