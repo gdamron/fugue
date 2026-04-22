@@ -9,8 +9,8 @@ use super::MAX_CHANNELS;
 /// Thread-safe controls for the Mixer module.
 ///
 /// Controls use hierarchical keys for array access:
-/// - `level.0` through `level.7` - Per-channel levels
-/// - `pan.0` through `pan.7` - Per-channel pan positions (-1.0 to 1.0)
+/// - `level.0` through `level.63` - Per-channel levels
+/// - `pan.0` through `pan.63` - Per-channel pan positions (-1.0 to 1.0)
 /// - `master` - Master output level
 ///
 /// # Example

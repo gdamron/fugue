@@ -6,7 +6,7 @@
 //!
 //! # Features
 //!
-//! - 4 input channels (default, configurable 1-8)
+//! - 4 input channels (default, configurable 1-64)
 //! - Per-channel level control (0.0 to 1.0)
 //! - Per-channel equal-power panning (-1.0 left to 1.0 right)
 //! - Master output level
@@ -50,7 +50,7 @@ mod inputs;
 mod outputs;
 
 /// Maximum number of mixer channels supported.
-pub const MAX_CHANNELS: usize = 8;
+pub const MAX_CHANNELS: usize = 64;
 
 /// A multi-channel audio mixer.
 ///
@@ -61,9 +61,9 @@ pub const MAX_CHANNELS: usize = 8;
 ///
 /// # Inputs
 ///
-/// - `in1` through `in8` - Audio inputs (depending on channel count)
-/// - `level1` through `level8` - Level CV inputs (multiplied with base level)
-/// - `pan1` through `pan8` - Pan modulation inputs (added to base pan)
+/// - `in1` through `in64` - Audio inputs (depending on channel count)
+/// - `level1` through `level64` - Level CV inputs (multiplied with base level)
+/// - `pan1` through `pan64` - Pan modulation inputs (added to base pan)
 /// - `master` - Master output level CV
 ///
 /// # Outputs
@@ -73,8 +73,8 @@ pub const MAX_CHANNELS: usize = 8;
 ///
 /// # Controls
 ///
-/// - `level.0` through `level.7` - Per-channel base levels
-/// - `pan.0` through `pan.7` - Per-channel base pan positions
+/// - `level.0` through `level.63` - Per-channel base levels
+/// - `pan.0` through `pan.63` - Per-channel base pan positions
 /// - `master` - Master output level
 ///
 /// # Example
@@ -101,7 +101,7 @@ pub struct Mixer {
 impl Mixer {
     /// Creates a new mixer with the specified number of channels.
     ///
-    /// Channel count is clamped to 1-8. Default levels are 1.0 (unity gain).
+    /// Channel count is clamped to 1-64. Default levels are 1.0 (unity gain).
     pub fn new(channels: usize) -> Self {
         let channels = channels.clamp(1, MAX_CHANNELS);
         let controls = MixerControls::new(channels);
@@ -309,7 +309,7 @@ impl Module for Mixer {
 ///
 /// # Configuration Options
 ///
-/// - `channels` (usize): Number of input channels, 1-8 (default: 4)
+/// - `channels` (usize): Number of input channels, 1-64 (default: 4)
 /// - `levels` (array of f32): Initial level for each channel (default: all 1.0)
 /// - `pans` (array of f32): Initial pan position for each channel (-1.0 to 1.0, default: all 0.0)
 /// - `master` (f32): Master output level (default: 1.0)
@@ -501,6 +501,24 @@ mod tests {
         assert!(inputs.contains(&"pan2"));
         assert!(inputs.contains(&"pan3"));
         assert!(!inputs.contains(&"pan4"));
+    }
+
+    #[test]
+    fn test_mixer_expanded_channel_ports_and_pan() {
+        let mut mixer = Mixer::new(16).with_pan(15, 1.0);
+        assert_eq!(mixer.channel_count(), 16);
+
+        let inputs = mixer.inputs();
+        assert!(inputs.contains(&"in16"));
+        assert!(inputs.contains(&"level16"));
+        assert!(inputs.contains(&"pan16"));
+        assert!(!inputs.contains(&"in17"));
+
+        mixer.set_input("in16", 1.0).unwrap();
+        mixer.process();
+
+        approx_eq(mixer.get_output("left").unwrap(), 0.0);
+        approx_eq(mixer.get_output("right").unwrap(), 1.0);
     }
 
     #[test]

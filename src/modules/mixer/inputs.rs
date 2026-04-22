@@ -2,14 +2,80 @@
 
 use super::MAX_CHANNELS;
 
-pub static INPUT_NAMES: [&str; MAX_CHANNELS] =
-    ["in1", "in2", "in3", "in4", "in5", "in6", "in7", "in8"];
-pub static LEVEL_NAMES: [&str; MAX_CHANNELS] = [
-    "level1", "level2", "level3", "level4", "level5", "level6", "level7", "level8",
-];
-pub static PAN_NAMES: [&str; MAX_CHANNELS] = [
-    "pan1", "pan2", "pan3", "pan4", "pan5", "pan6", "pan7", "pan8",
-];
+macro_rules! mixer_port_names {
+    ($prefix:literal) => {
+        [
+            concat!($prefix, "1"),
+            concat!($prefix, "2"),
+            concat!($prefix, "3"),
+            concat!($prefix, "4"),
+            concat!($prefix, "5"),
+            concat!($prefix, "6"),
+            concat!($prefix, "7"),
+            concat!($prefix, "8"),
+            concat!($prefix, "9"),
+            concat!($prefix, "10"),
+            concat!($prefix, "11"),
+            concat!($prefix, "12"),
+            concat!($prefix, "13"),
+            concat!($prefix, "14"),
+            concat!($prefix, "15"),
+            concat!($prefix, "16"),
+            concat!($prefix, "17"),
+            concat!($prefix, "18"),
+            concat!($prefix, "19"),
+            concat!($prefix, "20"),
+            concat!($prefix, "21"),
+            concat!($prefix, "22"),
+            concat!($prefix, "23"),
+            concat!($prefix, "24"),
+            concat!($prefix, "25"),
+            concat!($prefix, "26"),
+            concat!($prefix, "27"),
+            concat!($prefix, "28"),
+            concat!($prefix, "29"),
+            concat!($prefix, "30"),
+            concat!($prefix, "31"),
+            concat!($prefix, "32"),
+            concat!($prefix, "33"),
+            concat!($prefix, "34"),
+            concat!($prefix, "35"),
+            concat!($prefix, "36"),
+            concat!($prefix, "37"),
+            concat!($prefix, "38"),
+            concat!($prefix, "39"),
+            concat!($prefix, "40"),
+            concat!($prefix, "41"),
+            concat!($prefix, "42"),
+            concat!($prefix, "43"),
+            concat!($prefix, "44"),
+            concat!($prefix, "45"),
+            concat!($prefix, "46"),
+            concat!($prefix, "47"),
+            concat!($prefix, "48"),
+            concat!($prefix, "49"),
+            concat!($prefix, "50"),
+            concat!($prefix, "51"),
+            concat!($prefix, "52"),
+            concat!($prefix, "53"),
+            concat!($prefix, "54"),
+            concat!($prefix, "55"),
+            concat!($prefix, "56"),
+            concat!($prefix, "57"),
+            concat!($prefix, "58"),
+            concat!($prefix, "59"),
+            concat!($prefix, "60"),
+            concat!($prefix, "61"),
+            concat!($prefix, "62"),
+            concat!($prefix, "63"),
+            concat!($prefix, "64"),
+        ]
+    };
+}
+
+pub static INPUT_NAMES: [&str; MAX_CHANNELS] = mixer_port_names!("in");
+pub static LEVEL_NAMES: [&str; MAX_CHANNELS] = mixer_port_names!("level");
+pub static PAN_NAMES: [&str; MAX_CHANNELS] = mixer_port_names!("pan");
 
 pub struct MixerInputs {
     names: Vec<&'static str>,
