@@ -18,6 +18,7 @@
 
 pub mod adsr;
 pub mod agent;
+pub mod cell_sequencer;
 pub mod clock;
 pub mod code;
 pub mod dac;
@@ -34,6 +35,7 @@ pub mod vca;
 // Re-export module types
 pub use adsr::{Adsr, AdsrControls};
 pub use agent::AgentControls;
+pub use cell_sequencer::{CellSequencer, CellSequencerControls};
 pub use clock::{Clock, ClockControls};
 pub use code::CodeControls;
 
@@ -54,6 +56,7 @@ pub use vca::{Vca, VcaControls};
 // Re-export factory types
 pub use adsr::AdsrFactory;
 pub use agent::AgentFactory;
+pub use cell_sequencer::CellSequencerFactory;
 pub use clock::ClockFactory;
 pub use code::CodeFactory;
 pub use dac::DacFactory;

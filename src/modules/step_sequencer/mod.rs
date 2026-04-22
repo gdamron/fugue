@@ -538,7 +538,7 @@ impl ModuleFactory for StepSequencerFactory {
 }
 
 /// Parses a pattern array from JSON.
-fn parse_pattern(
+pub(crate) fn parse_pattern(
     value: Option<&serde_json::Value>,
 ) -> Result<Vec<Step>, Box<dyn std::error::Error>> {
     let Some(array) = value.and_then(|v| v.as_array()) else {
@@ -556,7 +556,7 @@ fn parse_pattern(
 }
 
 /// Parses a single step from JSON.
-fn parse_step(value: &serde_json::Value) -> Result<Step, Box<dyn std::error::Error>> {
+pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, Box<dyn std::error::Error>> {
     // Handle simple null as rest
     if value.is_null() {
         return Ok(Step::rest());
