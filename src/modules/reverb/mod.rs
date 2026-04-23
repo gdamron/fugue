@@ -201,13 +201,11 @@ impl Reverb {
         let input_diffuser = Allpass::new(input_diff_size, INPUT_DIFF_COEFF);
 
         let left_diffusers = std::array::from_fn(|i| {
-            let size =
-                ((OUTPUT_DIFF_SIZES[i] + STEREO_SPREAD) * diff_scale).ceil() as usize;
+            let size = ((OUTPUT_DIFF_SIZES[i] + STEREO_SPREAD) * diff_scale).ceil() as usize;
             Allpass::new(size, OUTPUT_DIFF_COEFFS[i])
         });
         let right_diffusers = std::array::from_fn(|i| {
-            let size =
-                ((OUTPUT_DIFF_SIZES[i] - STEREO_SPREAD) * diff_scale).ceil() as usize;
+            let size = ((OUTPUT_DIFF_SIZES[i] - STEREO_SPREAD) * diff_scale).ceil() as usize;
             Allpass::new(size.max(1), OUTPUT_DIFF_COEFFS[i])
         });
 
@@ -249,8 +247,7 @@ impl Reverb {
 
         // Compute room-dependent parameters
         let room_m = room_size_to_meters(room_size_ctrl);
-        let largest_delay =
-            ((self.sample_rate as f32 * room_m / SPEED_OF_SOUND) as usize).max(1);
+        let largest_delay = ((self.sample_rate as f32 * room_m / SPEED_OF_SOUND) as usize).max(1);
 
         let rt60 = decay_to_rt60(decay_ctrl);
         let alpha = compute_alpha(rt60, self.sample_rate);
@@ -460,33 +457,20 @@ impl ModuleFactory for ReverbFactory {
             .get("room_size")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.5) as f32;
-        let decay = config
-            .get("decay")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.5) as f32;
+        let decay = config.get("decay").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
         let damping = config
             .get("damping")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.5) as f32;
-        let wet = config
-            .get("wet")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.33) as f32;
-        let dry = config
-            .get("dry")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1.0) as f32;
-        let width = config
-            .get("width")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1.0) as f32;
+        let wet = config.get("wet").and_then(|v| v.as_f64()).unwrap_or(0.33) as f32;
+        let dry = config.get("dry").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+        let width = config.get("width").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
         let freeze = config
             .get("freeze")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let controls =
-            ReverbControls::new(room_size, decay, damping, wet, dry, width, freeze);
+        let controls = ReverbControls::new(room_size, decay, damping, wet, dry, width, freeze);
         let reverb = Reverb::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {

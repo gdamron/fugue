@@ -1,0 +1,118 @@
+{
+  "version": "1.0.0",
+  "title": "Piano Voice",
+  "description": "Bright sawtooth through a warm lowpass with gentle pitch drift and a moderate piano-like decay envelope.",
+  "modules": [
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "sawtooth",
+        "fm_amount": 1.8
+      }
+    },
+    {
+      "id": "detune_lfo",
+      "type": "lfo",
+      "config": {
+        "frequency": 5.2,
+        "waveform": "sine"
+      }
+    },
+    {
+      "id": "filter",
+      "type": "filter",
+      "config": {
+        "filter_type": "lowpass",
+        "cutoff": 3500.0,
+        "resonance": 0.15
+      }
+    },
+    {
+      "id": "env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.005,
+        "decay": 0.8,
+        "sustain": 0.2,
+        "release": 0.4
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    }
+  ],
+  "connections": [
+    {
+      "from": "detune_lfo",
+      "from_port": "out",
+      "to": "osc",
+      "to_port": "fm"
+    },
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "filter",
+      "to_port": "audio"
+    },
+    {
+      "from": "filter",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "frequency",
+      "to": "osc",
+      "to_port": "frequency"
+    },
+    {
+      "name": "gate",
+      "to": "env",
+      "to_port": "gate"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "audio",
+      "from": "vca",
+      "from_port": "audio"
+    }
+  ],
+  "controls": [
+    {
+      "key": "attack",
+      "module": "env",
+      "control": "attack"
+    },
+    {
+      "key": "decay",
+      "module": "env",
+      "control": "decay"
+    },
+    {
+      "key": "release",
+      "module": "env",
+      "control": "release"
+    },
+    {
+      "key": "brightness",
+      "module": "filter",
+      "control": "cutoff"
+    },
+    {
+      "key": "detune",
+      "module": "osc",
+      "control": "fm_amount"
+    }
+  ]
+}

@@ -54,7 +54,8 @@ impl CellSequencer {
 
     pub fn new_with_controls(sample_rate: u32, controls: CellSequencerControls) -> Self {
         let sequences = controls.sequences();
-        let current_sequence = normalize_sequence_index(controls.selected_sequence(), sequences.len());
+        let current_sequence =
+            normalize_sequence_index(controls.selected_sequence(), sequences.len());
         Self {
             sample_rate,
             ctrl: controls.clone(),
@@ -134,12 +135,14 @@ impl CellSequencer {
             return;
         }
 
-        self.current_sequence = normalize_sequence_index(self.current_sequence, self.sequences.len());
+        self.current_sequence =
+            normalize_sequence_index(self.current_sequence, self.sequences.len());
         self.pending_sequence = self
             .pending_sequence
             .map(|index| normalize_sequence_index(index, self.sequences.len()));
 
-        let selected = normalize_sequence_index(self.ctrl.selected_sequence(), self.sequences.len());
+        let selected =
+            normalize_sequence_index(self.ctrl.selected_sequence(), self.sequences.len());
         self.ctrl.set_selected_sequence(selected);
         self.last_control_selected_sequence = selected;
     }
@@ -176,8 +179,7 @@ impl CellSequencer {
     }
 
     fn effective_selected_sequence(&self) -> usize {
-        self.inputs
-            .select_sequence(self.ctrl.selected_sequence())
+        self.inputs.select_sequence(self.ctrl.selected_sequence())
     }
 
     fn effective_wait_for_cycle_end(&self) -> bool {
@@ -234,7 +236,11 @@ impl CellSequencer {
     fn update_outputs(&mut self) {
         self.outputs.set(
             self.calculate_frequency(),
-            if self.gate_samples_remaining > 0 { 1.0 } else { 0.0 },
+            if self.gate_samples_remaining > 0 {
+                1.0
+            } else {
+                0.0
+            },
             self.current_step as f32,
             self.current_sequence as f32,
         );
@@ -243,18 +249,15 @@ impl CellSequencer {
     fn process_sample(&mut self) {
         self.sync_sequences_from_controls();
 
-        let selected_sequence = normalize_sequence_index(
-            self.effective_selected_sequence(),
-            self.sequences.len(),
-        );
+        let selected_sequence =
+            normalize_sequence_index(self.effective_selected_sequence(), self.sequences.len());
         if selected_sequence != self.last_control_selected_sequence {
             self.request_sequence_change(selected_sequence);
         }
 
         let gate_rising = self.inputs.gate() > 0.5 && self.last_gate_in <= 0.5;
         let reset_rising = self.inputs.reset_gate() > 0.5 && self.last_reset_in <= 0.5;
-        let next_rising =
-            self.inputs.next_sequence() > 0.5 && self.last_next_sequence_in <= 0.5;
+        let next_rising = self.inputs.next_sequence() > 0.5 && self.last_next_sequence_in <= 0.5;
         let previous_rising =
             self.inputs.previous_sequence() > 0.5 && self.last_previous_sequence_in <= 0.5;
 
@@ -471,7 +474,11 @@ fn parse_sequence_bank(
     };
 
     if array.len() > MAX_SEQUENCES {
-        return Err(format!("sequence bank may not contain more than {} sequences", MAX_SEQUENCES).into());
+        return Err(format!(
+            "sequence bank may not contain more than {} sequences",
+            MAX_SEQUENCES
+        )
+        .into());
     }
 
     let mut bank = Vec::with_capacity(array.len());
@@ -579,7 +586,10 @@ mod tests {
     fn test_cell_sequencer_wait_for_cycle_end_input_overrides_control() {
         let mut seq = CellSequencer::new(44_100)
             .with_steps(2)
-            .with_sequences(vec![vec![Step::note(0), Step::note(2)], vec![Step::note(12)]]);
+            .with_sequences(vec![
+                vec![Step::note(0), Step::note(2)],
+                vec![Step::note(12)],
+            ]);
 
         advance_gate(&mut seq);
         seq.reset_inputs();
@@ -674,7 +684,10 @@ mod tests {
             .unwrap();
 
         assert!(result.control_surface.is_some());
-        assert_eq!(result.module.lock().unwrap().outputs(), &["frequency", "gate", "step", "sequence"]);
+        assert_eq!(
+            result.module.lock().unwrap().outputs(),
+            &["frequency", "gate", "step", "sequence"]
+        );
 
         let registry = ModuleRegistry::default();
         assert!(registry.has_type("cell_sequencer"));

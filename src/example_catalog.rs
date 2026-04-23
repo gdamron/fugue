@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 10] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 11] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -66,6 +66,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 10] = [
         title: "Development Patch (Inline)",
         summary: "Registers the voice development inline.",
     },
+    ExampleDefinition {
+        file_name: "developments/voice_library_trio.json",
+        title: "Voice Library Trio",
+        summary: "Layers piano, marimba, and pad developments through one mixer.",
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,14 +89,26 @@ pub fn playable_examples() -> Vec<ExampleDefinition> {
 }
 
 pub fn resolve_example(name: &str) -> Result<ExampleDefinition, String> {
-    let normalized = Path::new(name)
+    let full = Path::new(name)
+        .strip_prefix(EXAMPLES_DIR)
+        .unwrap_or_else(|_| Path::new(name));
+    let full = full.to_string_lossy();
+    let bare = Path::new(name)
         .file_name()
-        .and_then(|file_name| file_name.to_str())
-        .unwrap_or(name);
+        .and_then(|file_name| file_name.to_str());
 
     playable_examples()
         .into_iter()
-        .find(|example| example.file_name == normalized)
+        .find(|example| {
+            example.file_name == full
+                || bare.is_some_and(|bare| {
+                    example.file_name == bare
+                        || Path::new(example.file_name)
+                            .file_name()
+                            .and_then(|file_name| file_name.to_str())
+                            == Some(bare)
+                })
+        })
         .ok_or_else(|| format!("Unknown example '{name}'.\n\n{}", valid_examples_message()))
 }
 
@@ -185,6 +202,7 @@ mod tests {
                 "step_sequencer.json",
                 "development_file_patch.json",
                 "development_inline_patch.json",
+                "developments/voice_library_trio.json",
             ]
         );
     }
@@ -207,6 +225,18 @@ mod tests {
 
         assert_eq!(bare.file_name, "simple_tone.json");
         assert_eq!(with_path.file_name, "simple_tone.json");
+    }
+
+    #[test]
+    fn resolve_example_accepts_nested_example_paths() {
+        let bare = resolve_example("voice_library_trio.json").unwrap();
+        let nested = resolve_example("developments/voice_library_trio.json").unwrap();
+        let with_examples_prefix =
+            resolve_example("examples/developments/voice_library_trio.json").unwrap();
+
+        assert_eq!(bare.file_name, "developments/voice_library_trio.json");
+        assert_eq!(nested.file_name, "developments/voice_library_trio.json");
+        assert_eq!(with_examples_prefix.file_name, "developments/voice_library_trio.json");
     }
 
     #[test]

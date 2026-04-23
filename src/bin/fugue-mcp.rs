@@ -293,7 +293,11 @@ impl FugueMcp {
                     running: status.running,
                     module_count: status.module_count,
                     connection_count: status.connection_count,
-                    modules: running.list_modules().into_iter().map(|module| module.id).collect(),
+                    modules: running
+                        .list_modules()
+                        .into_iter()
+                        .map(|module| module.id)
+                        .collect(),
                 }
             }
             None => StatusResponse {
@@ -487,27 +491,26 @@ impl FugueMcp {
             .ok_or_else(|| mcp_error("No invention is running."))?;
 
         if let Some(module_id) = &params.module_id {
-            let entries: Vec<ControlEntry> = <RunningInvention as OrchestrationRuntime>::list_controls(
-                running,
-                Some(module_id),
-            )
-                .map_err(graph_err)?
-                .into_iter()
-                .map(|(module_id, controls)| ControlEntry { module_id, controls })
-                .collect();
+            let entries: Vec<ControlEntry> =
+                <RunningInvention as OrchestrationRuntime>::list_controls(running, Some(module_id))
+                    .map_err(graph_err)?
+                    .into_iter()
+                    .map(|(module_id, controls)| ControlEntry {
+                        module_id,
+                        controls,
+                    })
+                    .collect();
             json_result(&entries)
         } else {
-            let entries: Vec<ControlEntry> = <RunningInvention as OrchestrationRuntime>::list_controls(
-                running,
-                None,
-            )
-                .map_err(graph_err)?
-                .into_iter()
-                .map(|(id, controls)| ControlEntry {
-                    module_id: id,
-                    controls,
-                })
-                .collect();
+            let entries: Vec<ControlEntry> =
+                <RunningInvention as OrchestrationRuntime>::list_controls(running, None)
+                    .map_err(graph_err)?
+                    .into_iter()
+                    .map(|(id, controls)| ControlEntry {
+                        module_id: id,
+                        controls,
+                    })
+                    .collect();
             json_result(&entries)
         }
     }

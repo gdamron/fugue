@@ -1,0 +1,137 @@
+{
+  "version": "1.0.0",
+  "title": "Voice Library Trio",
+  "description": "A small verification patch that layers three reusable development voices through a mixer.",
+  "developments": [
+    {
+      "name": "piano_voice",
+      "path": "piano.json"
+    },
+    {
+      "name": "marimba_voice",
+      "path": "marimba.json"
+    },
+    {
+      "name": "pad_voice",
+      "path": "pad.json"
+    }
+  ],
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 82.0
+      }
+    },
+    {
+      "id": "melody",
+      "type": "melody",
+      "config": {
+        "root_note": 57,
+        "scale_degrees": [0, 2, 4, 7, 9],
+        "note_weights": [1.2, 0.9, 1.0, 1.1, 0.8]
+      }
+    },
+    {
+      "id": "piano",
+      "type": "piano_voice"
+    },
+    {
+      "id": "marimba",
+      "type": "marimba_voice"
+    },
+    {
+      "id": "pad",
+      "type": "pad_voice"
+    },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "config": {
+        "channels": 3,
+        "levels": [0.32, 0.22, 0.36],
+        "pans": [-0.35, 0.2, 0.0],
+        "master": 0.55
+      }
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "melody",
+      "to_port": "gate"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "piano",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody",
+      "from_port": "gate",
+      "to": "piano",
+      "to_port": "gate"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "marimba",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody",
+      "from_port": "gate",
+      "to": "marimba",
+      "to_port": "gate"
+    },
+    {
+      "from": "melody",
+      "from_port": "frequency",
+      "to": "pad",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody",
+      "from_port": "gate",
+      "to": "pad",
+      "to_port": "gate"
+    },
+    {
+      "from": "piano",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in1"
+    },
+    {
+      "from": "marimba",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in2"
+    },
+    {
+      "from": "pad",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in3"
+    },
+    {
+      "from": "mixer",
+      "from_port": "left",
+      "to": "dac",
+      "to_port": "audio_left"
+    },
+    {
+      "from": "mixer",
+      "from_port": "right",
+      "to": "dac",
+      "to_port": "audio_right"
+    }
+  ]
+}

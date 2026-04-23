@@ -1,0 +1,100 @@
+{
+  "version": "1.0.0",
+  "title": "Pluck Voice",
+  "description": "A sharp pluck with a very short envelope and an aggressive lowpass sweep to suggest a string-like snap.",
+  "modules": [
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "square"
+      }
+    },
+    {
+      "id": "filter",
+      "type": "filter",
+      "config": {
+        "filter_type": "lowpass",
+        "cutoff": 1800.0,
+        "resonance": 0.58,
+        "cv_amount": 5200.0
+      }
+    },
+    {
+      "id": "env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.001,
+        "decay": 0.07,
+        "sustain": 0.0,
+        "release": 0.03
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    }
+  ],
+  "connections": [
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "filter",
+      "to_port": "audio"
+    },
+    {
+      "from": "filter",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "filter",
+      "to_port": "cutoff_cv"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "frequency",
+      "to": "osc",
+      "to_port": "frequency"
+    },
+    {
+      "name": "gate",
+      "to": "env",
+      "to_port": "gate"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "audio",
+      "from": "vca",
+      "from_port": "audio"
+    }
+  ],
+  "controls": [
+    {
+      "key": "decay",
+      "module": "env",
+      "control": "decay"
+    },
+    {
+      "key": "brightness",
+      "module": "filter",
+      "control": "cutoff"
+    },
+    {
+      "key": "bite",
+      "module": "filter",
+      "control": "resonance"
+    }
+  ]
+}

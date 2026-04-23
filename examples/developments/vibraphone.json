@@ -1,0 +1,118 @@
+{
+  "version": "1.0.0",
+  "title": "Vibraphone Voice",
+  "description": "A mellow struck sine voice with a gentle tremolo and long ringing sustain.",
+  "modules": [
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "sine",
+        "am_amount": 0.32
+      }
+    },
+    {
+      "id": "tremolo_lfo",
+      "type": "lfo",
+      "config": {
+        "frequency": 5.0,
+        "waveform": "sine"
+      }
+    },
+    {
+      "id": "filter",
+      "type": "filter",
+      "config": {
+        "filter_type": "bandpass",
+        "cutoff": 2200.0,
+        "resonance": 0.24
+      }
+    },
+    {
+      "id": "env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.03,
+        "decay": 1.4,
+        "sustain": 0.72,
+        "release": 1.8
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    }
+  ],
+  "connections": [
+    {
+      "from": "tremolo_lfo",
+      "from_port": "out",
+      "to": "osc",
+      "to_port": "am"
+    },
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "filter",
+      "to_port": "audio"
+    },
+    {
+      "from": "filter",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "frequency",
+      "to": "osc",
+      "to_port": "frequency"
+    },
+    {
+      "name": "gate",
+      "to": "env",
+      "to_port": "gate"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "audio",
+      "from": "vca",
+      "from_port": "audio"
+    }
+  ],
+  "controls": [
+    {
+      "key": "attack",
+      "module": "env",
+      "control": "attack"
+    },
+    {
+      "key": "release",
+      "module": "env",
+      "control": "release"
+    },
+    {
+      "key": "tremolo_depth",
+      "module": "osc",
+      "control": "am_amount"
+    },
+    {
+      "key": "tremolo_rate",
+      "module": "tremolo_lfo",
+      "control": "frequency"
+    },
+    {
+      "key": "brightness",
+      "module": "filter",
+      "control": "cutoff"
+    }
+  ]
+}
