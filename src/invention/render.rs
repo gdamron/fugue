@@ -8,7 +8,7 @@ use crate::agents::AgentManager;
 use crate::scripting::ScriptManager;
 use crate::{ControlValue, Invention, InventionBuilder, ModuleRegistry};
 
-use super::graph::{GraphCommand, RoutingConnection, SignalGraph};
+use super::graph::{GraphCommand, SignalGraph};
 use super::orchestration::{ModulePorts, OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 use super::runtime::{
     module_ports, validate_input_port, validate_output_port, ControlSurfaceInstance,
@@ -455,16 +455,6 @@ impl RenderEngine {
     fn install_runtime(&mut self, runtime: super::runtime::InventionRuntime) {
         self.scripts.stop_all();
         self.agents.stop_all();
-        let mut input_map: std::collections::HashMap<String, Vec<RoutingConnection>> =
-            std::collections::HashMap::new();
-
-        for conn in &runtime.routing {
-            input_map
-                .entry(conn.to_module.clone())
-                .or_default()
-                .push(conn.clone());
-        }
-
         let (_, command_rx) = mpsc::channel();
 
         runtime.state.lock().unwrap().running = true;
@@ -473,10 +463,12 @@ impl RenderEngine {
         self.graph = Some(Arc::new(Mutex::new(SignalGraph {
             modules: runtime.modules,
             sinks: runtime.sinks,
-            input_map,
+            edges: runtime.routing,
             current_sample: 0,
             command_rx,
             process_order: Vec::new(),
+            compiled_routes: Vec::new(),
+            sink_indices: Vec::new(),
             topo_dirty: true,
         })));
         self.registry = runtime.registry;

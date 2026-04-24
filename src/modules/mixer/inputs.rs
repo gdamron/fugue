@@ -166,6 +166,29 @@ impl MixerInputs {
         self.master_cv_active = false;
     }
 
+    /// Hot-path indexed setter. Port layout for a mixer with N channels:
+    ///   `[0, N)` → audio inputs (in1..inN)
+    ///   `[N, 2N)` → level CVs (level1..levelN)
+    ///   `[2N, 3N)` → pan mods (pan1..panN)
+    ///   `3N` → master CV
+    #[inline]
+    pub fn set_by_index(&mut self, channels: usize, index: usize, value: f32) {
+        if index < channels {
+            self.audio[index] = value;
+        } else if index < 2 * channels {
+            let idx = index - channels;
+            self.level_cvs[idx] = value.clamp(0.0, 2.0);
+            self.level_cv_active[idx] = true;
+        } else if index < 3 * channels {
+            let idx = index - 2 * channels;
+            self.pan_mods[idx] = value.clamp(-1.0, 1.0);
+            self.pan_mod_active[idx] = true;
+        } else if index == 3 * channels {
+            self.master_cv = value.clamp(0.0, 2.0);
+            self.master_cv_active = true;
+        }
+    }
+
     pub fn audio(&self, channel: usize) -> f32 {
         self.audio[channel]
     }

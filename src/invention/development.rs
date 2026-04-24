@@ -48,20 +48,20 @@ impl ModuleFactory for DevelopmentFactory {
 
 struct ExternalInputRoute {
     module_index: usize,
-    port: String,
+    port_index: usize,
 }
 
 struct ExternalOutputRoute {
     name: &'static str,
     module_index: usize,
-    port: String,
+    port_index: usize,
     value: f32,
 }
 
 struct CompiledConnection {
     from_module: usize,
-    from_port: String,
-    to_port: String,
+    from_port: usize,
+    to_port: usize,
 }
 
 struct CompiledDevelopmentGraph {
@@ -201,7 +201,14 @@ impl DevelopmentModule {
             route_indexes.insert(*name, index);
         }
 
-        let module_indexes = module_indexes(&runtime.modules);
+        // Take ownership before building the index map to avoid a borrow
+        // of the IndexMap that outlives the consumption point.
+        let module_list: Vec<(String, GraphModule)> = runtime.modules.into_iter().collect();
+        let module_indexes: HashMap<String, usize> = module_list
+            .iter()
+            .enumerate()
+            .map(|(i, (id, _))| (id.clone(), i))
+            .collect();
 
         let mut input_routes: Vec<Vec<ExternalInputRoute>> =
             (0..input_ports.len()).map(|_| Vec::new()).collect();
@@ -212,9 +219,18 @@ impl DevelopmentModule {
             let module_index = *module_indexes
                 .get(input.to.as_str())
                 .ok_or_else(|| format!("Unknown input target module: {}", input.to))?;
+            let port_index = module_list
+                .get(module_index)
+                .and_then(|(_, m)| m.module().input_port_index(input.to_port.as_str()))
+                .ok_or_else(|| {
+                    format!(
+                        "Unknown input port '{}' on module '{}'",
+                        input.to_port, input.to
+                    )
+                })?;
             input_routes[index].push(ExternalInputRoute {
                 module_index,
-                port: input.to_port.clone(),
+                port_index,
             });
         }
 
@@ -226,16 +242,25 @@ impl DevelopmentModule {
                 let module_index = *module_indexes
                     .get(output.from.as_str())
                     .ok_or_else(|| format!("Unknown output source module: {}", output.from))?;
+                let port_index = module_list
+                    .get(module_index)
+                    .and_then(|(_, m)| m.module().output_port_index(output.from_port.as_str()))
+                    .ok_or_else(|| {
+                        format!(
+                            "Unknown output port '{}' on module '{}'",
+                            output.from_port, output.from
+                        )
+                    })?;
                 Ok(ExternalOutputRoute {
                     name: output_ports[index],
                     module_index,
-                    port: output.from_port.clone(),
+                    port_index,
                     value: 0.0,
                 })
             })
             .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
 
-        let graph = CompiledDevelopmentGraph::new(runtime.modules, &runtime.routing)?;
+        let graph = CompiledDevelopmentGraph::from_modules(module_list, &runtime.routing)?;
 
         Ok((
             Self {
@@ -257,7 +282,9 @@ impl DevelopmentModule {
             let value = self.input_values[index];
             for route in routes {
                 if let Some(module) = self.graph.modules.get_mut(route.module_index) {
-                    let _ = module.module_mut().set_input(&route.port, value);
+                    module
+                        .module_mut()
+                        .set_input_by_index(route.port_index, value);
                 }
             }
         }
@@ -269,7 +296,7 @@ impl DevelopmentModule {
                 .graph
                 .modules
                 .get(output.module_index)
-                .map(|module| module.module().get_output(&output.port).unwrap_or(0.0))
+                .map(|module| module.module().get_output_by_index(output.port_index))
                 .unwrap_or(0.0);
         }
     }
@@ -289,15 +316,20 @@ impl Module for DevelopmentModule {
 
         for &module_index in &self.graph.process_order {
             if let Some(connections) = self.graph.input_routes.get(module_index) {
-                for conn in connections {
+                let count = connections.len();
+                for c in 0..count {
+                    let (from_module, from_port, to_port) = {
+                        let conn = &self.graph.input_routes[module_index][c];
+                        (conn.from_module, conn.from_port, conn.to_port)
+                    };
                     let input_value = self
                         .graph
                         .modules
-                        .get(conn.from_module)
-                        .map(|module| module.module().get_output(&conn.from_port).unwrap_or(0.0))
+                        .get(from_module)
+                        .map(|module| module.module().get_output_by_index(from_port))
                         .unwrap_or(0.0);
                     if let Some(module) = self.graph.modules.get_mut(module_index) {
-                        let _ = module.module_mut().set_input(&conn.to_port, input_value);
+                        module.module_mut().set_input_by_index(to_port, input_value);
                     }
                 }
             }
@@ -367,23 +399,23 @@ fn unique_port_names<'a>(names: impl Iterator<Item = &'a String>) -> Vec<&'stati
     ports
 }
 
-fn module_indexes(modules: &IndexMap<String, GraphModule>) -> HashMap<&str, usize> {
+fn module_indexes_slice(modules: &[(String, GraphModule)]) -> HashMap<&str, usize> {
     modules
-        .keys()
+        .iter()
         .enumerate()
-        .map(|(index, id)| (id.as_str(), index))
+        .map(|(index, (id, _))| (id.as_str(), index))
         .collect()
 }
 
 impl CompiledDevelopmentGraph {
-    fn new(
-        modules: IndexMap<String, GraphModule>,
+    fn from_modules(
+        module_list: Vec<(String, GraphModule)>,
         routing: &[RoutingConnection],
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let indexes = module_indexes(&modules);
-        let process_order = compute_process_order(&modules, routing);
+        let indexes = module_indexes_slice(&module_list);
+        let process_order = compute_process_order_slice(&module_list, routing);
         let mut input_routes: Vec<Vec<CompiledConnection>> =
-            (0..modules.len()).map(|_| Vec::new()).collect();
+            (0..module_list.len()).map(|_| Vec::new()).collect();
 
         for conn in routing {
             let from_module = *indexes
@@ -392,15 +424,35 @@ impl CompiledDevelopmentGraph {
             let to_module = *indexes
                 .get(conn.to_module.as_str())
                 .ok_or_else(|| format!("Unknown destination module: {}", conn.to_module))?;
+
+            let from_port = module_list
+                .get(from_module)
+                .and_then(|(_, m)| m.module().output_port_index(conn.from_port.as_str()))
+                .ok_or_else(|| {
+                    format!(
+                        "Unknown output port '{}' on module '{}'",
+                        conn.from_port, conn.from_module
+                    )
+                })?;
+            let to_port = module_list
+                .get(to_module)
+                .and_then(|(_, m)| m.module().input_port_index(conn.to_port.as_str()))
+                .ok_or_else(|| {
+                    format!(
+                        "Unknown input port '{}' on module '{}'",
+                        conn.to_port, conn.to_module
+                    )
+                })?;
+
             input_routes[to_module].push(CompiledConnection {
                 from_module,
-                from_port: conn.from_port.clone(),
-                to_port: conn.to_port.clone(),
+                from_port,
+                to_port,
             });
         }
 
         Ok(Self {
-            modules: modules.into_values().collect(),
+            modules: module_list.into_iter().map(|(_, m)| m).collect(),
             input_routes,
             process_order,
             current_sample: 0,
@@ -408,11 +460,11 @@ impl CompiledDevelopmentGraph {
     }
 }
 
-fn compute_process_order(
-    modules: &IndexMap<String, GraphModule>,
+fn compute_process_order_slice(
+    modules: &[(String, GraphModule)],
     routing: &[RoutingConnection],
 ) -> Vec<usize> {
-    let indexes = module_indexes(modules);
+    let indexes = module_indexes_slice(modules);
     let mut downstream: Vec<Vec<usize>> = (0..modules.len()).map(|_| Vec::new()).collect();
 
     for conn in routing {

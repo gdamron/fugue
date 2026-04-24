@@ -188,6 +188,16 @@ impl Module for MelodyGenerator {
         self.outputs.get(port)
     }
 
+    #[inline]
+    fn set_input_by_index(&mut self, index: usize, value: f32) {
+        self.inputs.set_by_index(index, value);
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        self.outputs.get_by_index(index)
+    }
+
     fn last_processed_sample(&self) -> u64 {
         self.last_processed_sample
     }

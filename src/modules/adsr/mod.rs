@@ -245,6 +245,19 @@ impl Module for Adsr {
         outputs::AdsrOutputs::get(port, self.envelope_value)
     }
 
+    #[inline]
+    fn set_input_by_index(&mut self, index: usize, value: f32) {
+        self.inputs.set_by_index(index, value);
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        match index {
+            0 => self.envelope_value.clamp(0.0, 1.0),
+            _ => 0.0,
+        }
+    }
+
     fn last_processed_sample(&self) -> u64 {
         self.last_processed_sample
     }

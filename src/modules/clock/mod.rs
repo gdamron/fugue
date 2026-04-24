@@ -204,6 +204,16 @@ impl Module for Clock {
         self.outputs.get(port)
     }
 
+    #[inline]
+    fn set_input_by_index(&mut self, _index: usize, _value: f32) {
+        // Clock has no inputs.
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        self.outputs.get_by_index(index)
+    }
+
     fn last_processed_sample(&self) -> u64 {
         self.last_processed_sample
     }

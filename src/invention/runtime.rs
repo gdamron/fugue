@@ -123,27 +123,18 @@ impl InventionRuntime {
         self,
         mut backend: B,
     ) -> Result<RunningInvention, Box<dyn std::error::Error>> {
-        // Build input map: for each module, collect all connections that feed into it
-        let mut input_map: std::collections::HashMap<String, Vec<RoutingConnection>> =
-            std::collections::HashMap::new();
-
-        for conn in &self.routing {
-            input_map
-                .entry(conn.to_module.clone())
-                .or_default()
-                .push(conn.clone());
-        }
-
         let (command_tx, command_rx) = mpsc::channel();
         let module_ports = Arc::new(Mutex::new(module_ports(&self.modules)));
 
         let mut graph = SignalGraph {
             modules: self.modules,
             sinks: self.sinks,
-            input_map,
+            edges: self.routing,
             current_sample: 0,
             command_rx,
             process_order: Vec::new(),
+            compiled_routes: Vec::new(),
+            sink_indices: Vec::new(),
             topo_dirty: true,
         };
 

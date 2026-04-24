@@ -27,4 +27,14 @@ impl MelodyOutputs {
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }
+
+    /// Hot-path indexed getter. Index must match `OUTPUTS` order.
+    #[inline]
+    pub fn get_by_index(&self, index: usize) -> f32 {
+        match index {
+            0 => self.frequency,
+            1 => self.gate,
+            _ => 0.0,
+        }
+    }
 }

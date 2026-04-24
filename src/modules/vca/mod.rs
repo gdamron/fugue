@@ -135,6 +135,19 @@ impl Module for Vca {
         outputs::VcaOutputs::get(port, self.inputs.audio() * self.effective_cv())
     }
 
+    #[inline]
+    fn set_input_by_index(&mut self, index: usize, value: f32) {
+        self.inputs.set_by_index(index, value);
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        match index {
+            0 => self.inputs.audio() * self.effective_cv(),
+            _ => 0.0,
+        }
+    }
+
     fn last_processed_sample(&self) -> u64 {
         self.last_processed_sample
     }

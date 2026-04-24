@@ -215,6 +215,21 @@ impl Module for Mixer {
         outputs::MixerOutputs::get(port, left, right)
     }
 
+    #[inline]
+    fn set_input_by_index(&mut self, index: usize, value: f32) {
+        self.input_state.set_by_index(self.channels, index, value);
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        let (left, right) = self.mix();
+        match index {
+            0 => left,
+            1 => right,
+            _ => 0.0,
+        }
+    }
+
     fn last_processed_sample(&self) -> u64 {
         self.last_processed_sample
     }

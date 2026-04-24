@@ -36,6 +36,19 @@ impl VcaInputs {
         self.cv_active = false;
     }
 
+    /// Hot-path indexed setter. Index must match `INPUTS` order.
+    #[inline]
+    pub fn set_by_index(&mut self, index: usize, value: f32) {
+        match index {
+            0 => self.audio = value,
+            1 => {
+                self.cv = value.clamp(0.0, 1.0);
+                self.cv_active = true;
+            }
+            _ => {}
+        }
+    }
+
     pub fn audio(&self) -> f32 {
         self.audio
     }

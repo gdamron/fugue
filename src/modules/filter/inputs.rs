@@ -47,6 +47,24 @@ impl FilterInputs {
         }
     }
 
+    /// Hot-path indexed setter. Index must match `INPUTS` order.
+    #[inline]
+    pub fn set_by_index(&mut self, index: usize, value: f32) {
+        match index {
+            0 => self.audio = value,
+            1 => {
+                self.cutoff = value.clamp(20.0, 20000.0);
+                self.cutoff_active = true;
+            }
+            2 => self.cutoff_cv = value,
+            3 => {
+                self.resonance = value.clamp(0.0, 1.0);
+                self.resonance_active = true;
+            }
+            _ => {}
+        }
+    }
+
     pub fn reset(&mut self) {
         self.cutoff_active = false;
         self.resonance_active = false;

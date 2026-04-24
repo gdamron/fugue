@@ -29,6 +29,16 @@ impl LfoInputs {
         }
     }
 
+    /// Hot-path indexed setter. Index must match `INPUTS` order.
+    #[inline]
+    pub fn set_by_index(&mut self, index: usize, value: f32) {
+        match index {
+            0 => self.sync = value,
+            1 => self.rate = value,
+            _ => {}
+        }
+    }
+
     pub fn sync(&self) -> f32 {
         self.sync
     }
