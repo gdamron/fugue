@@ -1,7 +1,6 @@
 //! Thread-safe controls for the Vca module.
 
-use std::sync::{Arc, Mutex};
-
+use crate::atomic::AtomicF32;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 /// Thread-safe controls for the Vca module.
@@ -19,7 +18,7 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 /// ```
 #[derive(Clone)]
 pub struct VcaControls {
-    pub(crate) cv: Arc<Mutex<f32>>,
+    pub(crate) cv: AtomicF32,
 }
 
 impl VcaControls {
@@ -28,18 +27,18 @@ impl VcaControls {
     /// Defaults to 1.0 (unity gain / passthrough).
     pub fn new(cv: f32) -> Self {
         Self {
-            cv: Arc::new(Mutex::new(cv.clamp(0.0, 1.0))),
+            cv: AtomicF32::new(cv.clamp(0.0, 1.0)),
         }
     }
 
     /// Gets the CV value.
     pub fn cv(&self) -> f32 {
-        *self.cv.lock().unwrap()
+        self.cv.load()
     }
 
     /// Sets the CV value (0.0-1.0).
     pub fn set_cv(&self, value: f32) {
-        *self.cv.lock().unwrap() = value.clamp(0.0, 1.0);
+        self.cv.store(value.clamp(0.0, 1.0));
     }
 }
 

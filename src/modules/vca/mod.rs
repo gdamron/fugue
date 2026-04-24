@@ -5,9 +5,9 @@
 //! tremolo effects, and level control.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -36,7 +36,7 @@ impl ModuleFactory for VcaFactory {
         let vca = Vca::new_with_controls(controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(vca)),
+            module: GraphModule::Module(Box::new(vca)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,

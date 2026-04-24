@@ -1,7 +1,6 @@
 //! Thread-safe controls for the ADSR envelope generator.
 
-use std::sync::{Arc, Mutex};
-
+use crate::atomic::AtomicF32;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 /// Thread-safe controls for the ADSR envelope generator.
@@ -22,61 +21,61 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 /// ```
 #[derive(Clone)]
 pub struct AdsrControls {
-    pub(crate) attack: Arc<Mutex<f32>>,
-    pub(crate) decay: Arc<Mutex<f32>>,
-    pub(crate) sustain: Arc<Mutex<f32>>,
-    pub(crate) release: Arc<Mutex<f32>>,
+    pub(crate) attack: AtomicF32,
+    pub(crate) decay: AtomicF32,
+    pub(crate) sustain: AtomicF32,
+    pub(crate) release: AtomicF32,
 }
 
 impl AdsrControls {
     /// Creates new ADSR controls with the given initial values.
     pub fn new(attack: f32, decay: f32, sustain: f32, release: f32) -> Self {
         Self {
-            attack: Arc::new(Mutex::new(attack.max(0.0))),
-            decay: Arc::new(Mutex::new(decay.max(0.0))),
-            sustain: Arc::new(Mutex::new(sustain.clamp(0.0, 1.0))),
-            release: Arc::new(Mutex::new(release.max(0.0))),
+            attack: AtomicF32::new(attack.max(0.0)),
+            decay: AtomicF32::new(decay.max(0.0)),
+            sustain: AtomicF32::new(sustain.clamp(0.0, 1.0)),
+            release: AtomicF32::new(release.max(0.0)),
         }
     }
 
     /// Gets the attack time in seconds.
     pub fn attack(&self) -> f32 {
-        *self.attack.lock().unwrap()
+        self.attack.load()
     }
 
     /// Sets the attack time in seconds.
     pub fn set_attack(&self, value: f32) {
-        *self.attack.lock().unwrap() = value.max(0.0);
+        self.attack.store(value.max(0.0));
     }
 
     /// Gets the decay time in seconds.
     pub fn decay(&self) -> f32 {
-        *self.decay.lock().unwrap()
+        self.decay.load()
     }
 
     /// Sets the decay time in seconds.
     pub fn set_decay(&self, value: f32) {
-        *self.decay.lock().unwrap() = value.max(0.0);
+        self.decay.store(value.max(0.0));
     }
 
     /// Gets the sustain level (0.0-1.0).
     pub fn sustain(&self) -> f32 {
-        *self.sustain.lock().unwrap()
+        self.sustain.load()
     }
 
     /// Sets the sustain level (0.0-1.0).
     pub fn set_sustain(&self, value: f32) {
-        *self.sustain.lock().unwrap() = value.clamp(0.0, 1.0);
+        self.sustain.store(value.clamp(0.0, 1.0));
     }
 
     /// Gets the release time in seconds.
     pub fn release(&self) -> f32 {
-        *self.release.lock().unwrap()
+        self.release.load()
     }
 
     /// Sets the release time in seconds.
     pub fn set_release(&self, value: f32) {
-        *self.release.lock().unwrap() = value.max(0.0);
+        self.release.store(value.max(0.0));
     }
 }
 

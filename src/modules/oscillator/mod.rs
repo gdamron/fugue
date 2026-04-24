@@ -1,9 +1,9 @@
 //! Oscillator module for waveform generation.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
 use std::f32::consts::PI;
@@ -53,7 +53,7 @@ impl ModuleFactory for OscillatorFactory {
         let osc = Oscillator::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(osc)),
+            module: GraphModule::Module(Box::new(osc)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,

@@ -30,10 +30,10 @@
 //! ```
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::dsp::{Allpass, Damper, DelayLine};
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -474,7 +474,7 @@ impl ModuleFactory for ReverbFactory {
         let reverb = Reverb::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(reverb)),
+            module: GraphModule::Module(Box::new(reverb)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
@@ -650,7 +650,7 @@ mod tests {
 
         let result = factory.build(44100, &config).unwrap();
 
-        let module = result.module.lock().unwrap();
+        let module = result.module.module();
         assert_eq!(module.name(), "Reverb");
         assert_eq!(result.handles.len(), 1);
         assert_eq!(result.handles[0].0, "controls");

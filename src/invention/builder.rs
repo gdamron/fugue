@@ -8,7 +8,7 @@ use crate::invention::runtime::{
 };
 use crate::invention::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
 use crate::registry::ModuleRegistry;
-use crate::ModuleFactory;
+use crate::{GraphModule, ModuleFactory};
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::development::DevelopmentFactory;
-use super::graph::{RoutingConnection, SinkInstance};
+use super::graph::RoutingConnection;
 
 /// Result type for building modules, containing modules, sinks, and handles.
 type BuildModulesResult = (
     IndexMap<String, ModuleInstance>,
-    IndexMap<String, SinkInstance>,
+    Vec<String>,
     IndexMap<String, ControlSurfaceInstance>,
     InventionHandles,
 );
@@ -189,7 +189,7 @@ impl InventionBuilder {
         invention: &Invention,
     ) -> Result<BuildModulesResult, Box<dyn std::error::Error>> {
         let mut modules = IndexMap::new();
-        let mut sinks = IndexMap::new();
+        let mut sinks = Vec::new();
         let mut control_surfaces = IndexMap::new();
         let mut all_handles: HashMap<String, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
@@ -199,13 +199,13 @@ impl InventionBuilder {
                 .registry
                 .build(&spec.module_type, self.sample_rate, &spec.config)?;
 
+            // If this is a sink, track its module id for output collection.
+            if matches!(result.module, GraphModule::Sink(_)) {
+                sinks.push(spec.id.clone());
+            }
+
             // Store in modules collection
             modules.insert(spec.id.clone(), result.module);
-
-            // If this is a sink, also store in sinks collection
-            if let Some(sink) = result.sink {
-                sinks.insert(spec.id.clone(), sink);
-            }
 
             if let Some(control_surface) = result.control_surface {
                 control_surfaces.insert(spec.id.clone(), control_surface);
@@ -423,9 +423,9 @@ mod tests {
         let builder = InventionBuilder::new(44_100);
         let (runtime, _) = builder.build(invention).unwrap();
 
-        let module = runtime.modules.get("lead").unwrap();
-        assert!(module.lock().unwrap().inputs().contains(&"frequency"));
-        assert!(module.lock().unwrap().outputs().contains(&"audio"));
+        let module = runtime.modules.get("lead").unwrap().module();
+        assert!(module.inputs().contains(&"frequency"));
+        assert!(module.outputs().contains(&"audio"));
 
         let controls = runtime.control_surfaces.get("lead").unwrap().controls();
         assert_eq!(controls.len(), 1);
@@ -522,9 +522,8 @@ mod tests {
             source_path: None,
         };
 
-        let (runtime, _) = InventionBuilder::new(44_100).build(root).unwrap();
-        let voice = runtime.modules.get("voice").unwrap();
-        let mut voice = voice.lock().unwrap();
+        let (mut runtime, _) = InventionBuilder::new(44_100).build(root).unwrap();
+        let voice = runtime.modules.get_mut("voice").unwrap().module_mut();
 
         voice.set_input("signal", 0.8).unwrap();
         voice.process();

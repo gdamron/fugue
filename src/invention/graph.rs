@@ -32,9 +32,8 @@
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 
-use crate::{SinkModule, SinkOutput};
+use crate::{GraphModule, SinkOutput};
 
 use super::runtime::ModuleInstance;
 
@@ -50,7 +49,6 @@ pub(crate) enum GraphCommand {
     AddModule {
         module_id: String,
         module: ModuleInstance,
-        sink: Option<SinkInstance>,
     },
     /// Remove a module from the graph (fire-and-forget).
     RemoveModule { module_id: String },
@@ -70,9 +68,6 @@ pub(crate) enum GraphCommand {
     },
 }
 
-/// Type alias for sink module instances.
-pub(crate) type SinkInstance = Arc<Mutex<dyn SinkModule + Send>>;
-
 /// A single routing connection in the signal graph.
 #[derive(Debug, Clone)]
 pub(crate) struct RoutingConnection {
@@ -87,7 +82,7 @@ pub(crate) struct SignalGraph {
     /// All modules in the graph (including sinks).
     pub(crate) modules: IndexMap<String, ModuleInstance>,
     /// Sink modules that drive processing and collect output.
-    pub(crate) sinks: IndexMap<String, SinkInstance>,
+    pub(crate) sinks: Vec<String>,
     /// Maps module_id -> Vec of connections that feed into it
     pub(crate) input_map: HashMap<String, Vec<RoutingConnection>>,
     /// Current sample number (for caching)
@@ -114,8 +109,8 @@ impl SignalGraph {
 
         self.current_sample += 1;
 
-        for module in self.modules.values() {
-            module.lock().unwrap().reset_inputs();
+        for module in self.modules.values_mut() {
+            module.module_mut().reset_inputs();
         }
 
         for i in 0..self.process_order.len() {
@@ -126,16 +121,16 @@ impl SignalGraph {
                     let input_value = self
                         .modules
                         .get(&conn.from_module)
-                        .map(|m| m.lock().unwrap().get_output(&conn.from_port).unwrap_or(0.0))
+                        .map(|m| m.module().get_output(&conn.from_port).unwrap_or(0.0))
                         .unwrap_or(0.0);
-                    if let Some(module) = self.modules.get(module_id.as_str()) {
-                        let _ = module.lock().unwrap().set_input(&conn.to_port, input_value);
+                    if let Some(module) = self.modules.get_mut(module_id.as_str()) {
+                        let _ = module.module_mut().set_input(&conn.to_port, input_value);
                     }
                 }
             }
 
-            if let Some(module) = self.modules.get(module_id.as_str()) {
-                let mut m = module.lock().unwrap();
+            if let Some(module) = self.modules.get_mut(module_id.as_str()) {
+                let m = module.module_mut();
                 m.process();
                 m.mark_processed(self.current_sample);
             }
@@ -157,24 +152,21 @@ impl SignalGraph {
                 port,
                 value,
             } => {
-                if let Some(module) = self.modules.get(&module_id) {
-                    let _ = module.lock().unwrap().set_input(&port, value);
+                if let Some(module) = self.modules.get_mut(&module_id) {
+                    let _ = module.module_mut().set_input(&port, value);
                 }
             }
-            GraphCommand::AddModule {
-                module_id,
-                module,
-                sink,
-            } => {
+            GraphCommand::AddModule { module_id, module } => {
+                let is_sink = matches!(module, GraphModule::Sink(_));
                 self.modules.insert(module_id.clone(), module);
-                if let Some(sink) = sink {
-                    self.sinks.insert(module_id, sink);
+                if is_sink && !self.sinks.contains(&module_id) {
+                    self.sinks.push(module_id);
                 }
                 self.topo_dirty = true;
             }
             GraphCommand::RemoveModule { module_id } => {
                 self.modules.swap_remove(&module_id);
-                self.sinks.swap_remove(&module_id);
+                self.sinks.retain(|id| id != &module_id);
                 self.input_map.remove(&module_id);
                 // Remove connections referencing this module from all other input maps
                 for connections in self.input_map.values_mut() {
@@ -327,10 +319,11 @@ impl SignalGraph {
         }
 
         let mut output = SinkOutput::default();
-        for sink in self.sinks.values() {
-            let frame = sink.lock().unwrap().sink_output();
-            output.left += frame.left;
-            output.right += frame.right;
+        for sink_id in &self.sinks {
+            if let Some(frame) = self.modules.get(sink_id).and_then(GraphModule::sink_output) {
+                output.left += frame.left;
+                output.right += frame.right;
+            }
         }
 
         if sink_count > 1 {
@@ -378,7 +371,7 @@ mod tests {
 
         let mut graph = SignalGraph {
             modules,
-            sinks: IndexMap::new(),
+            sinks: Vec::new(),
             input_map,
             current_sample: 0,
             command_rx: rx,

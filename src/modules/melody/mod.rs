@@ -1,9 +1,9 @@
 //! Melody generation module.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::music::{Note, Scale};
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -57,7 +57,7 @@ impl ModuleFactory for MelodyFactory {
         let melody = MelodyGenerator::new(controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(melody)),
+            module: GraphModule::Module(Box::new(melody)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,

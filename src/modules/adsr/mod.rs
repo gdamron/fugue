@@ -1,9 +1,9 @@
 //! ADSR envelope generator module.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -46,7 +46,7 @@ impl ModuleFactory for AdsrFactory {
         let adsr = Adsr::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(adsr)),
+            module: GraphModule::Module(Box::new(adsr)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,

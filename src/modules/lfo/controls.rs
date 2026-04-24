@@ -1,7 +1,6 @@
 //! Thread-safe controls for the LFO.
 
-use std::sync::{Arc, Mutex};
-
+use crate::atomic::AtomicF32;
 use crate::modules::OscillatorType;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
@@ -21,37 +20,37 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 /// ```
 #[derive(Clone)]
 pub struct LfoControls {
-    pub(crate) frequency: Arc<Mutex<f32>>,
-    pub(crate) waveform: Arc<Mutex<OscillatorType>>,
+    pub(crate) frequency: AtomicF32,
+    pub(crate) waveform: AtomicF32,
 }
 
 impl LfoControls {
     /// Creates new LFO controls with the given initial values.
     pub fn new(frequency: f32, waveform: OscillatorType) -> Self {
         Self {
-            frequency: Arc::new(Mutex::new(frequency.clamp(0.001, 100.0))),
-            waveform: Arc::new(Mutex::new(waveform)),
+            frequency: AtomicF32::new(frequency.clamp(0.001, 100.0)),
+            waveform: AtomicF32::new(waveform.to_index()),
         }
     }
 
     /// Gets the frequency in Hz.
     pub fn frequency(&self) -> f32 {
-        *self.frequency.lock().unwrap()
+        self.frequency.load()
     }
 
     /// Sets the frequency in Hz.
     pub fn set_frequency(&self, value: f32) {
-        *self.frequency.lock().unwrap() = value.clamp(0.001, 100.0);
+        self.frequency.store(value.clamp(0.001, 100.0));
     }
 
     /// Gets the waveform type.
     pub fn waveform(&self) -> OscillatorType {
-        *self.waveform.lock().unwrap()
+        OscillatorType::from_index(self.waveform.load())
     }
 
     /// Sets the waveform type.
     pub fn set_waveform(&self, value: OscillatorType) {
-        *self.waveform.lock().unwrap() = value;
+        self.waveform.store(value.to_index());
     }
 }
 

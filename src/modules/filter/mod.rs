@@ -35,9 +35,9 @@
 
 use std::any::Any;
 use std::f32::consts::PI;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -368,7 +368,7 @@ impl ModuleFactory for FilterFactory {
         let filter = Filter::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(filter)),
+            module: GraphModule::Module(Box::new(filter)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
@@ -449,7 +449,7 @@ mod tests {
 
         let result = factory.build(44100, &config).unwrap();
 
-        let module = result.module.lock().unwrap();
+        let module = result.module.module();
         assert_eq!(module.name(), "Filter");
 
         // Check that controls handle is returned

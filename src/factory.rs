@@ -6,7 +6,7 @@
 
 use crate::{ControlSurface, Module, SinkModule};
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Factory for constructing module instances from configuration.
 ///
@@ -70,12 +70,41 @@ pub trait ModuleFactory: Send + Sync + 'static {
     }
 }
 
+/// Owned module storage used by the signal graph.
+pub enum GraphModule {
+    Module(Box<dyn Module + Send>),
+    Sink(Box<dyn SinkModule + Send>),
+}
+
+impl GraphModule {
+    pub fn module(&self) -> &dyn Module {
+        match self {
+            Self::Module(module) => module.as_ref(),
+            Self::Sink(module) => module.as_ref(),
+        }
+    }
+
+    pub fn module_mut(&mut self) -> &mut dyn Module {
+        match self {
+            Self::Module(module) => module.as_mut(),
+            Self::Sink(module) => module.as_mut(),
+        }
+    }
+
+    pub fn sink_output(&self) -> Option<crate::SinkOutput> {
+        match self {
+            Self::Module(_) => None,
+            Self::Sink(module) => Some(module.sink_output()),
+        }
+    }
+}
+
 /// Result of building a module from a factory.
 ///
 /// Contains both the module instance and any handles for runtime control.
 pub struct ModuleBuildResult {
     /// The constructed module instance.
-    pub module: Arc<Mutex<dyn Module + Send>>,
+    pub module: GraphModule,
 
     /// Named handles for runtime control.
     ///
@@ -90,10 +119,9 @@ pub struct ModuleBuildResult {
     /// Shared typed control surface for runtime control, if the module exposes one.
     pub control_surface: Option<Arc<dyn ControlSurface + Send + Sync>>,
 
-    /// If this module is a sink, a reference to it as a SinkModule.
+    /// Whether this module is a sink.
     ///
-    /// This should point to the same instance as `module`. Sink modules
-    /// are final destinations that drive pull-based processing and collect
-    /// output for external destinations like audio devices.
-    pub sink: Option<Arc<Mutex<dyn SinkModule + Send>>>,
+    /// Sink modules are represented by [`GraphModule::Sink`] so the signal graph
+    /// can process and collect output from the same owned object without locks.
+    pub sink: Option<()>,
 }

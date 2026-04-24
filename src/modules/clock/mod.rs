@@ -1,8 +1,8 @@
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -42,7 +42,7 @@ impl ModuleFactory for ClockFactory {
         }
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(clock)),
+            module: GraphModule::Module(Box::new(clock)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,

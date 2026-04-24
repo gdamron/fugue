@@ -4,9 +4,9 @@
 //! stored sequences and controls for selecting or advancing between them.
 
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::music::Note;
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -447,7 +447,7 @@ impl ModuleFactory for CellSequencerFactory {
         let module = CellSequencer::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(module)),
+            module: GraphModule::Module(Box::new(module)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn std::any::Any + Send + Sync>,
@@ -685,7 +685,7 @@ mod tests {
 
         assert!(result.control_surface.is_some());
         assert_eq!(
-            result.module.lock().unwrap().outputs(),
+            result.module.module().outputs(),
             &["frequency", "gate", "step", "sequence"]
         );
 

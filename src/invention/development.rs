@@ -1,8 +1,7 @@
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::graph::RoutingConnection;
 use crate::invention::runtime::{
     validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
-    ModuleInstance,
 };
 use crate::{ControlMeta, ControlSurface, ControlValue, Invention, Module, ModuleRegistry};
 use indexmap::IndexMap;
@@ -39,7 +38,7 @@ impl ModuleFactory for DevelopmentFactory {
             DevelopmentModule::new(&self.name, runtime, &self.definition)?;
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(module)),
+            module: GraphModule::Module(Box::new(module)),
             handles: Vec::<(String, Arc<dyn Any + Send + Sync>)>::new(),
             control_surface: Some(control_surface),
             sink: None,
@@ -66,7 +65,7 @@ struct CompiledConnection {
 }
 
 struct CompiledDevelopmentGraph {
-    modules: Vec<ModuleInstance>,
+    modules: Vec<GraphModule>,
     input_routes: Vec<Vec<CompiledConnection>>,
     process_order: Vec<usize>,
     current_sample: u64,
@@ -257,8 +256,8 @@ impl DevelopmentModule {
         for (index, routes) in self.input_routes.iter().enumerate() {
             let value = self.input_values[index];
             for route in routes {
-                if let Some(module) = self.graph.modules.get(route.module_index) {
-                    let _ = module.lock().unwrap().set_input(&route.port, value);
+                if let Some(module) = self.graph.modules.get_mut(route.module_index) {
+                    let _ = module.module_mut().set_input(&route.port, value);
                 }
             }
         }
@@ -270,13 +269,7 @@ impl DevelopmentModule {
                 .graph
                 .modules
                 .get(output.module_index)
-                .map(|module| {
-                    module
-                        .lock()
-                        .unwrap()
-                        .get_output(&output.port)
-                        .unwrap_or(0.0)
-                })
+                .map(|module| module.module().get_output(&output.port).unwrap_or(0.0))
                 .unwrap_or(0.0);
         }
     }
@@ -288,8 +281,8 @@ impl Module for DevelopmentModule {
     }
 
     fn process(&mut self) -> bool {
-        for module in &self.graph.modules {
-            module.lock().unwrap().reset_inputs();
+        for module in &mut self.graph.modules {
+            module.module_mut().reset_inputs();
         }
         self.graph.current_sample += 1;
         self.apply_external_inputs();
@@ -301,22 +294,16 @@ impl Module for DevelopmentModule {
                         .graph
                         .modules
                         .get(conn.from_module)
-                        .map(|module| {
-                            module
-                                .lock()
-                                .unwrap()
-                                .get_output(&conn.from_port)
-                                .unwrap_or(0.0)
-                        })
+                        .map(|module| module.module().get_output(&conn.from_port).unwrap_or(0.0))
                         .unwrap_or(0.0);
-                    if let Some(module) = self.graph.modules.get(module_index) {
-                        let _ = module.lock().unwrap().set_input(&conn.to_port, input_value);
+                    if let Some(module) = self.graph.modules.get_mut(module_index) {
+                        let _ = module.module_mut().set_input(&conn.to_port, input_value);
                     }
                 }
             }
 
-            if let Some(module) = self.graph.modules.get(module_index) {
-                let mut module = module.lock().unwrap();
+            if let Some(module) = self.graph.modules.get_mut(module_index) {
+                let module = module.module_mut();
                 module.process();
                 module.mark_processed(self.graph.current_sample);
             }
@@ -380,7 +367,7 @@ fn unique_port_names<'a>(names: impl Iterator<Item = &'a String>) -> Vec<&'stati
     ports
 }
 
-fn module_indexes(modules: &IndexMap<String, ModuleInstance>) -> HashMap<&str, usize> {
+fn module_indexes(modules: &IndexMap<String, GraphModule>) -> HashMap<&str, usize> {
     modules
         .keys()
         .enumerate()
@@ -390,7 +377,7 @@ fn module_indexes(modules: &IndexMap<String, ModuleInstance>) -> HashMap<&str, u
 
 impl CompiledDevelopmentGraph {
     fn new(
-        modules: IndexMap<String, ModuleInstance>,
+        modules: IndexMap<String, GraphModule>,
         routing: &[RoutingConnection],
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let indexes = module_indexes(&modules);
@@ -422,7 +409,7 @@ impl CompiledDevelopmentGraph {
 }
 
 fn compute_process_order(
-    modules: &IndexMap<String, ModuleInstance>,
+    modules: &IndexMap<String, GraphModule>,
     routing: &[RoutingConnection],
 ) -> Vec<usize> {
     let indexes = module_indexes(modules);

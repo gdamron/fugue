@@ -1,10 +1,26 @@
 //! Thread-safe controls for the Filter.
 
-use std::sync::{Arc, Mutex};
-
+use crate::atomic::AtomicF32;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::FilterType;
+
+fn filter_type_to_index(filter_type: FilterType) -> f32 {
+    match filter_type {
+        FilterType::LowPass => 0.0,
+        FilterType::HighPass => 1.0,
+        FilterType::BandPass => 2.0,
+    }
+}
+
+fn index_to_filter_type(index: f32) -> FilterType {
+    match index.round() as i32 {
+        0 => FilterType::LowPass,
+        1 => FilterType::HighPass,
+        2 => FilterType::BandPass,
+        _ => FilterType::LowPass,
+    }
+}
 
 /// Thread-safe controls for the Filter.
 ///
@@ -23,61 +39,61 @@ use super::FilterType;
 /// ```
 #[derive(Clone)]
 pub struct FilterControls {
-    pub(crate) cutoff: Arc<Mutex<f32>>,
-    pub(crate) resonance: Arc<Mutex<f32>>,
-    pub(crate) filter_type: Arc<Mutex<FilterType>>,
-    pub(crate) cv_amount: Arc<Mutex<f32>>,
+    pub(crate) cutoff: AtomicF32,
+    pub(crate) resonance: AtomicF32,
+    pub(crate) filter_type: AtomicF32,
+    pub(crate) cv_amount: AtomicF32,
 }
 
 impl FilterControls {
     /// Creates new filter controls with the given initial values.
     pub fn new(cutoff: f32, resonance: f32, filter_type: FilterType, cv_amount: f32) -> Self {
         Self {
-            cutoff: Arc::new(Mutex::new(cutoff.clamp(20.0, 20000.0))),
-            resonance: Arc::new(Mutex::new(resonance.clamp(0.0, 1.0))),
-            filter_type: Arc::new(Mutex::new(filter_type)),
-            cv_amount: Arc::new(Mutex::new(cv_amount.max(0.0))),
+            cutoff: AtomicF32::new(cutoff.clamp(20.0, 20000.0)),
+            resonance: AtomicF32::new(resonance.clamp(0.0, 1.0)),
+            filter_type: AtomicF32::new(filter_type_to_index(filter_type)),
+            cv_amount: AtomicF32::new(cv_amount.max(0.0)),
         }
     }
 
     /// Gets the cutoff frequency in Hz.
     pub fn cutoff(&self) -> f32 {
-        *self.cutoff.lock().unwrap()
+        self.cutoff.load()
     }
 
     /// Sets the cutoff frequency in Hz.
     pub fn set_cutoff(&self, value: f32) {
-        *self.cutoff.lock().unwrap() = value.clamp(20.0, 20000.0);
+        self.cutoff.store(value.clamp(20.0, 20000.0));
     }
 
     /// Gets the resonance (0.0-1.0).
     pub fn resonance(&self) -> f32 {
-        *self.resonance.lock().unwrap()
+        self.resonance.load()
     }
 
     /// Sets the resonance (0.0-1.0).
     pub fn set_resonance(&self, value: f32) {
-        *self.resonance.lock().unwrap() = value.clamp(0.0, 1.0);
+        self.resonance.store(value.clamp(0.0, 1.0));
     }
 
     /// Gets the filter type.
     pub fn filter_type(&self) -> FilterType {
-        *self.filter_type.lock().unwrap()
+        index_to_filter_type(self.filter_type.load())
     }
 
     /// Sets the filter type.
     pub fn set_filter_type(&self, value: FilterType) {
-        *self.filter_type.lock().unwrap() = value;
+        self.filter_type.store(filter_type_to_index(value));
     }
 
     /// Gets the CV modulation amount in Hz.
     pub fn cv_amount(&self) -> f32 {
-        *self.cv_amount.lock().unwrap()
+        self.cv_amount.load()
     }
 
     /// Sets the CV modulation amount in Hz.
     pub fn set_cv_amount(&self, value: f32) {
-        *self.cv_amount.lock().unwrap() = value.max(0.0);
+        self.cv_amount.store(value.max(0.0));
     }
 }
 

@@ -533,7 +533,7 @@ impl FugueMcp {
             let config = serde_json::Value::Null;
             match registry.build(type_name, sample_rate, &config) {
                 Ok(result) => {
-                    let module = result.module.lock().unwrap();
+                    let module = result.module.module();
                     let inputs: Vec<String> =
                         module.inputs().iter().map(|s| s.to_string()).collect();
                     let outputs: Vec<String> =

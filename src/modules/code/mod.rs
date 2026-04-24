@@ -1,7 +1,7 @@
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::{ControlMeta, ControlSurface, Module};
 
 pub use self::controls::CodeControls;
@@ -45,7 +45,7 @@ impl ModuleFactory for CodeFactory {
         );
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(CodeModule {
+            module: GraphModule::Module(Box::new(CodeModule {
                 controls: controls.clone(),
                 last_processed_sample: 0,
             })),
@@ -150,7 +150,7 @@ mod tests {
         });
         let built = CodeFactory.build(48_000, &config).unwrap();
         assert!(built.control_surface.is_some());
-        assert_eq!(built.module.lock().unwrap().inputs().len(), 0);
+        assert_eq!(built.module.module().inputs().len(), 0);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 pub mod agents;
+mod atomic;
 pub mod dsp;
 #[cfg(test)]
 mod example_catalog;
@@ -21,7 +22,7 @@ pub use traits::{
 };
 
 // Re-export factory system
-pub use factory::{ModuleBuildResult, ModuleFactory};
+pub use factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 pub use registry::ModuleRegistry;
 
 // Re-export modules

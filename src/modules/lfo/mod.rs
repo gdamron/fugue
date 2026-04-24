@@ -28,9 +28,9 @@
 
 use std::any::Any;
 use std::f32::consts::PI;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::modules::OscillatorType;
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -286,7 +286,7 @@ impl ModuleFactory for LfoFactory {
         let lfo = Lfo::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(lfo)),
+            module: GraphModule::Module(Box::new(lfo)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
@@ -365,7 +365,7 @@ mod tests {
 
         let result = factory.build(44100, &config).unwrap();
 
-        let module = result.module.lock().unwrap();
+        let module = result.module.module();
         assert_eq!(module.name(), "Lfo");
 
         // Check that controls handle is returned
