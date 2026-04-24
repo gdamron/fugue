@@ -1,0 +1,167 @@
+{
+  "version": "1.0.0",
+  "title": "Voice Library Trio",
+  "description": "Three-voice arrangement: a pluck bass on quarter notes, a piano melody on eighth notes, and a slow pad on half notes — each drawing from a different register and clock subdivision.",
+  "developments": [
+    {
+      "name": "pluck_voice",
+      "path": "pluck.json"
+    },
+    {
+      "name": "piano_voice",
+      "path": "piano.json"
+    },
+    {
+      "name": "pad_voice",
+      "path": "pad.json"
+    }
+  ],
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 80.0
+      }
+    },
+    {
+      "id": "bass_mel",
+      "type": "melody",
+      "config": {
+        "root_note": 45,
+        "scale_degrees": [0, 0, 5, 7, 0, 3],
+        "note_weights": [3.0, 2.5, 1.2, 1.5, 2.0, 1.0]
+      }
+    },
+    {
+      "id": "melody_mel",
+      "type": "melody",
+      "config": {
+        "root_note": 69,
+        "scale_degrees": [0, 2, 3, 5, 7, 10, 12],
+        "note_weights": [1.5, 1.0, 0.8, 1.2, 1.4, 0.7, 1.0]
+      }
+    },
+    {
+      "id": "pad_mel",
+      "type": "melody",
+      "config": {
+        "root_note": 57,
+        "scale_degrees": [0, 3, 7],
+        "note_weights": [2.0, 1.2, 1.5]
+      }
+    },
+    {
+      "id": "bass",
+      "type": "pluck_voice"
+    },
+    {
+      "id": "melody",
+      "type": "piano_voice"
+    },
+    {
+      "id": "pad",
+      "type": "pad_voice"
+    },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "config": {
+        "channels": 3,
+        "levels": [0.45, 0.35, 0.25],
+        "pans": [-0.35, 0.3, 0.0],
+        "master": 0.55
+      }
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "bass_mel",
+      "to_port": "gate"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x2",
+      "to": "melody_mel",
+      "to_port": "gate"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_d2",
+      "to": "pad_mel",
+      "to_port": "gate"
+    },
+    {
+      "from": "bass_mel",
+      "from_port": "frequency",
+      "to": "bass",
+      "to_port": "frequency"
+    },
+    {
+      "from": "bass_mel",
+      "from_port": "gate",
+      "to": "bass",
+      "to_port": "gate"
+    },
+    {
+      "from": "melody_mel",
+      "from_port": "frequency",
+      "to": "melody",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody_mel",
+      "from_port": "gate",
+      "to": "melody",
+      "to_port": "gate"
+    },
+    {
+      "from": "pad_mel",
+      "from_port": "frequency",
+      "to": "pad",
+      "to_port": "frequency"
+    },
+    {
+      "from": "pad_mel",
+      "from_port": "gate",
+      "to": "pad",
+      "to_port": "gate"
+    },
+    {
+      "from": "bass",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in1"
+    },
+    {
+      "from": "melody",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in2"
+    },
+    {
+      "from": "pad",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in3"
+    },
+    {
+      "from": "mixer",
+      "from_port": "left",
+      "to": "dac",
+      "to_port": "audio_left"
+    },
+    {
+      "from": "mixer",
+      "from_port": "right",
+      "to": "dac",
+      "to_port": "audio_right"
+    }
+  ]
+}

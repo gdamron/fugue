@@ -53,9 +53,9 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::music::Note;
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -526,7 +526,7 @@ impl ModuleFactory for StepSequencerFactory {
             StepSequencer::new_with_controls(sample_rate, controls.clone()).with_pattern(pattern);
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(seq)),
+            module: GraphModule::Module(Box::new(seq)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn std::any::Any + Send + Sync>,
@@ -754,7 +754,7 @@ mod tests {
         });
 
         let result = factory.build(44100, &config).unwrap();
-        let module = result.module.lock().unwrap();
+        let module = result.module.module();
 
         assert_eq!(module.name(), "StepSequencer");
         assert_eq!(module.inputs(), &["gate", "reset"]);

@@ -39,6 +39,19 @@ impl ClockOutputs {
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }
+
+    /// Hot-path indexed getter. Index must match `OUTPUTS` order.
+    #[inline]
+    pub fn get_by_index(&self, index: usize) -> f32 {
+        match index {
+            0 => self.gate,
+            1 => self.gate_d4,
+            2 => self.gate_d2,
+            3 => self.gate_x2,
+            4 => self.gate_x4,
+            _ => 0.0,
+        }
+    }
 }
 
 impl Default for ClockOutputs {

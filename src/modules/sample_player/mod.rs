@@ -1,9 +1,9 @@
 //! Sample player module for audio file playback.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::Module;
 
 pub use self::controls::SamplePlayerControls;
@@ -31,7 +31,7 @@ impl ModuleFactory for SamplePlayerFactory {
         let player = SamplePlayer::new_with_controls(controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(player)),
+            module: GraphModule::Module(Box::new(player)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,

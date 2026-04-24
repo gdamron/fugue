@@ -21,6 +21,14 @@ impl MelodyInputs {
         }
     }
 
+    /// Hot-path indexed setter. Index must match `INPUTS` order.
+    #[inline]
+    pub fn set_by_index(&mut self, index: usize, value: f32) {
+        if index == 0 {
+            self.gate = value;
+        }
+    }
+
     pub fn gate(&self) -> f32 {
         self.gate
     }

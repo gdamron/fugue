@@ -1,8 +1,8 @@
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -42,7 +42,7 @@ impl ModuleFactory for ClockFactory {
         }
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(clock)),
+            module: GraphModule::Module(Box::new(clock)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
@@ -202,6 +202,16 @@ impl Module for Clock {
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
+    }
+
+    #[inline]
+    fn set_input_by_index(&mut self, _index: usize, _value: f32) {
+        // Clock has no inputs.
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        self.outputs.get_by_index(index)
     }
 
     fn last_processed_sample(&self) -> u64 {

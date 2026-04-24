@@ -531,7 +531,7 @@ fn cmd_types(repl: &FugueRepl) -> Result<String, String> {
         let config = serde_json::Value::Null;
         match registry.build(type_name, repl.sample_rate, &config) {
             Ok(result) => {
-                let module = result.module.lock().unwrap();
+                let module = result.module.module();
                 let inputs: Vec<&str> = module.inputs().to_vec();
                 let outputs: Vec<&str> = module.outputs().to_vec();
                 let controls = result

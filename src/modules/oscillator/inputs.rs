@@ -38,6 +38,20 @@ impl OscillatorInputs {
         }
     }
 
+    /// Hot-path indexed setter. Index must match `INPUTS` order.
+    #[inline]
+    pub fn set_by_index(&mut self, index: usize, value: f32) {
+        match index {
+            0 => {
+                self.frequency = value;
+                self.frequency_active = true;
+            }
+            1 => self.fm = value,
+            2 => self.am = value,
+            _ => {}
+        }
+    }
+
     pub fn reset(&mut self) {
         self.frequency_active = false;
     }

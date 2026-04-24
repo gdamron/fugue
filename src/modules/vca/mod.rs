@@ -5,9 +5,9 @@
 //! tremolo effects, and level control.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -36,7 +36,7 @@ impl ModuleFactory for VcaFactory {
         let vca = Vca::new_with_controls(controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(vca)),
+            module: GraphModule::Module(Box::new(vca)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
@@ -133,6 +133,19 @@ impl Module for Vca {
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         outputs::VcaOutputs::get(port, self.inputs.audio() * self.effective_cv())
+    }
+
+    #[inline]
+    fn set_input_by_index(&mut self, index: usize, value: f32) {
+        self.inputs.set_by_index(index, value);
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        match index {
+            0 => self.inputs.audio() * self.effective_cv(),
+            _ => 0.0,
+        }
     }
 
     fn last_processed_sample(&self) -> u64 {

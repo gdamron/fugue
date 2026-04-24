@@ -8,10 +8,11 @@ use crate::agents::AgentManager;
 use crate::scripting::ScriptManager;
 use crate::{ControlValue, Invention, InventionBuilder, ModuleRegistry};
 
-use super::graph::{GraphCommand, RoutingConnection, SignalGraph};
-use super::orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
+use super::graph::{GraphCommand, SignalGraph};
+use super::orchestration::{ModulePorts, OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 use super::runtime::{
-    validate_input_port, validate_output_port, ControlSurfaceInstance, GraphCommandError,
+    module_ports, validate_input_port, validate_output_port, ControlSurfaceInstance,
+    GraphCommandError,
 };
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
@@ -26,6 +27,7 @@ pub struct RenderEngine {
     registry: ModuleRegistry,
     state: Arc<Mutex<RuntimeState>>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
+    module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
     source_json: Option<String>,
     scripts: ScriptManager,
     agents: AgentManager,
@@ -53,6 +55,7 @@ impl RenderEngine {
                 ..RuntimeState::default()
             })),
             control_surfaces: Arc::new(Mutex::new(IndexMap::new())),
+            module_ports: Arc::new(Mutex::new(IndexMap::new())),
             source_json: None,
             scripts: ScriptManager::default(),
             agents: AgentManager::default(),
@@ -76,8 +79,9 @@ impl RenderEngine {
             snapshot: self.snapshot(),
             registry: self.registry.clone(),
             sample_rate: self.sample_rate,
-            graph: self.graph.as_ref()?.clone(),
+            graph: Some(self.graph.as_ref()?.clone()),
             command_tx: None,
+            module_ports: self.module_ports.clone(),
         })
     }
 
@@ -284,13 +288,32 @@ impl RenderEngine {
                 .insert(module_id.to_string(), control_surface);
         }
 
+        self.module_ports.lock().unwrap().insert(
+            module_id.to_string(),
+            ModulePorts {
+                inputs: result
+                    .module
+                    .module()
+                    .inputs()
+                    .iter()
+                    .map(|port| (*port).to_string())
+                    .collect(),
+                outputs: result
+                    .module
+                    .module()
+                    .outputs()
+                    .iter()
+                    .map(|port| (*port).to_string())
+                    .collect(),
+            },
+        );
+
         graph
             .lock()
             .unwrap()
             .apply_command(GraphCommand::AddModule {
                 module_id: module_id.to_string(),
                 module: result.module,
-                sink: result.sink,
             });
 
         self.state.lock().unwrap().modules.insert(
@@ -337,6 +360,7 @@ impl RenderEngine {
             .lock()
             .unwrap()
             .shift_remove(module_id);
+        self.module_ports.lock().unwrap().shift_remove(module_id);
         graph
             .lock()
             .unwrap()
@@ -431,27 +455,20 @@ impl RenderEngine {
     fn install_runtime(&mut self, runtime: super::runtime::InventionRuntime) {
         self.scripts.stop_all();
         self.agents.stop_all();
-        let mut input_map: std::collections::HashMap<String, Vec<RoutingConnection>> =
-            std::collections::HashMap::new();
-
-        for conn in &runtime.routing {
-            input_map
-                .entry(conn.to_module.clone())
-                .or_default()
-                .push(conn.clone());
-        }
-
         let (_, command_rx) = mpsc::channel();
 
         runtime.state.lock().unwrap().running = true;
 
+        *self.module_ports.lock().unwrap() = module_ports(&runtime.modules);
         self.graph = Some(Arc::new(Mutex::new(SignalGraph {
             modules: runtime.modules,
             sinks: runtime.sinks,
-            input_map,
+            edges: runtime.routing,
             current_sample: 0,
             command_rx,
             process_order: Vec::new(),
+            compiled_routes: Vec::new(),
+            sink_indices: Vec::new(),
             topo_dirty: true,
         })));
         self.registry = runtime.registry;

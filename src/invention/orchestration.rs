@@ -1,8 +1,6 @@
 use crate::factory::ModuleBuildResult;
 use crate::invention::graph::{GraphCommand, SignalGraph};
-use crate::invention::runtime::{
-    validate_input_port, validate_output_port, ControlSurfaceInstance, GraphCommandError,
-};
+use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
 use crate::{ControlMeta, ControlValue};
 use indexmap::IndexMap;
@@ -53,8 +51,15 @@ pub struct RuntimeController {
     pub(crate) snapshot: RuntimeSnapshot,
     pub(crate) registry: ModuleRegistry,
     pub(crate) sample_rate: u32,
-    pub(crate) graph: Arc<Mutex<SignalGraph>>,
+    pub(crate) graph: Option<Arc<Mutex<SignalGraph>>>,
     pub(crate) command_tx: Option<mpsc::Sender<GraphCommand>>,
+    pub(crate) module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ModulePorts {
+    pub(crate) inputs: Vec<String>,
+    pub(crate) outputs: Vec<String>,
 }
 
 impl RuntimeSnapshot {
@@ -141,7 +146,11 @@ impl RuntimeController {
                 .send(cmd)
                 .map_err(|_| GraphCommandError::AudioThreadStopped)
         } else {
-            self.graph.lock().unwrap().apply_command(cmd);
+            let graph = self
+                .graph
+                .as_ref()
+                .ok_or(GraphCommandError::AudioThreadStopped)?;
+            graph.lock().unwrap().apply_command(cmd);
             Ok(())
         }
     }
@@ -166,11 +175,26 @@ impl RuntimeController {
             module,
             handles,
             control_surface,
-            sink,
+            sink: _,
         } = self
             .registry
             .build(module_type, self.sample_rate, config)
             .map_err(|e| GraphCommandError::ModuleBuildFailed(e.to_string()))?;
+
+        let ports = ModulePorts {
+            inputs: module
+                .module()
+                .inputs()
+                .iter()
+                .map(|port| (*port).to_string())
+                .collect(),
+            outputs: module
+                .module()
+                .outputs()
+                .iter()
+                .map(|port| (*port).to_string())
+                .collect(),
+        };
 
         if let Some(control_surface) = control_surface {
             self.snapshot
@@ -183,8 +207,12 @@ impl RuntimeController {
         self.send_or_apply(GraphCommand::AddModule {
             module_id: module_id.to_string(),
             module,
-            sink,
         })?;
+
+        self.module_ports
+            .lock()
+            .unwrap()
+            .insert(module_id.to_string(), ports);
 
         self.snapshot.state.lock().unwrap().modules.insert(
             module_id.to_string(),
@@ -211,6 +239,7 @@ impl RuntimeController {
         self.send_or_apply(GraphCommand::RemoveModule {
             module_id: module_id.to_string(),
         })?;
+        self.module_ports.lock().unwrap().shift_remove(module_id);
         let mut state = self.snapshot.state.lock().unwrap();
         state.modules.shift_remove(module_id);
         state
@@ -227,21 +256,26 @@ impl RuntimeController {
         to_module: &str,
         to_port: &str,
     ) -> Result<(), GraphCommandError> {
-        {
-            let graph = self.graph.lock().unwrap();
-            let source = graph
-                .modules
-                .get(from_module)
-                .ok_or_else(|| GraphCommandError::UnknownModule(from_module.to_string()))?;
-            validate_output_port(source, from_port)
-                .map_err(|e| GraphCommandError::InvalidPort(e.to_string()))?;
-            let dest = graph
-                .modules
-                .get(to_module)
-                .ok_or_else(|| GraphCommandError::UnknownModule(to_module.to_string()))?;
-            validate_input_port(dest, to_port)
-                .map_err(|e| GraphCommandError::InvalidPort(e.to_string()))?;
+        let ports = self.module_ports.lock().unwrap();
+        let source = ports
+            .get(from_module)
+            .ok_or_else(|| GraphCommandError::UnknownModule(from_module.to_string()))?;
+        if !source.outputs.iter().any(|port| port == from_port) {
+            return Err(GraphCommandError::InvalidPort(format!(
+                "module '{}' does not have output port '{}' (available: {:?})",
+                from_module, from_port, source.outputs
+            )));
         }
+        let dest = ports
+            .get(to_module)
+            .ok_or_else(|| GraphCommandError::UnknownModule(to_module.to_string()))?;
+        if !dest.inputs.iter().any(|port| port == to_port) {
+            return Err(GraphCommandError::InvalidPort(format!(
+                "module '{}' does not have input port '{}' (available: {:?})",
+                to_module, to_port, dest.inputs
+            )));
+        }
+        drop(ports);
 
         self.send_or_apply(GraphCommand::AddConnection {
             from_module: from_module.to_string(),

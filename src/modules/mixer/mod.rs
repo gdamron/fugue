@@ -37,9 +37,9 @@
 
 use std::any::Any;
 use std::f32::consts::FRAC_PI_4;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -171,11 +171,10 @@ impl Mixer {
     fn mix(&self) -> (f32, f32) {
         let mut left = 0.0;
         let mut right = 0.0;
-        let levels = self.ctrl.levels.lock().unwrap();
 
         for i in 0..self.channels {
             let level_cv = self.input_state.level_cv(i);
-            let channel_out = self.input_state.audio(i) * levels[i] * level_cv;
+            let channel_out = self.input_state.audio(i) * self.ctrl.level(i) * level_cv;
             let pan = self.effective_pan(i);
             let angle = (pan + 1.0) * FRAC_PI_4;
             left += channel_out * angle.cos();
@@ -214,6 +213,21 @@ impl Module for Mixer {
     fn get_output(&self, port: &str) -> Result<f32, String> {
         let (left, right) = self.mix();
         outputs::MixerOutputs::get(port, left, right)
+    }
+
+    #[inline]
+    fn set_input_by_index(&mut self, index: usize, value: f32) {
+        self.input_state.set_by_index(self.channels, index, value);
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        let (left, right) = self.mix();
+        match index {
+            0 => left,
+            1 => right,
+            _ => 0.0,
+        }
     }
 
     fn last_processed_sample(&self) -> u64 {
@@ -372,7 +386,7 @@ impl ModuleFactory for MixerFactory {
         let mixer = Mixer::new_with_controls(channels, controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(mixer)),
+            module: GraphModule::Module(Box::new(mixer)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
@@ -546,7 +560,7 @@ mod tests {
 
         let result = factory.build(44100, &config).unwrap();
 
-        let module = result.module.lock().unwrap();
+        let module = result.module.module();
         assert_eq!(module.name(), "Mixer");
 
         // Should have in1-in3, level1-level3, pan1-pan3, and master

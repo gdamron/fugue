@@ -41,6 +41,17 @@ impl DacInputs {
         }
     }
 
+    /// Hot-path indexed setter. Index must match `INPUTS` order.
+    #[inline]
+    pub fn set_by_index(&mut self, index: usize, value: f32) {
+        match index {
+            0 => self.audio += value,
+            1 => self.audio_left += value,
+            2 => self.audio_right += value,
+            _ => {}
+        }
+    }
+
     pub fn audio_left(&self) -> f32 {
         self.audio_left + self.audio
     }

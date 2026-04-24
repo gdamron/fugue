@@ -1,0 +1,105 @@
+{
+  "version": "1.0.0",
+  "title": "Piano Voice",
+  "description": "Sawtooth voice with a shared amplitude and filter envelope: bright on attack, warmly decaying — piano-like struck character without vibrato.",
+  "modules": [
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "sawtooth"
+      }
+    },
+    {
+      "id": "filter",
+      "type": "filter",
+      "config": {
+        "filter_type": "lowpass",
+        "cutoff": 400.0,
+        "resonance": 0.1,
+        "cv_amount": 5500.0
+      }
+    },
+    {
+      "id": "env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.003,
+        "decay": 1.2,
+        "sustain": 0.08,
+        "release": 0.5
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    }
+  ],
+  "connections": [
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "filter",
+      "to_port": "audio"
+    },
+    {
+      "from": "filter",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "filter",
+      "to_port": "cutoff_cv"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "frequency",
+      "to": "osc",
+      "to_port": "frequency"
+    },
+    {
+      "name": "gate",
+      "to": "env",
+      "to_port": "gate"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "audio",
+      "from": "vca",
+      "from_port": "audio"
+    }
+  ],
+  "controls": [
+    {
+      "key": "decay",
+      "module": "env",
+      "control": "decay"
+    },
+    {
+      "key": "sustain",
+      "module": "env",
+      "control": "sustain"
+    },
+    {
+      "key": "release",
+      "module": "env",
+      "control": "release"
+    },
+    {
+      "key": "brightness_peak",
+      "module": "filter",
+      "control": "cv_amount"
+    }
+  ]
+}

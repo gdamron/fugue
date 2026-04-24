@@ -1,0 +1,88 @@
+mod support;
+
+use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
+use std::time::Instant;
+
+use fugue::{Invention, InventionBuilder, RenderEngine};
+use support::NullAudioBackend;
+
+const SAMPLE_RATE: u32 = 48_000;
+
+fn development_path(file_name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("developments")
+        .join(file_name)
+}
+
+#[test]
+fn voice_library_presets_load_as_standalone_developments() {
+    for file_name in [
+        "piano.json",
+        "marimba.json",
+        "vibraphone.json",
+        "pluck.json",
+        "pad.json",
+    ] {
+        let path = development_path(file_name);
+        let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
+
+        assert!(
+            invention.is_development(),
+            "{file_name} should be a development"
+        );
+        assert_eq!(
+            invention.inputs.len(),
+            2,
+            "{file_name} should expose two inputs"
+        );
+        assert_eq!(invention.inputs[0].name, "frequency");
+        assert_eq!(invention.inputs[1].name, "gate");
+        assert_eq!(
+            invention.outputs.len(),
+            1,
+            "{file_name} should expose one output"
+        );
+        assert_eq!(invention.outputs[0].name, "audio");
+
+        InventionBuilder::new(SAMPLE_RATE).build(invention).unwrap();
+    }
+}
+
+#[test]
+fn voice_library_trio_runs_multiple_development_instances() {
+    let path = development_path("voice_library_trio.json");
+    let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(invention).unwrap();
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(SAMPLE_RATE))
+        .unwrap();
+
+    thread::sleep(Duration::from_millis(25));
+    running.stop();
+}
+
+#[test]
+#[ignore = "local performance check; run with --ignored --nocapture"]
+fn voice_library_trio_tight_render_benchmark() {
+    let path = development_path("voice_library_trio.json");
+    let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
+    let mut engine = RenderEngine::new(SAMPLE_RATE);
+    engine.load_invention(invention).unwrap();
+
+    let frames = SAMPLE_RATE as usize * 2;
+    let mut output = vec![0.0; frames * 2];
+    let start = Instant::now();
+    let rendered = engine.render_interleaved(&mut output).unwrap();
+    let elapsed = start.elapsed();
+
+    std::hint::black_box(output);
+    eprintln!(
+        "rendered {} frames from voice_library_trio.json in {:?} ({:.2}x realtime)",
+        rendered,
+        elapsed,
+        (rendered as f64 / SAMPLE_RATE as f64) / elapsed.as_secs_f64()
+    );
+}

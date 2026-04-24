@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::{
-    Step, DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS, MAX_SEQUENCES,
-    parse_sequence_bank_json,
+    parse_sequence_bank_json, Step, DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS,
+    MAX_SEQUENCES,
 };
 
 #[derive(Clone)]

@@ -1,5 +1,5 @@
-use crate::factory::{ModuleBuildResult, ModuleFactory};
-use crate::invention::graph::{RoutingConnection, SignalGraph};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::graph::RoutingConnection;
 use crate::invention::runtime::{
     validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
 };
@@ -7,7 +7,6 @@ use crate::{ControlMeta, ControlSurface, ControlValue, Invention, Module, Module
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use super::builder::InventionBuilder;
@@ -39,7 +38,7 @@ impl ModuleFactory for DevelopmentFactory {
             DevelopmentModule::new(&self.name, runtime, &self.definition)?;
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(module)),
+            module: GraphModule::Module(Box::new(module)),
             handles: Vec::<(String, Arc<dyn Any + Send + Sync>)>::new(),
             control_surface: Some(control_surface),
             sink: None,
@@ -48,14 +47,28 @@ impl ModuleFactory for DevelopmentFactory {
 }
 
 struct ExternalInputRoute {
-    module_id: String,
-    port: String,
+    module_index: usize,
+    port_index: usize,
 }
 
 struct ExternalOutputRoute {
     name: &'static str,
-    module_id: String,
-    port: String,
+    module_index: usize,
+    port_index: usize,
+    value: f32,
+}
+
+struct CompiledConnection {
+    from_module: usize,
+    from_port: usize,
+    to_port: usize,
+}
+
+struct CompiledDevelopmentGraph {
+    modules: Vec<GraphModule>,
+    input_routes: Vec<Vec<CompiledConnection>>,
+    process_order: Vec<usize>,
+    current_sample: u64,
 }
 
 struct AliasedControl {
@@ -149,7 +162,7 @@ pub(crate) struct DevelopmentModule {
     input_routes: Vec<Vec<ExternalInputRoute>>,
     input_values: Vec<f32>,
     outputs: Vec<ExternalOutputRoute>,
-    graph: SignalGraph,
+    graph: CompiledDevelopmentGraph,
     last_processed_sample: u64,
 }
 
@@ -180,21 +193,22 @@ impl DevelopmentModule {
             &runtime.control_surfaces,
         )?);
 
-        let input_ports: Vec<&'static str> = definition
-            .inputs
-            .iter()
-            .map(|entry| leak_name(&entry.name))
-            .collect();
-        let output_ports: Vec<&'static str> = definition
-            .outputs
-            .iter()
-            .map(|entry| leak_name(&entry.name))
-            .collect();
+        let input_ports = unique_port_names(definition.inputs.iter().map(|entry| &entry.name));
+        let output_ports = unique_port_names(definition.outputs.iter().map(|entry| &entry.name));
 
         let mut route_indexes: HashMap<&str, usize> = HashMap::new();
         for (index, name) in input_ports.iter().enumerate() {
             route_indexes.insert(*name, index);
         }
+
+        // Take ownership before building the index map to avoid a borrow
+        // of the IndexMap that outlives the consumption point.
+        let module_list: Vec<(String, GraphModule)> = runtime.modules.into_iter().collect();
+        let module_indexes: HashMap<String, usize> = module_list
+            .iter()
+            .enumerate()
+            .map(|(i, (id, _))| (id.clone(), i))
+            .collect();
 
         let mut input_routes: Vec<Vec<ExternalInputRoute>> =
             (0..input_ports.len()).map(|_| Vec::new()).collect();
@@ -202,9 +216,21 @@ impl DevelopmentModule {
             let index = *route_indexes
                 .get(input.name.as_str())
                 .ok_or_else(|| format!("Unknown development input: {}", input.name))?;
+            let module_index = *module_indexes
+                .get(input.to.as_str())
+                .ok_or_else(|| format!("Unknown input target module: {}", input.to))?;
+            let port_index = module_list
+                .get(module_index)
+                .and_then(|(_, m)| m.module().input_port_index(input.to_port.as_str()))
+                .ok_or_else(|| {
+                    format!(
+                        "Unknown input port '{}' on module '{}'",
+                        input.to_port, input.to
+                    )
+                })?;
             input_routes[index].push(ExternalInputRoute {
-                module_id: input.to.clone(),
-                port: input.to_port.clone(),
+                module_index,
+                port_index,
             });
         }
 
@@ -212,31 +238,29 @@ impl DevelopmentModule {
             .outputs
             .iter()
             .enumerate()
-            .map(|(index, output)| ExternalOutputRoute {
-                name: output_ports[index],
-                module_id: output.from.clone(),
-                port: output.from_port.clone(),
+            .map(|(index, output)| {
+                let module_index = *module_indexes
+                    .get(output.from.as_str())
+                    .ok_or_else(|| format!("Unknown output source module: {}", output.from))?;
+                let port_index = module_list
+                    .get(module_index)
+                    .and_then(|(_, m)| m.module().output_port_index(output.from_port.as_str()))
+                    .ok_or_else(|| {
+                        format!(
+                            "Unknown output port '{}' on module '{}'",
+                            output.from_port, output.from
+                        )
+                    })?;
+                Ok(ExternalOutputRoute {
+                    name: output_ports[index],
+                    module_index,
+                    port_index,
+                    value: 0.0,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
 
-        let mut input_map: HashMap<String, Vec<RoutingConnection>> = HashMap::new();
-        for conn in &runtime.routing {
-            input_map
-                .entry(conn.to_module.clone())
-                .or_default()
-                .push(conn.clone());
-        }
-
-        let (_, command_rx) = mpsc::channel();
-        let graph = SignalGraph {
-            modules: runtime.modules,
-            sinks: runtime.sinks,
-            input_map,
-            current_sample: 0,
-            command_rx,
-            process_order: Vec::new(),
-            topo_dirty: true,
-        };
+        let graph = CompiledDevelopmentGraph::from_modules(module_list, &runtime.routing)?;
 
         Ok((
             Self {
@@ -244,7 +268,7 @@ impl DevelopmentModule {
                 input_ports,
                 output_ports,
                 input_routes,
-                input_values: vec![0.0; definition.inputs.len()],
+                input_values: vec![0.0; route_indexes.len()],
                 outputs,
                 graph,
                 last_processed_sample: 0,
@@ -257,10 +281,23 @@ impl DevelopmentModule {
         for (index, routes) in self.input_routes.iter().enumerate() {
             let value = self.input_values[index];
             for route in routes {
-                if let Some(module) = self.graph.modules.get(&route.module_id) {
-                    let _ = module.lock().unwrap().set_input(&route.port, value);
+                if let Some(module) = self.graph.modules.get_mut(route.module_index) {
+                    module
+                        .module_mut()
+                        .set_input_by_index(route.port_index, value);
                 }
             }
+        }
+    }
+
+    fn cache_outputs(&mut self) {
+        for output in &mut self.outputs {
+            output.value = self
+                .graph
+                .modules
+                .get(output.module_index)
+                .map(|module| module.module().get_output_by_index(output.port_index))
+                .unwrap_or(0.0);
         }
     }
 }
@@ -271,38 +308,40 @@ impl Module for DevelopmentModule {
     }
 
     fn process(&mut self) -> bool {
-        self.graph.ensure_process_order();
-
-        for module in self.graph.modules.values() {
-            module.lock().unwrap().reset_inputs();
+        for module in &mut self.graph.modules {
+            module.module_mut().reset_inputs();
         }
         self.graph.current_sample += 1;
         self.apply_external_inputs();
 
-        for i in 0..self.graph.process_order.len() {
-            let module_id = &self.graph.process_order[i];
-
-            if let Some(connections) = self.graph.input_map.get(module_id.as_str()) {
-                for conn in connections {
+        for &module_index in &self.graph.process_order {
+            if let Some(connections) = self.graph.input_routes.get(module_index) {
+                let count = connections.len();
+                for c in 0..count {
+                    let (from_module, from_port, to_port) = {
+                        let conn = &self.graph.input_routes[module_index][c];
+                        (conn.from_module, conn.from_port, conn.to_port)
+                    };
                     let input_value = self
                         .graph
                         .modules
-                        .get(&conn.from_module)
-                        .map(|m| m.lock().unwrap().get_output(&conn.from_port).unwrap_or(0.0))
+                        .get(from_module)
+                        .map(|module| module.module().get_output_by_index(from_port))
                         .unwrap_or(0.0);
-                    if let Some(module) = self.graph.modules.get(module_id.as_str()) {
-                        let _ = module.lock().unwrap().set_input(&conn.to_port, input_value);
+                    if let Some(module) = self.graph.modules.get_mut(module_index) {
+                        module.module_mut().set_input_by_index(to_port, input_value);
                     }
                 }
             }
 
-            if let Some(module) = self.graph.modules.get(module_id.as_str()) {
-                let mut module = module.lock().unwrap();
+            if let Some(module) = self.graph.modules.get_mut(module_index) {
+                let module = module.module_mut();
                 module.process();
                 module.mark_processed(self.graph.current_sample);
             }
         }
 
+        self.cache_outputs();
         self.last_processed_sample = self.graph.current_sample;
         true
     }
@@ -331,13 +370,7 @@ impl Module for DevelopmentModule {
             .iter()
             .find(|route| route.name == port)
             .ok_or_else(|| format!("Unknown output port: {}", port))?;
-        self.graph
-            .modules
-            .get(&output.module_id)
-            .ok_or_else(|| format!("Unknown output module: {}", output.module_id))?
-            .lock()
-            .unwrap()
-            .get_output(&output.port)
+        Ok(output.value)
     }
 
     fn last_processed_sample(&self) -> u64 {
@@ -351,4 +384,133 @@ impl Module for DevelopmentModule {
 
 fn leak_name(name: &str) -> &'static str {
     Box::leak(name.to_string().into_boxed_str())
+}
+
+fn unique_port_names<'a>(names: impl Iterator<Item = &'a String>) -> Vec<&'static str> {
+    let mut ports = Vec::new();
+    let mut seen = HashSet::new();
+
+    for name in names {
+        if seen.insert(name.as_str()) {
+            ports.push(leak_name(name));
+        }
+    }
+
+    ports
+}
+
+fn module_indexes_slice(modules: &[(String, GraphModule)]) -> HashMap<&str, usize> {
+    modules
+        .iter()
+        .enumerate()
+        .map(|(index, (id, _))| (id.as_str(), index))
+        .collect()
+}
+
+impl CompiledDevelopmentGraph {
+    fn from_modules(
+        module_list: Vec<(String, GraphModule)>,
+        routing: &[RoutingConnection],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let indexes = module_indexes_slice(&module_list);
+        let process_order = compute_process_order_slice(&module_list, routing);
+        let mut input_routes: Vec<Vec<CompiledConnection>> =
+            (0..module_list.len()).map(|_| Vec::new()).collect();
+
+        for conn in routing {
+            let from_module = *indexes
+                .get(conn.from_module.as_str())
+                .ok_or_else(|| format!("Unknown source module: {}", conn.from_module))?;
+            let to_module = *indexes
+                .get(conn.to_module.as_str())
+                .ok_or_else(|| format!("Unknown destination module: {}", conn.to_module))?;
+
+            let from_port = module_list
+                .get(from_module)
+                .and_then(|(_, m)| m.module().output_port_index(conn.from_port.as_str()))
+                .ok_or_else(|| {
+                    format!(
+                        "Unknown output port '{}' on module '{}'",
+                        conn.from_port, conn.from_module
+                    )
+                })?;
+            let to_port = module_list
+                .get(to_module)
+                .and_then(|(_, m)| m.module().input_port_index(conn.to_port.as_str()))
+                .ok_or_else(|| {
+                    format!(
+                        "Unknown input port '{}' on module '{}'",
+                        conn.to_port, conn.to_module
+                    )
+                })?;
+
+            input_routes[to_module].push(CompiledConnection {
+                from_module,
+                from_port,
+                to_port,
+            });
+        }
+
+        Ok(Self {
+            modules: module_list.into_iter().map(|(_, m)| m).collect(),
+            input_routes,
+            process_order,
+            current_sample: 0,
+        })
+    }
+}
+
+fn compute_process_order_slice(
+    modules: &[(String, GraphModule)],
+    routing: &[RoutingConnection],
+) -> Vec<usize> {
+    let indexes = module_indexes_slice(modules);
+    let mut downstream: Vec<Vec<usize>> = (0..modules.len()).map(|_| Vec::new()).collect();
+
+    for conn in routing {
+        let Some(&from_index) = indexes.get(conn.from_module.as_str()) else {
+            continue;
+        };
+        let Some(&to_index) = indexes.get(conn.to_module.as_str()) else {
+            continue;
+        };
+        downstream[from_index].push(to_index);
+    }
+
+    let mut state = vec![0_u8; modules.len()];
+    let mut order = Vec::with_capacity(modules.len());
+
+    for start in 0..modules.len() {
+        if state[start] != 0 {
+            continue;
+        }
+
+        let mut stack = vec![(start, 0_usize)];
+        state[start] = 1;
+
+        while let Some((node, next_index)) = stack.last_mut() {
+            if *next_index < downstream[*node].len() {
+                let next = downstream[*node][*next_index];
+                *next_index += 1;
+                match state[next] {
+                    0 => {
+                        state[next] = 1;
+                        stack.push((next, 0));
+                    }
+                    1 => {
+                        // Back-edge: preserve the existing graph behavior by treating
+                        // the connection as a one-sample delay point.
+                    }
+                    _ => {}
+                }
+            } else {
+                let (finished, _) = stack.pop().unwrap();
+                state[finished] = 2;
+                order.push(finished);
+            }
+        }
+    }
+
+    order.reverse();
+    order
 }

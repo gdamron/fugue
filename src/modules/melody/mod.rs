@@ -1,9 +1,9 @@
 //! Melody generation module.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::music::{Note, Scale};
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -57,7 +57,7 @@ impl ModuleFactory for MelodyFactory {
         let melody = MelodyGenerator::new(controls.clone());
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(melody)),
+            module: GraphModule::Module(Box::new(melody)),
             handles: vec![(
                 "controls".to_string(),
                 Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
@@ -186,6 +186,16 @@ impl Module for MelodyGenerator {
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
+    }
+
+    #[inline]
+    fn set_input_by_index(&mut self, index: usize, value: f32) {
+        self.inputs.set_by_index(index, value);
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        self.outputs.get_by_index(index)
     }
 
     fn last_processed_sample(&self) -> u64 {

@@ -39,6 +39,17 @@ impl DacOutputs {
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }
+
+    /// Hot-path indexed getter. Index must match `OUTPUTS` order.
+    #[inline]
+    pub fn get_by_index(&self, index: usize) -> f32 {
+        match index {
+            0 => self.audio,
+            1 => self.audio_left,
+            2 => self.audio_right,
+            _ => 0.0,
+        }
+    }
 }
 
 impl Default for DacOutputs {

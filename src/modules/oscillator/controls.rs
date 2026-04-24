@@ -1,7 +1,6 @@
 //! Thread-safe controls for the Oscillator.
 
-use std::sync::{Arc, Mutex};
-
+use crate::atomic::AtomicF32;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::OscillatorType;
@@ -23,10 +22,10 @@ use super::OscillatorType;
 /// ```
 #[derive(Clone)]
 pub struct OscillatorControls {
-    pub(crate) frequency: Arc<Mutex<f32>>,
-    pub(crate) oscillator_type: Arc<Mutex<OscillatorType>>,
-    pub(crate) fm_amount: Arc<Mutex<f32>>,
-    pub(crate) am_amount: Arc<Mutex<f32>>,
+    pub(crate) frequency: AtomicF32,
+    pub(crate) oscillator_type: AtomicF32,
+    pub(crate) fm_amount: AtomicF32,
+    pub(crate) am_amount: AtomicF32,
 }
 
 impl OscillatorControls {
@@ -38,51 +37,51 @@ impl OscillatorControls {
         am_amount: f32,
     ) -> Self {
         Self {
-            frequency: Arc::new(Mutex::new(frequency.max(0.0))),
-            oscillator_type: Arc::new(Mutex::new(oscillator_type)),
-            fm_amount: Arc::new(Mutex::new(fm_amount)),
-            am_amount: Arc::new(Mutex::new(am_amount.clamp(0.0, 1.0))),
+            frequency: AtomicF32::new(frequency.max(0.0)),
+            oscillator_type: AtomicF32::new(oscillator_type.to_index()),
+            fm_amount: AtomicF32::new(fm_amount),
+            am_amount: AtomicF32::new(am_amount.clamp(0.0, 1.0)),
         }
     }
 
     /// Gets the frequency in Hz.
     pub fn frequency(&self) -> f32 {
-        *self.frequency.lock().unwrap()
+        self.frequency.load()
     }
 
     /// Sets the frequency in Hz.
     pub fn set_frequency(&self, value: f32) {
-        *self.frequency.lock().unwrap() = value.max(0.0);
+        self.frequency.store(value.max(0.0));
     }
 
     /// Gets the oscillator type.
     pub fn oscillator_type(&self) -> OscillatorType {
-        *self.oscillator_type.lock().unwrap()
+        OscillatorType::from_index(self.oscillator_type.load())
     }
 
     /// Sets the oscillator type.
     pub fn set_oscillator_type(&self, value: OscillatorType) {
-        *self.oscillator_type.lock().unwrap() = value;
+        self.oscillator_type.store(value.to_index());
     }
 
     /// Gets the FM amount in Hz.
     pub fn fm_amount(&self) -> f32 {
-        *self.fm_amount.lock().unwrap()
+        self.fm_amount.load()
     }
 
     /// Sets the FM amount in Hz.
     pub fn set_fm_amount(&self, value: f32) {
-        *self.fm_amount.lock().unwrap() = value;
+        self.fm_amount.store(value);
     }
 
     /// Gets the AM amount (0.0-1.0).
     pub fn am_amount(&self) -> f32 {
-        *self.am_amount.lock().unwrap()
+        self.am_amount.load()
     }
 
     /// Sets the AM amount (0.0-1.0).
     pub fn set_am_amount(&self, value: f32) {
-        *self.am_amount.lock().unwrap() = value.clamp(0.0, 1.0);
+        self.am_amount.store(value.clamp(0.0, 1.0));
     }
 }
 

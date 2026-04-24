@@ -8,7 +8,7 @@ use crate::invention::runtime::{
 };
 use crate::invention::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
 use crate::registry::ModuleRegistry;
-use crate::ModuleFactory;
+use crate::{GraphModule, ModuleFactory};
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::development::DevelopmentFactory;
-use super::graph::{RoutingConnection, SinkInstance};
+use super::graph::RoutingConnection;
 
 /// Result type for building modules, containing modules, sinks, and handles.
 type BuildModulesResult = (
     IndexMap<String, ModuleInstance>,
-    IndexMap<String, SinkInstance>,
+    Vec<String>,
     IndexMap<String, ControlSurfaceInstance>,
     InventionHandles,
 );
@@ -189,7 +189,7 @@ impl InventionBuilder {
         invention: &Invention,
     ) -> Result<BuildModulesResult, Box<dyn std::error::Error>> {
         let mut modules = IndexMap::new();
-        let mut sinks = IndexMap::new();
+        let mut sinks = Vec::new();
         let mut control_surfaces = IndexMap::new();
         let mut all_handles: HashMap<String, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
@@ -199,13 +199,13 @@ impl InventionBuilder {
                 .registry
                 .build(&spec.module_type, self.sample_rate, &spec.config)?;
 
+            // If this is a sink, track its module id for output collection.
+            if matches!(result.module, GraphModule::Sink(_)) {
+                sinks.push(spec.id.clone());
+            }
+
             // Store in modules collection
             modules.insert(spec.id.clone(), result.module);
-
-            // If this is a sink, also store in sinks collection
-            if let Some(sink) = result.sink {
-                sinks.insert(spec.id.clone(), sink);
-            }
 
             if let Some(control_surface) = result.control_surface {
                 control_surfaces.insert(spec.id.clone(), control_surface);
@@ -423,9 +423,9 @@ mod tests {
         let builder = InventionBuilder::new(44_100);
         let (runtime, _) = builder.build(invention).unwrap();
 
-        let module = runtime.modules.get("lead").unwrap();
-        assert!(module.lock().unwrap().inputs().contains(&"frequency"));
-        assert!(module.lock().unwrap().outputs().contains(&"audio"));
+        let module = runtime.modules.get("lead").unwrap().module();
+        assert!(module.inputs().contains(&"frequency"));
+        assert!(module.outputs().contains(&"audio"));
 
         let controls = runtime.control_surfaces.get("lead").unwrap().controls();
         assert_eq!(controls.len(), 1);
@@ -451,6 +451,85 @@ mod tests {
             surface.get_control("type").unwrap(),
             ControlValue::String("square".to_string())
         );
+    }
+
+    #[test]
+    fn development_fans_out_exposed_inputs_and_caches_outputs() {
+        let development = Invention {
+            version: "1.0.0".to_string(),
+            title: Some("fanout".to_string()),
+            description: None,
+            developments: vec![],
+            modules: vec![
+                crate::ModuleSpec {
+                    id: "full".to_string(),
+                    module_type: "vca".to_string(),
+                    config: serde_json::json!({"cv": 1.0}),
+                },
+                crate::ModuleSpec {
+                    id: "half".to_string(),
+                    module_type: "vca".to_string(),
+                    config: serde_json::json!({"cv": 0.5}),
+                },
+            ],
+            connections: vec![],
+            inputs: vec![
+                DevelopmentInput {
+                    name: "signal".to_string(),
+                    to: "full".to_string(),
+                    to_port: "audio".to_string(),
+                },
+                DevelopmentInput {
+                    name: "signal".to_string(),
+                    to: "half".to_string(),
+                    to_port: "audio".to_string(),
+                },
+            ],
+            outputs: vec![
+                DevelopmentOutput {
+                    name: "full".to_string(),
+                    from: "full".to_string(),
+                    from_port: "audio".to_string(),
+                },
+                DevelopmentOutput {
+                    name: "half".to_string(),
+                    from: "half".to_string(),
+                    from_port: "audio".to_string(),
+                },
+            ],
+            controls: vec![],
+            source_path: None,
+        };
+
+        let root = Invention {
+            version: "1.0.0".to_string(),
+            title: Some("root".to_string()),
+            description: None,
+            developments: vec![DevelopmentSpec {
+                name: "fanout".to_string(),
+                path: None,
+                definition: Some(Box::new(development)),
+            }],
+            modules: vec![crate::ModuleSpec {
+                id: "voice".to_string(),
+                module_type: "fanout".to_string(),
+                config: serde_json::Value::Null,
+            }],
+            connections: vec![],
+            inputs: vec![],
+            outputs: vec![],
+            controls: vec![],
+            source_path: None,
+        };
+
+        let (mut runtime, _) = InventionBuilder::new(44_100).build(root).unwrap();
+        let voice = runtime.modules.get_mut("voice").unwrap().module_mut();
+
+        voice.set_input("signal", 0.8).unwrap();
+        voice.process();
+
+        assert_eq!(voice.get_output("full").unwrap(), 0.8);
+        assert_eq!(voice.get_output("half").unwrap(), 0.4);
     }
 
     #[test]

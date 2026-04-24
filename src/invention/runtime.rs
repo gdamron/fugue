@@ -4,27 +4,54 @@ use crate::agents::AgentManager;
 use crate::modules::{AudioBackend, AudioDriver};
 use crate::registry::ModuleRegistry;
 use crate::scripting::ScriptManager;
-use crate::{ControlMeta, ControlSurface, ControlValue, Module};
+use crate::{ControlMeta, ControlSurface, ControlValue, GraphModule};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use super::graph::{GraphCommand, RoutingConnection, SignalGraph, SinkInstance};
+use super::graph::{GraphCommand, RoutingConnection, SignalGraph};
 use super::handles::InventionHandles;
-use super::orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
+use super::orchestration::{ModulePorts, OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
 /// Type alias for module instances stored in the runtime.
-pub type ModuleInstance = Arc<Mutex<dyn Module + Send>>;
+pub type ModuleInstance = GraphModule;
 pub type ControlSurfaceInstance = Arc<dyn ControlSurface + Send + Sync>;
+
+pub(crate) fn module_ports(
+    modules: &IndexMap<String, ModuleInstance>,
+) -> IndexMap<String, ModulePorts> {
+    modules
+        .iter()
+        .map(|(id, module)| {
+            (
+                id.clone(),
+                ModulePorts {
+                    inputs: module
+                        .module()
+                        .inputs()
+                        .iter()
+                        .map(|port| (*port).to_string())
+                        .collect(),
+                    outputs: module
+                        .module()
+                        .outputs()
+                        .iter()
+                        .map(|port| (*port).to_string())
+                        .collect(),
+                },
+            )
+        })
+        .collect()
+}
 
 /// Validates that a module has the specified output port.
 pub(crate) fn validate_output_port(
     module: &ModuleInstance,
     port: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let m = module.lock().unwrap();
+    let m = module.module();
     if !m.outputs().contains(&port) {
         return Err(format!(
             "Module '{}' does not have output port '{}'. Available: {:?}",
@@ -42,7 +69,7 @@ pub(crate) fn validate_input_port(
     module: &ModuleInstance,
     port: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let m = module.lock().unwrap();
+    let m = module.module();
     if !m.inputs().contains(&port) {
         return Err(format!(
             "Module '{}' does not have input port '{}'. Available: {:?}",
@@ -60,7 +87,7 @@ pub struct InventionRuntime {
     /// All modules in the invention.
     pub(crate) modules: IndexMap<String, ModuleInstance>,
     /// Sink modules that drive processing.
-    pub(crate) sinks: IndexMap<String, SinkInstance>,
+    pub(crate) sinks: Vec<String>,
     /// Shared runtime control surfaces keyed by module id.
     pub(crate) control_surfaces: IndexMap<String, ControlSurfaceInstance>,
     /// Signal routing connections.
@@ -96,37 +123,25 @@ impl InventionRuntime {
         self,
         mut backend: B,
     ) -> Result<RunningInvention, Box<dyn std::error::Error>> {
-        // Build input map: for each module, collect all connections that feed into it
-        let mut input_map: std::collections::HashMap<String, Vec<RoutingConnection>> =
-            std::collections::HashMap::new();
-
-        for conn in &self.routing {
-            input_map
-                .entry(conn.to_module.clone())
-                .or_default()
-                .push(conn.clone());
-        }
-
         let (command_tx, command_rx) = mpsc::channel();
+        let module_ports = Arc::new(Mutex::new(module_ports(&self.modules)));
 
-        let graph = SignalGraph {
+        let mut graph = SignalGraph {
             modules: self.modules,
             sinks: self.sinks,
-            input_map,
+            edges: self.routing,
             current_sample: 0,
             command_rx,
             process_order: Vec::new(),
+            compiled_routes: Vec::new(),
+            sink_indices: Vec::new(),
             topo_dirty: true,
         };
 
-        let graph_arc = Arc::new(Mutex::new(graph));
         let control_surfaces = Arc::new(Mutex::new(self.control_surfaces));
 
-        // Pass a closure that calls process_sample on the graph
-        let graph_clone = graph_arc.clone();
-        backend.start(Box::new(move || {
-            graph_clone.lock().unwrap().process_sample()
-        }))?;
+        // The audio callback owns the graph, so processing does not lock it.
+        backend.start(Box::new(move || graph.process_sample()))?;
 
         {
             self.state.lock().unwrap().running = true;
@@ -134,12 +149,12 @@ impl InventionRuntime {
 
         let running = RunningInvention {
             backend: Box::new(backend),
-            graph: graph_arc,
             control_surfaces,
             command_tx,
             registry: self.registry,
             sample_rate: self.sample_rate,
             state: self.state,
+            module_ports,
             scripts: ScriptManager::default(),
             agents: AgentManager::default(),
         };
@@ -196,12 +211,12 @@ impl std::error::Error for GraphCommandError {}
 /// A running invention with audio output.
 pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
-    graph: Arc<Mutex<SignalGraph>>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     command_tx: mpsc::Sender<GraphCommand>,
     registry: ModuleRegistry,
     sample_rate: u32,
     state: Arc<Mutex<RuntimeState>>,
+    module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
     scripts: ScriptManager,
     agents: AgentManager,
 }
@@ -227,8 +242,9 @@ impl RunningInvention {
             snapshot: self.snapshot(),
             registry: self.registry.clone(),
             sample_rate: self.sample_rate,
-            graph: self.graph.clone(),
+            graph: None,
             command_tx: Some(self.command_tx.clone()),
+            module_ports: self.module_ports.clone(),
         }
     }
 
@@ -297,10 +313,29 @@ impl RunningInvention {
                 .insert(module_id.clone(), control_surface);
         }
 
+        self.module_ports.lock().unwrap().insert(
+            module_id.clone(),
+            ModulePorts {
+                inputs: result
+                    .module
+                    .module()
+                    .inputs()
+                    .iter()
+                    .map(|port| (*port).to_string())
+                    .collect(),
+                outputs: result
+                    .module
+                    .module()
+                    .outputs()
+                    .iter()
+                    .map(|port| (*port).to_string())
+                    .collect(),
+            },
+        );
+
         self.send_command(GraphCommand::AddModule {
             module_id: module_id.clone(),
             module: result.module,
-            sink: result.sink,
         })?;
 
         self.state.lock().unwrap().modules.insert(
@@ -348,44 +383,26 @@ impl RunningInvention {
         to_module: &str,
         to_port: &str,
     ) -> Result<(), GraphCommandError> {
-        // Lock graph to validate modules and ports
-        {
-            let graph = self.graph.lock().unwrap();
-
-            // Validate source module exists and has the output port
-            let source = graph
-                .modules
-                .get(from_module)
-                .ok_or_else(|| GraphCommandError::UnknownModule(from_module.to_string()))?;
-            {
-                let m = source.lock().unwrap();
-                if !m.outputs().contains(&from_port) {
-                    return Err(GraphCommandError::InvalidPort(format!(
-                        "module '{}' does not have output port '{}' (available: {:?})",
-                        from_module,
-                        from_port,
-                        m.outputs()
-                    )));
-                }
-            }
-
-            // Validate dest module exists and has the input port
-            let dest = graph
-                .modules
-                .get(to_module)
-                .ok_or_else(|| GraphCommandError::UnknownModule(to_module.to_string()))?;
-            {
-                let m = dest.lock().unwrap();
-                if !m.inputs().contains(&to_port) {
-                    return Err(GraphCommandError::InvalidPort(format!(
-                        "module '{}' does not have input port '{}' (available: {:?})",
-                        to_module,
-                        to_port,
-                        m.inputs()
-                    )));
-                }
-            }
+        let ports = self.module_ports.lock().unwrap();
+        let source = ports
+            .get(from_module)
+            .ok_or_else(|| GraphCommandError::UnknownModule(from_module.to_string()))?;
+        if !source.outputs.iter().any(|port| port == from_port) {
+            return Err(GraphCommandError::InvalidPort(format!(
+                "module '{}' does not have output port '{}' (available: {:?})",
+                from_module, from_port, source.outputs
+            )));
         }
+        let dest = ports
+            .get(to_module)
+            .ok_or_else(|| GraphCommandError::UnknownModule(to_module.to_string()))?;
+        if !dest.inputs.iter().any(|port| port == to_port) {
+            return Err(GraphCommandError::InvalidPort(format!(
+                "module '{}' does not have input port '{}' (available: {:?})",
+                to_module, to_port, dest.inputs
+            )));
+        }
+        drop(ports);
 
         self.send_command(GraphCommand::AddConnection {
             from_module: from_module.to_string(),
@@ -504,6 +521,7 @@ impl RunningInvention {
             .lock()
             .unwrap()
             .shift_remove(&module_id);
+        self.module_ports.lock().unwrap().shift_remove(&module_id);
         self.send_command(GraphCommand::RemoveModule {
             module_id: module_id.clone(),
         })?;

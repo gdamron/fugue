@@ -1,0 +1,100 @@
+{
+  "version": "1.0.0",
+  "title": "Marimba Voice",
+  "description": "A short, woody struck voice built from a bright oscillator into a bandpass filter with a fast-decaying envelope sweep.",
+  "modules": [
+    {
+      "id": "osc",
+      "type": "oscillator",
+      "config": {
+        "oscillator_type": "triangle"
+      }
+    },
+    {
+      "id": "filter",
+      "type": "filter",
+      "config": {
+        "filter_type": "bandpass",
+        "cutoff": 900.0,
+        "resonance": 0.34,
+        "cv_amount": 2800.0
+      }
+    },
+    {
+      "id": "env",
+      "type": "adsr",
+      "config": {
+        "attack": 0.001,
+        "decay": 0.16,
+        "sustain": 0.0,
+        "release": 0.05
+      }
+    },
+    {
+      "id": "vca",
+      "type": "vca"
+    }
+  ],
+  "connections": [
+    {
+      "from": "osc",
+      "from_port": "audio",
+      "to": "filter",
+      "to_port": "audio"
+    },
+    {
+      "from": "filter",
+      "from_port": "audio",
+      "to": "vca",
+      "to_port": "audio"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "vca",
+      "to_port": "cv"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "filter",
+      "to_port": "cutoff_cv"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "frequency",
+      "to": "osc",
+      "to_port": "frequency"
+    },
+    {
+      "name": "gate",
+      "to": "env",
+      "to_port": "gate"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "audio",
+      "from": "vca",
+      "from_port": "audio"
+    }
+  ],
+  "controls": [
+    {
+      "key": "decay",
+      "module": "env",
+      "control": "decay"
+    },
+    {
+      "key": "tone",
+      "module": "filter",
+      "control": "cutoff"
+    },
+    {
+      "key": "resonance",
+      "module": "filter",
+      "control": "resonance"
+    }
+  ]
+}

@@ -25,6 +25,11 @@ Run a specific invention directly by JSON filename:
 cargo run --example examples -- --example simple_tone.json
 ```
 
+Nested curated examples work the same way:
+```bash
+cargo run --example examples -- --example developments/voice_library_trio.json
+```
+
 Current playable examples include:
 
 - `simple_tone.json`
@@ -37,6 +42,7 @@ Current playable examples include:
 - `step_sequencer.json`
 - `development_file_patch.json`
 - `development_inline_patch.json`
+- `developments/voice_library_trio.json`
 
 ### Development Examples
 

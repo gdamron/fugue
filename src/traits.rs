@@ -273,6 +273,46 @@ pub trait Module: Send {
     /// * `port` - Name of the output port (must match one from `outputs()`)
     fn get_output(&self, port: &str) -> Result<f32, String>;
 
+    /// Resolves an input port name to a stable index. Topology-change path,
+    /// not the audio hot path.
+    ///
+    /// The default implementation linearly searches `self.inputs()`. That's
+    /// fine: port resolution happens once at graph compile time, not per
+    /// sample.
+    fn input_port_index(&self, name: &str) -> Option<usize> {
+        self.inputs().iter().position(|n| *n == name)
+    }
+
+    /// Resolves an output port name to a stable index. Topology-change path.
+    fn output_port_index(&self, name: &str) -> Option<usize> {
+        self.outputs().iter().position(|n| *n == name)
+    }
+
+    /// Fast indexed input setter. Called on the audio hot path.
+    ///
+    /// Each module should override this with a `match index { 0 => .., ... }`
+    /// that writes the field directly — no string comparison per sample.
+    /// The default falls back to the string-keyed `set_input`, which is safe
+    /// but doesn't deliver the speedup and allocates on the hot path.
+    fn set_input_by_index(&mut self, index: usize, value: f32) {
+        let name = self.inputs().get(index).map(|s| (*s).to_string());
+        if let Some(name) = name {
+            let _ = self.set_input(&name, value);
+        }
+    }
+
+    /// Fast indexed output getter. Called on the audio hot path.
+    ///
+    /// Same pattern as `set_input_by_index` — override for speed, default is
+    /// a safe fallback.
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        if let Some(name) = self.outputs().get(index).copied() {
+            self.get_output(name).unwrap_or(0.0)
+        } else {
+            0.0
+        }
+    }
+
     /// Returns the sample number when this module was last processed.
     ///
     /// Used by the pull-based processing system to avoid reprocessing modules

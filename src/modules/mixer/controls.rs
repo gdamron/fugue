@@ -1,7 +1,6 @@
 //! Thread-safe controls for the Mixer module.
 
-use std::sync::{Arc, Mutex};
-
+use crate::atomic::AtomicF32;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::MAX_CHANNELS;
@@ -27,9 +26,9 @@ use super::MAX_CHANNELS;
 /// ```
 #[derive(Clone)]
 pub struct MixerControls {
-    pub(crate) levels: Arc<Mutex<[f32; MAX_CHANNELS]>>,
-    pub(crate) pans: Arc<Mutex<[f32; MAX_CHANNELS]>>,
-    pub(crate) master: Arc<Mutex<f32>>,
+    pub(crate) levels: [AtomicF32; MAX_CHANNELS],
+    pub(crate) pans: [AtomicF32; MAX_CHANNELS],
+    pub(crate) master: AtomicF32,
     pub(crate) channels: usize,
 }
 
@@ -39,9 +38,9 @@ impl MixerControls {
     /// All levels default to 1.0 (unity gain).
     pub fn new(channels: usize) -> Self {
         Self {
-            levels: Arc::new(Mutex::new([1.0; MAX_CHANNELS])),
-            pans: Arc::new(Mutex::new([0.0; MAX_CHANNELS])),
-            master: Arc::new(Mutex::new(1.0)),
+            levels: std::array::from_fn(|_| AtomicF32::new(1.0)),
+            pans: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            master: AtomicF32::new(1.0),
             channels: channels.clamp(1, MAX_CHANNELS),
         }
     }
@@ -53,22 +52,22 @@ impl MixerControls {
         initial_pans: &[f32],
         master: f32,
     ) -> Self {
-        let mut levels = [1.0; MAX_CHANNELS];
-        let mut pans = [0.0; MAX_CHANNELS];
-        for (i, &level) in initial_levels.iter().enumerate() {
-            if i < MAX_CHANNELS {
-                levels[i] = level.clamp(0.0, 2.0);
-            }
-        }
-        for (i, &pan) in initial_pans.iter().enumerate() {
-            if i < MAX_CHANNELS {
-                pans[i] = pan.clamp(-1.0, 1.0);
-            }
-        }
+        let levels: [AtomicF32; MAX_CHANNELS] = std::array::from_fn(|i| {
+            AtomicF32::new(
+                initial_levels
+                    .get(i)
+                    .copied()
+                    .unwrap_or(1.0)
+                    .clamp(0.0, 2.0),
+            )
+        });
+        let pans: [AtomicF32; MAX_CHANNELS] = std::array::from_fn(|i| {
+            AtomicF32::new(initial_pans.get(i).copied().unwrap_or(0.0).clamp(-1.0, 1.0))
+        });
         Self {
-            levels: Arc::new(Mutex::new(levels)),
-            pans: Arc::new(Mutex::new(pans)),
-            master: Arc::new(Mutex::new(master.clamp(0.0, 2.0))),
+            levels,
+            pans,
+            master: AtomicF32::new(master.clamp(0.0, 2.0)),
             channels: channels.clamp(1, MAX_CHANNELS),
         }
     }
@@ -81,7 +80,7 @@ impl MixerControls {
     /// Gets the level for a specific channel (0-indexed).
     pub fn level(&self, channel: usize) -> f32 {
         if channel < self.channels {
-            self.levels.lock().unwrap()[channel]
+            self.levels[channel].load()
         } else {
             0.0
         }
@@ -90,14 +89,14 @@ impl MixerControls {
     /// Sets the level for a specific channel (0-indexed).
     pub fn set_level(&self, channel: usize, level: f32) {
         if channel < self.channels {
-            self.levels.lock().unwrap()[channel] = level.clamp(0.0, 2.0);
+            self.levels[channel].store(level.clamp(0.0, 2.0));
         }
     }
 
     /// Gets the pan for a specific channel (0-indexed).
     pub fn pan(&self, channel: usize) -> f32 {
         if channel < self.channels {
-            self.pans.lock().unwrap()[channel]
+            self.pans[channel].load()
         } else {
             0.0
         }
@@ -106,18 +105,18 @@ impl MixerControls {
     /// Sets the pan for a specific channel (0-indexed).
     pub fn set_pan(&self, channel: usize, pan: f32) {
         if channel < self.channels {
-            self.pans.lock().unwrap()[channel] = pan.clamp(-1.0, 1.0);
+            self.pans[channel].store(pan.clamp(-1.0, 1.0));
         }
     }
 
     /// Gets the master level.
     pub fn master(&self) -> f32 {
-        *self.master.lock().unwrap()
+        self.master.load()
     }
 
     /// Sets the master level.
     pub fn set_master(&self, level: f32) {
-        *self.master.lock().unwrap() = level.clamp(0.0, 2.0);
+        self.master.store(level.clamp(0.0, 2.0));
     }
 }
 

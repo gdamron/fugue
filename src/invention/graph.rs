@@ -19,6 +19,13 @@
 //! 4. **Cycle handling** - Back-edges are skipped during DFS; those edges read one-sample-delayed values
 //! 5. **Mix outputs** - Combine all sink outputs and return the final sample
 //!
+//! ## Routing Compilation
+//!
+//! At topology change we compile the string-keyed edge list into index-based
+//! `CompiledRoute`s. The hot path then traverses `Vec<Vec<CompiledRoute>>` and
+//! `IndexMap::get_index`/`get_index_mut` (both O(1) vector access) — no
+//! `HashMap` string hashing per sample.
+//!
 //! ## Why IndexMap?
 //!
 //! **CRITICAL**: We use `IndexMap` instead of `HashMap` for deterministic iteration order.
@@ -30,11 +37,9 @@
 //!   tie-breaking (when multiple valid orders exist) is deterministic across runs
 
 use indexmap::IndexMap;
-use std::collections::HashMap;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 
-use crate::{SinkModule, SinkOutput};
+use crate::{GraphModule, SinkOutput};
 
 use super::runtime::ModuleInstance;
 
@@ -50,7 +55,6 @@ pub(crate) enum GraphCommand {
     AddModule {
         module_id: String,
         module: ModuleInstance,
-        sink: Option<SinkInstance>,
     },
     /// Remove a module from the graph (fire-and-forget).
     RemoveModule { module_id: String },
@@ -70,10 +74,10 @@ pub(crate) enum GraphCommand {
     },
 }
 
-/// Type alias for sink module instances.
-pub(crate) type SinkInstance = Arc<Mutex<dyn SinkModule + Send>>;
-
-/// A single routing connection in the signal graph.
+/// A single routing connection in the signal graph, by module name.
+///
+/// This is the authoritative string-keyed form used for topology-change
+/// operations. The hot path uses [`CompiledRoute`] instead.
 #[derive(Debug, Clone)]
 pub(crate) struct RoutingConnection {
     pub(crate) from_module: String,
@@ -82,21 +86,39 @@ pub(crate) struct RoutingConnection {
     pub(crate) to_port: String,
 }
 
+/// A pre-compiled route used on the audio hot path.
+///
+/// `from_module` indexes into the graph's `IndexMap<String, ModuleInstance>`
+/// (via `get_index`/`get_index_mut`). Port indices are resolved at topology
+/// change via `Module::input_port_index` / `output_port_index`, so the hot
+/// path does no string hashing or matching.
+#[derive(Debug, Clone)]
+pub(crate) struct CompiledRoute {
+    pub(crate) from_module: usize,
+    pub(crate) from_port: usize,
+    pub(crate) to_port: usize,
+}
+
 /// The signal processing graph for modular routing.
 pub(crate) struct SignalGraph {
     /// All modules in the graph (including sinks).
     pub(crate) modules: IndexMap<String, ModuleInstance>,
-    /// Sink modules that drive processing and collect output.
-    pub(crate) sinks: IndexMap<String, SinkInstance>,
-    /// Maps module_id -> Vec of connections that feed into it
-    pub(crate) input_map: HashMap<String, Vec<RoutingConnection>>,
+    /// Sink modules that drive processing and collect output (by module id).
+    pub(crate) sinks: Vec<String>,
+    /// Authoritative edge list — updated by topology-change commands.
+    pub(crate) edges: Vec<RoutingConnection>,
     /// Current sample number (for caching)
     pub(crate) current_sample: u64,
     /// Receiver for commands from the main thread.
     pub(crate) command_rx: mpsc::Receiver<GraphCommand>,
-    /// Pre-computed topological processing order.
-    pub(crate) process_order: Vec<String>,
-    /// Flag indicating topology changed and process_order needs recomputation.
+    /// Pre-computed topological processing order as module indices.
+    pub(crate) process_order: Vec<usize>,
+    /// Pre-compiled routes indexed by destination module index.
+    /// `compiled_routes[i]` is the list of edges feeding the i-th module.
+    pub(crate) compiled_routes: Vec<Vec<CompiledRoute>>,
+    /// Sink module indices, cached for the hot path.
+    pub(crate) sink_indices: Vec<usize>,
+    /// Flag indicating topology changed and derived state needs recomputation.
     pub(crate) topo_dirty: bool,
 }
 
@@ -104,7 +126,7 @@ impl SignalGraph {
     pub(crate) fn ensure_process_order(&mut self) {
         self.drain_commands();
         if self.topo_dirty {
-            self.recompute_process_order();
+            self.recompile();
             self.topo_dirty = false;
         }
     }
@@ -114,28 +136,37 @@ impl SignalGraph {
 
         self.current_sample += 1;
 
-        for module in self.modules.values() {
-            module.lock().unwrap().reset_inputs();
+        for module in self.modules.values_mut() {
+            module.module_mut().reset_inputs();
         }
 
         for i in 0..self.process_order.len() {
-            let module_id = &self.process_order[i];
+            let module_idx = self.process_order[i];
 
-            if let Some(connections) = self.input_map.get(module_id.as_str()) {
-                for conn in connections {
-                    let input_value = self
-                        .modules
-                        .get(&conn.from_module)
-                        .map(|m| m.lock().unwrap().get_output(&conn.from_port).unwrap_or(0.0))
-                        .unwrap_or(0.0);
-                    if let Some(module) = self.modules.get(module_id.as_str()) {
-                        let _ = module.lock().unwrap().set_input(&conn.to_port, input_value);
-                    }
+            // Apply all input routes feeding this module.
+            let route_count = self
+                .compiled_routes
+                .get(module_idx)
+                .map(|r| r.len())
+                .unwrap_or(0);
+            for r in 0..route_count {
+                let (from_idx, from_port, to_port) = {
+                    let route = &self.compiled_routes[module_idx][r];
+                    (route.from_module, route.from_port, route.to_port)
+                };
+
+                let input_value = self
+                    .modules
+                    .get_index(from_idx)
+                    .map(|(_, m)| m.module().get_output_by_index(from_port))
+                    .unwrap_or(0.0);
+                if let Some((_, module)) = self.modules.get_index_mut(module_idx) {
+                    module.module_mut().set_input_by_index(to_port, input_value);
                 }
             }
 
-            if let Some(module) = self.modules.get(module_id.as_str()) {
-                let mut m = module.lock().unwrap();
+            if let Some((_, module)) = self.modules.get_index_mut(module_idx) {
+                let m = module.module_mut();
                 m.process();
                 m.mark_processed(self.current_sample);
             }
@@ -157,29 +188,23 @@ impl SignalGraph {
                 port,
                 value,
             } => {
-                if let Some(module) = self.modules.get(&module_id) {
-                    let _ = module.lock().unwrap().set_input(&port, value);
+                if let Some(module) = self.modules.get_mut(&module_id) {
+                    let _ = module.module_mut().set_input(&port, value);
                 }
             }
-            GraphCommand::AddModule {
-                module_id,
-                module,
-                sink,
-            } => {
+            GraphCommand::AddModule { module_id, module } => {
+                let is_sink = matches!(module, GraphModule::Sink(_));
                 self.modules.insert(module_id.clone(), module);
-                if let Some(sink) = sink {
-                    self.sinks.insert(module_id, sink);
+                if is_sink && !self.sinks.contains(&module_id) {
+                    self.sinks.push(module_id);
                 }
                 self.topo_dirty = true;
             }
             GraphCommand::RemoveModule { module_id } => {
                 self.modules.swap_remove(&module_id);
-                self.sinks.swap_remove(&module_id);
-                self.input_map.remove(&module_id);
-                // Remove connections referencing this module from all other input maps
-                for connections in self.input_map.values_mut() {
-                    connections.retain(|conn| conn.from_module != module_id);
-                }
+                self.sinks.retain(|id| id != &module_id);
+                self.edges
+                    .retain(|e| e.from_module != module_id && e.to_module != module_id);
                 self.topo_dirty = true;
             }
             GraphCommand::AddConnection {
@@ -188,15 +213,12 @@ impl SignalGraph {
                 to_module,
                 to_port,
             } => {
-                self.input_map
-                    .entry(to_module.clone())
-                    .or_default()
-                    .push(RoutingConnection {
-                        from_module,
-                        from_port,
-                        to_module,
-                        to_port,
-                    });
+                self.edges.push(RoutingConnection {
+                    from_module,
+                    from_port,
+                    to_module,
+                    to_port,
+                });
                 self.topo_dirty = true;
             }
             GraphCommand::RemoveConnection {
@@ -205,101 +227,124 @@ impl SignalGraph {
                 to_module,
                 to_port,
             } => {
-                if let Some(connections) = self.input_map.get_mut(&to_module) {
-                    connections.retain(|conn| {
-                        !(conn.from_module == from_module
-                            && conn.from_port == from_port
-                            && conn.to_port == to_port)
-                    });
-                }
+                self.edges.retain(|e| {
+                    !(e.from_module == from_module
+                        && e.from_port == from_port
+                        && e.to_module == to_module
+                        && e.to_port == to_port)
+                });
                 self.topo_dirty = true;
             }
         }
     }
 
-    /// Recomputes the topological processing order using iterative DFS.
+    /// Recomputes topological order, compiled routes, and sink indices.
     ///
-    /// Called only when topology changes (module/connection add/remove), never
-    /// on the audio hot path. Produces a reverse post-order traversal which
-    /// gives a valid topological ordering. Back-edges (cycles) are detected
-    /// and skipped — those edges become one-sample delay points. Unlike Kahn's
-    /// algorithm, DFS visits **all** nodes, so modules downstream of cycles
-    /// are correctly ordered after their dependencies.
-    fn recompute_process_order(&mut self) {
-        let module_ids: Vec<String> = self.modules.keys().cloned().collect();
+    /// Called only when topology changes, never on the audio hot path.
+    fn recompile(&mut self) {
+        let n = self.modules.len();
 
-        // Build adjacency: module -> modules it feeds into (downstream)
-        let mut downstream: HashMap<&str, Vec<&str>> = HashMap::new();
-        for connections in self.input_map.values() {
-            for conn in connections {
-                if self.modules.contains_key(&conn.to_module)
-                    && self.modules.contains_key(&conn.from_module)
-                {
-                    downstream
-                        .entry(conn.from_module.as_str())
-                        .or_default()
-                        .push(conn.to_module.as_str());
-                }
-            }
+        // Build adjacency using module indices
+        let mut downstream: Vec<Vec<usize>> = (0..n).map(|_| Vec::new()).collect();
+        for edge in &self.edges {
+            let Some(from_idx) = self.modules.get_index_of(edge.from_module.as_str()) else {
+                continue;
+            };
+            let Some(to_idx) = self.modules.get_index_of(edge.to_module.as_str()) else {
+                continue;
+            };
+            downstream[from_idx].push(to_idx);
         }
 
-        // Iterative DFS producing reverse post-order (topological order)
-        // State: 0 = unvisited, 1 = on stack (in progress), 2 = finished
-        let mut state: HashMap<&str, u8> = HashMap::new();
-        for id in &module_ids {
-            state.insert(id.as_str(), 0);
-        }
+        // Iterative DFS producing reverse post-order (topological order).
+        // State: 0 = unvisited, 1 = on stack (in progress), 2 = finished.
+        // Back-edges become implicit one-sample delay points.
+        let mut state = vec![0_u8; n];
+        let mut order: Vec<usize> = Vec::with_capacity(n);
 
-        let mut order: Vec<String> = Vec::with_capacity(module_ids.len());
-
-        // Visit nodes in deterministic (IndexMap insertion) order
-        for start in &module_ids {
-            if state[start.as_str()] != 0 {
+        for start in 0..n {
+            if state[start] != 0 {
                 continue;
             }
 
-            // Iterative DFS using an explicit stack
-            // Each entry: (node, index into its downstream neighbors)
-            let mut stack: Vec<(&str, usize)> = vec![(start.as_str(), 0)];
-            *state.get_mut(start.as_str()).unwrap() = 1; // on stack
+            let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+            state[start] = 1;
 
             while let Some((node, idx)) = stack.last_mut() {
-                let neighbors = downstream.get(*node).map(|v| v.as_slice()).unwrap_or(&[]);
-                if *idx < neighbors.len() {
-                    let next = neighbors[*idx];
+                let node = *node;
+                if *idx < downstream[node].len() {
+                    let next = downstream[node][*idx];
                     *idx += 1;
-                    match state.get(next) {
-                        Some(0) => {
-                            // Unvisited — push onto stack
-                            *state.get_mut(next).unwrap() = 1;
+                    match state[next] {
+                        0 => {
+                            state[next] = 1;
                             stack.push((next, 0));
                         }
-                        Some(1) => {
-                            // Back-edge (cycle) — skip, this becomes
-                            // the one-sample delay point
+                        1 => {
+                            // Back-edge (cycle) — skip, one-sample delay
                         }
                         _ => {
-                            // Already finished — skip (cross/forward edge)
+                            // Already finished — skip
                         }
                     }
                 } else {
-                    // All neighbors visited — finish this node (post-order)
                     let (finished, _) = stack.pop().unwrap();
-                    *state.get_mut(finished).unwrap() = 2;
-                    order.push(finished.to_string());
+                    state[finished] = 2;
+                    order.push(finished);
                 }
             }
         }
 
-        // Reverse post-order = topological order
         order.reverse();
         self.process_order = order;
+
+        // Rebuild per-destination compiled route lists. Resolve port names
+        // to indices once here; the hot path does no string work.
+        self.compiled_routes = (0..n).map(|_| Vec::new()).collect();
+        for edge in &self.edges {
+            let Some(from_idx) = self.modules.get_index_of(edge.from_module.as_str()) else {
+                continue;
+            };
+            let Some(to_idx) = self.modules.get_index_of(edge.to_module.as_str()) else {
+                continue;
+            };
+            let Some((_, from_module)) = self.modules.get_index(from_idx) else {
+                continue;
+            };
+            let Some((_, to_module)) = self.modules.get_index(to_idx) else {
+                continue;
+            };
+            let Some(from_port) = from_module
+                .module()
+                .output_port_index(edge.from_port.as_str())
+            else {
+                continue;
+            };
+            let Some(to_port) = to_module.module().input_port_index(edge.to_port.as_str()) else {
+                continue;
+            };
+            self.compiled_routes[to_idx].push(CompiledRoute {
+                from_module: from_idx,
+                from_port,
+                to_port,
+            });
+        }
+
+        // Cache sink indices.
+        self.sink_indices = self
+            .sinks
+            .iter()
+            .filter_map(|id| self.modules.get_index_of(id.as_str()))
+            .collect();
     }
 
-    /// Returns the current processing order (for testing).
+    /// Returns the current processing order as module names (for testing).
     #[cfg(test)]
-    fn process_order(&self) -> &[String] {
-        &self.process_order
+    fn process_order_names(&self) -> Vec<String> {
+        self.process_order
+            .iter()
+            .filter_map(|&idx| self.modules.get_index(idx).map(|(k, _)| k.clone()))
+            .collect()
     }
 
     /// Processes one sample through the entire graph — allocation-free.
@@ -307,11 +352,11 @@ impl SignalGraph {
     /// # Linear Processing Algorithm
     ///
     /// 1. **Drain commands**: Apply any pending topology/parameter changes
-    /// 2. **Recompute order**: If topology changed, run topo sort (allocates, but rare)
+    /// 2. **Recompile**: If topology changed, run topo sort + route compilation (allocates, but rare)
     /// 3. **Increment sample counter**: Track which sample we're processing
     /// 4. **Reset inputs**: Clear input "active" flags on all modules
     /// 5. **Linear iteration**: Process modules in topological order, setting inputs
-    ///    from already-computed upstream outputs
+    ///    from already-computed upstream outputs via index-based routes
     /// 6. **Collect sink output**: Sum sink outputs with gain compensation
     /// 7. **Return sample**: Output the final mixed stereo frame
     ///
@@ -320,17 +365,19 @@ impl SignalGraph {
     pub(crate) fn process_sample(&mut self) -> SinkOutput {
         self.process_modules();
 
-        // Collect sink outputs — no allocation, just accumulate
-        let sink_count = self.sinks.len();
+        let sink_count = self.sink_indices.len();
         if sink_count == 0 {
             return SinkOutput::default();
         }
 
         let mut output = SinkOutput::default();
-        for sink in self.sinks.values() {
-            let frame = sink.lock().unwrap().sink_output();
-            output.left += frame.left;
-            output.right += frame.right;
+        for &sink_idx in &self.sink_indices {
+            if let Some((_, module)) = self.modules.get_index(sink_idx) {
+                if let Some(frame) = module.sink_output() {
+                    output.left += frame.left;
+                    output.right += frame.right;
+                }
+            }
         }
 
         if sink_count > 1 {
@@ -363,36 +410,35 @@ mod tests {
             modules.insert(id.to_string(), result.module);
         }
 
-        let mut input_map: HashMap<String, Vec<RoutingConnection>> = HashMap::new();
-        for &(from, to) in connections {
-            input_map
-                .entry(to.to_string())
-                .or_default()
-                .push(RoutingConnection {
-                    from_module: from.to_string(),
-                    from_port: "audio".to_string(),
-                    to_module: to.to_string(),
-                    to_port: "fm".to_string(),
-                });
-        }
+        let edges: Vec<RoutingConnection> = connections
+            .iter()
+            .map(|&(from, to)| RoutingConnection {
+                from_module: from.to_string(),
+                from_port: "audio".to_string(),
+                to_module: to.to_string(),
+                to_port: "fm".to_string(),
+            })
+            .collect();
 
         let mut graph = SignalGraph {
             modules,
-            sinks: IndexMap::new(),
-            input_map,
+            sinks: Vec::new(),
+            edges,
             current_sample: 0,
             command_rx: rx,
             process_order: Vec::new(),
+            compiled_routes: Vec::new(),
+            sink_indices: Vec::new(),
             topo_dirty: true,
         };
-        graph.recompute_process_order();
+        graph.recompile();
         graph
     }
 
     /// Helper: returns the position of `id` in the process order.
     fn pos(graph: &SignalGraph, id: &str) -> usize {
         graph
-            .process_order()
+            .process_order_names()
             .iter()
             .position(|s| s == id)
             .unwrap_or_else(|| panic!("{id} not found in process_order"))
@@ -408,7 +454,7 @@ mod tests {
             &[("osc1", "osc2"), ("osc2", "osc1"), ("osc1", "dac")],
         );
 
-        let order = graph.process_order();
+        let order = graph.process_order_names();
         assert_eq!(order.len(), 3, "all modules must be visited");
         assert!(
             pos(&graph, "dac") > pos(&graph, "osc1"),
@@ -421,14 +467,14 @@ mod tests {
     fn test_linear_chain_ordering() {
         // a → b → c — strict dependency order
         let graph = test_graph(&["a", "b", "c"], &[("a", "b"), ("b", "c")]);
-        assert_eq!(graph.process_order(), &["a", "b", "c"]);
+        assert_eq!(graph.process_order_names(), vec!["a", "b", "c"]);
     }
 
     #[test]
     fn test_three_node_cycle_all_visited() {
         // a → b → c → a (cycle) — all three must appear in process order
         let graph = test_graph(&["a", "b", "c"], &[("a", "b"), ("b", "c"), ("c", "a")]);
-        let order = graph.process_order();
+        let order = graph.process_order_names();
         assert_eq!(order.len(), 3);
         // a should come before b, b before c (back-edge is c→a)
         assert!(pos(&graph, "a") < pos(&graph, "b"), "order: {:?}", order);

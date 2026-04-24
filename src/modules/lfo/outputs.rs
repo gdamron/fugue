@@ -27,6 +27,16 @@ impl LfoOutputs {
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }
+
+    /// Hot-path indexed getter. Index must match `OUTPUTS` order.
+    #[inline]
+    pub fn get_by_index(&self, index: usize) -> f32 {
+        match index {
+            0 => self.out,
+            1 => self.out_uni,
+            _ => 0.0,
+        }
+    }
 }
 
 impl Default for LfoOutputs {

@@ -1,8 +1,6 @@
 //! DAC module for audio output.
 
-use std::sync::{Arc, Mutex};
-
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::modules::dac::inputs;
 use crate::modules::dac::outputs;
 use crate::{Module, SinkModule, SinkOutput};
@@ -27,13 +25,11 @@ impl ModuleFactory for DacFactory {
             dac.soft_clip = soft_clip;
         }
 
-        let dac_arc = Arc::new(Mutex::new(dac));
-
         Ok(ModuleBuildResult {
-            module: dac_arc.clone(),
+            module: GraphModule::Sink(Box::new(dac)),
             handles: vec![],
             control_surface: None,
-            sink: Some(dac_arc),
+            sink: Some(()),
         })
     }
 
@@ -162,6 +158,16 @@ impl Module for DacModule {
         self.outputs.get(port)
     }
 
+    #[inline]
+    fn set_input_by_index(&mut self, index: usize, value: f32) {
+        self.inputs.set_by_index(index, value);
+    }
+
+    #[inline]
+    fn get_output_by_index(&self, index: usize) -> f32 {
+        self.outputs.get_by_index(index)
+    }
+
     fn last_processed_sample(&self) -> u64 {
         self.last_processed_sample
     }
@@ -284,11 +290,11 @@ mod tests {
         let factory = DacFactory;
 
         // Test with soft_clip disabled
-        let result = factory
+        let mut result = factory
             .build(44100, &serde_json::json!({"soft_clip": false}))
             .expect("Failed to build DacModule");
 
-        let mut module = result.module.lock().unwrap();
+        let module = result.module.module_mut();
         module.set_input("audio", 0.5).ok();
         // Can't easily test the soft_clip field, but we can verify it builds
     }

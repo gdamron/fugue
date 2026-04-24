@@ -66,6 +66,31 @@ impl AdsrInputs {
         self.release_active = false;
     }
 
+    /// Hot-path indexed setter. Index must match `INPUTS` order.
+    #[inline]
+    pub fn set_by_index(&mut self, index: usize, value: f32) {
+        match index {
+            0 => self.gate = value,
+            1 => {
+                self.attack = value.max(0.0);
+                self.attack_active = true;
+            }
+            2 => {
+                self.decay = value.max(0.0);
+                self.decay_active = true;
+            }
+            3 => {
+                self.sustain = value.clamp(0.0, 1.0);
+                self.sustain_active = true;
+            }
+            4 => {
+                self.release = value.max(0.0);
+                self.release_active = true;
+            }
+            _ => {}
+        }
+    }
+
     pub fn gate(&self) -> f32 {
         self.gate
     }

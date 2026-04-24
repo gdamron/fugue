@@ -7,9 +7,9 @@
 //! [`crate::agents::AgentManager`] on background threads.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::factory::{ModuleBuildResult, ModuleFactory};
+use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::{ControlMeta, ControlSurface, Module};
 
 pub use self::controls::AgentControls;
@@ -53,7 +53,7 @@ impl ModuleFactory for AgentFactory {
         );
 
         Ok(ModuleBuildResult {
-            module: Arc::new(Mutex::new(AgentModule {
+            module: GraphModule::Module(Box::new(AgentModule {
                 controls: controls.clone(),
                 inputs: inputs::AgentInputs::new(),
                 last_trigger: 0.0,
@@ -174,7 +174,7 @@ mod tests {
             )
             .unwrap();
         assert!(built.control_surface.is_some());
-        assert_eq!(built.module.lock().unwrap().inputs(), &["trigger", "reset"]);
+        assert_eq!(built.module.module().inputs(), &["trigger", "reset"]);
         let controls = built.control_surface.unwrap();
         assert_eq!(
             controls.get_control("backend").unwrap(),
