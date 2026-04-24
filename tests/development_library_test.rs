@@ -3,8 +3,9 @@ mod support;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
-use fugue::{Invention, InventionBuilder};
+use fugue::{Invention, InventionBuilder, RenderEngine};
 use support::NullAudioBackend;
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -61,4 +62,27 @@ fn voice_library_trio_runs_multiple_development_instances() {
 
     thread::sleep(Duration::from_millis(25));
     running.stop();
+}
+
+#[test]
+#[ignore = "local performance check; run with --ignored --nocapture"]
+fn voice_library_trio_tight_render_benchmark() {
+    let path = development_path("voice_library_trio.json");
+    let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
+    let mut engine = RenderEngine::new(SAMPLE_RATE);
+    engine.load_invention(invention).unwrap();
+
+    let frames = SAMPLE_RATE as usize * 2;
+    let mut output = vec![0.0; frames * 2];
+    let start = Instant::now();
+    let rendered = engine.render_interleaved(&mut output).unwrap();
+    let elapsed = start.elapsed();
+
+    std::hint::black_box(output);
+    eprintln!(
+        "rendered {} frames from voice_library_trio.json in {:?} ({:.2}x realtime)",
+        rendered,
+        elapsed,
+        (rendered as f64 / SAMPLE_RATE as f64) / elapsed.as_secs_f64()
+    );
 }

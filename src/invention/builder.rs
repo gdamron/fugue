@@ -454,6 +454,86 @@ mod tests {
     }
 
     #[test]
+    fn development_fans_out_exposed_inputs_and_caches_outputs() {
+        let development = Invention {
+            version: "1.0.0".to_string(),
+            title: Some("fanout".to_string()),
+            description: None,
+            developments: vec![],
+            modules: vec![
+                crate::ModuleSpec {
+                    id: "full".to_string(),
+                    module_type: "vca".to_string(),
+                    config: serde_json::json!({"cv": 1.0}),
+                },
+                crate::ModuleSpec {
+                    id: "half".to_string(),
+                    module_type: "vca".to_string(),
+                    config: serde_json::json!({"cv": 0.5}),
+                },
+            ],
+            connections: vec![],
+            inputs: vec![
+                DevelopmentInput {
+                    name: "signal".to_string(),
+                    to: "full".to_string(),
+                    to_port: "audio".to_string(),
+                },
+                DevelopmentInput {
+                    name: "signal".to_string(),
+                    to: "half".to_string(),
+                    to_port: "audio".to_string(),
+                },
+            ],
+            outputs: vec![
+                DevelopmentOutput {
+                    name: "full".to_string(),
+                    from: "full".to_string(),
+                    from_port: "audio".to_string(),
+                },
+                DevelopmentOutput {
+                    name: "half".to_string(),
+                    from: "half".to_string(),
+                    from_port: "audio".to_string(),
+                },
+            ],
+            controls: vec![],
+            source_path: None,
+        };
+
+        let root = Invention {
+            version: "1.0.0".to_string(),
+            title: Some("root".to_string()),
+            description: None,
+            developments: vec![DevelopmentSpec {
+                name: "fanout".to_string(),
+                path: None,
+                definition: Some(Box::new(development)),
+            }],
+            modules: vec![crate::ModuleSpec {
+                id: "voice".to_string(),
+                module_type: "fanout".to_string(),
+                config: serde_json::Value::Null,
+            }],
+            connections: vec![],
+            inputs: vec![],
+            outputs: vec![],
+            controls: vec![],
+            source_path: None,
+        };
+
+        let (runtime, _) = InventionBuilder::new(44_100).build(root).unwrap();
+        let voice = runtime.modules.get("voice").unwrap();
+        let mut voice = voice.lock().unwrap();
+
+        voice.set_input("signal", 0.8).unwrap();
+        voice.process();
+
+        assert_eq!(voice.get_output("full").unwrap(), 0.8);
+        assert_eq!(voice.get_output("half").unwrap(), 0.4);
+    }
+
+    #[test]
     fn resolves_relative_development_paths() {
         let unique = format!(
             "fugue-development-test-{}-{}",
