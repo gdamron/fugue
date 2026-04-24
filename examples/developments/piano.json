@@ -1,22 +1,13 @@
 {
   "version": "1.0.0",
   "title": "Piano Voice",
-  "description": "Bright sawtooth through a warm lowpass with gentle pitch drift and a moderate piano-like decay envelope.",
+  "description": "Sawtooth voice with a shared amplitude and filter envelope: bright on attack, warmly decaying — piano-like struck character without vibrato.",
   "modules": [
     {
       "id": "osc",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "sawtooth",
-        "fm_amount": 1.8
-      }
-    },
-    {
-      "id": "detune_lfo",
-      "type": "lfo",
-      "config": {
-        "frequency": 5.2,
-        "waveform": "sine"
+        "oscillator_type": "sawtooth"
       }
     },
     {
@@ -24,18 +15,19 @@
       "type": "filter",
       "config": {
         "filter_type": "lowpass",
-        "cutoff": 3500.0,
-        "resonance": 0.15
+        "cutoff": 400.0,
+        "resonance": 0.1,
+        "cv_amount": 5500.0
       }
     },
     {
       "id": "env",
       "type": "adsr",
       "config": {
-        "attack": 0.005,
-        "decay": 0.8,
-        "sustain": 0.2,
-        "release": 0.4
+        "attack": 0.003,
+        "decay": 1.2,
+        "sustain": 0.08,
+        "release": 0.5
       }
     },
     {
@@ -44,12 +36,6 @@
     }
   ],
   "connections": [
-    {
-      "from": "detune_lfo",
-      "from_port": "out",
-      "to": "osc",
-      "to_port": "fm"
-    },
     {
       "from": "osc",
       "from_port": "audio",
@@ -67,6 +53,12 @@
       "from_port": "envelope",
       "to": "vca",
       "to_port": "cv"
+    },
+    {
+      "from": "env",
+      "from_port": "envelope",
+      "to": "filter",
+      "to_port": "cutoff_cv"
     }
   ],
   "inputs": [
@@ -90,14 +82,14 @@
   ],
   "controls": [
     {
-      "key": "attack",
-      "module": "env",
-      "control": "attack"
-    },
-    {
       "key": "decay",
       "module": "env",
       "control": "decay"
+    },
+    {
+      "key": "sustain",
+      "module": "env",
+      "control": "sustain"
     },
     {
       "key": "release",
@@ -105,14 +97,9 @@
       "control": "release"
     },
     {
-      "key": "brightness",
+      "key": "brightness_peak",
       "module": "filter",
-      "control": "cutoff"
-    },
-    {
-      "key": "detune",
-      "module": "osc",
-      "control": "fm_amount"
+      "control": "cv_amount"
     }
   ]
 }

@@ -7,7 +7,7 @@
       "id": "osc",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "sawtooth"
+        "oscillator_type": "triangle"
       }
     },
     {

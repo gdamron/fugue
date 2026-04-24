@@ -8,7 +8,7 @@
       "type": "oscillator",
       "config": {
         "oscillator_type": "sine",
-        "am_amount": 0.32
+        "am_amount": 0.18
       }
     },
     {
@@ -24,8 +24,8 @@
       "type": "filter",
       "config": {
         "filter_type": "bandpass",
-        "cutoff": 2200.0,
-        "resonance": 0.24
+        "cutoff": 1400.0,
+        "resonance": 0.22
       }
     },
     {

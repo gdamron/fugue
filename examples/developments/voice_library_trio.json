@@ -1,15 +1,15 @@
 {
   "version": "1.0.0",
   "title": "Voice Library Trio",
-  "description": "A small verification patch that layers three reusable development voices through a mixer.",
+  "description": "Three-voice arrangement: a pluck bass on quarter notes, a piano melody on eighth notes, and a slow pad on half notes — each drawing from a different register and clock subdivision.",
   "developments": [
+    {
+      "name": "pluck_voice",
+      "path": "pluck.json"
+    },
     {
       "name": "piano_voice",
       "path": "piano.json"
-    },
-    {
-      "name": "marimba_voice",
-      "path": "marimba.json"
     },
     {
       "name": "pad_voice",
@@ -21,25 +21,43 @@
       "id": "clock",
       "type": "clock",
       "config": {
-        "bpm": 82.0
+        "bpm": 80.0
       }
     },
     {
-      "id": "melody",
+      "id": "bass_mel",
+      "type": "melody",
+      "config": {
+        "root_note": 45,
+        "scale_degrees": [0, 0, 5, 7, 0, 3],
+        "note_weights": [3.0, 2.5, 1.2, 1.5, 2.0, 1.0]
+      }
+    },
+    {
+      "id": "melody_mel",
+      "type": "melody",
+      "config": {
+        "root_note": 69,
+        "scale_degrees": [0, 2, 3, 5, 7, 10, 12],
+        "note_weights": [1.5, 1.0, 0.8, 1.2, 1.4, 0.7, 1.0]
+      }
+    },
+    {
+      "id": "pad_mel",
       "type": "melody",
       "config": {
         "root_note": 57,
-        "scale_degrees": [0, 2, 4, 7, 9],
-        "note_weights": [1.2, 0.9, 1.0, 1.1, 0.8]
+        "scale_degrees": [0, 3, 7],
+        "note_weights": [2.0, 1.2, 1.5]
       }
     },
     {
-      "id": "piano",
-      "type": "piano_voice"
+      "id": "bass",
+      "type": "pluck_voice"
     },
     {
-      "id": "marimba",
-      "type": "marimba_voice"
+      "id": "melody",
+      "type": "piano_voice"
     },
     {
       "id": "pad",
@@ -50,8 +68,8 @@
       "type": "mixer",
       "config": {
         "channels": 3,
-        "levels": [0.32, 0.22, 0.36],
-        "pans": [-0.35, 0.2, 0.0],
+        "levels": [0.45, 0.35, 0.25],
+        "pans": [-0.35, 0.3, 0.0],
         "master": 0.55
       }
     },
@@ -64,53 +82,65 @@
     {
       "from": "clock",
       "from_port": "gate",
+      "to": "bass_mel",
+      "to_port": "gate"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x2",
+      "to": "melody_mel",
+      "to_port": "gate"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_d2",
+      "to": "pad_mel",
+      "to_port": "gate"
+    },
+    {
+      "from": "bass_mel",
+      "from_port": "frequency",
+      "to": "bass",
+      "to_port": "frequency"
+    },
+    {
+      "from": "bass_mel",
+      "from_port": "gate",
+      "to": "bass",
+      "to_port": "gate"
+    },
+    {
+      "from": "melody_mel",
+      "from_port": "frequency",
+      "to": "melody",
+      "to_port": "frequency"
+    },
+    {
+      "from": "melody_mel",
+      "from_port": "gate",
       "to": "melody",
       "to_port": "gate"
     },
     {
-      "from": "melody",
-      "from_port": "frequency",
-      "to": "piano",
-      "to_port": "frequency"
-    },
-    {
-      "from": "melody",
-      "from_port": "gate",
-      "to": "piano",
-      "to_port": "gate"
-    },
-    {
-      "from": "melody",
-      "from_port": "frequency",
-      "to": "marimba",
-      "to_port": "frequency"
-    },
-    {
-      "from": "melody",
-      "from_port": "gate",
-      "to": "marimba",
-      "to_port": "gate"
-    },
-    {
-      "from": "melody",
+      "from": "pad_mel",
       "from_port": "frequency",
       "to": "pad",
       "to_port": "frequency"
     },
     {
-      "from": "melody",
+      "from": "pad_mel",
       "from_port": "gate",
       "to": "pad",
       "to_port": "gate"
     },
     {
-      "from": "piano",
+      "from": "bass",
       "from_port": "audio",
       "to": "mixer",
       "to_port": "in1"
     },
     {
-      "from": "marimba",
+      "from": "melody",
       "from_port": "audio",
       "to": "mixer",
       "to_port": "in2"
