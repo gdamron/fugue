@@ -23,6 +23,7 @@ pub const DEFAULT_STEPS: usize = 16;
 pub const DEFAULT_GATE_LENGTH: f32 = 0.5;
 pub const DEFAULT_BASE_NOTE: u8 = 48;
 pub const MAX_SEQUENCES: usize = 64;
+pub const MAX_STEPS: usize = 256;
 
 pub struct CellSequencer {
     #[allow(dead_code)]
@@ -37,6 +38,7 @@ pub struct CellSequencer {
     step_duration_samples: u32,
     samples_since_gate: u32,
     first_gate_received: bool,
+    active_note: Option<i8>,
     last_gate_in: f32,
     last_reset_in: f32,
     last_next_sequence_in: f32,
@@ -68,6 +70,7 @@ impl CellSequencer {
             step_duration_samples: sample_rate / 2,
             samples_since_gate: 0,
             first_gate_received: false,
+            active_note: None,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             last_next_sequence_in: 0.0,
@@ -131,6 +134,7 @@ impl CellSequencer {
             self.pending_sequence = None;
             self.current_step = 0;
             self.gate_samples_remaining = 0;
+            self.active_note = None;
             self.last_control_selected_sequence = 0;
             return;
         }
@@ -159,23 +163,45 @@ impl CellSequencer {
         self.get_step(self.current_sequence, self.current_step)
     }
 
-    fn calculate_frequency(&self) -> f32 {
+    fn note_frequency(&self, offset: i8) -> f32 {
+        let midi_note = (self.ctrl.base_note() as i16 + offset as i16).clamp(0, 127) as u8;
+        Note::new(midi_note).frequency()
+    }
+
+    fn next_step_is_held(&self) -> bool {
+        let next_step = self.current_step + 1;
+        next_step < self.step_count() && self.get_step(self.current_sequence, next_step).held
+    }
+
+    fn calculate_gate_samples(&self, step: &Step) -> u32 {
+        let gate_length = if step.held || self.next_step_is_held() {
+            1.0
+        } else {
+            step.gate_length.unwrap_or(self.ctrl.gate_length())
+        };
+        (self.step_duration_samples as f32 * gate_length) as u32
+    }
+
+    fn start_step(&mut self) {
         let step = self.current_step_value();
         match step.note {
             Some(offset) => {
-                let midi_note = (self.ctrl.base_note() as i16 + offset as i16).clamp(0, 127) as u8;
-                Note::new(midi_note).frequency()
+                self.active_note = Some(offset);
+                self.gate_samples_remaining = self.calculate_gate_samples(&step);
             }
-            None => 0.0,
+            None if step.held && self.active_note.is_some() => {
+                self.gate_samples_remaining = self.calculate_gate_samples(&step);
+            }
+            None => {
+                self.active_note = None;
+                self.gate_samples_remaining = 0;
+            }
         }
     }
 
-    fn calculate_gate_samples(&self) -> u32 {
-        let gate_length = self
-            .current_step_value()
-            .gate_length
-            .unwrap_or(self.ctrl.gate_length());
-        (self.step_duration_samples as f32 * gate_length) as u32
+    fn prime_current_note(&mut self) {
+        let step = self.current_step_value();
+        self.active_note = step.note;
     }
 
     fn effective_selected_sequence(&self) -> usize {
@@ -192,7 +218,9 @@ impl CellSequencer {
         self.current_sequence = sequence_index;
         self.current_step = 0;
         self.gate_samples_remaining = 0;
+        self.active_note = None;
         self.pending_sequence = None;
+        self.prime_current_note();
         self.ctrl.set_selected_sequence(sequence_index);
         self.last_control_selected_sequence = sequence_index;
     }
@@ -203,6 +231,7 @@ impl CellSequencer {
             self.pending_sequence = None;
             self.current_step = 0;
             self.gate_samples_remaining = 0;
+            self.active_note = None;
             self.ctrl.set_selected_sequence(0);
             self.last_control_selected_sequence = 0;
             return;
@@ -235,7 +264,9 @@ impl CellSequencer {
 
     fn update_outputs(&mut self) {
         self.outputs.set(
-            self.calculate_frequency(),
+            self.active_note
+                .map(|offset| self.note_frequency(offset))
+                .unwrap_or(0.0),
             if self.gate_samples_remaining > 0 {
                 1.0
             } else {
@@ -264,6 +295,7 @@ impl CellSequencer {
         if reset_rising {
             self.current_step = 0;
             self.gate_samples_remaining = 0;
+            self.active_note = None;
         }
 
         if next_rising {
@@ -289,6 +321,7 @@ impl CellSequencer {
                             normalize_sequence_index(sequence_index, self.sequences.len());
                         self.ctrl.set_selected_sequence(self.current_sequence);
                         self.last_control_selected_sequence = self.current_sequence;
+                        self.active_note = None;
                     }
                     self.current_step = 0;
                 } else {
@@ -299,11 +332,7 @@ impl CellSequencer {
             self.first_gate_received = true;
             self.samples_since_gate = 0;
 
-            if self.current_step_value().note.is_some() {
-                self.gate_samples_remaining = self.calculate_gate_samples();
-            } else {
-                self.gate_samples_remaining = 0;
-            }
+            self.start_step();
         }
 
         self.samples_since_gate += 1;
@@ -365,7 +394,7 @@ impl Module for CellSequencer {
                 .with_range(0.0, 127.0)
                 .with_default(DEFAULT_BASE_NOTE as f32),
             ControlMeta::new("steps", "Number of steps per sequence")
-                .with_range(1.0, 64.0)
+                .with_range(1.0, MAX_STEPS as f32)
                 .with_default(DEFAULT_STEPS as f32),
             ControlMeta::new("gate_length", "Default gate length ratio")
                 .with_range(0.0, 1.0)
@@ -484,8 +513,12 @@ fn parse_sequence_bank(
     let mut bank = Vec::with_capacity(array.len());
     for sequence in array {
         let parsed = parse_pattern(Some(sequence))?;
-        if parsed.len() > 64 {
-            return Err("each sequence may not contain more than 64 steps".into());
+        if parsed.len() > MAX_STEPS {
+            return Err(format!(
+                "each sequence may not contain more than {} steps",
+                MAX_STEPS
+            )
+            .into());
         }
         bank.push(parsed);
     }
@@ -529,6 +562,68 @@ mod tests {
         advance_gate(&mut seq);
         assert_eq!(seq.get_output("step").unwrap(), 1.0);
         assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_cell_sequencer_held_steps_continue_active_note() {
+        let mut seq = CellSequencer::new(10)
+            .with_steps(3)
+            .with_gate_length(0.4)
+            .with_sequences(vec![vec![Step::note(0), Step::held(), Step::rest()]]);
+
+        advance_gate(&mut seq);
+        let expected = Note::new(DEFAULT_BASE_NOTE).frequency();
+        assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
+        assert_eq!(seq.get_output("gate").unwrap(), 1.0);
+
+        for _ in 0..2 {
+            seq.process();
+        }
+        assert_eq!(
+            seq.get_output("gate").unwrap(),
+            1.0,
+            "note followed by a held step should use a full-step gate"
+        );
+
+        advance_gate(&mut seq);
+        assert_eq!(seq.current_step(), 1);
+        assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
+        assert_eq!(seq.get_output("gate").unwrap(), 1.0);
+
+        advance_gate(&mut seq);
+        assert_eq!(seq.current_step(), 2);
+        assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
+        assert_eq!(seq.get_output("gate").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_cell_sequencer_contextless_held_step_is_rest() {
+        let mut seq = CellSequencer::new(44_100)
+            .with_steps(1)
+            .with_sequences(vec![vec![Step::held()]]);
+
+        advance_gate(&mut seq);
+
+        assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
+        assert_eq!(seq.get_output("gate").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_cell_sequencer_sequence_change_clears_held_state() {
+        let mut seq = CellSequencer::new(44_100)
+            .with_steps(2)
+            .with_sequences(vec![
+                vec![Step::note(0), Step::held()],
+                vec![Step::held(), Step::rest()],
+            ]);
+
+        advance_gate(&mut seq);
+        pulse(&mut seq, "next_sequence");
+
+        assert_eq!(seq.current_sequence(), 1);
+        assert_eq!(seq.current_step(), 0);
+        assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
+        assert_eq!(seq.get_output("gate").unwrap(), 0.0);
     }
 
     #[test]

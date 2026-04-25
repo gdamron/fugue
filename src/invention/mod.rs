@@ -24,8 +24,8 @@ pub mod state;
 
 pub use builder::InventionBuilder;
 pub use format::{
-    Connection, DevelopmentControl, DevelopmentInput, DevelopmentOutput, DevelopmentSpec,
-    Invention, ModuleSpec, TimeSignature,
+    AssetSpec, Connection, DevelopmentControl, DevelopmentInput, DevelopmentOutput,
+    DevelopmentSpec, Invention, ModuleSpec, TimeSignature,
 };
 pub use handles::InventionHandles;
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};

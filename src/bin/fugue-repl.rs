@@ -61,6 +61,7 @@ impl FugueRepl {
             title: self.title.clone(),
             description: None,
             developments: self.developments.clone(),
+            assets: std::collections::BTreeMap::new(),
             modules: self
                 .modules
                 .values()
@@ -156,6 +157,7 @@ fn cmd_new(repl: &mut FugueRepl, rest: &str) -> Result<String, String> {
         title: title.clone(),
         description: None,
         developments: Vec::new(),
+        assets: std::collections::BTreeMap::new(),
         modules: vec![ModuleSpec {
             id: "dac".to_string(),
             module_type: "dac".to_string(),

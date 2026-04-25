@@ -93,6 +93,7 @@ impl InventionBuilder {
         mut self,
         invention: Invention,
     ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
+        let invention = self.resolve_assets(invention)?;
         self.register_developments(&invention)?;
         self.validate_invention(&invention)?;
 
@@ -123,6 +124,43 @@ impl InventionBuilder {
         };
 
         Ok((runtime, handles))
+    }
+
+    fn resolve_assets(
+        &self,
+        mut invention: Invention,
+    ) -> Result<Invention, Box<dyn std::error::Error>> {
+        if invention.assets.is_empty() {
+            return Ok(invention);
+        }
+
+        let mut assets = HashMap::new();
+        for (name, asset) in &invention.assets {
+            let resolved = resolve_asset_path(invention.source_path.as_deref(), &asset.path)?;
+            let json = std::fs::read_to_string(&resolved).map_err(|err| {
+                format!(
+                    "Failed to read asset '{}' from '{}': {}",
+                    name,
+                    resolved.display(),
+                    err
+                )
+            })?;
+            let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| {
+                format!(
+                    "Failed to parse asset '{}' from '{}': {}",
+                    name,
+                    resolved.display(),
+                    err
+                )
+            })?;
+            assets.insert(name.clone(), value);
+        }
+
+        for module in &mut invention.modules {
+            module.config = resolve_asset_refs(&module.config, &assets)?;
+        }
+
+        Ok(invention)
     }
 
     fn build_runtime_state(&self, invention: &Invention) -> RuntimeState {
@@ -331,12 +369,92 @@ fn resolve_development_path(
     Ok(base_dir.join(candidate))
 }
 
+fn resolve_asset_path(
+    source_path: Option<&Path>,
+    path: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        return Ok(candidate);
+    }
+
+    let Some(source_path) = source_path else {
+        return Err(format!(
+            "Relative asset path '{}' requires the parent invention to be loaded from a file",
+            path
+        )
+        .into());
+    };
+
+    let base_dir = source_path.parent().unwrap_or_else(|| Path::new("."));
+    Ok(base_dir.join(candidate))
+}
+
+fn resolve_asset_refs(
+    value: &serde_json::Value,
+    assets: &HashMap<String, serde_json::Value>,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    match value {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(|item| resolve_asset_refs(item, assets))
+            .collect(),
+        serde_json::Value::Object(map) => {
+            if let Some(asset_name) = map.get("$asset") {
+                let asset_name = asset_name.as_str().ok_or("$asset must be a string")?;
+                if map.keys().any(|key| key != "$asset" && key != "path") {
+                    return Err(
+                        "asset reference objects may only contain '$asset' and 'path'".into(),
+                    );
+                }
+
+                let asset = assets
+                    .get(asset_name)
+                    .ok_or_else(|| format!("Unknown asset reference '{}'", asset_name))?;
+
+                let Some(path) = map.get("path") else {
+                    return Ok(asset.clone());
+                };
+                let path = path
+                    .as_str()
+                    .ok_or("asset reference path must be a string")?;
+                if !path.is_empty() && !path.starts_with('/') {
+                    return Err(format!(
+                        "asset reference path '{}' must be a JSON Pointer starting with '/'",
+                        path
+                    )
+                    .into());
+                }
+
+                asset
+                    .pointer(path)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "Asset reference '{}' does not contain JSON Pointer '{}'",
+                            asset_name, path
+                        )
+                    })
+                    .map_err(Into::into)
+            } else {
+                map.iter()
+                    .map(|(key, value)| Ok((key.clone(), resolve_asset_refs(value, assets)?)))
+                    .collect::<Result<serde_json::Map<String, serde_json::Value>, Box<dyn std::error::Error>>>()
+                    .map(serde_json::Value::Object)
+            }
+        }
+        _ => Ok(value.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        ControlValue, DevelopmentControl, DevelopmentInput, DevelopmentOutput, DevelopmentSpec,
+        AssetSpec, ControlValue, DevelopmentControl, DevelopmentInput, DevelopmentOutput,
+        DevelopmentSpec,
     };
+    use std::collections::BTreeMap;
 
     fn voice_development() -> Invention {
         Invention {
@@ -344,6 +462,7 @@ mod tests {
             title: Some("voice".to_string()),
             description: None,
             developments: vec![],
+            assets: BTreeMap::new(),
             modules: vec![
                 crate::ModuleSpec {
                     id: "osc".to_string(),
@@ -387,6 +506,7 @@ mod tests {
             title: Some("root".to_string()),
             description: None,
             developments: vec![voice],
+            assets: BTreeMap::new(),
             modules: vec![
                 crate::ModuleSpec {
                     id: "lead".to_string(),
@@ -460,6 +580,7 @@ mod tests {
             title: Some("fanout".to_string()),
             description: None,
             developments: vec![],
+            assets: BTreeMap::new(),
             modules: vec![
                 crate::ModuleSpec {
                     id: "full".to_string(),
@@ -510,6 +631,7 @@ mod tests {
                 path: None,
                 definition: Some(Box::new(development)),
             }],
+            assets: BTreeMap::new(),
             modules: vec![crate::ModuleSpec {
                 id: "voice".to_string(),
                 module_type: "fanout".to_string(),
@@ -566,12 +688,90 @@ mod tests {
     }
 
     #[test]
+    fn resolves_relative_asset_refs_in_module_configs() {
+        let unique = format!(
+            "fugue-asset-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        std::fs::write(
+            dir.join("score.json"),
+            r#"{"base_note_hint":48,"cells":[[{"note":0},{"note":null}],[{"note":12}]]}"#,
+        )
+        .unwrap();
+
+        let mut assets = BTreeMap::new();
+        assets.insert(
+            "score".to_string(),
+            AssetSpec {
+                path: "score.json".to_string(),
+            },
+        );
+        let root = Invention {
+            version: "1.0.0".to_string(),
+            title: Some("asset root".to_string()),
+            description: None,
+            developments: vec![],
+            assets,
+            modules: vec![crate::ModuleSpec {
+                id: "seq".to_string(),
+                module_type: "cell_sequencer".to_string(),
+                config: serde_json::json!({
+                    "base_note": { "$asset": "score", "path": "/base_note_hint" },
+                    "sequences": { "$asset": "score", "path": "/cells" },
+                    "metadata": [{ "source": { "$asset": "score", "path": "/base_note_hint" } }]
+                }),
+            }],
+            connections: vec![],
+            inputs: vec![],
+            outputs: vec![],
+            controls: vec![],
+            source_path: None,
+        };
+        let root_path = dir.join("root.json");
+        std::fs::write(&root_path, root.to_json().unwrap()).unwrap();
+
+        let invention = Invention::from_file(&root_path.to_string_lossy()).unwrap();
+        let (runtime, _) = InventionBuilder::new(44_100).build(invention).unwrap();
+        let state = runtime.state.lock().unwrap();
+        let config = &state.modules.get("seq").unwrap().config;
+
+        assert_eq!(config["base_note"], 48);
+        assert_eq!(config["sequences"].as_array().unwrap().len(), 2);
+        assert_eq!(config["metadata"][0]["source"], 48);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn asset_ref_errors_on_missing_pointer() {
+        let mut assets = HashMap::new();
+        assets.insert("score".to_string(), serde_json::json!({"cells": []}));
+
+        let error = resolve_asset_refs(
+            &serde_json::json!({ "$asset": "score", "path": "/missing" }),
+            &assets,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("does not contain JSON Pointer '/missing'"));
+    }
+
+    #[test]
     fn supports_nested_developments() {
         let inner = Invention {
             version: "1.0.0".to_string(),
             title: Some("inner".to_string()),
             description: None,
             developments: vec![],
+            assets: BTreeMap::new(),
             modules: vec![crate::ModuleSpec {
                 id: "osc".to_string(),
                 module_type: "oscillator".to_string(),
@@ -596,6 +796,7 @@ mod tests {
                 path: None,
                 definition: Some(Box::new(inner)),
             }],
+            assets: BTreeMap::new(),
             modules: vec![crate::ModuleSpec {
                 id: "voice".to_string(),
                 module_type: "inner_voice".to_string(),

@@ -6,7 +6,7 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::{
     parse_sequence_bank_json, Step, DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS,
-    MAX_SEQUENCES,
+    MAX_SEQUENCES, MAX_STEPS,
 };
 
 #[derive(Clone)]
@@ -49,7 +49,7 @@ impl CellSequencerControls {
         Self {
             shared: Arc::new(Mutex::new(CellSequencerState {
                 base_note: base_note.min(127),
-                steps: steps.clamp(1, 64),
+                steps: steps.clamp(1, MAX_STEPS),
                 gate_length: gate_length.clamp(0.0, 1.0),
                 selected_sequence,
                 wait_for_cycle_end,
@@ -72,7 +72,7 @@ impl CellSequencerControls {
     }
 
     pub fn set_steps(&self, steps: usize) {
-        self.shared.lock().unwrap().steps = steps.clamp(1, 64);
+        self.shared.lock().unwrap().steps = steps.clamp(1, MAX_STEPS);
     }
 
     pub fn gate_length(&self) -> f32 {
@@ -140,7 +140,7 @@ impl ControlSurface for CellSequencerControls {
                 .with_range(0.0, 127.0)
                 .with_default(self.base_note() as f32),
             ControlMeta::number("steps", "Number of steps per sequence")
-                .with_range(1.0, 64.0)
+                .with_range(1.0, MAX_STEPS as f32)
                 .with_default(self.steps() as f32),
             ControlMeta::number("gate_length", "Default gate length ratio")
                 .with_range(0.0, 1.0)

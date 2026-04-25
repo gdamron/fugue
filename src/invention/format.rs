@@ -3,6 +3,7 @@
 //! Inventions are JSON documents that describe modules and their connections.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// A complete invention document defining a modular synthesis setup.
@@ -26,6 +27,10 @@ pub struct Invention {
     /// Development definitions available to modules in this document.
     #[serde(default)]
     pub developments: Vec<DevelopmentSpec>,
+
+    /// Shared JSON assets available to module configuration via `$asset` references.
+    #[serde(default)]
+    pub assets: BTreeMap<String, AssetSpec>,
 
     /// The modules in this invention.
     pub modules: Vec<ModuleSpec>,
@@ -93,6 +98,13 @@ pub struct DevelopmentSpec {
     /// Optional inline development definition.
     #[serde(default)]
     pub definition: Option<Box<Invention>>,
+}
+
+/// A shared JSON asset that can be referenced from module configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetSpec {
+    /// JSON file path. Relative paths resolve from the loading invention file.
+    pub path: String,
 }
 
 /// Maps an exposed development input to an internal module input.
@@ -208,6 +220,7 @@ mod tests {
         assert_eq!(invention.modules[0].id, "clock1");
         assert_eq!(invention.modules[0].module_type, "clock");
         assert!(invention.developments.is_empty());
+        assert!(invention.assets.is_empty());
         assert!(invention.inputs.is_empty());
         assert!(invention.outputs.is_empty());
         assert!(invention.controls.is_empty());
