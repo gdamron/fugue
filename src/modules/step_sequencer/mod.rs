@@ -52,7 +52,8 @@
 //! }
 //! ```
 
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
@@ -76,14 +77,15 @@ pub const DEFAULT_GATE_LENGTH: f32 = 0.5;
 pub const DEFAULT_BASE_NOTE: u8 = 48;
 
 /// A single step in the sequencer pattern.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Step {
     /// Note offset from base_note. None = rest (no note).
     pub note: Option<i8>,
     /// Gate length for this step as ratio of step duration (0.0-1.0).
     /// If None, uses the sequencer's default gate_length.
-    #[serde(rename = "gate", default, skip_serializing_if = "Option::is_none")]
     pub gate_length: Option<f32>,
+    /// Continue the previous active note without retriggering.
+    pub held: bool,
 }
 
 impl Step {
@@ -92,6 +94,7 @@ impl Step {
         Self {
             note: Some(offset),
             gate_length: None,
+            held: false,
         }
     }
 
@@ -100,6 +103,7 @@ impl Step {
         Self {
             note: Some(offset),
             gate_length: Some(gate_length.clamp(0.0, 1.0)),
+            held: false,
         }
     }
 
@@ -108,6 +112,16 @@ impl Step {
         Self {
             note: None,
             gate_length: None,
+            held: false,
+        }
+    }
+
+    /// Creates a held step that continues the previous active note.
+    pub fn held() -> Self {
+        Self {
+            note: None,
+            gate_length: None,
+            held: true,
         }
     }
 }
@@ -115,6 +129,37 @@ impl Step {
 impl Default for Step {
     fn default() -> Self {
         Self::rest()
+    }
+}
+
+impl<'de> Deserialize<'de> for Step {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        parse_step(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for Step {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self.held {
+            let mut map = serializer.serialize_map(Some(1))?;
+            map.serialize_entry("held", &true)?;
+            return map.end();
+        }
+
+        let entries = if self.gate_length.is_some() { 2 } else { 1 };
+        let mut map = serializer.serialize_map(Some(entries))?;
+        map.serialize_entry("note", &self.note)?;
+        if let Some(gate_length) = self.gate_length {
+            map.serialize_entry("gate", &gate_length)?;
+        }
+        map.end()
     }
 }
 
@@ -165,6 +210,8 @@ pub struct StepSequencer {
     samples_since_gate: u32,
     /// Whether we've received at least one gate.
     first_gate_received: bool,
+    /// Frequency for the current active note, retained across held steps.
+    active_note: Option<i8>,
 
     // Edge detection state
     last_gate_in: f32,
@@ -191,6 +238,7 @@ impl StepSequencer {
             step_duration_samples: sample_rate / 2, // Default ~120 BPM
             samples_since_gate: 0,
             first_gate_received: false,
+            active_note: None,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
@@ -209,6 +257,7 @@ impl StepSequencer {
             step_duration_samples: sample_rate / 2,
             samples_since_gate: 0,
             first_gate_received: false,
+            active_note: None,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
@@ -281,28 +330,44 @@ impl StepSequencer {
         self.ctrl.pattern().get(index).cloned().unwrap_or_default()
     }
 
-    /// Calculates the frequency for the current step.
-    fn calculate_frequency(&self) -> f32 {
-        let step = self.get_step(self.current_step);
-        match step.note {
-            Some(offset) => {
-                let base = self.ctrl.base_note();
-                let midi_note = (base as i16 + offset as i16).clamp(0, 127) as u8;
-                Note::new(midi_note).frequency()
-            }
-            None => 0.0, // Rest - no frequency
-        }
+    /// Calculates the frequency for a note offset.
+    fn note_frequency(&self, offset: i8) -> f32 {
+        let base = self.ctrl.base_note();
+        let midi_note = (base as i16 + offset as i16).clamp(0, 127) as u8;
+        Note::new(midi_note).frequency()
+    }
+
+    fn next_step_is_held(&self) -> bool {
+        let next_step = self.current_step + 1;
+        next_step < self.ctrl.steps() && self.get_step(next_step).held
     }
 
     /// Calculates the gate duration in samples for the current step.
-    fn calculate_gate_samples(&self) -> u32 {
-        let step = self.get_step(self.current_step);
+    fn calculate_gate_samples(&self, step: &Step) -> u32 {
+        let gate_length = if step.held || self.next_step_is_held() {
+            1.0
+        } else {
+            step.gate_length.unwrap_or(self.ctrl.gate_length())
+        };
 
-        // Use per-step gate length if specified, otherwise default
-        let gate_length = step.gate_length.unwrap_or(self.ctrl.gate_length());
-
-        // Calculate gate duration as fraction of step duration
         (self.step_duration_samples as f32 * gate_length) as u32
+    }
+
+    fn start_step(&mut self) {
+        let step = self.get_step(self.current_step);
+        match step.note {
+            Some(offset) => {
+                self.active_note = Some(offset);
+                self.gate_samples_remaining = self.calculate_gate_samples(&step);
+            }
+            None if step.held && self.active_note.is_some() => {
+                self.gate_samples_remaining = self.calculate_gate_samples(&step);
+            }
+            None => {
+                self.active_note = None;
+                self.gate_samples_remaining = 0;
+            }
+        }
     }
 
     /// Advances to the next step.
@@ -314,6 +379,7 @@ impl StepSequencer {
     fn reset(&mut self) {
         self.current_step = 0;
         self.gate_samples_remaining = 0;
+        self.active_note = None;
     }
 
     /// Processes one sample.
@@ -342,13 +408,7 @@ impl StepSequencer {
             self.first_gate_received = true;
             self.samples_since_gate = 0;
 
-            // Start gate for current step
-            let step = self.get_step(self.current_step);
-            if step.note.is_some() {
-                self.gate_samples_remaining = self.calculate_gate_samples();
-            } else {
-                self.gate_samples_remaining = 0; // Rest - no gate
-            }
+            self.start_step();
         }
 
         // Count samples for step duration measurement
@@ -361,7 +421,9 @@ impl StepSequencer {
 
         // Update cached outputs
         self.outputs.set(
-            self.calculate_frequency(),
+            self.active_note
+                .map(|offset| self.note_frequency(offset))
+                .unwrap_or(0.0),
             if self.gate_samples_remaining > 0 {
                 1.0
             } else {
@@ -564,6 +626,19 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, Box<dyn std:
 
     // Handle object format
     if let Some(obj) = value.as_object() {
+        let held = match obj.get("held") {
+            Some(serde_json::Value::Bool(value)) => *value,
+            Some(_) => return Err("held must be a boolean".into()),
+            None => false,
+        };
+
+        if held {
+            if obj.keys().any(|key| key != "held") {
+                return Err("held steps may only contain {\"held\": true}".into());
+            }
+            return Ok(Step::held());
+        }
+
         let note = match obj.get("note") {
             Some(serde_json::Value::Null) => None,
             Some(n) => n.as_i64().map(|v| v as i8),
@@ -575,7 +650,11 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, Box<dyn std:
             .and_then(|v| v.as_f64())
             .map(|v| (v as f32).clamp(0.0, 1.0));
 
-        return Ok(Step { note, gate_length });
+        return Ok(Step {
+            note,
+            gate_length,
+            held: false,
+        });
     }
 
     // Handle simple integer as note
@@ -691,6 +770,80 @@ mod tests {
     }
 
     #[test]
+    fn test_step_sequencer_held_steps_continue_active_note() {
+        let mut seq = StepSequencer::new(10)
+            .with_steps(3)
+            .with_gate_length(0.4)
+            .with_pattern(vec![Step::note(0), Step::held(), Step::rest()]);
+
+        seq.set_input("gate", 1.0).unwrap();
+        seq.process();
+        let expected = Note::new(DEFAULT_BASE_NOTE).frequency();
+        assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
+        assert_eq!(seq.get_output("gate").unwrap(), 1.0);
+
+        seq.set_input("gate", 0.0).unwrap();
+        for _ in 0..3 {
+            seq.process();
+        }
+        assert_eq!(
+            seq.get_output("gate").unwrap(),
+            1.0,
+            "note followed by a held step should use a full-step gate"
+        );
+
+        seq.set_input("gate", 1.0).unwrap();
+        seq.process();
+        assert_eq!(seq.current_step(), 1);
+        assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
+        assert_eq!(seq.get_output("gate").unwrap(), 1.0);
+
+        seq.set_input("gate", 0.0).unwrap();
+        seq.process();
+        seq.set_input("gate", 1.0).unwrap();
+        seq.process();
+        assert_eq!(seq.current_step(), 2);
+        assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
+        assert_eq!(seq.get_output("gate").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_step_sequencer_contextless_held_step_is_rest() {
+        let mut seq = StepSequencer::new(44_100)
+            .with_steps(1)
+            .with_pattern(vec![Step::held()]);
+
+        seq.set_input("gate", 1.0).unwrap();
+        seq.process();
+
+        assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
+        assert_eq!(seq.get_output("gate").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_step_sequencer_repeated_notes_retrigger() {
+        let mut seq = StepSequencer::new(10)
+            .with_steps(2)
+            .with_gate_length(0.6)
+            .with_pattern(vec![Step::note(0), Step::note(0)]);
+
+        seq.set_input("gate", 1.0).unwrap();
+        seq.process();
+        assert_eq!(seq.get_output("gate").unwrap(), 1.0);
+
+        seq.set_input("gate", 0.0).unwrap();
+        for _ in 0..4 {
+            seq.process();
+        }
+        assert_eq!(seq.get_output("gate").unwrap(), 0.0);
+
+        seq.set_input("gate", 1.0).unwrap();
+        seq.process();
+        assert_eq!(seq.current_step(), 1);
+        assert_eq!(seq.get_output("gate").unwrap(), 1.0);
+    }
+
+    #[test]
     fn test_step_sequencer_frequency_calculation() {
         let _seq = StepSequencer::new(44100)
             .with_base_note(60) // C4
@@ -767,10 +920,17 @@ mod tests {
         let step = parse_step(&serde_json::json!({"note": 5, "gate": 0.8})).unwrap();
         assert_eq!(step.note, Some(5));
         assert_eq!(step.gate_length, Some(0.8));
+        assert!(!step.held);
+
+        // Held continuation
+        let step = parse_step(&serde_json::json!({"held": true})).unwrap();
+        assert_eq!(step.note, None);
+        assert!(step.held);
 
         // Object with null note (rest)
         let step = parse_step(&serde_json::json!({"note": null})).unwrap();
         assert_eq!(step.note, None);
+        assert!(!step.held);
 
         // Simple integer
         let step = parse_step(&serde_json::json!(7)).unwrap();
@@ -779,6 +939,16 @@ mod tests {
         // Null value
         let step = parse_step(&serde_json::Value::Null).unwrap();
         assert_eq!(step.note, None);
+
+        assert!(parse_step(&serde_json::json!({"held": true, "note": 0})).is_err());
+        assert!(parse_step(&serde_json::json!({"held": true, "gate": 1.0})).is_err());
+        assert!(parse_step(&serde_json::json!({"held": "yes"})).is_err());
+    }
+
+    #[test]
+    fn test_step_serializes_held_without_note_field() {
+        let value = serde_json::to_value(Step::held()).unwrap();
+        assert_eq!(value, serde_json::json!({"held": true}));
     }
 
     #[test]

@@ -208,6 +208,7 @@ impl FugueMcp {
             title: params.title.clone(),
             description: None,
             developments: vec![],
+            assets: std::collections::BTreeMap::new(),
             modules: vec![ModuleSpec {
                 id: "dac".to_string(),
                 module_type: "dac".to_string(),
