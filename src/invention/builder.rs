@@ -137,7 +137,7 @@ impl InventionBuilder {
         let mut assets = HashMap::new();
         for (name, asset) in &invention.assets {
             let resolved = resolve_asset_path(invention.source_path.as_deref(), &asset.path)?;
-            let json = std::fs::read_to_string(&resolved).map_err(|err| {
+            let contents = std::fs::read_to_string(&resolved).map_err(|err| {
                 format!(
                     "Failed to read asset '{}' from '{}': {}",
                     name,
@@ -145,14 +145,22 @@ impl InventionBuilder {
                     err
                 )
             })?;
-            let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| {
-                format!(
-                    "Failed to parse asset '{}' from '{}': {}",
-                    name,
-                    resolved.display(),
-                    err
-                )
-            })?;
+            let is_json = resolved
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+            let value = if is_json {
+                serde_json::from_str(&contents).map_err(|err| {
+                    format!(
+                        "Failed to parse asset '{}' from '{}': {}",
+                        name,
+                        resolved.display(),
+                        err
+                    )
+                })?
+            } else {
+                serde_json::Value::String(contents)
+            };
             assets.insert(name.clone(), value);
         }
 
@@ -745,6 +753,87 @@ mod tests {
         assert_eq!(config["base_note"], 48);
         assert_eq!(config["sequences"].as_array().unwrap().len(), 2);
         assert_eq!(config["metadata"][0]["source"], 48);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn text_assets_resolve_as_string_values() {
+        let unique = format!(
+            "fugue-text-asset-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let script_body = "function init() {}\nreturn { init };\n";
+        let prompt_body = "# Conductor\n\nReturn JSON only.\n";
+        std::fs::write(dir.join("voice.js"), script_body).unwrap();
+        std::fs::write(dir.join("prompt.md"), prompt_body).unwrap();
+
+        let mut assets = BTreeMap::new();
+        assets.insert(
+            "voice_script".to_string(),
+            AssetSpec {
+                path: "voice.js".to_string(),
+            },
+        );
+        assets.insert(
+            "conductor_prompt".to_string(),
+            AssetSpec {
+                path: "prompt.md".to_string(),
+            },
+        );
+        let root = Invention {
+            version: "1.0.0".to_string(),
+            title: Some("text assets".to_string()),
+            description: None,
+            developments: vec![],
+            assets,
+            modules: vec![
+                crate::ModuleSpec {
+                    id: "voice".to_string(),
+                    module_type: "code".to_string(),
+                    config: serde_json::json!({
+                        "script": { "$asset": "voice_script" },
+                        "tick_hz": 0.0,
+                        "enabled": false
+                    }),
+                },
+                crate::ModuleSpec {
+                    id: "conductor".to_string(),
+                    module_type: "agent".to_string(),
+                    config: serde_json::json!({
+                        "prompt": { "$asset": "conductor_prompt" },
+                        "enabled": false
+                    }),
+                },
+            ],
+            connections: vec![],
+            inputs: vec![],
+            outputs: vec![],
+            controls: vec![],
+            source_path: None,
+        };
+        let root_path = dir.join("root.json");
+        std::fs::write(&root_path, root.to_json().unwrap()).unwrap();
+
+        let invention = Invention::from_file(&root_path.to_string_lossy()).unwrap();
+        let (runtime, _) = InventionBuilder::new(44_100).build(invention).unwrap();
+        let state = runtime.state.lock().unwrap();
+
+        let voice_config = &state.modules.get("voice").unwrap().config;
+        assert_eq!(voice_config["script"], serde_json::Value::String(script_body.to_string()));
+
+        let conductor_config = &state.modules.get("conductor").unwrap().config;
+        assert_eq!(
+            conductor_config["prompt"],
+            serde_json::Value::String(prompt_body.to_string())
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
