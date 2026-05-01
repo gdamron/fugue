@@ -44,6 +44,7 @@ pub struct CellSequencer {
     last_next_sequence_in: f32,
     last_previous_sequence_in: f32,
     last_control_selected_sequence: usize,
+    last_advance_request_count: u64,
     inputs: inputs::CellSequencerInputs,
     outputs: outputs::CellSequencerOutputs,
     last_processed_sample: u64,
@@ -76,6 +77,7 @@ impl CellSequencer {
             last_next_sequence_in: 0.0,
             last_previous_sequence_in: 0.0,
             last_control_selected_sequence: current_sequence,
+            last_advance_request_count: controls.advance_request_count(),
             inputs: inputs::CellSequencerInputs::new(),
             outputs: outputs::CellSequencerOutputs::new(),
             last_processed_sample: 0,
@@ -136,6 +138,8 @@ impl CellSequencer {
             self.gate_samples_remaining = 0;
             self.active_note = None;
             self.last_control_selected_sequence = 0;
+            self.ctrl.set_current_cell(0);
+            self.ctrl.set_loop_count(0);
             return;
         }
 
@@ -149,6 +153,7 @@ impl CellSequencer {
             normalize_sequence_index(self.ctrl.selected_sequence(), self.sequences.len());
         self.ctrl.set_selected_sequence(selected);
         self.last_control_selected_sequence = selected;
+        self.ctrl.set_current_cell(self.current_sequence);
     }
 
     fn get_step(&self, sequence_index: usize, step_index: usize) -> Step {
@@ -223,6 +228,8 @@ impl CellSequencer {
         self.prime_current_note();
         self.ctrl.set_selected_sequence(sequence_index);
         self.last_control_selected_sequence = sequence_index;
+        self.ctrl.set_current_cell(sequence_index);
+        self.ctrl.set_loop_count(0);
     }
 
     fn request_sequence_change(&mut self, sequence_index: usize) {
@@ -286,9 +293,14 @@ impl CellSequencer {
             self.request_sequence_change(selected_sequence);
         }
 
+        let advance_count = self.ctrl.advance_request_count();
+        let advance_rising = advance_count != self.last_advance_request_count;
+        self.last_advance_request_count = advance_count;
+
         let gate_rising = self.inputs.gate() > 0.5 && self.last_gate_in <= 0.5;
         let reset_rising = self.inputs.reset_gate() > 0.5 && self.last_reset_in <= 0.5;
-        let next_rising = self.inputs.next_sequence() > 0.5 && self.last_next_sequence_in <= 0.5;
+        let next_rising = (self.inputs.next_sequence() > 0.5 && self.last_next_sequence_in <= 0.5)
+            || advance_rising;
         let previous_rising =
             self.inputs.previous_sequence() > 0.5 && self.last_previous_sequence_in <= 0.5;
 
@@ -322,6 +334,11 @@ impl CellSequencer {
                         self.ctrl.set_selected_sequence(self.current_sequence);
                         self.last_control_selected_sequence = self.current_sequence;
                         self.active_note = None;
+                        self.ctrl.set_current_cell(self.current_sequence);
+                        self.ctrl.set_loop_count(0);
+                    } else {
+                        let next_loop = self.ctrl.loop_count().saturating_add(1);
+                        self.ctrl.set_loop_count(next_loop);
                     }
                     self.current_step = 0;
                 } else {
@@ -758,6 +775,54 @@ mod tests {
         };
         let parsed: Value = serde_json::from_str(&value).unwrap();
         assert_eq!(parsed.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_advance_control_advances_cell_and_resets_loop_count() {
+        let controls = CellSequencerControls::new_with_values(
+            DEFAULT_BASE_NOTE,
+            2,
+            DEFAULT_GATE_LENGTH,
+            0,
+            false,
+            vec![
+                vec![Step::note(0), Step::note(2)],
+                vec![Step::note(7), Step::note(9)],
+            ],
+        );
+        let mut seq = CellSequencer::new_with_controls(44_100, controls.clone());
+
+        advance_gate(&mut seq);
+        advance_gate(&mut seq);
+        advance_gate(&mut seq); // wraps cell 0 once
+        assert_eq!(controls.loop_count(), 1);
+        assert_eq!(controls.current_cell(), 0);
+
+        controls
+            .set_control("advance", ControlValue::Number(1.0))
+            .unwrap();
+        seq.process();
+
+        assert_eq!(seq.current_sequence(), 1);
+        assert_eq!(controls.current_cell(), 1);
+        assert_eq!(controls.loop_count(), 0);
+        assert_eq!(controls.total_cells(), 2);
+    }
+
+    #[test]
+    fn test_loop_count_increments_on_cell_wrap() {
+        let mut seq = CellSequencer::new(44_100)
+            .with_steps(2)
+            .with_sequences(vec![vec![Step::note(0), Step::note(2)]]);
+
+        advance_gate(&mut seq);
+        advance_gate(&mut seq);
+        assert_eq!(seq.ctrl.loop_count(), 0);
+        advance_gate(&mut seq); // wraps to step 0 → loop completed
+        assert_eq!(seq.ctrl.loop_count(), 1);
+        advance_gate(&mut seq);
+        advance_gate(&mut seq); // wraps again
+        assert_eq!(seq.ctrl.loop_count(), 2);
     }
 
     #[test]

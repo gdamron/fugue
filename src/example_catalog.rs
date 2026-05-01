@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 11] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 12] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -70,6 +70,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 11] = [
         file_name: "developments/voice_library_trio.json",
         title: "Voice Library Trio",
         summary: "Layers piano, marimba, and pad developments through one mixer.",
+    },
+    ExampleDefinition {
+        file_name: "in_c.json",
+        title: "In C — Terry Riley",
+        summary: "13-voice generative performance of Terry Riley's In C with self-progressing voices.",
     },
 ];
 
@@ -203,6 +208,7 @@ mod tests {
                 "development_file_patch.json",
                 "development_inline_patch.json",
                 "developments/voice_library_trio.json",
+                "in_c.json",
             ]
         );
     }

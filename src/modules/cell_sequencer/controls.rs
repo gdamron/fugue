@@ -23,6 +23,9 @@ pub(crate) struct CellSequencerState {
     pub(crate) wait_for_cycle_end: bool,
     pub(crate) sequences: Vec<Vec<Step>>,
     pub(crate) sequence_bank_version: u64,
+    pub(crate) loop_count: u32,
+    pub(crate) current_cell: usize,
+    pub(crate) advance_request_count: u64,
 }
 
 impl CellSequencerControls {
@@ -55,6 +58,9 @@ impl CellSequencerControls {
                 wait_for_cycle_end,
                 sequences,
                 sequence_bank_version: 0,
+                loop_count: 0,
+                current_cell: selected_sequence,
+                advance_request_count: 0,
             })),
         }
     }
@@ -125,6 +131,35 @@ impl CellSequencerControls {
     pub fn sequence_bank_version(&self) -> u64 {
         self.shared.lock().unwrap().sequence_bank_version
     }
+
+    pub fn loop_count(&self) -> u32 {
+        self.shared.lock().unwrap().loop_count
+    }
+
+    pub(crate) fn set_loop_count(&self, value: u32) {
+        self.shared.lock().unwrap().loop_count = value;
+    }
+
+    pub fn current_cell(&self) -> usize {
+        self.shared.lock().unwrap().current_cell
+    }
+
+    pub(crate) fn set_current_cell(&self, value: usize) {
+        self.shared.lock().unwrap().current_cell = value;
+    }
+
+    pub fn total_cells(&self) -> usize {
+        self.shared.lock().unwrap().sequences.len()
+    }
+
+    pub fn advance_request_count(&self) -> u64 {
+        self.shared.lock().unwrap().advance_request_count
+    }
+
+    pub fn request_advance(&self) {
+        let mut shared = self.shared.lock().unwrap();
+        shared.advance_request_count = shared.advance_request_count.wrapping_add(1);
+    }
 }
 
 impl Default for CellSequencerControls {
@@ -155,6 +190,17 @@ impl ControlSurface for CellSequencerControls {
             ),
             ControlMeta::string("sequences_json", "Sequence bank as JSON")
                 .with_default(self.sequences_json()),
+            ControlMeta::number("loop_count", "Completed loops of the active cell")
+                .with_default(self.loop_count() as f32),
+            ControlMeta::number("current_cell", "Currently playing cell index")
+                .with_default(self.current_cell() as f32),
+            ControlMeta::number("total_cells", "Total number of cells in the bank")
+                .with_default(self.total_cells() as f32),
+            ControlMeta::number(
+                "advance",
+                "Trigger: rising edge advances to the next cell",
+            )
+            .with_default(0.0),
         ]
     }
 
@@ -166,6 +212,10 @@ impl ControlSurface for CellSequencerControls {
             "selected_sequence" => Ok((self.selected_sequence() as f32).into()),
             "wait_for_cycle_end" => Ok(self.wait_for_cycle_end().into()),
             "sequences_json" => Ok(self.sequences_json().into()),
+            "loop_count" => Ok((self.loop_count() as f32).into()),
+            "current_cell" => Ok((self.current_cell() as f32).into()),
+            "total_cells" => Ok((self.total_cells() as f32).into()),
+            "advance" => Ok(0.0_f32.into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -178,6 +228,14 @@ impl ControlSurface for CellSequencerControls {
             "selected_sequence" => self.set_selected_sequence(value.as_number()?.max(0.0) as usize),
             "wait_for_cycle_end" => self.set_wait_for_cycle_end(value.as_bool()?),
             "sequences_json" => self.set_sequences_json(value.as_string()?)?,
+            "advance" => {
+                if value.as_number()? > 0.5 {
+                    self.request_advance();
+                }
+            }
+            "loop_count" | "current_cell" | "total_cells" => {
+                return Err(format!("Control '{}' is read-only", key));
+            }
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
