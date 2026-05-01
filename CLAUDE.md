@@ -12,10 +12,24 @@ clean audio -- that is, audio that sounds as the user intended -- is the top
 priority.
 
 - Keep audio-thread code allocation-free (no `Vec::new()`, etc.)
+- Keep audio-thread code lock-free. Module `process()` runs at sample rate
+  (tens of thousands of times per second per module), so a `Mutex` shared
+  with control/script threads will starve the audio callback and produce
+  dropouts. Share state with control/script threads via `std::sync::atomic`
+  primitives (or `crate::atomic::AtomicF32`) on the hot path. If a `Mutex`
+  is unavoidable for a non-trivial value (e.g. a `Vec`), gate it behind an
+  atomic version counter so the audio thread only locks when it actually
+  changed. See `src/modules/cell_sequencer/controls.rs` and
+  `src/modules/mixer/controls.rs` for the pattern.
 - Use pre-allocated buffers for DSP
 - Prefer `f32` math for audio-rate signals (SIMD-friendly)
 - Reset phase accumulators using `%=` to prevent drift
 - Use `Send` marker for thread-safe types
+- Cache results of expensive math (`powf`, `exp`, `log`, `sin`, `cos`,
+  `tan`) instead of recomputing per sample. Prefer a precomputed lookup
+  table or recompute-on-change for any value that varies less often than
+  the sample rate. See `src/music/note.rs`'s `MIDI_FREQUENCIES` table for
+  the pattern.
 
 ## This is a Music Creation Tool
 

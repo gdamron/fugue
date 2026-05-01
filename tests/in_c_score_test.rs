@@ -101,7 +101,7 @@ fn in_c_cell_one_regression() {
     let cell_one = cells[0].as_array().unwrap();
 
     assert_eq!(cell_one.len(), 24);
-    for (index, note) in [(0, 0), (1, 4), (8, 0), (9, 5), (16, 0), (17, 4)] {
+    for (index, note) in [(0, 0), (1, 4), (8, 0), (9, 4), (16, 0), (17, 4)] {
         assert_eq!(cell_one[index]["note"], note);
     }
     for index in [
