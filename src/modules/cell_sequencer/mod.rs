@@ -45,6 +45,9 @@ pub struct CellSequencer {
     last_previous_sequence_in: f32,
     last_control_selected_sequence: usize,
     last_advance_request_count: u64,
+    cached_frequency: f32,
+    cached_frequency_offset: Option<i8>,
+    cached_frequency_base: u8,
     inputs: inputs::CellSequencerInputs,
     outputs: outputs::CellSequencerOutputs,
     last_processed_sample: u64,
@@ -78,6 +81,9 @@ impl CellSequencer {
             last_previous_sequence_in: 0.0,
             last_control_selected_sequence: current_sequence,
             last_advance_request_count: controls.advance_request_count(),
+            cached_frequency: 0.0,
+            cached_frequency_offset: None,
+            cached_frequency_base: controls.base_note(),
             inputs: inputs::CellSequencerInputs::new(),
             outputs: outputs::CellSequencerOutputs::new(),
             last_processed_sample: 0,
@@ -269,11 +275,26 @@ impl CellSequencer {
         self.ctrl.steps()
     }
 
+    fn frequency_for_active_note(&mut self) -> f32 {
+        let Some(offset) = self.active_note else {
+            self.cached_frequency_offset = None;
+            return 0.0;
+        };
+        let base = self.ctrl.base_note();
+        if self.cached_frequency_offset == Some(offset) && self.cached_frequency_base == base {
+            return self.cached_frequency;
+        }
+        let freq = self.note_frequency(offset);
+        self.cached_frequency = freq;
+        self.cached_frequency_offset = Some(offset);
+        self.cached_frequency_base = base;
+        freq
+    }
+
     fn update_outputs(&mut self) {
+        let frequency = self.frequency_for_active_note();
         self.outputs.set(
-            self.active_note
-                .map(|offset| self.note_frequency(offset))
-                .unwrap_or(0.0),
+            frequency,
             if self.gate_samples_remaining > 0 {
                 1.0
             } else {

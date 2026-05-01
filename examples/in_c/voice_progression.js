@@ -120,5 +120,3 @@ function reset() {
   cellLengths = null;
   lastCellApplied = -1;
 }
-
-return { init, tick, reset };

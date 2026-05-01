@@ -1,0 +1,1053 @@
+{
+  "version": "1.0.0",
+  "title": "In C \u2014 Terry Riley (1964)",
+  "description": "13-voice generative performance of Terry Riley's *In C*. Each voice owns a cell_sequencer loaded with the 53-cell score and a code module that decides when to advance. A constant C5 8th-note pulse anchors the ensemble. Mixed across a 20-channel mixer through a shared reverb. The conductor agent module is included but disabled by default \u2014 see the README to wire it up.",
+  "assets": {
+    "score": {
+      "path": "in_c/score.json"
+    },
+    "voice_progression": {
+      "path": "in_c/voice_progression.js"
+    },
+    "conductor_prompt": {
+      "path": "in_c/conductor.md"
+    }
+  },
+  "developments": [
+    {
+      "name": "piano_voice",
+      "path": "developments/piano.json"
+    },
+    {
+      "name": "marimba_voice",
+      "path": "developments/marimba.json"
+    },
+    {
+      "name": "vibraphone_voice",
+      "path": "developments/vibraphone.json"
+    },
+    {
+      "name": "pluck_voice",
+      "path": "developments/pluck.json"
+    },
+    {
+      "name": "pad_voice",
+      "path": "developments/pad.json"
+    }
+  ],
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 240.0,
+        "gate_duration": 0.4
+      }
+    },
+    {
+      "id": "mel_1",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_1",
+      "type": "piano_voice"
+    },
+    {
+      "id": "prog_1",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_1",
+        "peer_voice_ids": [
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_2",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_2",
+      "type": "marimba_voice"
+    },
+    {
+      "id": "prog_2",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_2",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_3",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_3",
+      "type": "vibraphone_voice"
+    },
+    {
+      "id": "prog_3",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_3",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_4",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_4",
+      "type": "piano_voice"
+    },
+    {
+      "id": "prog_4",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_4",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_5",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_5",
+      "type": "pluck_voice"
+    },
+    {
+      "id": "prog_5",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_5",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_6",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_6",
+      "type": "pad_voice"
+    },
+    {
+      "id": "prog_6",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_6",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_7",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_7",
+      "type": "vibraphone_voice"
+    },
+    {
+      "id": "prog_7",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_7",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_8",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_8",
+      "type": "piano_voice"
+    },
+    {
+      "id": "prog_8",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_8",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_9",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_9",
+      "type": "marimba_voice"
+    },
+    {
+      "id": "prog_9",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_9",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_10",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_10",
+      "type": "pluck_voice"
+    },
+    {
+      "id": "prog_10",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_10",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_11",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_11",
+      "type": "vibraphone_voice"
+    },
+    {
+      "id": "prog_11",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_11",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_12",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_12",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_12",
+      "type": "pad_voice"
+    },
+    {
+      "id": "prog_12",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_12",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_13"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mel_13",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": false,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_13",
+      "type": "piano_voice"
+    },
+    {
+      "id": "prog_13",
+      "type": "code",
+      "config": {
+        "tick_hz": 4.0,
+        "enabled": true,
+        "script": {
+          "$asset": "voice_progression"
+        },
+        "sequencer_id": "mel_13",
+        "peer_voice_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12"
+        ],
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "last_cell_behavior": "loop"
+      }
+    },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "config": {
+        "channels": 20,
+        "levels": [
+          0.45, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32,
+          0.32, 0.32, 0.32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "pans": [
+          0.0, -0.7, -0.55, -0.4, -0.25, -0.1, 0.0, 0.1, 0.25, 0.4, 0.55, 0.7,
+          -0.15, 0.15, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "master": 0.55
+      }
+    },
+    {
+      "id": "reverb",
+      "type": "reverb",
+      "config": {
+        "room_size": 0.85,
+        "damping": 0.45,
+        "wet": 0.22,
+        "dry": 0.78
+      }
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_1",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_1",
+      "from_port": "frequency",
+      "to": "voice_1",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_1",
+      "from_port": "gate",
+      "to": "voice_1",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_1",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in2"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_2",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_2",
+      "from_port": "frequency",
+      "to": "voice_2",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_2",
+      "from_port": "gate",
+      "to": "voice_2",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_2",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in3"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_3",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_3",
+      "from_port": "frequency",
+      "to": "voice_3",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_3",
+      "from_port": "gate",
+      "to": "voice_3",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_3",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in4"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_4",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_4",
+      "from_port": "frequency",
+      "to": "voice_4",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_4",
+      "from_port": "gate",
+      "to": "voice_4",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_4",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in5"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_5",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_5",
+      "from_port": "frequency",
+      "to": "voice_5",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_5",
+      "from_port": "gate",
+      "to": "voice_5",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_5",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in6"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_6",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_6",
+      "from_port": "frequency",
+      "to": "voice_6",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_6",
+      "from_port": "gate",
+      "to": "voice_6",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_6",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in7"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_7",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_7",
+      "from_port": "frequency",
+      "to": "voice_7",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_7",
+      "from_port": "gate",
+      "to": "voice_7",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_7",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in8"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_8",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_8",
+      "from_port": "frequency",
+      "to": "voice_8",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_8",
+      "from_port": "gate",
+      "to": "voice_8",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_8",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in9"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_9",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_9",
+      "from_port": "frequency",
+      "to": "voice_9",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_9",
+      "from_port": "gate",
+      "to": "voice_9",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_9",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in10"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_10",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_10",
+      "from_port": "frequency",
+      "to": "voice_10",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_10",
+      "from_port": "gate",
+      "to": "voice_10",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_10",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in11"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_11",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_11",
+      "from_port": "frequency",
+      "to": "voice_11",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_11",
+      "from_port": "gate",
+      "to": "voice_11",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_11",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in12"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_12",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_12",
+      "from_port": "frequency",
+      "to": "voice_12",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_12",
+      "from_port": "gate",
+      "to": "voice_12",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_12",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in13"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_13",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_13",
+      "from_port": "frequency",
+      "to": "voice_13",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_13",
+      "from_port": "gate",
+      "to": "voice_13",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_13",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in14"
+    },
+    {
+      "from": "mixer",
+      "from_port": "left",
+      "to": "reverb",
+      "to_port": "left"
+    },
+    {
+      "from": "mixer",
+      "from_port": "right",
+      "to": "reverb",
+      "to_port": "right"
+    },
+    {
+      "from": "reverb",
+      "from_port": "left",
+      "to": "dac",
+      "to_port": "audio_left"
+    },
+    {
+      "from": "reverb",
+      "from_port": "right",
+      "to": "dac",
+      "to_port": "audio_right"
+    }
+  ]
+}

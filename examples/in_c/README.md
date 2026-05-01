@@ -15,11 +15,13 @@ peers.
 ## Run it
 
 ```
-cargo run --example examples -- --example in_c.json
+cargo run --release --example examples -- --example in_c.json
 ```
 
-Press Enter to stop. The performance continues indefinitely — voices wrap
-back to cell 1 after reaching cell 53 (configurable, see below).
+Use `--release`. With 13 voices, a 20-channel mixer, and reverb, the dev
+profile leaves enough margin missing to drop frames on most laptops. Press
+Enter to stop. The performance continues indefinitely — voices wrap back
+to cell 1 after reaching cell 53 (configurable, see below).
 
 ## Structure
 
