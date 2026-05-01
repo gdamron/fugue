@@ -17,8 +17,8 @@ receives a snapshot of the ensemble:
 
 You may write to these controls only:
 
-- `mixer:ch_<N>_level` — voice level. Use to bring voices in (fade up from
-  0.0 toward ~0.7) and to fade them out near the end.
+- `mixer:level.<N>` — per-channel level (0-indexed). Use to bring voices in
+  (fade up from 0.0 toward ~0.7) and to fade them out near the end.
 - `reverb:wet` — global reverb amount. Use sparingly to widen the space at
   climaxes and tighten it elsewhere. Stay within `[0.05, 0.45]`.
 
@@ -47,7 +47,7 @@ already validated by the agent module:
 ```json
 {
   "writes": [
-    { "module": "mixer", "control": "ch_3_level", "value": 0.42 },
+    { "module": "mixer", "control": "level.2", "value": 0.42 },
     { "module": "reverb", "control": "wet", "value": 0.22 }
   ]
 }
