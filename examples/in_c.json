@@ -45,6 +45,19 @@
       }
     },
     {
+      "id": "pulse_mel",
+      "type": "melody",
+      "config": {
+        "root_note": 72,
+        "scale_degrees": [0],
+        "note_weights": [1.0]
+      }
+    },
+    {
+      "id": "pulse",
+      "type": "pluck_voice"
+    },
+    {
       "id": "mel_1",
       "type": "cell_sequencer",
       "config": {
@@ -682,13 +695,26 @@
       }
     },
     {
+      "id": "conductor",
+      "type": "agent",
+      "config": {
+        "enabled": false,
+        "backend": "local:auto",
+        "cooldown_ms": 8000.0,
+        "system": "You are the conductor for a generative performance of Terry Riley's In C.",
+        "prompt": {
+          "$asset": "conductor_prompt"
+        }
+      }
+    },
+    {
       "id": "mixer",
       "type": "mixer",
       "config": {
         "channels": 20,
         "levels": [
-          0.45, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32,
-          0.32, 0.32, 0.32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+          0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         ],
         "pans": [
           0.0, -0.7, -0.55, -0.4, -0.25, -0.1, 0.0, 0.1, 0.25, 0.4, 0.55, 0.7,
@@ -713,6 +739,30 @@
     }
   ],
   "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "pulse_mel",
+      "to_port": "gate"
+    },
+    {
+      "from": "pulse_mel",
+      "from_port": "frequency",
+      "to": "pulse",
+      "to_port": "frequency"
+    },
+    {
+      "from": "pulse_mel",
+      "from_port": "gate",
+      "to": "pulse",
+      "to_port": "gate"
+    },
+    {
+      "from": "pulse",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in1"
+    },
     {
       "from": "clock",
       "from_port": "gate_x4",
@@ -1024,6 +1074,12 @@
       "from_port": "audio",
       "to": "mixer",
       "to_port": "in14"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_d4",
+      "to": "conductor",
+      "to_port": "trigger"
     },
     {
       "from": "mixer",

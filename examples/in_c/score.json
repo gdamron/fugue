@@ -6,9 +6,6 @@
   "cells": [
     [
       {
-        "note": 0
-      },
-      {
         "note": 4
       },
       {
@@ -76,14 +73,17 @@
       },
       {
         "held": true
+      },
+      {
+        "note": 0
       }
     ],
     [
       {
-        "note": 0
+        "note": 4
       },
       {
-        "note": 4
+        "held": true
       },
       {
         "held": true
@@ -125,7 +125,7 @@
         "held": true
       },
       {
-        "held": true
+        "note": 0
       }
     ],
     [
