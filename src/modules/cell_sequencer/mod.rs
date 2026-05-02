@@ -35,6 +35,11 @@ pub struct CellSequencer {
     pending_sequence: Option<usize>,
     current_step: usize,
     gate_samples_remaining: u32,
+    /// When `true`, the output gate stays high regardless of
+    /// `gate_samples_remaining`. Set when the active step is part of a held
+    /// chain that should sustain across the next clock boundary; cleared as
+    /// soon as the next `start_step` runs.
+    gate_continuous: bool,
     step_duration_samples: u32,
     samples_since_gate: u32,
     first_gate_received: bool,
@@ -71,6 +76,7 @@ impl CellSequencer {
             pending_sequence: None,
             current_step: 0,
             gate_samples_remaining: 0,
+            gate_continuous: false,
             step_duration_samples: sample_rate / 2,
             samples_since_gate: 0,
             first_gate_received: false,
@@ -142,6 +148,7 @@ impl CellSequencer {
             self.pending_sequence = None;
             self.current_step = 0;
             self.gate_samples_remaining = 0;
+            self.gate_continuous = false;
             self.active_note = None;
             self.last_control_selected_sequence = 0;
             self.ctrl.set_current_cell(0);
@@ -184,8 +191,11 @@ impl CellSequencer {
         next_step < self.step_count() && self.get_step(self.current_sequence, next_step).held
     }
 
-    fn calculate_gate_samples(&self, step: &Step) -> u32 {
-        let gate_length = if step.held || self.next_step_is_held() {
+    fn gate_samples_for_step(&self, step: &Step) -> u32 {
+        // Used for non-bridged steps: an end-of-chain held step or an
+        // ordinary note step. Held steps fill their full duration; note
+        // steps respect the per-step or default gate_length.
+        let gate_length = if step.held {
             1.0
         } else {
             step.gate_length.unwrap_or(self.ctrl.gate_length())
@@ -195,18 +205,34 @@ impl CellSequencer {
 
     fn start_step(&mut self) {
         let step = self.current_step_value();
-        match step.note {
+        let next_held = self.next_step_is_held();
+
+        let voice_active = match step.note {
             Some(offset) => {
                 self.active_note = Some(offset);
-                self.gate_samples_remaining = self.calculate_gate_samples(&step);
+                true
             }
-            None if step.held && self.active_note.is_some() => {
-                self.gate_samples_remaining = self.calculate_gate_samples(&step);
-            }
+            None if step.held && self.active_note.is_some() => true,
             None => {
                 self.active_note = None;
-                self.gate_samples_remaining = 0;
+                false
             }
+        };
+
+        if !voice_active {
+            self.gate_continuous = false;
+            self.gate_samples_remaining = 0;
+            return;
+        }
+
+        if next_held {
+            // Bridge the gate across the upcoming clock boundary so the
+            // downstream envelope doesn't see a one-sample dip and retrigger.
+            self.gate_continuous = true;
+            self.gate_samples_remaining = 0;
+        } else {
+            self.gate_continuous = false;
+            self.gate_samples_remaining = self.gate_samples_for_step(&step);
         }
     }
 
@@ -229,6 +255,7 @@ impl CellSequencer {
         self.current_sequence = sequence_index;
         self.current_step = 0;
         self.gate_samples_remaining = 0;
+        self.gate_continuous = false;
         self.active_note = None;
         self.pending_sequence = None;
         self.prime_current_note();
@@ -244,6 +271,7 @@ impl CellSequencer {
             self.pending_sequence = None;
             self.current_step = 0;
             self.gate_samples_remaining = 0;
+            self.gate_continuous = false;
             self.active_note = None;
             self.ctrl.set_selected_sequence(0);
             self.last_control_selected_sequence = 0;
@@ -293,13 +321,14 @@ impl CellSequencer {
 
     fn update_outputs(&mut self) {
         let frequency = self.frequency_for_active_note();
+        let gate = if self.gate_continuous || self.gate_samples_remaining > 0 {
+            1.0
+        } else {
+            0.0
+        };
         self.outputs.set(
             frequency,
-            if self.gate_samples_remaining > 0 {
-                1.0
-            } else {
-                0.0
-            },
+            gate,
             self.current_step as f32,
             self.current_sequence as f32,
         );
@@ -328,6 +357,7 @@ impl CellSequencer {
         if reset_rising {
             self.current_step = 0;
             self.gate_samples_remaining = 0;
+            self.gate_continuous = false;
             self.active_note = None;
         }
 
@@ -632,6 +662,71 @@ mod tests {
         assert_eq!(seq.current_step(), 2);
         assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
         assert_eq!(seq.get_output("gate").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_cell_sequencer_held_chain_keeps_gate_high_across_step_boundaries() {
+        // Regression: a held chain used to produce a one-sample gate dip at
+        // every step boundary, which downstream ADSRs saw as a rising edge
+        // and retriggered. With the fix the gate must stay continuously high
+        // through the middle of any held chain.
+        let mut seq = CellSequencer::new(48_000)
+            .with_steps(5)
+            .with_sequences(vec![vec![
+                Step::note(0),
+                Step::held(),
+                Step::held(),
+                Step::held(),
+                Step::held(),
+            ]]);
+
+        const HIGH: usize = 3;
+        const LOW: usize = 5;
+        const PERIOD: usize = HIGH + LOW;
+
+        // Drive two complete clock periods so step_duration_samples gets
+        // calibrated from samples_since_gate.
+        for _ in 0..2 {
+            seq.set_input("gate", 1.0).unwrap();
+            for _ in 0..HIGH {
+                seq.process();
+            }
+            seq.set_input("gate", 0.0).unwrap();
+            for _ in 0..LOW {
+                seq.process();
+            }
+        }
+        assert_eq!(seq.step_duration_samples as usize, PERIOD);
+
+        // Now walk through two more periods (each one lands the sequencer in
+        // a *middle* held step — the cell still has more held steps after).
+        // The output gate must remain 1.0 every sample.
+        for cycle in 0..2 {
+            seq.set_input("gate", 1.0).unwrap();
+            for sample in 0..HIGH {
+                seq.process();
+                assert_eq!(
+                    seq.get_output("gate").unwrap(),
+                    1.0,
+                    "held chain dropped gate during gate-high phase \
+                     (cycle {}, sample {})",
+                    cycle,
+                    sample
+                );
+            }
+            seq.set_input("gate", 0.0).unwrap();
+            for sample in 0..LOW {
+                seq.process();
+                assert_eq!(
+                    seq.get_output("gate").unwrap(),
+                    1.0,
+                    "held chain dropped gate during gate-low phase \
+                     (cycle {}, sample {})",
+                    cycle,
+                    HIGH + sample
+                );
+            }
+        }
     }
 
     #[test]
