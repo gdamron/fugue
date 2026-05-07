@@ -1,4 +1,4 @@
-use fugue::ModuleRegistry;
+use fugue::{Invention, InventionBuilder, ModuleRegistry};
 use serde_json::Value;
 
 fn score() -> Value {
@@ -92,6 +92,60 @@ fn in_c_score_builds_a_cell_sequencer() {
 
     let registry = ModuleRegistry::default();
     registry.build("cell_sequencer", 44_100, &config).unwrap();
+}
+
+#[test]
+fn in_c_example_uses_conductor_for_progression() {
+    let invention = Invention::from_file("examples/in_c.json").unwrap();
+
+    assert!(
+        !invention
+            .modules
+            .iter()
+            .any(|module| module.id.starts_with("prog_")),
+        "per-voice progression modules should not conduct In C"
+    );
+
+    let conductor = invention
+        .modules
+        .iter()
+        .find(|module| module.id == "conductor")
+        .expect("conductor module should exist");
+    assert_eq!(conductor.module_type, "agent");
+    assert_eq!(conductor.config["enabled"], true);
+
+    let context = conductor.config["context"].as_array().unwrap();
+    let apply = conductor.config["apply"].as_array().unwrap();
+    for index in 1..=13 {
+        let sequencer_id = format!("mel_{}", index);
+        assert!(
+            context
+                .iter()
+                .any(|binding| binding["name"] == sequencer_id),
+            "missing conductor context for {}",
+            sequencer_id
+        );
+        assert!(
+            apply.iter().any(|mapping| {
+                mapping["to"] == sequencer_id
+                    && mapping["control"] == "advance"
+                    && mapping["from"]
+                        == format!("$.payload.advances.{}", sequencer_id)
+            }),
+            "missing conductor advance mapping for {}",
+            sequencer_id
+        );
+    }
+
+    let fallback = invention
+        .modules
+        .iter()
+        .find(|module| module.id == "conductor_fallback")
+        .expect("fallback module should exist");
+    assert_eq!(fallback.module_type, "code");
+    assert_eq!(fallback.config["enabled"], true);
+
+    InventionBuilder::new(44_100).build(invention).unwrap();
 }
 
 #[test]

@@ -7,10 +7,9 @@ general-purpose modules.
 > freedom to determine how many times he or she will repeat each pattern
 > before moving on to the next."  — Terry Riley, *In C* performing instructions
 
-This invention realizes those instructions in software: each voice owns its
-own progression through the 53 melodic cells, deciding how many loops to
-spend on each cell before advancing, while keeping loose alignment with its
-peers.
+This invention realizes those instructions in software: a conductor observes
+all 13 voices and decides when each one should move through the 53 melodic
+cells, while keeping the ensemble loosely aligned and musical.
 
 ## Run it
 
@@ -18,10 +17,11 @@ peers.
 cargo run --release --example examples -- --example in_c.json
 ```
 
-Use `--release`. With 13 voices, a 20-channel mixer, and reverb, the dev
-profile leaves enough margin missing to drop frames on most laptops. Press
-Enter to stop. The performance continues indefinitely — voices wrap back
-to cell 1 after reaching cell 53 (configurable, see below).
+Use `--release`. With 13 voices, a 20-channel mixer, reverb, scripting, and
+agent orchestration, the dev profile leaves enough margin missing to drop
+frames on most laptops. Press Enter to stop. The performance continues
+indefinitely; pattern 53 is treated as a gathering point before the cycle can
+begin again.
 
 ## Structure
 
@@ -36,16 +36,16 @@ to cell 1 after reaching cell 53 (configurable, see below).
   - `voice_<i>` — a development instance from `examples/developments/`
     (piano, marimba, vibraphone, pluck, or pad — distributed across voices
     for timbral variety).
-  - `prog_<i>` — a `code` module running `voice_progression.js`. It reads
-    each voice's `loop_count` and peer voices' `current_cell`, and pulses
-    `advance` on its own sequencer when the musical conditions are met. It
-    also keeps the sequencer's `steps` aligned with the active cell's
-    length (cells in the score range from 4 to 256 32nd-note steps).
-- **`conductor`** — an `agent` module loaded with `conductor.md`. Disabled
-  by default so the example runs without LLM credentials. When enabled it
-  wakes on the clock's whole-note gate (`gate_d4`) and writes to mixer
-  channel levels and reverb wet to shape the macro arc. To enable, set
-  `enabled: true` on the `conductor` module and configure a backend.
+- **`conductor`** — an `agent` module loaded with `conductor.md`. It wakes
+  on the clock's whole-note gate (`gate_d4`), reads every voice's
+  `current_cell` and `loop_count`, and writes `advance` decisions back to
+  the `mel_<i>` sequencers. It also writes mixer channel levels and reverb
+  wet to shape the macro arc. Configure the backend with
+  `conductor.config.backend`; the default is `local:auto`.
+- **`conductor_fallback`** — a `code` module that keeps sequencer `steps`
+  aligned with the active cell length. If the conductor is disabled or has
+  not completed a request recently, it applies conservative deterministic
+  conducting rules so the example still progresses without LLM credentials.
 - **`mixer`** — 20 channels: channel 1 is the pulse, channels 2–14 are the
   13 voices spread across the stereo field, channels 15–20 are headroom for
   the conductor or future per-voice routing.
@@ -59,12 +59,13 @@ Edit `examples/in_c.json` directly:
 | Where | What it controls |
 | --- | --- |
 | `clock.config.bpm` | Tempo. `240` corresponds to 120 BPM at the 8th-note pulse; halve for half-time, double for double-time. |
-| `prog_<i>.config.min_loops_before_advance` | Minimum loops a voice spends on a cell before it considers advancing. Higher = slower, more meditative. |
-| `prog_<i>.config.max_cells_ahead_of_slowest` | How far a voice will run ahead of the slowest peer. Lower = tighter ensemble. |
-| `prog_<i>.config.advance_probability` | Per-tick probability of advancing once min-loops is satisfied and the voice is within range. Lower = longer dwell time per cell. |
-| `prog_<i>.config.last_cell_behavior` | `"loop"` (default here) wraps cell 53 → cell 1 so the performance never terminates. `"hold"` parks the voice on cell 53. |
+| `conductor.config.backend` | LLM/local harness used for primary conducting. |
+| `conductor.config.cooldown_ms` | Minimum spacing between conductor requests. Higher = broader, slower decisions. |
+| `conductor_fallback.config.min_loops_before_advance` | Minimum loops a voice spends on a cell before fallback considers advancing. Higher = slower, more meditative. |
+| `conductor_fallback.config.max_cells_ahead_of_slowest` | How far fallback lets a voice run ahead of the slowest peer. Lower = tighter ensemble. |
+| `conductor_fallback.config.advance_probability` | Per-tick fallback probability of advancing once min-loops is satisfied and the voice is within range. |
 | `mixer.config.levels` / `pans` | Per-channel mix. Channel 1 is the pulse; 2–14 are the voices. |
-| Voice count | Add or remove voice triples (`mel_<i>` + `voice_<i>` + `prog_<i>`) and update the corresponding `peer_voice_ids` lists and mixer channel mapping. |
+| Voice count | Add or remove voice pairs (`mel_<i>` + `voice_<i>`) and update the conductor context/apply mappings, fallback `sequencer_ids`, and mixer channel mapping. |
 
 ## Score data
 

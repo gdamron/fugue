@@ -1,16 +1,16 @@
 {
   "version": "1.0.0",
-  "title": "In C \u2014 Terry Riley (1964)",
-  "description": "13-voice generative performance of Terry Riley's *In C*. Each voice owns a cell_sequencer loaded with the 53-cell score and a code module that decides when to advance. A constant C5 8th-note pulse anchors the ensemble. Mixed across a 20-channel mixer through a shared reverb. The conductor agent module is included but disabled by default \u2014 see the README to wire it up.",
+  "title": "In C — Terry Riley (1964)",
+  "description": "13-voice generative performance of Terry Riley's *In C*. A conductor agent observes the ensemble and decides when each voice moves between the 53 cells, with a deterministic fallback script keeping the piece listenable when no LLM backend is available. A constant C5 8th-note pulse anchors the ensemble. Mixed across a 20-channel mixer through a shared reverb.",
   "assets": {
     "score": {
       "path": "in_c/score.json"
     },
-    "voice_progression": {
-      "path": "in_c/voice_progression.js"
-    },
     "conductor_prompt": {
       "path": "in_c/conductor.md"
+    },
+    "conductor_fallback": {
+      "path": "in_c/conductor_fallback.js"
     }
   },
   "developments": [
@@ -40,7 +40,7 @@
       "id": "clock",
       "type": "clock",
       "config": {
-        "bpm": 240.0,
+        "bpm": 240,
         "gate_duration": 0.4
       }
     },
@@ -49,8 +49,12 @@
       "type": "melody",
       "config": {
         "root_note": 72,
-        "scale_degrees": [0],
-        "note_weights": [1.0]
+        "scale_degrees": [
+          0
+        ],
+        "note_weights": [
+          1
+        ]
       }
     },
     {
@@ -77,36 +81,6 @@
       "type": "piano_voice"
     },
     {
-      "id": "prog_1",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_1",
-        "peer_voice_ids": [
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
-    },
-    {
       "id": "mel_2",
       "type": "cell_sequencer",
       "config": {
@@ -124,36 +98,6 @@
     {
       "id": "voice_2",
       "type": "marimba_voice"
-    },
-    {
-      "id": "prog_2",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_2",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
     },
     {
       "id": "mel_3",
@@ -175,36 +119,6 @@
       "type": "vibraphone_voice"
     },
     {
-      "id": "prog_3",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_3",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
-    },
-    {
       "id": "mel_4",
       "type": "cell_sequencer",
       "config": {
@@ -222,36 +136,6 @@
     {
       "id": "voice_4",
       "type": "piano_voice"
-    },
-    {
-      "id": "prog_4",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_4",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
     },
     {
       "id": "mel_5",
@@ -273,36 +157,6 @@
       "type": "pluck_voice"
     },
     {
-      "id": "prog_5",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_5",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
-    },
-    {
       "id": "mel_6",
       "type": "cell_sequencer",
       "config": {
@@ -320,36 +174,6 @@
     {
       "id": "voice_6",
       "type": "pad_voice"
-    },
-    {
-      "id": "prog_6",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_6",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
     },
     {
       "id": "mel_7",
@@ -371,36 +195,6 @@
       "type": "vibraphone_voice"
     },
     {
-      "id": "prog_7",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_7",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
-    },
-    {
       "id": "mel_8",
       "type": "cell_sequencer",
       "config": {
@@ -418,36 +212,6 @@
     {
       "id": "voice_8",
       "type": "piano_voice"
-    },
-    {
-      "id": "prog_8",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_8",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
     },
     {
       "id": "mel_9",
@@ -469,36 +233,6 @@
       "type": "marimba_voice"
     },
     {
-      "id": "prog_9",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_9",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
-    },
-    {
       "id": "mel_10",
       "type": "cell_sequencer",
       "config": {
@@ -516,36 +250,6 @@
     {
       "id": "voice_10",
       "type": "pluck_voice"
-    },
-    {
-      "id": "prog_10",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_10",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
     },
     {
       "id": "mel_11",
@@ -567,36 +271,6 @@
       "type": "vibraphone_voice"
     },
     {
-      "id": "prog_11",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_11",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_12",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
-    },
-    {
       "id": "mel_12",
       "type": "cell_sequencer",
       "config": {
@@ -614,36 +288,6 @@
     {
       "id": "voice_12",
       "type": "pad_voice"
-    },
-    {
-      "id": "prog_12",
-      "type": "code",
-      "config": {
-        "tick_hz": 4.0,
-        "enabled": true,
-        "script": {
-          "$asset": "voice_progression"
-        },
-        "sequencer_id": "mel_12",
-        "peer_voice_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_13"
-        ],
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
     },
     {
       "id": "mel_13",
@@ -665,16 +309,413 @@
       "type": "piano_voice"
     },
     {
-      "id": "prog_13",
+      "id": "conductor",
+      "type": "agent",
+      "config": {
+        "enabled": true,
+        "backend": "local:auto",
+        "cooldown_ms": 8000,
+        "system": "You are the conductor for a generative performance of Terry Riley's In C.",
+        "prompt": {
+          "$asset": "conductor_prompt"
+        },
+        "include_graph_summary": true,
+        "context": [
+          {
+            "name": "mel_1",
+            "from": "mel_1",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_2",
+            "from": "mel_2",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_3",
+            "from": "mel_3",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_4",
+            "from": "mel_4",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_5",
+            "from": "mel_5",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_6",
+            "from": "mel_6",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_7",
+            "from": "mel_7",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_8",
+            "from": "mel_8",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_9",
+            "from": "mel_9",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_10",
+            "from": "mel_10",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_11",
+            "from": "mel_11",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_12",
+            "from": "mel_12",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mel_13",
+            "from": "mel_13",
+            "source": "controls",
+            "keys": [
+              "current_cell",
+              "loop_count",
+              "total_cells",
+              "steps"
+            ]
+          },
+          {
+            "name": "mixer_levels",
+            "from": "mixer",
+            "source": "controls",
+            "keys": [
+              "level.*"
+            ]
+          },
+          {
+            "name": "reverb",
+            "from": "reverb",
+            "source": "controls",
+            "keys": [
+              "wet"
+            ]
+          }
+        ],
+        "response": {
+          "format": "json",
+          "kind": "in_c_conducting.v1"
+        },
+        "apply": [
+          {
+            "from": "$.payload.advances.mel_1",
+            "to": "mel_1",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_2",
+            "to": "mel_2",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_3",
+            "to": "mel_3",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_4",
+            "to": "mel_4",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_5",
+            "to": "mel_5",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_6",
+            "to": "mel_6",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_7",
+            "to": "mel_7",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_8",
+            "to": "mel_8",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_9",
+            "to": "mel_9",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_10",
+            "to": "mel_10",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_11",
+            "to": "mel_11",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_12",
+            "to": "mel_12",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_13",
+            "to": "mel_13",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.levels.voice_1",
+            "to": "mixer",
+            "control": "level.1",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_2",
+            "to": "mixer",
+            "control": "level.2",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_3",
+            "to": "mixer",
+            "control": "level.3",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_4",
+            "to": "mixer",
+            "control": "level.4",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_5",
+            "to": "mixer",
+            "control": "level.5",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_6",
+            "to": "mixer",
+            "control": "level.6",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_7",
+            "to": "mixer",
+            "control": "level.7",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_8",
+            "to": "mixer",
+            "control": "level.8",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_9",
+            "to": "mixer",
+            "control": "level.9",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_10",
+            "to": "mixer",
+            "control": "level.10",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_11",
+            "to": "mixer",
+            "control": "level.11",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_12",
+            "to": "mixer",
+            "control": "level.12",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_13",
+            "to": "mixer",
+            "control": "level.13",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.reverb_wet",
+            "to": "reverb",
+            "control": "wet",
+            "type": "number",
+            "min": 0.05,
+            "max": 0.45
+          }
+        ]
+      }
+    },
+    {
+      "id": "conductor_fallback",
       "type": "code",
       "config": {
-        "tick_hz": 4.0,
+        "tick_hz": 4,
         "enabled": true,
         "script": {
-          "$asset": "voice_progression"
+          "$asset": "conductor_fallback"
         },
-        "sequencer_id": "mel_13",
-        "peer_voice_ids": [
+        "conductor_id": "conductor",
+        "sequencer_ids": [
           "mel_1",
           "mel_2",
           "mel_3",
@@ -686,25 +727,16 @@
           "mel_9",
           "mel_10",
           "mel_11",
-          "mel_12"
+          "mel_12",
+          "mel_13"
         ],
+        "mixer_id": "mixer",
+        "reverb_id": "reverb",
         "min_loops_before_advance": 4,
         "max_cells_ahead_of_slowest": 2,
         "advance_probability": 0.15,
-        "last_cell_behavior": "loop"
-      }
-    },
-    {
-      "id": "conductor",
-      "type": "agent",
-      "config": {
-        "enabled": false,
-        "backend": "local:auto",
-        "cooldown_ms": 8000.0,
-        "system": "You are the conductor for a generative performance of Terry Riley's In C.",
-        "prompt": {
-          "$asset": "conductor_prompt"
-        }
+        "conductor_timeout_ticks": 24,
+        "last_cell_hold_loops": 4
       }
     },
     {
@@ -713,12 +745,48 @@
       "config": {
         "channels": 20,
         "levels": [
-          0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
-          0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+          0.1,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
         ],
         "pans": [
-          0.0, -0.7, -0.55, -0.4, -0.25, -0.1, 0.0, 0.1, 0.25, 0.4, 0.55, 0.7,
-          -0.15, 0.15, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+          0,
+          -0.7,
+          -0.55,
+          -0.4,
+          -0.25,
+          -0.1,
+          0,
+          0.1,
+          0.25,
+          0.4,
+          0.55,
+          0.7,
+          -0.15,
+          0.15,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
         ],
         "master": 0.55
       }

@@ -784,6 +784,7 @@ mod native {
         let Some(mappings) = config.get("apply").and_then(Value::as_array) else {
             return Ok(());
         };
+        let mut writes = Vec::with_capacity(mappings.len());
         for mapping in mappings {
             let path = mapping
                 .get("from")
@@ -831,9 +832,24 @@ mod native {
                 ),
                 other => return Err(format!("unknown apply type '{}'", other)),
             };
+            let controls = controller
+                .snapshot
+                .list_controls(Some(target))
+                .map_err(|err| err.to_string())?;
+            let has_control = controls
+                .first()
+                .map(|(_, controls)| controls.iter().any(|meta| meta.key == control))
+                .unwrap_or(false);
+            if !has_control {
+                return Err(format!("unknown apply control '{}:{}'", target, control));
+            }
+            writes.push((target.to_string(), control.to_string(), control_value));
+        }
+
+        for (target, control, control_value) in writes {
             controller
                 .snapshot
-                .set_control(target, control, control_value)
+                .set_control(&target, &control, control_value)
                 .map_err(|err| {
                     let message = err.to_string();
                     set_string(controller, module_id, "last_apply_error", &message);
