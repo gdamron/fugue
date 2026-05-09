@@ -10,6 +10,7 @@ let cellLengths = null;
 let lastCellApplied = null;
 let lastConductorRequestCount = 0;
 let ticksSinceConductor = 0;
+let lastConductorHealthy = null;
 
 function readOwnConfig() {
   const modules = graph.listModules();
@@ -89,9 +90,9 @@ function conductorIsHealthy() {
   try {
     enabled = readBool(cfg.conductorId, "enabled");
   } catch (_err) {
-    return false;
+    return { healthy: false, reason: "conductor module not found" };
   }
-  if (!enabled) return false;
+  if (!enabled) return { healthy: false, reason: "conductor disabled" };
 
   const requestCount = readNumber(cfg.conductorId, "request_count");
   if (requestCount > lastConductorRequestCount) {
@@ -100,12 +101,24 @@ function conductorIsHealthy() {
   } else {
     ticksSinceConductor += 1;
   }
-  if (requestCount === 0) return false;
-  if (ticksSinceConductor > cfg.timeoutTicks) return false;
 
   const status = graph.getControl(cfg.conductorId, "status");
   const lastError = graph.getControl(cfg.conductorId, "last_error");
-  return status !== "error" && lastError === "";
+
+  const activeRequest = status === "requesting" || status === "building_context";
+  if (requestCount === 0 && !activeRequest) {
+    return { healthy: false, reason: "no requests completed (status: " + status + (lastError ? ", error: " + lastError : "") + ")" };
+  }
+  if (ticksSinceConductor > cfg.timeoutTicks && !activeRequest) {
+    return { healthy: false, reason: "conductor timed out (" + ticksSinceConductor + " ticks since last request)" };
+  }
+  if (status === "error") {
+    return { healthy: false, reason: "conductor in error state: " + lastError };
+  }
+  if (lastError !== "") {
+    return { healthy: false, reason: "conductor has error: " + lastError };
+  }
+  return { healthy: true, reason: null };
 }
 
 function tick() {
@@ -130,7 +143,16 @@ function tick() {
     if (cell < total - 1) allAtLast = false;
   }
 
-  if (conductorIsHealthy()) return;
+  const result = conductorIsHealthy();
+  if (result.healthy !== lastConductorHealthy) {
+    if (result.healthy) {
+      console.log("[in_c] conductor agent is driving");
+    } else {
+      console.log("[in_c] script fallback is driving: " + result.reason);
+    }
+    lastConductorHealthy = result.healthy;
+  }
+  if (result.healthy) return;
 
   for (let i = 0; i < cfg.sequencers.length; i++) {
     const id = cfg.sequencers[i];
@@ -158,4 +180,5 @@ function reset() {
   lastCellApplied = null;
   lastConductorRequestCount = 0;
   ticksSinceConductor = 0;
+  lastConductorHealthy = null;
 }

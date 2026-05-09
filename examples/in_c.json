@@ -49,12 +49,8 @@
       "type": "melody",
       "config": {
         "root_note": 72,
-        "scale_degrees": [
-          0
-        ],
-        "note_weights": [
-          1
-        ]
+        "scale_degrees": [0],
+        "note_weights": [1]
       }
     },
     {
@@ -65,11 +61,11 @@
       "id": "mel_1",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 72,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -88,7 +84,7 @@
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -103,11 +99,11 @@
       "id": "mel_3",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 48,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -122,11 +118,11 @@
       "id": "mel_4",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 72,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -141,11 +137,11 @@
       "id": "mel_5",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 48,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -164,7 +160,7 @@
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -179,11 +175,11 @@
       "id": "mel_7",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 48,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -202,7 +198,7 @@
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -217,11 +213,11 @@
       "id": "mel_9",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 72,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -236,11 +232,11 @@
       "id": "mel_10",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 36,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -255,11 +251,11 @@
       "id": "mel_11",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 24,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -274,11 +270,11 @@
       "id": "mel_12",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 36,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -293,11 +289,11 @@
       "id": "mel_13",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
+        "base_note": 72,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,
-        "wait_for_cycle_end": false,
+        "wait_for_cycle_end": true,
         "sequences": {
           "$asset": "score",
           "path": "/cells"
@@ -313,8 +309,8 @@
       "type": "agent",
       "config": {
         "enabled": true,
-        "backend": "local:auto",
-        "cooldown_ms": 8000,
+        "backend": "local:codex",
+        "cooldown_ms": 4000,
         "system": "You are the conductor for a generative performance of Terry Riley's In C.",
         "prompt": {
           "$asset": "conductor_prompt"
@@ -325,160 +321,91 @@
             "name": "mel_1",
             "from": "mel_1",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_2",
             "from": "mel_2",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_3",
             "from": "mel_3",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_4",
             "from": "mel_4",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_5",
             "from": "mel_5",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_6",
             "from": "mel_6",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_7",
             "from": "mel_7",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_8",
             "from": "mel_8",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_9",
             "from": "mel_9",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_10",
             "from": "mel_10",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_11",
             "from": "mel_11",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_12",
             "from": "mel_12",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mel_13",
             "from": "mel_13",
             "source": "controls",
-            "keys": [
-              "current_cell",
-              "loop_count",
-              "total_cells",
-              "steps"
-            ]
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
           },
           {
             "name": "mixer_levels",
             "from": "mixer",
             "source": "controls",
-            "keys": [
-              "level.*"
-            ]
+            "keys": ["level.*"]
           },
           {
             "name": "reverb",
             "from": "reverb",
             "source": "controls",
-            "keys": [
-              "wet"
-            ]
+            "keys": ["wet"]
           }
         ],
         "response": {
@@ -745,48 +672,12 @@
       "config": {
         "channels": 20,
         "levels": [
-          0.1,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0.2,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0
+          0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
+          0, 0, 0, 0, 0, 0
         ],
         "pans": [
-          0,
-          -0.7,
-          -0.55,
-          -0.4,
-          -0.25,
-          -0.1,
-          0,
-          0.1,
-          0.25,
-          0.4,
-          0.55,
-          0.7,
-          -0.15,
-          0.15,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0
+          0, -0.7, -0.55, -0.4, -0.25, -0.1, 0, 0.1, 0.25, 0.4, 0.55, 0.7,
+          -0.15, 0.15, 0, 0, 0, 0, 0, 0
         ],
         "master": 0.55
       }

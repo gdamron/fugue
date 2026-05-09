@@ -22,7 +22,7 @@ receives a structured snapshot:
   should stay on its current cell.
 - Never skip cells during normal conducting.
 - Do not advance a voice until it has repeated the current cell long enough to
-  interlock with the ensemble. As a baseline, require at least 8 completed
+  interlock with the ensemble. As a baseline, require at least 4 completed
   loops, and often wait longer.
 - Keep the ensemble within 2 or 3 cells. Do not advance a voice that is already
   2 cells ahead of the slowest active voice unless the whole group is clearly
