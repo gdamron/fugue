@@ -251,7 +251,7 @@
       "id": "mel_11",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 24,
+        "base_note": 36,
         "steps": 24,
         "gate_length": 0.85,
         "selected_sequence": 0,

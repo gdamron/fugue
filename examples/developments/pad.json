@@ -35,7 +35,7 @@
         "attack": 0.65,
         "decay": 1.8,
         "sustain": 0.78,
-        "release": 1.9
+        "release": 8
       }
     },
     {
