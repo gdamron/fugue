@@ -109,7 +109,7 @@ mod native {
     struct LocalHarness {
         name: &'static str,
         command: &'static str,
-        build_args: fn(&Value) -> Vec<String>,
+        build_args: fn(&Value, &Value) -> Vec<String>,
     }
 
     fn run_host(
@@ -165,6 +165,7 @@ mod native {
             last_request_at = Some(Instant::now());
 
             if let Err(error) = service_request(&module_id, &config, &controller, &mut history) {
+                eprintln!("[agent:{}] error: {}", module_id, error);
                 set_string(&controller, &module_id, "status", "error");
                 set_string(&controller, &module_id, "last_error", &error);
             }
@@ -194,6 +195,7 @@ mod native {
         let backend = get_string(controller, module_id, "backend")
             .or_else(|| string_config(config, "backend"))
             .unwrap_or_else(|| "local:auto".to_string());
+        eprintln!("[agent:{}] requesting via backend '{}'", module_id, backend);
         let result = call_backend(&backend, config, &packet)?;
 
         set_string(controller, module_id, "status", "parsing");
@@ -207,7 +209,11 @@ mod native {
         let parsed = if format == "text" {
             None
         } else {
-            Some(parse_json_response(&result.text)?)
+            Some(parse_json_response(&result.text).map_err(|err| {
+                let preview: String = result.text.chars().take(200).collect();
+                eprintln!("[agent:{}] response preview: {}", module_id, preview);
+                err
+            })?)
         };
 
         if let Some(parsed) = &parsed {
@@ -248,6 +254,7 @@ mod native {
             "request_count",
             ControlValue::Number(count as f32),
         );
+        eprintln!("[agent:{}] request #{} complete", module_id, count);
         set_string(controller, module_id, "status", "idle");
         Ok(())
     }
@@ -420,7 +427,9 @@ mod native {
 
         match backend {
             "local_command" => call_local_command(config, packet),
-            backend if backend.starts_with("local:") => call_local_harness_backend(backend, packet),
+            backend if backend.starts_with("local:") => {
+                call_local_harness_backend(backend, config, packet)
+            }
             "openai" | "anthropic" | "provider_api" => call_provider_api(backend, config, packet),
             other => Err(format!("unknown agent backend '{}'", other)),
         }
@@ -444,13 +453,22 @@ mod native {
         run_command(command, &args, Some(&packet.to_string()), "local_command")
     }
 
-    fn call_local_harness_backend(backend: &str, packet: &Value) -> Result<BackendResult, String> {
+    fn call_local_harness_backend(
+        backend: &str,
+        config: &Value,
+        packet: &Value,
+    ) -> Result<BackendResult, String> {
         let harness_name = backend.trim_start_matches("local:");
         if harness_name == "auto" {
             for harness in local_harnesses().iter().copied() {
                 if command_available(harness.command) {
-                    return call_local_harness(harness, packet);
+                    eprintln!("[agent] auto-selected harness '{}'", harness.name);
+                    return call_local_harness(harness, config, packet);
                 }
+                eprintln!(
+                    "[agent] harness '{}' unavailable (command '{}' not found)",
+                    harness.name, harness.command
+                );
             }
             let tried = local_harnesses()
                 .iter()
@@ -474,11 +492,15 @@ mod native {
                 harness.name, harness.command
             ));
         }
-        call_local_harness(harness, packet)
+        call_local_harness(harness, config, packet)
     }
 
-    fn call_local_harness(harness: LocalHarness, packet: &Value) -> Result<BackendResult, String> {
-        let args = (harness.build_args)(packet);
+    fn call_local_harness(
+        harness: LocalHarness,
+        config: &Value,
+        packet: &Value,
+    ) -> Result<BackendResult, String> {
+        let args = (harness.build_args)(packet, config);
         run_command(harness.command, &args, None, harness.name)
     }
 
@@ -497,16 +519,30 @@ mod native {
         ]
     }
 
-    fn claude_args(packet: &Value) -> Vec<String> {
-        vec![
+    fn claude_args(packet: &Value, config: &Value) -> Vec<String> {
+        let mut args = vec![
             "-p".to_string(),
-            packet.to_string(),
+            format_prompt_packet(packet),
             "--output-format".to_string(),
             "text".to_string(),
-        ]
+            "--no-session-persistence".to_string(),
+            "--tools".to_string(),
+            "".to_string(),
+        ];
+        if let Some(system) = packet.get("system").and_then(Value::as_str) {
+            if !system.is_empty() {
+                args.push("--system-prompt".to_string());
+                args.push(system.to_string());
+            }
+        }
+        if let Some(model) = config.get("model").and_then(Value::as_str) {
+            args.push("--model".to_string());
+            args.push(model.to_string());
+        }
+        args
     }
 
-    fn codex_args(packet: &Value) -> Vec<String> {
+    fn codex_args(packet: &Value, _config: &Value) -> Vec<String> {
         vec![
             "exec".to_string(),
             "--skip-git-repo-check".to_string(),
@@ -784,6 +820,7 @@ mod native {
         let Some(mappings) = config.get("apply").and_then(Value::as_array) else {
             return Ok(());
         };
+        let mut writes = Vec::with_capacity(mappings.len());
         for mapping in mappings {
             let path = mapping
                 .get("from")
@@ -831,9 +868,24 @@ mod native {
                 ),
                 other => return Err(format!("unknown apply type '{}'", other)),
             };
+            let controls = controller
+                .snapshot
+                .list_controls(Some(target))
+                .map_err(|err| err.to_string())?;
+            let has_control = controls
+                .first()
+                .map(|(_, controls)| controls.iter().any(|meta| meta.key == control))
+                .unwrap_or(false);
+            if !has_control {
+                return Err(format!("unknown apply control '{}:{}'", target, control));
+            }
+            writes.push((target.to_string(), control.to_string(), control_value));
+        }
+
+        for (target, control, control_value) in writes {
             controller
                 .snapshot
-                .set_control(target, control, control_value)
+                .set_control(&target, &control, control_value)
                 .map_err(|err| {
                     let message = err.to_string();
                     set_string(controller, module_id, "last_apply_error", &message);

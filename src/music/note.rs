@@ -1,3 +1,19 @@
+use std::sync::LazyLock;
+
+/// Precomputed Hz for every MIDI note 0..=127.
+///
+/// `Note::frequency` does ~600k calls/sec across 13 In C voices on the audio
+/// thread; the table replaces a `powf` per call with a single array load.
+static MIDI_FREQUENCIES: LazyLock<[f32; 128]> = LazyLock::new(|| {
+    let mut table = [0.0f32; 128];
+    let mut i = 0;
+    while i < 128 {
+        table[i] = 440.0 * 2.0_f32.powf((i as f32 - 69.0) / 12.0);
+        i += 1;
+    }
+    table
+});
+
 /// A musical note represented as a MIDI note number.
 ///
 /// MIDI note numbers range from 0-127, where 60 is middle C (C4)
@@ -16,9 +32,10 @@ impl Note {
 
     /// Returns the frequency of this note in Hz.
     ///
-    /// Uses A4 (note 69) = 440 Hz as the reference.
+    /// Uses A4 (note 69) = 440 Hz as the reference. Backed by a precomputed
+    /// 128-entry table so the audio thread does not pay a `powf` per sample.
     pub fn frequency(&self) -> f32 {
-        440.0 * 2.0_f32.powf((self.midi_note as f32 - 69.0) / 12.0)
+        MIDI_FREQUENCIES[self.midi_note.min(127) as usize]
     }
 
     /// Creates a note from a frequency in Hz.

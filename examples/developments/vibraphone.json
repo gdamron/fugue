@@ -34,8 +34,8 @@
       "config": {
         "attack": 0.03,
         "decay": 1.4,
-        "sustain": 0.72,
-        "release": 1.8
+        "sustain": 0.62,
+        "release": 2.8
       }
     },
     {

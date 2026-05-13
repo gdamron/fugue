@@ -341,7 +341,56 @@ fn install_graph_api(
     context
         .register_global_property(js_string!("graph"), graph, Attribute::all())
         .map_err(|err| err.to_string())?;
+
+    let log_fn = make_console_writer(module_id, ConsoleSink::Stdout, "log");
+    let info_fn = make_console_writer(module_id, ConsoleSink::Stdout, "info");
+    let warn_fn = make_console_writer(module_id, ConsoleSink::Stderr, "warn");
+    let error_fn = make_console_writer(module_id, ConsoleSink::Stderr, "error");
+    let debug_fn = make_console_writer(module_id, ConsoleSink::Stdout, "debug");
+
+    let console = ObjectInitializer::new(context)
+        .function(log_fn, js_string!("log"), 0)
+        .function(info_fn, js_string!("info"), 0)
+        .function(warn_fn, js_string!("warn"), 0)
+        .function(error_fn, js_string!("error"), 0)
+        .function(debug_fn, js_string!("debug"), 0)
+        .build();
+
+    context
+        .register_global_property(js_string!("console"), console, Attribute::all())
+        .map_err(|err| err.to_string())?;
+
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum ConsoleSink {
+    Stdout,
+    Stderr,
+}
+
+fn make_console_writer(module_id: &str, sink: ConsoleSink, level: &'static str) -> NativeFunction {
+    let module_id = module_id.to_string();
+    unsafe {
+        NativeFunction::from_closure(move |_this, args, context| {
+            let mut buf = String::new();
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    buf.push(' ');
+                }
+                let rendered = arg
+                    .to_string(context)?
+                    .to_std_string_escaped();
+                buf.push_str(&rendered);
+            }
+            let line = format!("[{} {}] {}", module_id, level, buf);
+            match sink {
+                ConsoleSink::Stdout => println!("{}", line),
+                ConsoleSink::Stderr => eprintln!("{}", line),
+            }
+            Ok(JsValue::undefined())
+        })
+    }
 }
 
 fn call_hook(name: &str, context: &mut Context) -> Result<bool, String> {

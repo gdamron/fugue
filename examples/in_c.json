@@ -1,0 +1,1068 @@
+{
+  "version": "1.0.0",
+  "title": "In C — Terry Riley (1964)",
+  "description": "13-voice generative performance of Terry Riley's *In C*. A conductor agent observes the ensemble and decides when each voice moves between the 53 cells, with a deterministic fallback script keeping the piece listenable when no LLM backend is available. A constant C5 8th-note pulse anchors the ensemble. Mixed across a 20-channel mixer through a shared reverb.",
+  "assets": {
+    "score": {
+      "path": "in_c/score.json"
+    },
+    "conductor_prompt": {
+      "path": "in_c/conductor.md"
+    },
+    "conductor_fallback": {
+      "path": "in_c/conductor_fallback.js"
+    }
+  },
+  "developments": [
+    {
+      "name": "piano_voice",
+      "path": "developments/piano.json"
+    },
+    {
+      "name": "marimba_voice",
+      "path": "developments/marimba.json"
+    },
+    {
+      "name": "vibraphone_voice",
+      "path": "developments/vibraphone.json"
+    },
+    {
+      "name": "pluck_voice",
+      "path": "developments/pluck.json"
+    },
+    {
+      "name": "pad_voice",
+      "path": "developments/pad.json"
+    }
+  ],
+  "modules": [
+    {
+      "id": "clock",
+      "type": "clock",
+      "config": {
+        "bpm": 240,
+        "gate_duration": 0.4
+      }
+    },
+    {
+      "id": "pulse_mel",
+      "type": "melody",
+      "config": {
+        "root_note": 72,
+        "scale_degrees": [0],
+        "note_weights": [1]
+      }
+    },
+    {
+      "id": "pulse",
+      "type": "pluck_voice"
+    },
+    {
+      "id": "mel_1",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 72,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_1",
+      "type": "piano_voice"
+    },
+    {
+      "id": "mel_2",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_2",
+      "type": "marimba_voice"
+    },
+    {
+      "id": "mel_3",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 48,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_3",
+      "type": "vibraphone_voice"
+    },
+    {
+      "id": "mel_4",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 72,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_4",
+      "type": "piano_voice"
+    },
+    {
+      "id": "mel_5",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 48,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_5",
+      "type": "pluck_voice"
+    },
+    {
+      "id": "mel_6",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_6",
+      "type": "pad_voice"
+    },
+    {
+      "id": "mel_7",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 48,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_7",
+      "type": "vibraphone_voice"
+    },
+    {
+      "id": "mel_8",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 60,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_8",
+      "type": "piano_voice"
+    },
+    {
+      "id": "mel_9",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 72,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_9",
+      "type": "marimba_voice"
+    },
+    {
+      "id": "mel_10",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 36,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_10",
+      "type": "pluck_voice"
+    },
+    {
+      "id": "mel_11",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 36,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_11",
+      "type": "vibraphone_voice"
+    },
+    {
+      "id": "mel_12",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 36,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_12",
+      "type": "pad_voice"
+    },
+    {
+      "id": "mel_13",
+      "type": "cell_sequencer",
+      "config": {
+        "base_note": 72,
+        "steps": 24,
+        "gate_length": 0.85,
+        "selected_sequence": 0,
+        "wait_for_cycle_end": true,
+        "sequences": {
+          "$asset": "score",
+          "path": "/cells"
+        }
+      }
+    },
+    {
+      "id": "voice_13",
+      "type": "piano_voice"
+    },
+    {
+      "id": "conductor",
+      "type": "agent",
+      "config": {
+        "enabled": true,
+        "backend": "local:codex",
+        "cooldown_ms": 4000,
+        "system": "You are the conductor for a generative performance of Terry Riley's In C.",
+        "prompt": {
+          "$asset": "conductor_prompt"
+        },
+        "include_graph_summary": true,
+        "context": [
+          {
+            "name": "mel_1",
+            "from": "mel_1",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_2",
+            "from": "mel_2",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_3",
+            "from": "mel_3",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_4",
+            "from": "mel_4",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_5",
+            "from": "mel_5",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_6",
+            "from": "mel_6",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_7",
+            "from": "mel_7",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_8",
+            "from": "mel_8",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_9",
+            "from": "mel_9",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_10",
+            "from": "mel_10",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_11",
+            "from": "mel_11",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_12",
+            "from": "mel_12",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mel_13",
+            "from": "mel_13",
+            "source": "controls",
+            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+          },
+          {
+            "name": "mixer_levels",
+            "from": "mixer",
+            "source": "controls",
+            "keys": ["level.*"]
+          },
+          {
+            "name": "reverb",
+            "from": "reverb",
+            "source": "controls",
+            "keys": ["wet"]
+          }
+        ],
+        "response": {
+          "format": "json",
+          "kind": "in_c_conducting.v1"
+        },
+        "apply": [
+          {
+            "from": "$.payload.advances.mel_1",
+            "to": "mel_1",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_2",
+            "to": "mel_2",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_3",
+            "to": "mel_3",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_4",
+            "to": "mel_4",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_5",
+            "to": "mel_5",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_6",
+            "to": "mel_6",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_7",
+            "to": "mel_7",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_8",
+            "to": "mel_8",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_9",
+            "to": "mel_9",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_10",
+            "to": "mel_10",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_11",
+            "to": "mel_11",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_12",
+            "to": "mel_12",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.advances.mel_13",
+            "to": "mel_13",
+            "control": "advance",
+            "type": "number",
+            "min": 0,
+            "max": 1
+          },
+          {
+            "from": "$.payload.levels.voice_1",
+            "to": "mixer",
+            "control": "level.1",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_2",
+            "to": "mixer",
+            "control": "level.2",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_3",
+            "to": "mixer",
+            "control": "level.3",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_4",
+            "to": "mixer",
+            "control": "level.4",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_5",
+            "to": "mixer",
+            "control": "level.5",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_6",
+            "to": "mixer",
+            "control": "level.6",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_7",
+            "to": "mixer",
+            "control": "level.7",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_8",
+            "to": "mixer",
+            "control": "level.8",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_9",
+            "to": "mixer",
+            "control": "level.9",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_10",
+            "to": "mixer",
+            "control": "level.10",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_11",
+            "to": "mixer",
+            "control": "level.11",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_12",
+            "to": "mixer",
+            "control": "level.12",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.levels.voice_13",
+            "to": "mixer",
+            "control": "level.13",
+            "type": "number",
+            "min": 0,
+            "max": 0.8
+          },
+          {
+            "from": "$.payload.reverb_wet",
+            "to": "reverb",
+            "control": "wet",
+            "type": "number",
+            "min": 0.05,
+            "max": 0.45
+          }
+        ]
+      }
+    },
+    {
+      "id": "conductor_fallback",
+      "type": "code",
+      "config": {
+        "tick_hz": 4,
+        "enabled": true,
+        "script": {
+          "$asset": "conductor_fallback"
+        },
+        "conductor_id": "conductor",
+        "sequencer_ids": [
+          "mel_1",
+          "mel_2",
+          "mel_3",
+          "mel_4",
+          "mel_5",
+          "mel_6",
+          "mel_7",
+          "mel_8",
+          "mel_9",
+          "mel_10",
+          "mel_11",
+          "mel_12",
+          "mel_13"
+        ],
+        "mixer_id": "mixer",
+        "reverb_id": "reverb",
+        "min_loops_before_advance": 4,
+        "max_cells_ahead_of_slowest": 2,
+        "advance_probability": 0.15,
+        "conductor_timeout_ticks": 24,
+        "last_cell_hold_loops": 4
+      }
+    },
+    {
+      "id": "mixer",
+      "type": "mixer",
+      "config": {
+        "channels": 20,
+        "levels": [
+          0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
+          0, 0, 0, 0, 0, 0
+        ],
+        "pans": [
+          0, -0.7, -0.55, -0.4, -0.25, -0.1, 0, 0.1, 0.25, 0.4, 0.55, 0.7,
+          -0.15, 0.15, 0, 0, 0, 0, 0, 0
+        ],
+        "master": 0.55
+      }
+    },
+    {
+      "id": "reverb",
+      "type": "reverb",
+      "config": {
+        "room_size": 0.85,
+        "damping": 0.45,
+        "wet": 0.22,
+        "dry": 0.78
+      }
+    },
+    {
+      "id": "dac",
+      "type": "dac"
+    }
+  ],
+  "connections": [
+    {
+      "from": "clock",
+      "from_port": "gate",
+      "to": "pulse_mel",
+      "to_port": "gate"
+    },
+    {
+      "from": "pulse_mel",
+      "from_port": "frequency",
+      "to": "pulse",
+      "to_port": "frequency"
+    },
+    {
+      "from": "pulse_mel",
+      "from_port": "gate",
+      "to": "pulse",
+      "to_port": "gate"
+    },
+    {
+      "from": "pulse",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in1"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_1",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_1",
+      "from_port": "frequency",
+      "to": "voice_1",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_1",
+      "from_port": "gate",
+      "to": "voice_1",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_1",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in2"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_2",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_2",
+      "from_port": "frequency",
+      "to": "voice_2",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_2",
+      "from_port": "gate",
+      "to": "voice_2",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_2",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in3"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_3",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_3",
+      "from_port": "frequency",
+      "to": "voice_3",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_3",
+      "from_port": "gate",
+      "to": "voice_3",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_3",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in4"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_4",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_4",
+      "from_port": "frequency",
+      "to": "voice_4",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_4",
+      "from_port": "gate",
+      "to": "voice_4",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_4",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in5"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_5",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_5",
+      "from_port": "frequency",
+      "to": "voice_5",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_5",
+      "from_port": "gate",
+      "to": "voice_5",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_5",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in6"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_6",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_6",
+      "from_port": "frequency",
+      "to": "voice_6",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_6",
+      "from_port": "gate",
+      "to": "voice_6",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_6",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in7"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_7",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_7",
+      "from_port": "frequency",
+      "to": "voice_7",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_7",
+      "from_port": "gate",
+      "to": "voice_7",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_7",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in8"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_8",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_8",
+      "from_port": "frequency",
+      "to": "voice_8",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_8",
+      "from_port": "gate",
+      "to": "voice_8",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_8",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in9"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_9",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_9",
+      "from_port": "frequency",
+      "to": "voice_9",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_9",
+      "from_port": "gate",
+      "to": "voice_9",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_9",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in10"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_10",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_10",
+      "from_port": "frequency",
+      "to": "voice_10",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_10",
+      "from_port": "gate",
+      "to": "voice_10",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_10",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in11"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_11",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_11",
+      "from_port": "frequency",
+      "to": "voice_11",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_11",
+      "from_port": "gate",
+      "to": "voice_11",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_11",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in12"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_12",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_12",
+      "from_port": "frequency",
+      "to": "voice_12",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_12",
+      "from_port": "gate",
+      "to": "voice_12",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_12",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in13"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_x4",
+      "to": "mel_13",
+      "to_port": "gate"
+    },
+    {
+      "from": "mel_13",
+      "from_port": "frequency",
+      "to": "voice_13",
+      "to_port": "frequency"
+    },
+    {
+      "from": "mel_13",
+      "from_port": "gate",
+      "to": "voice_13",
+      "to_port": "gate"
+    },
+    {
+      "from": "voice_13",
+      "from_port": "audio",
+      "to": "mixer",
+      "to_port": "in14"
+    },
+    {
+      "from": "clock",
+      "from_port": "gate_d4",
+      "to": "conductor",
+      "to_port": "trigger"
+    },
+    {
+      "from": "mixer",
+      "from_port": "left",
+      "to": "reverb",
+      "to_port": "left"
+    },
+    {
+      "from": "mixer",
+      "from_port": "right",
+      "to": "reverb",
+      "to_port": "right"
+    },
+    {
+      "from": "reverb",
+      "from_port": "left",
+      "to": "dac",
+      "to_port": "audio_left"
+    },
+    {
+      "from": "reverb",
+      "from_port": "right",
+      "to": "dac",
+      "to_port": "audio_right"
+    }
+  ]
+}

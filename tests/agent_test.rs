@@ -115,6 +115,114 @@ fn agent_trigger_applies_step_pattern_response() {
 }
 
 #[test]
+fn agent_apply_preflights_all_paths_before_writing() {
+    let invention = Invention::from_json(
+        r#"{
+            "version": "1.0.0",
+            "modules": [
+                {
+                    "id": "bass_seq",
+                    "type": "step_sequencer",
+                    "config": {
+                        "base_note": 36,
+                        "steps": 4,
+                        "pattern": [
+                            { "note": 0 },
+                            { "note": null },
+                            { "note": 7 },
+                            { "note": 5 }
+                        ]
+                    }
+                },
+                {
+                    "id": "agent",
+                    "type": "agent",
+                    "config": {
+                        "backend": "test:response",
+                        "prompt": "Generate a variation of the current motif.",
+                        "response": {
+                            "format": "json",
+                            "kind": "pattern_variation",
+                            "schema_ref": "fugue.step_pattern.v1"
+                        },
+                        "test_response": {
+                            "kind": "pattern_variation",
+                            "summary": "test variation",
+                            "payload": {
+                                "pattern": [
+                                    { "note": 0, "gate": 0.75 },
+                                    { "note": 3, "gate": 0.5 },
+                                    { "note": null }
+                                ]
+                            },
+                            "confidence": 1.0,
+                            "warnings": []
+                        },
+                        "apply": [
+                            {
+                                "from": "$.payload.pattern",
+                                "to": "bass_seq",
+                                "control": "pattern_json",
+                                "type": "json_string"
+                            },
+                            {
+                                "from": "$.payload.missing",
+                                "to": "bass_seq",
+                                "control": "steps",
+                                "type": "number"
+                            }
+                        ]
+                    }
+                },
+                { "id": "dac", "type": "dac" }
+            ],
+            "connections": []
+        }"#,
+    )
+    .unwrap();
+
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(48_000))
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut trigger_count = 1.0;
+    loop {
+        running
+            .set_control(
+                "agent",
+                "trigger_count",
+                ControlValue::Number(trigger_count),
+            )
+            .unwrap();
+        trigger_count += 1.0;
+
+        let error = running.get_control("agent", "last_error").unwrap();
+        if let ControlValue::String(error) = error {
+            if error.contains("apply path '$.payload.missing' not found") {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "agent did not report apply error"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let pattern_json = running.get_control("bass_seq", "pattern_json").unwrap();
+    let ControlValue::String(pattern_json) = pattern_json else {
+        panic!("pattern_json should be a string control");
+    };
+    let pattern: serde_json::Value = serde_json::from_str(&pattern_json).unwrap();
+    assert_eq!(pattern.as_array().unwrap().len(), 4);
+    assert_eq!(pattern[1]["note"], serde_json::Value::Null);
+
+    running.stop();
+}
+
+#[test]
 fn step_sequencer_pattern_json_round_trips() {
     let invention = Invention::from_json(
         r#"{
