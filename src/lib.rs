@@ -26,11 +26,11 @@ pub use traits::{
 pub use factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 pub use registry::ModuleRegistry;
 pub use rpc::{
-    validate_schema_version, PackageInfo, PackageInstallRequest, PackageList, PackageSource,
-    RpcCommand, RpcError, RpcErrorCode, RpcEvent, RpcEventPayload, RpcEventSink, RpcRequest,
-    RpcRequestPayload, RpcResponse, RpcResponsePayload, RpcSubscriptionTopic,
-    RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot, RuntimePortInfo,
-    SinkStatusState, RPC_SCHEMA_VERSION,
+    validate_schema_version, ModuleTypeInfo, ModuleTypeList, PackageInfo, PackageInstallRequest,
+    PackageList, PackageSource, RpcCommand, RpcError, RpcErrorCode, RpcEvent, RpcEventPayload,
+    RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse, RpcResponsePayload,
+    RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot,
+    RuntimePortInfo, SinkStatusState, RPC_SCHEMA_VERSION,
 };
 
 // Re-export modules
