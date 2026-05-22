@@ -68,6 +68,18 @@ pub trait ModuleFactory: Send + Sync + 'static {
     fn is_sink(&self) -> bool {
         false
     }
+
+    /// Returns input ports for type discovery when constructing the module
+    /// requires side effects or mandatory config.
+    fn input_ports(&self) -> Option<&'static [&'static str]> {
+        None
+    }
+
+    /// Returns output ports for type discovery when constructing the module
+    /// requires side effects or mandatory config.
+    fn output_ports(&self) -> Option<&'static [&'static str]> {
+        None
+    }
 }
 
 /// Owned module storage used by the signal graph.

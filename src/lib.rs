@@ -42,6 +42,8 @@ pub use modules::{
     Oscillator, OscillatorControls, OscillatorFactory, OscillatorType, SamplePlayer,
     SamplePlayerControls, SamplePlayerFactory, Vca, VcaControls, VcaFactory,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::{AudioFileSink, AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats};
 
 // Re-export invention system
 pub use invention::{

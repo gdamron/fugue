@@ -11,6 +11,7 @@
 //! - [`Adsr`] / [`AdsrControls`] - Envelope generator
 //! - [`Vca`] / [`VcaControls`] - Voltage controlled amplifier
 //! - [`DacModule`] - Audio output sink module
+//! - [`AudioFileSink`] - Audio file recording sink module
 //! - [`AudioDriver`] / [`AudioBackend`] - Audio output backends
 //!
 //! Each module also provides a factory for self-contained construction:
@@ -18,6 +19,8 @@
 
 pub mod adsr;
 pub mod agent;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod audio_file_sink;
 pub mod cell_sequencer;
 pub mod clock;
 pub mod code;
@@ -35,6 +38,8 @@ pub mod vca;
 // Re-export module types
 pub use adsr::{Adsr, AdsrControls};
 pub use agent::AgentControls;
+#[cfg(not(target_arch = "wasm32"))]
+pub use audio_file_sink::{AudioFileSink, AudioFileSinkFactory, AudioFileSinkHandle};
 pub use cell_sequencer::{CellSequencer, CellSequencerControls};
 pub use clock::{Clock, ClockControls};
 pub use code::CodeControls;
@@ -56,6 +61,8 @@ pub use vca::{Vca, VcaControls};
 // Re-export factory types
 pub use adsr::AdsrFactory;
 pub use agent::AgentFactory;
+#[cfg(not(target_arch = "wasm32"))]
+pub use audio_file_sink::AudioFileSinkStats;
 pub use cell_sequencer::CellSequencerFactory;
 pub use clock::ClockFactory;
 pub use code::CodeFactory;

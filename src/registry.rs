@@ -99,6 +99,16 @@ impl ModuleRegistry {
             .unwrap_or(false)
     }
 
+    /// Returns factory-declared input ports when available.
+    pub fn factory_input_ports(&self, type_id: &str) -> Option<&'static [&'static str]> {
+        self.factories.get(type_id).and_then(|f| f.input_ports())
+    }
+
+    /// Returns factory-declared output ports when available.
+    pub fn factory_output_ports(&self, type_id: &str) -> Option<&'static [&'static str]> {
+        self.factories.get(type_id).and_then(|f| f.output_ports())
+    }
+
     /// Returns an iterator over registered type identifiers.
     pub fn types(&self) -> impl Iterator<Item = &str> + '_ {
         self.factories.keys().map(String::as_str)
@@ -108,6 +118,8 @@ impl ModuleRegistry {
 impl Default for ModuleRegistry {
     /// Creates a registry with all built-in module factories.
     fn default() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        use crate::modules::AudioFileSinkFactory;
         use crate::modules::{
             AdsrFactory, AgentFactory, CellSequencerFactory, ClockFactory, CodeFactory, DacFactory,
             FilterFactory, LfoFactory, MelodyFactory, MixerFactory, OscillatorFactory,
@@ -116,6 +128,8 @@ impl Default for ModuleRegistry {
 
         let mut reg = Self::new();
         reg.register(AgentFactory);
+        #[cfg(not(target_arch = "wasm32"))]
+        reg.register(AudioFileSinkFactory);
         reg.register(CellSequencerFactory);
         reg.register(ClockFactory);
         reg.register(CodeFactory);
