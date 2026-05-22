@@ -155,48 +155,7 @@ Type `help` for the full command reference.
 
 ## MCP Server (AI-Driven Composition)
 
-Fugue includes an MCP server that exposes the full runtime API as tools, letting 
-LLM agents like Claude create and manipulate inventions through natural 
-conversation. Try starting with:
-
-```plaintext
-Create a new fugue invention.
-```
-
-### Setup
-
-Build with the `mcp` feature:
-
-```bash
-cargo build --features mcp --bin fugue-mcp --release
-```
-
-### Use with Claude Desktop
-
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-```json
-{
-  "mcpServers": {
-    "fugue": {
-      "command": "/path/to/fugue/target/release/fugue-mcp"
-    }
-  }
-}
-```
-
-### Use with Claude Code
-
-Add to `.mcp.json` in the project root:
-
-```json
-{
-  "mcpServers": {
-    "fugue": {
-      "command": "cargo",
-      "args": ["run", "--features", "mcp", "--release", "--bin", "fugue-mcp"],
-      "cwd": "/path/to/fugue"
-    }
-  }
-}
-```
+The MCP server now lives in the separate
+[`fugue-mcp`](https://github.com/gdamron/fugue-mcp) repository. It exposes the
+runtime API as tools and talks to `fugue serve` over the shared runtime RPC
+protocol.

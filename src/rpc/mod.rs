@@ -93,6 +93,7 @@ pub enum RpcCommand {
     },
     InstallPackage(PackageInstallRequest),
     ListPackages,
+    DescribeModuleTypes,
 }
 
 /// Package installation request placeholder for future package discovery work.
@@ -137,6 +138,7 @@ pub enum RpcResponsePayload {
     Ack,
     Snapshot(RuntimeFullSnapshot),
     Packages(PackageList),
+    ModuleTypes(ModuleTypeList),
     Error(RpcError),
 }
 
@@ -270,6 +272,71 @@ impl PackageList {
             }],
         }
     }
+}
+
+/// Built-in module type discovery response.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct ModuleTypeList {
+    pub module_types: Vec<ModuleTypeInfo>,
+}
+
+impl ModuleTypeList {
+    /// Returns port and control metadata for module types in the built-in registry.
+    pub fn built_in(registry: &ModuleRegistry, sample_rate: u32) -> Self {
+        let mut type_names: Vec<&str> = registry.types().collect();
+        type_names.sort();
+
+        let module_types = type_names
+            .into_iter()
+            .map(|type_name| {
+                let config = serde_json::Value::Null;
+                match registry.build(type_name, sample_rate, &config) {
+                    Ok(result) => {
+                        let module = result.module.module();
+                        ModuleTypeInfo {
+                            type_name: type_name.to_string(),
+                            inputs: module
+                                .inputs()
+                                .iter()
+                                .map(|port| port.to_string())
+                                .collect(),
+                            outputs: module
+                                .outputs()
+                                .iter()
+                                .map(|port| port.to_string())
+                                .collect(),
+                            controls: result
+                                .control_surface
+                                .as_ref()
+                                .map(|surface| surface.controls())
+                                .unwrap_or_default(),
+                            is_sink: registry.is_sink(type_name),
+                        }
+                    }
+                    Err(_) => ModuleTypeInfo {
+                        type_name: type_name.to_string(),
+                        inputs: Vec::new(),
+                        outputs: Vec::new(),
+                        controls: Vec::new(),
+                        is_sink: registry.is_sink(type_name),
+                    },
+                }
+            })
+            .collect();
+
+        Self { module_types }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct ModuleTypeInfo {
+    pub type_name: String,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    pub controls: Vec<ControlMeta>,
+    pub is_sink: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -441,6 +508,7 @@ mod tests {
                 version: Some("1.2.3".to_string()),
             }),
             RpcCommand::ListPackages,
+            RpcCommand::DescribeModuleTypes,
         ];
 
         for command in commands {
@@ -475,6 +543,22 @@ mod tests {
         assert!(packages.packages[0]
             .module_types
             .contains(&"oscillator".to_string()));
+    }
+
+    #[test]
+    fn built_in_module_types_include_ports_and_controls() {
+        let registry = ModuleRegistry::default();
+        let module_types = ModuleTypeList::built_in(&registry, 44_100);
+        let oscillator = module_types
+            .module_types
+            .iter()
+            .find(|module_type| module_type.type_name == "oscillator")
+            .expect("oscillator module type is listed");
+        assert!(oscillator.outputs.contains(&"audio".to_string()));
+        assert!(oscillator
+            .controls
+            .iter()
+            .any(|control| control.key == "frequency"));
     }
 
     #[test]
