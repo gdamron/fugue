@@ -111,14 +111,17 @@ running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 ```
 
 
-## REPL (Interactive Terminal)
+## CLI and REPL
 
-Fugue includes a terminal REPL for interactively building and tweaking inventions while audio plays.
+The Fugue command-line host lives in the separate `fugue-cli` repository. It
+provides playback, rendering, daemon, and interactive REPL commands while this
+repository stays focused on the core library and runtime.
 
-### Build and Run
+From a sibling checkout:
 
 ```bash
-cargo run --features repl --bin fugue-repl
+cd ../fugue-cli
+cargo run -- repl
 ```
 
 ### Example Session

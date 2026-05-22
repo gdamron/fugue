@@ -17,7 +17,6 @@ rmcp = { version = "1.1", features = ["server", "transport-io"], optional = true
 tokio = { version = "1", features = ["full"], optional = true }
 schemars = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true }
-rustyline = { version = "14", optional = true }
 notify = { version = "7", optional = true }
 notify-debouncer-mini = { version = "0.5", optional = true }
 
@@ -36,18 +35,12 @@ web-sys = { version = "0.3", features = ["AudioContext", "AudioDestinationNode"]
 ffi = []
 rpc-schema = ["dep:schemars"]
 mcp = ["dep:rmcp", "dep:tokio", "rpc-schema", "dep:tracing-subscriber"]
-repl = ["dep:rustyline"]
 dev = ["dep:notify", "dep:notify-debouncer-mini", "dep:tokio", "dep:tracing-subscriber"]
 
 [[bin]]
 name = "fugue-mcp"
 path = "src/bin/fugue-mcp.rs"
 required-features = ["mcp"]
-
-[[bin]]
-name = "fugue"
-path = "src/bin/fugue-repl.rs"
-required-features = ["repl"]
 
 [[bin]]
 name = "fugue-mcp-dev"
