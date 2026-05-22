@@ -19,6 +19,7 @@ pub mod graph;
 pub mod handles;
 pub mod orchestration;
 pub mod render;
+pub mod rpc_snapshot;
 pub mod runtime;
 pub mod state;
 

@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 ///
 /// Inventions can be loaded from JSON files or strings and define
 /// the modules to instantiate and how they connect together.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct Invention {
     /// Version of the invention format.
     #[serde(default = "default_version")]
@@ -86,7 +87,8 @@ impl Invention {
 }
 
 /// A named development registered for use as a module type within an invention.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentSpec {
     /// Module type name used when instantiating this development.
     pub name: String,
@@ -101,14 +103,16 @@ pub struct DevelopmentSpec {
 }
 
 /// A shared JSON asset that can be referenced from module configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct AssetSpec {
     /// JSON file path. Relative paths resolve from the loading invention file.
     pub path: String,
 }
 
 /// Maps an exposed development input to an internal module input.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentInput {
     pub name: String,
     pub to: String,
@@ -116,7 +120,8 @@ pub struct DevelopmentInput {
 }
 
 /// Maps an exposed development output to an internal module output.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentOutput {
     pub name: String,
     pub from: String,
@@ -124,7 +129,8 @@ pub struct DevelopmentOutput {
 }
 
 /// Maps an exposed development control to an internal module control.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentControl {
     pub key: String,
     pub module: String,
@@ -132,7 +138,8 @@ pub struct DevelopmentControl {
 }
 
 /// Specification for a single module in an invention.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct ModuleSpec {
     /// Unique identifier for this module instance.
     pub id: String,
@@ -151,7 +158,8 @@ pub struct ModuleSpec {
 }
 
 /// Time signature specification.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct TimeSignature {
     /// Number of beats per measure (numerator).
     pub beats_per_measure: u32,
@@ -169,7 +177,8 @@ impl Default for TimeSignature {
 }
 
 /// A connection between two modules in an invention.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct Connection {
     /// Source module ID.
     pub from: String,

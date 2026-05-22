@@ -10,6 +10,7 @@ pub mod invention;
 pub mod modules;
 pub mod music;
 pub mod registry;
+pub mod rpc;
 pub mod scripting;
 pub mod traits;
 #[cfg(target_arch = "wasm32")]
@@ -24,6 +25,13 @@ pub use traits::{
 // Re-export factory system
 pub use factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 pub use registry::ModuleRegistry;
+pub use rpc::{
+    validate_schema_version, PackageInfo, PackageInstallRequest, PackageList, PackageSource,
+    RpcCommand, RpcError, RpcErrorCode, RpcEvent, RpcEventPayload, RpcEventSink, RpcRequest,
+    RpcRequestPayload, RpcResponse, RpcResponsePayload, RpcSubscriptionTopic,
+    RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot, RuntimePortInfo,
+    SinkStatusState, RPC_SCHEMA_VERSION,
+};
 
 // Re-export modules
 pub use modules::{
