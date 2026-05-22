@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// Runtime value for a module control.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum ControlValue {
     Number(f32),
@@ -64,6 +65,7 @@ impl From<&str> for ControlValue {
 
 /// Type-specific metadata describing a control value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub enum ControlKind {
     Number { min: f32, max: f32 },
     Bool,
@@ -87,6 +89,7 @@ pub enum ControlKind {
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct ControlMeta {
     /// The control key (e.g., "attack", "level.0", "type")
     pub key: String,

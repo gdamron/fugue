@@ -2,7 +2,8 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 /// Serializable description of a module in a running invention.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct RuntimeModuleInfo {
     /// Stable instance id inside the graph.
     pub id: String,
@@ -13,7 +14,8 @@ pub struct RuntimeModuleInfo {
 }
 
 /// Serializable description of a routed connection in a running invention.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct RuntimeConnectionInfo {
     pub from: String,
     pub from_port: String,
@@ -22,7 +24,8 @@ pub struct RuntimeConnectionInfo {
 }
 
 /// Lightweight runtime status used by orchestration and external APIs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct RuntimeStatus {
     pub running: bool,
     pub sample_rate: u32,

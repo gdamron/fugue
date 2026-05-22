@@ -34,7 +34,8 @@ web-sys = { version = "0.3", features = ["AudioContext", "AudioDestinationNode"]
 
 [features]
 ffi = []
-mcp = ["dep:rmcp", "dep:tokio", "dep:schemars", "dep:tracing-subscriber"]
+rpc-schema = ["dep:schemars"]
+mcp = ["dep:rmcp", "dep:tokio", "rpc-schema", "dep:tracing-subscriber"]
 repl = ["dep:rustyline"]
 dev = ["dep:notify", "dep:notify-debouncer-mini", "dep:tokio", "dep:tracing-subscriber"]
 

@@ -237,6 +237,11 @@ impl RunningInvention {
         }
     }
 
+    pub fn full_snapshot(&self) -> crate::RuntimeFullSnapshot {
+        let module_ports = self.module_ports.lock().unwrap();
+        self.snapshot().full_snapshot_with_ports(&module_ports)
+    }
+
     pub fn controller(&self) -> RuntimeController {
         RuntimeController {
             snapshot: self.snapshot(),
