@@ -118,17 +118,15 @@ impl ModuleRegistry {
 impl Default for ModuleRegistry {
     /// Creates a registry with all built-in module factories.
     fn default() -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        use crate::modules::AudioFileSinkFactory;
         use crate::modules::{
-            AdsrFactory, AgentFactory, CellSequencerFactory, ClockFactory, CodeFactory, DacFactory,
-            FilterFactory, LfoFactory, MelodyFactory, MixerFactory, OscillatorFactory,
-            ReverbFactory, SamplePlayerFactory, StepSequencerFactory, VcaFactory,
+            AdsrFactory, AgentFactory, AudioFileSinkFactory, CellSequencerFactory, ClockFactory,
+            CodeFactory, DacFactory, FilterFactory, LfoFactory, MelodyFactory, MixerFactory,
+            OscillatorFactory, ReverbFactory, SamplePlayerFactory, StepSequencerFactory,
+            VcaFactory,
         };
 
         let mut reg = Self::new();
         reg.register(AgentFactory);
-        #[cfg(not(target_arch = "wasm32"))]
         reg.register(AudioFileSinkFactory);
         reg.register(CellSequencerFactory);
         reg.register(ClockFactory);

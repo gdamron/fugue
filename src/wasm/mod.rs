@@ -208,6 +208,24 @@ impl WasmFugueEngine {
             .map_err(to_js_error)?;
         Ok(output)
     }
+
+    #[wasm_bindgen(js_name = finishAudioFileSink)]
+    /// Finalizes an in-memory `audio_file_sink` and returns JSON stats.
+    pub fn finish_audio_file_sink(&self, module_id: &str) -> Result<String, JsValue> {
+        let stats = self
+            .inner
+            .finish_audio_file_sink(module_id)
+            .map_err(to_js_error)?;
+        serde_json::to_string(&stats).map_err(|err| JsValue::from_str(&err.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = getAudioFileSinkWav)]
+    /// Returns finalized WAV bytes from an in-memory `audio_file_sink`.
+    pub fn audio_file_sink_wav(&self, module_id: &str) -> Result<Vec<u8>, JsValue> {
+        self.inner
+            .audio_file_sink_wav_bytes(module_id)
+            .map_err(to_js_error)
+    }
 }
 
 fn to_js_error(error: Box<dyn std::error::Error>) -> JsValue {

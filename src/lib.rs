@@ -36,14 +36,13 @@ pub use rpc::{
 // Re-export modules
 pub use modules::{
     default_sample_rate, Adsr, AdsrControls, AdsrFactory, AgentControls, AgentFactory,
-    AudioBackend, AudioDriver, Clock, ClockControls, ClockFactory, CodeControls, CodeFactory,
-    DacFactory, DacModule, Filter, FilterControls, FilterFactory, FilterType, Lfo, LfoControls,
-    LfoFactory, MelodyControls, MelodyFactory, MelodyGenerator, Mixer, MixerControls, MixerFactory,
-    Oscillator, OscillatorControls, OscillatorFactory, OscillatorType, SamplePlayer,
-    SamplePlayerControls, SamplePlayerFactory, Vca, VcaControls, VcaFactory,
+    AudioBackend, AudioDriver, AudioFileSink, AudioFileSinkFactory, AudioFileSinkHandle,
+    AudioFileSinkStats, Clock, ClockControls, ClockFactory, CodeControls, CodeFactory, DacFactory,
+    DacModule, Filter, FilterControls, FilterFactory, FilterType, Lfo, LfoControls, LfoFactory,
+    MelodyControls, MelodyFactory, MelodyGenerator, Mixer, MixerControls, MixerFactory, Oscillator,
+    OscillatorControls, OscillatorFactory, OscillatorType, SamplePlayer, SamplePlayerControls,
+    SamplePlayerFactory, Vca, VcaControls, VcaFactory,
 };
-#[cfg(not(target_arch = "wasm32"))]
-pub use modules::{AudioFileSink, AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats};
 
 // Re-export invention system
 pub use invention::{

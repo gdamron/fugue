@@ -45,6 +45,12 @@ impl InventionHandles {
         Self { handles }
     }
 
+    pub(crate) fn empty() -> Self {
+        Self {
+            handles: HashMap::new(),
+        }
+    }
+
     /// Get a handle by flat key, downcasting to the expected type.
     ///
     /// # Arguments
@@ -141,5 +147,9 @@ impl InventionHandles {
     /// If both sets contain the same key, the value from `other` wins.
     pub fn merge(&mut self, other: InventionHandles) {
         self.handles.extend(other.handles);
+    }
+
+    pub(crate) fn remove_prefix(&mut self, prefix: &str) {
+        self.handles.retain(|key, _| !key.starts_with(prefix));
     }
 }
