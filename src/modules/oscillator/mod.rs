@@ -16,20 +16,17 @@ mod inputs;
 mod outputs;
 mod waveform;
 
-/// Sine approximation over the full cycle via a parabolic Bhaskara-style fit.
+/// Sine approximation over the full cycle via a shaped parabolic fit.
 ///
-/// Input `phase` is in [0, 1). Max error < 0.2% — inaudible for audio.
-/// Roughly 8× faster than `(phase * 2π).sin()`.
+/// Input `phase` is in [0, 1). Max error is about 0.12% while preserving the
+/// sine zero crossings and extrema.
 #[inline(always)]
 fn fast_sine(phase: f32) -> f32 {
-    // Map phase ∈ [0,1) to x ∈ [-1,1) centred on the sine peak, then use
-    // a degree-5 minimax polynomial on [-π, π].
-    let x = phase * 2.0 * PI; // [0, 2π)
-    // Fold into [-π, π]
+    let x = phase * 2.0 * PI;
     let x = if x > PI { x - 2.0 * PI } else { x };
-    // Degree-5 odd polynomial: sin(x) ≈ x(1 - x²(1/6 - x²/120))
-    let x2 = x * x;
-    x * (1.0 + x2 * (-0.166_666_67 + x2 * 0.008_333_33))
+
+    let y = (4.0 / PI) * x + (-4.0 / (PI * PI)) * x * x.abs();
+    0.225 * (y * y.abs() - y) + y
 }
 
 /// Factory for constructing Oscillator modules from configuration.
@@ -341,6 +338,42 @@ impl Module for Oscillator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_fast_sine_cardinal_points() {
+        let epsilon = 0.000_001;
+
+        assert!(fast_sine(0.0).abs() < epsilon);
+        assert!((fast_sine(0.25) - 1.0).abs() < epsilon);
+        assert!(fast_sine(0.5).abs() < epsilon);
+        assert!((fast_sine(0.75) + 1.0).abs() < epsilon);
+    }
+
+    #[test]
+    fn test_fast_sine_matches_reference_with_bounded_error() {
+        let max_error = (0..1024)
+            .map(|i| {
+                let phase = i as f32 / 1024.0;
+                (fast_sine(phase) - (phase * 2.0 * PI).sin()).abs()
+            })
+            .fold(0.0, f32::max);
+
+        assert!(
+            max_error < 0.001_3,
+            "max sine approximation error {max_error}"
+        );
+    }
+
+    #[test]
+    fn test_fast_sine_has_no_half_cycle_discontinuity() {
+        let before = fast_sine(0.5 - 0.000_1);
+        let at = fast_sine(0.5);
+        let after = fast_sine(0.5 + 0.000_1);
+
+        assert!(before.abs() < 0.001);
+        assert!(at.abs() < 0.000_001);
+        assert!(after.abs() < 0.001);
+    }
 
     #[test]
     fn test_oscillator_controls() {
