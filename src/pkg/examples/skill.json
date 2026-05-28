@@ -1,0 +1,13 @@
+{
+  "id": "fugue.example.mixing-skill",
+  "version": "0.1.0",
+  "kind": "skill",
+  "license": "Apache-2.0",
+  "authors": [{ "name": "Example Engineer" }],
+  "description": "A Claude Code skill that guides mixing decisions in Fugue.",
+  "targets": ["external-agent"],
+  "requires": {
+    "mcp-tools": ["fugue"]
+  },
+  "entry": { "skill": "SKILL.md" }
+}

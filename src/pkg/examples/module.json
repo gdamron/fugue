@@ -1,0 +1,15 @@
+{
+  "id": "fugue.example.reverb",
+  "version": "1.0.0",
+  "kind": "module",
+  "license": "MIT",
+  "authors": [{ "name": "Example Audio", "url": "https://example.com" }],
+  "description": "A simple plate reverb module.",
+  "homepage": "https://example.com/reverb",
+  "targets": ["external-agent", "in-graph-agent"],
+  "requires": {
+    "capabilities": ["random"]
+  },
+  "deps": [],
+  "entry": { "wasm": "module.wasm" }
+}

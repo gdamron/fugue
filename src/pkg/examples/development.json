@@ -1,0 +1,11 @@
+{
+  "id": "fugue.example.acid-bassline",
+  "version": "0.2.0",
+  "kind": "development",
+  "license": "CC-BY-4.0",
+  "authors": [{ "name": "Example Composer" }],
+  "description": "Reusable acid bassline development.",
+  "targets": ["external-agent"],
+  "deps": ["fugue.core.sequencer@^1.0.0"],
+  "entry": { "development": "acid_bassline.development.json" }
+}
