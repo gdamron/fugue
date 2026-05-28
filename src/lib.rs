@@ -9,6 +9,7 @@ pub mod ffi;
 pub mod invention;
 pub mod modules;
 pub mod music;
+pub mod pkg;
 pub mod registry;
 pub mod rpc;
 pub mod scripting;
@@ -55,3 +56,11 @@ pub use invention::{
 
 // Re-export music theory
 pub use music::{Note, Scale};
+
+// Re-export package manifest types
+pub use pkg::{
+    parse_str as parse_pkg_str, validate as validate_pkg, Author as PkgAuthor,
+    Capability as PkgCapability, DepRef as PkgDepRef, EntrySpec as PkgEntrySpec, ManifestError,
+    PackageKind, PackageManifest, Requires as PkgRequires, Signing as PkgSigning,
+    Target as PkgTarget, ValidationError as PkgValidationError,
+};

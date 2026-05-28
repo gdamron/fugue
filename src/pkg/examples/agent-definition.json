@@ -1,0 +1,13 @@
+{
+  "id": "fugue.example.melody-agent",
+  "version": "0.1.0",
+  "kind": "agent-definition",
+  "license": "MIT",
+  "authors": [{ "name": "Example Studio" }],
+  "description": "An in-graph melody-writing agent.",
+  "targets": ["in-graph-agent"],
+  "requires": {
+    "capabilities": ["random", "time"]
+  },
+  "entry": { "definition": "agent.json" }
+}

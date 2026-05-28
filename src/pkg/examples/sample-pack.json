@@ -1,0 +1,13 @@
+{
+  "id": "fugue.example.tr808-samples",
+  "version": "1.0.0",
+  "kind": "sample-pack",
+  "license": "CC0-1.0",
+  "authors": [{ "name": "Example Sampler" }],
+  "description": "A small TR-808-flavored drum sample pack.",
+  "targets": ["claude-code", "in-graph-agent"],
+  "requires": {
+    "capabilities": ["fs:read:samples/"]
+  },
+  "entry": { "samples": "index.json" }
+}
