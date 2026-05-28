@@ -67,9 +67,8 @@ One per kind lives in [`examples/`](examples/):
 These files are exercised by `tests/pkg_manifest_test.rs`, so they stay
 in sync with the validator.
 
-## Phase 1 scope
+## Initial Scope
 
 This module owns the manifest type and its validation only. Resolution,
 installation, lockfile, capability enforcement at runtime, and signature
-verification are tracked by sibling tickets in the **Fugue Package
-System** project.
+verification will be implemented in a future phase.
