@@ -64,7 +64,7 @@ pub enum PackageKind {
     Development,
     Invention,
     Skill,
-    AgentDefinition,
+    Agent,
     SamplePack,
 }
 
@@ -75,7 +75,7 @@ impl PackageKind {
             PackageKind::Development => "development",
             PackageKind::Invention => "invention",
             PackageKind::Skill => "skill",
-            PackageKind::AgentDefinition => "agent-definition",
+            PackageKind::Agent => "agent",
             PackageKind::SamplePack => "sample-pack",
         }
     }
@@ -122,7 +122,7 @@ pub enum EntrySpec {
     Invention { invention: String },
     Development { development: String },
     Skill { skill: String },
-    AgentDefinition { definition: String },
+    Agent { definition: String },
     SamplePack { samples: String },
 }
 
@@ -134,7 +134,7 @@ impl EntrySpec {
             EntrySpec::Invention { .. } => PackageKind::Invention,
             EntrySpec::Development { .. } => PackageKind::Development,
             EntrySpec::Skill { .. } => PackageKind::Skill,
-            EntrySpec::AgentDefinition { .. } => PackageKind::AgentDefinition,
+            EntrySpec::Agent { .. } => PackageKind::Agent,
             EntrySpec::SamplePack { .. } => PackageKind::SamplePack,
         }
     }

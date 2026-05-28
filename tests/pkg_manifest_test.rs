@@ -12,7 +12,7 @@ const KINDS: &[(&str, PackageKind)] = &[
     ("development.json", PackageKind::Development),
     ("invention.json", PackageKind::Invention),
     ("skill.json", PackageKind::Skill),
-    ("agent-definition.json", PackageKind::AgentDefinition),
+    ("agent.json", PackageKind::Agent),
     ("sample-pack.json", PackageKind::SamplePack),
 ];
 
