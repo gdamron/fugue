@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::agents::AgentManager;
 use crate::scripting::ScriptManager;
-use crate::{ControlValue, Invention, InventionBuilder, ModuleRegistry};
+use crate::{ControlValue, Invention, InventionBuilder, InventionHandles, ModuleRegistry};
 
 use super::graph::{GraphCommand, SignalGraph};
 use super::orchestration::{ModulePorts, OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
@@ -28,6 +28,7 @@ pub struct RenderEngine {
     state: Arc<Mutex<RuntimeState>>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
+    handles: Arc<Mutex<InventionHandles>>,
     source_json: Option<String>,
     scripts: ScriptManager,
     agents: AgentManager,
@@ -56,6 +57,7 @@ impl RenderEngine {
             })),
             control_surfaces: Arc::new(Mutex::new(IndexMap::new())),
             module_ports: Arc::new(Mutex::new(IndexMap::new())),
+            handles: Arc::new(Mutex::new(InventionHandles::empty())),
             source_json: None,
             scripts: ScriptManager::default(),
             agents: AgentManager::default(),
@@ -169,7 +171,8 @@ impl RenderEngine {
         invention: Invention,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let builder = InventionBuilder::new(self.sample_rate);
-        let (runtime, _) = builder.build(invention)?;
+        let (runtime, handles) = builder.build(invention)?;
+        *self.handles.lock().unwrap() = handles;
         self.install_runtime(runtime);
         Ok(())
     }
@@ -215,6 +218,37 @@ impl RenderEngine {
         }
 
         Ok(output.len() / 2)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn finish_audio_file_sink(
+        &self,
+        module_id: &str,
+    ) -> Result<crate::AudioFileSinkStats, Box<dyn std::error::Error>> {
+        let handle = self.audio_file_sink_handle(module_id)?;
+        Ok(handle.finish())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn audio_file_sink_wav_bytes(
+        &self,
+        module_id: &str,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let handle = self.audio_file_sink_handle(module_id)?;
+        handle.wav_bytes().map_err(Into::into)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn audio_file_sink_handle(
+        &self,
+        module_id: &str,
+    ) -> Result<crate::AudioFileSinkHandle, Box<dyn std::error::Error>> {
+        let key = format!("{}.handle", module_id);
+        self.handles
+            .lock()
+            .unwrap()
+            .get::<crate::AudioFileSinkHandle>(&key)
+            .ok_or_else(|| format!("unknown audio_file_sink handle: {}", module_id).into())
     }
 
     /// Sets a runtime control on a module.
@@ -285,6 +319,16 @@ impl RenderEngine {
             .registry
             .build(module_type, self.sample_rate, config)
             .map_err(|e| GraphCommandError::ModuleBuildFailed(e.to_string()))?;
+
+        let mut new_handles = std::collections::HashMap::new();
+        for (handle_name, handle) in result.handles {
+            let key = format!("{}.{}", module_id, handle_name);
+            new_handles.insert(key, handle);
+        }
+        self.handles
+            .lock()
+            .unwrap()
+            .merge(InventionHandles::new(new_handles));
 
         if let Some(control_surface) = result.control_surface {
             self.control_surfaces
@@ -365,6 +409,10 @@ impl RenderEngine {
             .lock()
             .unwrap()
             .shift_remove(module_id);
+        self.handles
+            .lock()
+            .unwrap()
+            .remove_prefix(&format!("{}.", module_id));
         self.module_ports.lock().unwrap().shift_remove(module_id);
         graph
             .lock()

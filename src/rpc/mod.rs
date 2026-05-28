@@ -316,8 +316,18 @@ impl ModuleTypeList {
                     }
                     Err(_) => ModuleTypeInfo {
                         type_name: type_name.to_string(),
-                        inputs: Vec::new(),
-                        outputs: Vec::new(),
+                        inputs: registry
+                            .factory_input_ports(type_name)
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|port| port.to_string())
+                            .collect(),
+                        outputs: registry
+                            .factory_output_ports(type_name)
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|port| port.to_string())
+                            .collect(),
                         controls: Vec::new(),
                         is_sink: registry.is_sink(type_name),
                     },
@@ -559,6 +569,18 @@ mod tests {
             .controls
             .iter()
             .any(|control| control.key == "frequency"));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let audio_file_sink = module_types
+                .module_types
+                .iter()
+                .find(|module_type| module_type.type_name == "audio_file_sink")
+                .expect("audio_file_sink module type is listed");
+            assert!(audio_file_sink.is_sink);
+            assert!(audio_file_sink.inputs.contains(&"audio".to_string()));
+            assert!(audio_file_sink.outputs.contains(&"audio_left".to_string()));
+        }
     }
 
     #[test]

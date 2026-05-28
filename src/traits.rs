@@ -358,7 +358,7 @@ pub trait Module: Send {
 /// Output from a sink module.
 ///
 /// Supports stereo output. Mono sources should use [`SinkOutput::mono`].
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SinkOutput {
     pub left: f32,
     pub right: f32,
