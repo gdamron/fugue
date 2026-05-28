@@ -95,7 +95,7 @@ pub struct Author {
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum Target {
-    ClaudeCode,
+    ExternalAgent,
     InGraphAgent,
 }
 

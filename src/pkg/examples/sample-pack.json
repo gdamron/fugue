@@ -5,7 +5,7 @@
   "license": "CC0-1.0",
   "authors": [{ "name": "Example Sampler" }],
   "description": "A small TR-808-flavored drum sample pack.",
-  "targets": ["claude-code", "in-graph-agent"],
+  "targets": ["external-agent", "in-graph-agent"],
   "requires": {
     "capabilities": ["fs:read:samples/"]
   },

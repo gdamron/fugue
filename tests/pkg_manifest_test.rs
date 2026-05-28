@@ -69,7 +69,7 @@ fn rejects_kind_entry_mismatch() {
 #[test]
 fn rejects_empty_targets() {
     let json = include_str!("../src/pkg/examples/module.json").replace(
-        "\"targets\": [\"claude-code\", \"in-graph-agent\"]",
+        "\"targets\": [\"external-agent\", \"in-graph-agent\"]",
         "\"targets\": []",
     );
     let err = parse_str(&json).unwrap_err();

@@ -6,7 +6,7 @@
   "authors": [{ "name": "Example Audio", "url": "https://example.com" }],
   "description": "A simple plate reverb module.",
   "homepage": "https://example.com/reverb",
-  "targets": ["claude-code", "in-graph-agent"],
+  "targets": ["external-agent", "in-graph-agent"],
   "requires": {
     "capabilities": ["random"]
   },

@@ -5,6 +5,6 @@
   "license": "CC-BY-SA-4.0",
   "authors": [{ "name": "Example Ensemble" }],
   "description": "An arrangement of Terry Riley's In C.",
-  "targets": ["claude-code"],
+  "targets": ["external-agent"],
   "entry": { "invention": "in_c.invention.json" }
 }

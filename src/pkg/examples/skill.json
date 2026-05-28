@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "authors": [{ "name": "Example Engineer" }],
   "description": "A Claude Code skill that guides mixing decisions in Fugue.",
-  "targets": ["claude-code"],
+  "targets": ["external-agent"],
   "requires": {
     "mcp-tools": ["fugue"]
   },

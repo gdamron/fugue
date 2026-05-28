@@ -20,7 +20,7 @@ helpers live in [`validate.rs`](validate.rs); the entry points are
 | `authors`     | array of `{name, url?}`   | yes      | At least one entry; `name` must be non-empty.                                 |
 | `description` | string                    | no       | One-line summary.                                                             |
 | `homepage`    | string                    | no       | Project / docs URL.                                                           |
-| `targets`     | array of string enum      | yes      | At least one of `claude-code`, `in-graph-agent`.                              |
+| `targets`     | array of string enum      | yes      | At least one of `external-agent`, `in-graph-agent`.                           |
 | `requires`    | object                    | no       | Declared runtime requirements (see below).                                    |
 | `deps`        | array of `id@req` strings | no       | Other Fugue packages this one depends on. Phase 1 shape-checks only.          |
 | `entry`       | object                    | yes      | Kind-specific entry point (see below).                                        |

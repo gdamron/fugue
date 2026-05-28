@@ -5,7 +5,7 @@
   "license": "CC-BY-4.0",
   "authors": [{ "name": "Example Composer" }],
   "description": "Reusable acid bassline development.",
-  "targets": ["claude-code"],
+  "targets": ["external-agent"],
   "deps": ["fugue.core.sequencer@^1.0.0"],
   "entry": { "development": "acid_bassline.development.json" }
 }
