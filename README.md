@@ -153,6 +153,11 @@ fugue> quit
 
 Type `help` for the full command reference.
 
+## Browser Playback
+
+The JavaScript browser player is packaged separately as `@ilusiv/fugue-js`.
+This repository owns the Rust engine and wasm exports that package consumes.
+
 ## MCP Server (AI-Driven Composition)
 
 The MCP server now lives in the separate

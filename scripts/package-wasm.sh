@@ -21,7 +21,7 @@ cat > "$STAGE_DIR/README.md" <<EOF
 Contents:
 
 - wasm-bindgen generated JS glue
-- `fugue-code-host.js` helper for running `code` modules in host JavaScript
+- \`fugue-code-host.js\` helper for running \`code\` modules in host JavaScript
 - \`.wasm\` binary
 - \`LICENSE\`
 

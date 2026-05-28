@@ -1,5 +1,6 @@
 //! wasm-bindgen wrapper for the render engine.
 
+use js_sys::Float32Array;
 use wasm_bindgen::prelude::*;
 
 use crate::{ControlValue, RenderEngine};
@@ -12,6 +13,7 @@ use crate::{ControlValue, RenderEngine};
 /// modules from JavaScript.
 pub struct WasmFugueEngine {
     inner: RenderEngine,
+    render_buffer: Vec<f32>,
 }
 
 #[wasm_bindgen(js_class = FugueEngine)]
@@ -21,6 +23,7 @@ impl WasmFugueEngine {
     pub fn new(sample_rate: u32) -> WasmFugueEngine {
         WasmFugueEngine {
             inner: RenderEngine::new(sample_rate),
+            render_buffer: Vec::new(),
         }
     }
 
@@ -225,6 +228,28 @@ impl WasmFugueEngine {
         self.inner
             .audio_file_sink_wav_bytes(module_id)
             .map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = renderInterleavedInto)]
+    /// Renders interleaved stereo samples into a caller-provided buffer.
+    ///
+    /// The buffer length must be even and is interpreted as
+    /// `[left0, right0, left1, right1, ...]`.
+    pub fn render_interleaved_into(&mut self, output: &Float32Array) -> Result<usize, JsValue> {
+        let samples = output.length() as usize;
+        if samples % 2 != 0 {
+            return Err(JsValue::from_str("output buffer length must be even"));
+        }
+        if self.render_buffer.len() != samples {
+            self.render_buffer.resize(samples, 0.0);
+        }
+
+        let frames = self
+            .inner
+            .render_interleaved(&mut self.render_buffer)
+            .map_err(to_js_error)?;
+        output.copy_from(&self.render_buffer);
+        Ok(frames)
     }
 }
 
