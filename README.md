@@ -153,6 +153,27 @@ fugue> quit
 
 Type `help` for the full command reference.
 
+## Browser Playback API
+
+The wasm package includes a UI-free JavaScript player for browser hosts. Build
+the wasm-bindgen output, package it with `scripts/package-wasm.sh`, serve the
+generated files, then use `FuguePlayer` from application code:
+
+```js
+import { FuguePlayer } from "./fugue-player.js";
+
+const player = await FuguePlayer.create();
+await player.loadInvention(inventionJson);
+await player.play();
+
+player.stop();
+await player.dispose();
+```
+
+`play()` must be called from a browser user gesture such as a click handler.
+Inventions that depend on file or URL sample loading are not supported on wasm
+yet.
+
 ## MCP Server (AI-Driven Composition)
 
 The MCP server now lives in the separate
