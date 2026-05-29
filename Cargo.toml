@@ -19,6 +19,8 @@ schemars = { version = "1", optional = true }
 cpal = "0.15"
 ureq = { version = "2.10", default-features = true }
 boa_engine = "0.21.1"
+claxon = "0.4.3"
+flacenc = "0.5.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
