@@ -206,6 +206,40 @@ mod tests {
         std::env::temp_dir().join(format!("fugue-{}-{}.wav", name, nanos))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn temp_flac_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("fugue-{}-{}.flac", name, nanos))
+    }
+
+    /// Encodes frames to a 16-bit FLAC bitstream for decode tests.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn encode_test_flac(sample_rate: u32, channels: usize, frames: &[[f32; 2]]) -> Vec<u8> {
+        use flacenc::component::BitRepr;
+        use flacenc::error::Verify;
+
+        let scale = i16::MAX as f32;
+        let mut samples = Vec::new();
+        for frame in frames {
+            samples.push((frame[0].clamp(-1.0, 1.0) * scale).round() as i32);
+            if channels > 1 {
+                samples.push((frame[1].clamp(-1.0, 1.0) * scale).round() as i32);
+            }
+        }
+
+        let config = flacenc::config::Encoder::default().into_verified().unwrap();
+        let source =
+            flacenc::source::MemSource::from_samples(&samples, channels, 16, sample_rate as usize);
+        let stream =
+            flacenc::encode_with_fixed_block_size(&config, source, config.block_size).unwrap();
+        let mut sink = flacenc::bitsink::ByteSink::new();
+        stream.write(&mut sink).unwrap();
+        sink.as_slice().to_vec()
+    }
+
     fn write_test_wav(sample_rate: u32, channels: u16, frames: &[[f32; 2]]) -> PathBuf {
         let path = temp_wav_path("sample-player");
         let spec = hound::WavSpec {
@@ -331,6 +365,59 @@ mod tests {
             "expected resampled buffer, got {}",
             sample_len
         );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// A stereo ramp at least one FLAC block (16 frames) long.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flac_test_frames() -> Vec<[f32; 2]> {
+        (0..32)
+            .map(|index| [index as f32 / 64.0, -(index as f32) / 64.0])
+            .collect()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_sample_player_loads_flac() {
+        let frames = flac_test_frames();
+        let path = temp_flac_path("load");
+        std::fs::write(&path, encode_test_flac(44_100, 2, &frames)).unwrap();
+
+        let controls =
+            SamplePlayerControls::new(44_100, Some(path.to_str().unwrap()), Some(false), Some(false))
+                .unwrap();
+
+        let shared = controls.shared.lock().unwrap();
+        let sample = shared.pending_sample.as_ref().unwrap();
+        assert_eq!(sample.len(), frames.len());
+        for (index, frame) in frames.iter().enumerate() {
+            assert!((sample.left[index] - frame[0]).abs() < 1e-3);
+            assert!((sample.right[index] - frame[1]).abs() < 1e-3);
+        }
+        drop(shared);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_sample_player_detects_flac_by_header() {
+        // FLAC bitstream behind a misleading `.wav` extension: the header magic
+        // must win so the file still decodes.
+        let frames = flac_test_frames();
+        let path = temp_wav_path("flac-as-wav");
+        std::fs::write(&path, encode_test_flac(44_100, 1, &frames)).unwrap();
+
+        let controls =
+            SamplePlayerControls::new(44_100, Some(path.to_str().unwrap()), Some(false), Some(false))
+                .unwrap();
+
+        let shared = controls.shared.lock().unwrap();
+        let sample = shared.pending_sample.as_ref().unwrap();
+        assert_eq!(sample.len(), frames.len());
+        assert!((sample.left[5] - frames[5][0]).abs() < 1e-3);
+        drop(shared);
 
         let _ = std::fs::remove_file(path);
     }

@@ -135,7 +135,7 @@ impl SamplePlayerControls {
 impl ControlSurface for SamplePlayerControls {
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::string("source", "Audio sample path or https URL")
+            ControlMeta::string("source", "Audio sample path or https URL (WAV or FLAC)")
                 .with_default(self.source()),
             ControlMeta::boolean("play", "Start or stop sample playback", self.play()),
             ControlMeta::boolean("loop", "Loop playback when enabled", self.loop_enabled()),
@@ -161,14 +161,27 @@ impl ControlSurface for SamplePlayerControls {
     }
 }
 
+/// Audio container formats the sample player can decode.
+enum AudioFormat {
+    Wav,
+    Flac,
+}
+
 fn load_sample(source: &str, target_sample_rate: u32) -> Result<SampleData, String> {
-    let (reader, remote) = open_source(source)?;
-    let wav =
-        hound::WavReader::new(reader).map_err(|err| format!("Failed to decode WAV: {}", err))?;
-    let spec = wav.spec();
-    let channels = spec.channels.max(1) as usize;
-    let sample_rate = spec.sample_rate;
-    let samples = decode_samples(wav)?;
+    let (mut reader, remote) = open_source(source)?;
+
+    // Peek the header magic so format detection is header-driven (authoritative)
+    // with the file extension as a fallback. The source readers (file or HTTPS
+    // stream) are not seekable, so the consumed bytes are chained back on.
+    let mut magic = [0u8; 4];
+    let filled = read_magic(&mut reader, &mut magic)?;
+    let format = detect_format(source, &magic[..filled])?;
+    let reader = std::io::Cursor::new(magic[..filled].to_vec()).chain(reader);
+
+    let (channels, sample_rate, samples) = match format {
+        AudioFormat::Wav => decode_wav(reader)?,
+        AudioFormat::Flac => decode_flac(reader)?,
+    };
     let data = SampleData::from_interleaved(channels, sample_rate, target_sample_rate, samples);
 
     if data.len() == 0 {
@@ -177,6 +190,50 @@ fn load_sample(source: &str, target_sample_rate: u32) -> Result<SampleData, Stri
     }
 
     Ok(data)
+}
+
+/// Reads up to `buf.len()` header bytes, returning how many were read. Short
+/// reads are tolerated so detection can fall back to the file extension.
+fn read_magic<R: Read>(reader: &mut R, buf: &mut [u8]) -> Result<usize, String> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(err) => return Err(format!("Failed to read audio header: {}", err)),
+        }
+    }
+    Ok(filled)
+}
+
+fn detect_format(source: &str, magic: &[u8]) -> Result<AudioFormat, String> {
+    if magic.starts_with(b"RIFF") {
+        return Ok(AudioFormat::Wav);
+    }
+    if magic.starts_with(b"fLaC") {
+        return Ok(AudioFormat::Flac);
+    }
+
+    match source_extension(source).as_deref() {
+        Some("wav") => Ok(AudioFormat::Wav),
+        Some("flac") => Ok(AudioFormat::Flac),
+        _ => Err(format!(
+            "Unsupported audio format for '{}': expected WAV or FLAC",
+            source
+        )),
+    }
+}
+
+/// Lowercased file extension of `source`, ignoring any URL query/fragment.
+fn source_extension(source: &str) -> Option<String> {
+    let path = source.split(['?', '#']).next().unwrap_or(source);
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let (_, ext) = name.rsplit_once('.')?;
+    if ext.is_empty() {
+        None
+    } else {
+        Some(ext.to_ascii_lowercase())
+    }
 }
 
 fn open_source(source: &str) -> Result<(Box<dyn Read>, bool), String> {
@@ -205,13 +262,18 @@ fn open_source(source: &str) -> Result<(Box<dyn Read>, bool), String> {
     }
 }
 
-fn decode_samples<R: Read>(mut wav: hound::WavReader<R>) -> Result<Vec<f32>, String> {
+/// Decodes a WAV stream into `(channels, sample_rate, interleaved f32 samples)`.
+fn decode_wav<R: Read>(reader: R) -> Result<(usize, u32, Vec<f32>), String> {
+    let mut wav =
+        hound::WavReader::new(reader).map_err(|err| format!("Failed to decode WAV: {}", err))?;
     let spec = wav.spec();
-    match spec.sample_format {
+    let channels = spec.channels.max(1) as usize;
+    let sample_rate = spec.sample_rate;
+    let samples = match spec.sample_format {
         hound::SampleFormat::Float => wav
             .samples::<f32>()
             .map(|sample| sample.map_err(|err| err.to_string()))
-            .collect(),
+            .collect::<Result<Vec<f32>, String>>()?,
         hound::SampleFormat::Int => {
             let shift = spec.bits_per_sample.saturating_sub(1) as u32;
             let scale = (1_i64 << shift) as f32;
@@ -221,9 +283,38 @@ fn decode_samples<R: Read>(mut wav: hound::WavReader<R>) -> Result<Vec<f32>, Str
                         .map(|value| (value as f32 / scale).clamp(-1.0, 1.0))
                         .map_err(|err| err.to_string())
                 })
-                .collect()
+                .collect::<Result<Vec<f32>, String>>()?
         }
-    }
+    };
+    Ok((channels, sample_rate, samples))
+}
+
+/// Decodes a FLAC stream into `(channels, sample_rate, interleaved f32 samples)`,
+/// matching the normalization used for integer WAV so both formats share the
+/// downstream contract.
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_flac<R: Read>(reader: R) -> Result<(usize, u32, Vec<f32>), String> {
+    let mut flac = claxon::FlacReader::new(reader)
+        .map_err(|err| format!("Failed to decode FLAC: {}", err))?;
+    let info = flac.streaminfo();
+    let channels = info.channels.max(1) as usize;
+    let sample_rate = info.sample_rate;
+    let shift = info.bits_per_sample.saturating_sub(1);
+    let scale = (1_i64 << shift) as f32;
+    let samples = flac
+        .samples()
+        .map(|sample| {
+            sample
+                .map(|value| (value as f32 / scale).clamp(-1.0, 1.0))
+                .map_err(|err| err.to_string())
+        })
+        .collect::<Result<Vec<f32>, String>>()?;
+    Ok((channels, sample_rate, samples))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn decode_flac<R: Read>(_reader: R) -> Result<(usize, u32, Vec<f32>), String> {
+    Err("FLAC decoding is not available on wasm32".to_string())
 }
 
 fn resample_channel(input: &[f32], sample_rate: u32, target_sample_rate: u32) -> Vec<f32> {
