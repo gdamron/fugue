@@ -47,7 +47,7 @@ pub struct SamplePlayer {
     inputs: inputs::SamplePlayerInputs,
     outputs: outputs::SamplePlayerOutputs,
     sample: Option<Arc<controls::SampleData>>,
-    frame_index: usize,
+    position: f64,
     playing: bool,
     last_play_input: f32,
     last_play_trigger: u64,
@@ -63,7 +63,7 @@ impl SamplePlayer {
             inputs: inputs::SamplePlayerInputs::new(),
             outputs: outputs::SamplePlayerOutputs::new(),
             sample: None,
-            frame_index: 0,
+            position: 0.0,
             playing: false,
             last_play_input: 0.0,
             last_play_trigger: 0,
@@ -74,7 +74,7 @@ impl SamplePlayer {
     }
 
     fn restart(&mut self) {
-        self.frame_index = 0;
+        self.position = 0.0;
         self.playing = self
             .sample
             .as_ref()
@@ -102,7 +102,7 @@ impl Module for SamplePlayer {
 
         if let Some(sample) = pending_sample {
             self.sample = Some(sample);
-            self.frame_index = 0;
+            self.position = 0.0;
             self.playing = control_play;
             self.pending_start_gate = self.playing;
         }
@@ -115,7 +115,7 @@ impl Module for SamplePlayer {
             self.restart();
         } else if !control_play && self.last_control_play {
             self.playing = false;
-            self.frame_index = 0;
+            self.position = 0.0;
             self.pending_start_gate = false;
         }
 
@@ -133,26 +133,30 @@ impl Module for SamplePlayer {
         }
 
         if let Some(sample) = &self.sample {
-            if self.playing && sample.len() > 0 {
-                let index = self.frame_index.min(sample.len() - 1);
-                left = sample.left[index];
-                right = sample.right[index];
+            let len = sample.len();
+            if self.playing && len > 0 {
+                let (l, r) = sample.sample_at(self.position);
+                left = l;
+                right = r;
 
-                if index + 1 >= sample.len() {
+                let pitch = self.inputs.pitch(self.ctrl.pitch_ratio()).max(1e-4);
+                self.position += pitch as f64;
+
+                if self.position >= len as f64 {
                     end_gate = 1.0;
                     if loop_enabled {
-                        self.frame_index = 0;
+                        // `%=` keeps the fractional read head bounded without
+                        // accumulating drift across loops.
+                        self.position %= len as f64;
                         self.pending_start_gate = true;
                     } else {
                         self.playing = false;
-                        self.frame_index = 0;
+                        self.position = 0.0;
                         if control_play {
                             self.ctrl.set_play(false);
                             self.last_control_play = false;
                         }
                     }
-                } else {
-                    self.frame_index += 1;
                 }
             }
         }
@@ -198,21 +202,27 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn temp_wav_path(name: &str) -> PathBuf {
+    /// Process-unique suffix so parallel tests never collide on a temp path.
+    /// (The resample cache is keyed by path, so a reused path would otherwise
+    /// serve a stale buffer.)
+    fn unique_suffix() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("fugue-{}-{}.wav", name, nanos))
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("{}-{}", nanos, seq)
+    }
+
+    fn temp_wav_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("fugue-{}-{}.wav", name, unique_suffix()))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn temp_flac_path(name: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("fugue-{}-{}.flac", name, nanos))
+        std::env::temp_dir().join(format!("fugue-{}-{}.flac", name, unique_suffix()))
     }
 
     /// Encodes frames to a 16-bit FLAC bitstream for decode tests.
@@ -365,6 +375,101 @@ mod tests {
             "expected resampled buffer, got {}",
             sample_len
         );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Counts how many `process()` calls it takes to reach the end-of-sample
+    /// gate at a given pitch ratio.
+    fn frames_to_end(path: &std::path::Path, pitch_ratio: f32) -> usize {
+        let controls =
+            SamplePlayerControls::new(44_100, Some(path.to_str().unwrap()), Some(true), Some(false))
+                .unwrap();
+        controls
+            .set_control("pitch_ratio", ControlValue::Number(pitch_ratio))
+            .unwrap();
+        let mut player = SamplePlayer::new_with_controls(controls);
+
+        for count in 1..1000 {
+            player.process();
+            if player.get_output("sample_end_gate").unwrap() > 0.5 {
+                return count;
+            }
+        }
+        panic!("sample never reached end gate at pitch {}", pitch_ratio);
+    }
+
+    #[test]
+    fn test_sample_player_pitch_ratio_advances_faster() {
+        let frames: Vec<[f32; 2]> = (0..64).map(|i| [i as f32 / 128.0, 0.0]).collect();
+        let path = write_test_wav(44_100, 1, &frames);
+
+        let normal = frames_to_end(&path, 1.0);
+        let fast = frames_to_end(&path, 2.0);
+
+        // Double the pitch ratio should consume the buffer in roughly half the
+        // process calls.
+        assert!(
+            (fast as f32 - normal as f32 / 2.0).abs() <= 2.0,
+            "expected ~{} frames at 2x, got {} (1x took {})",
+            normal / 2,
+            fast,
+            normal
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_sample_player_pitch_input_overrides_control() {
+        let frames: Vec<[f32; 2]> = (0..64).map(|i| [i as f32 / 128.0, 0.0]).collect();
+        let path = write_test_wav(44_100, 1, &frames);
+
+        let controls = SamplePlayerControls::new(
+            44_100,
+            Some(path.to_str().unwrap()),
+            Some(true),
+            Some(false),
+        )
+        .unwrap();
+        // Control says 1.0, but a connected CV input says 2.0 and must win.
+        controls
+            .set_control("pitch_ratio", ControlValue::Number(1.0))
+            .unwrap();
+        let mut player = SamplePlayer::new_with_controls(controls);
+
+        let mut count = 0;
+        for _ in 0..1000 {
+            player.set_input("pitch", 2.0).unwrap();
+            player.process();
+            player.reset_inputs();
+            count += 1;
+            if player.get_output("sample_end_gate").unwrap() > 0.5 {
+                break;
+            }
+        }
+
+        // 64 frames at 2x ≈ 32 process calls, well under the 64 a 1x read needs.
+        assert!(count <= 40, "expected ~32 frames with pitch CV 2x, got {}", count);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_sample_player_caches_resampled_buffer() {
+        let path = write_test_wav(22_050, 1, &[[0.0, 0.0], [0.5, 0.0], [1.0, 0.0], [0.5, 0.0]]);
+        let source = path.to_str().unwrap();
+
+        let first =
+            SamplePlayerControls::new(44_100, Some(source), Some(false), Some(false)).unwrap();
+        let second =
+            SamplePlayerControls::new(44_100, Some(source), Some(false), Some(false)).unwrap();
+
+        let first_buf = first.shared.lock().unwrap().pending_sample.clone().unwrap();
+        let second_buf = second.shared.lock().unwrap().pending_sample.clone().unwrap();
+
+        // Same source + target rate must hand back the same cached Arc.
+        assert!(Arc::ptr_eq(&first_buf, &second_buf));
 
         let _ = std::fs::remove_file(path);
     }
