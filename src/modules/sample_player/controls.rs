@@ -1,13 +1,16 @@
 //! Thread-safe controls for the SamplePlayer module.
 
+use std::collections::HashMap;
 use std::io::Read;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::atomic::AtomicF32;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 #[derive(Clone)]
 pub struct SamplePlayerControls {
     pub(crate) shared: Arc<Mutex<SamplePlayerShared>>,
+    pitch_ratio: AtomicF32,
     sample_rate: u32,
 }
 
@@ -27,6 +30,13 @@ pub(crate) struct SampleData {
 impl SampleData {
     pub(crate) fn len(&self) -> usize {
         self.left.len().min(self.right.len())
+    }
+
+    /// Reads both channels at fractional frame position `pos` using the shared
+    /// cubic interpolation kernel. Used for audio-rate pitched playback.
+    #[inline]
+    pub(crate) fn sample_at(&self, pos: f64) -> (f32, f32) {
+        (cubic_sample(&self.left, pos), cubic_sample(&self.right, pos))
     }
 
     fn from_interleaved(
@@ -79,6 +89,7 @@ impl SamplePlayerControls {
                 play_trigger: 0,
                 pending_sample: None,
             })),
+            pitch_ratio: AtomicF32::new(1.0),
             sample_rate,
         };
 
@@ -104,10 +115,10 @@ impl SamplePlayerControls {
     }
 
     pub fn set_source(&self, source: &str) -> Result<(), String> {
-        let sample = load_sample(source, self.sample_rate)?;
+        let sample = load_cached_sample(source, self.sample_rate)?;
         let mut shared = self.shared.lock().unwrap();
         shared.source = source.to_string();
-        shared.pending_sample = Some(Arc::new(sample));
+        shared.pending_sample = Some(sample);
         Ok(())
     }
 
@@ -130,6 +141,16 @@ impl SamplePlayerControls {
     pub fn set_loop_enabled(&self, loop_enabled: bool) {
         self.shared.lock().unwrap().loop_enabled = loop_enabled;
     }
+
+    pub fn pitch_ratio(&self) -> f32 {
+        self.pitch_ratio.load()
+    }
+
+    pub fn set_pitch_ratio(&self, pitch_ratio: f32) {
+        // Clamp to a small positive floor so the read head always advances
+        // forward; a zero or negative ratio would stall or reverse playback.
+        self.pitch_ratio.store(pitch_ratio.max(1e-4));
+    }
 }
 
 impl ControlSurface for SamplePlayerControls {
@@ -139,6 +160,12 @@ impl ControlSurface for SamplePlayerControls {
                 .with_default(self.source()),
             ControlMeta::boolean("play", "Start or stop sample playback", self.play()),
             ControlMeta::boolean("loop", "Loop playback when enabled", self.loop_enabled()),
+            ControlMeta::number(
+                "pitch_ratio",
+                "Playback speed / pitch ratio (1.0 = native, 2.0 = up an octave)",
+            )
+            .with_range(0.25, 4.0)
+            .with_default(self.pitch_ratio()),
         ]
     }
 
@@ -147,6 +174,7 @@ impl ControlSurface for SamplePlayerControls {
             "source" => Ok(self.source().into()),
             "play" => Ok(self.play().into()),
             "loop" => Ok(self.loop_enabled().into()),
+            "pitch_ratio" => Ok(self.pitch_ratio().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -156,6 +184,7 @@ impl ControlSurface for SamplePlayerControls {
             "source" => self.set_source(value.as_string()?),
             "play" => Ok(self.set_play(value.as_bool()?)),
             "loop" => Ok(self.set_loop_enabled(value.as_bool()?)),
+            "pitch_ratio" => Ok(self.set_pitch_ratio(value.as_number()?)),
             _ => return Err(format!("Unknown control: {}", key)),
         }
     }
@@ -165,6 +194,38 @@ impl ControlSurface for SamplePlayerControls {
 enum AudioFormat {
     Wav,
     Flac,
+}
+
+/// Process-wide cache of decoded + resampled buffers, keyed by the resolved
+/// source string and the target (engine) sample rate. Decode/resample happens
+/// off the audio thread, so a `Mutex` here is fine; the audio thread only ever
+/// touches the resulting `Arc<SampleData>`. Deduplicates work and memory when
+/// several players reference the same asset at the same rate.
+//
+// NOTE: keyed by the resolved `source` path today. Once FUG-130 lands a stable
+// asset id, the key should switch to `(asset_id, target_rate)`.
+type SampleCache = Mutex<HashMap<(String, u32), Arc<SampleData>>>;
+
+fn sample_cache() -> &'static SampleCache {
+    static CACHE: OnceLock<SampleCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Returns the resampled buffer for `(source, target_sample_rate)`, decoding it
+/// (and caching) only on a miss. A decode error leaves the cache untouched.
+fn load_cached_sample(source: &str, target_sample_rate: u32) -> Result<Arc<SampleData>, String> {
+    let key = (source.to_string(), target_sample_rate);
+
+    if let Some(cached) = sample_cache().lock().unwrap().get(&key) {
+        return Ok(Arc::clone(cached));
+    }
+
+    let sample = Arc::new(load_sample(source, target_sample_rate)?);
+    sample_cache()
+        .lock()
+        .unwrap()
+        .insert(key, Arc::clone(&sample));
+    Ok(sample)
 }
 
 fn load_sample(source: &str, target_sample_rate: u32) -> Result<SampleData, String> {
@@ -330,12 +391,34 @@ fn resample_channel(input: &[f32], sample_rate: u32, target_sample_rate: u32) ->
 
     for index in 0..target_len {
         let source_pos = index as f64 * ratio;
-        let base = source_pos.floor() as usize;
-        let frac = (source_pos - base as f64) as f32;
-        let a = input[base.min(input.len() - 1)];
-        let b = input[(base + 1).min(input.len() - 1)];
-        output.push(a + (b - a) * frac);
+        output.push(cubic_sample(input, source_pos));
     }
 
     output
+}
+
+/// 4-point (Catmull-Rom) cubic Hermite interpolation between `y1` and `y2`,
+/// where `t` is the fractional position in `[0, 1)`.
+#[inline]
+fn cubic_hermite(y0: f32, y1: f32, y2: f32, y3: f32, t: f32) -> f32 {
+    let c0 = y1;
+    let c1 = 0.5 * (y2 - y0);
+    let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+    let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+    ((c3 * t + c2) * t + c1) * t + c0
+}
+
+/// Reads `input` at fractional position `pos`, using the four samples
+/// surrounding `pos` with edge-clamped neighbours. Allocation-free; the shared
+/// kernel for both on-load sample-rate conversion and audio-rate pitch.
+#[inline]
+pub(crate) fn cubic_sample(input: &[f32], pos: f64) -> f32 {
+    let n = input.len();
+    if n == 0 {
+        return 0.0;
+    }
+    let base = pos.floor() as isize;
+    let frac = (pos - base as f64) as f32;
+    let at = |i: isize| input[i.clamp(0, n as isize - 1) as usize];
+    cubic_hermite(at(base - 1), at(base), at(base + 1), at(base + 2), frac)
 }
