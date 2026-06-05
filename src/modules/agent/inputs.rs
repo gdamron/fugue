@@ -1,40 +1,59 @@
 //! Input definitions for the Agent module.
 
+use crate::MAX_BLOCK;
+
 pub const INPUTS: [&str; 2] = ["trigger", "reset"];
 
-#[derive(Debug, Clone, Copy)]
 pub struct AgentInputs {
-    trigger: f32,
-    reset: f32,
+    trigger: [f32; MAX_BLOCK],
+    reset: [f32; MAX_BLOCK],
 }
 
 impl AgentInputs {
     pub fn new() -> Self {
         Self {
-            trigger: 0.0,
-            reset: 0.0,
+            trigger: [0.0; MAX_BLOCK],
+            reset: [0.0; MAX_BLOCK],
         }
     }
 
+    /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
             "trigger" => {
-                self.trigger = value;
+                self.trigger.fill(value);
                 Ok(())
             }
             "reset" => {
-                self.reset = value;
+                self.reset.fill(value);
                 Ok(())
             }
             _ => Err(format!("Unknown input port: {}", port)),
         }
     }
 
-    pub fn trigger(&self) -> f32 {
-        self.trigger
+    /// Mutable block buffer for the indexed input port. Index matches `INPUTS`.
+    #[inline]
+    pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
+        match index {
+            0 => &mut self.trigger,
+            _ => &mut self.reset,
+        }
     }
 
-    pub fn reset(&self) -> f32 {
-        self.reset
+    #[inline]
+    pub fn trigger(&self, i: usize) -> f32 {
+        self.trigger[i]
+    }
+
+    #[inline]
+    pub fn reset(&self, i: usize) -> f32 {
+        self.reset[i]
+    }
+}
+
+impl Default for AgentInputs {
+    fn default() -> Self {
+        Self::new()
     }
 }

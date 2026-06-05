@@ -1,127 +1,126 @@
 //! Input state for the Adsr module.
 
+use crate::MAX_BLOCK;
+
 pub const INPUTS: [&str; 5] = ["gate", "attack", "decay", "sustain", "release"];
 
 pub struct AdsrInputs {
-    gate: f32,
-    attack: f32,
-    decay: f32,
-    sustain: f32,
-    release: f32,
-    attack_active: bool,
-    decay_active: bool,
-    sustain_active: bool,
-    release_active: bool,
+    gate: [f32; MAX_BLOCK],
+    attack: [f32; MAX_BLOCK],
+    decay: [f32; MAX_BLOCK],
+    sustain: [f32; MAX_BLOCK],
+    release: [f32; MAX_BLOCK],
+    attack_connected: bool,
+    decay_connected: bool,
+    sustain_connected: bool,
+    release_connected: bool,
 }
 
 impl AdsrInputs {
     pub fn new() -> Self {
         Self {
-            gate: 0.0,
-            attack: 0.0,
-            decay: 0.0,
-            sustain: 0.0,
-            release: 0.0,
-            attack_active: false,
-            decay_active: false,
-            sustain_active: false,
-            release_active: false,
+            gate: [0.0; MAX_BLOCK],
+            attack: [0.0; MAX_BLOCK],
+            decay: [0.0; MAX_BLOCK],
+            sustain: [0.0; MAX_BLOCK],
+            release: [0.0; MAX_BLOCK],
+            attack_connected: false,
+            decay_connected: false,
+            sustain_connected: false,
+            release_connected: false,
         }
     }
 
+    /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
             "gate" => {
-                self.gate = value;
+                self.gate.fill(value);
                 Ok(())
             }
             "attack" => {
-                self.attack = value.max(0.0);
-                self.attack_active = true;
+                self.attack.fill(value.max(0.0));
+                self.attack_connected = true;
                 Ok(())
             }
             "decay" => {
-                self.decay = value.max(0.0);
-                self.decay_active = true;
+                self.decay.fill(value.max(0.0));
+                self.decay_connected = true;
                 Ok(())
             }
             "sustain" => {
-                self.sustain = value.clamp(0.0, 1.0);
-                self.sustain_active = true;
+                self.sustain.fill(value.clamp(0.0, 1.0));
+                self.sustain_connected = true;
                 Ok(())
             }
             "release" => {
-                self.release = value.max(0.0);
-                self.release_active = true;
+                self.release.fill(value.max(0.0));
+                self.release_connected = true;
                 Ok(())
             }
             _ => Err(format!("Unknown input port: {}", port)),
         }
     }
 
-    pub fn reset(&mut self) {
-        self.attack_active = false;
-        self.decay_active = false;
-        self.sustain_active = false;
-        self.release_active = false;
+    /// Mutable block buffer for the indexed input port. Index matches `INPUTS`.
+    #[inline]
+    pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
+        match index {
+            0 => &mut self.gate,
+            1 => &mut self.attack,
+            2 => &mut self.decay,
+            3 => &mut self.sustain,
+            _ => &mut self.release,
+        }
     }
 
-    /// Hot-path indexed setter. Index must match `INPUTS` order.
-    #[inline]
-    pub fn set_by_index(&mut self, index: usize, value: f32) {
+    /// Records whether an input port is fed by an upstream connection.
+    pub fn set_connected(&mut self, index: usize, connected: bool) {
         match index {
-            0 => self.gate = value,
-            1 => {
-                self.attack = value.max(0.0);
-                self.attack_active = true;
-            }
-            2 => {
-                self.decay = value.max(0.0);
-                self.decay_active = true;
-            }
-            3 => {
-                self.sustain = value.clamp(0.0, 1.0);
-                self.sustain_active = true;
-            }
-            4 => {
-                self.release = value.max(0.0);
-                self.release_active = true;
-            }
+            1 => self.attack_connected = connected,
+            2 => self.decay_connected = connected,
+            3 => self.sustain_connected = connected,
+            4 => self.release_connected = connected,
             _ => {}
         }
     }
 
-    pub fn gate(&self) -> f32 {
-        self.gate
+    #[inline]
+    pub fn gate(&self, i: usize) -> f32 {
+        self.gate[i]
     }
 
-    pub fn attack(&self, control: f32) -> f32 {
-        if self.attack_active {
-            self.attack
+    #[inline]
+    pub fn attack(&self, i: usize, control: f32) -> f32 {
+        if self.attack_connected {
+            self.attack[i].max(0.0)
         } else {
             control
         }
     }
 
-    pub fn decay(&self, control: f32) -> f32 {
-        if self.decay_active {
-            self.decay
+    #[inline]
+    pub fn decay(&self, i: usize, control: f32) -> f32 {
+        if self.decay_connected {
+            self.decay[i].max(0.0)
         } else {
             control
         }
     }
 
-    pub fn sustain(&self, control: f32) -> f32 {
-        if self.sustain_active {
-            self.sustain
+    #[inline]
+    pub fn sustain(&self, i: usize, control: f32) -> f32 {
+        if self.sustain_connected {
+            self.sustain[i].clamp(0.0, 1.0)
         } else {
             control
         }
     }
 
-    pub fn release(&self, control: f32) -> f32 {
-        if self.release_active {
-            self.release
+    #[inline]
+    pub fn release(&self, i: usize, control: f32) -> f32 {
+        if self.release_connected {
+            self.release[i].max(0.0)
         } else {
             control
         }

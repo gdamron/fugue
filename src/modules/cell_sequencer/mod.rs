@@ -55,7 +55,6 @@ pub struct CellSequencer {
     cached_frequency_base: u8,
     inputs: inputs::CellSequencerInputs,
     outputs: outputs::CellSequencerOutputs,
-    last_processed_sample: u64,
 }
 
 impl CellSequencer {
@@ -92,7 +91,6 @@ impl CellSequencer {
             cached_frequency_base: controls.base_note(),
             inputs: inputs::CellSequencerInputs::new(),
             outputs: outputs::CellSequencerOutputs::new(),
-            last_processed_sample: 0,
         }
     }
 
@@ -241,13 +239,14 @@ impl CellSequencer {
         self.active_note = step.note;
     }
 
-    fn effective_selected_sequence(&self) -> usize {
-        self.inputs.select_sequence(self.ctrl.selected_sequence())
+    fn effective_selected_sequence(&self, i: usize) -> usize {
+        self.inputs
+            .select_sequence(i, self.ctrl.selected_sequence())
     }
 
-    fn effective_wait_for_cycle_end(&self) -> bool {
+    fn effective_wait_for_cycle_end(&self, i: usize) -> bool {
         self.inputs
-            .wait_for_cycle_end(self.ctrl.wait_for_cycle_end())
+            .wait_for_cycle_end(i, self.ctrl.wait_for_cycle_end())
     }
 
     fn apply_sequence_change(&mut self, sequence_index: usize) {
@@ -265,7 +264,7 @@ impl CellSequencer {
         self.ctrl.set_loop_count(0);
     }
 
-    fn request_sequence_change(&mut self, sequence_index: usize) {
+    fn request_sequence_change(&mut self, i: usize, sequence_index: usize) {
         if self.sequences.is_empty() {
             self.current_sequence = 0;
             self.pending_sequence = None;
@@ -282,7 +281,7 @@ impl CellSequencer {
         self.ctrl.set_selected_sequence(sequence_index);
         self.last_control_selected_sequence = sequence_index;
 
-        if self.effective_wait_for_cycle_end() {
+        if self.effective_wait_for_cycle_end(i) {
             self.pending_sequence = Some(sequence_index);
         } else {
             self.apply_sequence_change(sequence_index);
@@ -319,7 +318,7 @@ impl CellSequencer {
         freq
     }
 
-    fn update_outputs(&mut self) {
+    fn update_outputs(&mut self, i: usize) {
         let frequency = self.frequency_for_active_note();
         let gate = if self.gate_continuous || self.gate_samples_remaining > 0 {
             1.0
@@ -327,6 +326,7 @@ impl CellSequencer {
             0.0
         };
         self.outputs.set(
+            i,
             frequency,
             gate,
             self.current_step as f32,
@@ -334,25 +334,25 @@ impl CellSequencer {
         );
     }
 
-    fn process_sample(&mut self) {
+    fn process_sample(&mut self, i: usize) {
         self.sync_sequences_from_controls();
 
         let selected_sequence =
-            normalize_sequence_index(self.effective_selected_sequence(), self.sequences.len());
+            normalize_sequence_index(self.effective_selected_sequence(i), self.sequences.len());
         if selected_sequence != self.last_control_selected_sequence {
-            self.request_sequence_change(selected_sequence);
+            self.request_sequence_change(i, selected_sequence);
         }
 
         let advance_count = self.ctrl.advance_request_count();
         let advance_rising = advance_count != self.last_advance_request_count;
         self.last_advance_request_count = advance_count;
 
-        let gate_rising = self.inputs.gate() > 0.5 && self.last_gate_in <= 0.5;
-        let reset_rising = self.inputs.reset_gate() > 0.5 && self.last_reset_in <= 0.5;
-        let next_rising = (self.inputs.next_sequence() > 0.5 && self.last_next_sequence_in <= 0.5)
+        let gate_rising = self.inputs.gate(i) > 0.5 && self.last_gate_in <= 0.5;
+        let reset_rising = self.inputs.reset_gate(i) > 0.5 && self.last_reset_in <= 0.5;
+        let next_rising = (self.inputs.next_sequence(i) > 0.5 && self.last_next_sequence_in <= 0.5)
             || advance_rising;
         let previous_rising =
-            self.inputs.previous_sequence() > 0.5 && self.last_previous_sequence_in <= 0.5;
+            self.inputs.previous_sequence(i) > 0.5 && self.last_previous_sequence_in <= 0.5;
 
         if reset_rising {
             self.current_step = 0;
@@ -363,12 +363,12 @@ impl CellSequencer {
 
         if next_rising {
             let target = self.advance_sequence_offset(1);
-            self.request_sequence_change(target);
+            self.request_sequence_change(i, target);
         }
 
         if previous_rising {
             let target = self.advance_sequence_offset(-1);
-            self.request_sequence_change(target);
+            self.request_sequence_change(i, target);
         }
 
         if gate_rising {
@@ -409,12 +409,12 @@ impl CellSequencer {
             self.gate_samples_remaining -= 1;
         }
 
-        self.update_outputs();
+        self.update_outputs(i);
 
-        self.last_gate_in = self.inputs.gate();
-        self.last_reset_in = self.inputs.reset_gate();
-        self.last_next_sequence_in = self.inputs.next_sequence();
-        self.last_previous_sequence_in = self.inputs.previous_sequence();
+        self.last_gate_in = self.inputs.gate(i);
+        self.last_reset_in = self.inputs.reset_gate(i);
+        self.last_next_sequence_in = self.inputs.next_sequence(i);
+        self.last_previous_sequence_in = self.inputs.previous_sequence(i);
     }
 }
 
@@ -423,8 +423,10 @@ impl Module for CellSequencer {
         "CellSequencer"
     }
 
-    fn process(&mut self) -> bool {
-        self.process_sample();
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            self.process_sample(i);
+        }
         true
     }
 
@@ -440,20 +442,20 @@ impl Module for CellSequencer {
         self.inputs.set(port, value)
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
+    fn set_input_connected(&mut self, index: usize, connected: bool) {
+        self.inputs.set_connected(index, connected);
+    }
+
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
-
-    fn reset_inputs(&mut self) {
-        self.inputs.reset();
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -606,10 +608,9 @@ mod tests {
 
     fn pulse(module: &mut CellSequencer, port: &str) {
         module.set_input(port, 1.0).unwrap();
-        module.process();
-        module.reset_inputs();
+        module.process(1);
         module.set_input(port, 0.0).unwrap();
-        module.process();
+        module.process(1);
     }
 
     fn advance_gate(module: &mut CellSequencer) {
@@ -645,7 +646,7 @@ mod tests {
         assert_eq!(seq.get_output("gate").unwrap(), 1.0);
 
         for _ in 0..2 {
-            seq.process();
+            seq.process(1);
         }
         assert_eq!(
             seq.get_output("gate").unwrap(),
@@ -689,11 +690,11 @@ mod tests {
         for _ in 0..2 {
             seq.set_input("gate", 1.0).unwrap();
             for _ in 0..HIGH {
-                seq.process();
+                seq.process(1);
             }
             seq.set_input("gate", 0.0).unwrap();
             for _ in 0..LOW {
-                seq.process();
+                seq.process(1);
             }
         }
         assert_eq!(seq.step_duration_samples as usize, PERIOD);
@@ -704,7 +705,7 @@ mod tests {
         for cycle in 0..2 {
             seq.set_input("gate", 1.0).unwrap();
             for sample in 0..HIGH {
-                seq.process();
+                seq.process(1);
                 assert_eq!(
                     seq.get_output("gate").unwrap(),
                     1.0,
@@ -716,7 +717,7 @@ mod tests {
             }
             seq.set_input("gate", 0.0).unwrap();
             for sample in 0..LOW {
-                seq.process();
+                seq.process(1);
                 assert_eq!(
                     seq.get_output("gate").unwrap(),
                     1.0,
@@ -820,20 +821,17 @@ mod tests {
             ]);
 
         advance_gate(&mut seq);
-        seq.reset_inputs();
         seq.set_input("wait_for_cycle_end", 1.0).unwrap();
         seq.set_input("next_sequence", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         assert_eq!(seq.current_sequence(), 0);
         assert_eq!(seq.pending_sequence, Some(1));
 
-        seq.reset_inputs();
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
-        seq.reset_inputs();
+        seq.process(1);
         seq.set_input("gate", 0.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         assert_eq!(seq.current_sequence(), 0);
 
@@ -861,11 +859,11 @@ mod tests {
         controls
             .set_control("selected_sequence", ControlValue::Number(1.0))
             .unwrap();
-        seq.process();
+        seq.process(1);
         controls
             .set_control("selected_sequence", ControlValue::Number(2.0))
             .unwrap();
-        seq.process();
+        seq.process(1);
 
         assert_eq!(seq.pending_sequence, Some(2));
 
@@ -917,7 +915,7 @@ mod tests {
         controls
             .set_control("advance", ControlValue::Number(1.0))
             .unwrap();
-        seq.process();
+        seq.process(1);
 
         assert_eq!(seq.current_sequence(), 1);
         assert_eq!(controls.current_cell(), 1);

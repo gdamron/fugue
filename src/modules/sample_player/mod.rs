@@ -53,7 +53,6 @@ pub struct SamplePlayer {
     last_play_trigger: u64,
     last_control_play: bool,
     pending_start_gate: bool,
-    last_processed_sample: u64,
 }
 
 impl SamplePlayer {
@@ -69,7 +68,6 @@ impl SamplePlayer {
             last_play_trigger: 0,
             last_control_play: false,
             pending_start_gate: false,
-            last_processed_sample: 0,
         }
     }
 
@@ -89,7 +87,8 @@ impl Module for SamplePlayer {
         "SamplePlayer"
     }
 
-    fn process(&mut self) -> bool {
+    fn process(&mut self, frames: usize) -> bool {
+        // Control-rate state read once per block.
         let (control_play, play_trigger, loop_control, pending_sample) = {
             let mut shared = self.ctrl.shared.lock().unwrap();
             (
@@ -107,62 +106,64 @@ impl Module for SamplePlayer {
             self.pending_start_gate = self.playing;
         }
 
-        let gate_rising = self.inputs.play() > 0.5 && self.last_play_input <= 0.5;
-        if play_trigger != self.last_play_trigger {
-            self.last_play_trigger = play_trigger;
-            self.restart();
-        } else if gate_rising {
-            self.restart();
-        } else if !control_play && self.last_control_play {
-            self.playing = false;
-            self.position = 0.0;
-            self.pending_start_gate = false;
-        }
+        for i in 0..frames {
+            let gate_rising = self.inputs.play(i) > 0.5 && self.last_play_input <= 0.5;
+            if play_trigger != self.last_play_trigger {
+                self.last_play_trigger = play_trigger;
+                self.restart();
+            } else if gate_rising {
+                self.restart();
+            } else if !control_play && self.last_control_play {
+                self.playing = false;
+                self.position = 0.0;
+                self.pending_start_gate = false;
+            }
 
-        self.last_control_play = control_play;
+            self.last_control_play = control_play;
 
-        let loop_enabled = self.inputs.loop_enabled(loop_control);
-        let mut start_gate = 0.0;
-        let mut end_gate = 0.0;
-        let mut left = 0.0;
-        let mut right = 0.0;
+            let loop_enabled = self.inputs.loop_enabled(i, loop_control);
+            let mut start_gate = 0.0;
+            let mut end_gate = 0.0;
+            let mut left = 0.0;
+            let mut right = 0.0;
 
-        if self.pending_start_gate && self.playing {
-            start_gate = 1.0;
-            self.pending_start_gate = false;
-        }
+            if self.pending_start_gate && self.playing {
+                start_gate = 1.0;
+                self.pending_start_gate = false;
+            }
 
-        if let Some(sample) = &self.sample {
-            let len = sample.len();
-            if self.playing && len > 0 {
-                let (l, r) = sample.sample_at(self.position);
-                left = l;
-                right = r;
+            if let Some(sample) = &self.sample {
+                let len = sample.len();
+                if self.playing && len > 0 {
+                    let (l, r) = sample.sample_at(self.position);
+                    left = l;
+                    right = r;
 
-                let pitch = self.inputs.pitch(self.ctrl.pitch_ratio()).max(1e-4);
-                self.position += pitch as f64;
+                    let pitch = self.inputs.pitch(i, self.ctrl.pitch_ratio()).max(1e-4);
+                    self.position += pitch as f64;
 
-                if self.position >= len as f64 {
-                    end_gate = 1.0;
-                    if loop_enabled {
-                        // `%=` keeps the fractional read head bounded without
-                        // accumulating drift across loops.
-                        self.position %= len as f64;
-                        self.pending_start_gate = true;
-                    } else {
-                        self.playing = false;
-                        self.position = 0.0;
-                        if control_play {
-                            self.ctrl.set_play(false);
-                            self.last_control_play = false;
+                    if self.position >= len as f64 {
+                        end_gate = 1.0;
+                        if loop_enabled {
+                            // `%=` keeps the fractional read head bounded without
+                            // accumulating drift across loops.
+                            self.position %= len as f64;
+                            self.pending_start_gate = true;
+                        } else {
+                            self.playing = false;
+                            self.position = 0.0;
+                            if control_play {
+                                self.ctrl.set_play(false);
+                                self.last_control_play = false;
+                            }
                         }
                     }
                 }
             }
-        }
 
-        self.outputs.set(left, right, start_gate, end_gate);
-        self.last_play_input = self.inputs.play();
+            self.outputs.set(i, left, right, start_gate, end_gate);
+            self.last_play_input = self.inputs.play(i);
+        }
         true
     }
 
@@ -174,6 +175,14 @@ impl Module for SamplePlayer {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.inputs.set(port, value)
     }
@@ -182,16 +191,8 @@ impl Module for SamplePlayer {
         self.outputs.get(port)
     }
 
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
-
-    fn reset_inputs(&mut self) {
-        self.inputs.reset();
+    fn set_input_connected(&mut self, index: usize, connected: bool) {
+        self.inputs.set_connected(index, connected);
     }
 }
 
@@ -289,15 +290,15 @@ mod tests {
         controls
             .set_control("play", ControlValue::Bool(true))
             .unwrap();
-        player.process();
+        player.process(1);
         assert_eq!(player.get_output("sample_start_gate").unwrap(), 1.0);
         assert!(player.get_output("audio_left").unwrap() > 0.2);
         assert!(player.get_output("audio_right").unwrap() < -0.2);
 
-        player.process();
+        player.process(1);
         assert_eq!(player.get_output("sample_start_gate").unwrap(), 0.0);
 
-        player.process();
+        player.process(1);
         assert_eq!(player.get_output("sample_end_gate").unwrap(), 1.0);
         assert_eq!(controls.play(), false);
 
@@ -319,10 +320,10 @@ mod tests {
         controls.set_play(true);
         player.set_input("loop", 1.0).unwrap();
 
-        player.process();
-        player.process();
+        player.process(1);
+        player.process(1);
         assert_eq!(player.get_output("sample_end_gate").unwrap(), 1.0);
-        player.process();
+        player.process(1);
         assert_eq!(player.get_output("sample_start_gate").unwrap(), 1.0);
         assert_eq!(controls.play(), true);
 
@@ -346,7 +347,7 @@ mod tests {
         assert_eq!(controls.source(), path.to_string_lossy());
 
         controls.set_play(true);
-        player.process();
+        player.process(1);
         assert!(player.get_output("audio_left").unwrap() > 0.25);
 
         let _ = std::fs::remove_file(path);
@@ -391,7 +392,7 @@ mod tests {
         let mut player = SamplePlayer::new_with_controls(controls);
 
         for count in 1..1000 {
-            player.process();
+            player.process(1);
             if player.get_output("sample_end_gate").unwrap() > 0.5 {
                 return count;
             }
@@ -441,8 +442,7 @@ mod tests {
         let mut count = 0;
         for _ in 0..1000 {
             player.set_input("pitch", 2.0).unwrap();
-            player.process();
-            player.reset_inputs();
+            player.process(1);
             count += 1;
             if player.get_output("sample_end_gate").unwrap() > 0.5 {
                 break;

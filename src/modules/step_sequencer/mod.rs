@@ -222,9 +222,6 @@ pub struct StepSequencer {
 
     // Cached outputs
     outputs: outputs::StepSequencerOutputs,
-
-    // Pull-based processing
-    last_processed_sample: u64,
 }
 
 impl StepSequencer {
@@ -243,7 +240,6 @@ impl StepSequencer {
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
             outputs: outputs::StepSequencerOutputs::new(),
-            last_processed_sample: 0,
         }
     }
 
@@ -262,7 +258,6 @@ impl StepSequencer {
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
             outputs: outputs::StepSequencerOutputs::new(),
-            last_processed_sample: 0,
         }
     }
 
@@ -383,10 +378,10 @@ impl StepSequencer {
     }
 
     /// Processes one sample.
-    fn process_sample(&mut self) {
+    fn process_sample(&mut self, i: usize) {
         // Detect rising edges
-        let gate_rising = self.inputs.gate() > 0.5 && self.last_gate_in <= 0.5;
-        let reset_rising = self.inputs.reset() > 0.5 && self.last_reset_in <= 0.5;
+        let gate_rising = self.inputs.gate(i) > 0.5 && self.last_gate_in <= 0.5;
+        let reset_rising = self.inputs.reset(i) > 0.5 && self.last_reset_in <= 0.5;
 
         // Handle reset (takes priority)
         if reset_rising {
@@ -421,6 +416,7 @@ impl StepSequencer {
 
         // Update cached outputs
         self.outputs.set(
+            i,
             self.active_note
                 .map(|offset| self.note_frequency(offset))
                 .unwrap_or(0.0),
@@ -433,8 +429,8 @@ impl StepSequencer {
         );
 
         // Store for edge detection
-        self.last_gate_in = self.inputs.gate();
-        self.last_reset_in = self.inputs.reset();
+        self.last_gate_in = self.inputs.gate(i);
+        self.last_reset_in = self.inputs.reset(i);
     }
 }
 
@@ -443,8 +439,10 @@ impl Module for StepSequencer {
         "StepSequencer"
     }
 
-    fn process(&mut self) -> bool {
-        self.process_sample();
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            self.process_sample(i);
+        }
         true
     }
 
@@ -460,16 +458,16 @@ impl Module for StepSequencer {
         self.inputs.set(port, value)
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -686,7 +684,7 @@ mod tests {
 
         // First gate - should stay at step 0 and output frequency
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         let freq = seq.get_output("frequency").unwrap();
         assert!(freq > 0.0, "Should have frequency at step 0 (note)");
@@ -694,11 +692,11 @@ mod tests {
 
         // Gate low
         seq.set_input("gate", 0.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         // Second gate - advance to step 1 (rest)
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         assert_eq!(seq.current_step(), 1);
         let freq = seq.get_output("frequency").unwrap();
@@ -714,11 +712,11 @@ mod tests {
         // Advance through all steps
         for expected_step in 0..8 {
             seq.set_input("gate", 1.0).unwrap();
-            seq.process();
+            seq.process(1);
             assert_eq!(seq.current_step(), expected_step % 4);
 
             seq.set_input("gate", 0.0).unwrap();
-            seq.process();
+            seq.process(1);
         }
     }
 
@@ -731,16 +729,16 @@ mod tests {
         // Advance a few steps
         for _ in 0..5 {
             seq.set_input("gate", 1.0).unwrap();
-            seq.process();
+            seq.process(1);
             seq.set_input("gate", 0.0).unwrap();
-            seq.process();
+            seq.process(1);
         }
 
         assert!(seq.current_step() > 0);
 
         // Reset
         seq.set_input("reset", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         assert_eq!(seq.current_step(), 0);
     }
@@ -757,7 +755,7 @@ mod tests {
 
         // Trigger first step
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
         seq.set_input("gate", 0.0).unwrap();
 
         // Gate should be high initially
@@ -765,7 +763,7 @@ mod tests {
 
         // After some samples, gate should still be high (within 50% of step duration)
         for _ in 0..100 {
-            seq.process();
+            seq.process(1);
         }
     }
 
@@ -777,14 +775,14 @@ mod tests {
             .with_pattern(vec![Step::note(0), Step::held(), Step::rest()]);
 
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
         let expected = Note::new(DEFAULT_BASE_NOTE).frequency();
         assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
         assert_eq!(seq.get_output("gate").unwrap(), 1.0);
 
         seq.set_input("gate", 0.0).unwrap();
         for _ in 0..3 {
-            seq.process();
+            seq.process(1);
         }
         assert_eq!(
             seq.get_output("gate").unwrap(),
@@ -793,15 +791,15 @@ mod tests {
         );
 
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
         assert_eq!(seq.current_step(), 1);
         assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
         assert_eq!(seq.get_output("gate").unwrap(), 1.0);
 
         seq.set_input("gate", 0.0).unwrap();
-        seq.process();
+        seq.process(1);
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
         assert_eq!(seq.current_step(), 2);
         assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
         assert_eq!(seq.get_output("gate").unwrap(), 0.0);
@@ -814,7 +812,7 @@ mod tests {
             .with_pattern(vec![Step::held()]);
 
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
         assert_eq!(seq.get_output("gate").unwrap(), 0.0);
@@ -828,17 +826,17 @@ mod tests {
             .with_pattern(vec![Step::note(0), Step::note(0)]);
 
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
         assert_eq!(seq.get_output("gate").unwrap(), 1.0);
 
         seq.set_input("gate", 0.0).unwrap();
         for _ in 0..4 {
-            seq.process();
+            seq.process(1);
         }
         assert_eq!(seq.get_output("gate").unwrap(), 0.0);
 
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
         assert_eq!(seq.current_step(), 1);
         assert_eq!(seq.get_output("gate").unwrap(), 1.0);
     }
@@ -866,7 +864,7 @@ mod tests {
         let mut seq = StepSequencer::new(44100).with_steps(4).with_pattern(vec![]); // Empty pattern
 
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         // Should treat as rests
         assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
@@ -881,11 +879,11 @@ mod tests {
 
         for expected in 0..4 {
             seq.set_input("gate", 1.0).unwrap();
-            seq.process();
+            seq.process(1);
             assert_eq!(seq.get_output("step").unwrap(), expected as f32);
 
             seq.set_input("gate", 0.0).unwrap();
-            seq.process();
+            seq.process(1);
         }
     }
 
@@ -958,7 +956,7 @@ mod tests {
             .with_pattern(vec![Step::note(-12)]); // Should be C3
 
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         let freq = seq.get_output("frequency").unwrap();
         let expected = Note::new(48).frequency(); // C3
@@ -1012,7 +1010,7 @@ mod tests {
         // Set base_note via control and verify it affects output
         seq.set_control("base_note", 60.0).unwrap();
         seq.set_input("gate", 1.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         let freq = seq.get_output("frequency").unwrap();
         let expected = Note::new(60).frequency();
@@ -1020,7 +1018,7 @@ mod tests {
 
         // Change base_note and verify output changes
         seq.set_control("base_note", 72.0).unwrap();
-        seq.process();
+        seq.process(1);
 
         let freq = seq.get_output("frequency").unwrap();
         let expected = Note::new(72).frequency();

@@ -94,7 +94,6 @@ pub struct MelodyGenerator {
     last_gate: f32,
     // Cached outputs (computed in process())
     outputs: outputs::MelodyOutputs,
-    last_processed_sample: u64, // For pull-based processing
 }
 
 impl MelodyGenerator {
@@ -111,7 +110,6 @@ impl MelodyGenerator {
             inputs: inputs::MelodyInputs::new(),
             last_gate: 0.0,
             outputs: outputs::MelodyOutputs::new(current_note.frequency()),
-            last_processed_sample: 0,
         }
     }
 
@@ -152,22 +150,24 @@ impl Module for MelodyGenerator {
         "MelodyGenerator"
     }
 
-    fn process(&mut self) -> bool {
-        // Detect rising edge of gate input
-        let gate_high = self.inputs.gate() > 0.5;
-        let was_low = self.last_gate <= 0.5;
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            // Detect rising edge of gate input
+            let gate = self.inputs.gate(i);
+            let gate_high = gate > 0.5;
+            let was_low = self.last_gate <= 0.5;
 
-        if gate_high && was_low {
-            // Rising edge: select a new note
-            self.current_note = self.next_note();
+            if gate_high && was_low {
+                // Rising edge: select a new note
+                self.current_note = self.next_note();
+            }
+
+            // Cache outputs
+            self.outputs.set(i, self.current_note.frequency(), gate);
+
+            // Remember last gate state for edge detection
+            self.last_gate = gate;
         }
-
-        // Cache outputs
-        self.outputs
-            .set(self.current_note.frequency(), self.inputs.gate());
-
-        // Remember last gate state for edge detection
-        self.last_gate = self.inputs.gate();
 
         true
     }
@@ -180,30 +180,20 @@ impl Module for MelodyGenerator {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
-    }
-
-    #[inline]
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        self.inputs.set_by_index(index, value);
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        self.outputs.get_by_index(index)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

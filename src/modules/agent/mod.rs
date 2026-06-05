@@ -58,7 +58,6 @@ impl ModuleFactory for AgentFactory {
                 inputs: inputs::AgentInputs::new(),
                 last_trigger: 0.0,
                 last_reset: 0.0,
-                last_processed_sample: 0,
             })),
             handles: vec![(
                 "controls".to_string(),
@@ -107,7 +106,6 @@ pub struct AgentModule {
     inputs: inputs::AgentInputs,
     last_trigger: f32,
     last_reset: f32,
-    last_processed_sample: u64,
 }
 
 impl Module for AgentModule {
@@ -115,15 +113,19 @@ impl Module for AgentModule {
         "Agent"
     }
 
-    fn process(&mut self) -> bool {
-        if self.inputs.trigger() > 0.5 && self.last_trigger <= 0.5 {
-            self.controls.increment_trigger();
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            let trigger = self.inputs.trigger(i);
+            let reset = self.inputs.reset(i);
+            if trigger > 0.5 && self.last_trigger <= 0.5 {
+                self.controls.increment_trigger();
+            }
+            if reset > 0.5 && self.last_reset <= 0.5 {
+                self.controls.increment_reset();
+            }
+            self.last_trigger = trigger;
+            self.last_reset = reset;
         }
-        if self.inputs.reset() > 0.5 && self.last_reset <= 0.5 {
-            self.controls.increment_reset();
-        }
-        self.last_trigger = self.inputs.trigger();
-        self.last_reset = self.inputs.reset();
         true
     }
 
@@ -135,20 +137,20 @@ impl Module for AgentModule {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, _index: usize) -> &[f32] {
+        &[]
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         Err(format!("Unknown output port: {}", port))
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

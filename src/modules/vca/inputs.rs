@@ -1,61 +1,66 @@
 //! Input state for the Vca module.
 
+use crate::MAX_BLOCK;
+
 pub const INPUTS: [&str; 2] = ["audio", "cv"];
 
 pub struct VcaInputs {
-    audio: f32,
-    cv: f32,
-    cv_active: bool,
+    audio: [f32; MAX_BLOCK],
+    cv: [f32; MAX_BLOCK],
+    cv_connected: bool,
 }
 
 impl VcaInputs {
     pub fn new() -> Self {
         Self {
-            audio: 0.0,
-            cv: 1.0,
-            cv_active: false,
+            audio: [0.0; MAX_BLOCK],
+            cv: [1.0; MAX_BLOCK],
+            cv_connected: false,
         }
     }
 
+    /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
             "audio" => {
-                self.audio = value;
+                self.audio.fill(value);
                 Ok(())
             }
             "cv" => {
-                self.cv = value.clamp(0.0, 1.0);
-                self.cv_active = true;
+                self.cv.fill(value.clamp(0.0, 1.0));
+                self.cv_connected = true;
                 Ok(())
             }
             _ => Err(format!("Unknown input port: {}", port)),
         }
     }
 
-    pub fn reset(&mut self) {
-        self.cv_active = false;
-    }
-
-    /// Hot-path indexed setter. Index must match `INPUTS` order.
+    /// Mutable block buffer for the indexed input port. Index matches `INPUTS`.
     #[inline]
-    pub fn set_by_index(&mut self, index: usize, value: f32) {
+    pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
         match index {
-            0 => self.audio = value,
-            1 => {
-                self.cv = value.clamp(0.0, 1.0);
-                self.cv_active = true;
-            }
-            _ => {}
+            0 => &mut self.audio,
+            _ => &mut self.cv,
         }
     }
 
-    pub fn audio(&self) -> f32 {
-        self.audio
+    /// Records whether an input port is fed by an upstream connection.
+    pub fn set_connected(&mut self, index: usize, connected: bool) {
+        if index == 1 {
+            self.cv_connected = connected;
+        }
     }
 
-    pub fn cv(&self, control: f32) -> f32 {
-        if self.cv_active {
-            self.cv
+    #[inline]
+    pub fn audio(&self, i: usize) -> f32 {
+        self.audio[i]
+    }
+
+    /// Effective CV at frame `i`: the connected signal (clamped) or the control default.
+    #[inline]
+    pub fn cv(&self, i: usize, control: f32) -> f32 {
+        if self.cv_connected {
+            self.cv[i].clamp(0.0, 1.0)
         } else {
             control
         }

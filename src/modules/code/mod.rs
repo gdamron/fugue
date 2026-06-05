@@ -47,7 +47,6 @@ impl ModuleFactory for CodeFactory {
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(CodeModule {
                 controls: controls.clone(),
-                last_processed_sample: 0,
             })),
             handles: vec![(
                 "controls".to_string(),
@@ -94,7 +93,6 @@ fn parse_config(config: &serde_json::Value) -> Result<CodeConfig, Box<dyn std::e
 /// wasm builds.
 pub struct CodeModule {
     controls: CodeControls,
-    last_processed_sample: u64,
 }
 
 impl Module for CodeModule {
@@ -102,7 +100,7 @@ impl Module for CodeModule {
         "Code"
     }
 
-    fn process(&mut self) -> bool {
+    fn process(&mut self, _frames: usize) -> bool {
         let _ = &self.controls;
         true
     }
@@ -115,20 +113,20 @@ impl Module for CodeModule {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, _index: usize) -> &mut [f32] {
+        &mut []
+    }
+
+    fn output_block(&self, _index: usize) -> &[f32] {
+        &[]
+    }
+
     fn set_input(&mut self, port: &str, _value: f32) -> Result<(), String> {
         Err(format!("Unknown input port: {}", port))
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         Err(format!("Unknown output port: {}", port))
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

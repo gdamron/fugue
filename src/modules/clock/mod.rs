@@ -68,7 +68,6 @@ pub struct Clock {
     beat_in_measure: u32,
     // Cached output for modular routing
     outputs: outputs::ClockOutputs,
-    last_processed_sample: u64, // For pull-based processing
 }
 
 impl Clock {
@@ -86,10 +85,9 @@ impl Clock {
             measure: 0,
             beat_in_measure: 0,
             outputs: outputs::ClockOutputs::new(),
-            last_processed_sample: 0,
         };
         clock.update_signal();
-        clock.update_cached_outputs();
+        clock.update_cached_outputs(0);
         clock
     }
 
@@ -97,7 +95,7 @@ impl Clock {
     pub fn with_time_signature(mut self, beats_per_measure: u32) -> Self {
         self.beats_per_measure = beats_per_measure;
         self.update_signal();
-        self.update_cached_outputs();
+        self.update_cached_outputs(0);
         self
     }
 
@@ -114,7 +112,7 @@ impl Clock {
         self.beat_in_measure = beat_in_measure;
     }
 
-    fn update_cached_outputs(&mut self) {
+    fn update_cached_outputs(&mut self, i: usize) {
         let samples_per_beat = self.ctrl.samples_per_beat(self.sample_rate);
         let gate_duration = self.ctrl.gate_duration();
         let sample_count = self.sample_count;
@@ -137,6 +135,7 @@ impl Clock {
 
         let beat = samples_per_beat;
         self.outputs.set_all(
+            i,
             pwm(beat),       // gate: beat rate
             pwm(beat * 4.0), // gate_d4: whole note (¼× beat rate)
             pwm(beat * 2.0), // gate_d2: half note (½× beat rate)
@@ -145,11 +144,16 @@ impl Clock {
         );
     }
 
-    /// Advances the clock by one sample.
-    pub fn tick(&mut self) {
+    /// Advances the clock by one sample, storing gate outputs at frame `i`.
+    fn advance(&mut self, i: usize) {
         self.sample_count += 1;
         self.update_signal();
-        self.update_cached_outputs();
+        self.update_cached_outputs(i);
+    }
+
+    /// Advances the clock by one sample (writes gate outputs to frame 0).
+    pub fn tick(&mut self) {
+        self.advance(0);
     }
 
     /// Returns the total number of samples elapsed since the clock started.
@@ -183,8 +187,10 @@ impl Module for Clock {
         "Clock"
     }
 
-    fn process(&mut self) -> bool {
-        self.tick();
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            self.advance(i);
+        }
         true
     }
 
@@ -196,30 +202,21 @@ impl Module for Clock {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, _index: usize) -> &mut [f32] {
+        // Clock has no inputs.
+        &mut []
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, _value: f32) -> Result<(), String> {
         inputs::ClockInputs::set(port)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
-    }
-
-    #[inline]
-    fn set_input_by_index(&mut self, _index: usize, _value: f32) {
-        // Clock has no inputs.
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        self.outputs.get_by_index(index)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

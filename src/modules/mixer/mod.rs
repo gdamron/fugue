@@ -93,9 +93,7 @@ pub struct Mixer {
     channels: usize,
     ctrl: MixerControls,
     input_state: inputs::MixerInputs,
-
-    // Pull-based processing
-    last_processed_sample: u64,
+    outputs: outputs::MixerOutputs,
 }
 
 impl Mixer {
@@ -116,7 +114,7 @@ impl Mixer {
             channels,
             ctrl: controls,
             input_state: inputs::MixerInputs::new(channels),
-            last_processed_sample: 0,
+            outputs: outputs::MixerOutputs::new(),
         }
     }
 
@@ -163,26 +161,26 @@ impl Mixer {
         &self.ctrl
     }
 
-    fn effective_pan(&self, channel: usize) -> f32 {
-        (self.ctrl.pan(channel) + self.input_state.pan_mod(channel)).clamp(-1.0, 1.0)
+    fn effective_pan(&self, channel: usize, i: usize) -> f32 {
+        (self.ctrl.pan(channel) + self.input_state.pan_mod(channel, i)).clamp(-1.0, 1.0)
     }
 
-    /// Mixes all inputs and returns the stereo output sample.
-    fn mix(&self) -> (f32, f32) {
+    /// Mixes all inputs at frame `i` and returns the stereo output sample.
+    fn mix(&self, i: usize) -> (f32, f32) {
         let mut left = 0.0;
         let mut right = 0.0;
 
-        for i in 0..self.channels {
-            let level_cv = self.input_state.level_cv(i);
-            let channel_out = self.input_state.audio(i) * self.ctrl.level(i) * level_cv;
-            let pan = self.effective_pan(i);
+        for ch in 0..self.channels {
+            let level_cv = self.input_state.level_cv(ch, i);
+            let channel_out = self.input_state.audio(ch, i) * self.ctrl.level(ch) * level_cv;
+            let pan = self.effective_pan(ch, i);
             let angle = (pan + 1.0) * FRAC_PI_4;
             left += channel_out * angle.cos();
             right += channel_out * angle.sin();
         }
 
         let master_level = self.ctrl.master();
-        let master_cv = self.input_state.master_cv();
+        let master_cv = self.input_state.master_cv(i);
         let gain = master_level * master_cv;
 
         (left * gain, right * gain)
@@ -194,7 +192,11 @@ impl Module for Mixer {
         "Mixer"
     }
 
-    fn process(&mut self) -> bool {
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            let (left, right) = self.mix(i);
+            self.outputs.set(i, left, right);
+        }
         true
     }
 
@@ -206,40 +208,24 @@ impl Module for Mixer {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.input_state.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.input_state.set(self.channels, port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        let (left, right) = self.mix();
-        outputs::MixerOutputs::get(port, left, right)
+        self.outputs.get(port)
     }
 
-    #[inline]
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        self.input_state.set_by_index(self.channels, index, value);
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        let (left, right) = self.mix();
-        match index {
-            0 => left,
-            1 => right,
-            _ => 0.0,
-        }
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
-
-    fn reset_inputs(&mut self) {
-        self.input_state.reset();
+    fn set_input_connected(&mut self, index: usize, connected: bool) {
+        self.input_state.set_connected(index, connected);
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -416,7 +402,7 @@ mod tests {
 
         mixer.set_input("in1", 0.5).unwrap();
         mixer.set_input("in2", 0.3).unwrap();
-        mixer.process();
+        mixer.process(1);
 
         let left = mixer.get_output("left").unwrap();
         let right = mixer.get_output("right").unwrap();
@@ -433,7 +419,7 @@ mod tests {
 
         mixer.set_input("in1", 1.0).unwrap();
         mixer.set_input("in2", 1.0).unwrap();
-        mixer.process();
+        mixer.process(1);
 
         let left = mixer.get_output("left").unwrap();
         let right = mixer.get_output("right").unwrap();
@@ -449,7 +435,7 @@ mod tests {
 
         mixer.set_input("in1", 1.0).unwrap();
         mixer.set_input("in2", 1.0).unwrap();
-        mixer.process();
+        mixer.process(1);
 
         let left = mixer.get_output("left").unwrap();
         let right = mixer.get_output("right").unwrap();
@@ -467,7 +453,7 @@ mod tests {
         mixer.set_input("in2", 1.0).unwrap();
         mixer.set_input("level1", 0.5).unwrap(); // CV reduces channel 1
         mixer.set_input("level2", 1.0).unwrap();
-        mixer.process();
+        mixer.process(1);
 
         let left = mixer.get_output("left").unwrap();
         let right = mixer.get_output("right").unwrap();
@@ -484,7 +470,7 @@ mod tests {
         mixer.set_input("in1", 1.0).unwrap();
         mixer.set_input("in2", 1.0).unwrap();
         mixer.set_input("master", 0.25).unwrap();
-        mixer.process();
+        mixer.process(1);
 
         let left = mixer.get_output("left").unwrap();
         let right = mixer.get_output("right").unwrap();
@@ -529,7 +515,7 @@ mod tests {
         assert!(!inputs.contains(&"in17"));
 
         mixer.set_input("in16", 1.0).unwrap();
-        mixer.process();
+        mixer.process(1);
 
         approx_eq(mixer.get_output("left").unwrap(), 0.0);
         approx_eq(mixer.get_output("right").unwrap(), 1.0);
@@ -585,7 +571,7 @@ mod tests {
 
         mixer.set_input("in1", 0.5).unwrap();
         mixer.set_input("in2", -0.5).unwrap();
-        mixer.process();
+        mixer.process(1);
 
         let left = mixer.get_output("left").unwrap();
         let right = mixer.get_output("right").unwrap();
@@ -599,7 +585,7 @@ mod tests {
 
         mixer.set_input("in1", 1.0).unwrap();
         mixer.set_input("in2", 1.0).unwrap();
-        mixer.process();
+        mixer.process(1);
 
         approx_eq(mixer.get_output("left").unwrap(), 1.0);
         approx_eq(mixer.get_output("right").unwrap(), 1.0);
@@ -611,7 +597,7 @@ mod tests {
 
         mixer.set_input("in1", 1.0).unwrap();
         mixer.set_input("pan1", 1.0).unwrap();
-        mixer.process();
+        mixer.process(1);
 
         approx_eq(mixer.get_output("left").unwrap(), 0.0);
         approx_eq(mixer.get_output("right").unwrap(), 1.0);

@@ -168,7 +168,6 @@ pub struct Reverb {
 
     inputs: inputs::ReverbInputs,
     outputs: outputs::ReverbOutputs,
-    last_processed_sample: u64,
 }
 
 impl Reverb {
@@ -223,12 +222,11 @@ impl Reverb {
             right_diffusers,
             inputs: inputs::ReverbInputs::new(),
             outputs: outputs::ReverbOutputs::new(),
-            last_processed_sample: 0,
         }
     }
 
-    /// Processes one stereo sample through the reverb.
-    fn process_sample(&mut self) {
+    /// Processes one stereo sample through the reverb at frame `i`.
+    fn process_sample(&mut self, i: usize) {
         let frozen = self.ctrl.freeze();
         let room_size_ctrl = self.ctrl.room_size();
         let decay_ctrl = self.ctrl.decay();
@@ -237,9 +235,9 @@ impl Reverb {
         let dry = self.ctrl.dry();
         let width = self.ctrl.width();
 
-        let input_l = self.inputs.left();
+        let input_l = self.inputs.left(i);
         let input_r = if self.inputs.right_active() {
-            self.inputs.right()
+            self.inputs.right(i)
         } else {
             input_l
         };
@@ -344,7 +342,7 @@ impl Reverb {
             0.0
         };
 
-        self.outputs.set(left_out, right_out);
+        self.outputs.set(i, left_out, right_out);
     }
 }
 
@@ -353,8 +351,10 @@ impl Module for Reverb {
         "Reverb"
     }
 
-    fn process(&mut self) -> bool {
-        self.process_sample();
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            self.process_sample(i);
+        }
         true
     }
 
@@ -366,6 +366,14 @@ impl Module for Reverb {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.inputs.set(port, value)
     }
@@ -374,16 +382,8 @@ impl Module for Reverb {
         self.outputs.get(port)
     }
 
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
-
-    fn reset_inputs(&mut self) {
-        self.inputs.reset();
+    fn set_input_connected(&mut self, index: usize, connected: bool) {
+        self.inputs.set_connected(index, connected);
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -493,7 +493,7 @@ mod tests {
     fn test_silence_in_silence_out() {
         let mut reverb = Reverb::new(44100);
         for _ in 0..2000 {
-            reverb.process();
+            reverb.process(1);
             let l = reverb.get_output("left").unwrap();
             let r = reverb.get_output("right").unwrap();
             assert!(!l.is_nan(), "Left output is NaN");
@@ -511,13 +511,13 @@ mod tests {
 
         // Feed a single impulse
         reverb.set_input("left", 1.0).unwrap();
-        reverb.process();
+        reverb.process(1);
         reverb.set_input("left", 0.0).unwrap();
 
         // Check for non-zero output in the tail
         let mut found_output = false;
         for _ in 0..8000 {
-            reverb.process();
+            reverb.process(1);
             let l = reverb.get_output("left").unwrap();
             let r = reverb.get_output("right").unwrap();
             if l.abs() > 1e-6 || r.abs() > 1e-6 {
@@ -536,7 +536,7 @@ mod tests {
 
         reverb.set_input("left", 0.75).unwrap();
         reverb.set_input("right", -0.5).unwrap();
-        reverb.process();
+        reverb.process(1);
 
         let l = reverb.get_output("left").unwrap();
         let r = reverb.get_output("right").unwrap();
@@ -561,7 +561,7 @@ mod tests {
         // Feed signal
         for _ in 0..2000 {
             reverb.set_input("left", 0.5).unwrap();
-            reverb.process();
+            reverb.process(1);
         }
         reverb.set_input("left", 0.0).unwrap();
 
@@ -571,7 +571,7 @@ mod tests {
         // Output should remain non-zero (frozen feedback)
         let mut energy = 0.0f32;
         for _ in 0..4000 {
-            reverb.process();
+            reverb.process(1);
             energy += reverb.get_output("left").unwrap().abs();
         }
         assert!(
@@ -590,13 +590,13 @@ mod tests {
         // Feed a brief signal then silence
         for _ in 0..100 {
             reverb.set_input("left", 0.1).unwrap();
-            reverb.process();
+            reverb.process(1);
         }
         reverb.set_input("left", 0.0).unwrap();
 
         // Run many samples of silence — output should stay bounded
         for i in 0..50000 {
-            reverb.process();
+            reverb.process(1);
             let l = reverb.get_output("left").unwrap();
             let r = reverb.get_output("right").unwrap();
             assert!(
