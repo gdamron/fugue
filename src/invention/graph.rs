@@ -509,6 +509,9 @@ impl SignalGraph {
 
         // Reset input connectivity and clear input buffers, then mark connected
         // ports. Connectivity lets modules arbitrate signal-vs-control default.
+        // Only the active block span is read, so zeroing the full MAX_BLOCK would
+        // be wasted work on the audio thread (recompile runs here).
+        let clear = self.block_size.clamp(1, MAX_BLOCK);
         for mi in 0..n {
             let n_in = self
                 .modules
@@ -518,7 +521,7 @@ impl SignalGraph {
             if let Some((_, inst)) = self.modules.get_index_mut(mi) {
                 let module = inst.module_mut();
                 for p in 0..n_in {
-                    module.input_block_mut(p).fill(0.0);
+                    module.input_block_mut(p)[..clear].fill(0.0);
                     module.set_input_connected(p, false);
                 }
             }
