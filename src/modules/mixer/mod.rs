@@ -356,7 +356,7 @@ impl ModuleFactory for MixerFactory {
                     .filter_map(|v| v.as_f64().map(|n| n as f32))
                     .collect()
             })
-            .unwrap_or_else(Vec::new);
+            .unwrap_or_default();
 
         let pans: Vec<f32> = config
             .get("pans")
@@ -366,7 +366,7 @@ impl ModuleFactory for MixerFactory {
                     .filter_map(|v| v.as_f64().map(|n| n as f32))
                     .collect()
             })
-            .unwrap_or_else(Vec::new);
+            .unwrap_or_default();
 
         let controls = MixerControls::new_with_config(channels, &levels, &pans, master);
         let mixer = Mixer::new_with_controls(channels, controls.clone());

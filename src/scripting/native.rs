@@ -421,10 +421,7 @@ fn call_hook(name: &str, context: &mut Context) -> Result<bool, String> {
             .as_bytes(),
         ))
         .map_err(|err| err.to_string())
-        .and_then(|value| match value.to_boolean() {
-            true => Ok(true),
-            false => Ok(false),
-        })
+        .map(|value| value.to_boolean())
 }
 
 fn string_arg(value: Option<&JsValue>, context: &mut Context, name: &str) -> JsResult<String> {

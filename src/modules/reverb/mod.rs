@@ -58,6 +58,9 @@ const MAX_ROOM_M: f32 = 100.0;
 const MIN_ROOM_M: f32 = 1.0;
 
 /// FDN delay length ratios relative to the largest delay.
+// These are intentional rounded DSP design constants, not an attempt to spell
+// `FRAC_1_SQRT_2`; keep the literal values so the delay tuning is unchanged.
+#[allow(clippy::approx_constant)]
 const FDN_RATIOS: [f32; FDN_ORDER] = [1.0, 0.816490, 0.707100, 0.632450];
 
 /// Early reflection tap positions as fractions of largest delay.

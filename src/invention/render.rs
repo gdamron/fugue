@@ -201,7 +201,7 @@ impl RenderEngine {
         &mut self,
         output: &mut [f32],
     ) -> Result<usize, Box<dyn std::error::Error>> {
-        if output.len() % 2 != 0 {
+        if !output.len().is_multiple_of(2) {
             return Err("output buffer length must be even".into());
         }
 

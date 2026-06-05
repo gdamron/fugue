@@ -4,6 +4,7 @@
 ///
 /// A simple first-order IIR filter useful for high-frequency damping in
 /// feedback paths, input bandwidth control, and parameter smoothing.
+#[derive(Default)]
 pub struct Damper {
     state: f32,
 }

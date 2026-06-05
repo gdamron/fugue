@@ -300,7 +300,7 @@ mod tests {
 
         player.process(1);
         assert_eq!(player.get_output("sample_end_gate").unwrap(), 1.0);
-        assert_eq!(controls.play(), false);
+        assert!(!controls.play());
 
         let _ = std::fs::remove_file(path);
     }
@@ -325,7 +325,7 @@ mod tests {
         assert_eq!(player.get_output("sample_end_gate").unwrap(), 1.0);
         player.process(1);
         assert_eq!(player.get_output("sample_start_gate").unwrap(), 1.0);
-        assert_eq!(controls.play(), true);
+        assert!(controls.play());
 
         let _ = std::fs::remove_file(path);
     }

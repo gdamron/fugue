@@ -181,12 +181,13 @@ impl ControlSurface for SamplePlayerControls {
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
-            "source" => self.set_source(value.as_string()?),
-            "play" => Ok(self.set_play(value.as_bool()?)),
-            "loop" => Ok(self.set_loop_enabled(value.as_bool()?)),
-            "pitch_ratio" => Ok(self.set_pitch_ratio(value.as_number()?)),
+            "source" => self.set_source(value.as_string()?)?,
+            "play" => self.set_play(value.as_bool()?),
+            "loop" => self.set_loop_enabled(value.as_bool()?),
+            "pitch_ratio" => self.set_pitch_ratio(value.as_number()?),
             _ => return Err(format!("Unknown control: {}", key)),
         }
+        Ok(())
     }
 }
 

@@ -209,10 +209,9 @@ mod native {
         let parsed = if format == "text" {
             None
         } else {
-            Some(parse_json_response(&result.text).map_err(|err| {
+            Some(parse_json_response(&result.text).inspect_err(|_err| {
                 let preview: String = result.text.chars().take(200).collect();
                 eprintln!("[agent:{}] response preview: {}", module_id, preview);
-                err
             })?)
         };
 
