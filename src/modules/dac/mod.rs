@@ -16,7 +16,7 @@ mod module;
 mod outputs;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use driver::{default_sample_rate, AudioBackend, AudioDriver};
+pub use driver::{default_sample_rate, AudioBackend, AudioDriver, BlockRenderFn};
 #[cfg(target_arch = "wasm32")]
-pub use driver_wasm::{default_sample_rate, AudioBackend, AudioDriver};
+pub use driver_wasm::{default_sample_rate, AudioBackend, AudioDriver, BlockRenderFn};
 pub use module::{DacFactory, DacModule};

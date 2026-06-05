@@ -1,6 +1,8 @@
 //! wasm stub audio backend.
 
-use crate::SinkOutput;
+/// Renders a block of `frames` planar stereo samples
+/// (`frames == left.len() == right.len()`).
+pub type BlockRenderFn = Box<dyn FnMut(&mut [f32], &mut [f32]) + Send>;
 
 /// Returns a conventional Web Audio sample rate.
 pub fn default_sample_rate() -> Result<u32, Box<dyn std::error::Error>> {
@@ -11,10 +13,7 @@ pub fn default_sample_rate() -> Result<u32, Box<dyn std::error::Error>> {
 pub trait AudioBackend: Send {
     fn sample_rate(&self) -> u32;
 
-    fn start(
-        &mut self,
-        _sample_fn: Box<dyn FnMut() -> SinkOutput + Send>,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn start(&mut self, _render: BlockRenderFn) -> Result<(), Box<dyn std::error::Error>>;
 
     fn stop(&mut self);
 }
@@ -37,10 +36,7 @@ impl AudioBackend for AudioDriver {
         self.sample_rate
     }
 
-    fn start(
-        &mut self,
-        _sample_fn: Box<dyn FnMut() -> SinkOutput + Send>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn start(&mut self, _render: BlockRenderFn) -> Result<(), Box<dyn std::error::Error>> {
         Err("AudioDriver is not available on wasm32; use RenderEngine instead".into())
     }
 

@@ -39,7 +39,7 @@
 use indexmap::IndexMap;
 use std::sync::mpsc;
 
-use crate::{GraphModule, SinkOutput, MAX_BLOCK};
+use crate::{GraphModule, MAX_BLOCK};
 
 use super::runtime::ModuleInstance;
 
@@ -578,17 +578,6 @@ impl SignalGraph {
             .iter()
             .filter_map(|&idx| self.modules.get_index(idx).map(|(k, _)| k.clone()))
             .collect()
-    }
-
-    /// Processes a single frame through the entire graph.
-    ///
-    /// Thin compatibility shim over [`SignalGraph::process_block`] with a
-    /// one-frame block. Prefer `process_block` for throughput.
-    pub(crate) fn process_sample(&mut self) -> SinkOutput {
-        let mut left = [0.0f32; 1];
-        let mut right = [0.0f32; 1];
-        self.process_block(&mut left, &mut right);
-        SinkOutput::stereo(left[0], right[0])
     }
 }
 
