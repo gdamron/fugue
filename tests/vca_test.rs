@@ -18,11 +18,12 @@ mod tests {
         // Simulate a few samples
         for i in 0..5 {
             // Process oscillator
-            osc.process();
+            osc.process(1);
             let osc_audio = osc.get_output("audio").unwrap();
 
             // Route to VCA (no CV connection)
             vca.set_input("audio", osc_audio).unwrap();
+            vca.process(1);
             let vca_output = vca.get_output("audio").unwrap();
 
             println!(
@@ -64,7 +65,7 @@ mod tests {
         // Trigger the envelope
         let gate = clock.get_output("gate").unwrap();
         adsr.set_input("gate", gate).unwrap();
-        adsr.process();
+        adsr.process(1);
 
         let envelope = adsr.get_output("envelope").unwrap();
         println!("Initial envelope value: {:.6}", envelope);
@@ -72,18 +73,19 @@ mod tests {
 
         // Process a few samples
         for i in 0..5 {
-            clock.process();
-            osc.process();
+            clock.process(1);
+            osc.process(1);
 
             let gate = clock.get_output("gate").unwrap();
             let osc_audio = osc.get_output("audio").unwrap();
 
             adsr.set_input("gate", gate).unwrap();
-            adsr.process();
+            adsr.process(1);
             let envelope = adsr.get_output("envelope").unwrap();
 
             vca.set_input("audio", osc_audio).unwrap();
             vca.set_input("cv", envelope).unwrap();
+            vca.process(1);
             let vca_output = vca.get_output("audio").unwrap();
 
             println!(

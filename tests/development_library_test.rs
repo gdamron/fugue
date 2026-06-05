@@ -86,3 +86,35 @@ fn voice_library_trio_tight_render_benchmark() {
         (rendered as f64 / SAMPLE_RATE as f64) / elapsed.as_secs_f64()
     );
 }
+
+/// Compares render throughput at several block sizes. Block size 1 is the
+/// legacy per-sample cadence; larger blocks should be at least as fast.
+#[test]
+#[ignore = "local performance check; run with --ignored --nocapture"]
+fn render_throughput_across_block_sizes() {
+    let path = development_path("voice_library_trio.json");
+    let frames = SAMPLE_RATE as usize * 2;
+
+    for &block in &[1usize, 16, 64, 256, 1024] {
+        let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
+        let mut engine = RenderEngine::new(SAMPLE_RATE);
+        engine.load_invention(invention).unwrap();
+        engine.set_block_size(block);
+
+        let mut output = vec![0.0; frames * 2];
+        // Warm up, then measure.
+        engine.render_interleaved(&mut output).unwrap();
+        let start = Instant::now();
+        let rendered = engine.render_interleaved(&mut output).unwrap();
+        let elapsed = start.elapsed();
+        std::hint::black_box(&output);
+
+        eprintln!(
+            "block_size={:>4}: {} frames in {:?} ({:.2}x realtime)",
+            block,
+            rendered,
+            elapsed,
+            (rendered as f64 / SAMPLE_RATE as f64) / elapsed.as_secs_f64()
+        );
+    }
+}
