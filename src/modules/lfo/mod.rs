@@ -344,7 +344,7 @@ mod tests {
             min = min.min(out);
             max = max.max(out);
 
-            assert!(out_uni >= 0.0 && out_uni <= 1.0);
+            assert!((0.0..=1.0).contains(&out_uni));
         }
 
         assert!(min < -0.9, "min was {}", min);
