@@ -19,68 +19,11 @@ use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, Runti
 pub type ModuleInstance = GraphModule;
 pub type ControlSurfaceInstance = Arc<dyn ControlSurface + Send + Sync>;
 
-pub(crate) fn module_ports(
-    modules: &IndexMap<String, ModuleInstance>,
-) -> IndexMap<String, ModulePorts> {
-    modules
-        .iter()
-        .map(|(id, module)| {
-            (
-                id.clone(),
-                ModulePorts {
-                    inputs: module
-                        .module()
-                        .inputs()
-                        .iter()
-                        .map(|port| (*port).to_string())
-                        .collect(),
-                    outputs: module
-                        .module()
-                        .outputs()
-                        .iter()
-                        .map(|port| (*port).to_string())
-                        .collect(),
-                },
-            )
-        })
-        .collect()
-}
+mod error;
+mod ports;
 
-/// Validates that a module has the specified output port.
-pub(crate) fn validate_output_port(
-    module: &ModuleInstance,
-    port: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let m = module.module();
-    if !m.outputs().contains(&port) {
-        return Err(format!(
-            "Module '{}' does not have output port '{}'. Available: {:?}",
-            m.name(),
-            port,
-            m.outputs()
-        )
-        .into());
-    }
-    Ok(())
-}
-
-/// Validates that a module has the specified input port.
-pub(crate) fn validate_input_port(
-    module: &ModuleInstance,
-    port: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let m = module.module();
-    if !m.inputs().contains(&port) {
-        return Err(format!(
-            "Module '{}' does not have input port '{}'. Available: {:?}",
-            m.name(),
-            port,
-            m.inputs()
-        )
-        .into());
-    }
-    Ok(())
-}
+pub use error::GraphCommandError;
+pub(crate) use ports::{module_ports, validate_input_port, validate_output_port};
 
 /// A prepared invention ready to run.
 pub struct InventionRuntime {
@@ -180,50 +123,6 @@ impl InventionRuntime {
         Ok(running)
     }
 }
-
-/// Error type for graph command operations.
-#[derive(Debug)]
-pub enum GraphCommandError {
-    /// The audio thread has stopped, so commands can no longer be delivered.
-    AudioThreadStopped,
-    /// The requested module type is not registered.
-    UnknownModuleType(String),
-    /// The module factory failed to build the module.
-    ModuleBuildFailed(String),
-    /// The referenced module does not exist in the graph.
-    UnknownModule(String),
-    /// The referenced port does not exist on the module.
-    InvalidPort(String),
-    /// A module control operation failed (invalid key, etc.).
-    ControlError(String),
-}
-
-impl std::fmt::Display for GraphCommandError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GraphCommandError::AudioThreadStopped => {
-                write!(f, "audio thread has stopped; command not delivered")
-            }
-            GraphCommandError::UnknownModuleType(t) => {
-                write!(f, "unknown module type: {}", t)
-            }
-            GraphCommandError::ModuleBuildFailed(msg) => {
-                write!(f, "module build failed: {}", msg)
-            }
-            GraphCommandError::UnknownModule(id) => {
-                write!(f, "unknown module: {}", id)
-            }
-            GraphCommandError::InvalidPort(msg) => {
-                write!(f, "invalid port: {}", msg)
-            }
-            GraphCommandError::ControlError(msg) => {
-                write!(f, "control error: {}", msg)
-            }
-        }
-    }
-}
-
-impl std::error::Error for GraphCommandError {}
 
 /// A running invention with audio output.
 pub struct RunningInvention {
