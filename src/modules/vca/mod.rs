@@ -111,9 +111,10 @@ impl Module for Vca {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        let control_cv = self.ctrl.cv();
         for i in 0..frames {
-            let value = self.inputs.audio(i) * self.inputs.cv(i, control_cv);
+            // Read the control per frame (cheap atomic load) so a control-driven
+            // gain responds sample-accurately rather than stepping per block.
+            let value = self.inputs.audio(i) * self.inputs.cv(i, self.ctrl.cv());
             self.outputs.set(i, value);
         }
         true
