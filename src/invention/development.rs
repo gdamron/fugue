@@ -3,7 +3,9 @@ use crate::invention::graph::RoutingConnection;
 use crate::invention::runtime::{
     validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
 };
-use crate::{ControlMeta, ControlSurface, ControlValue, Invention, Module, ModuleRegistry};
+use crate::{
+    ControlMeta, ControlSurface, ControlValue, Invention, Module, ModuleRegistry, MAX_BLOCK,
+};
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -55,9 +57,9 @@ struct ExternalOutputRoute {
     name: &'static str,
     module_index: usize,
     port_index: usize,
-    value: f32,
 }
 
+#[derive(Clone, Copy)]
 struct CompiledConnection {
     from_module: usize,
     from_port: usize,
@@ -160,10 +162,12 @@ pub(crate) struct DevelopmentModule {
     input_ports: Vec<&'static str>,
     output_ports: Vec<&'static str>,
     input_routes: Vec<Vec<ExternalInputRoute>>,
-    input_values: Vec<f32>,
+    /// Per-external-input-port block buffer (fed by the parent graph).
+    input_buffers: Vec<[f32; MAX_BLOCK]>,
+    /// Per-external-output-port block buffer (read by the parent graph).
+    output_buffers: Vec<[f32; MAX_BLOCK]>,
     outputs: Vec<ExternalOutputRoute>,
     graph: CompiledDevelopmentGraph,
-    last_processed_sample: u64,
 }
 
 impl DevelopmentModule {
@@ -255,12 +259,36 @@ impl DevelopmentModule {
                     name: output_ports[index],
                     module_index,
                     port_index,
-                    value: 0.0,
                 })
             })
             .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
 
-        let graph = CompiledDevelopmentGraph::from_modules(module_list, &runtime.routing)?;
+        let mut graph = CompiledDevelopmentGraph::from_modules(module_list, &runtime.routing)?;
+
+        // Mark every sub-module input port that receives a signal (from an
+        // external input or an internal route) as connected, so modules that
+        // arbitrate signal-vs-control use the incoming value.
+        for routes in &input_routes {
+            for route in routes {
+                if let Some(module) = graph.modules.get_mut(route.module_index) {
+                    module
+                        .module_mut()
+                        .set_input_connected(route.port_index, true);
+                }
+            }
+        }
+        for to_module in 0..graph.input_routes.len() {
+            let count = graph.input_routes[to_module].len();
+            for c in 0..count {
+                let to_port = graph.input_routes[to_module][c].to_port;
+                if let Some(module) = graph.modules.get_mut(to_module) {
+                    module.module_mut().set_input_connected(to_port, true);
+                }
+            }
+        }
+
+        let input_count = input_ports.len();
+        let output_count = output_ports.len();
 
         Ok((
             Self {
@@ -268,37 +296,13 @@ impl DevelopmentModule {
                 input_ports,
                 output_ports,
                 input_routes,
-                input_values: vec![0.0; route_indexes.len()],
+                input_buffers: vec![[0.0; MAX_BLOCK]; input_count],
+                output_buffers: vec![[0.0; MAX_BLOCK]; output_count],
                 outputs,
                 graph,
-                last_processed_sample: 0,
             },
             control_surface,
         ))
-    }
-
-    fn apply_external_inputs(&mut self) {
-        for (index, routes) in self.input_routes.iter().enumerate() {
-            let value = self.input_values[index];
-            for route in routes {
-                if let Some(module) = self.graph.modules.get_mut(route.module_index) {
-                    module
-                        .module_mut()
-                        .set_input_by_index(route.port_index, value);
-                }
-            }
-        }
-    }
-
-    fn cache_outputs(&mut self) {
-        for output in &mut self.outputs {
-            output.value = self
-                .graph
-                .modules
-                .get(output.module_index)
-                .map(|module| module.module().get_output_by_index(output.port_index))
-                .unwrap_or(0.0);
-        }
     }
 }
 
@@ -307,42 +311,53 @@ impl Module for DevelopmentModule {
         &self.name
     }
 
-    fn process(&mut self) -> bool {
-        for module in &mut self.graph.modules {
-            module.module_mut().reset_inputs();
-        }
-        self.graph.current_sample += 1;
-        self.apply_external_inputs();
-
-        for &module_index in &self.graph.process_order {
-            if let Some(connections) = self.graph.input_routes.get(module_index) {
-                let count = connections.len();
-                for c in 0..count {
-                    let (from_module, from_port, to_port) = {
-                        let conn = &self.graph.input_routes[module_index][c];
-                        (conn.from_module, conn.from_port, conn.to_port)
-                    };
-                    let input_value = self
-                        .graph
-                        .modules
-                        .get(from_module)
-                        .map(|module| module.module().get_output_by_index(from_port))
-                        .unwrap_or(0.0);
-                    if let Some(module) = self.graph.modules.get_mut(module_index) {
-                        module.module_mut().set_input_by_index(to_port, input_value);
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            // Feed external input ports (frame i) into their target sub-modules.
+            for (index, routes) in self.input_routes.iter().enumerate() {
+                let value = self.input_buffers[index][i];
+                for route in routes {
+                    if let Some(module) = self.graph.modules.get_mut(route.module_index) {
+                        module.module_mut().input_block_mut(route.port_index)[0] = value;
                     }
                 }
             }
 
-            if let Some(module) = self.graph.modules.get_mut(module_index) {
-                let module = module.module_mut();
-                module.process();
-                module.mark_processed(self.graph.current_sample);
+            self.graph.current_sample += 1;
+
+            // Run the internal sub-graph for one sample in topological order.
+            for oi in 0..self.graph.process_order.len() {
+                let module_index = self.graph.process_order[oi];
+                let count = self.graph.input_routes[module_index].len();
+                for c in 0..count {
+                    let conn = self.graph.input_routes[module_index][c];
+                    let input_value = self
+                        .graph
+                        .modules
+                        .get(conn.from_module)
+                        .map(|module| module.module().output_block(conn.from_port)[0])
+                        .unwrap_or(0.0);
+                    if let Some(module) = self.graph.modules.get_mut(module_index) {
+                        module.module_mut().input_block_mut(conn.to_port)[0] = input_value;
+                    }
+                }
+
+                if let Some(module) = self.graph.modules.get_mut(module_index) {
+                    module.module_mut().process(1);
+                }
+            }
+
+            // Cache external output ports (frame i).
+            for (oi, output) in self.outputs.iter().enumerate() {
+                let value = self
+                    .graph
+                    .modules
+                    .get(output.module_index)
+                    .map(|module| module.module().output_block(output.port_index)[0])
+                    .unwrap_or(0.0);
+                self.output_buffers[oi][i] = value;
             }
         }
-
-        self.cache_outputs();
-        self.last_processed_sample = self.graph.current_sample;
         true
     }
 
@@ -354,31 +369,31 @@ impl Module for DevelopmentModule {
         &self.output_ports
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        &mut self.input_buffers[index]
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        &self.output_buffers[index]
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         let index = self
             .input_ports
             .iter()
             .position(|name| *name == port)
             .ok_or_else(|| format!("Unknown input port: {}", port))?;
-        self.input_values[index] = value;
+        self.input_buffers[index].fill(value);
         Ok(())
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        let output = self
+        let index = self
             .outputs
             .iter()
-            .find(|route| route.name == port)
+            .position(|route| route.name == port)
             .ok_or_else(|| format!("Unknown output port: {}", port))?;
-        Ok(output.value)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
+        Ok(self.output_buffers[index][0])
     }
 }
 

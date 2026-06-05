@@ -134,7 +134,14 @@ impl InventionRuntime {
             command_rx,
             process_order: Vec::new(),
             compiled_routes: Vec::new(),
+            connected_in_ports: Vec::new(),
+            process_groups: Vec::new(),
             sink_indices: Vec::new(),
+            out_bufs: Vec::new(),
+            out_prev: Vec::new(),
+            out_counts: Vec::new(),
+            block_capacity: 0,
+            block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
         };
 

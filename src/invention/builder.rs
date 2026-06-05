@@ -656,7 +656,7 @@ mod tests {
         let voice = runtime.modules.get_mut("voice").unwrap().module_mut();
 
         voice.set_input("signal", 0.8).unwrap();
-        voice.process();
+        voice.process(1);
 
         assert_eq!(voice.get_output("full").unwrap(), 0.8);
         assert_eq!(voice.get_output("half").unwrap(), 0.4);

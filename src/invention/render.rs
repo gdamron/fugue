@@ -211,13 +211,33 @@ impl RenderEngine {
             .ok_or_else(|| "no invention loaded".to_string())?;
         let mut graph = graph.lock().unwrap();
 
-        for frame in output.chunks_exact_mut(2) {
-            let sample = graph.process_sample();
-            frame[0] = sample.left;
-            frame[1] = sample.right;
+        let frames_total = output.len() / 2;
+        let block = graph.block_size.clamp(1, crate::MAX_BLOCK);
+        let mut left = [0.0f32; crate::MAX_BLOCK];
+        let mut right = [0.0f32; crate::MAX_BLOCK];
+
+        let mut done = 0;
+        while done < frames_total {
+            let n = (frames_total - done).min(block);
+            graph.process_block(&mut left[..n], &mut right[..n]);
+            for k in 0..n {
+                output[(done + k) * 2] = left[k];
+                output[(done + k) * 2 + 1] = right[k];
+            }
+            done += n;
         }
 
-        Ok(output.len() / 2)
+        Ok(frames_total)
+    }
+
+    /// Sets the audio processing block size in frames (clamped to
+    /// `[1, MAX_BLOCK]`). Larger blocks amortize per-call overhead; smaller
+    /// blocks reduce control/feedback latency. Defaults to
+    /// [`crate::DEFAULT_BLOCK_SIZE`].
+    pub fn set_block_size(&self, block_size: usize) {
+        if let Some(graph) = self.graph.as_ref() {
+            graph.lock().unwrap().set_block_size(block_size);
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -521,7 +541,14 @@ impl RenderEngine {
             command_rx,
             process_order: Vec::new(),
             compiled_routes: Vec::new(),
+            connected_in_ports: Vec::new(),
+            process_groups: Vec::new(),
             sink_indices: Vec::new(),
+            out_bufs: Vec::new(),
+            out_prev: Vec::new(),
+            out_counts: Vec::new(),
+            block_capacity: 0,
+            block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
         })));
         self.registry = runtime.registry;
