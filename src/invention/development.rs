@@ -70,6 +70,13 @@ struct CompiledDevelopmentGraph {
     modules: Vec<GraphModule>,
     input_routes: Vec<Vec<CompiledConnection>>,
     process_order: Vec<usize>,
+    /// Output port count per internal module (parallel to module index).
+    out_counts: Vec<usize>,
+    /// Per-internal-module output block buffers, port-major with stride
+    /// `MAX_BLOCK`: `out_bufs[module][port * MAX_BLOCK + frame]`.
+    out_bufs: Vec<Vec<f32>>,
+    /// True if the sub-graph has a feedback loop (forces the per-sample path).
+    has_cycle: bool,
     current_sample: u64,
 }
 
@@ -304,16 +311,58 @@ impl DevelopmentModule {
             control_surface,
         ))
     }
-}
 
-impl Module for DevelopmentModule {
-    fn name(&self) -> &str {
-        &self.name
+    /// Processes the internal sub-graph a whole block at a time (acyclic case).
+    /// Each internal module's `process(frames)` is called once per block,
+    /// restoring block amortization through nested voices.
+    fn process_block(&mut self, frames: usize) {
+        // Feed external input ports (overwrite, as the prior dev module did).
+        for index in 0..self.input_routes.len() {
+            for r in 0..self.input_routes[index].len() {
+                let mi = self.input_routes[index][r].module_index;
+                let pp = self.input_routes[index][r].port_index;
+                let dst = self.graph.modules[mi].module_mut().input_block_mut(pp);
+                dst[..frames].copy_from_slice(&self.input_buffers[index][..frames]);
+            }
+        }
+
+        self.graph.current_sample += frames as u64;
+
+        // Process internal modules full-block in topological order.
+        for oi in 0..self.graph.process_order.len() {
+            let m = self.graph.process_order[oi];
+            for c in 0..self.graph.input_routes[m].len() {
+                let conn = self.graph.input_routes[m][c];
+                let base = conn.from_port * MAX_BLOCK;
+                let dst = self.graph.modules[m].module_mut().input_block_mut(conn.to_port);
+                dst[..frames]
+                    .copy_from_slice(&self.graph.out_bufs[conn.from_module][base..base + frames]);
+            }
+
+            self.graph.modules[m].module_mut().process(frames);
+
+            let n_out = self.graph.out_counts[m];
+            for p in 0..n_out {
+                let base = p * MAX_BLOCK;
+                let src = self.graph.modules[m].module().output_block(p);
+                self.graph.out_bufs[m][base..base + frames].copy_from_slice(&src[..frames]);
+            }
+        }
+
+        // Cache external output ports.
+        for oi in 0..self.outputs.len() {
+            let from = self.outputs[oi].module_index;
+            let base = self.outputs[oi].port_index * MAX_BLOCK;
+            self.output_buffers[oi][..frames]
+                .copy_from_slice(&self.graph.out_bufs[from][base..base + frames]);
+        }
     }
 
-    fn process(&mut self, frames: usize) -> bool {
+    /// Processes the internal sub-graph sample-by-sample. Used only when the
+    /// sub-graph contains a feedback loop, where back-edges must observe a
+    /// one-sample delay (the pre-block behavior).
+    fn process_per_sample(&mut self, frames: usize) {
         for i in 0..frames {
-            // Feed external input ports (frame i) into their target sub-modules.
             for (index, routes) in self.input_routes.iter().enumerate() {
                 let value = self.input_buffers[index][i];
                 for route in routes {
@@ -325,7 +374,6 @@ impl Module for DevelopmentModule {
 
             self.graph.current_sample += 1;
 
-            // Run the internal sub-graph for one sample in topological order.
             for oi in 0..self.graph.process_order.len() {
                 let module_index = self.graph.process_order[oi];
                 let count = self.graph.input_routes[module_index].len();
@@ -347,7 +395,6 @@ impl Module for DevelopmentModule {
                 }
             }
 
-            // Cache external output ports (frame i).
             for (oi, output) in self.outputs.iter().enumerate() {
                 let value = self
                     .graph
@@ -357,6 +404,20 @@ impl Module for DevelopmentModule {
                     .unwrap_or(0.0);
                 self.output_buffers[oi][i] = value;
             }
+        }
+    }
+}
+
+impl Module for DevelopmentModule {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn process(&mut self, frames: usize) -> bool {
+        if self.graph.has_cycle {
+            self.process_per_sample(frames);
+        } else {
+            self.process_block(frames);
         }
         true
     }
@@ -428,7 +489,7 @@ impl CompiledDevelopmentGraph {
         routing: &[RoutingConnection],
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let indexes = module_indexes_slice(&module_list);
-        let process_order = compute_process_order_slice(&module_list, routing);
+        let (process_order, has_cycle) = compute_process_order_slice(&module_list, routing);
         let mut input_routes: Vec<Vec<CompiledConnection>> =
             (0..module_list.len()).map(|_| Vec::new()).collect();
 
@@ -466,19 +527,31 @@ impl CompiledDevelopmentGraph {
             });
         }
 
+        let modules: Vec<GraphModule> = module_list.into_iter().map(|(_, m)| m).collect();
+
+        // Per-internal-module output block buffers.
+        let out_counts: Vec<usize> = modules.iter().map(|m| m.module().outputs().len()).collect();
+        let out_bufs: Vec<Vec<f32>> = out_counts.iter().map(|&c| vec![0.0; c * MAX_BLOCK]).collect();
+
         Ok(Self {
-            modules: module_list.into_iter().map(|(_, m)| m).collect(),
+            modules,
             input_routes,
             process_order,
+            out_counts,
+            out_bufs,
+            has_cycle,
             current_sample: 0,
         })
     }
 }
 
+/// Returns `(process_order, has_cycle)`. `has_cycle` is true if the sub-graph
+/// contains a back-edge (a feedback loop), which forces the slower
+/// sample-by-sample processing path.
 fn compute_process_order_slice(
     modules: &[(String, GraphModule)],
     routing: &[RoutingConnection],
-) -> Vec<usize> {
+) -> (Vec<usize>, bool) {
     let indexes = module_indexes_slice(modules);
     let mut downstream: Vec<Vec<usize>> = (0..modules.len()).map(|_| Vec::new()).collect();
 
@@ -494,6 +567,7 @@ fn compute_process_order_slice(
 
     let mut state = vec![0_u8; modules.len()];
     let mut order = Vec::with_capacity(modules.len());
+    let mut has_cycle = false;
 
     for start in 0..modules.len() {
         if state[start] != 0 {
@@ -513,8 +587,9 @@ fn compute_process_order_slice(
                         stack.push((next, 0));
                     }
                     1 => {
-                        // Back-edge: preserve the existing graph behavior by treating
-                        // the connection as a one-sample delay point.
+                        // Back-edge: a feedback loop. Preserve the existing
+                        // one-sample-delay behavior via the per-sample path.
+                        has_cycle = true;
                     }
                     _ => {}
                 }
@@ -527,5 +602,5 @@ fn compute_process_order_slice(
     }
 
     order.reverse();
-    order
+    (order, has_cycle)
 }
