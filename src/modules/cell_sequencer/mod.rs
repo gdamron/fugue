@@ -18,6 +18,10 @@ pub use self::controls::CellSequencerControls;
 mod controls;
 mod inputs;
 mod outputs;
+mod parse;
+
+use parse::{normalize_sequence_index, parse_sequence_bank};
+pub(crate) use parse::parse_sequence_bank_json;
 
 pub const DEFAULT_STEPS: usize = 16;
 pub const DEFAULT_GATE_LENGTH: f32 = 0.5;
@@ -555,50 +559,6 @@ impl ModuleFactory for CellSequencerFactory {
             sink: None,
         })
     }
-}
-
-fn normalize_sequence_index(index: usize, len: usize) -> usize {
-    if len == 0 {
-        0
-    } else {
-        index.min(len - 1)
-    }
-}
-
-fn parse_sequence_bank(
-    value: Option<&Value>,
-) -> Result<Vec<Vec<Step>>, Box<dyn std::error::Error>> {
-    let Some(array) = value.and_then(|value| value.as_array()) else {
-        return Ok(Vec::new());
-    };
-
-    if array.len() > MAX_SEQUENCES {
-        return Err(format!(
-            "sequence bank may not contain more than {} sequences",
-            MAX_SEQUENCES
-        )
-        .into());
-    }
-
-    let mut bank = Vec::with_capacity(array.len());
-    for sequence in array {
-        let parsed = parse_pattern(Some(sequence))?;
-        if parsed.len() > MAX_STEPS {
-            return Err(format!(
-                "each sequence may not contain more than {} steps",
-                MAX_STEPS
-            )
-            .into());
-        }
-        bank.push(parsed);
-    }
-
-    Ok(bank)
-}
-
-pub(crate) fn parse_sequence_bank_json(value: &str) -> Result<Vec<Vec<Step>>, String> {
-    let value: Value = serde_json::from_str(value).map_err(|err| err.to_string())?;
-    parse_sequence_bank(Some(&value)).map_err(|err| err.to_string())
 }
 
 #[cfg(test)]
