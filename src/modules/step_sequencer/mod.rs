@@ -52,8 +52,6 @@
 //! }
 //! ```
 
-use serde::ser::SerializeMap;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
@@ -66,6 +64,11 @@ pub use self::controls::StepSequencerControls;
 mod controls;
 mod inputs;
 mod outputs;
+mod parse;
+mod step;
+
+pub use step::Step;
+pub(crate) use parse::{parse_pattern, parse_step};
 
 /// Default number of steps in a pattern.
 pub const DEFAULT_STEPS: usize = 16;
@@ -75,93 +78,6 @@ pub const DEFAULT_GATE_LENGTH: f32 = 0.5;
 
 /// Default base MIDI note (C3).
 pub const DEFAULT_BASE_NOTE: u8 = 48;
-
-/// A single step in the sequencer pattern.
-#[derive(Debug, Clone)]
-pub struct Step {
-    /// Note offset from base_note. None = rest (no note).
-    pub note: Option<i8>,
-    /// Gate length for this step as ratio of step duration (0.0-1.0).
-    /// If None, uses the sequencer's default gate_length.
-    pub gate_length: Option<f32>,
-    /// Continue the previous active note without retriggering.
-    pub held: bool,
-}
-
-impl Step {
-    /// Creates a new step with a note.
-    pub fn note(offset: i8) -> Self {
-        Self {
-            note: Some(offset),
-            gate_length: None,
-            held: false,
-        }
-    }
-
-    /// Creates a new step with a note and custom gate length.
-    pub fn note_with_gate(offset: i8, gate_length: f32) -> Self {
-        Self {
-            note: Some(offset),
-            gate_length: Some(gate_length.clamp(0.0, 1.0)),
-            held: false,
-        }
-    }
-
-    /// Creates a rest step (no note).
-    pub fn rest() -> Self {
-        Self {
-            note: None,
-            gate_length: None,
-            held: false,
-        }
-    }
-
-    /// Creates a held step that continues the previous active note.
-    pub fn held() -> Self {
-        Self {
-            note: None,
-            gate_length: None,
-            held: true,
-        }
-    }
-}
-
-impl Default for Step {
-    fn default() -> Self {
-        Self::rest()
-    }
-}
-
-impl<'de> Deserialize<'de> for Step {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        parse_step(&value).map_err(serde::de::Error::custom)
-    }
-}
-
-impl Serialize for Step {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        if self.held {
-            let mut map = serializer.serialize_map(Some(1))?;
-            map.serialize_entry("held", &true)?;
-            return map.end();
-        }
-
-        let entries = if self.gate_length.is_some() { 2 } else { 1 };
-        let mut map = serializer.serialize_map(Some(entries))?;
-        map.serialize_entry("note", &self.note)?;
-        if let Some(gate_length) = self.gate_length {
-            map.serialize_entry("gate", &gate_length)?;
-        }
-        map.end()
-    }
-}
 
 /// A deterministic step sequencer for pattern playback.
 ///
@@ -595,72 +511,6 @@ impl ModuleFactory for StepSequencerFactory {
             sink: None,
         })
     }
-}
-
-/// Parses a pattern array from JSON.
-pub(crate) fn parse_pattern(
-    value: Option<&serde_json::Value>,
-) -> Result<Vec<Step>, Box<dyn std::error::Error>> {
-    let Some(array) = value.and_then(|v| v.as_array()) else {
-        return Ok(Vec::new());
-    };
-
-    let mut pattern = Vec::with_capacity(array.len());
-
-    for step_value in array {
-        let step = parse_step(step_value)?;
-        pattern.push(step);
-    }
-
-    Ok(pattern)
-}
-
-/// Parses a single step from JSON.
-pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, Box<dyn std::error::Error>> {
-    // Handle simple null as rest
-    if value.is_null() {
-        return Ok(Step::rest());
-    }
-
-    // Handle object format
-    if let Some(obj) = value.as_object() {
-        let held = match obj.get("held") {
-            Some(serde_json::Value::Bool(value)) => *value,
-            Some(_) => return Err("held must be a boolean".into()),
-            None => false,
-        };
-
-        if held {
-            if obj.keys().any(|key| key != "held") {
-                return Err("held steps may only contain {\"held\": true}".into());
-            }
-            return Ok(Step::held());
-        }
-
-        let note = match obj.get("note") {
-            Some(serde_json::Value::Null) => None,
-            Some(n) => n.as_i64().map(|v| v as i8),
-            None => None,
-        };
-
-        let gate_length = obj
-            .get("gate")
-            .and_then(|v| v.as_f64())
-            .map(|v| (v as f32).clamp(0.0, 1.0));
-
-        return Ok(Step {
-            note,
-            gate_length,
-            held: false,
-        });
-    }
-
-    // Handle simple integer as note
-    if let Some(n) = value.as_i64() {
-        return Ok(Step::note(n as i8));
-    }
-
-    Err(format!("Invalid step format: {:?}", value).into())
 }
 
 #[cfg(test)]
