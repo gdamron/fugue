@@ -39,7 +39,7 @@ mod tests {
                 }
                 prev[i] = v;
             }
-            clock.process();
+            clock.process(1);
         }
 
         for (i, (port, expected)) in SUBDIVISIONS.iter().enumerate() {
@@ -78,7 +78,7 @@ mod tests {
                     high[i] += 1;
                 }
             }
-            clock.process();
+            clock.process(1);
         }
 
         // Every port emits a 50%-duty cycle, so regardless of period each one

@@ -1,52 +1,70 @@
 //! Input state for the Reverb module.
 
+use crate::MAX_BLOCK;
+
 pub const INPUTS: [&str; 2] = ["left", "right"];
 
 pub struct ReverbInputs {
-    left: f32,
-    right: f32,
-    right_active: bool,
+    left: [f32; MAX_BLOCK],
+    right: [f32; MAX_BLOCK],
+    right_connected: bool,
 }
 
 impl ReverbInputs {
     pub fn new() -> Self {
         Self {
-            left: 0.0,
-            right: 0.0,
-            right_active: false,
+            left: [0.0; MAX_BLOCK],
+            right: [0.0; MAX_BLOCK],
+            right_connected: false,
         }
     }
 
+    /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
             "left" => {
-                self.left = value;
+                self.left.fill(value);
                 Ok(())
             }
             "right" => {
-                self.right = value;
-                self.right_active = true;
+                self.right.fill(value);
+                self.right_connected = true;
                 Ok(())
             }
             _ => Err(format!("Unknown input port: {}", port)),
         }
     }
 
-    pub fn reset(&mut self) {
-        self.right_active = false;
+    /// Mutable block buffer for the indexed input port. Index matches `INPUTS`.
+    #[inline]
+    pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
+        match index {
+            0 => &mut self.left,
+            _ => &mut self.right,
+        }
     }
 
-    pub fn left(&self) -> f32 {
-        self.left
+    /// Records whether an input port is fed by an upstream connection.
+    pub fn set_connected(&mut self, index: usize, connected: bool) {
+        if index == 1 {
+            self.right_connected = connected;
+        }
     }
 
-    pub fn right(&self) -> f32 {
-        self.right
+    #[inline]
+    pub fn left(&self, i: usize) -> f32 {
+        self.left[i]
     }
 
-    /// Returns true if the right input was set this sample.
+    #[inline]
+    pub fn right(&self, i: usize) -> f32 {
+        self.right[i]
+    }
+
+    /// Returns true if the right input is fed by an upstream connection.
+    #[inline]
     pub fn right_active(&self) -> bool {
-        self.right_active
+        self.right_connected
     }
 }
 

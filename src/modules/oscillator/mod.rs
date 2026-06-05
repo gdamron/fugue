@@ -115,7 +115,6 @@ pub struct Oscillator {
 
     // Cached output
     outputs: outputs::OscillatorOutputs,
-    last_processed_sample: u64,
 }
 
 impl Oscillator {
@@ -133,13 +132,13 @@ impl Oscillator {
             ctrl: controls,
             inputs: inputs::OscillatorInputs::new(),
             outputs: outputs::OscillatorOutputs::new(),
-            last_processed_sample: 0,
         }
     }
 
-    /// Returns the effective frequency (signal or control).
+    /// Returns the effective frequency (signal or control) at frame 0.
+    #[cfg(test)]
     fn effective_frequency(&self) -> f32 {
-        self.inputs.frequency(self.ctrl.frequency())
+        self.inputs.frequency(0, self.ctrl.frequency())
     }
 
     /// Sets the oscillator frequency in Hz (legacy API).
@@ -180,14 +179,14 @@ impl Oscillator {
         self.ctrl.set_am_amount(amount);
     }
 
-    /// Generates a sample with the given modulation values.
-    fn generate_sample_with_modulation(&mut self, freq_mod: f32, amp_mod: f32) -> f32 {
-        let base_freq = self.effective_frequency();
+    /// Generates the sample for frame `i`, reading per-sample modulation inputs.
+    pub(crate) fn generate_sample(&mut self, i: usize) -> f32 {
+        let base_freq = self.inputs.frequency(i, self.ctrl.frequency());
         let fm_amount = self.ctrl.fm_amount();
         let am_amount = self.ctrl.am_amount();
         let osc_type = self.ctrl.oscillator_type();
 
-        let modulated_freq = base_freq + (freq_mod * fm_amount);
+        let modulated_freq = base_freq + (self.inputs.fm(i) * fm_amount);
 
         let sample = match osc_type {
             OscillatorType::Sine => fast_sine(self.phase),
@@ -206,17 +205,13 @@ impl Oscillator {
         self.phase %= 1.0;
 
         let amp_scale = if am_amount > 0.0 {
-            let normalized_amp = (amp_mod + 1.0) * 0.5;
+            let normalized_amp = (self.inputs.am(i) + 1.0) * 0.5;
             1.0 - am_amount + (normalized_amp * am_amount)
         } else {
             1.0
         };
 
         sample * amp_scale
-    }
-
-    pub(crate) fn generate_sample(&mut self) -> f32 {
-        self.generate_sample_with_modulation(self.inputs.fm(), self.inputs.am())
     }
 
     /// Resets the oscillator phase to zero.
@@ -226,7 +221,7 @@ impl Oscillator {
 
     /// Generates the next sample (legacy API).
     pub fn next_sample(&mut self) -> f32 {
-        self.generate_sample()
+        self.generate_sample(0)
     }
 }
 
@@ -235,9 +230,11 @@ impl Module for Oscillator {
         "Oscillator"
     }
 
-    fn process(&mut self) -> bool {
-        let audio = self.generate_sample();
-        self.outputs.set_audio(audio);
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            let audio = self.generate_sample(i);
+            self.outputs.set(i, audio);
+        }
         true
     }
 
@@ -249,6 +246,14 @@ impl Module for Oscillator {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.inputs.set(port, value)
     }
@@ -257,26 +262,8 @@ impl Module for Oscillator {
         self.outputs.get(port)
     }
 
-    #[inline]
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        self.inputs.set_by_index(index, value);
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        self.outputs.get_by_index(index)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
-
-    fn reset_inputs(&mut self) {
-        self.inputs.reset();
+    fn set_input_connected(&mut self, index: usize, connected: bool) {
+        self.inputs.set_connected(index, connected);
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -407,8 +394,8 @@ mod tests {
         osc.set_input("frequency", 880.0).unwrap();
         assert_eq!(osc.effective_frequency(), 880.0);
 
-        // After reset_inputs, should use control again
-        osc.reset_inputs();
+        // After disconnecting the frequency port, should use control again
+        osc.set_input_connected(0, false);
         assert_eq!(osc.effective_frequency(), 440.0);
     }
 }

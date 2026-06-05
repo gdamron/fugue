@@ -199,10 +199,9 @@ mod tests {
 
         sink.set_input("audio_left", 0.25).unwrap();
         sink.set_input("audio_right", -0.5).unwrap();
-        sink.process();
-        sink.reset_inputs();
+        sink.process(1);
         sink.set_input("audio", 0.125).unwrap();
-        sink.process();
+        sink.process(1);
 
         let stats = handle.finish();
         assert_eq!(stats.frames_written, 2);
@@ -224,8 +223,8 @@ mod tests {
         let (mut sink, handle) = AudioFileSink::new_wasm(44_100, false, false, 1).unwrap();
 
         sink.set_input("audio", 0.25).unwrap();
-        sink.process();
-        sink.process();
+        sink.process(1);
+        sink.process(1);
 
         let stats = handle.finish();
         assert_eq!(stats.frames_written, 1);

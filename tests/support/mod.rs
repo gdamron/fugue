@@ -1,4 +1,4 @@
-use fugue::{AudioBackend, SinkOutput};
+use fugue::AudioBackend;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -27,14 +27,16 @@ impl AudioBackend for NullAudioBackend {
 
     fn start(
         &mut self,
-        mut sample_fn: Box<dyn FnMut() -> SinkOutput + Send>,
+        mut render: Box<dyn FnMut(&mut [f32], &mut [f32]) + Send>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let running = self.running.clone();
         running.store(true, Ordering::SeqCst);
 
         self.worker = Some(thread::spawn(move || {
+            let mut left = [0.0f32; 64];
+            let mut right = [0.0f32; 64];
             while running.load(Ordering::SeqCst) {
-                let _ = sample_fn();
+                render(&mut left, &mut right);
                 thread::sleep(Duration::from_millis(1));
             }
         }));

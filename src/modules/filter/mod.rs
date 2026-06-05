@@ -128,9 +128,6 @@ pub struct Filter {
     // Cached output
     outputs: outputs::FilterOutputs,
 
-    // Pull-based processing
-    last_processed_sample: u64,
-
     // Cached SVF coefficients — recomputed only when effective cutoff or
     // resonance changes. Sentinel -1.0 forces computation on first call.
     coeff_cutoff: f32,
@@ -158,7 +155,6 @@ impl Filter {
             ic2eq: 0.0,
             inputs: inputs::FilterInputs::new(),
             outputs: outputs::FilterOutputs::new(),
-            last_processed_sample: 0,
             coeff_cutoff: -1.0,
             coeff_resonance: -1.0,
             coeff_g: 0.0,
@@ -169,14 +165,14 @@ impl Filter {
         }
     }
 
-    /// Returns the effective cutoff (signal or control).
-    fn effective_cutoff(&self) -> f32 {
-        self.inputs.cutoff(self.ctrl.cutoff())
+    /// Returns the effective cutoff (signal or control) at frame `i`.
+    fn effective_cutoff(&self, i: usize) -> f32 {
+        self.inputs.cutoff(i, self.ctrl.cutoff())
     }
 
-    /// Returns the effective resonance (signal or control).
-    fn effective_resonance(&self) -> f32 {
-        self.inputs.resonance(self.ctrl.resonance())
+    /// Returns the effective resonance (signal or control) at frame `i`.
+    fn effective_resonance(&self, i: usize) -> f32 {
+        self.inputs.resonance(i, self.ctrl.resonance())
     }
 
     /// Sets the filter type (legacy API).
@@ -220,14 +216,14 @@ impl Filter {
 
     /// Processes one sample through the filter using the trapezoidal integrated
     /// SVF (Andrew Simper / Cytomic). Unconditionally stable at all frequencies.
-    fn process_sample(&mut self) -> f32 {
-        let base_cutoff = self.effective_cutoff();
+    fn process_sample(&mut self, i: usize) -> f32 {
+        let base_cutoff = self.effective_cutoff(i);
         let cv_amount = self.ctrl.cv_amount();
-        let base_resonance = self.effective_resonance();
+        let base_resonance = self.effective_resonance(i);
         let filter_type = self.ctrl.filter_type();
 
         let effective_cutoff =
-            (base_cutoff + self.inputs.cutoff_cv() * cv_amount).clamp(20.0, 20000.0);
+            (base_cutoff + self.inputs.cutoff_cv(i) * cv_amount).clamp(20.0, 20000.0);
         let effective_resonance = base_resonance.clamp(0.0, 0.99);
 
         // Recompute SVF coefficients only when cutoff or resonance changes.
@@ -245,7 +241,7 @@ impl Filter {
             self.coeff_resonance = effective_resonance;
         }
 
-        let input = self.inputs.audio();
+        let input = self.inputs.audio(i);
 
         // TPT SVF tick
         let v3 = input - self.ic2eq;
@@ -274,9 +270,11 @@ impl Module for Filter {
         "Filter"
     }
 
-    fn process(&mut self) -> bool {
-        let audio = self.process_sample();
-        self.outputs.set_audio(audio);
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            let audio = self.process_sample(i);
+            self.outputs.set(i, audio);
+        }
         true
     }
 
@@ -288,6 +286,14 @@ impl Module for Filter {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.inputs.set(port, value)
     }
@@ -296,26 +302,8 @@ impl Module for Filter {
         self.outputs.get(port)
     }
 
-    #[inline]
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        self.inputs.set_by_index(index, value);
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        self.outputs.get_by_index(index)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
-
-    fn reset_inputs(&mut self) {
-        self.inputs.reset();
+    fn set_input_connected(&mut self, index: usize, connected: bool) {
+        self.inputs.set_connected(index, connected);
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -465,7 +453,7 @@ mod tests {
             filter
                 .set_input("audio", if i % 2 == 0 { 1.0 } else { -1.0 })
                 .unwrap();
-            filter.process();
+            filter.process(1);
             output_sum += filter.get_output("audio").unwrap().abs();
         }
 

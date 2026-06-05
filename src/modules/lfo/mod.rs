@@ -95,9 +95,6 @@ pub struct Lfo {
 
     // Cached outputs
     outputs: outputs::LfoOutputs,
-
-    // Pull-based processing
-    last_processed_sample: u64,
 }
 
 impl Lfo {
@@ -116,7 +113,6 @@ impl Lfo {
             inputs: inputs::LfoInputs::new(),
             prev_sync: 0.0,
             outputs: outputs::LfoOutputs::new(),
-            last_processed_sample: 0,
         }
     }
 
@@ -147,19 +143,19 @@ impl Lfo {
         self.phase = 0.0;
     }
 
-    /// Generates the next sample based on current waveform and phase.
-    fn generate(&mut self) -> f32 {
+    /// Generates the sample for frame `i` based on current waveform and phase.
+    fn generate(&mut self, i: usize) -> f32 {
         // Check for sync trigger (rising edge detection)
-        if self.inputs.sync() > 0.5 && self.prev_sync <= 0.5 {
+        if self.inputs.sync(i) > 0.5 && self.prev_sync <= 0.5 {
             self.phase = 0.0;
         }
-        self.prev_sync = self.inputs.sync();
+        self.prev_sync = self.inputs.sync(i);
 
         let base_freq = self.ctrl.frequency();
         let waveform = self.ctrl.waveform();
 
         // Calculate effective frequency with modulation
-        let effective_freq = (base_freq + self.inputs.rate()).clamp(0.001, 100.0);
+        let effective_freq = (base_freq + self.inputs.rate(i)).clamp(0.001, 100.0);
 
         // Generate waveform (bipolar: -1.0 to +1.0)
         let sample = match waveform {
@@ -188,9 +184,11 @@ impl Module for Lfo {
         "Lfo"
     }
 
-    fn process(&mut self) -> bool {
-        let out = self.generate();
-        self.outputs.set_bipolar(out);
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            let out = self.generate(i);
+            self.outputs.set_bipolar(i, out);
+        }
         true
     }
 
@@ -202,30 +200,20 @@ impl Module for Lfo {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
-    }
-
-    #[inline]
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        self.inputs.set_by_index(index, value);
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        self.outputs.get_by_index(index)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -349,7 +337,7 @@ mod tests {
         let mut max = f32::MIN;
 
         for _ in 0..100 {
-            lfo.process();
+            lfo.process(1);
             let out = lfo.get_output("out").unwrap();
             let out_uni = lfo.get_output("out_uni").unwrap();
 

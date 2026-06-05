@@ -11,7 +11,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
-use crate::{Module, SinkModule, SinkOutput};
+use crate::{Module, SinkModule, MAX_BLOCK};
 
 mod inputs;
 mod outputs;
@@ -75,7 +75,8 @@ pub struct AudioFileSink {
     shared: SharedHandle,
     soft_clip: bool,
     monitor: bool,
-    last_processed_sample: u64,
+    /// Zero block returned by `sink_block` when monitoring is disabled.
+    silence: [f32; MAX_BLOCK],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -103,7 +104,7 @@ impl AudioFileSink {
             shared: shared.clone(),
             soft_clip,
             monitor,
-            last_processed_sample: 0,
+            silence: [0.0; MAX_BLOCK],
         };
         let handle = AudioFileSinkHandle { shared };
         (sink, handle)
@@ -146,16 +147,19 @@ impl Module for AudioFileSink {
         "AudioFileSink"
     }
 
-    fn process(&mut self) -> bool {
-        let (mut left, mut right) = (self.inputs.audio_left(), self.inputs.audio_right());
-        if self.soft_clip {
-            left = Self::soft_clip_sample(left);
-            right = Self::soft_clip_sample(right);
-        }
-        self.outputs.set(left, right);
+    fn process(&mut self, frames: usize) -> bool {
+        let stopping = self.shared.is_stopping();
+        for i in 0..frames {
+            let (mut left, mut right) = (self.inputs.audio_left(i), self.inputs.audio_right(i));
+            if self.soft_clip {
+                left = Self::soft_clip_sample(left);
+                right = Self::soft_clip_sample(right);
+            }
+            self.outputs.set(i, left, right);
 
-        if !self.shared.is_stopping() {
-            self.shared.push(left, right);
+            if !stopping {
+                self.shared.push(left, right);
+            }
         }
         true
     }
@@ -168,8 +172,12 @@ impl Module for AudioFileSink {
         &outputs::OUTPUTS
     }
 
-    fn reset_inputs(&mut self) {
-        self.inputs.reset();
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -179,32 +187,14 @@ impl Module for AudioFileSink {
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
     }
-
-    #[inline]
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        self.inputs.set_by_index(index, value);
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        self.outputs.get_by_index(index)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
 }
 
 impl SinkModule for AudioFileSink {
-    fn sink_output(&self) -> SinkOutput {
+    fn sink_block(&self) -> (&[f32], &[f32]) {
         if self.monitor {
-            SinkOutput::stereo(self.outputs.audio_left(), self.outputs.audio_right())
+            (self.outputs.left_block(), self.outputs.right_block())
         } else {
-            SinkOutput::default()
+            (&self.silence, &self.silence)
         }
     }
 }
@@ -253,11 +243,16 @@ mod tests {
 
         sink.set_input("audio_left", 0.2).unwrap();
         sink.set_input("audio_right", 0.4).unwrap();
-        sink.process();
-        assert_eq!(sink.sink_output(), SinkOutput::default());
+        sink.process(1);
+        // Monitoring disabled: sink contributes silence to the mix.
+        let (left, right) = sink.sink_block();
+        assert_eq!(left[0], 0.0);
+        assert_eq!(right[0], 0.0);
 
         sink = sink.with_monitor(true);
-        assert_eq!(sink.sink_output(), SinkOutput::stereo(0.2, 0.4));
+        let (left, right) = sink.sink_block();
+        assert_eq!(left[0], 0.2);
+        assert_eq!(right[0], 0.4);
 
         handle.finish();
         #[cfg(not(target_arch = "wasm32"))]
@@ -275,14 +270,15 @@ mod tests {
         let (mut sink, handle) = AudioFileSink::new_wasm(44_100, true, true, 16).unwrap();
 
         sink.set_input("audio", 3.0).unwrap();
-        sink.process();
-        assert!(sink.sink_output().left < 1.0);
+        sink.process(1);
+        assert!(sink.sink_block().0[0] < 1.0);
 
         sink = sink.with_soft_clip(false);
-        sink.reset_inputs();
         sink.set_input("audio", 3.0).unwrap();
-        sink.process();
-        assert_eq!(sink.sink_output(), SinkOutput::stereo(3.0, 3.0));
+        sink.process(1);
+        let (left, right) = sink.sink_block();
+        assert_eq!(left[0], 3.0);
+        assert_eq!(right[0], 3.0);
 
         handle.finish();
         #[cfg(not(target_arch = "wasm32"))]

@@ -30,7 +30,7 @@ mod tests {
 
             // Route signals
             adsr.set_input("gate", gate).unwrap();
-            adsr.process();
+            adsr.process(1);
 
             let envelope = adsr.get_output("envelope").unwrap();
 
@@ -45,8 +45,8 @@ mod tests {
             );
 
             // Process modules to advance to NEXT sample
-            clock.process();
-            osc.process();
+            clock.process(1);
+            osc.process(1);
         }
     }
 }

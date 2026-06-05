@@ -103,10 +103,12 @@ impl GraphModule {
         }
     }
 
-    pub fn sink_output(&self) -> Option<crate::SinkOutput> {
+    /// Stereo output blocks for a sink module, valid for `[..frames]` after
+    /// [`Module::process`]. Returns `None` for non-sink modules.
+    pub fn sink_block(&self) -> Option<(&[f32], &[f32])> {
         match self {
             Self::Module(_) => None,
-            Self::Sink(module) => Some(module.sink_output()),
+            Self::Sink(module) => Some(module.sink_block()),
         }
     }
 }

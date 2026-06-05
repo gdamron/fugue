@@ -1,6 +1,7 @@
 //! Input state for the Mixer module.
 
 use super::MAX_CHANNELS;
+use crate::MAX_BLOCK;
 
 macro_rules! mixer_port_names {
     ($prefix:literal) => {
@@ -79,13 +80,14 @@ pub static PAN_NAMES: [&str; MAX_CHANNELS] = mixer_port_names!("pan");
 
 pub struct MixerInputs {
     names: Vec<&'static str>,
-    audio: [f32; MAX_CHANNELS],
-    level_cvs: [f32; MAX_CHANNELS],
-    pan_mods: [f32; MAX_CHANNELS],
-    master_cv: f32,
-    level_cv_active: [bool; MAX_CHANNELS],
-    pan_mod_active: [bool; MAX_CHANNELS],
-    master_cv_active: bool,
+    channels: usize,
+    audio: Vec<[f32; MAX_BLOCK]>,
+    level_cvs: Vec<[f32; MAX_BLOCK]>,
+    pan_mods: Vec<[f32; MAX_BLOCK]>,
+    master_cv: [f32; MAX_BLOCK],
+    level_cv_connected: Vec<bool>,
+    pan_mod_connected: Vec<bool>,
+    master_cv_connected: bool,
 }
 
 impl MixerInputs {
@@ -104,13 +106,14 @@ impl MixerInputs {
 
         Self {
             names,
-            audio: [0.0; MAX_CHANNELS],
-            level_cvs: [1.0; MAX_CHANNELS],
-            pan_mods: [0.0; MAX_CHANNELS],
-            master_cv: 1.0,
-            level_cv_active: [false; MAX_CHANNELS],
-            pan_mod_active: [false; MAX_CHANNELS],
-            master_cv_active: false,
+            channels,
+            audio: vec![[0.0; MAX_BLOCK]; channels],
+            level_cvs: vec![[1.0; MAX_BLOCK]; channels],
+            pan_mods: vec![[0.0; MAX_BLOCK]; channels],
+            master_cv: [1.0; MAX_BLOCK],
+            level_cv_connected: vec![false; channels],
+            pan_mod_connected: vec![false; channels],
+            master_cv_connected: false,
         }
     }
 
@@ -118,12 +121,13 @@ impl MixerInputs {
         &self.names
     }
 
+    /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, channels: usize, port: &str, value: f32) -> Result<(), String> {
         if let Some(rest) = port.strip_prefix("in") {
             if let Ok(num) = rest.parse::<usize>() {
                 let idx = num - 1;
                 if idx < channels {
-                    self.audio[idx] = value;
+                    self.audio[idx].fill(value);
                     return Ok(());
                 }
             }
@@ -133,8 +137,8 @@ impl MixerInputs {
             if let Ok(num) = rest.parse::<usize>() {
                 let idx = num - 1;
                 if idx < channels {
-                    self.level_cvs[idx] = value.clamp(0.0, 2.0);
-                    self.level_cv_active[idx] = true;
+                    self.level_cvs[idx].fill(value.clamp(0.0, 2.0));
+                    self.level_cv_connected[idx] = true;
                     return Ok(());
                 }
             }
@@ -144,74 +148,83 @@ impl MixerInputs {
             if let Ok(num) = rest.parse::<usize>() {
                 let idx = num - 1;
                 if idx < channels {
-                    self.pan_mods[idx] = value.clamp(-1.0, 1.0);
-                    self.pan_mod_active[idx] = true;
+                    self.pan_mods[idx].fill(value.clamp(-1.0, 1.0));
+                    self.pan_mod_connected[idx] = true;
                     return Ok(());
                 }
             }
         }
 
         if port == "master" {
-            self.master_cv = value.clamp(0.0, 2.0);
-            self.master_cv_active = true;
+            self.master_cv.fill(value.clamp(0.0, 2.0));
+            self.master_cv_connected = true;
             return Ok(());
         }
 
         Err(format!("Unknown input port: {}", port))
     }
 
-    pub fn reset(&mut self) {
-        self.level_cv_active = [false; MAX_CHANNELS];
-        self.pan_mod_active = [false; MAX_CHANNELS];
-        self.master_cv_active = false;
-    }
-
-    /// Hot-path indexed setter. Port layout for a mixer with N channels:
+    /// Mutable block buffer for the indexed input port. Port layout for a
+    /// mixer with N channels:
     ///   `[0, N)` → audio inputs (in1..inN)
     ///   `[N, 2N)` → level CVs (level1..levelN)
     ///   `[2N, 3N)` → pan mods (pan1..panN)
     ///   `3N` → master CV
     #[inline]
-    pub fn set_by_index(&mut self, channels: usize, index: usize, value: f32) {
-        if index < channels {
-            self.audio[index] = value;
-        } else if index < 2 * channels {
-            let idx = index - channels;
-            self.level_cvs[idx] = value.clamp(0.0, 2.0);
-            self.level_cv_active[idx] = true;
-        } else if index < 3 * channels {
-            let idx = index - 2 * channels;
-            self.pan_mods[idx] = value.clamp(-1.0, 1.0);
-            self.pan_mod_active[idx] = true;
-        } else if index == 3 * channels {
-            self.master_cv = value.clamp(0.0, 2.0);
-            self.master_cv_active = true;
+    pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
+        let n = self.channels;
+        if index < n {
+            &mut self.audio[index]
+        } else if index < 2 * n {
+            &mut self.level_cvs[index - n]
+        } else if index < 3 * n {
+            &mut self.pan_mods[index - 2 * n]
+        } else {
+            &mut self.master_cv
         }
     }
 
-    pub fn audio(&self, channel: usize) -> f32 {
-        self.audio[channel]
+    /// Records whether an input port is fed by an upstream connection.
+    pub fn set_connected(&mut self, index: usize, connected: bool) {
+        let n = self.channels;
+        if index < n {
+            // audio inputs do not arbitrate against a control default
+        } else if index < 2 * n {
+            self.level_cv_connected[index - n] = connected;
+        } else if index < 3 * n {
+            self.pan_mod_connected[index - 2 * n] = connected;
+        } else if index == 3 * n {
+            self.master_cv_connected = connected;
+        }
     }
 
-    pub fn level_cv(&self, channel: usize) -> f32 {
-        if self.level_cv_active[channel] {
-            self.level_cvs[channel]
+    #[inline]
+    pub fn audio(&self, channel: usize, i: usize) -> f32 {
+        self.audio[channel][i]
+    }
+
+    #[inline]
+    pub fn level_cv(&self, channel: usize, i: usize) -> f32 {
+        if self.level_cv_connected[channel] {
+            self.level_cvs[channel][i].clamp(0.0, 2.0)
         } else {
             1.0
         }
     }
 
-    pub fn master_cv(&self) -> f32 {
-        if self.master_cv_active {
-            self.master_cv
+    #[inline]
+    pub fn master_cv(&self, i: usize) -> f32 {
+        if self.master_cv_connected {
+            self.master_cv[i].clamp(0.0, 2.0)
         } else {
             1.0
         }
     }
 
-    pub fn pan_mod(&self, channel: usize) -> f32 {
-        if self.pan_mod_active[channel] {
-            self.pan_mods[channel]
+    #[inline]
+    pub fn pan_mod(&self, channel: usize, i: usize) -> f32 {
+        if self.pan_mod_connected[channel] {
+            self.pan_mods[channel][i].clamp(-1.0, 1.0)
         } else {
             0.0
         }

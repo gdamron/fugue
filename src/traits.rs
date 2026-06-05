@@ -6,6 +6,21 @@
 //! - [`ControlMeta`] - Metadata describing a module control for UI/REPL discovery
 use serde::{Deserialize, Serialize};
 
+/// Maximum number of frames the engine processes in a single block.
+///
+/// Modules size their per-port buffers to this length; the signal graph never
+/// requests a `frames` count larger than `MAX_BLOCK` in a single
+/// [`Module::process`] call. The actual block size used at runtime is
+/// configurable (see [`crate::RenderEngine`]) and defaults to
+/// [`DEFAULT_BLOCK_SIZE`], but it is always `<= MAX_BLOCK`.
+pub const MAX_BLOCK: usize = 1024;
+
+/// Default audio processing block size in frames.
+///
+/// Chosen as a DAW-typical balance between per-call amortization and
+/// feedback/control latency. Configurable per engine instance.
+pub const DEFAULT_BLOCK_SIZE: usize = 64;
+
 /// Runtime value for a module control.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
@@ -177,7 +192,11 @@ pub trait ControlSurface: Send + Sync {
 /// The core abstraction for all synthesis components.
 ///
 /// Every module in the synthesis graph implements this trait.
-/// Modules process one sample at a time at audio rate, with named input and output ports.
+/// Modules process a **block** of audio frames at a time. Each module owns one
+/// pre-allocated buffer per input and output port (sized to [`MAX_BLOCK`]). The
+/// signal graph copies upstream output blocks into a module's input buffers,
+/// calls [`Module::process`] for the block, then reads the module's output
+/// buffers to feed downstream modules.
 ///
 /// All signals are `f32` values. The meaning of a signal is determined by which port
 /// it connects to, not by its type. This design mirrors real modular synthesizers where
@@ -186,53 +205,51 @@ pub trait ControlSurface: Send + Sync {
 /// # Example
 ///
 /// ```rust,ignore
-/// use fugue::Module;
+/// use fugue::{Module, MAX_BLOCK};
 ///
 /// struct Vca {
-///     audio_in: f32,
-///     cv_in: f32,
-///     last_processed_sample: u64,
+///     audio_in: [f32; MAX_BLOCK],
+///     cv_in: [f32; MAX_BLOCK],
+///     audio_out: [f32; MAX_BLOCK],
 /// }
 ///
 /// impl Module for Vca {
-///     fn name(&self) -> &str {
-///         "Vca"
-///     }
+///     fn name(&self) -> &str { "Vca" }
 ///
-///     fn process(&mut self) -> bool {
-///         // Processing happens here
+///     fn inputs(&self) -> &[&str] { &["audio", "cv"] }
+///     fn outputs(&self) -> &[&str] { &["audio"] }
+///
+///     fn process(&mut self, frames: usize) -> bool {
+///         for i in 0..frames {
+///             self.audio_out[i] = self.audio_in[i] * self.cv_in[i];
+///         }
 ///         true
 ///     }
 ///
-///     fn inputs(&self) -> &[&str] {
-///         &["audio", "cv"]
+///     fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+///         match index {
+///             0 => &mut self.audio_in,
+///             _ => &mut self.cv_in,
+///         }
 ///     }
 ///
-///     fn outputs(&self) -> &[&str] {
-///         &["audio"]
-///     }
+///     fn output_block(&self, _index: usize) -> &[f32] { &self.audio_out }
 ///
 ///     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
-///         match port {
-///             "audio" => { self.audio_in = value; Ok(()) }
-///             "cv" => { self.cv_in = value; Ok(()) }
-///             _ => Err(format!("Unknown input port: {}", port))
-///         }
+///         let buf = match port {
+///             "audio" => &mut self.audio_in,
+///             "cv" => &mut self.cv_in,
+///             _ => return Err(format!("Unknown input port: {}", port)),
+///         };
+///         buf.fill(value);
+///         Ok(())
 ///     }
 ///
 ///     fn get_output(&self, port: &str) -> Result<f32, String> {
 ///         match port {
-///             "audio" => Ok(self.audio_in * self.cv_in),
-///             _ => Err(format!("Unknown output port: {}", port))
+///             "audio" => Ok(self.audio_out[0]),
+///             _ => Err(format!("Unknown output port: {}", port)),
 ///         }
-///     }
-///
-///     fn last_processed_sample(&self) -> u64 {
-///         self.last_processed_sample
-///     }
-///
-///     fn mark_processed(&mut self, sample: u64) {
-///         self.last_processed_sample = sample;
 ///     }
 /// }
 /// ```
@@ -240,10 +257,16 @@ pub trait Module: Send {
     /// Returns the module's name for debugging purposes.
     fn name(&self) -> &str;
 
-    /// Processes one sample of audio.
+    /// Processes a block of `frames` audio frames (always `<= MAX_BLOCK`).
+    ///
+    /// On entry, each connected input port's buffer holds `frames` samples of
+    /// upstream signal (see [`Module::input_block_mut`]); unconnected input
+    /// buffers hold silence (zeros) unless the module arbitrates via
+    /// [`Module::set_input_connected`]. The module must write `frames` samples
+    /// to each of its output port buffers.
     ///
     /// Returns `true` if the module is still active, `false` if it should be removed.
-    fn process(&mut self) -> bool;
+    fn process(&mut self, frames: usize) -> bool;
 
     /// Returns the names of all input ports this module accepts.
     ///
@@ -255,33 +278,36 @@ pub trait Module: Send {
     /// Port names should be stable and descriptive (e.g., "audio", "trigger", "envelope").
     fn outputs(&self) -> &[&str];
 
-    /// Sets the value for a named input port.
+    /// Mutable access to an input port's block buffer.
     ///
-    /// Called once per sample by the invention runtime for each connected input.
-    /// Returns an error if the port name is not recognized.
+    /// The signal graph copies the upstream output block into `[..frames]`
+    /// before calling [`Module::process`]. The returned slice must be at least
+    /// `MAX_BLOCK` long. Called on the audio hot path; must not allocate.
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32];
+
+    /// Read-only access to an output port's block buffer.
     ///
-    /// # Arguments
+    /// Valid for `[..frames]` after [`Module::process`] has run. The returned
+    /// slice must be at least `MAX_BLOCK` long. Called on the audio hot path;
+    /// must not allocate.
+    fn output_block(&self, index: usize) -> &[f32];
+
+    /// Sets a named input port to a constant value across its whole buffer.
     ///
-    /// * `port` - Name of the input port (must match one from `inputs()`)
-    /// * `value` - The signal value (typically -1.0 to 1.0 for audio, 0.0 to 1.0 for CV)
+    /// Convenience for the control thread (the `SetModuleInput` command) and
+    /// tests — not the per-block routing path. Modules that arbitrate between a
+    /// connected signal and a control default should also mark the port
+    /// connected here. Returns an error if the port name is not recognized.
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String>;
 
-    /// Gets the current value from a named output port.
+    /// Gets the most recent value from a named output port (frame 0 of the
+    /// output block). Convenience for tests/inspection, not the hot path.
     ///
     /// Returns an error if the port name is not recognized.
-    /// This method should not modify module state - it only reads cached values.
-    ///
-    /// # Arguments
-    ///
-    /// * `port` - Name of the output port (must match one from `outputs()`)
     fn get_output(&self, port: &str) -> Result<f32, String>;
 
     /// Resolves an input port name to a stable index. Topology-change path,
     /// not the audio hot path.
-    ///
-    /// The default implementation linearly searches `self.inputs()`. That's
-    /// fine: port resolution happens once at graph compile time, not per
-    /// sample.
     fn input_port_index(&self, name: &str) -> Option<usize> {
         self.inputs().iter().position(|n| *n == name)
     }
@@ -291,53 +317,14 @@ pub trait Module: Send {
         self.outputs().iter().position(|n| *n == name)
     }
 
-    /// Fast indexed input setter. Called on the audio hot path.
+    /// Declares whether an input port is fed by an upstream connection.
     ///
-    /// Each module should override this with a `match index { 0 => .., ... }`
-    /// that writes the field directly — no string comparison per sample.
-    /// The default falls back to the string-keyed `set_input`, which is safe
-    /// but doesn't deliver the speedup and allocates on the hot path.
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        let name = self.inputs().get(index).map(|s| (*s).to_string());
-        if let Some(name) = name {
-            let _ = self.set_input(&name, value);
-        }
-    }
-
-    /// Fast indexed output getter. Called on the audio hot path.
-    ///
-    /// Same pattern as `set_input_by_index` — override for speed, default is
-    /// a safe fallback.
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        if let Some(name) = self.outputs().get(index).copied() {
-            self.get_output(name).unwrap_or(0.0)
-        } else {
-            0.0
-        }
-    }
-
-    /// Returns the sample number when this module was last processed.
-    ///
-    /// Used by the pull-based processing system to avoid reprocessing modules
-    /// multiple times within a single sample period. Modules should initialize
-    /// this to 0 and update it via `mark_processed()` after each processing cycle.
-    fn last_processed_sample(&self) -> u64;
-
-    /// Marks this module as processed for the given sample number.
-    ///
-    /// Called by the signal graph after processing the module. This enables
-    /// caching: if the same module's output is requested multiple times in
-    /// one sample, it returns cached values without reprocessing.
-    fn mark_processed(&mut self, sample: u64);
-
-    /// Resets input "active" flags before each sample.
-    ///
-    /// Called by the signal graph before routing signals for each sample.
-    /// Modules use this to track which inputs received signals vs. using
-    /// control defaults.
-    ///
-    /// Default implementation does nothing.
-    fn reset_inputs(&mut self) {}
+    /// Called by the signal graph on topology change (never on the hot path),
+    /// once per input port. Modules that arbitrate between an incoming signal
+    /// and a control default (e.g. an oscillator's `frequency` port) override
+    /// this to record connectivity. The default ignores it — most modules
+    /// simply read their input buffers (which are silence when unconnected).
+    fn set_input_connected(&mut self, _index: usize, _connected: bool) {}
 
     /// Legacy module-local control metadata surface.
     fn controls(&self) -> Vec<ControlMeta> {
@@ -390,25 +377,26 @@ impl SinkOutput {
 /// # Example
 ///
 /// ```rust,ignore
-/// use fugue::{Module, SinkModule, SinkOutput};
+/// use fugue::{Module, SinkModule, MAX_BLOCK};
 ///
 /// struct DacModule {
-///     audio_in: f32,
-///     last_processed_sample: u64,
+///     left: [f32; MAX_BLOCK],
+///     right: [f32; MAX_BLOCK],
 /// }
 ///
 /// impl SinkModule for DacModule {
-///     fn sink_output(&self) -> SinkOutput {
-///         SinkOutput::mono(self.audio_in)
+///     fn sink_block(&self) -> (&[f32], &[f32]) {
+///         (&self.left, &self.right)
 ///     }
 /// }
 /// ```
 pub trait SinkModule: Module {
-    /// Returns the collected output after processing.
+    /// Returns the collected stereo output blocks after [`Module::process`].
     ///
-    /// Called by the signal graph after `process()` to collect the
-    /// final output sample for mixing to audio output.
-    fn sink_output(&self) -> SinkOutput;
+    /// Both slices are valid for `[..frames]` after processing the block. The
+    /// signal graph mixes these into the engine's interleaved output. Mono
+    /// sinks return the same buffer for both channels.
+    fn sink_block(&self) -> (&[f32], &[f32]);
 }
 
 /// Helper for validating port names at module construction.
@@ -430,9 +418,21 @@ mod tests {
     use super::*;
 
     struct TestModule {
-        input_a: f32,
-        input_b: f32,
-        last_processed_sample: u64,
+        input_a: [f32; MAX_BLOCK],
+        input_b: [f32; MAX_BLOCK],
+        sum: [f32; MAX_BLOCK],
+        product: [f32; MAX_BLOCK],
+    }
+
+    impl TestModule {
+        fn new() -> Self {
+            Self {
+                input_a: [0.0; MAX_BLOCK],
+                input_b: [0.0; MAX_BLOCK],
+                sum: [0.0; MAX_BLOCK],
+                product: [0.0; MAX_BLOCK],
+            }
+        }
     }
 
     impl Module for TestModule {
@@ -440,7 +440,11 @@ mod tests {
             "TestModule"
         }
 
-        fn process(&mut self) -> bool {
+        fn process(&mut self, frames: usize) -> bool {
+            for i in 0..frames {
+                self.sum[i] = self.input_a[i] + self.input_b[i];
+                self.product[i] = self.input_a[i] * self.input_b[i];
+            }
             true
         }
 
@@ -452,14 +456,28 @@ mod tests {
             &["sum", "product"]
         }
 
+        fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+            match index {
+                0 => &mut self.input_a,
+                _ => &mut self.input_b,
+            }
+        }
+
+        fn output_block(&self, index: usize) -> &[f32] {
+            match index {
+                0 => &self.sum,
+                _ => &self.product,
+            }
+        }
+
         fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
             match port {
                 "a" => {
-                    self.input_a = value;
+                    self.input_a.fill(value);
                     Ok(())
                 }
                 "b" => {
-                    self.input_b = value;
+                    self.input_b.fill(value);
                     Ok(())
                 }
                 _ => Err(format!("Unknown input port: {}", port)),
@@ -468,47 +486,32 @@ mod tests {
 
         fn get_output(&self, port: &str) -> Result<f32, String> {
             match port {
-                "sum" => Ok(self.input_a + self.input_b),
-                "product" => Ok(self.input_a * self.input_b),
+                "sum" => Ok(self.sum[0]),
+                "product" => Ok(self.product[0]),
                 _ => Err(format!("Unknown output port: {}", port)),
             }
-        }
-
-        fn last_processed_sample(&self) -> u64 {
-            self.last_processed_sample
-        }
-
-        fn mark_processed(&mut self, sample: u64) {
-            self.last_processed_sample = sample;
         }
     }
 
     #[test]
     fn test_module() {
-        let mut module = TestModule {
-            input_a: 0.0,
-            input_b: 0.0,
-            last_processed_sample: 0,
-        };
+        let mut module = TestModule::new();
 
         // Test setting inputs
         assert!(module.set_input("a", 3.0).is_ok());
         assert!(module.set_input("b", 4.0).is_ok());
         assert!(module.set_input("c", 5.0).is_err());
 
-        // Test getting outputs
+        // Process a one-frame block and read outputs.
+        module.process(1);
         assert_eq!(module.get_output("sum").unwrap(), 7.0);
         assert_eq!(module.get_output("product").unwrap(), 12.0);
         assert!(module.get_output("invalid").is_err());
 
-        // Test sample tracking
-        assert_eq!(module.last_processed_sample(), 0);
-        module.mark_processed(42);
-        assert_eq!(module.last_processed_sample(), 42);
-
         // Test output after input change
         module.set_input("a", 5.0).unwrap();
         module.set_input("b", 6.0).unwrap();
+        module.process(1);
         assert_eq!(module.get_output("sum").unwrap(), 11.0);
         assert_eq!(module.get_output("product").unwrap(), 30.0);
         assert!(module.get_output("invalid").is_err());

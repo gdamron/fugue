@@ -3,7 +3,7 @@
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::modules::dac::inputs;
 use crate::modules::dac::outputs;
-use crate::{Module, SinkModule, SinkOutput};
+use crate::{Module, SinkModule};
 
 /// Factory for constructing DacModule instances from configuration.
 pub struct DacFactory;
@@ -75,8 +75,6 @@ pub struct DacModule {
     outputs: outputs::DacOutputs,
     /// Whether to apply soft clipping (default: true)
     soft_clip: bool,
-    /// Last processed sample number (for caching)
-    last_processed_sample: u64,
 }
 
 impl DacModule {
@@ -86,7 +84,6 @@ impl DacModule {
             inputs: inputs::DacInputs::new(),
             outputs: outputs::DacOutputs::new(),
             soft_clip: true,
-            last_processed_sample: 0,
         }
     }
 
@@ -128,13 +125,15 @@ impl Module for DacModule {
         "DacModule"
     }
 
-    fn process(&mut self) -> bool {
-        let (mut left, mut right) = (self.inputs.audio_left(), self.inputs.audio_right());
-        if self.soft_clip {
-            left = Self::soft_clip_sample(left);
-            right = Self::soft_clip_sample(right);
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            let (mut left, mut right) = (self.inputs.audio_left(i), self.inputs.audio_right(i));
+            if self.soft_clip {
+                left = Self::soft_clip_sample(left);
+                right = Self::soft_clip_sample(right);
+            }
+            self.outputs.set(i, left, right);
         }
-        self.outputs.set(left, right);
         true
     }
 
@@ -146,8 +145,12 @@ impl Module for DacModule {
         &outputs::OUTPUTS
     }
 
-    fn reset_inputs(&mut self) {
-        self.inputs.reset();
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -157,29 +160,11 @@ impl Module for DacModule {
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
     }
-
-    #[inline]
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        self.inputs.set_by_index(index, value);
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        self.outputs.get_by_index(index)
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
 }
 
 impl SinkModule for DacModule {
-    fn sink_output(&self) -> SinkOutput {
-        SinkOutput::stereo(self.outputs.audio_left(), self.outputs.audio_right())
+    fn sink_block(&self) -> (&[f32], &[f32]) {
+        (self.outputs.left_block(), self.outputs.right_block())
     }
 }
 
@@ -196,7 +181,7 @@ mod tests {
 
         // Set input and process
         dac.set_input("audio", 0.5).unwrap();
-        dac.process();
+        dac.process(1);
 
         // Below knee (0.95), soft clip is linear pass-through
         let out = dac.get_output("audio").unwrap();
@@ -205,8 +190,8 @@ mod tests {
             "Below knee, should be exact pass-through, got {}",
             out
         );
-        assert_eq!(dac.sink_output().left, out);
-        assert_eq!(dac.sink_output().right, out);
+        assert_eq!(dac.sink_block().0[0], out);
+        assert_eq!(dac.sink_block().1[0], out);
     }
 
     #[test]
@@ -215,7 +200,7 @@ mod tests {
 
         dac.set_input("audio_left", 0.25).unwrap();
         dac.set_input("audio_right", 0.75).unwrap();
-        dac.process();
+        dac.process(1);
 
         assert_eq!(dac.get_output("audio_left").unwrap(), 0.25);
         assert_eq!(dac.get_output("audio_right").unwrap(), 0.75);
@@ -227,7 +212,7 @@ mod tests {
 
         // Very hot signal that would normally clip
         dac.set_input("audio", 3.0).unwrap();
-        dac.process();
+        dac.process(1);
 
         let out = dac.get_output("audio").unwrap();
         // Should be limited below 1.0
@@ -240,15 +225,13 @@ mod tests {
         let mut dac = DacModule::new();
 
         // Test positive
-        dac.reset_inputs();
         dac.set_input("audio", 2.0).unwrap();
-        dac.process();
+        dac.process(1);
         let pos = dac.get_output("audio").unwrap();
 
         // Test negative
-        dac.reset_inputs();
         dac.set_input("audio", -2.0).unwrap();
-        dac.process();
+        dac.process(1);
         let neg = dac.get_output("audio").unwrap();
 
         assert!((pos + neg).abs() < 0.001, "Soft clip should be symmetrical");
@@ -260,15 +243,6 @@ mod tests {
 
         assert!(dac.set_input("invalid", 0.5).is_err());
         assert!(dac.get_output("invalid").is_err());
-    }
-
-    #[test]
-    fn test_dac_module_sample_tracking() {
-        let mut dac = DacModule::new();
-
-        assert_eq!(dac.last_processed_sample(), 0);
-        dac.mark_processed(42);
-        assert_eq!(dac.last_processed_sample(), 42);
     }
 
     #[test]

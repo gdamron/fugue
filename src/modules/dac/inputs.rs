@@ -1,63 +1,64 @@
 //! Input state for the DacModule.
 
+use crate::MAX_BLOCK;
+
 pub const INPUTS: [&str; 3] = ["audio", "audio_left", "audio_right"];
 
 pub struct DacInputs {
-    audio: f32,
-    audio_left: f32,
-    audio_right: f32,
+    audio: [f32; MAX_BLOCK],
+    audio_left: [f32; MAX_BLOCK],
+    audio_right: [f32; MAX_BLOCK],
 }
 
 impl DacInputs {
     pub fn new() -> Self {
         Self {
-            audio: 0.0,
-            audio_left: 0.0,
-            audio_right: 0.0,
+            audio: [0.0; MAX_BLOCK],
+            audio_left: [0.0; MAX_BLOCK],
+            audio_right: [0.0; MAX_BLOCK],
         }
     }
 
-    pub fn reset(&mut self) {
-        self.audio = 0.0;
-        self.audio_left = 0.0;
-        self.audio_right = 0.0;
-    }
-
+    /// Fills an input port's buffer with a constant value (control thread / tests).
+    /// In the graph, multiple sources into a port are summed by the scheduler.
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
             "audio" => {
-                self.audio += value;
+                self.audio.fill(value);
                 Ok(())
             }
             "audio_left" => {
-                self.audio_left += value;
+                self.audio_left.fill(value);
                 Ok(())
             }
             "audio_right" => {
-                self.audio_right += value;
+                self.audio_right.fill(value);
                 Ok(())
             }
             _ => Err(format!("Unknown input port: {}", port)),
         }
     }
 
-    /// Hot-path indexed setter. Index must match `INPUTS` order.
+    /// Mutable block buffer for the indexed input port. Index matches `INPUTS`.
     #[inline]
-    pub fn set_by_index(&mut self, index: usize, value: f32) {
+    pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
         match index {
-            0 => self.audio += value,
-            1 => self.audio_left += value,
-            2 => self.audio_right += value,
-            _ => {}
+            0 => &mut self.audio,
+            1 => &mut self.audio_left,
+            _ => &mut self.audio_right,
         }
     }
 
-    pub fn audio_left(&self) -> f32 {
-        self.audio_left + self.audio
+    /// Effective left input at frame `i`: the mono `audio` port mixed into left.
+    #[inline]
+    pub fn audio_left(&self, i: usize) -> f32 {
+        self.audio_left[i] + self.audio[i]
     }
 
-    pub fn audio_right(&self) -> f32 {
-        self.audio_right + self.audio
+    /// Effective right input at frame `i`: the mono `audio` port mixed into right.
+    #[inline]
+    pub fn audio_right(&self, i: usize) -> f32 {
+        self.audio_right[i] + self.audio[i]
     }
 }
 

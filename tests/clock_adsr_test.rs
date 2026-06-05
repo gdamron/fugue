@@ -33,7 +33,7 @@ mod tests {
 
             // Route to ADSR
             adsr.set_input("gate", gate).unwrap();
-            adsr.process();
+            adsr.process(1);
             let envelope = adsr.get_output("envelope").unwrap();
 
             max_envelope = max_envelope.max(envelope);
@@ -53,7 +53,7 @@ mod tests {
             last_gate = gate;
 
             // Advance clock
-            clock.process();
+            clock.process(1);
         }
 
         println!();

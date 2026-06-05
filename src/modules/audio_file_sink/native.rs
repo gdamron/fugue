@@ -395,10 +395,11 @@ mod tests {
 
         sink.set_input("audio_left", 0.25).unwrap();
         sink.set_input("audio_right", -0.5).unwrap();
-        sink.process();
-        sink.reset_inputs();
+        sink.process(1);
+        sink.set_input("audio_left", 0.0).unwrap();
+        sink.set_input("audio_right", 0.0).unwrap();
         sink.set_input("audio", 0.125).unwrap();
-        sink.process();
+        sink.process(1);
 
         let stats = handle.finish();
         assert_eq!(stats.frames_written, 2);
@@ -428,10 +429,9 @@ mod tests {
         for index in 0..FRAMES {
             let left = index as f32 / 128.0;
             let right = -(index as f32) / 128.0;
-            sink.reset_inputs();
             sink.set_input("audio_left", left).unwrap();
             sink.set_input("audio_right", right).unwrap();
-            sink.process();
+            sink.process(1);
             expected.push(left);
             expected.push(right);
         }

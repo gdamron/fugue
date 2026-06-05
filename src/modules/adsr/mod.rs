@@ -95,14 +95,16 @@ pub struct Adsr {
     // Controls (shared with AdsrControls handle)
     ctrl: AdsrControls,
 
-    // Signal inputs (set each sample when connected)
+    // Signal inputs (set each block when connected)
     inputs: inputs::AdsrInputs,
+
+    // Cached output block
+    outputs: outputs::AdsrOutputs,
 
     // State
     envelope_value: f32,
     last_gate_high: bool,
     phase: EnvelopePhase,
-    last_processed_sample: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -127,31 +129,31 @@ impl Adsr {
             sample_rate,
             ctrl: controls,
             inputs: inputs::AdsrInputs::new(),
+            outputs: outputs::AdsrOutputs::new(),
             envelope_value: 0.0,
             last_gate_high: false,
             phase: EnvelopePhase::Idle,
-            last_processed_sample: 0,
         }
     }
 
-    /// Returns the effective attack time (signal or control).
-    fn effective_attack(&self) -> f32 {
-        self.inputs.attack(self.ctrl.attack())
+    /// Returns the effective attack time (signal or control) at frame `i`.
+    fn effective_attack(&self, i: usize) -> f32 {
+        self.inputs.attack(i, self.ctrl.attack())
     }
 
-    /// Returns the effective decay time (signal or control).
-    fn effective_decay(&self) -> f32 {
-        self.inputs.decay(self.ctrl.decay())
+    /// Returns the effective decay time (signal or control) at frame `i`.
+    fn effective_decay(&self, i: usize) -> f32 {
+        self.inputs.decay(i, self.ctrl.decay())
     }
 
-    /// Returns the effective sustain level (signal or control).
-    fn effective_sustain(&self) -> f32 {
-        self.inputs.sustain(self.ctrl.sustain())
+    /// Returns the effective sustain level (signal or control) at frame `i`.
+    fn effective_sustain(&self, i: usize) -> f32 {
+        self.inputs.sustain(i, self.ctrl.sustain())
     }
 
-    /// Returns the effective release time (signal or control).
-    fn effective_release(&self) -> f32 {
-        self.inputs.release(self.ctrl.release())
+    /// Returns the effective release time (signal or control) at frame `i`.
+    fn effective_release(&self, i: usize) -> f32 {
+        self.inputs.release(i, self.ctrl.release())
     }
 
     /// Computes rate of change per sample for a given time duration.
@@ -162,9 +164,9 @@ impl Adsr {
         1.0 / (time_seconds * self.sample_rate as f32)
     }
 
-    /// Processes one sample of the envelope.
-    fn process_envelope(&mut self) {
-        let gate_high = self.inputs.gate() > 0.0;
+    /// Processes one sample of the envelope at frame `i`.
+    fn process_envelope(&mut self, i: usize) {
+        let gate_high = self.inputs.gate(i) > 0.0;
         let gate_triggered = gate_high && !self.last_gate_high;
         let gate_released = !gate_high && self.last_gate_high;
 
@@ -176,10 +178,10 @@ impl Adsr {
         }
 
         // Get effective values
-        let attack = self.effective_attack();
-        let decay = self.effective_decay();
-        let sustain = self.effective_sustain();
-        let release = self.effective_release();
+        let attack = self.effective_attack(i);
+        let decay = self.effective_decay(i);
+        let sustain = self.effective_sustain(i);
+        let release = self.effective_release(i);
 
         // Process based on phase
         match self.phase {
@@ -216,6 +218,7 @@ impl Adsr {
         }
 
         self.last_gate_high = gate_high;
+        self.outputs.set(i, self.envelope_value);
     }
 }
 
@@ -224,8 +227,10 @@ impl Module for Adsr {
         "Adsr"
     }
 
-    fn process(&mut self) -> bool {
-        self.process_envelope();
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            self.process_envelope(i);
+        }
         true
     }
 
@@ -237,37 +242,24 @@ impl Module for Adsr {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        outputs::AdsrOutputs::get(port, self.envelope_value)
+        self.outputs.get(port)
     }
 
-    #[inline]
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        self.inputs.set_by_index(index, value);
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        match index {
-            0 => self.envelope_value.clamp(0.0, 1.0),
-            _ => 0.0,
-        }
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
-
-    fn reset_inputs(&mut self) {
-        self.inputs.reset();
+    fn set_input_connected(&mut self, index: usize, connected: bool) {
+        self.inputs.set_connected(index, connected);
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -327,7 +319,7 @@ mod tests {
     #[test]
     fn test_adsr_idle() {
         let mut adsr = Adsr::new(44100);
-        adsr.process();
+        adsr.process(1);
         assert_eq!(adsr.get_output("envelope").unwrap(), 0.0);
     }
 
@@ -335,7 +327,7 @@ mod tests {
     fn test_adsr_gate_triggers_attack() {
         let mut adsr = Adsr::new(44100);
         adsr.set_input("gate", 1.0).unwrap();
-        adsr.process();
+        adsr.process(1);
         assert!(adsr.get_output("envelope").unwrap() > 0.0);
     }
 
@@ -344,7 +336,7 @@ mod tests {
         let mut adsr = Adsr::new(44100);
         adsr.set_control("attack", 0.0).unwrap();
         adsr.set_input("gate", 1.0).unwrap();
-        adsr.process();
+        adsr.process(1);
         assert_eq!(adsr.get_output("envelope").unwrap(), 1.0);
     }
 
@@ -360,7 +352,7 @@ mod tests {
 
         // Process through attack and decay to reach sustain
         for _ in 0..10 {
-            adsr.process();
+            adsr.process(1);
         }
 
         let envelope = adsr.get_output("envelope").unwrap();
@@ -379,7 +371,7 @@ mod tests {
         adsr.set_input("gate", 1.0).unwrap();
 
         for _ in 0..10 {
-            adsr.process();
+            adsr.process(1);
         }
 
         // Now release
@@ -388,7 +380,7 @@ mod tests {
         // Process release phase
         let release_samples = (0.01 * 44100.0) as usize + 10;
         for _ in 0..release_samples {
-            adsr.process();
+            adsr.process(1);
         }
 
         let envelope = adsr.get_output("envelope").unwrap();
@@ -435,10 +427,10 @@ mod tests {
 
         // Signal input should override
         adsr.set_input("attack", 0.1).unwrap();
-        assert_eq!(adsr.effective_attack(), 0.1);
+        assert_eq!(adsr.effective_attack(0), 0.1);
 
-        // After reset_inputs, should use control again
-        adsr.reset_inputs();
-        assert_eq!(adsr.effective_attack(), 0.5);
+        // After disconnecting the attack port, should use control again
+        adsr.set_input_connected(1, false);
+        assert_eq!(adsr.effective_attack(0), 0.5);
     }
 }

@@ -134,14 +134,31 @@ impl InventionRuntime {
             command_rx,
             process_order: Vec::new(),
             compiled_routes: Vec::new(),
+            connected_in_ports: Vec::new(),
+            process_groups: Vec::new(),
             sink_indices: Vec::new(),
+            out_bufs: Vec::new(),
+            out_prev: Vec::new(),
+            out_counts: Vec::new(),
+            block_capacity: 0,
+            block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
         };
 
         let control_surfaces = Arc::new(Mutex::new(self.control_surfaces));
 
         // The audio callback owns the graph, so processing does not lock it.
-        backend.start(Box::new(move || graph.process_sample()))?;
+        // Each callback fills its buffer in `block_size`-frame blocks.
+        backend.start(Box::new(move |left: &mut [f32], right: &mut [f32]| {
+            let frames = left.len().min(right.len());
+            let block = graph.block_size.clamp(1, crate::MAX_BLOCK);
+            let mut done = 0;
+            while done < frames {
+                let n = (frames - done).min(block);
+                graph.process_block(&mut left[done..done + n], &mut right[done..done + n]);
+                done += n;
+            }
+        }))?;
 
         {
             self.state.lock().unwrap().running = true;
@@ -578,7 +595,6 @@ mod tests {
     use super::*;
     use crate::invention::builder::InventionBuilder;
     use crate::invention::format::Invention;
-    use crate::SinkOutput;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread::{self, JoinHandle};
     use std::time::Duration;
@@ -606,12 +622,14 @@ mod tests {
 
         fn start(
             &mut self,
-            mut sample_fn: Box<dyn FnMut() -> SinkOutput + Send>,
+            mut render: Box<dyn FnMut(&mut [f32], &mut [f32]) + Send>,
         ) -> Result<(), Box<dyn std::error::Error>> {
             let stop = self.stop.clone();
             self.worker = Some(thread::spawn(move || {
+                let mut left = [0.0f32; 64];
+                let mut right = [0.0f32; 64];
                 while !stop.load(Ordering::Relaxed) {
-                    let _ = sample_fn();
+                    render(&mut left, &mut right);
                     thread::sleep(Duration::from_millis(2));
                 }
             }));

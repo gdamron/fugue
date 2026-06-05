@@ -75,7 +75,7 @@ impl ModuleFactory for VcaFactory {
 pub struct Vca {
     ctrl: VcaControls,
     inputs: inputs::VcaInputs,
-    last_processed_sample: u64, // For pull-based processing
+    outputs: outputs::VcaOutputs,
 }
 
 impl Vca {
@@ -89,13 +89,8 @@ impl Vca {
         Self {
             ctrl: controls,
             inputs: inputs::VcaInputs::new(),
-            last_processed_sample: 0,
+            outputs: outputs::VcaOutputs::new(),
         }
-    }
-
-    /// Returns the effective CV (signal or control).
-    fn effective_cv(&self) -> f32 {
-        self.inputs.cv(self.ctrl.cv())
     }
 
     /// Returns a reference to the controls.
@@ -115,7 +110,13 @@ impl Module for Vca {
         "Vca"
     }
 
-    fn process(&mut self) -> bool {
+    fn process(&mut self, frames: usize) -> bool {
+        for i in 0..frames {
+            // Read the control per frame (cheap atomic load) so a control-driven
+            // gain responds sample-accurately rather than stepping per block.
+            let value = self.inputs.audio(i) * self.inputs.cv(i, self.ctrl.cv());
+            self.outputs.set(i, value);
+        }
         true
     }
 
@@ -127,37 +128,24 @@ impl Module for Vca {
         &outputs::OUTPUTS
     }
 
+    fn input_block_mut(&mut self, index: usize) -> &mut [f32] {
+        self.inputs.block_mut(index)
+    }
+
+    fn output_block(&self, index: usize) -> &[f32] {
+        self.outputs.block(index)
+    }
+
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         self.inputs.set(port, value)
     }
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
-        outputs::VcaOutputs::get(port, self.inputs.audio() * self.effective_cv())
+        self.outputs.get(port)
     }
 
-    #[inline]
-    fn set_input_by_index(&mut self, index: usize, value: f32) {
-        self.inputs.set_by_index(index, value);
-    }
-
-    #[inline]
-    fn get_output_by_index(&self, index: usize) -> f32 {
-        match index {
-            0 => self.inputs.audio() * self.effective_cv(),
-            _ => 0.0,
-        }
-    }
-
-    fn last_processed_sample(&self) -> u64 {
-        self.last_processed_sample
-    }
-
-    fn mark_processed(&mut self, sample: u64) {
-        self.last_processed_sample = sample;
-    }
-
-    fn reset_inputs(&mut self) {
-        self.inputs.reset();
+    fn set_input_connected(&mut self, index: usize, connected: bool) {
+        self.inputs.set_connected(index, connected);
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -196,14 +184,17 @@ mod tests {
 
         // Full volume (default)
         vca.set_input("audio", 0.5).unwrap();
+        vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.5);
 
         // Half volume via CV signal
         vca.set_input("cv", 0.5).unwrap();
+        vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.25);
 
         // Silence
         vca.set_input("cv", 0.0).unwrap();
+        vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.0);
     }
 
@@ -215,10 +206,12 @@ mod tests {
 
         // CV above 1.0 should be clamped
         vca.set_input("cv", 2.0).unwrap();
+        vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 1.0);
 
         // CV below 0.0 should be clamped
         vca.set_input("cv", -0.5).unwrap();
+        vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.0);
     }
 
@@ -256,16 +249,19 @@ mod tests {
 
         vca.set_input("audio", 1.0).unwrap();
 
-        // Without signal, should use control
-        vca.reset_inputs();
+        // Without a connected cv signal, should use control
+        vca.set_input_connected(1, false);
+        vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.5);
 
         // With signal, should use signal
         vca.set_input("cv", 0.25).unwrap();
+        vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.25);
 
-        // After reset, should use control again
-        vca.reset_inputs();
+        // After disconnecting, should use control again
+        vca.set_input_connected(1, false);
+        vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.5);
     }
 }
