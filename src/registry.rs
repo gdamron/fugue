@@ -142,6 +142,8 @@ impl Default for ModuleRegistry {
         reg.register(SamplePlayerFactory);
         reg.register(StepSequencerFactory);
         reg.register(DacFactory);
+        #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
+        reg.register(crate::WasmModuleFactory);
         reg
     }
 }

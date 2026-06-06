@@ -14,6 +14,7 @@ serde_json = "1.0"
 indexmap = "2.0"
 hound = "3.5"
 schemars = { version = "1", optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cpal = "0.15"
@@ -21,6 +22,8 @@ ureq = { version = "2.10", default-features = true }
 boa_engine = "0.21.1"
 claxon = "0.4.3"
 flacenc = "0.5.1"
+wasmtime = { version = "45.0.0", optional = true, features = ["component-model"] }
+wasmtime-wasi = { version = "45.0.0", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -30,7 +33,12 @@ web-sys = { version = "0.3", features = ["AudioContext", "AudioDestinationNode"]
 
 [features]
 ffi = []
+plugins = ["dep:sha2", "dep:wasmtime", "dep:wasmtime-wasi"]
 rpc-schema = ["dep:schemars"]
+
+[dev-dependencies]
+wat = "1.251.0"
+wit-component = "0.251.0"
 
 [[example]]
 name = "examples"
