@@ -77,6 +77,7 @@ pub struct WasmModule {
     instance: Instance,
     set_input_block: TypedFunc<(u32, &'static [f32]), (Result<(), String>,)>,
     process: TypedFunc<(u32,), (bool,)>,
+    process_output_block: Option<TypedFunc<(u32,), (Result<Vec<f32>, String>,)>>,
     output_block: TypedFunc<(u32,), (Result<Vec<f32>, String>,)>,
     set_input: TypedFunc<(String, f32), (Result<(), String>,)>,
     set_input_connected: Option<TypedFunc<(u32, bool), ()>>,
@@ -89,6 +90,7 @@ pub struct WasmModule {
     input_blocks: Vec<[f32; MAX_BLOCK]>,
     output_blocks: Vec<[f32; MAX_BLOCK]>,
     input_transfer: Vec<Vec<f32>>,
+    input_connected: Vec<bool>,
 }
 
 impl WasmModule {
@@ -107,15 +109,16 @@ impl WasmModule {
         store.set_fuel(u64::MAX / 2)?;
         let instance = linker.instantiate(&mut store, &component)?;
 
-        let init = instance.get_typed_func::<(u32, String), (Result<(), String>,)>(
-            &mut store,
-            "init",
-        )?;
+        let init =
+            instance.get_typed_func::<(u32, String), (Result<(), String>,)>(&mut store, "init")?;
         let (result,) = init.call(&mut store, (sample_rate, config_json.to_string()))?;
         result.map_err(|e| format!("wasm module init failed: {e}"))?;
 
         let set_input_block = instance.get_typed_func(&mut store, "set-input-block")?;
         let process = instance.get_typed_func(&mut store, "process")?;
+        let process_output_block = instance
+            .get_typed_func(&mut store, "process-output-block")
+            .ok();
         let output_block = instance.get_typed_func(&mut store, "output-block")?;
         let set_input = instance.get_typed_func(&mut store, "set-input")?;
         let set_input_connected = instance
@@ -128,6 +131,7 @@ impl WasmModule {
             instance,
             set_input_block,
             process,
+            process_output_block,
             output_block,
             set_input,
             set_input_connected,
@@ -140,6 +144,7 @@ impl WasmModule {
             input_blocks: Vec::new(),
             output_blocks: Vec::new(),
             input_transfer: Vec::new(),
+            input_connected: Vec::new(),
         })
     }
 
@@ -152,6 +157,7 @@ impl WasmModule {
         self.input_transfer = (0..self.inputs.len())
             .map(|_| Vec::with_capacity(MAX_BLOCK))
             .collect();
+        self.input_connected = vec![false; self.inputs.len()];
 
         self.input_names = leak_port_names(&self.inputs);
         self.output_names = leak_port_names(&self.outputs);
@@ -183,6 +189,9 @@ impl Module for WasmModule {
     fn process(&mut self, frames: usize) -> bool {
         let frames = frames.min(MAX_BLOCK);
         for index in 0..self.input_blocks.len() {
+            if !self.input_connected.get(index).copied().unwrap_or(false) {
+                continue;
+            }
             let values = &mut self.input_transfer[index];
             values.clear();
             values.extend_from_slice(&self.input_blocks[index][..frames]);
@@ -192,6 +201,22 @@ impl Module for WasmModule {
             else {
                 return false;
             };
+        }
+
+        if self.output_blocks.len() == 1 {
+            if let Some(process_output_block) = &self.process_output_block {
+                let Ok((Ok(values),)) =
+                    process_output_block.call(&mut self.store, (frames as u32,))
+                else {
+                    return false;
+                };
+                let n = frames.min(values.len());
+                self.output_blocks[0][..n].copy_from_slice(&values[..n]);
+                if n < frames {
+                    self.output_blocks[0][n..frames].fill(0.0);
+                }
+                return true;
+            }
         }
 
         let Ok((active,)) = self.process.call(&mut self.store, (frames as u32,)) else {
@@ -246,6 +271,9 @@ impl Module for WasmModule {
     }
 
     fn set_input_connected(&mut self, index: usize, connected: bool) {
+        if let Some(slot) = self.input_connected.get_mut(index) {
+            *slot = connected;
+        }
         if let Some(func) = &self.set_input_connected {
             let _ = func.call(&mut self.store, (index as u32, connected));
         }
@@ -326,7 +354,10 @@ impl HostState {
                     preopen(&mut builder, &scope, true)?;
                 }
                 Capability::Net(host) => {
-                    return Err(format!("network capability is not supported for wasm modules yet: {host}").into());
+                    return Err(format!(
+                        "network capability is not supported for wasm modules yet: {host}"
+                    )
+                    .into());
                 }
             }
         }

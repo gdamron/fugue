@@ -84,6 +84,11 @@ impl Guest for TestModule {
         true
     }
 
+    fn process_output_block(frames: u32) -> Result<Vec<f32>, String> {
+        Self::process(frames);
+        Self::output_block(0)
+    }
+
     fn output_block(index: u32) -> Result<Vec<f32>, String> {
         if index != 0 {
             return Err(format!("unknown output index: {index}"));

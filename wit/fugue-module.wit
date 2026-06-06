@@ -14,6 +14,7 @@ world module {
     export set-input-connected: func(index: u32, connected: bool);
     export set-input-block: func(index: u32, values: list<f32>) -> result<_, string>;
     export process: func(frames: u32) -> bool;
+    export process-output-block: func(frames: u32) -> result<list<f32>, string>;
     export output-block: func(index: u32) -> result<list<f32>, string>;
     export get-output: func(port: string) -> result<f32, string>;
     export set-control: func(key: string, value: f32) -> result<_, string>;

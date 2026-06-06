@@ -66,6 +66,7 @@ fn loads_fixture_component_and_processes_audio_block() {
     assert_eq!(module.inputs(), &["frequency"]);
     assert_eq!(module.outputs(), &["audio"]);
 
+    module.set_input_connected(0, true);
     module.input_block_mut(0)[..2].fill(48_000.0);
     assert!(module.process(2));
     assert_eq!(module.output_block(0)[0], 0.0);
@@ -76,8 +77,12 @@ fn loads_fixture_component_and_processes_audio_block() {
     assert_eq!(module.get_output("audio").expect("get output"), 0.0);
     assert_eq!(module.output_block(0)[1], 0.5);
 
-    module.set_input("frequency", 12_000.0).expect("set frequency");
-    module.set_control("frequency", 12_000.0).expect("set control");
+    module
+        .set_input("frequency", 12_000.0)
+        .expect("set frequency");
+    module
+        .set_control("frequency", 12_000.0)
+        .expect("set control");
 }
 
 #[test]
@@ -87,6 +92,7 @@ fn fugue_module_wit_declares_required_exports() {
         "export init:",
         "export set-input:",
         "export process:",
+        "export process-output-block:",
         "export get-output:",
         "export set-control:",
     ] {
