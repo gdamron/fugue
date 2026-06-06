@@ -37,8 +37,10 @@ plugins = ["dep:sha2", "dep:wasmtime", "dep:wasmtime-wasi"]
 rpc-schema = ["dep:schemars"]
 
 [dev-dependencies]
+tempfile = "3.27.0"
 wat = "1.251.0"
 wit-component = "0.251.0"
+wit-bindgen = "0.51.0"
 
 [[example]]
 name = "examples"

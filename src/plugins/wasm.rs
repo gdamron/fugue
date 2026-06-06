@@ -104,6 +104,7 @@ impl WasmModule {
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
 
         let mut store = Store::new(&engine, HostState::from_manifest(manifest)?);
+        store.set_fuel(u64::MAX / 2)?;
         let instance = linker.instantiate(&mut store, &component)?;
 
         let init = instance.get_typed_func::<(u32, String), (Result<(), String>,)>(

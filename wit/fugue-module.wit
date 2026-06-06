@@ -10,11 +10,11 @@ world module {
     export name: func() -> string;
     export inputs: func() -> list<string>;
     export outputs: func() -> list<string>;
-    export set-input: func(port: string, value: float32) -> result<_, string>;
+    export set-input: func(port: string, value: f32) -> result<_, string>;
     export set-input-connected: func(index: u32, connected: bool);
-    export set-input-block: func(index: u32, values: list<float32>) -> result<_, string>;
+    export set-input-block: func(index: u32, values: list<f32>) -> result<_, string>;
     export process: func(frames: u32) -> bool;
-    export output-block: func(index: u32) -> result<list<float32>, string>;
-    export get-output: func(port: string) -> result<float32, string>;
-    export set-control: func(key: string, value: float32) -> result<_, string>;
+    export output-block: func(index: u32) -> result<list<f32>, string>;
+    export get-output: func(port: string) -> result<f32, string>;
+    export set-control: func(key: string, value: f32) -> result<_, string>;
 }
