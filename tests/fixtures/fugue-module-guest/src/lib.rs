@@ -12,6 +12,7 @@ struct State {
     frequency: f32,
     phase: f32,
     output: [f32; 1024],
+    last_frames: usize,
 }
 
 impl Default for State {
@@ -21,6 +22,7 @@ impl Default for State {
             frequency: 440.0,
             phase: 0.0,
             output: [0.0; 1024],
+            last_frames: 0,
         }
     }
 }
@@ -75,6 +77,7 @@ impl Guest for TestModule {
     fn process(frames: u32) -> bool {
         STATE.with_borrow_mut(|state| {
             let frames = (frames as usize).min(state.output.len());
+            state.last_frames = frames;
             for i in 0..frames {
                 state.output[i] = state.phase;
                 state.phase += state.frequency / state.sample_rate;
@@ -84,16 +87,16 @@ impl Guest for TestModule {
         true
     }
 
-    fn process_output_block(frames: u32) -> Result<Vec<f32>, String> {
-        Self::process(frames);
-        Self::output_block(0)
+    fn process_output_block(frames: u32) -> Result<(bool, Vec<f32>), String> {
+        let active = Self::process(frames);
+        Ok((active, Self::output_block(0)?))
     }
 
     fn output_block(index: u32) -> Result<Vec<f32>, String> {
         if index != 0 {
             return Err(format!("unknown output index: {index}"));
         }
-        STATE.with_borrow(|state| Ok(state.output.to_vec()))
+        STATE.with_borrow(|state| Ok(state.output[..state.last_frames].to_vec()))
     }
 
     fn get_output(port: String) -> Result<f32, String> {

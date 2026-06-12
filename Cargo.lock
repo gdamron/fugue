@@ -1083,7 +1083,6 @@ dependencies = [
  "wasm-bindgen",
  "wasmtime",
  "wasmtime-wasi",
- "wat",
  "web-sys",
  "wit-bindgen 0.51.0",
  "wit-component 0.251.0",

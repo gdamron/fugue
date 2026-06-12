@@ -77,7 +77,7 @@ pub struct WasmModule {
     instance: Instance,
     set_input_block: TypedFunc<(u32, &'static [f32]), (Result<(), String>,)>,
     process: TypedFunc<(u32,), (bool,)>,
-    process_output_block: Option<TypedFunc<(u32,), (Result<Vec<f32>, String>,)>>,
+    process_output_block: Option<TypedFunc<(u32,), (Result<(bool, Vec<f32>), String>,)>>,
     output_block: TypedFunc<(u32,), (Result<Vec<f32>, String>,)>,
     set_input: TypedFunc<(String, f32), (Result<(), String>,)>,
     set_input_connected: Option<TypedFunc<(u32, bool), ()>>,
@@ -91,6 +91,10 @@ pub struct WasmModule {
     output_blocks: Vec<[f32; MAX_BLOCK]>,
     input_transfer: Vec<Vec<f32>>,
     input_connected: Vec<bool>,
+    /// Latched after a guest trap; a trapped store fails every subsequent
+    /// call, so we stop calling into it instead of paying full call cost
+    /// per block.
+    failed: bool,
 }
 
 impl WasmModule {
@@ -116,14 +120,12 @@ impl WasmModule {
 
         let set_input_block = instance.get_typed_func(&mut store, "set-input-block")?;
         let process = instance.get_typed_func(&mut store, "process")?;
-        let process_output_block = instance
-            .get_typed_func(&mut store, "process-output-block")
-            .ok();
+        let process_output_block =
+            optional_typed_func(&instance, &mut store, "process-output-block")?;
         let output_block = instance.get_typed_func(&mut store, "output-block")?;
         let set_input = instance.get_typed_func(&mut store, "set-input")?;
-        let set_input_connected = instance
-            .get_typed_func(&mut store, "set-input-connected")
-            .ok();
+        let set_input_connected =
+            optional_typed_func(&instance, &mut store, "set-input-connected")?;
         let set_control = instance.get_typed_func(&mut store, "set-control")?;
 
         Ok(Self {
@@ -145,6 +147,7 @@ impl WasmModule {
             output_blocks: Vec::new(),
             input_transfer: Vec::new(),
             input_connected: Vec::new(),
+            failed: false,
         })
     }
 
@@ -179,6 +182,20 @@ impl WasmModule {
         let (value,) = func.call(&mut self.store, ())?;
         Ok(value)
     }
+
+    /// Latches the module as failed after a guest trap or error, zeroing all
+    /// outputs so downstream modules don't hold a stale sustained value.
+    fn fail(&mut self, export: &str) -> bool {
+        eprintln!(
+            "wasm module '{}' failed in `{export}`; muting output",
+            self.name
+        );
+        for block in &mut self.output_blocks {
+            block.fill(0.0);
+        }
+        self.failed = true;
+        false
+    }
 }
 
 impl Module for WasmModule {
@@ -187,6 +204,9 @@ impl Module for WasmModule {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        if self.failed {
+            return false;
+        }
         let frames = frames.min(MAX_BLOCK);
         for index in 0..self.input_blocks.len() {
             if !self.input_connected.get(index).copied().unwrap_or(false) {
@@ -199,33 +219,37 @@ impl Module for WasmModule {
                 .set_input_block
                 .call(&mut self.store, (index as u32, &*values))
             else {
-                return false;
+                return self.fail("set-input-block");
             };
         }
 
+        // Note: each block lifts the guest's `list<f32>` into a fresh `Vec`,
+        // an allocation inherent to component-model lifting. A shared-memory
+        // output path is the planned follow-up to make this hot path
+        // allocation-free.
         if self.output_blocks.len() == 1 {
             if let Some(process_output_block) = &self.process_output_block {
-                let Ok((Ok(values),)) =
+                let Ok((Ok((active, values)),)) =
                     process_output_block.call(&mut self.store, (frames as u32,))
                 else {
-                    return false;
+                    return self.fail("process-output-block");
                 };
                 let n = frames.min(values.len());
                 self.output_blocks[0][..n].copy_from_slice(&values[..n]);
                 if n < frames {
                     self.output_blocks[0][n..frames].fill(0.0);
                 }
-                return true;
+                return active;
             }
         }
 
         let Ok((active,)) = self.process.call(&mut self.store, (frames as u32,)) else {
-            return false;
+            return self.fail("process");
         };
 
         for index in 0..self.output_blocks.len() {
             let Ok((Ok(values),)) = self.output_block.call(&mut self.store, (index as u32,)) else {
-                return false;
+                return self.fail("output-block");
             };
             let n = frames.min(values.len());
             self.output_blocks[index][..n].copy_from_slice(&values[..n]);
@@ -297,11 +321,14 @@ fn component_engine() -> Result<Engine, Box<dyn Error>> {
 
 fn cached_component(engine: &Engine, wasm_path: &Path) -> Result<Component, Box<dyn Error>> {
     let bytes = fs::read(wasm_path)?;
-    let cache_path = cache_path_for(wasm_path, &bytes)?;
+    let cache_path = cache_path_for(engine, wasm_path, &bytes)?;
     if cache_path.exists() {
-        // The cache file is produced by this engine configuration and content hash.
-        let component = unsafe { Component::deserialize_file(engine, &cache_path)? };
-        return Ok(component);
+        // The cache file is produced by this engine configuration and content
+        // hash; if it fails wasmtime's own compatibility check (e.g. after a
+        // dependency bump), fall through and recompile instead of erroring.
+        if let Ok(component) = unsafe { Component::deserialize_file(engine, &cache_path) } {
+            return Ok(component);
+        }
     }
 
     let compiled = engine.precompile_component(&bytes)?;
@@ -313,10 +340,14 @@ fn cached_component(engine: &Engine, wasm_path: &Path) -> Result<Component, Box<
     Ok(component)
 }
 
-fn cache_path_for(wasm_path: &Path, wasm: &[u8]) -> Result<PathBuf, Box<dyn Error>> {
+fn cache_path_for(
+    engine: &Engine,
+    wasm_path: &Path,
+    wasm: &[u8],
+) -> Result<PathBuf, Box<dyn Error>> {
     let mut hasher = Sha256::new();
     hasher.update(CACHE_VERSION.as_bytes());
-    hasher.update(b"wasmtime-45");
+    hasher.update(engine_compatibility_tag(engine).to_le_bytes());
     hasher.update(wasm_path.to_string_lossy().as_bytes());
     hasher.update(wasm);
     let digest = hasher.finalize();
@@ -324,16 +355,62 @@ fn cache_path_for(wasm_path: &Path, wasm: &[u8]) -> Result<PathBuf, Box<dyn Erro
     Ok(fugue_cache_dir()?.join(file))
 }
 
+/// Hashes the engine's precompile compatibility state (wasmtime version,
+/// compiler config, target) so cache keys rotate automatically on dependency
+/// bumps instead of relying on a hardcoded version tag.
+fn engine_compatibility_tag(engine: &Engine) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    engine.precompile_compatibility_hash().hash(&mut hasher);
+    hasher.finish()
+}
+
 fn fugue_cache_dir() -> Result<PathBuf, Box<dyn Error>> {
     let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_string())?;
     Ok(PathBuf::from(home).join(".fugue/cache/wasm"))
 }
 
+/// Interns port names in a global set so repeated load/unload of the same
+/// module reuses one leaked allocation per distinct name instead of growing
+/// without bound. Called at module init only, never on the audio thread.
 fn leak_port_names(names: &[String]) -> Vec<&'static str> {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+
+    static INTERNED: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let mut interned = INTERNED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .expect("port name intern lock");
     names
         .iter()
-        .map(|name| Box::leak(name.clone().into_boxed_str()) as &'static str)
+        .map(|name| match interned.get(name.as_str()) {
+            Some(existing) => *existing,
+            None => {
+                let leaked = Box::leak(name.clone().into_boxed_str()) as &'static str;
+                interned.insert(leaked);
+                leaked
+            }
+        })
         .collect()
+}
+
+/// Resolves an optional export, distinguishing "not exported" (None) from
+/// "exported with the wrong signature" (error) so a mistyped fast-path export
+/// fails loudly instead of silently falling back to the slow path.
+fn optional_typed_func<Params, Results>(
+    instance: &Instance,
+    store: &mut Store<HostState>,
+    name: &str,
+) -> Result<Option<TypedFunc<Params, Results>>, Box<dyn Error>>
+where
+    Params: wasmtime::component::ComponentNamedList + wasmtime::component::Lower,
+    Results: wasmtime::component::ComponentNamedList + wasmtime::component::Lift,
+{
+    if instance.get_func(&mut *store, name).is_none() {
+        return Ok(None);
+    }
+    Ok(Some(instance.get_typed_func(&mut *store, name)?))
 }
 
 struct HostState {
@@ -446,9 +523,10 @@ mod tests {
 
     #[test]
     fn cache_path_changes_with_wasm_bytes() {
+        let engine = component_engine().expect("engine");
         let path = Path::new("module.fugue-module.wasm");
-        let a = cache_path_for(path, b"a").expect("cache path");
-        let b = cache_path_for(path, b"b").expect("cache path");
+        let a = cache_path_for(&engine, path, b"a").expect("cache path");
+        let b = cache_path_for(&engine, path, b"b").expect("cache path");
         assert_ne!(a, b);
     }
 }
