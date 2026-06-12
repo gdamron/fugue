@@ -10,6 +10,8 @@ pub mod invention;
 pub mod modules;
 pub mod music;
 pub mod pkg;
+#[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
+pub mod plugins;
 pub mod registry;
 pub mod rpc;
 pub mod scripting;
@@ -63,4 +65,9 @@ pub use pkg::{
     Capability as PkgCapability, DepRef as PkgDepRef, EntrySpec as PkgEntrySpec, ManifestError,
     PackageKind, PackageManifest, Requires as PkgRequires, Signing as PkgSigning,
     Target as PkgTarget, ValidationError as PkgValidationError,
+};
+
+#[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
+pub use plugins::wasm::{
+    load_component_module, load_manifest_module, WasmModule, WasmModuleFactory,
 };
