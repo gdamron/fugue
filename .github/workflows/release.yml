@@ -136,12 +136,35 @@ jobs:
           name: wasm
           path: dist/*.tar.gz
 
+  client-binaries:
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download client binaries from private releases
+        env:
+          GH_TOKEN: ${{ secrets.CLIENT_BINARIES_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # The `fugue` and `fugue-mcp` binaries are built in their own (private)
+          # repos. Pull the prebuilt assets for this version with a read-only PAT
+          # and re-host them on the public Fugue release. The private releases for
+          # v$VERSION must already exist (release fugue-cli and fugue-mcp first).
+          gh release download "v$VERSION" -R gdamron/fugue-cli --pattern 'fugue-cli-*.tar.gz' --dir dist
+          gh release download "v$VERSION" -R gdamron/fugue-mcp --pattern 'fugue-mcp-*.tar.gz' --dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-binaries
+          path: dist/*.tar.gz
+
   release:
     needs:
       - native
       - ios
       - android
       - wasm
+      - client-binaries
     runs-on: ubuntu-24.04
     permissions:
       contents: write

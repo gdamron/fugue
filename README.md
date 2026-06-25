@@ -9,6 +9,35 @@ A system for composing algorithmic and generative music.
 - 🎚️ **Live control**: Update scales, rhythms, and synthesis parameters in real-time
 - 🤖 **MCP Server**: Collaborate with LLM agents
 
+## Install
+
+One-line install (macOS and Linux), no Rust toolchain required. This downloads
+the prebuilt `fugue` and `fugue-mcp` binaries into `~/.fugue/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gdamron/fugue/main/install.sh | sh
+```
+
+Then add `~/.fugue/bin` to your `PATH` (the installer prints the exact line) and
+register the MCP server with Claude Code:
+
+```sh
+claude mcp add fugue ~/.fugue/bin/fugue-mcp
+```
+
+`fugue-mcp` auto-spawns `fugue serve` from your `PATH`, so installing both
+binaries together is all that's required to play audio.
+
+Overrides: `FUGUE_BIN_DIR` (install location), `FUGUE_VERSION` (pin a specific
+release tag, default `latest`).
+
+Prebuilt binaries are published for **macOS arm64** and **Linux x86_64 / arm64**
+(glibc). Linux binaries dynamically link ALSA — install `libasound2`
+(Debian/Ubuntu: `sudo apt-get install libasound2`) if it is not already present.
+**Intel Macs and Windows** are not yet prebuilt; build from source for those
+(Windows additionally needs a cross-platform daemon transport, tracked
+separately).
+
 ## Quick Start
 
 ### Run the Examples
