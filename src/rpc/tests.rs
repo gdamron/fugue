@@ -26,6 +26,7 @@ fn rpc_commands_round_trip_json() {
     let commands = vec![
         RpcCommand::LoadInvention {
             invention: Box::new(test_invention()),
+            frozen: true,
         },
         RpcCommand::UnloadInvention,
         RpcCommand::SetControl {
