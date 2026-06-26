@@ -12,6 +12,11 @@ use serde::{Deserialize, Serialize};
 /// Current runtime RPC schema version.
 pub const RPC_SCHEMA_VERSION: u32 = 1;
 
+/// Default for [`RpcCommand::LoadInvention::frozen`]: lockfile validation on.
+fn default_frozen() -> bool {
+    true
+}
+
 /// A client request envelope.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
@@ -55,6 +60,11 @@ pub enum RpcRequestPayload {
 pub enum RpcCommand {
     LoadInvention {
         invention: Box<Invention>,
+        /// When true (the default), the daemon validates `fugue.lock.json`
+        /// integrity before loading and refuses on a mismatch. Defaulted for
+        /// wire back-compatibility with clients that omit it.
+        #[serde(default = "default_frozen")]
+        frozen: bool,
     },
     UnloadInvention,
     SetControl {

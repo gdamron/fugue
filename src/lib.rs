@@ -68,6 +68,11 @@ pub use pkg::{
     Target as PkgTarget, ValidationError as PkgValidationError,
 };
 
+// Re-export lockfile types
+pub use pkg::{LockError, LockSource, LockedPackage, Lockfile, LOCKFILE_NAME, LOCKFILE_VERSION};
+#[cfg(not(target_arch = "wasm32"))]
+pub use pkg::compute_integrity;
+
 #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
 pub use plugins::wasm::{
     load_component_module, load_manifest_module, WasmModule, WasmModuleFactory,
