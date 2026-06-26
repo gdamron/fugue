@@ -46,7 +46,10 @@ pub use code::CodeControls;
 
 // Deprecated type alias for backward compatibility
 #[allow(deprecated)]
-pub use dac::{default_sample_rate, AudioBackend, AudioDriver, DacModule};
+pub use dac::{
+    default_sample_rate, AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver,
+    DacModule,
+};
 pub use filter::{Filter, FilterControls, FilterType};
 pub use lfo::{Lfo, LfoControls};
 pub use melody::{MelodyControls, MelodyGenerator};
