@@ -18,6 +18,12 @@ the prebuilt `fugue` and `fugue-mcp` binaries into `~/.fugue/bin`:
 curl -fsSL https://raw.githubusercontent.com/gdamron/fugue/main/install.sh | sh
 ```
 
+Windows PowerShell install:
+
+```powershell
+iwr https://raw.githubusercontent.com/gdamron/fugue/main/install.ps1 -useb | iex
+```
+
 Then add `~/.fugue/bin` to your `PATH` (the installer prints the exact line) and
 register the MCP server with Claude Code:
 
@@ -31,12 +37,10 @@ binaries together is all that's required to play audio.
 Overrides: `FUGUE_BIN_DIR` (install location), `FUGUE_VERSION` (pin a specific
 release tag, default `latest`).
 
-Prebuilt binaries are published for **macOS arm64** and **Linux x86_64 / arm64**
-(glibc). Linux binaries dynamically link ALSA — install `libasound2`
+Prebuilt binaries are published for **macOS arm64**, **Linux x86_64 / arm64**
+(glibc), and **Windows x86_64**. Linux binaries dynamically link ALSA — install `libasound2`
 (Debian/Ubuntu: `sudo apt-get install libasound2`) if it is not already present.
-**Intel Macs and Windows** are not yet prebuilt; build from source for those
-(Windows additionally needs a cross-platform daemon transport, tracked
-separately).
+**Intel Macs** are not yet prebuilt; build from source for those.
 
 ## Quick Start
 

@@ -9,14 +9,24 @@ on:
 
 jobs:
   build-library:
-    name: Build Library
-    runs-on: ubuntu-latest
+    name: Build Library (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+      CARGO_NET_RETRY: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
 
     steps:
       - name: Check Out Repository
         uses: actions/checkout@v4
 
       - name: Install Linux Audio Dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config

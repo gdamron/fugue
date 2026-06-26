@@ -17,6 +17,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_HTTP_MULTIPLEXING: false
+  CARGO_NET_RETRY: 10
   RELEASE_REF: ${{ inputs.ref || github.ref }}
 
 jobs:
@@ -45,6 +47,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - runner: macos-14
             target: aarch64-apple-darwin
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4

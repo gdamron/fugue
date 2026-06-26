@@ -14,10 +14,19 @@ mkdir -p "$STAGE_DIR/lib"
 
 case "$TARGET" in
   *apple-darwin)
-    SHARED_EXT="dylib"
+    STATIC_LIB="libfugue.a"
+    SHARED_LIB="libfugue.dylib"
+    IMPORT_LIB=""
     ;;
   *linux*)
-    SHARED_EXT="so"
+    STATIC_LIB="libfugue.a"
+    SHARED_LIB="libfugue.so"
+    IMPORT_LIB=""
+    ;;
+  *windows-msvc)
+    STATIC_LIB="fugue.lib"
+    SHARED_LIB="fugue.dll"
+    IMPORT_LIB="fugue.dll.lib"
     ;;
   *)
     echo "unsupported native target: $TARGET" >&2
@@ -25,8 +34,15 @@ case "$TARGET" in
     ;;
 esac
 
-cp "$BUILD_DIR/libfugue.a" "$STAGE_DIR/lib/"
-cp "$BUILD_DIR/libfugue.$SHARED_EXT" "$STAGE_DIR/lib/"
+cp "$BUILD_DIR/$STATIC_LIB" "$STAGE_DIR/lib/"
+cp "$BUILD_DIR/$SHARED_LIB" "$STAGE_DIR/lib/"
+if [[ -n "$IMPORT_LIB" && -f "$BUILD_DIR/$IMPORT_LIB" ]]; then
+  cp "$BUILD_DIR/$IMPORT_LIB" "$STAGE_DIR/lib/"
+fi
+IMPORT_LIB_CONTENT=""
+if [[ -n "$IMPORT_LIB" ]]; then
+  IMPORT_LIB_CONTENT="- \`lib/$IMPORT_LIB\`"
+fi
 cp "$ROOT/include/fugue.h" "$STAGE_DIR/"
 cp "$ROOT/LICENSE" "$STAGE_DIR/"
 
@@ -35,8 +51,9 @@ cat > "$STAGE_DIR/README.md" <<EOF
 
 Contents:
 
-- \`lib/libfugue.a\`
-- \`lib/libfugue.$SHARED_EXT\`
+- \`lib/$STATIC_LIB\`
+- \`lib/$SHARED_LIB\`
+$IMPORT_LIB_CONTENT
 - \`fugue.h\`
 - \`LICENSE\`
 
