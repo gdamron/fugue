@@ -128,6 +128,61 @@ fn test_add_then_remove_module() {
     running.stop();
 }
 
+#[test]
+fn test_swap_module_preserves_compatible_connections() {
+    let (running, _handles) = build_simple_invention();
+    running
+        .swap_module("osc", "vca", &serde_json::json!({}), true)
+        .expect("Failed to swap oscillator for vca");
+
+    let snapshot = running.full_snapshot();
+    let osc = snapshot
+        .modules
+        .iter()
+        .find(|module| module.info.id == "osc")
+        .expect("swapped module remains present");
+    assert_eq!(osc.info.module_type, "vca");
+    assert_eq!(snapshot.connections.len(), 1);
+    assert_eq!(snapshot.connections[0].from, "osc");
+    assert_eq!(snapshot.connections[0].from_port, "audio");
+    running.stop();
+}
+
+#[test]
+fn test_swap_module_prunes_incompatible_connections() {
+    let (running, _handles) = build_simple_invention();
+    running
+        .swap_module("osc", "lfo", &serde_json::json!({}), true)
+        .expect("Failed to swap oscillator for lfo");
+
+    let snapshot = running.full_snapshot();
+    let osc = snapshot
+        .modules
+        .iter()
+        .find(|module| module.info.id == "osc")
+        .expect("swapped module remains present");
+    assert_eq!(osc.info.module_type, "lfo");
+    assert!(snapshot.connections.is_empty());
+    running.stop();
+}
+
+#[test]
+fn test_swap_module_invalid_type_keeps_existing_module() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.swap_module("osc", "not_a_module", &serde_json::json!({}), true);
+    assert!(result.is_err());
+
+    let snapshot = running.full_snapshot();
+    let osc = snapshot
+        .modules
+        .iter()
+        .find(|module| module.info.id == "osc")
+        .expect("original module remains present");
+    assert_eq!(osc.info.module_type, "oscillator");
+    assert_eq!(snapshot.connections.len(), 1);
+    running.stop();
+}
+
 // --- Connection management tests ---
 
 #[test]
