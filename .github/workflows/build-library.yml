@@ -11,6 +11,9 @@ jobs:
   build-library:
     name: Build Library (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+      CARGO_NET_RETRY: 10
     strategy:
       fail-fast: false
       matrix:
