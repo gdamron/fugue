@@ -1,6 +1,8 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use crate::modules::AudioDiagnosticsSnapshot;
+
 /// Serializable description of a module in a running invention.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
@@ -24,13 +26,15 @@ pub struct RuntimeConnectionInfo {
 }
 
 /// Lightweight runtime status used by orchestration and external APIs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct RuntimeStatus {
     pub running: bool,
     pub sample_rate: u32,
     pub module_count: usize,
     pub connection_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<AudioDiagnosticsSnapshot>,
 }
 
 /// Authoritative runtime-owned snapshot of modules, connections, and status.
@@ -50,6 +54,7 @@ impl RuntimeState {
             sample_rate: self.sample_rate,
             module_count: self.modules.len(),
             connection_count: self.connections.len(),
+            diagnostics: None,
         }
     }
 }

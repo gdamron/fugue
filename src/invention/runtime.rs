@@ -155,7 +155,9 @@ impl RunningInvention {
 
     pub fn full_snapshot(&self) -> crate::RuntimeFullSnapshot {
         let module_ports = self.module_ports.lock().unwrap();
-        self.snapshot().full_snapshot_with_ports(&module_ports)
+        let mut snapshot = self.snapshot().full_snapshot_with_ports(&module_ports);
+        snapshot.status = self.with_audio_diagnostics(snapshot.status);
+        snapshot
     }
 
     pub fn controller(&self) -> RuntimeController {
@@ -167,6 +169,14 @@ impl RunningInvention {
             command_tx: Some(self.command_tx.clone()),
             module_ports: self.module_ports.clone(),
         }
+    }
+
+    fn with_audio_diagnostics(&self, mut status: RuntimeStatus) -> RuntimeStatus {
+        status.diagnostics = self
+            .backend
+            .diagnostics()
+            .map(|diagnostics| diagnostics.snapshot());
+        status
     }
 
     /// Sends a command to the audio thread for graph mutation.
@@ -457,7 +467,7 @@ impl RunningInvention {
 
 impl OrchestrationRuntime for RunningInvention {
     fn status(&self) -> RuntimeStatus {
-        self.snapshot().status()
+        self.with_audio_diagnostics(self.snapshot().status())
     }
 
     fn list_modules(&self) -> Vec<RuntimeModuleInfo> {

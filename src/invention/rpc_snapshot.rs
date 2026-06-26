@@ -172,6 +172,7 @@ mod tests {
             sample_rate: 48_000,
             module_count: 0,
             connection_count: 0,
+            diagnostics: None,
         }
     }
 

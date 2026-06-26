@@ -1,6 +1,7 @@
 use super::*;
 use crate::invention::builder::InventionBuilder;
 use crate::invention::format::Invention;
+use crate::modules::AudioDiagnostics;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -8,6 +9,7 @@ use std::time::Duration;
 struct TickBackend {
     sample_rate: u32,
     stop: Arc<AtomicBool>,
+    diagnostics: Arc<AudioDiagnostics>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -16,6 +18,7 @@ impl TickBackend {
         Self {
             sample_rate,
             stop: Arc::new(AtomicBool::new(false)),
+            diagnostics: Arc::new(AudioDiagnostics::new()),
             worker: None,
         }
     }
@@ -31,11 +34,15 @@ impl AudioBackend for TickBackend {
         mut render: Box<dyn FnMut(&mut [f32], &mut [f32]) + Send>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let stop = self.stop.clone();
+        let diagnostics = self.diagnostics.clone();
         self.worker = Some(thread::spawn(move || {
             let mut left = [0.0f32; 64];
             let mut right = [0.0f32; 64];
             while !stop.load(Ordering::Relaxed) {
+                let started = std::time::Instant::now();
                 render(&mut left, &mut right);
+                let callback_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+                diagnostics.record_callback(callback_ns, 1_333_333);
                 thread::sleep(Duration::from_millis(2));
             }
         }));
@@ -47,6 +54,10 @@ impl AudioBackend for TickBackend {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+    }
+
+    fn diagnostics(&self) -> Option<Arc<AudioDiagnostics>> {
+        Some(self.diagnostics.clone())
     }
 }
 
@@ -80,6 +91,18 @@ fn running_invention_tracks_runtime_module_mutations() {
         .unwrap();
 
     thread::sleep(Duration::from_millis(50));
+
+    let status = running.status();
+    assert!(status
+        .diagnostics
+        .as_ref()
+        .is_some_and(|diagnostics| diagnostics.callback_count > 0));
+    assert!(running
+        .full_snapshot()
+        .status
+        .diagnostics
+        .as_ref()
+        .is_some_and(|diagnostics| diagnostics.callback_count > 0));
 
     assert!(running
         .list_modules()

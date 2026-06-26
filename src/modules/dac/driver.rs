@@ -3,6 +3,10 @@
 use crate::MAX_BLOCK;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
+use std::sync::Arc;
+use std::time::Instant;
+
+use super::AudioDiagnostics;
 
 /// Renders a block of `frames` planar stereo samples, where
 /// `frames == left.len() == right.len()`. Called from the audio thread.
@@ -93,6 +97,11 @@ pub trait AudioBackend: Send {
 
     /// Stops audio output.
     fn stop(&mut self);
+
+    /// Returns live callback diagnostics when the backend can collect them.
+    fn diagnostics(&self) -> Option<Arc<AudioDiagnostics>> {
+        None
+    }
 }
 
 /// Default audio backend using the cpal library.
@@ -102,6 +111,7 @@ pub trait AudioBackend: Send {
 pub struct AudioDriver {
     stream: Option<Stream>,
     sample_rate: u32,
+    diagnostics: Arc<AudioDiagnostics>,
 }
 
 /// Safety: AudioDriver is safe to send between threads. The contained cpal::Stream
@@ -126,6 +136,7 @@ impl AudioDriver {
         Ok(Self {
             stream: None,
             sample_rate,
+            diagnostics: Arc::new(AudioDiagnostics::new()),
         })
     }
 }
@@ -143,31 +154,79 @@ impl AudioBackend for AudioDriver {
 
         let config = device.default_output_config()?;
         let channels = config.channels() as usize;
+        let sample_rate = config.sample_rate().0;
+        let diagnostics = self.diagnostics.clone();
+        let log_missed_deadlines = std::env::var_os("FUGUE_AUDIO_DIAGNOSTICS_LOG").is_some();
 
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
                 let mut render = render;
                 let mut left = [0.0f32; MAX_BLOCK];
                 let mut right = [0.0f32; MAX_BLOCK];
-                Self::build_stream::<f32>(&device, &config.into(), move |data: &mut [f32]| {
-                    render_block(data, channels, &mut left, &mut right, &mut *render, write_frame_f32);
-                })?
+                Self::build_stream::<f32>(
+                    &device,
+                    &config.into(),
+                    channels,
+                    sample_rate,
+                    diagnostics.clone(),
+                    log_missed_deadlines,
+                    move |data: &mut [f32]| {
+                        render_block(
+                            data,
+                            channels,
+                            &mut left,
+                            &mut right,
+                            &mut *render,
+                            write_frame_f32,
+                        );
+                    },
+                )?
             }
             cpal::SampleFormat::I16 => {
                 let mut render = render;
                 let mut left = [0.0f32; MAX_BLOCK];
                 let mut right = [0.0f32; MAX_BLOCK];
-                Self::build_stream::<i16>(&device, &config.into(), move |data: &mut [i16]| {
-                    render_block(data, channels, &mut left, &mut right, &mut *render, write_frame_i16);
-                })?
+                Self::build_stream::<i16>(
+                    &device,
+                    &config.into(),
+                    channels,
+                    sample_rate,
+                    diagnostics.clone(),
+                    log_missed_deadlines,
+                    move |data: &mut [i16]| {
+                        render_block(
+                            data,
+                            channels,
+                            &mut left,
+                            &mut right,
+                            &mut *render,
+                            write_frame_i16,
+                        );
+                    },
+                )?
             }
             cpal::SampleFormat::U16 => {
                 let mut render = render;
                 let mut left = [0.0f32; MAX_BLOCK];
                 let mut right = [0.0f32; MAX_BLOCK];
-                Self::build_stream::<u16>(&device, &config.into(), move |data: &mut [u16]| {
-                    render_block(data, channels, &mut left, &mut right, &mut *render, write_frame_u16);
-                })?
+                Self::build_stream::<u16>(
+                    &device,
+                    &config.into(),
+                    channels,
+                    sample_rate,
+                    diagnostics.clone(),
+                    log_missed_deadlines,
+                    move |data: &mut [u16]| {
+                        render_block(
+                            data,
+                            channels,
+                            &mut left,
+                            &mut right,
+                            &mut *render,
+                            write_frame_u16,
+                        );
+                    },
+                )?
             }
             _ => return Err("Unsupported sample format".into()),
         };
@@ -180,6 +239,10 @@ impl AudioBackend for AudioDriver {
 
     fn stop(&mut self) {
         self.stream = None;
+    }
+
+    fn diagnostics(&self) -> Option<Arc<AudioDiagnostics>> {
+        Some(self.diagnostics.clone())
     }
 }
 
@@ -234,20 +297,49 @@ impl AudioDriver {
     fn build_stream<T>(
         device: &cpal::Device,
         config: &cpal::StreamConfig,
+        channels: usize,
+        sample_rate: u32,
+        diagnostics: Arc<AudioDiagnostics>,
+        log_missed_deadlines: bool,
         mut callback: impl FnMut(&mut [T]) + Send + 'static,
     ) -> Result<Stream, Box<dyn std::error::Error>>
     where
         T: cpal::Sample + cpal::SizedSample,
     {
+        let error_diagnostics = diagnostics.clone();
         let stream = device.build_output_stream(
             config,
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+                let started = Instant::now();
                 callback(data);
+                let callback_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+                let buffer_period_ns = buffer_period_ns(data.len(), channels, sample_rate);
+                if diagnostics.record_callback(callback_ns, buffer_period_ns)
+                    && log_missed_deadlines
+                {
+                    eprintln!(
+                        "Audio callback missed deadline: {:.3} ms > {:.3} ms",
+                        callback_ns as f64 / 1_000_000.0,
+                        buffer_period_ns as f64 / 1_000_000.0
+                    );
+                }
             },
-            |err| eprintln!("Stream error: {}", err),
+            move |err| {
+                error_diagnostics.record_xrun();
+                eprintln!("Stream error: {}", err);
+            },
             None,
         )?;
 
         Ok(stream)
     }
+}
+
+#[inline]
+fn buffer_period_ns(sample_count: usize, channels: usize, sample_rate: u32) -> u64 {
+    if channels == 0 || sample_rate == 0 {
+        return 0;
+    }
+    let frames = sample_count / channels;
+    ((frames as u128 * 1_000_000_000u128) / u128::from(sample_rate)) as u64
 }

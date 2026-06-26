@@ -7,6 +7,7 @@
 //! - [`AudioBackend`] - Trait for custom audio backends
 //! - [`default_sample_rate`] - Get the system's audio sample rate
 
+mod diagnostics;
 #[cfg(not(target_arch = "wasm32"))]
 mod driver;
 #[cfg(target_arch = "wasm32")]
@@ -15,6 +16,7 @@ mod inputs;
 mod module;
 mod outputs;
 
+pub use diagnostics::{AudioDiagnostics, AudioDiagnosticsSnapshot};
 #[cfg(not(target_arch = "wasm32"))]
 pub use driver::{default_sample_rate, AudioBackend, AudioDriver, BlockRenderFn};
 #[cfg(target_arch = "wasm32")]

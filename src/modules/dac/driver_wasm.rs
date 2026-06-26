@@ -16,6 +16,10 @@ pub trait AudioBackend: Send {
     fn start(&mut self, _render: BlockRenderFn) -> Result<(), Box<dyn std::error::Error>>;
 
     fn stop(&mut self);
+
+    fn diagnostics(&self) -> Option<std::sync::Arc<super::AudioDiagnostics>> {
+        None
+    }
 }
 
 /// Stub backend for wasm builds.
