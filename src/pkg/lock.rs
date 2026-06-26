@@ -200,6 +200,17 @@ impl Lockfile {
         self.packages.insert(id.into(), package);
     }
 
+    /// Merge a batch of resolved package entries and graph roots into this
+    /// lockfile, replacing any existing entries for the same ids.
+    pub fn merge(&mut self, entries: Vec<(String, LockedPackage)>, roots: &[String]) {
+        for (id, package) in entries {
+            self.upsert(id, package);
+        }
+        for id in roots {
+            self.add_root(id.clone());
+        }
+    }
+
     /// Record an explicitly-installed package id as a graph root.
     pub fn add_root(&mut self, id: impl Into<String>) {
         let id = id.into();
@@ -230,7 +241,7 @@ impl Error for LockError {}
 
 #[cfg(not(target_arch = "wasm32"))]
 mod fs_ops {
-    use super::{LockError, Lockfile, LOCKFILE_NAME};
+    use super::{LockError, LockedPackage, Lockfile, LOCKFILE_NAME};
     use sha2::{Digest, Sha256};
     use std::error::Error;
     use std::fs;
@@ -240,6 +251,44 @@ mod fs_ops {
         /// Read and parse (and upgrade) a lockfile from disk.
         pub fn read(path: &Path) -> Result<Self, Box<dyn Error>> {
             Self::from_slice(&fs::read(path)?)
+        }
+
+        /// Read and upgrade the lockfile at `path`, or start a fresh empty one
+        /// if it does not exist.
+        pub fn read_or_new(path: &Path) -> Result<Self, Box<dyn Error>> {
+            if path.exists() {
+                Self::read(path)
+            } else {
+                Ok(Self::new())
+            }
+        }
+
+        /// Read `path` (or start fresh), merge in `entries`/`roots`, and return
+        /// the serialized v2 bytes — the update `fugue install` writes.
+        pub fn merged_bytes(
+            path: &Path,
+            entries: Vec<(String, LockedPackage)>,
+            roots: &[String],
+        ) -> Result<Vec<u8>, Box<dyn Error>> {
+            let mut lockfile = Self::read_or_new(path)?;
+            lockfile.merge(entries, roots);
+            lockfile.to_bytes()
+        }
+
+        /// Verify the first existing lockfile among `candidates` against
+        /// `packages_dir`. A missing lockfile is not an error — a frozen load
+        /// only enforces a lockfile that is actually present. Callers supply the
+        /// candidate paths per their own host conventions.
+        pub fn verify_first(
+            candidates: &[PathBuf],
+            packages_dir: &Path,
+        ) -> Result<(), Box<dyn Error>> {
+            for path in candidates {
+                if path.is_file() {
+                    return Self::read(path)?.verify(packages_dir).map_err(Into::into);
+                }
+            }
+            Ok(())
         }
 
         /// Look for a `fugue.lock.json` next to an invention file.
@@ -493,6 +542,68 @@ mod fs_tests {
         assert_eq!(err.problems.len(), 1);
         assert!(err.problems[0].contains("fugue.demo.x"));
         assert!(err.problems[0].contains("integrity mismatch"));
+    }
+
+    #[test]
+    fn merged_bytes_creates_and_preserves_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(LOCKFILE_NAME);
+        let entry = |version: &str| LockedPackage {
+            version: version.to_string(),
+            kind: "development".into(),
+            source: LockSource::Local { path: "/pkg".into() },
+            integrity: "sha256:abc".into(),
+            path: PathBuf::from("/packs"),
+            dependencies: Vec::new(),
+        };
+
+        let first = Lockfile::merged_bytes(
+            &path,
+            vec![("fugue.demo.a".into(), entry("1.0.0"))],
+            &["fugue.demo.a".into()],
+        )
+        .unwrap();
+        fs::write(&path, first).unwrap();
+
+        let second = Lockfile::merged_bytes(
+            &path,
+            vec![("fugue.demo.b".into(), entry("2.0.0"))],
+            &["fugue.demo.b".into()],
+        )
+        .unwrap();
+        let lock = Lockfile::from_slice(&second).unwrap();
+        assert_eq!(lock.version, LOCKFILE_VERSION);
+        assert_eq!(lock.packages.len(), 2);
+        assert_eq!(lock.roots.len(), 2);
+    }
+
+    #[test]
+    fn verify_first_uses_first_existing_candidate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = write_pkg(tmp.path(), "fugue.demo.x", "1.0.0", "alpha");
+        let integrity = compute_integrity(&dir).unwrap();
+        let mut lock = Lockfile::new();
+        lock.upsert(
+            "fugue.demo.x",
+            LockedPackage {
+                version: "1.0.0".into(),
+                kind: "module".into(),
+                source: LockSource::Local {
+                    path: dir.display().to_string(),
+                },
+                integrity,
+                path: dir.clone(),
+                dependencies: Vec::new(),
+            },
+        );
+        let lock_path = tmp.path().join(LOCKFILE_NAME);
+        fs::write(&lock_path, lock.to_bytes().unwrap()).unwrap();
+
+        let missing = tmp.path().join("nope").join(LOCKFILE_NAME);
+        // First candidate is absent, second exists and validates.
+        assert!(Lockfile::verify_first(&[missing.clone(), lock_path], tmp.path()).is_ok());
+        // No candidate present → nothing to enforce.
+        assert!(Lockfile::verify_first(&[missing], tmp.path()).is_ok());
     }
 
     #[test]

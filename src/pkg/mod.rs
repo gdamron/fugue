@@ -6,12 +6,14 @@
 
 pub mod lock;
 pub mod manifest;
+pub mod resolve;
 pub mod validate;
 
 pub use lock::{Lockfile, LockedPackage, LockError, LockSource, LOCKFILE_NAME, LOCKFILE_VERSION};
 pub use manifest::{
     Author, Capability, DepRef, EntrySpec, PackageKind, PackageManifest, Requires, Signing, Target,
 };
+pub use resolve::{dependency_edges, resolve_transitive, select_version, PackageProvider, Resolved};
 pub use validate::{parse_str, validate, ManifestError, ValidationError};
 
 #[cfg(not(target_arch = "wasm32"))]
