@@ -19,21 +19,35 @@ const HISTOGRAM_BUCKET_NS: [u64; 12] = [
     u64::MAX,
 ];
 
-/// Serializable point-in-time view of audio callback timing diagnostics.
+/// Serializable point-in-time view of native audio callback timing.
+///
+/// Values are cumulative for the lifetime of the backend instance. Timing
+/// fields are reported in milliseconds for status/RPC consumers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct AudioDiagnosticsSnapshot {
+    /// Number of device callbacks observed by the backend.
     pub callback_count: u64,
+    /// Number of cpal stream errors reported through the error callback.
     pub xrun_count: u64,
+    /// Number of callbacks whose measured render time exceeded the buffer period.
     pub missed_deadline_count: u64,
+    /// Sum of all measured callback durations.
     pub total_callback_ms: f64,
+    /// Mean callback duration, or zero before the first callback.
     pub average_callback_ms: f64,
+    /// Longest measured callback duration.
     pub max_callback_ms: f64,
+    /// Coarse p99 callback duration estimated from fixed histogram buckets.
     pub p99_callback_ms: f64,
+    /// Current device buffer period derived from callback frames and sample rate.
     pub buffer_period_ms: f64,
 }
 
-/// Lock-free counters updated by the audio callback and read by status APIs.
+/// Lock-free accumulator for native audio callback diagnostics.
+///
+/// The audio thread only performs relaxed atomic updates against preallocated
+/// counters. Status/RPC callers read snapshots from non-audio threads.
 pub struct AudioDiagnostics {
     callback_count: AtomicU64,
     xrun_count: AtomicU64,
