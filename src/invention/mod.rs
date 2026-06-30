@@ -21,6 +21,7 @@ pub mod orchestration;
 pub mod render;
 pub mod rpc_snapshot;
 pub mod runtime;
+pub mod score;
 pub mod state;
 
 pub use builder::InventionBuilder;
@@ -33,4 +34,5 @@ pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot
 pub use render::{CodeModuleRuntimeInfo, RenderEngine};
 pub use rpc_snapshot::ControlOverride;
 pub use runtime::{GraphCommandError, InventionRuntime, RunningInvention};
+pub use score::{validate_score, Score, SCORE_SCHEMA_V1};
 pub use state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};

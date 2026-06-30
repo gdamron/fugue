@@ -161,6 +161,19 @@ impl InventionBuilder {
             } else {
                 serde_json::Value::String(contents)
             };
+            // Assets that declare themselves as scores opt into load-time
+            // validation against `fugue.score.v1`. Other JSON assets are left
+            // as-is, since assets are a general-purpose mechanism.
+            if declares_score_schema(&value) {
+                crate::invention::score::validate_score(&value).map_err(|err| {
+                    format!(
+                        "Invalid score asset '{}' from '{}': {}",
+                        name,
+                        resolved.display(),
+                        err
+                    )
+                })?;
+            }
             assets.insert(name.clone(), value);
         }
 
@@ -375,6 +388,16 @@ fn resolve_development_path(
 
     let base_dir = source_path.parent().unwrap_or_else(|| Path::new("."));
     Ok(base_dir.join(candidate))
+}
+
+/// Returns true when a parsed JSON asset declares itself a `fugue.score.v1`
+/// document via a top-level `schema` field, opting into load-time validation.
+fn declares_score_schema(value: &serde_json::Value) -> bool {
+    value
+        .get("schema")
+        .and_then(|schema| schema.as_str())
+        .map(|schema| schema == crate::invention::score::SCORE_SCHEMA_V1)
+        .unwrap_or(false)
 }
 
 fn resolve_asset_path(

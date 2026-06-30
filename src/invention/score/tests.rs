@@ -1,0 +1,147 @@
+use super::*;
+use serde_json::json;
+
+/// The shipped In C score asset must validate against the schema it generalizes.
+#[test]
+fn in_c_score_asset_validates() {
+    let json = include_str!("../../../examples/in_c/score.json");
+    let value: Value = serde_json::from_str(json).expect("in_c score.json parses");
+    validate_score(&value).expect("in_c score.json validates");
+
+    let score = Score::from_json(json).expect("in_c score.json deserializes");
+    assert_eq!(score.base_note_hint, Some(60));
+    assert_eq!(score.rhythm_grid.as_deref(), Some("32nd_note"));
+    assert!(score.cells.is_some());
+}
+
+#[test]
+fn full_metadata_cells_score_validates() {
+    let value = json!({
+        "schema": "fugue.score.v1",
+        "title": "The Flow of Water",
+        "composer": "Grant Damron",
+        "key": "Ab major",
+        "tempo": 120.0,
+        "time_signature": { "beats_per_measure": 4, "beat_unit": 4 },
+        "base_note_hint": 48,
+        "rhythm_grid": "16th_note",
+        "cells": [
+            [ { "note": 0 }, { "held": true }, { "note": 7, "gate": 0.8 }, null ],
+            [ 4, { "note": null }, { "note": -12 } ]
+        ]
+    });
+    validate_score(&value).expect("full metadata score validates");
+}
+
+#[test]
+fn flat_steps_score_validates() {
+    let value = json!({ "steps": [ { "note": 0 }, null, 5, { "held": true } ] });
+    validate_score(&value).expect("flat steps score validates");
+}
+
+#[test]
+fn round_trips_through_typed_model() {
+    let value = json!({
+        "schema": "fugue.score.v1",
+        "title": "Round Trip",
+        "base_note_hint": 60,
+        "steps": [ { "note": 0 }, { "note": 7, "gate": 0.5 }, { "held": true }, null ]
+    });
+    let json = serde_json::to_string(&value).unwrap();
+    let score = Score::from_json(&json).expect("typed parse");
+    let reserialized = score.to_json().expect("serialize");
+    validate_score(&serde_json::from_str::<Value>(&reserialized).unwrap())
+        .expect("re-serialized score still validates");
+}
+
+#[test]
+fn rejects_non_object() {
+    let err = validate_score(&json!([1, 2, 3])).unwrap_err();
+    assert!(err.contains("must be a JSON object"), "{err}");
+}
+
+#[test]
+fn rejects_unknown_schema_version() {
+    let value = json!({ "schema": "fugue.score.v2", "steps": [ { "note": 0 } ] });
+    let err = validate_score(&value).unwrap_err();
+    assert!(err.contains("unsupported score schema"), "{err}");
+}
+
+#[test]
+fn rejects_missing_content() {
+    let value = json!({ "title": "Empty", "base_note_hint": 60 });
+    let err = validate_score(&value).unwrap_err();
+    assert!(err.contains("'cells' or 'steps'"), "{err}");
+}
+
+#[test]
+fn rejects_empty_cells() {
+    let err = validate_score(&json!({ "cells": [] })).unwrap_err();
+    assert!(err.contains("cells must not be empty"), "{err}");
+}
+
+#[test]
+fn rejects_empty_inner_cell() {
+    let err = validate_score(&json!({ "cells": [[]] })).unwrap_err();
+    assert!(err.contains("cells[0] must not be empty"), "{err}");
+}
+
+#[test]
+fn rejects_non_integer_note() {
+    let err = validate_score(&json!({ "steps": [ { "note": "C4" } ] })).unwrap_err();
+    assert!(
+        err.contains("step.note must be an integer or null"),
+        "{err}"
+    );
+}
+
+#[test]
+fn rejects_out_of_range_note() {
+    let err = validate_score(&json!({ "steps": [ { "note": 500 } ] })).unwrap_err();
+    assert!(err.contains("out of range"), "{err}");
+}
+
+#[test]
+fn rejects_out_of_range_base_note() {
+    let err = validate_score(&json!({ "base_note_hint": 200, "steps": [ 0 ] })).unwrap_err();
+    assert!(
+        err.contains("base_note_hint must be between 0 and 127"),
+        "{err}"
+    );
+}
+
+#[test]
+fn rejects_gate_above_one() {
+    let err = validate_score(&json!({ "steps": [ { "note": 0, "gate": 1.5 } ] })).unwrap_err();
+    assert!(err.contains("step.gate must be between 0 and 1"), "{err}");
+}
+
+#[test]
+fn rejects_held_with_extra_keys() {
+    let value = json!({ "steps": [ { "held": true, "note": 0 } ] });
+    let err = validate_score(&value).unwrap_err();
+    assert!(err.contains("held steps may only contain"), "{err}");
+}
+
+#[test]
+fn rejects_non_positive_tempo() {
+    let err = validate_score(&json!({ "tempo": 0.0, "steps": [ 0 ] })).unwrap_err();
+    assert!(err.contains("tempo must be a positive number"), "{err}");
+}
+
+#[test]
+fn rejects_zero_beat_unit() {
+    let value = json!({
+        "time_signature": { "beats_per_measure": 4, "beat_unit": 0 },
+        "steps": [ 0 ]
+    });
+    let err = validate_score(&value).unwrap_err();
+    assert!(err.contains("beat_unit must be greater than 0"), "{err}");
+}
+
+#[test]
+fn cell_error_reports_index() {
+    let value = json!({ "cells": [ [ { "note": 0 } ], [ { "note": "x" } ] ] });
+    let err = validate_score(&value).unwrap_err();
+    assert!(err.contains("cells[1]"), "{err}");
+}
