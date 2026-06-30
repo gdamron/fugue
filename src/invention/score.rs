@@ -1,10 +1,16 @@
 //! The `fugue.score.v1` score data asset.
 //!
 //! A score is a declarative, general-purpose container for the musical content
-//! of a piece — a bank of cells (or a single flat step sequence) in the same
-//! `{ note, gate, held }` step shape consumed by [`step_sequencer`] and
+//! of a piece — a bank of `cells`, each a sequence of steps in the same
+//! `{ note, gate, held }` shape consumed by [`step_sequencer`] and
 //! [`cell_sequencer`], plus light metadata (title, composer, key, tempo, time
 //! signature, base-note hint, rhythm grid).
+//!
+//! A through-composed piece that is a single sequence is just a bank of one
+//! cell (`cells: [[ ...steps... ]]`); a flat-sequence consumer can pull it via
+//! the `$asset` path `/cells/0`. There is deliberately no separate flat `steps`
+//! field — one canonical content shape keeps producers, validation, and the
+//! import-accuracy harness simple.
 //!
 //! Scores are produced by score importers (e.g. an agent transcribing a PDF, or
 //! a MusicXML/MIDI converter) and consumed via the invention `$asset`
@@ -33,9 +39,9 @@ pub const SCORE_SCHEMA_V1: &str = "fugue.score.v1";
 
 /// A `fugue.score.v1` document: the musical content of a piece plus metadata.
 ///
-/// Content is held as either a bank of `cells` (each a sequence of steps, as in
-/// [`cell_sequencer`]) or a single flat `steps` sequence (as in
-/// [`step_sequencer`]). At least one must be present and non-empty.
+/// Content is held as a bank of `cells`, each a sequence of steps (as in
+/// [`cell_sequencer`]). A single-sequence piece is a bank of one cell. The
+/// bank must be present and non-empty, and every cell must be non-empty.
 ///
 /// [`step_sequencer`]: crate::modules::StepSequencer
 /// [`cell_sequencer`]: crate::modules::cell_sequencer
@@ -75,13 +81,9 @@ pub struct Score {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rhythm_grid: Option<String>,
 
-    /// Bank of cells; each cell is a sequence of steps.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cells: Option<Vec<Vec<Step>>>,
-
-    /// A single flat step sequence.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub steps: Option<Vec<Step>>,
+    /// Bank of cells; each cell is a sequence of steps. A single-sequence piece
+    /// is a bank of one cell.
+    pub cells: Vec<Vec<Step>>,
 }
 
 impl Score {
@@ -152,41 +154,24 @@ pub fn validate_score(value: &Value) -> Result<(), String> {
         validate_time_signature(time_signature)?;
     }
 
-    let has_cells = object.get("cells").is_some_and(|v| !v.is_null());
-    let has_steps = object.get("steps").is_some_and(|v| !v.is_null());
-    if !has_cells && !has_steps {
-        return Err("score must contain non-empty 'cells' or 'steps'".to_string());
+    let cells = object
+        .get("cells")
+        .filter(|v| !v.is_null())
+        .ok_or_else(|| "score must contain a non-empty 'cells' array".to_string())?
+        .as_array()
+        .ok_or_else(|| "score.cells must be an array".to_string())?;
+    if cells.is_empty() {
+        return Err("score.cells must not be empty".to_string());
     }
-
-    if has_cells {
-        let cells = object["cells"]
+    for (index, cell) in cells.iter().enumerate() {
+        let steps = cell
             .as_array()
-            .ok_or_else(|| "score.cells must be an array".to_string())?;
-        if cells.is_empty() {
-            return Err("score.cells must not be empty".to_string());
-        }
-        for (index, cell) in cells.iter().enumerate() {
-            let steps = cell
-                .as_array()
-                .ok_or_else(|| format!("score.cells[{}] must be an array of steps", index))?;
-            if steps.is_empty() {
-                return Err(format!("score.cells[{}] must not be empty", index));
-            }
-            for step in steps {
-                validate_step(step).map_err(|err| format!("score.cells[{}]: {}", index, err))?;
-            }
-        }
-    }
-
-    if has_steps {
-        let steps = object["steps"]
-            .as_array()
-            .ok_or_else(|| "score.steps must be an array".to_string())?;
+            .ok_or_else(|| format!("score.cells[{}] must be an array of steps", index))?;
         if steps.is_empty() {
-            return Err("score.steps must not be empty".to_string());
+            return Err(format!("score.cells[{}] must not be empty", index));
         }
         for step in steps {
-            validate_step(step).map_err(|err| format!("score.steps: {}", err))?;
+            validate_step(step).map_err(|err| format!("score.cells[{}]: {}", index, err))?;
         }
     }
 
