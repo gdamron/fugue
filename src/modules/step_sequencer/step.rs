@@ -13,6 +13,9 @@ pub struct Step {
     pub gate_length: Option<f32>,
     /// Continue the previous active note without retriggering.
     pub held: bool,
+    /// Optional amplitude for this step (0.0-1.0). If None, uses the 
+    /// sequencer's default amplitude.
+    pub amplitude: Option<f32>,
 }
 
 impl Step {
@@ -22,6 +25,7 @@ impl Step {
             note: Some(offset),
             gate_length: None,
             held: false,
+            amplitude: None,
         }
     }
 
@@ -31,6 +35,7 @@ impl Step {
             note: Some(offset),
             gate_length: Some(gate_length.clamp(0.0, 1.0)),
             held: false,
+            amplitude: None,
         }
     }
 
@@ -40,6 +45,7 @@ impl Step {
             note: None,
             gate_length: None,
             held: false,
+            amplitude: None,
         }
     }
 
@@ -49,6 +55,7 @@ impl Step {
             note: None,
             gate_length: None,
             held: true,
+            amplitude: None,
         }
     }
 }

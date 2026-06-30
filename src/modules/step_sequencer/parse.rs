@@ -55,6 +55,7 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, Box<dyn std:
             note,
             gate_length,
             held: false,
+            amplitude: None,
         });
     }
 
