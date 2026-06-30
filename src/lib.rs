@@ -50,11 +50,12 @@ pub use modules::{
 
 // Re-export invention system
 pub use invention::{
-    AssetSpec, CodeModuleRuntimeInfo, Connection, ControlOverride, DevelopmentControl,
-    DevelopmentInput, DevelopmentOutput, DevelopmentSpec, GraphCommandError, Invention,
-    InventionBuilder, InventionHandles, InventionRuntime, ModuleSpec, OrchestrationRuntime,
-    RenderEngine, RunningInvention, RuntimeConnectionInfo, RuntimeController, RuntimeModuleInfo,
-    RuntimeSnapshot, RuntimeState, RuntimeStatus, TimeSignature,
+    validate_score, AssetSpec, CodeModuleRuntimeInfo, Connection, ControlOverride,
+    DevelopmentControl, DevelopmentInput, DevelopmentOutput, DevelopmentSpec, GraphCommandError,
+    Invention, InventionBuilder, InventionHandles, InventionRuntime, ModuleSpec,
+    OrchestrationRuntime, RenderEngine, RunningInvention, RuntimeConnectionInfo, RuntimeController,
+    RuntimeModuleInfo, RuntimeSnapshot, RuntimeState, RuntimeStatus, Score, TimeSignature,
+    SCORE_SCHEMA_V1,
 };
 
 // Re-export music theory
