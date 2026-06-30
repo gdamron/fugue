@@ -37,22 +37,17 @@ use crate::modules::Step;
 /// is still treated as a v1 score.
 pub const SCORE_SCHEMA_V1: &str = "fugue.score.v1";
 
-/// A `fugue.score.v1` document: the musical content of a piece plus metadata.
+/// A `fugue.score.v1` document: a piece's musical content plus light metadata.
 ///
-/// Content is held as a bank of `cells`, each a sequence of steps (as in
-/// [`cell_sequencer`]). A single-sequence piece is a bank of one cell. The
-/// bank must be present and non-empty, and every cell must be non-empty.
-///
-/// [`step_sequencer`]: crate::modules::StepSequencer
-/// [`cell_sequencer`]: crate::modules::cell_sequencer
+/// Content is a bank of `cells`, each a sequence of steps in the shared
+/// `{ note, gate, held }` shape; a single-sequence piece is a bank of one cell.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Score {
-    /// Schema identifier. Optional; when present it must equal
-    /// [`SCORE_SCHEMA_V1`].
+    /// Schema id; when present, must equal [`SCORE_SCHEMA_V1`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
 
-    /// Human-readable title of the piece.
+    /// Piece title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 
@@ -60,11 +55,11 @@ pub struct Score {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composer: Option<String>,
 
-    /// Key signature, free-form (e.g. "C minor", "Ab major").
+    /// Key signature, free-form (e.g. "C minor").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
 
-    /// Tempo in beats per minute. Must be positive when present.
+    /// Tempo in BPM; must be positive when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tempo: Option<f32>,
 
@@ -72,17 +67,15 @@ pub struct Score {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_signature: Option<TimeSignature>,
 
-    /// Suggested base MIDI note that step offsets are relative to (0..=127).
+    /// Base MIDI note (0..=127) that step offsets are relative to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_note_hint: Option<i64>,
 
-    /// Rhythmic grid the steps are quantized to (e.g. "16th_note",
-    /// "32nd_note"). Free-form hint for consumers.
+    /// Rhythmic grid the steps sit on (e.g. "16th_note"); a hint for consumers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rhythm_grid: Option<String>,
 
-    /// Bank of cells; each cell is a sequence of steps. A single-sequence piece
-    /// is a bank of one cell.
+    /// Bank of cells, each a sequence of steps.
     pub cells: Vec<Vec<Step>>,
 }
 
