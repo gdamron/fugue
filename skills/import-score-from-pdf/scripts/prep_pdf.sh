@@ -1,6 +1,8 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 #
 # prep_pdf.sh — deterministic PDF preprocessing for the import-score-from-pdf skill.
+# POSIX sh; runs on macOS, Linux, WSL, and Git Bash. Windows users without a POSIX
+# shell should use the sibling prep_pdf.ps1 (identical behavior).
 #
 # Renders a score PDF's pages to PNGs at a fixed DPI and extracts text/metadata
 # anchors using poppler, then writes a manifest.json. This is the agent-agnostic
@@ -25,7 +27,7 @@
 #   text.txt                      pdftotext -layout output (embedded text streams)
 #   manifest.json                 poppler version, dpi, page list, anchor files
 #
-set -euo pipefail
+set -eu
 
 DEFAULT_DPI=200
 DPI="$DEFAULT_DPI"
@@ -39,7 +41,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dpi) DPI="${2:-}"; shift 2 ;;
     --install) INSTALL=1; shift ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     -*) die "unknown option: $1" ;;
     *)
       if [ -z "$INPUT" ]; then INPUT="$1"
@@ -52,9 +54,11 @@ done
 [ -n "$INPUT" ]  || die "missing <input.pdf> (see --help)"
 [ -n "$OUTDIR" ] || die "missing <output_dir> (see --help)"
 [ -f "$INPUT" ]  || die "input PDF not found: $INPUT"
-case "$DPI" in (*[!0-9]*|'') die "--dpi must be a positive integer" ;; esac
+case "$DPI" in *[!0-9]*|'') die "--dpi must be a positive integer" ;; esac
 
 # --- Preflight: ensure poppler (pdftocairo, pdftotext, pdfinfo) --------------
+# Prints the platform install command; only runs it with --install. Windows
+# managers (winget/choco/scoop) are handled by prep_pdf.ps1.
 install_cmd() {
   if command -v brew >/dev/null 2>&1; then
     echo "brew install poppler"
@@ -62,8 +66,12 @@ install_cmd() {
     echo "sudo apt-get update && sudo apt-get install -y poppler-utils"
   elif command -v dnf >/dev/null 2>&1; then
     echo "sudo dnf install -y poppler-utils"
+  elif command -v zypper >/dev/null 2>&1; then
+    echo "sudo zypper install -y poppler-tools"
   elif command -v pacman >/dev/null 2>&1; then
     echo "sudo pacman -S --noconfirm poppler"
+  elif command -v apk >/dev/null 2>&1; then
+    echo "sudo apk add poppler-utils"
   else
     echo ""
   fi
@@ -101,15 +109,12 @@ pdfinfo "$INPUT" > "$OUTDIR/info.txt"
 pdftotext -layout "$INPUT" "$OUTDIR/text.txt"
 
 # --- Manifest ----------------------------------------------------------------
-# Stable, sorted list of rendered page images (numeric order).
-pages_json=""
-while IFS= read -r f; do
-  base="$(basename "$f")"
-  pages_json="$pages_json    \"$base\",
-"
-done < <(find "$OUTDIR" -maxdepth 1 -name 'page-*.png' | sort -t- -k2 -n)
-pages_json="${pages_json%,
-}"
+# Stable, numerically-sorted list of rendered page images. Built via command
+# substitution so the accumulator survives (a piped `while` runs in a subshell).
+pages_json="$(find "$OUTDIR" -maxdepth 1 -name 'page-*.png' | sort -t- -k2 -n | while IFS= read -r f; do
+  printf '    "%s",\n' "$(basename "$f")"
+done)"
+pages_json="${pages_json%,}"
 
 page_count="$(find "$OUTDIR" -maxdepth 1 -name 'page-*.png' | wc -l | tr -d ' ')"
 src_base="$(basename "$INPUT")"

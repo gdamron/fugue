@@ -8,9 +8,10 @@ description: Transcribe a score PDF into a validated fugue.score.v1 asset. Use w
 Turn a notated score **PDF** into a `fugue.score.v1` asset (a bank of cells in the
 `{ note, gate, held }` step shape the sequencers consume).
 
-This skill is **agent-agnostic**: the rendering/anchor step is a plain script
-(`scripts/prep_pdf.sh`) any harness can run; the transcription is performed by
-whatever agent is reading this. Nothing here is specific to one assistant.
+This skill is **agent-agnostic** and **cross-platform**: the rendering/anchor step is
+a plain script (`scripts/prep_pdf.sh` for macOS/Linux/WSL, `scripts/prep_pdf.ps1` for
+Windows) any harness can run; the transcription is performed by whatever agent is
+reading this. Nothing here is specific to one assistant or OS.
 
 We do **not** rasterize PDFs ourselves. Poppler is the canonical renderer the
 toolchain already assumes; pinning it (version recorded in the manifest) is how we
@@ -25,16 +26,36 @@ not by pixel-identical rendering.
 
 ## 1 — Preprocess (deterministic render + anchors)
 
-Run the prep script. It ensures poppler is installed, renders each page to a PNG at
-a pinned DPI, and extracts the PDF's text/metadata anchors:
+Run the prep script for your platform. It ensures poppler is installed, renders each
+page to a PNG at a pinned DPI, and extracts the PDF's text/metadata anchors. Both
+scripts produce identical output.
 
 ```sh
+# macOS / Linux / WSL / Git Bash
 skills/import-score-from-pdf/scripts/prep_pdf.sh --install path/to/score.pdf out/
 ```
 
-- Omit `--install` to have it only *print* the platform install command if poppler
-  is missing (installing mutates the system — see the script's preflight).
-- `--dpi N` overrides the pinned default (200). Keep it fixed for a given piece.
+```powershell
+# Windows (PowerShell)
+skills\import-score-from-pdf\scripts\prep_pdf.ps1 -Install path\to\score.pdf out\
+```
+
+- Omit `--install` / `-Install` to have it only *print* the platform install command
+  if poppler is missing (installing mutates the system — see the script's preflight).
+- `--dpi N` / `-Dpi N` overrides the pinned default (200). Keep it fixed for a piece.
+
+**poppler is the one prerequisite.** If it isn't installed, the preflight prints the
+right command for your platform:
+
+| Platform | Install |
+|----------|---------|
+| macOS | `brew install poppler` |
+| Debian/Ubuntu | `sudo apt-get install -y poppler-utils` |
+| Fedora/RHEL | `sudo dnf install -y poppler-utils` |
+| openSUSE | `sudo zypper install -y poppler-tools` |
+| Arch | `sudo pacman -S poppler` |
+| Alpine | `sudo apk add poppler-utils` |
+| Windows | `winget install --id oschwartz10612.Poppler -e` (or `choco install poppler` / `scoop install poppler`; else install manually and put its `bin\` on PATH) |
 
 Output in `out/`:
 

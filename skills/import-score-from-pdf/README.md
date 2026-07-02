@@ -5,10 +5,12 @@ A first-party Fugue skill that turns a notated score **PDF** into a validated
 
 ## Why it's shaped this way
 
-- **Agent-agnostic.** The skill is a neutral bundle, not a Claude-only file. The
-  heavy lifting (`scripts/prep_pdf.sh`) is plain shell + poppler that any
-  harness — Claude Code, Codex, the in-graph Agent module, or a human — can run.
-  `SKILL.md` is portable content; `fugue.skill.json` declares the bundle.
+- **Agent-agnostic & cross-platform.** The skill is a neutral bundle, not a
+  Claude-only file. The heavy lifting is plain poppler orchestration any harness —
+  Claude Code, Codex, the in-graph Agent module, or a human — can run: POSIX
+  `scripts/prep_pdf.sh` (macOS/Linux/WSL/Git Bash) and `scripts/prep_pdf.ps1`
+  (native Windows PowerShell), with identical output. `SKILL.md` is portable
+  content; `fugue.skill.json` declares the bundle.
 - **No native rasterizer.** We don't render PDFs in Rust. Poppler is the renderer
   the surrounding toolchain already assumes; we pin it (version recorded in
   `manifest.json`) for reproducibility. Rationale:
@@ -21,17 +23,24 @@ A first-party Fugue skill that turns a notated score **PDF** into a validated
 
 ```
 import-score-from-pdf/
-  SKILL.md            portable instructions (front-matter + body)
-  fugue.skill.json    manifest stub (id, version, targets, requires, produces)
-  scripts/prep_pdf.sh poppler preflight + deterministic render + anchors + manifest
-  README.md           this file
+  SKILL.md             portable instructions (front-matter + body)
+  fugue.skill.json     manifest stub (id, version, targets, requires, produces)
+  scripts/prep_pdf.sh  poppler preflight + deterministic render + anchors + manifest (POSIX)
+  scripts/prep_pdf.ps1 the same, for native Windows PowerShell
+  README.md            this file
 ```
 
 ## Quick start
 
 ```sh
+# macOS / Linux / WSL / Git Bash
 scripts/prep_pdf.sh --install path/to/score.pdf out/
 # out/page-*.png  out/info.txt  out/text.txt  out/manifest.json
+```
+
+```powershell
+# Windows
+scripts\prep_pdf.ps1 -Install path\to\score.pdf out\
 ```
 
 Then follow `SKILL.md` to read the pages + anchors and transcribe to

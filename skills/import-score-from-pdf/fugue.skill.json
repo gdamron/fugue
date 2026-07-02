@@ -10,7 +10,8 @@
     "tools": ["poppler"]
   },
   "scripts": {
-    "prep": "scripts/prep_pdf.sh"
+    "prep": "scripts/prep_pdf.sh",
+    "prep_windows": "scripts/prep_pdf.ps1"
   },
   "produces": "fugue.score.v1"
 }
