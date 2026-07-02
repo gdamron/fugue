@@ -8,27 +8,26 @@ description: Transcribe a score PDF into a validated fugue.score.v1 asset. Use w
 Turn a notated score **PDF** into a `fugue.score.v1` asset (a bank of cells in the
 `{ note, gate, held }` step shape the sequencers consume).
 
-This skill is **agent-agnostic** and **cross-platform**: the rendering/anchor step is
-a plain script (`scripts/prep_pdf.sh` for macOS/Linux/WSL, `scripts/prep_pdf.ps1` for
-Windows) any harness can run; the transcription is performed by whatever agent is
-reading this. Nothing here is specific to one assistant or OS.
+This skill is **cross-platform**: the rendering/anchor step is a plain script
+(`scripts/prep_pdf.sh` for macOS/Linux/WSL, `scripts/prep_pdf.ps1` for Windows).
 
 We do **not** rasterize PDFs ourselves. Poppler is the canonical renderer the
-toolchain already assumes; pinning it (version recorded in the manifest) is how we
-get reproducibility. The *accuracy* of a transcription is measured separately,
-against a MusicXML/MIDI ground truth, by the import-accuracy harness (FUG-174) —
-not by pixel-identical rendering.
+toolchain already assumes; pinning it (version recorded in the manifest) is how
+we get reproducibility. The _accuracy_ of a transcription is measured separately,
+against a MusicXML/MIDI ground truth, by the import-accuracy harness — not by
+pixel-identical rendering.
 
 ## When to use
 
 - The user has a score as a PDF and wants it playable in Fugue.
-- You need a deterministic, inspectable view of a score's pages + embedded text.
+- You need a deterministic, easily inspected view of a score's pages + embedded
+  text.
 
 ## 1 — Preprocess (deterministic render + anchors)
 
-Run the prep script for your platform. It ensures poppler is installed, renders each
-page to a PNG at a pinned DPI, and extracts the PDF's text/metadata anchors. Both
-scripts produce identical output.
+Run the prep script for your platform. It ensures poppler is installed, renders
+each page to a PNG at a pinned DPI, and extracts the PDF's text/metadata anchors.
+Both scripts produce identical output.
 
 ```sh
 # macOS / Linux / WSL / Git Bash
@@ -40,31 +39,31 @@ skills/import-score-from-pdf/scripts/prep_pdf.sh --install path/to/score.pdf out
 skills\import-score-from-pdf\scripts\prep_pdf.ps1 -Install path\to\score.pdf out\
 ```
 
-- Omit `--install` / `-Install` to have it only *print* the platform install command
+- Omit `--install` / `-Install` to have it only _print_ the platform install command
   if poppler is missing (installing mutates the system — see the script's preflight).
 - `--dpi N` / `-Dpi N` overrides the pinned default (200). Keep it fixed for a piece.
 
-**poppler is the one prerequisite.** If it isn't installed, the preflight prints the
-right command for your platform:
+**poppler is the one prerequisite.** If it isn't installed, the preflight prints
+the right command for your platform:
 
-| Platform | Install |
-|----------|---------|
-| macOS | `brew install poppler` |
-| Debian/Ubuntu | `sudo apt-get install -y poppler-utils` |
-| Fedora/RHEL | `sudo dnf install -y poppler-utils` |
-| openSUSE | `sudo zypper install -y poppler-tools` |
-| Arch | `sudo pacman -S poppler` |
-| Alpine | `sudo apk add poppler-utils` |
-| Windows | `winget install --id oschwartz10612.Poppler -e` (or `choco install poppler` / `scoop install poppler`; else install manually and put its `bin\` on PATH) |
+| Platform      | Install                                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS         | `brew install poppler`                                                                                                                                   |
+| Debian/Ubuntu | `sudo apt-get install -y poppler-utils`                                                                                                                  |
+| Fedora/RHEL   | `sudo dnf install -y poppler-utils`                                                                                                                      |
+| openSUSE      | `sudo zypper install -y poppler-tools`                                                                                                                   |
+| Arch          | `sudo pacman -S poppler`                                                                                                                                 |
+| Alpine        | `sudo apk add poppler-utils`                                                                                                                             |
+| Windows       | `winget install --id oschwartz10612.Poppler -e` (or `choco install poppler` / `scoop install poppler`; else install manually and put its `bin\` on PATH) |
 
 Output in `out/`:
 
-| File | Use |
-|------|-----|
-| `page-1.png`, `page-2.png`, … | the pages to read, in order |
-| `info.txt` | `pdfinfo` metadata (Title, Author, Creator, page count/size) |
-| `text.txt` | `pdftotext -layout` embedded text (titles, tempo marks, etc.) |
-| `manifest.json` | pinned poppler version + DPI + page list (the determinism record) |
+| File                          | Use                                                               |
+| ----------------------------- | ----------------------------------------------------------------- |
+| `page-1.png`, `page-2.png`, … | the pages to read, in order                                       |
+| `info.txt`                    | `pdfinfo` metadata (Title, Author, Creator, page count/size)      |
+| `text.txt`                    | `pdftotext -layout` embedded text (titles, tempo marks, etc.)     |
+| `manifest.json`               | pinned poppler version + DPI + page list (the determinism record) |
 
 ## 2 — Fill metadata from anchors
 
@@ -78,7 +77,7 @@ Read `info.txt` and `text.txt` to populate the score's metadata:
   anchor, e.g. 48/60).
 - `rhythm_grid` — the smallest subdivision you will quantize to (e.g. "16th_note").
 
-Treat anchors as *hints*: the page images are the source of truth for notes.
+Treat anchors as _hints_: the page images are the source of truth for notes.
 
 ## 3 — Transcribe page → system → measure
 
@@ -114,8 +113,9 @@ Every candidate must conform to the schema (authoritative validator:
 
 - top-level is an object; if `schema` is present it must be `"fugue.score.v1"`;
 - `cells` is present and non-empty, and every cell is non-empty;
-- every step is `null`, an integer in `-128..=127`, or an object whose `note` is an
-  integer/null and `gate` is in `0..1`; a `held` step carries only `{ "held": true }`;
+- every step is `null`, an integer in `-128..=127`, or an object whose `note` is
+  an integer/null and `gate` is in `0..1`; a `held` step carries only
+  `{ "held": true }`;
 - `base_note_hint` is `0..=127`; `tempo` > 0; time-signature fields are positive.
 
 ## 5 — Self-verify (numeric guards) and iterate
@@ -127,9 +127,7 @@ Before declaring done, cross-check the transcription against what the page shows
 - **Note density** — steps-per-system is plausible (no silently empty or overfull
   cells).
 
-Fix mismatches and repeat from step 3 until the guards pass. These are cheap
-structural checks; true note-level accuracy is scored later by FUG-174 against a
-MusicXML/MIDI ground truth.
+Fix mismatches and repeat from step 3 until the guards pass.
 
 ## Output
 
