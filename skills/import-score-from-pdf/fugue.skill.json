@@ -1,0 +1,17 @@
+{
+  "kind": "skill",
+  "id": "fugue.import.score-from-pdf",
+  "version": "0.1.0",
+  "name": "Import score from PDF",
+  "description": "Turn a score PDF into a validated fugue.score.v1 asset: pinned poppler render + anchor extraction, agent transcription, and numeric self-checks.",
+  "targets": ["claude-code", "in-graph-agent"],
+  "entry": "SKILL.md",
+  "requires": {
+    "tools": ["poppler"]
+  },
+  "scripts": {
+    "prep": "scripts/prep_pdf.sh",
+    "prep_windows": "scripts/prep_pdf.ps1"
+  },
+  "produces": "fugue.score.v1"
+}
