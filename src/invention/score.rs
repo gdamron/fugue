@@ -255,5 +255,8 @@ fn check_note_range(note: i64) -> Result<(), String> {
     }
 }
 
+#[cfg(feature = "score-import")]
+pub mod import;
+
 #[cfg(test)]
 mod tests;

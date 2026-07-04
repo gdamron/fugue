@@ -15,6 +15,10 @@ indexmap = "2.0"
 hound = "3.5"
 semver = "1"
 schemars = { version = "1", optional = true }
+roxmltree = { version = "0.21", optional = true }
+zip = { version = "8", optional = true, default-features = false, features = [
+  "deflate",
+] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sha2 = "0.10"
@@ -41,6 +45,7 @@ web-sys = { version = "0.3", features = [
 ffi = []
 plugins = ["dep:wasmtime", "dep:wasmtime-wasi"]
 rpc-schema = ["dep:schemars"]
+score-import = ["dep:roxmltree", "dep:zip"]
 
 [dev-dependencies]
 tempfile = "3.27.0"
