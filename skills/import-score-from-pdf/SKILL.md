@@ -108,8 +108,18 @@ Assemble the `fugue.score.v1` document:
 
 ## 4 — Validate against fugue.score.v1
 
-Every candidate must conform to the schema (authoritative validator:
-`src/invention/score.rs::validate_score` in the `fugue` crate). Self-check the shape:
+Every candidate must conform to the schema. When the `fugue` CLI is installed,
+run the authoritative validator directly:
+
+```sh
+fugue score validate draft-score.json   # prints OK / first error; exit 0 on pass
+```
+
+Treat a non-zero exit as a failed candidate: fix the reported problem and
+re-validate before moving on.
+
+If the CLI is not available, self-check the same shape the validator enforces
+(`src/invention/score.rs::validate_score` in the `fugue` crate):
 
 - top-level is an object; if `schema` is present it must be `"fugue.score.v1"`;
 - `cells` is present and non-empty, and every cell is non-empty;
