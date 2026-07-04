@@ -1,11 +1,17 @@
-//! Musical scale and note primitives.
+//! Musical primitives: pitch, scale, key, and rhythmic time.
 //!
 //! - [`Note`] - A single pitch as a MIDI note number
 //! - [`Scale`] - A root note; degrees are semitone offsets
+//! - [`KeyMode`]/[`key_signature_name`] - key signatures on the circle of fifths
+//! - [`Rat`]/[`note_value_name`] - exact rational time and note-value naming
 
-pub use self::note::Note;
+pub use self::key::{key_signature_name, KeyMode};
+pub use self::note::{step_semitone, Note};
+pub use self::rhythm::{note_value_name, Rat};
 
+mod key;
 mod note;
+mod rhythm;
 
 /// A musical scale rooted on a given note.
 ///

@@ -10,7 +10,6 @@
 //! them.
 
 mod musicxml;
-mod rational;
 
 pub use musicxml::{convert_musicxml, ConvertReport, BASE_NOTE};
 

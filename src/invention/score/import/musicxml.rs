@@ -25,8 +25,8 @@ use crate::invention::score::{Score, SCORE_SCHEMA_V1};
 use crate::invention::TimeSignature;
 use crate::modules::Step;
 
-use super::rational::Rat;
-use metadata::{extract_metadata, grid_name};
+use crate::music::{note_value_name, Note, Rat};
+use metadata::extract_metadata;
 
 /// Base MIDI note all step offsets are relative to. Middle C keeps every
 /// valid MIDI pitch (0..=127) within the sequencers' `i8` offset range.
@@ -94,7 +94,7 @@ pub fn convert_musicxml(xml: &str) -> Result<(Score, ConvertReport), String> {
     // every event lands on an integer step index.
     let mut grid: Option<Rat> = None;
     let mut fold = |value: Rat| {
-        if value.num != 0 {
+        if !value.is_zero() {
             grid = Some(match grid {
                 Some(current) => current.gcd(value),
                 None => value,
@@ -116,12 +116,12 @@ pub fn convert_musicxml(xml: &str) -> Result<(Score, ConvertReport), String> {
     let total: Rat = first
         .capacities
         .iter()
-        .fold(Rat::new(0, 1), |sum, c| sum.add(*c));
+        .fold(Rat::new(0, 1), |sum, c| sum + *c);
     let steps_per_cell = total
         .div_exact(grid)
         .ok_or("internal: grid does not divide the piece length")?;
     report.steps_per_cell = steps_per_cell as usize;
-    report.rhythm_grid = grid_name(grid);
+    report.rhythm_grid = note_value_name(grid);
 
     // Merge ties, split voices into lanes, and emit step cells.
     let mut cells: Vec<Vec<Step>> = Vec::new();
@@ -238,9 +238,9 @@ fn convert_part(
                 "backup" | "forward" => {
                     let duration = required_duration(element, number, divisions)?;
                     cursor = if element.has_tag_name("backup") {
-                        cursor.sub(duration)
+                        cursor - duration
                     } else {
-                        cursor.add(duration)
+                        cursor + duration
                     };
                     if cursor.is_negative() {
                         return Err(format!(
@@ -278,7 +278,7 @@ fn convert_part(
                         let sort = voice.parse::<u32>().unwrap_or(u32::MAX);
                         let (tie_start, tie_stop) = tie_flags(element);
                         voices.entry((sort, voice)).or_default().push(NoteEvent {
-                            onset: measure_start.add(onset),
+                            onset: measure_start + onset,
                             duration,
                             midi,
                             tie_start,
@@ -288,7 +288,7 @@ fn convert_part(
 
                     if !is_chord {
                         chord_onset = Some(cursor);
-                        cursor = cursor.add(duration);
+                        cursor = cursor + duration;
                         high_water = high_water.max(cursor);
                     }
                 }
@@ -313,10 +313,10 @@ fn convert_part(
                 number, time_signature.beats_per_measure, time_signature.beat_unit
             ));
         }
-        if capacity.num <= 0 {
+        if !capacity.is_positive() {
             return Err(format!("measure {}: empty implicit measure", number));
         }
-        measure_start = measure_start.add(capacity);
+        measure_start = measure_start + capacity;
         capacities.push(capacity);
     }
 
@@ -356,6 +356,9 @@ fn required_duration(
 }
 
 /// MIDI note number for a pitched note; `None` for rests and unpitched notes.
+///
+/// The XML extraction and error context live here; the spelled-pitch → MIDI
+/// mapping itself is [`Note::from_spelling`] in `crate::music`.
 fn note_midi(element: roxmltree::Node, measure: &str) -> Result<Option<i64>, String> {
     if element.children().any(|n| n.has_tag_name("rest")) {
         return Ok(None);
@@ -366,15 +369,9 @@ fn note_midi(element: roxmltree::Node, measure: &str) -> Result<Option<i64>, Str
     };
     let step = child_text(pitch, "step")
         .ok_or_else(|| format!("measure {}: <pitch> missing <step>", measure))?;
-    let semitone = match step {
-        "C" => 0,
-        "D" => 2,
-        "E" => 4,
-        "F" => 5,
-        "G" => 7,
-        "A" => 9,
-        "B" => 11,
-        other => return Err(format!("measure {}: invalid <step> '{}'", measure, other)),
+    let step = match step.chars().next() {
+        Some(letter) if step.len() == 1 => letter,
+        _ => return Err(format!("measure {}: invalid <step> '{}'", measure, step)),
     };
     let alter = child_text(pitch, "alter")
         .map(|t| {
@@ -391,16 +388,15 @@ fn note_midi(element: roxmltree::Node, measure: &str) -> Result<Option<i64>, Str
     }
     let octave = child_text(pitch, "octave")
         .ok_or_else(|| format!("measure {}: <pitch> missing <octave>", measure))?
-        .parse::<i64>()
+        .parse::<i32>()
         .map_err(|_| format!("measure {}: invalid <octave>", measure))?;
-    let midi = (octave + 1) * 12 + semitone + alter as i64;
-    if !(0..=127).contains(&midi) {
-        return Err(format!(
-            "measure {}: pitch out of MIDI range (computed {})",
-            measure, midi
-        ));
-    }
-    Ok(Some(midi))
+    let note = Note::from_spelling(step, alter as i32, octave).ok_or_else(|| {
+        format!(
+            "measure {}: '{}' (alter {}, octave {}) is not a MIDI pitch",
+            measure, step, alter, octave
+        )
+    })?;
+    Ok(Some(i64::from(note.midi_note)))
 }
 
 fn tie_flags(element: roxmltree::Node) -> (bool, bool) {
@@ -426,9 +422,9 @@ fn merge_ties(mut events: Vec<NoteEvent>, report: &mut ConvertReport) -> Vec<Not
     for event in events {
         if event.tie_stop {
             if let Some(&idx) = open.get(&event.midi) {
-                let end = merged[idx].onset.add(merged[idx].duration);
+                let end = merged[idx].onset + merged[idx].duration;
                 if end == event.onset {
-                    merged[idx].duration = merged[idx].duration.add(event.duration);
+                    merged[idx].duration = merged[idx].duration + event.duration;
                     report.ties_merged += 1;
                     if !event.tie_start {
                         open.remove(&event.midi);
@@ -458,7 +454,7 @@ fn assign_lanes(mut events: Vec<NoteEvent>) -> Vec<Vec<NoteEvent>> {
     let mut lanes: Vec<Vec<NoteEvent>> = Vec::new();
     let mut lane_ends: Vec<Rat> = Vec::new();
     for event in events {
-        let end = event.onset.add(event.duration);
+        let end = event.onset + event.duration;
         match lane_ends.iter().position(|&e| e <= event.onset) {
             Some(lane) => {
                 lane_ends[lane] = end;

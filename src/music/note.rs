@@ -47,4 +47,59 @@ impl Note {
             midi_note: midi.round() as u8,
         }
     }
+
+    /// Creates a note from a spelled pitch: step letter, chromatic alteration
+    /// (sharps positive, flats negative), and scientific octave — the spelling
+    /// used by notation formats like MusicXML (`Eb4` = step 'E', alter -1,
+    /// octave 4 = MIDI 63).
+    ///
+    /// Returns `None` for an invalid step letter or a pitch outside MIDI
+    /// 0..=127.
+    pub fn from_spelling(step: char, alter: i32, octave: i32) -> Option<Self> {
+        let semitone = step_semitone(step)? as i32;
+        let midi = (octave + 1) * 12 + semitone + alter;
+        u8::try_from(midi).ok().filter(|&m| m <= 127).map(Self::new)
+    }
+}
+
+/// Semitone offset of a step letter within the octave (C = 0 … B = 11), or
+/// `None` if the letter is not a pitch step.
+pub fn step_semitone(step: char) -> Option<u8> {
+    match step.to_ascii_uppercase() {
+        'C' => Some(0),
+        'D' => Some(2),
+        'E' => Some(4),
+        'F' => Some(5),
+        'G' => Some(7),
+        'A' => Some(9),
+        'B' => Some(11),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spells_pitches_to_midi() {
+        assert_eq!(Note::from_spelling('C', 0, 4).unwrap().midi_note, 60);
+        assert_eq!(Note::from_spelling('E', -1, 4).unwrap().midi_note, 63);
+        assert_eq!(Note::from_spelling('F', 1, 5).unwrap().midi_note, 78);
+        assert_eq!(Note::from_spelling('A', 0, 0).unwrap().midi_note, 21);
+        // Enharmonic spellings land on the same key.
+        assert_eq!(
+            Note::from_spelling('B', 1, 3).unwrap().midi_note,
+            Note::from_spelling('C', 0, 4).unwrap().midi_note
+        );
+    }
+
+    #[test]
+    fn rejects_bad_letters_and_out_of_range_pitches() {
+        assert!(Note::from_spelling('H', 0, 4).is_none());
+        assert!(Note::from_spelling('C', -1, -1).is_none()); // below MIDI 0
+        assert!(Note::from_spelling('G', 1, 9).is_none()); // above MIDI 127
+        assert_eq!(step_semitone('g'), Some(7));
+        assert_eq!(step_semitone('x'), None);
+    }
 }

@@ -1,11 +1,11 @@
-//! Piece metadata and grid naming for MusicXML conversion.
+//! Piece metadata extraction for MusicXML conversion.
 
 use std::fmt::Write as _;
 
 use crate::invention::TimeSignature;
 
 use super::{child_text, ConvertReport};
-use crate::invention::score::import::rational::Rat;
+use crate::music::{key_signature_name, KeyMode};
 
 pub(super) struct Metadata {
     pub(super) title: Option<String>,
@@ -70,7 +70,13 @@ pub(super) fn extract_metadata(root: roxmltree::Node, report: &mut ConvertReport
     for node in root.descendants() {
         if key.is_none() && node.has_tag_name("key") {
             if let Some(fifths) = child_text(node, "fifths").and_then(|t| t.parse::<i32>().ok()) {
-                key = key_name(fifths, child_text(node, "mode"));
+                // MusicXML <mode> is free-form; anything but "minor" (church
+                // modes, "major", absent) is named from the major-key tonic.
+                let mode = match child_text(node, "mode") {
+                    Some("minor") => KeyMode::Minor,
+                    _ => KeyMode::Major,
+                };
+                key = key_signature_name(fifths, mode);
             }
         }
         if time_signature.is_none() && node.has_tag_name("time") {
@@ -117,44 +123,4 @@ pub(super) fn extract_metadata(root: roxmltree::Node, report: &mut ConvertReport
         tempo,
         time_signature,
     }
-}
-
-/// Human-readable grid name, e.g. `16th_note` or `8th_triplet`, from the grid
-/// expressed as a fraction of a whole note.
-pub(super) fn grid_name(grid: Rat) -> String {
-    let whole = Rat::new(grid.num, grid.den * 4);
-    if whole.num == 1 {
-        match whole.den {
-            1 => return "whole_note".to_string(),
-            2 => return "half_note".to_string(),
-            4 => return "quarter_note".to_string(),
-            8 => return "8th_note".to_string(),
-            16 => return "16th_note".to_string(),
-            32 => return "32nd_note".to_string(),
-            64 => return "64th_note".to_string(),
-            128 => return "128th_note".to_string(),
-            3 => return "half_triplet".to_string(),
-            6 => return "quarter_triplet".to_string(),
-            12 => return "8th_triplet".to_string(),
-            24 => return "16th_triplet".to_string(),
-            48 => return "32nd_triplet".to_string(),
-            _ => {}
-        }
-    }
-    format!("{}/{}_whole_note", whole.num, whole.den)
-}
-
-/// Key name from circle-of-fifths position, e.g. `-4` → "Ab major"/"F minor".
-fn key_name(fifths: i32, mode: Option<&str>) -> Option<String> {
-    const MAJORS: [&str; 15] = [
-        "Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#",
-    ];
-    const MINORS: [&str; 15] = [
-        "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#", "G#", "D#", "A#",
-    ];
-    let index = usize::try_from(fifths + 7).ok().filter(|&i| i < 15)?;
-    Some(match mode {
-        Some("minor") => format!("{} minor", MINORS[index]),
-        _ => format!("{} major", MAJORS[index]),
-    })
 }
