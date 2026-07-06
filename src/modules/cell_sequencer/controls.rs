@@ -34,6 +34,10 @@ pub(crate) struct CellSequencerShared {
     /// One-shot playback flag (the `mode` control: loop | one_shot). The
     /// audio thread reads it at sample rate.
     pub(crate) one_shot: AtomicBool,
+    /// Written by the audio thread when a one-shot bank playthrough
+    /// completes (cleared on re-arm). Exposed as the read-only `ended`
+    /// control so live surfaces can observe the end without graph access.
+    pub(crate) ended: AtomicBool,
     pub(crate) sequences: Mutex<Vec<Vec<Step>>>,
 }
 
@@ -70,6 +74,7 @@ impl CellSequencerControls {
                 current_cell: AtomicUsize::new(selected_sequence),
                 advance_request_count: AtomicU64::new(0),
                 one_shot: AtomicBool::new(false),
+                ended: AtomicBool::new(false),
                 sequences: Mutex::new(sequences),
             }),
         }
@@ -157,6 +162,16 @@ impl CellSequencerControls {
             }
         }
         Ok(())
+    }
+
+    /// Whether a one-shot bank playthrough has completed (read-only; the
+    /// audio thread maintains it).
+    pub fn ended(&self) -> bool {
+        self.shared.ended.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_ended(&self, ended: bool) {
+        self.shared.ended.store(ended, Ordering::Relaxed);
     }
 
     pub fn sequences(&self) -> Vec<Vec<Step>> {
@@ -267,6 +282,11 @@ impl ControlSurface for CellSequencerControls {
                 "Trigger: rising edge advances to the next cell",
             )
             .with_default(0.0),
+            ControlMeta::boolean(
+                "ended",
+                "Read-only: a one_shot bank playthrough has completed",
+                self.ended(),
+            ),
         ]
     }
 
@@ -279,6 +299,7 @@ impl ControlSurface for CellSequencerControls {
             "wait_for_cycle_end" => Ok(self.wait_for_cycle_end().into()),
             "sequences_json" => Ok(self.sequences_json().into()),
             "mode" => Ok(self.mode().into()),
+            "ended" => Ok(self.ended().into()),
             "loop_count" => Ok((self.loop_count() as f32).into()),
             "current_cell" => Ok((self.current_cell() as f32).into()),
             "total_cells" => Ok((self.total_cells() as f32).into()),
@@ -301,7 +322,7 @@ impl ControlSurface for CellSequencerControls {
                     self.request_advance();
                 }
             }
-            "loop_count" | "current_cell" | "total_cells" => {
+            "loop_count" | "current_cell" | "total_cells" | "ended" => {
                 return Err(format!("Control '{}' is read-only", key));
             }
             _ => return Err(format!("Unknown control: {}", key)),

@@ -124,6 +124,47 @@ impl InventionRuntime {
     }
 }
 
+/// Returns whether a one-shot playthrough has ended, observed through module
+/// controls rather than the audio graph (safe from any thread while audio
+/// runs). `source` names the authoritative module; `None` watches every
+/// module exposing an `ended` control (any true wins). Errors when the named
+/// module is missing or lacks the control, or when nothing exposes it.
+pub(crate) fn end_reached_in(
+    surfaces: &IndexMap<String, ControlSurfaceInstance>,
+    source: Option<&str>,
+) -> Result<bool, String> {
+    let mut candidates = 0usize;
+    let mut ended = false;
+    for (id, surface) in surfaces.iter() {
+        if let Some(wanted) = source {
+            if id != wanted {
+                continue;
+            }
+        }
+        match surface.get_control("ended") {
+            Ok(crate::ControlValue::Bool(value)) => {
+                candidates += 1;
+                ended = ended || value;
+            }
+            Ok(_) => return Err(format!("module '{}' has a non-boolean 'ended' control", id)),
+            Err(_) => {
+                if source.is_some() {
+                    return Err(format!("module '{}' has no 'ended' control", id));
+                }
+            }
+        }
+    }
+    if candidates == 0 {
+        return Err(match source {
+            Some(wanted) => format!("unknown end source module '{}'", wanted),
+            None => "no module exposes an 'ended' control; playback would never stop \
+                     (use a one_shot sequencer or stop manually)"
+                .to_string(),
+        });
+    }
+    Ok(ended)
+}
+
 /// A running invention with audio output.
 pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
@@ -138,6 +179,14 @@ pub struct RunningInvention {
 }
 
 impl RunningInvention {
+    /// Returns whether a one-shot playthrough has ended (see
+    /// [`end_reached_in`]): observed via module controls, so it is safe to
+    /// poll from a control thread while audio runs.
+    pub fn end_reached(&self, source: Option<&str>) -> Result<bool, String> {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        end_reached_in(&surfaces, source)
+    }
+
     /// Stops audio playback.
     pub fn stop(mut self) {
         self.scripts.stop_all();

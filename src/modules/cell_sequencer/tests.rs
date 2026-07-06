@@ -532,9 +532,7 @@ fn test_cell_mode_control_round_trips() {
 fn test_cells_hold_long_sequences() {
     // A full through-composed lane (e.g. a 604-step Flow-of-Water voice)
     // fits in one cell; MAX_STEPS bounds bank-swap cost, not playback.
-    let long: Vec<Step> = (0..604)
-        .map(|i| Step::note((i % 12) as i8))
-        .collect();
+    let long: Vec<Step> = (0..604).map(|i| Step::note((i % 12) as i8)).collect();
     let mut seq = CellSequencer::new(44_100)
         .with_steps(604)
         .with_sequences(vec![long])
