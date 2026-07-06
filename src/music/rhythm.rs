@@ -7,7 +7,7 @@
 //! vocabulary used by `rhythm_grid` in `fugue.score.v1` assets.
 
 /// An exact time value in quarter notes. Always reduced, denominator >= 1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rat {
     num: i64,
     den: i64,
@@ -143,6 +143,35 @@ pub fn note_value_name(quarters: Rat) -> String {
     format!("{}/{}_whole_note", whole.num, whole.den)
 }
 
+/// Inverse of [`note_value_name`]: parses a note-value name back to a
+/// duration in quarter notes. Accepts every name `note_value_name` produces,
+/// including the `{num}/{den}_whole_note` fallback.
+pub fn note_value_from_name(name: &str) -> Option<Rat> {
+    let whole = match name {
+        "whole_note" => Rat::new(1, 1),
+        "half_note" => Rat::new(1, 2),
+        "quarter_note" => Rat::new(1, 4),
+        "8th_note" => Rat::new(1, 8),
+        "16th_note" => Rat::new(1, 16),
+        "32nd_note" => Rat::new(1, 32),
+        "64th_note" => Rat::new(1, 64),
+        "128th_note" => Rat::new(1, 128),
+        "half_triplet" => Rat::new(1, 3),
+        "quarter_triplet" => Rat::new(1, 6),
+        "8th_triplet" => Rat::new(1, 12),
+        "16th_triplet" => Rat::new(1, 24),
+        "32nd_triplet" => Rat::new(1, 48),
+        other => {
+            let fraction = other.strip_suffix("_whole_note")?;
+            let (num, den) = fraction.split_once('/')?;
+            let num = num.parse::<i64>().ok().filter(|&n| n > 0)?;
+            let den = den.parse::<i64>().ok().filter(|&d| d > 0)?;
+            Rat::new(num, den)
+        }
+    };
+    Some(Rat::new(whole.num * 4, whole.den))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +196,29 @@ mod tests {
         assert_eq!(Rat::new(3, 2).div_exact(Rat::new(1, 2)), Some(3));
         assert_eq!(Rat::new(1, 3).div_exact(Rat::new(1, 2)), None);
         assert_eq!(Rat::new(-1, 2).div_exact(Rat::new(1, 2)), None);
+    }
+
+    #[test]
+    fn note_value_names_round_trip() {
+        for quarters in [
+            Rat::new(4, 1),
+            Rat::new(1, 1),
+            Rat::new(1, 4),
+            Rat::new(1, 8),
+            Rat::new(1, 3),
+            Rat::new(2, 3),
+            Rat::new(3, 4), // dotted eighth → fallback name
+        ] {
+            let name = note_value_name(quarters);
+            assert_eq!(
+                note_value_from_name(&name),
+                Some(quarters),
+                "round trip failed for {}",
+                name
+            );
+        }
+        assert_eq!(note_value_from_name("not_a_value"), None);
+        assert_eq!(note_value_from_name("0/4_whole_note"), None);
     }
 
     #[test]

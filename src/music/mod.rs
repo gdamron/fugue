@@ -7,7 +7,7 @@
 
 pub use self::key::{key_signature_name, KeyMode};
 pub use self::note::{step_semitone, Note};
-pub use self::rhythm::{note_value_name, Rat};
+pub use self::rhythm::{note_value_from_name, note_value_name, Rat};
 
 mod key;
 mod note;

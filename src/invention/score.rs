@@ -255,8 +255,11 @@ fn check_note_range(note: i64) -> Result<(), String> {
     }
 }
 
+pub mod compare;
 #[cfg(feature = "score-import")]
 pub mod import;
+
+pub use compare::{compare_scores, CompareReport};
 
 #[cfg(test)]
 mod tests;
