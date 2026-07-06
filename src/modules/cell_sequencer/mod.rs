@@ -2,6 +2,17 @@
 //!
 //! The cell sequencer extends the deterministic step sequencer with multiple
 //! stored sequences and controls for selecting or advancing between them.
+//!
+//! # Playback modes
+//!
+//! The `mode` control selects `loop` (default: the active cell repeats until
+//! a command switches cells) or `one_shot`: at each cycle end the sequencer
+//! auto-advances to the next cell, playing the bank through once as a single
+//! long sequence; after the final cell's last step completes it falls silent
+//! and latches the `end` output gate high (exactly one rising edge). Explicit
+//! cell commands (`select_sequence`, `next`/`previous`, `advance`) still work
+//! in one_shot and take priority over the auto-advance; `reset_gate` or
+//! selecting a cell re-arms a finished sequencer.
 
 use serde_json::Value;
 use std::sync::Arc;
@@ -20,14 +31,19 @@ mod inputs;
 mod outputs;
 mod parse;
 
-use parse::{normalize_sequence_index, parse_sequence_bank};
 pub(crate) use parse::parse_sequence_bank_json;
+use parse::{normalize_sequence_index, parse_sequence_bank};
 
 pub const DEFAULT_STEPS: usize = 16;
 pub const DEFAULT_GATE_LENGTH: f32 = 0.5;
 pub const DEFAULT_BASE_NOTE: u8 = 48;
 pub const MAX_SEQUENCES: usize = 64;
-pub const MAX_STEPS: usize = 256;
+/// Upper bound on steps per cell. This exists to bound the bank clone the
+/// audio thread performs when the sequence bank changes (and to sanity-bound
+/// `sequences_json` input), not playback cost — playback is O(1) per sample
+/// regardless of length. 1024 keeps the worst-case swap around ~1 MB while
+/// letting a full through-composed lane live in a single cell.
+pub const MAX_STEPS: usize = 1024;
 
 pub struct CellSequencer {
     #[allow(dead_code)]
@@ -48,6 +64,9 @@ pub struct CellSequencer {
     samples_since_gate: u32,
     first_gate_received: bool,
     active_note: Option<i8>,
+    /// One-shot playback of the bank has completed; `end` latches high and
+    /// clock edges are ignored until reset or an explicit cell selection.
+    finished: bool,
     last_gate_in: f32,
     last_reset_in: f32,
     last_next_sequence_in: f32,
@@ -84,6 +103,7 @@ impl CellSequencer {
             samples_since_gate: 0,
             first_gate_received: false,
             active_note: None,
+            finished: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             last_next_sequence_in: 0.0,
@@ -125,6 +145,12 @@ impl CellSequencer {
 
     pub fn with_sequences(self, sequences: Vec<Vec<Step>>) -> Self {
         self.ctrl.set_sequences(sequences);
+        self
+    }
+
+    /// Enables or disables one-shot playback (the `mode` control).
+    pub fn with_one_shot(self, one_shot: bool) -> Self {
+        self.ctrl.set_one_shot(one_shot);
         self
     }
 
@@ -243,6 +269,14 @@ impl CellSequencer {
         self.active_note = step.note;
     }
 
+    /// Ends one-shot playback: silence the voice and latch the `end` gate.
+    fn finish(&mut self) {
+        self.finished = true;
+        self.active_note = None;
+        self.gate_samples_remaining = 0;
+        self.gate_continuous = false;
+    }
+
     fn effective_selected_sequence(&self, i: usize) -> usize {
         self.inputs
             .select_sequence(i, self.ctrl.selected_sequence())
@@ -255,6 +289,8 @@ impl CellSequencer {
 
     fn apply_sequence_change(&mut self, sequence_index: usize) {
         let sequence_index = normalize_sequence_index(sequence_index, self.sequences.len());
+        // An explicit cell selection re-arms a finished one-shot sequencer.
+        self.finished = false;
         self.current_sequence = sequence_index;
         self.current_step = 0;
         self.gate_samples_remaining = 0;
@@ -285,7 +321,7 @@ impl CellSequencer {
         self.ctrl.set_selected_sequence(sequence_index);
         self.last_control_selected_sequence = sequence_index;
 
-        if self.effective_wait_for_cycle_end(i) {
+        if self.effective_wait_for_cycle_end(i) && !self.finished {
             self.pending_sequence = Some(sequence_index);
         } else {
             self.apply_sequence_change(sequence_index);
@@ -335,10 +371,11 @@ impl CellSequencer {
             gate,
             self.current_step as f32,
             self.current_sequence as f32,
+            if self.finished { 1.0 } else { 0.0 },
         );
     }
 
-    fn process_sample(&mut self, i: usize) {
+    fn process_sample(&mut self, i: usize, one_shot: bool) {
         self.sync_sequences_from_controls();
 
         let selected_sequence =
@@ -363,6 +400,7 @@ impl CellSequencer {
             self.gate_samples_remaining = 0;
             self.gate_continuous = false;
             self.active_note = None;
+            self.finished = false;
         }
 
         if next_rising {
@@ -375,7 +413,14 @@ impl CellSequencer {
             self.request_sequence_change(i, target);
         }
 
-        if gate_rising {
+        // Leaving one_shot mode while finished re-arms playback.
+        if self.finished && !one_shot {
+            self.finished = false;
+        }
+
+        // Once a one-shot bank has finished, clock edges are ignored until
+        // reset or an explicit cell selection.
+        if gate_rising && !self.finished {
             if self.first_gate_received && self.samples_since_gate > 0 {
                 self.step_duration_samples = self.samples_since_gate;
             }
@@ -384,6 +429,8 @@ impl CellSequencer {
                 let next_step = self.current_step + 1;
                 if next_step >= self.step_count() {
                     if let Some(sequence_index) = self.pending_sequence.take() {
+                        // Explicit (deferred) cell commands take priority
+                        // over one_shot auto-advance.
                         self.current_sequence =
                             normalize_sequence_index(sequence_index, self.sequences.len());
                         self.ctrl.set_selected_sequence(self.current_sequence);
@@ -391,11 +438,27 @@ impl CellSequencer {
                         self.active_note = None;
                         self.ctrl.set_current_cell(self.current_sequence);
                         self.ctrl.set_loop_count(0);
+                        self.current_step = 0;
+                    } else if one_shot {
+                        if self.current_sequence + 1 < self.sequences.len() {
+                            // Play the bank through: fall into the next cell.
+                            self.current_sequence += 1;
+                            self.ctrl.set_selected_sequence(self.current_sequence);
+                            self.last_control_selected_sequence = self.current_sequence;
+                            self.active_note = None;
+                            self.ctrl.set_current_cell(self.current_sequence);
+                            self.ctrl.set_loop_count(0);
+                            self.current_step = 0;
+                        } else {
+                            // The final cell's last step has sounded for its
+                            // full duration: the bank is over.
+                            self.finish();
+                        }
                     } else {
                         let next_loop = self.ctrl.loop_count().saturating_add(1);
                         self.ctrl.set_loop_count(next_loop);
+                        self.current_step = 0;
                     }
-                    self.current_step = 0;
                 } else {
                     self.current_step = next_step;
                 }
@@ -404,7 +467,9 @@ impl CellSequencer {
             self.first_gate_received = true;
             self.samples_since_gate = 0;
 
-            self.start_step();
+            if !self.finished {
+                self.start_step();
+            }
         }
 
         self.samples_since_gate += 1;
@@ -428,8 +493,11 @@ impl Module for CellSequencer {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        // Mode is control-plane state: read it once per block so the
+        // per-sample loop carries no atomic load for it.
+        let one_shot = self.ctrl.one_shot();
         for i in 0..frames {
-            self.process_sample(i);
+            self.process_sample(i, one_shot);
         }
         true
     }
@@ -476,6 +544,12 @@ impl Module for CellSequencer {
             ControlMeta::new("selected_sequence", "Active sequence index")
                 .with_range(0.0, MAX_SEQUENCES as f32 - 1.0)
                 .with_default(self.ctrl.selected_sequence() as f32),
+            ControlMeta::string(
+                "mode",
+                "Playback mode: loop repeats the active cell; one_shot plays the bank through once and fires the end gate",
+            )
+            .with_options(vec!["loop".to_string(), "one_shot".to_string()])
+            .with_default("loop"),
         ]
     }
 
@@ -485,6 +559,8 @@ impl Module for CellSequencer {
             "steps" => Ok(self.ctrl.steps() as f32),
             "gate_length" => Ok(self.ctrl.gate_length()),
             "selected_sequence" => Ok(self.ctrl.selected_sequence() as f32),
+            // Numeric view of the string `mode` control: 0.0 = loop, 1.0 = one_shot.
+            "mode" => Ok(if self.ctrl.one_shot() { 1.0 } else { 0.0 }),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -495,6 +571,7 @@ impl Module for CellSequencer {
             "steps" => self.ctrl.set_steps(value as usize),
             "gate_length" => self.ctrl.set_gate_length(value),
             "selected_sequence" => self.ctrl.set_selected_sequence(value.max(0.0) as usize),
+            "mode" => self.ctrl.set_one_shot(value > 0.5),
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
@@ -547,6 +624,9 @@ impl ModuleFactory for CellSequencerFactory {
             wait_for_cycle_end,
             sequences.clone(),
         );
+        if let Some(mode) = config.get("mode").and_then(|value| value.as_str()) {
+            controls.set_mode(mode)?;
+        }
         let module = CellSequencer::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {

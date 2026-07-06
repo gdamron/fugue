@@ -2,12 +2,13 @@
 
 use crate::MAX_BLOCK;
 
-pub const OUTPUTS: [&str; 3] = ["frequency", "gate", "step"];
+pub const OUTPUTS: [&str; 4] = ["frequency", "gate", "step", "end"];
 
 pub struct StepSequencerOutputs {
     frequency: [f32; MAX_BLOCK],
     gate: [f32; MAX_BLOCK],
     step: [f32; MAX_BLOCK],
+    end: [f32; MAX_BLOCK],
 }
 
 impl StepSequencerOutputs {
@@ -16,14 +17,16 @@ impl StepSequencerOutputs {
             frequency: [0.0; MAX_BLOCK],
             gate: [0.0; MAX_BLOCK],
             step: [0.0; MAX_BLOCK],
+            end: [0.0; MAX_BLOCK],
         }
     }
 
     #[inline]
-    pub fn set(&mut self, i: usize, frequency: f32, gate: f32, step: f32) {
+    pub fn set(&mut self, i: usize, frequency: f32, gate: f32, step: f32, end: f32) {
         self.frequency[i] = frequency;
         self.gate[i] = gate;
         self.step[i] = step;
+        self.end[i] = end;
     }
 
     /// Block buffer for the indexed output port. Index matches `OUTPUTS`.
@@ -32,7 +35,8 @@ impl StepSequencerOutputs {
         match index {
             0 => &self.frequency,
             1 => &self.gate,
-            _ => &self.step,
+            2 => &self.step,
+            _ => &self.end,
         }
     }
 
@@ -41,6 +45,7 @@ impl StepSequencerOutputs {
             "frequency" => Ok(self.frequency[0]),
             "gate" => Ok(self.gate[0]),
             "step" => Ok(self.step[0]),
+            "end" => Ok(self.end[0]),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }

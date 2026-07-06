@@ -62,15 +62,15 @@ use crate::Module;
 pub use self::controls::StepSequencerControls;
 
 mod controls;
+mod factory;
 mod inputs;
 mod outputs;
 mod parse;
 mod step;
-mod factory;
 
-pub use step::Step;
 pub use factory::StepSequencerFactory;
 pub(crate) use parse::{parse_pattern, parse_step};
+pub use step::Step;
 
 /// Default number of steps in a pattern.
 pub const DEFAULT_STEPS: usize = 16;
@@ -89,13 +89,23 @@ pub const DEFAULT_BASE_NOTE: u8 = 48;
 /// # Inputs
 ///
 /// - `gate` - Clock gate input (rising edge advances step)
-/// - `reset` - Reset input (rising edge resets to step 0)
+/// - `reset` - Reset input (rising edge resets to step 0 and re-arms one-shot)
 ///
 /// # Outputs
 ///
 /// - `frequency` - Current note frequency in Hz (0.0 during rest)
 /// - `gate` - Output gate signal (high during note, low during rest)
 /// - `step` - Current step number (0 to steps-1)
+/// - `end` - End-of-sequence gate: 0.0 while playing; latches to 1.0 when a
+///   one-shot pattern completes (exactly one rising edge per playthrough) and
+///   stays high until `reset` or a switch back to loop mode
+///
+/// # Playback modes
+///
+/// The `mode` control selects `loop` (default; the pattern repeats forever)
+/// or `one_shot`: the pattern plays once, the final step sounds for its full
+/// duration, and on the next clock edge the sequencer falls silent and fires
+/// `end`. Further clock edges are ignored until `reset` re-arms it.
 ///
 /// # Example
 ///
@@ -130,6 +140,9 @@ pub struct StepSequencer {
     first_gate_received: bool,
     /// Frequency for the current active note, retained across held steps.
     active_note: Option<i8>,
+    /// One-shot playback has completed; the `end` output latches high and
+    /// clock edges are ignored until reset (or a switch back to loop mode).
+    finished: bool,
 
     // Edge detection state
     last_gate_in: f32,
@@ -154,6 +167,7 @@ impl StepSequencer {
             samples_since_gate: 0,
             first_gate_received: false,
             active_note: None,
+            finished: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
@@ -172,6 +186,7 @@ impl StepSequencer {
             samples_since_gate: 0,
             first_gate_received: false,
             active_note: None,
+            finished: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
@@ -200,6 +215,12 @@ impl StepSequencer {
     /// Sets the pattern.
     pub fn with_pattern(self, pattern: Vec<Step>) -> Self {
         self.ctrl.set_pattern(pattern);
+        self
+    }
+
+    /// Enables or disables one-shot playback (the `mode` control).
+    pub fn with_one_shot(self, one_shot: bool) -> Self {
+        self.ctrl.set_one_shot(one_shot);
         self
     }
 
@@ -288,15 +309,23 @@ impl StepSequencer {
         self.current_step = (self.current_step + 1) % self.ctrl.steps();
     }
 
-    /// Resets to step 0.
+    /// Resets to step 0 and re-arms one-shot playback.
     fn reset(&mut self) {
         self.current_step = 0;
         self.gate_samples_remaining = 0;
         self.active_note = None;
+        self.finished = false;
+    }
+
+    /// Ends one-shot playback: silence the voice and latch the `end` gate.
+    fn finish(&mut self) {
+        self.finished = true;
+        self.active_note = None;
+        self.gate_samples_remaining = 0;
     }
 
     /// Processes one sample.
-    fn process_sample(&mut self, i: usize) {
+    fn process_sample(&mut self, i: usize, one_shot: bool) {
         // Detect rising edges
         let gate_rising = self.inputs.gate(i) > 0.5 && self.last_gate_in <= 0.5;
         let reset_rising = self.inputs.reset(i) > 0.5 && self.last_reset_in <= 0.5;
@@ -306,8 +335,14 @@ impl StepSequencer {
             self.reset();
         }
 
-        // Handle clock gate
-        if gate_rising {
+        // Leaving one_shot mode while finished re-arms playback.
+        if self.finished && !one_shot {
+            self.finished = false;
+        }
+
+        // Handle clock gate. Once a one-shot pattern has finished, clock
+        // edges are ignored until reset.
+        if gate_rising && !self.finished {
             // Measure step duration from previous gate
             if self.first_gate_received && self.samples_since_gate > 0 {
                 self.step_duration_samples = self.samples_since_gate;
@@ -316,12 +351,20 @@ impl StepSequencer {
             // Advance step on every gate EXCEPT the first one
             // First gate plays step 0, subsequent gates advance
             if self.first_gate_received {
-                self.advance_step();
+                if one_shot && self.current_step + 1 >= self.ctrl.steps() {
+                    // The final step has sounded for its full duration; this
+                    // clock edge is the end of the pattern.
+                    self.finish();
+                } else {
+                    self.advance_step();
+                }
             }
             self.first_gate_received = true;
             self.samples_since_gate = 0;
 
-            self.start_step();
+            if !self.finished {
+                self.start_step();
+            }
         }
 
         // Count samples for step duration measurement
@@ -344,6 +387,7 @@ impl StepSequencer {
                 0.0
             },
             self.current_step as f32,
+            if self.finished { 1.0 } else { 0.0 },
         );
 
         // Store for edge detection
@@ -358,8 +402,11 @@ impl Module for StepSequencer {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        // Mode is control-plane state: read it once per block so the
+        // per-sample loop carries no atomic load for it.
+        let one_shot = self.ctrl.one_shot();
         for i in 0..frames {
-            self.process_sample(i);
+            self.process_sample(i, one_shot);
         }
         true
     }
@@ -399,6 +446,12 @@ impl Module for StepSequencer {
             ControlMeta::new("gate_length", "Default gate length ratio")
                 .with_range(0.0, 1.0)
                 .with_default(DEFAULT_GATE_LENGTH),
+            ControlMeta::string(
+                "mode",
+                "Playback mode: loop repeats; one_shot plays once and fires the end gate",
+            )
+            .with_options(vec!["loop".to_string(), "one_shot".to_string()])
+            .with_default("loop"),
         ]
     }
 
@@ -407,6 +460,8 @@ impl Module for StepSequencer {
             "base_note" => Ok(self.ctrl.base_note() as f32),
             "steps" => Ok(self.ctrl.steps() as f32),
             "gate_length" => Ok(self.ctrl.gate_length()),
+            // Numeric view of the string `mode` control: 0.0 = loop, 1.0 = one_shot.
+            "mode" => Ok(if self.ctrl.one_shot() { 1.0 } else { 0.0 }),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -423,6 +478,10 @@ impl Module for StepSequencer {
             }
             "gate_length" => {
                 self.ctrl.set_gate_length(value);
+                Ok(())
+            }
+            "mode" => {
+                self.ctrl.set_one_shot(value > 0.5);
                 Ok(())
             }
             _ => Err(format!("Unknown control: {}", key)),

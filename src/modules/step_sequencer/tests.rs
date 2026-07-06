@@ -242,7 +242,7 @@ fn test_step_sequencer_factory() {
 
     assert_eq!(module.name(), "StepSequencer");
     assert_eq!(module.inputs(), &["gate", "reset"]);
-    assert_eq!(module.outputs(), &["frequency", "gate", "step"]);
+    assert_eq!(module.outputs(), &["frequency", "gate", "step", "end"]);
 }
 
 #[test]
@@ -328,12 +328,13 @@ fn test_step_sequencer_controls_metadata() {
     let seq = StepSequencer::new(44100);
     let controls = Module::controls(&seq);
 
-    assert_eq!(controls.len(), 3);
+    assert_eq!(controls.len(), 4);
 
     let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
     assert!(keys.contains(&"base_note"));
     assert!(keys.contains(&"steps"));
     assert!(keys.contains(&"gate_length"));
+    assert!(keys.contains(&"mode"));
 }
 
 #[test]
@@ -379,4 +380,135 @@ fn test_step_sequencer_factory_returns_handles() {
     assert_eq!(controls.base_note(), 36);
     assert_eq!(controls.steps(), 8);
     assert!((controls.gate_length() - 0.75).abs() < f32::EPSILON);
+}
+
+/// Drives one full clock pulse (rising edge + release) through the sequencer.
+fn pulse(seq: &mut StepSequencer) {
+    seq.set_input("gate", 1.0).unwrap();
+    seq.process(1);
+    seq.set_input("gate", 0.0).unwrap();
+    seq.process(1);
+}
+
+#[test]
+fn test_one_shot_plays_once_and_fires_end() {
+    let mut seq = StepSequencer::new(44100)
+        .with_steps(4)
+        .with_pattern(vec![
+            Step::note(0),
+            Step::note(2),
+            Step::note(4),
+            Step::note(5),
+        ])
+        .with_one_shot(true);
+
+    // Steps 0..3 play normally; end stays low throughout.
+    for expected_step in 0..4 {
+        pulse(&mut seq);
+        assert_eq!(seq.current_step(), expected_step);
+        assert_eq!(
+            seq.get_output("end").unwrap(),
+            0.0,
+            "end must stay low mid-pattern"
+        );
+        assert!(seq.get_output("frequency").unwrap() > 0.0);
+    }
+
+    // The next clock edge marks the final step's completion: silence + end.
+    pulse(&mut seq);
+    assert_eq!(
+        seq.get_output("end").unwrap(),
+        1.0,
+        "end fires at completion"
+    );
+    assert_eq!(seq.get_output("frequency").unwrap(), 0.0, "voice is silent");
+    assert_eq!(seq.get_output("gate").unwrap(), 0.0);
+
+    // Further clocks are ignored; end stays latched (exactly one rising edge).
+    for _ in 0..3 {
+        pulse(&mut seq);
+        assert_eq!(seq.get_output("end").unwrap(), 1.0);
+        assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
+    }
+}
+
+#[test]
+fn test_one_shot_reset_rearms() {
+    let mut seq = StepSequencer::new(44100)
+        .with_steps(2)
+        .with_pattern(vec![Step::note(0), Step::note(2)])
+        .with_one_shot(true);
+
+    for _ in 0..3 {
+        pulse(&mut seq);
+    }
+    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+
+    // Reset clears the latch and re-arms playback from step 0.
+    seq.set_input("reset", 1.0).unwrap();
+    seq.process(1);
+    seq.set_input("reset", 0.0).unwrap();
+    seq.process(1);
+    assert_eq!(seq.get_output("end").unwrap(), 0.0, "reset clears end");
+
+    pulse(&mut seq);
+    assert!(
+        seq.get_output("frequency").unwrap() > 0.0,
+        "plays again after reset"
+    );
+    pulse(&mut seq);
+    pulse(&mut seq);
+    assert_eq!(
+        seq.get_output("end").unwrap(),
+        1.0,
+        "second playthrough ends too"
+    );
+}
+
+#[test]
+fn test_switching_to_loop_clears_finished() {
+    let mut seq = StepSequencer::new(44100)
+        .with_steps(2)
+        .with_pattern(vec![Step::note(0), Step::note(2)])
+        .with_one_shot(true);
+
+    for _ in 0..3 {
+        pulse(&mut seq);
+    }
+    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+
+    seq.set_control("mode", 0.0).unwrap(); // back to loop
+    pulse(&mut seq);
+    assert_eq!(seq.get_output("end").unwrap(), 0.0, "loop mode clears end");
+    assert!(
+        seq.get_output("frequency").unwrap() > 0.0,
+        "playback resumes"
+    );
+}
+
+#[test]
+fn test_loop_mode_end_never_fires() {
+    let mut seq = StepSequencer::new(44100)
+        .with_steps(2)
+        .with_pattern(vec![Step::note(0), Step::note(2)]);
+
+    for _ in 0..10 {
+        pulse(&mut seq);
+        assert_eq!(seq.get_output("end").unwrap(), 0.0);
+    }
+    // Wrapped several times, still playing.
+    assert!(seq.get_output("frequency").unwrap() > 0.0);
+}
+
+#[test]
+fn test_mode_control_round_trips() {
+    let seq = StepSequencer::new(44100);
+    let meta = Module::controls(&seq);
+    assert_eq!(meta.iter().filter(|c| c.key == "mode").count(), 1);
+
+    let controls = seq.controls();
+    assert_eq!(controls.mode(), "loop");
+    controls.set_mode("one_shot").unwrap();
+    assert_eq!(controls.mode(), "one_shot");
+    assert!(controls.set_mode("bounce").is_err());
 }

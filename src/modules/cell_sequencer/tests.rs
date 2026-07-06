@@ -355,9 +355,195 @@ fn test_cell_sequencer_factory_and_registry() {
     assert!(result.control_surface.is_some());
     assert_eq!(
         result.module.module().outputs(),
-        &["frequency", "gate", "step", "sequence"]
+        &["frequency", "gate", "step", "sequence", "end"]
     );
 
     let registry = ModuleRegistry::default();
     assert!(registry.has_type("cell_sequencer"));
+}
+
+#[test]
+fn test_one_shot_plays_bank_through_and_fires_end() {
+    // Three cells x 2 steps: one_shot concatenates them into one sequence.
+    let mut seq = CellSequencer::new(44_100)
+        .with_steps(2)
+        .with_sequences(vec![
+            vec![Step::note(0), Step::note(2)],
+            vec![Step::note(4), Step::note(5)],
+            vec![Step::note(7), Step::note(9)],
+        ])
+        .with_one_shot(true);
+
+    let expected_cells = [0.0, 0.0, 1.0, 1.0, 2.0, 2.0];
+    for (i, expected_cell) in expected_cells.iter().enumerate() {
+        advance_gate(&mut seq);
+        assert_eq!(
+            seq.get_output("sequence").unwrap(),
+            *expected_cell,
+            "cell at clock {}",
+            i
+        );
+        assert_eq!(
+            seq.get_output("end").unwrap(),
+            0.0,
+            "end low at clock {}",
+            i
+        );
+        assert!(seq.get_output("frequency").unwrap() > 0.0);
+    }
+
+    // Next clock edge completes the final step of the final cell.
+    advance_gate(&mut seq);
+    assert_eq!(
+        seq.get_output("end").unwrap(),
+        1.0,
+        "end fires at bank completion"
+    );
+    assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
+    assert_eq!(seq.get_output("gate").unwrap(), 0.0);
+
+    // Latched; further clocks ignored.
+    for _ in 0..3 {
+        advance_gate(&mut seq);
+        assert_eq!(seq.get_output("end").unwrap(), 1.0);
+        assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
+    }
+}
+
+#[test]
+fn test_one_shot_reset_rearms_current_cell() {
+    let mut seq = CellSequencer::new(44_100)
+        .with_steps(2)
+        .with_sequences(vec![
+            vec![Step::note(0), Step::note(2)],
+            vec![Step::note(4), Step::note(5)],
+        ])
+        .with_one_shot(true);
+
+    for _ in 0..5 {
+        advance_gate(&mut seq);
+    }
+    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+
+    // Reset clears the latch; playback resumes in the final cell.
+    pulse(&mut seq, "reset");
+    assert_eq!(seq.get_output("end").unwrap(), 0.0);
+    advance_gate(&mut seq);
+    assert!(seq.get_output("frequency").unwrap() > 0.0);
+    assert_eq!(seq.get_output("sequence").unwrap(), 1.0);
+}
+
+#[test]
+fn test_one_shot_explicit_selection_rearms_and_restarts() {
+    let mut seq = CellSequencer::new(44_100)
+        .with_steps(2)
+        .with_sequences(vec![
+            vec![Step::note(0), Step::note(2)],
+            vec![Step::note(4), Step::note(5)],
+        ])
+        .with_one_shot(true);
+
+    for _ in 0..5 {
+        advance_gate(&mut seq);
+    }
+    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+
+    // Selecting cell 0 re-arms even with wait_for_cycle_end semantics (no
+    // cycle is running while finished).
+    seq.set_control("selected_sequence", 0.0).unwrap();
+    seq.process(1);
+    assert_eq!(seq.get_output("end").unwrap(), 0.0, "selection re-arms");
+
+    // Selection primes step 0 immediately (as with live cell switches), so
+    // the first clock advances to step 1; the bank then plays through and
+    // ends again.
+    for expected_cell in [0.0, 1.0, 1.0] {
+        advance_gate(&mut seq);
+        assert_eq!(seq.get_output("sequence").unwrap(), expected_cell);
+    }
+    advance_gate(&mut seq);
+    assert_eq!(
+        seq.get_output("end").unwrap(),
+        1.0,
+        "second playthrough ends"
+    );
+}
+
+#[test]
+fn test_one_shot_pending_command_overrides_auto_advance() {
+    let mut seq = CellSequencer::new(44_100)
+        .with_steps(2)
+        .with_wait_for_cycle_end(true)
+        .with_sequences(vec![
+            vec![Step::note(0), Step::note(2)],
+            vec![Step::note(4), Step::note(5)],
+            vec![Step::note(7), Step::note(9)],
+        ])
+        .with_one_shot(true);
+
+    advance_gate(&mut seq); // cell 0 step 0
+
+    // Request a jump straight to cell 2; it defers to the cycle end and must
+    // win over the one_shot auto-advance to cell 1.
+    seq.set_control("selected_sequence", 2.0).unwrap();
+    advance_gate(&mut seq); // cell 0 step 1
+    advance_gate(&mut seq); // cycle end: pending jump applies
+    assert_eq!(seq.get_output("sequence").unwrap(), 2.0);
+    assert_eq!(seq.get_output("end").unwrap(), 0.0);
+
+    // Cell 2 is the last cell; the bank ends after it.
+    advance_gate(&mut seq);
+    advance_gate(&mut seq);
+    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+}
+
+#[test]
+fn test_loop_mode_cell_end_never_fires() {
+    let mut seq = CellSequencer::new(44_100)
+        .with_steps(2)
+        .with_sequences(vec![vec![Step::note(0), Step::note(2)]]);
+
+    for _ in 0..8 {
+        advance_gate(&mut seq);
+        assert_eq!(seq.get_output("end").unwrap(), 0.0);
+    }
+    assert!(seq.ctrl.loop_count() > 0, "the cell keeps looping");
+}
+
+#[test]
+fn test_cell_mode_control_round_trips() {
+    let seq = CellSequencer::new(44_100);
+    let meta = Module::controls(&seq);
+    assert_eq!(meta.iter().filter(|c| c.key == "mode").count(), 1);
+
+    assert_eq!(seq.ctrl.mode(), "loop");
+    seq.ctrl
+        .set_control("mode", ControlValue::from("one_shot"))
+        .unwrap();
+    assert_eq!(seq.ctrl.mode(), "one_shot");
+    assert!(seq.ctrl.set_mode("bounce").is_err());
+    match seq.ctrl.get_control("mode").unwrap() {
+        ControlValue::String(value) => assert_eq!(value, "one_shot"),
+        other => panic!("expected string mode, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_cells_hold_long_sequences() {
+    // A full through-composed lane (e.g. a 604-step Flow-of-Water voice)
+    // fits in one cell; MAX_STEPS bounds bank-swap cost, not playback.
+    let long: Vec<Step> = (0..604)
+        .map(|i| Step::note((i % 12) as i8))
+        .collect();
+    let mut seq = CellSequencer::new(44_100)
+        .with_steps(604)
+        .with_sequences(vec![long])
+        .with_one_shot(true);
+
+    for _ in 0..604 {
+        advance_gate(&mut seq);
+        assert_eq!(seq.get_output("end").unwrap(), 0.0);
+    }
+    advance_gate(&mut seq);
+    assert_eq!(seq.get_output("end").unwrap(), 1.0, "ends after 604 steps");
 }
