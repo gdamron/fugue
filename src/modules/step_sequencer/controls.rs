@@ -1,5 +1,6 @@
 //! Thread-safe controls for the StepSequencer module.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::{ControlMeta, ControlSurface, ControlValue};
@@ -29,6 +30,9 @@ pub struct StepSequencerControls {
     pub(crate) steps: Arc<Mutex<usize>>,
     pub(crate) gate_length: Arc<Mutex<f32>>,
     pub(crate) pattern: Arc<Mutex<Vec<Step>>>,
+    /// One-shot playback flag; an atomic because the audio thread reads it
+    /// at sample rate (exposed as the `mode` control: loop | one_shot).
+    pub(crate) one_shot: Arc<AtomicBool>,
 }
 
 impl StepSequencerControls {
@@ -39,6 +43,7 @@ impl StepSequencerControls {
             steps: Arc::new(Mutex::new(DEFAULT_STEPS)),
             gate_length: Arc::new(Mutex::new(DEFAULT_GATE_LENGTH)),
             pattern: Arc::new(Mutex::new(Vec::new())),
+            one_shot: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -49,6 +54,7 @@ impl StepSequencerControls {
             steps: Arc::new(Mutex::new(steps.clamp(1, 64))),
             gate_length: Arc::new(Mutex::new(gate_length.clamp(0.0, 1.0))),
             pattern: Arc::new(Mutex::new(Vec::new())),
+            one_shot: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -80,6 +86,40 @@ impl StepSequencerControls {
     /// Sets the default gate length ratio (0.0-1.0).
     pub fn set_gate_length(&self, length: f32) {
         *self.gate_length.lock().unwrap() = length.clamp(0.0, 1.0);
+    }
+
+    /// Returns whether one-shot playback is enabled.
+    pub fn one_shot(&self) -> bool {
+        self.one_shot.load(Ordering::Relaxed)
+    }
+
+    /// Enables or disables one-shot playback.
+    pub fn set_one_shot(&self, one_shot: bool) {
+        self.one_shot.store(one_shot, Ordering::Relaxed);
+    }
+
+    /// Gets the playback mode as its control string (`loop` or `one_shot`).
+    pub fn mode(&self) -> &'static str {
+        if self.one_shot() {
+            "one_shot"
+        } else {
+            "loop"
+        }
+    }
+
+    /// Sets the playback mode from its control string.
+    pub fn set_mode(&self, mode: &str) -> Result<(), String> {
+        match mode {
+            "loop" => self.set_one_shot(false),
+            "one_shot" => self.set_one_shot(true),
+            other => {
+                return Err(format!(
+                    "Unknown mode '{}' (expected loop | one_shot)",
+                    other
+                ))
+            }
+        }
+        Ok(())
     }
 
     /// Gets the current pattern.
@@ -135,6 +175,12 @@ impl ControlSurface for StepSequencerControls {
                 .with_default(self.gate_length()),
             ControlMeta::string("pattern_json", "Step pattern as JSON")
                 .with_default(self.pattern_json()),
+            ControlMeta::string(
+                "mode",
+                "Playback mode: loop repeats; one_shot plays once and fires the end gate",
+            )
+            .with_options(vec!["loop".to_string(), "one_shot".to_string()])
+            .with_default(self.mode()),
         ]
     }
 
@@ -144,6 +190,7 @@ impl ControlSurface for StepSequencerControls {
             "steps" => Ok((self.steps() as f32).into()),
             "gate_length" => Ok(self.gate_length().into()),
             "pattern_json" => Ok(self.pattern_json().into()),
+            "mode" => Ok(self.mode().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -154,6 +201,7 @@ impl ControlSurface for StepSequencerControls {
             "steps" => self.set_steps(value.as_number()? as usize),
             "gate_length" => self.set_gate_length(value.as_number()?),
             "pattern_json" => self.set_pattern_json(value.as_string()?)?,
+            "mode" => self.set_mode(value.as_string()?)?,
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())

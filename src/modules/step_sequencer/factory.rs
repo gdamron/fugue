@@ -7,6 +7,7 @@ use super::*;
 /// - `base_note` (u8): Base MIDI note added to step values (default: 48, C3)
 /// - `steps` (usize): Number of steps in pattern (default: 16)
 /// - `gate_length` (f32): Default gate length ratio 0.0-1.0 (default: 0.5)
+/// - `mode` (string): `"loop"` (default) or `"one_shot"` (play once, fire `end`)
 /// - `pattern` (array): Array of step objects
 ///
 /// # Step Object Format
@@ -69,6 +70,9 @@ impl ModuleFactory for StepSequencerFactory {
         let pattern = parse_pattern(config.get("pattern"))?;
 
         let controls = StepSequencerControls::new_with_values(base_note, steps, gate_length);
+        if let Some(mode) = config.get("mode").and_then(|v| v.as_str()) {
+            controls.set_mode(mode)?;
+        }
 
         let seq =
             StepSequencer::new_with_controls(sample_rate, controls.clone()).with_pattern(pattern);

@@ -31,6 +31,9 @@ pub(crate) struct CellSequencerShared {
     pub(crate) loop_count: AtomicU32,
     pub(crate) current_cell: AtomicUsize,
     pub(crate) advance_request_count: AtomicU64,
+    /// One-shot playback flag (the `mode` control: loop | one_shot). The
+    /// audio thread reads it at sample rate.
+    pub(crate) one_shot: AtomicBool,
     pub(crate) sequences: Mutex<Vec<Vec<Step>>>,
 }
 
@@ -66,6 +69,7 @@ impl CellSequencerControls {
                 loop_count: AtomicU32::new(0),
                 current_cell: AtomicUsize::new(selected_sequence),
                 advance_request_count: AtomicU64::new(0),
+                one_shot: AtomicBool::new(false),
                 sequences: Mutex::new(sequences),
             }),
         }
@@ -76,7 +80,9 @@ impl CellSequencerControls {
     }
 
     pub fn set_base_note(&self, note: u8) {
-        self.shared.base_note.store(note.min(127), Ordering::Relaxed);
+        self.shared
+            .base_note
+            .store(note.min(127), Ordering::Relaxed);
     }
 
     pub fn steps(&self) -> usize {
@@ -103,9 +109,10 @@ impl CellSequencerControls {
 
     pub fn set_selected_sequence(&self, selected_sequence: usize) {
         let len = self.shared.sequences.lock().unwrap().len();
-        self.shared
-            .selected_sequence
-            .store(clamp_sequence_index(selected_sequence, len), Ordering::Relaxed);
+        self.shared.selected_sequence.store(
+            clamp_sequence_index(selected_sequence, len),
+            Ordering::Relaxed,
+        );
     }
 
     pub fn wait_for_cycle_end(&self) -> bool {
@@ -116,6 +123,40 @@ impl CellSequencerControls {
         self.shared
             .wait_for_cycle_end
             .store(wait_for_cycle_end, Ordering::Relaxed);
+    }
+
+    /// Returns whether one-shot playback is enabled.
+    pub fn one_shot(&self) -> bool {
+        self.shared.one_shot.load(Ordering::Relaxed)
+    }
+
+    /// Enables or disables one-shot playback.
+    pub fn set_one_shot(&self, one_shot: bool) {
+        self.shared.one_shot.store(one_shot, Ordering::Relaxed);
+    }
+
+    /// Gets the playback mode as its control string (`loop` or `one_shot`).
+    pub fn mode(&self) -> &'static str {
+        if self.one_shot() {
+            "one_shot"
+        } else {
+            "loop"
+        }
+    }
+
+    /// Sets the playback mode from its control string.
+    pub fn set_mode(&self, mode: &str) -> Result<(), String> {
+        match mode {
+            "loop" => self.set_one_shot(false),
+            "one_shot" => self.set_one_shot(true),
+            other => {
+                return Err(format!(
+                    "Unknown mode '{}' (expected loop | one_shot)",
+                    other
+                ))
+            }
+        }
+        Ok(())
     }
 
     pub fn sequences(&self) -> Vec<Vec<Step>> {
@@ -209,6 +250,12 @@ impl ControlSurface for CellSequencerControls {
             ),
             ControlMeta::string("sequences_json", "Sequence bank as JSON")
                 .with_default(self.sequences_json()),
+            ControlMeta::string(
+                "mode",
+                "Playback mode: loop repeats the active cell; one_shot plays the bank through once and fires the end gate",
+            )
+            .with_options(vec!["loop".to_string(), "one_shot".to_string()])
+            .with_default(self.mode()),
             ControlMeta::number("loop_count", "Completed loops of the active cell")
                 .with_default(self.loop_count() as f32),
             ControlMeta::number("current_cell", "Currently playing cell index")
@@ -231,6 +278,7 @@ impl ControlSurface for CellSequencerControls {
             "selected_sequence" => Ok((self.selected_sequence() as f32).into()),
             "wait_for_cycle_end" => Ok(self.wait_for_cycle_end().into()),
             "sequences_json" => Ok(self.sequences_json().into()),
+            "mode" => Ok(self.mode().into()),
             "loop_count" => Ok((self.loop_count() as f32).into()),
             "current_cell" => Ok((self.current_cell() as f32).into()),
             "total_cells" => Ok((self.total_cells() as f32).into()),
@@ -247,6 +295,7 @@ impl ControlSurface for CellSequencerControls {
             "selected_sequence" => self.set_selected_sequence(value.as_number()?.max(0.0) as usize),
             "wait_for_cycle_end" => self.set_wait_for_cycle_end(value.as_bool()?),
             "sequences_json" => self.set_sequences_json(value.as_string()?)?,
+            "mode" => self.set_mode(value.as_string()?)?,
             "advance" => {
                 if value.as_number()? > 0.5 {
                     self.request_advance();
