@@ -1,5 +1,6 @@
 //! Thread-safe controls for the MelodyGenerator module.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::{ControlMeta, ControlSurface, ControlValue};
@@ -30,6 +31,12 @@ pub struct MelodyControls {
     pub(crate) allowed_degrees: Arc<Mutex<Vec<i32>>>,
     /// Probability weights for each allowed degree.
     pub(crate) note_weights: Arc<Mutex<Vec<f32>>>,
+    /// RNG seed value; only meaningful when `seed_version > 0`.
+    pub(crate) seed_value: Arc<AtomicU64>,
+    /// Bumped on every `set_seed`; `0` means "never seeded" (entropy RNG).
+    /// The audio thread re-seeds when it observes a version change, so
+    /// setting the same seed again deterministically restarts the stream.
+    pub(crate) seed_version: Arc<AtomicU64>,
 }
 
 impl MelodyControls {
@@ -42,7 +49,30 @@ impl MelodyControls {
             root_note: Arc::new(Mutex::new(root_note)),
             allowed_degrees: Arc::new(Mutex::new(allowed_degrees)),
             note_weights: Arc::new(Mutex::new(weights)),
+            seed_value: Arc::new(AtomicU64::new(0)),
+            seed_version: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Returns the RNG seed, or `None` when the generator runs from entropy.
+    pub fn seed(&self) -> Option<u64> {
+        if self.seed_version.load(Ordering::Acquire) == 0 {
+            None
+        } else {
+            Some(self.seed_value.load(Ordering::Acquire))
+        }
+    }
+
+    /// Seeds the RNG. Identical seeds produce identical note sequences;
+    /// setting the same seed again restarts the stream from the top.
+    pub fn set_seed(&self, seed: u64) {
+        self.seed_value.store(seed, Ordering::Release);
+        self.seed_version.fetch_add(1, Ordering::Release);
+    }
+
+    /// Monotonic seed change counter (0 = never seeded).
+    pub fn seed_version(&self) -> u64 {
+        self.seed_version.load(Ordering::Acquire)
     }
 
     /// Gets the root MIDI note number.
@@ -178,6 +208,15 @@ impl ControlSurface for MelodyControls {
                 .with_range(1.0, 128.0)
                 .with_default(degree_count as f32),
         );
+        controls.push(
+            ControlMeta::number(
+                "seed",
+                "RNG seed: same seed, same melody; setting it (re)starts the \
+                 stream. Note: f32 controls carry ~24 bits of integer \
+                 precision; use module config JSON for full 64-bit seeds.",
+            )
+            .with_default(self.seed().unwrap_or(0) as f32),
+        );
 
         for i in 0..degree_count {
             controls.push(
@@ -205,6 +244,7 @@ impl ControlSurface for MelodyControls {
         match key {
             "root_note" => Ok((self.root_note() as f32).into()),
             "degree_count" => Ok((self.degree_count() as f32).into()),
+            "seed" => Ok((self.seed().unwrap_or(0) as f32).into()),
             _ => {
                 if let Some(rest) = key.strip_prefix("degree.") {
                     return Ok((self
@@ -234,6 +274,10 @@ impl ControlSurface for MelodyControls {
             }
             "degree_count" => {
                 self.set_degree_count(value as usize);
+                Ok(())
+            }
+            "seed" => {
+                self.set_seed(value.max(0.0) as u64);
                 Ok(())
             }
             _ => {

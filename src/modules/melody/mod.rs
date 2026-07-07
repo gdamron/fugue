@@ -45,6 +45,9 @@ impl ModuleFactory for MelodyFactory {
             .unwrap_or_else(|| vec![0, 2, 4, 5, 7, 9, 11]);
 
         let controls = MelodyControls::new(root_note, degrees);
+        if let Some(seed) = config.get("seed").and_then(|v| v.as_u64()) {
+            controls.set_seed(seed);
+        }
 
         if let Some(weights) = config.get("note_weights").and_then(|v| v.as_array()) {
             let weights: Vec<f32> = weights
@@ -88,6 +91,8 @@ impl ModuleFactory for MelodyFactory {
 pub struct MelodyGenerator {
     ctrl: MelodyControls,
     rng: StdRng,
+    /// Seed version last applied to `rng`; re-seeds when the control changes.
+    last_seed_version: u64,
     current_note: Note,
     // Modular inputs
     inputs: inputs::MelodyInputs,
@@ -103,9 +108,17 @@ impl MelodyGenerator {
     /// Note changes are triggered by the rising edge of the `gate` input.
     pub fn new(controls: MelodyControls) -> Self {
         let current_note = Note::new(60);
+        // A configured seed makes the generator fully deterministic; without
+        // one the historical entropy-seeded behavior is preserved.
+        let rng = match controls.seed() {
+            Some(seed) => StdRng::seed_from_u64(seed),
+            None => StdRng::from_entropy(),
+        };
+        let last_seed_version = controls.seed_version();
         Self {
             ctrl: controls,
-            rng: StdRng::from_entropy(),
+            rng,
+            last_seed_version,
             current_note,
             inputs: inputs::MelodyInputs::new(),
             last_gate: 0.0,
@@ -151,6 +164,16 @@ impl Module for MelodyGenerator {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        // Re-seed when the seed control changed (checked once per block;
+        // seeding a ChaCha-based StdRng is stack-only, no allocation).
+        let seed_version = self.ctrl.seed_version();
+        if seed_version != self.last_seed_version {
+            if let Some(seed) = self.ctrl.seed() {
+                self.rng = StdRng::seed_from_u64(seed);
+            }
+            self.last_seed_version = seed_version;
+        }
+
         for i in 0..frames {
             // Detect rising edge of gate input
             let gate = self.inputs.gate(i);
@@ -238,6 +261,7 @@ impl Module for MelodyGenerator {
         match key {
             "root_note" => Ok(self.ctrl.root_note() as f32),
             "degree_count" => Ok(self.ctrl.degree_count() as f32),
+            "seed" => Ok(self.ctrl.seed().unwrap_or(0) as f32),
             _ => {
                 if let Some(rest) = key.strip_prefix("degree.") {
                     if let Ok(idx) = rest.parse::<usize>() {
@@ -262,6 +286,10 @@ impl Module for MelodyGenerator {
             }
             "degree_count" => {
                 self.ctrl.set_degree_count(value as usize);
+                Ok(())
+            }
+            "seed" => {
+                self.ctrl.set_seed(value.max(0.0) as u64);
                 Ok(())
             }
             _ => {
@@ -296,6 +324,7 @@ mod tests {
         let controls = Module::controls(&melody);
 
         // root_note + degree_count + 7 degrees + 7 weights = 16
+        // (the seed control lives on the ControlSurface, not this legacy list)
         assert_eq!(controls.len(), 16);
 
         let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
@@ -395,5 +424,97 @@ mod tests {
 
         melody.set_control("degree.0", -3.0).unwrap();
         assert_eq!(melody.get_control("degree.0").unwrap(), -3.0);
+    }
+
+    /// Drives one gate pulse and returns the resulting frequency.
+    fn pulse_note(melody: &mut MelodyGenerator) -> f32 {
+        melody.set_input("gate", 1.0).unwrap();
+        melody.process(1);
+        melody.set_input("gate", 0.0).unwrap();
+        melody.process(1);
+        melody.get_output("frequency").unwrap()
+    }
+
+    fn notes(melody: &mut MelodyGenerator, count: usize) -> Vec<f32> {
+        (0..count).map(|_| pulse_note(melody)).collect()
+    }
+
+    fn seeded_melody(seed: u64) -> MelodyGenerator {
+        let controls = MelodyControls::new(60, vec![0, 2, 3, 5, 7, 9, 10]);
+        controls.set_seed(seed);
+        MelodyGenerator::new(controls)
+    }
+
+    #[test]
+    fn test_same_seed_produces_identical_melodies() {
+        let a = notes(&mut seeded_melody(42), 32);
+        let b = notes(&mut seeded_melody(42), 32);
+        assert_eq!(a, b, "same seed must reproduce the same note stream");
+
+        let c = notes(&mut seeded_melody(43), 32);
+        assert_ne!(a, c, "different seeds should diverge");
+    }
+
+    #[test]
+    fn test_reseeding_restarts_the_stream() {
+        let mut melody = seeded_melody(7);
+        let first = notes(&mut melody, 8);
+
+        // Setting the same seed again restarts the stream from the top.
+        melody.controls().set_seed(7);
+        let replay = notes(&mut melody, 8);
+        assert_eq!(first, replay);
+    }
+
+    #[test]
+    fn test_seed_control_surface_round_trip() {
+        use crate::{ControlSurface, ControlValue};
+        let controls = MelodyControls::new(60, vec![0, 2, 4]);
+        assert_eq!(controls.seed(), None, "unseeded by default");
+
+        controls
+            .set_control("seed", ControlValue::Number(1234.0))
+            .unwrap();
+        assert_eq!(controls.seed(), Some(1234));
+        assert_eq!(
+            controls.get_control("seed").unwrap(),
+            ControlValue::Number(1234.0)
+        );
+        assert!(controls.controls().iter().any(|meta| meta.key == "seed"));
+    }
+
+    #[test]
+    fn test_factory_seed_config() {
+        use crate::factory::ModuleFactory;
+        let factory = MelodyFactory;
+        let build = |seed: u64| {
+            let config = serde_json::json!({
+                "root_note": 60,
+                "scale_degrees": [0, 2, 4, 5, 7],
+                "seed": seed
+            });
+            factory.build(48_000, &config).unwrap()
+        };
+        let mut first = build(99);
+        let mut second = build(99);
+        let a: Vec<f32> = (0..16)
+            .map(|_| {
+                first.module.module_mut().set_input("gate", 1.0).unwrap();
+                first.module.module_mut().process(1);
+                first.module.module_mut().set_input("gate", 0.0).unwrap();
+                first.module.module_mut().process(1);
+                first.module.module().get_output("frequency").unwrap()
+            })
+            .collect();
+        let b: Vec<f32> = (0..16)
+            .map(|_| {
+                second.module.module_mut().set_input("gate", 1.0).unwrap();
+                second.module.module_mut().process(1);
+                second.module.module_mut().set_input("gate", 0.0).unwrap();
+                second.module.module_mut().process(1);
+                second.module.module().get_output("frequency").unwrap()
+            })
+            .collect();
+        assert_eq!(a, b, "config seed flows through the factory");
     }
 }
