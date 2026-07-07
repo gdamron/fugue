@@ -271,10 +271,17 @@ impl CellSequencer {
 
     /// Ends one-shot playback: silence the voice and latch the `end` gate.
     fn finish(&mut self) {
-        self.finished = true;
+        self.set_finished(true);
         self.active_note = None;
         self.gate_samples_remaining = 0;
         self.gate_continuous = false;
+    }
+
+    /// Updates `finished` and mirrors it into the controls' read-only `ended`
+    /// flag (an event-rate store, not per sample).
+    fn set_finished(&mut self, finished: bool) {
+        self.finished = finished;
+        self.ctrl.set_ended(finished);
     }
 
     fn effective_selected_sequence(&self, i: usize) -> usize {
@@ -290,7 +297,7 @@ impl CellSequencer {
     fn apply_sequence_change(&mut self, sequence_index: usize) {
         let sequence_index = normalize_sequence_index(sequence_index, self.sequences.len());
         // An explicit cell selection re-arms a finished one-shot sequencer.
-        self.finished = false;
+        self.set_finished(false);
         self.current_sequence = sequence_index;
         self.current_step = 0;
         self.gate_samples_remaining = 0;
@@ -400,7 +407,7 @@ impl CellSequencer {
             self.gate_samples_remaining = 0;
             self.gate_continuous = false;
             self.active_note = None;
-            self.finished = false;
+            self.set_finished(false);
         }
 
         if next_rising {
@@ -415,7 +422,7 @@ impl CellSequencer {
 
         // Leaving one_shot mode while finished re-arms playback.
         if self.finished && !one_shot {
-            self.finished = false;
+            self.set_finished(false);
         }
 
         // Once a one-shot bank has finished, clock edges are ignored until

@@ -65,6 +65,14 @@ pub enum RpcCommand {
         /// wire back-compatibility with clients that omit it.
         #[serde(default = "default_frozen")]
         frozen: bool,
+        /// When true, the daemon stops (unloads) the invention once a
+        /// one-shot playthrough ends. Defaulted for wire back-compat.
+        #[serde(default)]
+        stop_on_end: bool,
+        /// Module whose `ended` control is authoritative for `stop_on_end`;
+        /// `None` watches every module exposing one (any true wins).
+        #[serde(default)]
+        end_source: Option<String>,
     },
     UnloadInvention,
     SetControl {

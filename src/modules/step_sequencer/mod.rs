@@ -314,14 +314,21 @@ impl StepSequencer {
         self.current_step = 0;
         self.gate_samples_remaining = 0;
         self.active_note = None;
-        self.finished = false;
+        self.set_finished(false);
     }
 
     /// Ends one-shot playback: silence the voice and latch the `end` gate.
     fn finish(&mut self) {
-        self.finished = true;
+        self.set_finished(true);
         self.active_note = None;
         self.gate_samples_remaining = 0;
+    }
+
+    /// Updates `finished` and mirrors it into the controls' read-only `ended`
+    /// flag (an event-rate store, not per sample).
+    fn set_finished(&mut self, finished: bool) {
+        self.finished = finished;
+        self.ctrl.set_ended(finished);
     }
 
     /// Processes one sample.
@@ -337,7 +344,7 @@ impl StepSequencer {
 
         // Leaving one_shot mode while finished re-arms playback.
         if self.finished && !one_shot {
-            self.finished = false;
+            self.set_finished(false);
         }
 
         // Handle clock gate. Once a one-shot pattern has finished, clock

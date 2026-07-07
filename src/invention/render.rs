@@ -240,6 +240,76 @@ impl RenderEngine {
         }
     }
 
+    /// Returns the current audio processing block size in frames.
+    pub fn block_size(&self) -> usize {
+        self.graph
+            .as_ref()
+            .map(|graph| graph.lock().unwrap().block_size)
+            .unwrap_or(crate::DEFAULT_BLOCK_SIZE)
+    }
+
+    /// Scans the most recently rendered block for a rising `end` gate and
+    /// returns the frame index (within that block) where the piece ended.
+    ///
+    /// `source` names the module whose `end` output is authoritative; when
+    /// `None`, every module exposing an `end` output is watched and the
+    /// earliest high frame wins ("the piece ends when any end gate fires" —
+    /// name a source for multi-lane pieces with uneven lanes). `frames` is
+    /// the number of valid frames in the last render call, which must not
+    /// have exceeded one graph block for the scan to be frame-exact (the
+    /// `end` gate is latched, so a coarser host still cannot *miss* it —
+    /// only land on a later frame).
+    ///
+    /// Errors when no invention is loaded, when a named source does not
+    /// exist or has no `end` output, or when `source` is `None` and nothing
+    /// in the graph exposes an `end` output (the render would never stop).
+    pub fn scan_end_gate(
+        &self,
+        source: Option<&str>,
+        frames: usize,
+    ) -> Result<Option<usize>, Box<dyn std::error::Error>> {
+        let graph = self
+            .graph
+            .as_ref()
+            .ok_or_else(|| "no invention loaded".to_string())?;
+        let graph = graph.lock().unwrap();
+
+        let mut earliest: Option<usize> = None;
+        let mut candidates = 0usize;
+        for (id, module) in graph.modules.iter() {
+            if let Some(wanted) = source {
+                if id != wanted {
+                    continue;
+                }
+            }
+            let module = module.module();
+            let Some(port) = module.outputs().iter().position(|port| *port == "end") else {
+                if source.is_some() {
+                    return Err(format!("module '{}' has no 'end' output", id).into());
+                }
+                continue;
+            };
+            candidates += 1;
+            let block = module.output_block(port);
+            let n = frames.min(block.len());
+            if let Some(frame) = block[..n].iter().position(|&value| value > 0.5) {
+                earliest = Some(earliest.map_or(frame, |current| current.min(frame)));
+            }
+        }
+
+        if candidates == 0 {
+            return Err(match source {
+                Some(wanted) => format!("unknown end source module '{}'", wanted).into(),
+                None => "no module exposes an 'end' output; the render would never stop \
+                     (use a one_shot sequencer or an explicit duration)"
+                    .to_string()
+                    .into(),
+            });
+        }
+
+        Ok(earliest)
+    }
+
     #[cfg(target_arch = "wasm32")]
     pub fn finish_audio_file_sink(
         &self,
@@ -269,6 +339,14 @@ impl RenderEngine {
             .unwrap()
             .get::<crate::AudioFileSinkHandle>(&key)
             .ok_or_else(|| format!("unknown audio_file_sink handle: {}", module_id).into())
+    }
+
+    /// Returns whether a one-shot playthrough has ended, observed via module
+    /// controls (the same surface live playback uses; `scan_end_gate` is the
+    /// frame-exact alternative for offline rendering).
+    pub fn end_reached(&self, source: Option<&str>) -> Result<bool, String> {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        super::runtime::end_reached_in(&surfaces, source)
     }
 
     /// Sets a runtime control on a module.

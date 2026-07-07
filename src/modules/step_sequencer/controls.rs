@@ -33,6 +33,10 @@ pub struct StepSequencerControls {
     /// One-shot playback flag; an atomic because the audio thread reads it
     /// at sample rate (exposed as the `mode` control: loop | one_shot).
     pub(crate) one_shot: Arc<AtomicBool>,
+    /// Written by the audio thread when a one-shot pattern completes (and
+    /// cleared on re-arm), so live surfaces can observe the end without
+    /// touching the graph. Exposed as the read-only `ended` control.
+    pub(crate) ended: Arc<AtomicBool>,
 }
 
 impl StepSequencerControls {
@@ -44,6 +48,7 @@ impl StepSequencerControls {
             gate_length: Arc::new(Mutex::new(DEFAULT_GATE_LENGTH)),
             pattern: Arc::new(Mutex::new(Vec::new())),
             one_shot: Arc::new(AtomicBool::new(false)),
+            ended: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -55,6 +60,7 @@ impl StepSequencerControls {
             gate_length: Arc::new(Mutex::new(gate_length.clamp(0.0, 1.0))),
             pattern: Arc::new(Mutex::new(Vec::new())),
             one_shot: Arc::new(AtomicBool::new(false)),
+            ended: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -120,6 +126,16 @@ impl StepSequencerControls {
             }
         }
         Ok(())
+    }
+
+    /// Whether a one-shot playthrough has completed (read-only; the audio
+    /// thread maintains it).
+    pub fn ended(&self) -> bool {
+        self.ended.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_ended(&self, ended: bool) {
+        self.ended.store(ended, Ordering::Relaxed);
     }
 
     /// Gets the current pattern.
@@ -191,6 +207,7 @@ impl ControlSurface for StepSequencerControls {
             "gate_length" => Ok(self.gate_length().into()),
             "pattern_json" => Ok(self.pattern_json().into()),
             "mode" => Ok(self.mode().into()),
+            "ended" => Ok(self.ended().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -202,6 +219,7 @@ impl ControlSurface for StepSequencerControls {
             "gate_length" => self.set_gate_length(value.as_number()?),
             "pattern_json" => self.set_pattern_json(value.as_string()?)?,
             "mode" => self.set_mode(value.as_string()?)?,
+            "ended" => return Err("Control 'ended' is read-only".to_string()),
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())

@@ -27,6 +27,8 @@ fn rpc_commands_round_trip_json() {
         RpcCommand::LoadInvention {
             invention: Box::new(test_invention()),
             frozen: true,
+            stop_on_end: true,
+            end_source: Some("seq".to_string()),
         },
         RpcCommand::UnloadInvention,
         RpcCommand::SetControl {
@@ -180,4 +182,27 @@ fn runtime_rpc_schema_generates() {
     let schema = schema::runtime_rpc_schema();
     let json = serde_json::to_value(schema).unwrap();
     assert!(json.is_object());
+}
+
+#[test]
+fn load_invention_defaults_stop_on_end_fields() {
+    // Older clients omit the stop-on-end fields; they must default off.
+    let json = serde_json::json!({
+        "command": "load_invention",
+        "invention": serde_json::to_value(test_invention()).unwrap(),
+    });
+    let command: RpcCommand = serde_json::from_value(json).unwrap();
+    match command {
+        RpcCommand::LoadInvention {
+            frozen,
+            stop_on_end,
+            end_source,
+            ..
+        } => {
+            assert!(frozen, "frozen defaults on");
+            assert!(!stop_on_end, "stop_on_end defaults off");
+            assert_eq!(end_source, None);
+        }
+        other => panic!("expected LoadInvention, got {:?}", other),
+    }
 }
