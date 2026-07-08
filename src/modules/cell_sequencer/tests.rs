@@ -126,6 +126,54 @@ fn test_cell_sequencer_held_chain_keeps_gate_high_across_step_boundaries() {
 }
 
 #[test]
+fn test_held_step_before_new_note_releases_so_it_retriggers() {
+    // Regression (FUG-189): a held step followed by a *new note* must release
+    // its gate before the next clock edge so the note retriggers. It used to
+    // fill the full step duration and rely on a one-sample boundary dip, which
+    // vanishes at fractional step periods (fast tempos) — dropping the
+    // retrigger and flattening the articulation. A held step followed by a
+    // rest or the end of the chain still sustains fully
+    // (see the held-chain and held-then-rest tests).
+    let mut seq = CellSequencer::new(48_000)
+        .with_steps(4)
+        .with_gate_length(0.5)
+        .with_sequences(vec![vec![
+            Step::note(0),
+            Step::held(),
+            Step::note(7),
+            Step::rest(),
+        ]]);
+
+    const HIGH: usize = 4;
+    const LOW: usize = 6;
+    const PERIOD: usize = HIGH + LOW;
+    let edge = |seq: &mut CellSequencer| {
+        seq.set_input("gate", 1.0).unwrap();
+        seq.process(HIGH);
+        seq.set_input("gate", 0.0).unwrap();
+        seq.process(LOW);
+    };
+
+    edge(&mut seq); // step 0: note(0); next is held -> gate bridges (continuous)
+    edge(&mut seq); // step 1: held; next is note(7) -> must release before the edge
+    assert_eq!(seq.step_duration_samples as usize, PERIOD);
+    assert_eq!(
+        seq.get_output("gate").unwrap(),
+        0.0,
+        "held step before a new note must release so the note can retrigger"
+    );
+
+    // step 2: note(7) must retrigger — the gate rises again on its edge.
+    seq.set_input("gate", 1.0).unwrap();
+    seq.process(1);
+    assert_eq!(seq.current_step(), 2);
+    assert!(
+        seq.get_output("gate").unwrap() > 0.5,
+        "the new note's gate must rise (retrigger) after the held step released"
+    );
+}
+
+#[test]
 fn test_cell_sequencer_contextless_held_step_is_rest() {
     let mut seq = CellSequencer::new(44_100)
         .with_steps(1)

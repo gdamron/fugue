@@ -219,12 +219,28 @@ impl CellSequencer {
         next_step < self.step_count() && self.get_step(self.current_sequence, next_step).held
     }
 
-    fn gate_samples_for_step(&self, step: &Step) -> u32 {
+    /// Whether the step after the current one starts a new note — i.e. it is a
+    /// note step (not held, not a rest). Such a step must retrigger, so the
+    /// current step's gate has to release first.
+    fn next_step_starts_note(&self) -> bool {
+        let next_step = self.current_step + 1;
+        next_step < self.step_count()
+            && self.get_step(self.current_sequence, next_step).note.is_some()
+    }
+
+    fn gate_samples_for_step(&self, step: &Step, retrigger_follows: bool) -> u32 {
         // Used for non-bridged steps: an end-of-chain held step or an
-        // ordinary note step. Held steps fill their full duration; note
-        // steps respect the per-step or default gate_length.
+        // ordinary note step. A held step normally fills its full duration,
+        // but when a new note follows it must release first so that note
+        // retriggers — relying on the one-sample boundary dip is unreliable at
+        // fractional step durations (fast tempos drop the retrigger). Note
+        // steps always respect the per-step or default gate_length.
         let gate_length = if step.held {
-            1.0
+            if retrigger_follows {
+                self.ctrl.gate_length()
+            } else {
+                1.0
+            }
         } else {
             step.gate_length.unwrap_or(self.ctrl.gate_length())
         };
@@ -260,7 +276,8 @@ impl CellSequencer {
             self.gate_samples_remaining = 0;
         } else {
             self.gate_continuous = false;
-            self.gate_samples_remaining = self.gate_samples_for_step(&step);
+            let retrigger_follows = self.next_step_starts_note();
+            self.gate_samples_remaining = self.gate_samples_for_step(&step, retrigger_follows);
         }
     }
 
