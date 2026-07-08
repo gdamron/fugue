@@ -129,10 +129,15 @@ impl RuntimeSnapshot {
         key: &str,
         value: ControlValue,
     ) -> Result<(), GraphCommandError> {
-        let controls = self.control_surfaces.lock().unwrap();
-        let surface = controls
-            .get(module_id)
-            .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
+        // Invoke outside the directory lock: a scheduler's `schedule` write
+        // re-resolves its targets against this same directory.
+        let surface = {
+            let controls = self.control_surfaces.lock().unwrap();
+            controls
+                .get(module_id)
+                .cloned()
+                .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
+        };
         surface
             .set_control(key, value)
             .map_err(GraphCommandError::ControlError)
@@ -195,6 +200,21 @@ impl RuntimeController {
                 .map(|port| (*port).to_string())
                 .collect(),
         };
+
+        // Attach schedulers before touching the graph, so a schedule that
+        // fails to resolve leaves the running invention unchanged.
+        if module_type == crate::modules::control_scheduler::CONTROL_SCHEDULER_TYPE_ID {
+            let handle = handles
+                .iter()
+                .find(|(name, _)| name == "controls")
+                .map(|(_, handle)| handle);
+            crate::modules::control_scheduler::attach_from_handle(
+                module_id,
+                handle,
+                &self.snapshot.control_surfaces,
+            )
+            .map_err(GraphCommandError::ModuleBuildFailed)?;
+        }
 
         if let Some(control_surface) = control_surface {
             self.snapshot

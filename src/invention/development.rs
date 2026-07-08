@@ -16,7 +16,9 @@ use super::builder::InventionBuilder;
 mod compiled_graph;
 mod control_surface;
 
-use compiled_graph::{unique_port_names, CompiledDevelopmentGraph, ExternalInputRoute, ExternalOutputRoute};
+use compiled_graph::{
+    unique_port_names, CompiledDevelopmentGraph, ExternalInputRoute, ExternalOutputRoute,
+};
 use control_surface::DevelopmentControlSurface;
 
 pub(crate) struct DevelopmentFactory {
@@ -91,7 +93,7 @@ impl DevelopmentModule {
 
         let control_surface = Arc::new(DevelopmentControlSurface::new(
             definition,
-            &runtime.control_surfaces,
+            &runtime.control_surfaces.lock().unwrap(),
         )?);
 
         let input_ports = unique_port_names(definition.inputs.iter().map(|entry| &entry.name));
@@ -224,7 +226,9 @@ impl DevelopmentModule {
             for c in 0..self.graph.input_routes[m].len() {
                 let conn = self.graph.input_routes[m][c];
                 let base = conn.from_port * MAX_BLOCK;
-                let dst = self.graph.modules[m].module_mut().input_block_mut(conn.to_port);
+                let dst = self.graph.modules[m]
+                    .module_mut()
+                    .input_block_mut(conn.to_port);
                 dst[..frames]
                     .copy_from_slice(&self.graph.out_bufs[conn.from_module][base..base + frames]);
             }

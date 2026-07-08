@@ -31,8 +31,10 @@ pub struct InventionRuntime {
     pub(crate) modules: IndexMap<String, ModuleInstance>,
     /// Sink modules that drive processing.
     pub(crate) sinks: Vec<String>,
-    /// Shared runtime control surfaces keyed by module id.
-    pub(crate) control_surfaces: IndexMap<String, ControlSurfaceInstance>,
+    /// Shared runtime control surfaces keyed by module id. Already shared at
+    /// build time so control schedulers can hold a weak reference to the same
+    /// directory the runtime serves.
+    pub(crate) control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     /// Signal routing connections.
     pub(crate) routing: Vec<RoutingConnection>,
     /// Module registry for building new modules at runtime.
@@ -88,7 +90,7 @@ impl InventionRuntime {
             topo_dirty: true,
         };
 
-        let control_surfaces = Arc::new(Mutex::new(self.control_surfaces));
+        let control_surfaces = self.control_surfaces;
 
         // The audio callback owns the graph, so processing does not lock it.
         // Each callback fills its buffer in `block_size`-frame blocks.
@@ -286,6 +288,17 @@ impl RunningInvention {
             handle_map.insert(key, handle);
         }
 
+        // Attach schedulers before touching the graph, so a schedule that
+        // fails to resolve leaves the running invention unchanged.
+        if module_type == crate::modules::control_scheduler::CONTROL_SCHEDULER_TYPE_ID {
+            crate::modules::control_scheduler::attach_from_handle(
+                &module_id,
+                handle_map.get(&format!("{}.controls", module_id)),
+                &self.control_surfaces,
+            )
+            .map_err(GraphCommandError::ModuleBuildFailed)?;
+        }
+
         if let Some(control_surface) = result.control_surface {
             self.control_surfaces
                 .lock()
@@ -384,6 +397,17 @@ impl RunningInvention {
         for (handle_name, handle) in result.handles {
             let key = format!("{}.{}", module_id, handle_name);
             handle_map.insert(key, handle);
+        }
+
+        // Attach schedulers before touching the graph, so a schedule that
+        // fails to resolve leaves the running invention unchanged.
+        if module_type == crate::modules::control_scheduler::CONTROL_SCHEDULER_TYPE_ID {
+            crate::modules::control_scheduler::attach_from_handle(
+                &module_id,
+                handle_map.get(&format!("{}.controls", module_id)),
+                &self.control_surfaces,
+            )
+            .map_err(GraphCommandError::ModuleBuildFailed)?;
         }
 
         let ports = ModulePorts {
@@ -634,10 +658,15 @@ impl RunningInvention {
         key: &str,
         value: ControlValue,
     ) -> Result<(), GraphCommandError> {
-        let controls = self.control_surfaces.lock().unwrap();
-        let control_surface = controls
-            .get(module_id)
-            .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
+        // Invoke outside the directory lock: a scheduler's `schedule` write
+        // re-resolves its targets against this same directory.
+        let control_surface = {
+            let controls = self.control_surfaces.lock().unwrap();
+            controls
+                .get(module_id)
+                .cloned()
+                .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
+        };
         control_surface
             .set_control(key, value)
             .map_err(GraphCommandError::ControlError)

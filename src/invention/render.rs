@@ -356,10 +356,15 @@ impl RenderEngine {
         key: &str,
         value: ControlValue,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let controls = self.control_surfaces.lock().unwrap();
-        let control_surface = controls
-            .get(module_id)
-            .ok_or_else(|| format!("unknown module: {}", module_id))?;
+        // Invoke outside the directory lock: a scheduler's `schedule` write
+        // re-resolves its targets against this same directory.
+        let control_surface = {
+            let controls = self.control_surfaces.lock().unwrap();
+            controls
+                .get(module_id)
+                .cloned()
+                .ok_or_else(|| format!("unknown module: {}", module_id))?
+        };
         control_surface.set_control(key, value)?;
         Ok(())
     }
@@ -423,6 +428,18 @@ impl RenderEngine {
             let key = format!("{}.{}", module_id, handle_name);
             new_handles.insert(key, handle);
         }
+
+        // Attach schedulers before touching the graph, so a schedule that
+        // fails to resolve leaves the loaded invention unchanged.
+        if module_type == crate::modules::control_scheduler::CONTROL_SCHEDULER_TYPE_ID {
+            crate::modules::control_scheduler::attach_from_handle(
+                module_id,
+                new_handles.get(&format!("{}.controls", module_id)),
+                &self.control_surfaces,
+            )
+            .map_err(GraphCommandError::ModuleBuildFailed)?;
+        }
+
         self.handles
             .lock()
             .unwrap()
@@ -631,7 +648,11 @@ impl RenderEngine {
         })));
         self.registry = runtime.registry;
         self.state = runtime.state;
-        *self.control_surfaces.lock().unwrap() = runtime.control_surfaces;
+        // Adopt the runtime's directory (rather than copying its contents)
+        // so schedulers attached at build time keep resolving against the
+        // live map. Stale snapshots of the previous invention keep the old
+        // directory, matching how `state` is replaced above.
+        self.control_surfaces = runtime.control_surfaces;
         if let Some(controller) = self.controller() {
             self.scripts.start_all(controller.clone());
             self.agents.start_all(controller);

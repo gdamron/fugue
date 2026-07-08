@@ -302,8 +302,7 @@ impl SignalGraph {
                                 [route.from_port * self.block_capacity + (s - 1)]
                         }
                     } else {
-                        self.out_bufs[route.from_module]
-                            [route.from_port * self.block_capacity + s]
+                        self.out_bufs[route.from_module][route.from_port * self.block_capacity + s]
                     };
                     if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
                         inst.module_mut().input_block_mut(route.to_port)[0] += value;
@@ -424,6 +423,29 @@ impl SignalGraph {
             downstream[from_idx].push(to_idx);
             if from_idx == to_idx {
                 has_self_loop[from_idx] = true;
+            }
+        }
+
+        // Control-write targets are ordering dependencies without routes: a
+        // module that writes another module's controls during `process()`
+        // (see `Module::control_targets`) must run first so the write lands
+        // in the same block. These edges join the adjacency for the DFS and
+        // SCC passes but compile no routes; a resulting cycle simply becomes
+        // a feedback group, processed sample-by-sample.
+        for from_idx in 0..n {
+            let targets = self
+                .modules
+                .get_index(from_idx)
+                .map(|(_, inst)| inst.module().control_targets())
+                .unwrap_or_default();
+            for target in targets {
+                let Some(to_idx) = self.modules.get_index_of(target.as_str()) else {
+                    continue;
+                };
+                downstream[from_idx].push(to_idx);
+                if from_idx == to_idx {
+                    has_self_loop[from_idx] = true;
+                }
             }
         }
 
@@ -566,7 +588,11 @@ impl SignalGraph {
             .collect();
         let cap = self.block_size.clamp(1, MAX_BLOCK);
         self.block_capacity = cap;
-        self.out_bufs = self.out_counts.iter().map(|&c| vec![0.0; c * cap]).collect();
+        self.out_bufs = self
+            .out_counts
+            .iter()
+            .map(|&c| vec![0.0; c * cap])
+            .collect();
         self.out_prev = self.out_counts.iter().map(|&c| vec![0.0; c]).collect();
 
         // Cache sink indices.

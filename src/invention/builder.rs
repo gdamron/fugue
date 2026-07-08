@@ -100,6 +100,28 @@ impl InventionBuilder {
         // Build all module instances (including sinks)
         let (modules, sinks, control_surfaces, handles) = self.build_modules(&invention)?;
 
+        // Share the control-surface directory now so control schedulers can
+        // resolve their schedules against it (and re-resolve live edits
+        // through the same directory the runtime serves). A schedule that
+        // fails to resolve is a load error.
+        let control_surfaces = Arc::new(Mutex::new(control_surfaces));
+        for spec in &invention.modules {
+            if spec.module_type != crate::modules::control_scheduler::CONTROL_SCHEDULER_TYPE_ID {
+                continue;
+            }
+            let controls: crate::modules::ControlSchedulerControls = handles
+                .get(&format!("{}.controls", spec.id))
+                .ok_or_else(|| {
+                    format!(
+                        "control_scheduler '{}' is missing its controls handle",
+                        spec.id
+                    )
+                })?;
+            controls
+                .attach(&spec.id, &control_surfaces)
+                .map_err(|err| format!("control_scheduler '{}': {}", spec.id, err))?;
+        }
+
         // Warn if no sink modules (invention will run but produce silence)
         if sinks.is_empty() && invention.outputs.is_empty() {
             eprintln!(

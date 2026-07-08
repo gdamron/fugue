@@ -15,7 +15,7 @@ impl ExampleDefinition {
     }
 }
 
-const PLAYABLE_EXAMPLES: [ExampleDefinition; 12] = [
+const PLAYABLE_EXAMPLES: [ExampleDefinition; 13] = [
     ExampleDefinition {
         file_name: "simple_tone.json",
         title: "Simple Tone",
@@ -55,6 +55,11 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 12] = [
         file_name: "step_sequencer.json",
         title: "Step Sequencer",
         summary: "Deterministic bassline built from a 16-step pattern.",
+    },
+    ExampleDefinition {
+        file_name: "control_scheduler.json",
+        title: "Control Scheduler Hairpins",
+        summary: "Bassline shaped by scheduled dynamics and a tempo change.",
     },
     ExampleDefinition {
         file_name: "development_file_patch.json",
@@ -205,6 +210,7 @@ mod tests {
                 "lfo_tremolo_sync.json",
                 "mixer_voices.json",
                 "step_sequencer.json",
+                "control_scheduler.json",
                 "development_file_patch.json",
                 "development_inline_patch.json",
                 "developments/voice_library_trio.json",
