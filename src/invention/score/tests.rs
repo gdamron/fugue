@@ -146,3 +146,53 @@ fn cell_error_reports_index() {
     let err = validate_score(&value).unwrap_err();
     assert!(err.contains("cells[1]"), "{err}");
 }
+
+#[test]
+fn tempo_map_validates_and_round_trips() {
+    let value = json!({
+        "schema": "fugue.score.v1",
+        "tempo": 60.0,
+        "tempo_map": [
+            { "at_step": 0, "bpm": 60.0 },
+            { "at_step": 256, "bpm": 124.0 },
+            { "at_step": 528, "bpm": 62.0 }
+        ],
+        "cells": [[ 0 ]]
+    });
+    validate_score(&value).expect("tempo_map validates");
+
+    let score = Score::from_json(&value.to_string()).expect("typed parse");
+    assert_eq!(score.tempo_map.len(), 3);
+    assert_eq!(score.tempo_map[1].at_step, 256);
+    assert_eq!(score.tempo_map[1].bpm, 124.0);
+
+    // A constant-tempo score omits the map entirely and stays valid (v1 compat).
+    let constant = Score::from_json(&json!({ "tempo": 90.0, "cells": [[ 0 ]] }).to_string())
+        .expect("constant-tempo score parses");
+    assert!(constant.tempo_map.is_empty());
+    let reserialized: Value = serde_json::from_str(&constant.to_json().unwrap()).unwrap();
+    assert!(
+        reserialized.get("tempo_map").is_none(),
+        "an empty tempo_map is not serialized"
+    );
+}
+
+#[test]
+fn rejects_unordered_tempo_map() {
+    let value = json!({
+        "tempo_map": [ { "at_step": 10, "bpm": 60.0 }, { "at_step": 10, "bpm": 90.0 } ],
+        "cells": [[ 0 ]]
+    });
+    let err = validate_score(&value).unwrap_err();
+    assert!(err.contains("must be greater than the previous entry"), "{err}");
+}
+
+#[test]
+fn rejects_non_positive_tempo_map_bpm() {
+    let value = json!({
+        "tempo_map": [ { "at_step": 0, "bpm": 0.0 } ],
+        "cells": [[ 0 ]]
+    });
+    let err = validate_score(&value).unwrap_err();
+    assert!(err.contains("tempo_map[0].bpm must be a positive number"), "{err}");
+}

@@ -72,6 +72,57 @@ pub(crate) fn parse_schedule(value: &serde_json::Value) -> Result<Vec<ScheduleEn
     Ok(entries)
 }
 
+/// One `{ at_step, bpm }` entry of a score tempo map, as spliced in from a
+/// `fugue.score.v1` asset. Kept local (rather than importing the score type)
+/// so the module layer stays independent of the score/invention layer.
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct TempoMapPoint {
+    at_step: u64,
+    bpm: f32,
+}
+
+/// Compiles a score tempo map into schedule entries that write a clock's tempo
+/// control at each change's step boundary.
+///
+/// Each `{ at_step, bpm }` becomes `{ at: at_step, module, control, value:
+/// bpm * bpm_scale }`. `bpm_scale` is the invention's interpretation knob
+/// (default `1.0`): the score records the notated quarter-note tempo, and the
+/// invention decides how its clock realizes it. Returned entries carry no
+/// ramp — a notated tempo change is an instantaneous step at its boundary.
+pub(crate) fn compile_tempo_map(
+    value: &serde_json::Value,
+    module: &str,
+    control: &str,
+    bpm_scale: f32,
+) -> Result<Vec<ScheduleEntry>, String> {
+    if !(bpm_scale.is_finite() && bpm_scale > 0.0) {
+        return Err(format!(
+            "tempo_map bpm_scale must be a positive number, got {}",
+            bpm_scale
+        ));
+    }
+    let points: Vec<TempoMapPoint> = serde_json::from_value(value.clone())
+        .map_err(|err| format!("invalid tempo_map: {}", err))?;
+    let mut entries = Vec::with_capacity(points.len());
+    for point in points {
+        let value = point.bpm * bpm_scale;
+        if !(value.is_finite() && value > 0.0) {
+            return Err(format!(
+                "tempo_map entry at step {}: scaled bpm ({}) must be positive",
+                point.at_step, value
+            ));
+        }
+        entries.push(ScheduleEntry {
+            at: point.at_step,
+            module: module.to_string(),
+            control: control.to_string(),
+            value: ScheduleValue::Number(value),
+            ramp: None,
+        });
+    }
+    Ok(entries)
+}
+
 /// Parses and validates a schedule from JSON text.
 pub(crate) fn parse_schedule_json(json: &str) -> Result<Vec<ScheduleEntry>, String> {
     let entries: Vec<ScheduleEntry> =

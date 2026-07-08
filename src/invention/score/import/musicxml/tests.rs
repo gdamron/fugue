@@ -270,8 +270,8 @@ fn maps_minor_mode_key_names() {
 }
 
 #[test]
-fn warns_on_tempo_changes_and_keeps_the_first() {
-    let (score, report) = convert(&format!(
+fn tempo_changes_compile_into_a_tempo_map() {
+    let (score, _) = convert(&format!(
         r#"<measure number="1">
           <attributes><divisions>1</divisions>
             <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
@@ -283,11 +283,35 @@ fn warns_on_tempo_changes_and_keeps_the_first() {
         note("C", 4, None, 1, ""),
         note("D", 4, None, 1, "")
     ));
+    // Notes sit on quarter-note steps 0 and 1; the tempo marks land at the
+    // same positions, giving a two-entry map with the initial tempo first.
     assert_eq!(score.tempo, Some(60.0));
-    assert!(report
-        .warnings
-        .iter()
-        .any(|w| w.contains("tempo changes") && w.contains("124")));
+    assert_eq!(
+        score.tempo_map,
+        vec![
+            TempoPoint { at_step: 0, bpm: 60.0 },
+            TempoPoint { at_step: 1, bpm: 124.0 },
+        ]
+    );
+}
+
+#[test]
+fn constant_tempo_emits_no_map() {
+    // A restated identical tempo is not a change: no map, just the scalar.
+    let (score, _) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          <direction><sound tempo="90"/></direction>
+          {}
+          <direction><sound tempo="90"/></direction>
+          {}
+        </measure>"#,
+        note("C", 4, None, 1, ""),
+        note("D", 4, None, 1, "")
+    ));
+    assert_eq!(score.tempo, Some(90.0));
+    assert!(score.tempo_map.is_empty());
 }
 
 #[test]

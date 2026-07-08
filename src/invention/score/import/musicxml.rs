@@ -21,7 +21,7 @@ mod metadata;
 
 use std::collections::BTreeMap;
 
-use crate::invention::score::{Score, SCORE_SCHEMA_V1};
+use crate::invention::score::{Score, TempoPoint, SCORE_SCHEMA_V1};
 use crate::invention::TimeSignature;
 use crate::modules::Step;
 
@@ -112,6 +112,12 @@ pub fn convert_musicxml(xml: &str) -> Result<(Score, ConvertReport), String> {
             }
         }
     }
+    // Fold tempo-mark onsets in too, so every mark lands on an integer step
+    // (metric modulations sit on bar/beat boundaries, so in practice this
+    // never refines the grid; it only guarantees exactness).
+    for (onset, _) in &first.tempo_events {
+        fold(*onset);
+    }
     let grid = grid.ok_or("MusicXML document has no notes")?;
     let total: Rat = first
         .capacities
@@ -142,19 +148,65 @@ pub fn convert_musicxml(xml: &str) -> Result<(Score, ConvertReport), String> {
         }
     }
 
-    let metadata = extract_metadata(root, &mut report);
+    // Compile positioned tempo marks (first part is authoritative, matching
+    // measure lengths) into an ordered tempo map on the step grid.
+    let (tempo, tempo_map) = build_tempo_map(&first.tempo_events, grid)?;
+
+    let metadata = extract_metadata(root);
     let score = Score {
         schema: Some(SCORE_SCHEMA_V1.to_string()),
         title: metadata.title,
         composer: metadata.composer,
         key: metadata.key,
-        tempo: metadata.tempo,
+        tempo,
+        tempo_map,
         time_signature: metadata.time_signature,
         base_note_hint: Some(BASE_NOTE),
         rhythm_grid: Some(report.rhythm_grid.clone()),
         cells,
     };
     Ok((score, report))
+}
+
+/// Turns positioned tempo marks into `(initial tempo, tempo_map)`.
+///
+/// Marks are placed on the step grid, ordered, and de-duplicated: a later mark
+/// at the same step supersedes an earlier one, and a mark that restates the
+/// preceding tempo is dropped. The map is emitted only when the piece actually
+/// changes tempo (two or more distinct tempos); a constant-tempo piece yields
+/// just the scalar `tempo`, so existing single-tempo imports are unchanged.
+fn build_tempo_map(
+    tempo_events: &[(Rat, f32)],
+    grid: Rat,
+) -> Result<(Option<f32>, Vec<TempoPoint>), String> {
+    let mut placed: Vec<(u64, f32)> = Vec::with_capacity(tempo_events.len());
+    for (onset, bpm) in tempo_events {
+        let at_step = onset
+            .div_exact(grid)
+            .ok_or("internal: tempo mark is not on the step grid")? as u64;
+        placed.push((at_step, *bpm));
+    }
+    // Stable sort keeps document order among marks sharing a step.
+    placed.sort_by_key(|(at_step, _)| *at_step);
+
+    let mut map: Vec<TempoPoint> = Vec::new();
+    for (at_step, bpm) in placed {
+        if let Some(last) = map.last_mut() {
+            if last.at_step == at_step {
+                last.bpm = bpm;
+                continue;
+            }
+            if last.bpm == bpm {
+                continue;
+            }
+        }
+        map.push(TempoPoint { at_step, bpm });
+    }
+
+    let tempo = map.first().map(|point| point.bpm);
+    // A single (or collapsed-to-one) tempo needs no map.
+    let tempo_map = if map.len() > 1 { map } else { Vec::new() };
+    Ok((tempo, tempo_map))
 }
 
 /// A sounding note with an exact global onset and duration (quarter notes).
@@ -173,6 +225,26 @@ struct PartEvents {
     /// Keyed by `(numeric voice sort key, voice label)` for stable ordering.
     voices: BTreeMap<(u32, String), Vec<NoteEvent>>,
     capacities: Vec<Rat>,
+    /// Playback tempo marks as `(global onset in quarter notes, quarter-note
+    /// BPM)`, in document order. Sourced from `<sound tempo>` elements, which
+    /// is how notation editors encode tempo and metric modulations.
+    tempo_events: Vec<(Rat, f32)>,
+}
+
+/// Reads a quarter-note BPM from a `<sound tempo>` element or a `<direction>`
+/// that contains one. `<sound tempo>` is always quarter notes per minute in
+/// MusicXML, regardless of the displayed metronome unit, so metric
+/// modulations resolve to their true playback tempo.
+fn tempo_from(element: roxmltree::Node) -> Option<f32> {
+    let sound = if element.has_tag_name("sound") {
+        Some(element)
+    } else {
+        element.descendants().find(|n| n.has_tag_name("sound"))
+    };
+    sound
+        .and_then(|n| n.attribute("tempo"))
+        .and_then(|t| t.parse::<f32>().ok())
+        .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
 }
 
 fn convert_part(
@@ -182,6 +254,7 @@ fn convert_part(
 ) -> Result<PartEvents, String> {
     let mut voices: BTreeMap<(u32, String), Vec<NoteEvent>> = BTreeMap::new();
     let mut capacities = Vec::new();
+    let mut tempo_events: Vec<(Rat, f32)> = Vec::new();
     let mut divisions: i64 = 1;
     let mut time_signature = TimeSignature::default();
     let mut seen_time = false;
@@ -292,6 +365,12 @@ fn convert_part(
                         high_water = high_water.max(cursor);
                     }
                 }
+                "direction" | "sound" => {
+                    // Tempo marks apply at the current time position.
+                    if let Some(bpm) = tempo_from(element) {
+                        tempo_events.push((measure_start + cursor, bpm));
+                    }
+                }
                 _ => {}
             }
         }
@@ -324,6 +403,7 @@ fn convert_part(
         id,
         voices,
         capacities,
+        tempo_events,
     })
 }
 
