@@ -96,7 +96,8 @@ fn builds_inline_development_as_module() {
     assert!(module.inputs().contains(&"frequency"));
     assert!(module.outputs().contains(&"audio"));
 
-    let controls = runtime.control_surfaces.get("lead").unwrap().controls();
+    let surfaces = runtime.control_surfaces.lock().unwrap();
+    let controls = surfaces.get("lead").unwrap().controls();
     assert_eq!(controls.len(), 1);
     assert_eq!(controls[0].key, "type");
 }
@@ -111,7 +112,13 @@ fn development_controls_alias_internal_surface() {
 
     let builder = InventionBuilder::new(44_100);
     let (runtime, _) = builder.build(invention).unwrap();
-    let surface = runtime.control_surfaces.get("lead").unwrap();
+    let surface = runtime
+        .control_surfaces
+        .lock()
+        .unwrap()
+        .get("lead")
+        .cloned()
+        .unwrap();
 
     surface
         .set_control("type", ControlValue::String("square".to_string()))
@@ -368,7 +375,10 @@ fn text_assets_resolve_as_string_values() {
     let state = runtime.state.lock().unwrap();
 
     let voice_config = &state.modules.get("voice").unwrap().config;
-    assert_eq!(voice_config["script"], serde_json::Value::String(script_body.to_string()));
+    assert_eq!(
+        voice_config["script"],
+        serde_json::Value::String(script_body.to_string())
+    );
 
     let conductor_config = &state.modules.get("conductor").unwrap().config;
     assert_eq!(

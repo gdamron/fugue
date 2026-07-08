@@ -23,6 +23,7 @@ pub mod audio_file_sink;
 pub mod cell_sequencer;
 pub mod clock;
 pub mod code;
+pub mod control_scheduler;
 pub mod dac;
 pub mod filter;
 pub mod lfo;
@@ -43,6 +44,9 @@ pub use audio_file_sink::{
 pub use cell_sequencer::{CellSequencer, CellSequencerControls};
 pub use clock::{Clock, ClockControls};
 pub use code::CodeControls;
+pub use control_scheduler::{
+    ControlScheduler, ControlSchedulerControls, ScheduleEntry, ScheduleValue,
+};
 
 // Deprecated type alias for backward compatibility
 #[allow(deprecated)]
@@ -67,6 +71,7 @@ pub use agent::AgentFactory;
 pub use cell_sequencer::CellSequencerFactory;
 pub use clock::ClockFactory;
 pub use code::CodeFactory;
+pub use control_scheduler::ControlSchedulerFactory;
 pub use dac::DacFactory;
 pub use filter::FilterFactory;
 pub use lfo::LfoFactory;

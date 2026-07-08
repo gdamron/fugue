@@ -41,11 +41,12 @@ pub use modules::{
     default_sample_rate, Adsr, AdsrControls, AdsrFactory, AgentControls, AgentFactory,
     AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver, AudioFileSink,
     AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats, Clock, ClockControls,
-    ClockFactory, CodeControls, CodeFactory, DacFactory, DacModule, Filter, FilterControls,
-    FilterFactory, FilterType, Lfo, LfoControls, LfoFactory, MelodyControls, MelodyFactory,
-    MelodyGenerator, Mixer, MixerControls, MixerFactory, Oscillator, OscillatorControls,
-    OscillatorFactory, OscillatorType, SamplePlayer, SamplePlayerControls, SamplePlayerFactory,
-    Vca, VcaControls, VcaFactory,
+    ClockFactory, CodeControls, CodeFactory, ControlScheduler, ControlSchedulerControls,
+    ControlSchedulerFactory, DacFactory, DacModule, Filter, FilterControls, FilterFactory,
+    FilterType, Lfo, LfoControls, LfoFactory, MelodyControls, MelodyFactory, MelodyGenerator,
+    Mixer, MixerControls, MixerFactory, Oscillator, OscillatorControls, OscillatorFactory,
+    OscillatorType, SamplePlayer, SamplePlayerControls, SamplePlayerFactory, Vca, VcaControls,
+    VcaFactory,
 };
 
 // Re-export invention system
@@ -70,9 +71,9 @@ pub use pkg::{
 };
 
 // Re-export lockfile types
-pub use pkg::{LockError, LockSource, LockedPackage, Lockfile, LOCKFILE_NAME, LOCKFILE_VERSION};
 #[cfg(not(target_arch = "wasm32"))]
 pub use pkg::compute_integrity;
+pub use pkg::{LockError, LockSource, LockedPackage, Lockfile, LOCKFILE_NAME, LOCKFILE_VERSION};
 
 #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
 pub use plugins::wasm::{

@@ -73,6 +73,7 @@ Current playable examples include:
 - `lfo_tremolo_sync.json`
 - `mixer_voices.json`
 - `step_sequencer.json`
+- `control_scheduler.json`
 - `development_file_patch.json`
 - `development_inline_patch.json`
 - `developments/voice_library_trio.json`

@@ -326,6 +326,21 @@ pub trait Module: Send {
     /// simply read their input buffers (which are silence when unconnected).
     fn set_input_connected(&mut self, _index: usize, _connected: bool) {}
 
+    /// Ids of modules whose controls this module writes during
+    /// [`Module::process`] (e.g. the control scheduler's targets).
+    ///
+    /// The signal graph treats these as ordering dependencies when compiling
+    /// the process order, so a scheduled control write lands before its
+    /// target processes the same block. A dependency that forms a cycle
+    /// (e.g. scheduling the clock that drives the scheduler) folds both
+    /// modules into a feedback group, processed sample-by-sample.
+    ///
+    /// Called on topology change, never on the audio hot path;
+    /// implementations may briefly lock and allocate.
+    fn control_targets(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Legacy module-local control metadata surface.
     fn controls(&self) -> Vec<ControlMeta> {
         vec![]
