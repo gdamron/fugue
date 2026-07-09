@@ -1,8 +1,9 @@
-//! RTMP streaming sink backed by an ffmpeg subprocess.
+//! RTMP streaming tap backed by an ffmpeg subprocess.
 //!
-//! Audio is handed off from the audio thread through a lock-free ring. Video is
-//! pushed by the host through [`RtmpSinkHandle::push_video_rgba`]. The native
-//! backend owns ffmpeg and all socket/process I/O on a worker thread.
+//! Audio passes through the module unchanged and is also handed off to the
+//! shared streaming backend through a lock-free ring. Video is pushed by the host
+//! through [`RtmpSinkHandle::push_video_rgba`]. The native backend owns ffmpeg
+//! and all socket/process I/O on a worker thread.
 //!
 //! Requires an `ffmpeg` executable in `PATH` by default. Set
 //! `config.ffmpeg_path` to an explicit executable path when the host bundles or
@@ -143,15 +144,16 @@ impl Module for RtmpSink {
     fn process(&mut self, frames: usize) -> bool {
         let stopping = self.shared.is_stopping();
         for i in 0..frames {
-            let (mut left, mut right) = (self.inputs.audio_left(i), self.inputs.audio_right(i));
-            if self.soft_clip {
-                left = Self::soft_clip_sample(left);
-                right = Self::soft_clip_sample(right);
-            }
+            let (left, right) = (self.inputs.audio_left(i), self.inputs.audio_right(i));
             self.outputs.set(i, left, right);
 
             if !stopping {
-                self.shared.push_audio(left, right);
+                let (stream_left, stream_right) = if self.soft_clip {
+                    (Self::soft_clip_sample(left), Self::soft_clip_sample(right))
+                } else {
+                    (left, right)
+                };
+                self.shared.push_audio(stream_left, stream_right);
             }
         }
         true
@@ -203,7 +205,7 @@ impl RtmpSinkHandle {
     }
 
     pub fn stats(&self) -> RtmpSinkStats {
-        self.shared.stats()
+        self.shared.stats().into()
     }
 }
 
