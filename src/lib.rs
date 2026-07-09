@@ -49,6 +49,9 @@ pub use modules::{
     VcaFactory,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::{RtmpSink, RtmpSinkConfig, RtmpSinkFactory, RtmpSinkHandle, RtmpSinkStats};
+
 // Re-export invention system
 pub use invention::{
     validate_score, AssetSpec, CodeModuleRuntimeInfo, Connection, ControlOverride,
