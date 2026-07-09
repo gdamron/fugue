@@ -51,8 +51,7 @@ impl RtmpSinkConfig {
         sample_rate: u32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let url = required_string(config, "url")?;
-        let width = required_u32(config, "width")?;
-        let height = required_u32(config, "height")?;
+        let (width, height) = parse_dimensions(config)?;
         if width == 0 || height == 0 {
             return Err("rtmp_sink width and height must be greater than zero".into());
         }
@@ -87,8 +86,8 @@ impl RtmpSinkConfig {
             sample_rate,
             video_encoder: optional_string(config, "video_encoder", "libx264"),
             audio_encoder: optional_string(config, "audio_encoder", "aac"),
-            video_bitrate: optional_string(config, "video_bitrate", "2500k"),
-            audio_bitrate: optional_string(config, "audio_bitrate", "128k"),
+            video_bitrate: optional_bitrate(config, "video_bitrate", "2500k")?,
+            audio_bitrate: optional_bitrate(config, "audio_bitrate", "128k")?,
             gop_seconds,
             buffer_frames,
             video_queue_frames,
@@ -648,12 +647,56 @@ fn required_string(
         .ok_or_else(|| format!("rtmp_sink requires config.{key}").into())
 }
 
+fn parse_dimensions(config: &serde_json::Value) -> Result<(u32, u32), Box<dyn std::error::Error>> {
+    match (config.get("width"), config.get("height")) {
+        (Some(_), Some(_)) => Ok((
+            required_u32(config, "width")?,
+            required_u32(config, "height")?,
+        )),
+        (None, None) => parse_resolution(config),
+        _ => Err(
+            "rtmp_sink requires both config.width and config.height, or config.resolution".into(),
+        ),
+    }
+}
+
+fn parse_resolution(config: &serde_json::Value) -> Result<(u32, u32), Box<dyn std::error::Error>> {
+    let resolution = config
+        .get("resolution")
+        .and_then(|value| value.as_str())
+        .ok_or("rtmp_sink requires config.width/config.height or config.resolution")?;
+    let (width, height) = resolution
+        .split_once('x')
+        .or_else(|| resolution.split_once('X'))
+        .ok_or("rtmp_sink resolution must look like 1920x1080")?;
+    let width = width
+        .parse::<u32>()
+        .map_err(|_| "rtmp_sink resolution width must be a positive integer")?;
+    let height = height
+        .parse::<u32>()
+        .map_err(|_| "rtmp_sink resolution height must be a positive integer")?;
+    Ok((width, height))
+}
+
 fn optional_string(config: &serde_json::Value, key: &str, default: &str) -> String {
     config
         .get(key)
         .and_then(|value| value.as_str())
         .unwrap_or(default)
         .to_string()
+}
+
+fn optional_bitrate(
+    config: &serde_json::Value,
+    key: &str,
+    default: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    match config.get(key) {
+        Some(value) if value.is_string() => Ok(value.as_str().unwrap().to_string()),
+        Some(value) if value.is_u64() => Ok(format!("{}k", value.as_u64().unwrap())),
+        Some(_) => Err(format!("rtmp_sink config.{key} must be a string or integer kbps").into()),
+        None => Ok(default.to_string()),
+    }
 }
 
 fn required_u32(config: &serde_json::Value, key: &str) -> Result<u32, Box<dyn std::error::Error>> {
@@ -732,6 +775,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_fug_137_config_aliases() {
+        let config = RtmpSinkConfig::from_json(
+            &json!({
+                "url": "rtmp://example.test/live/fugue",
+                "resolution": "1920x1080",
+                "video_bitrate": 4500,
+                "audio_bitrate": 128,
+                "fps": 60
+            }),
+            48_000,
+        )
+        .unwrap();
+
+        assert_eq!(config.width, 1920);
+        assert_eq!(config.height, 1080);
+        assert_eq!(config.video_bitrate, "4500k");
+        assert_eq!(config.audio_bitrate, "128k");
+        assert_eq!(config.fps, 60);
+    }
+
+    #[test]
     fn rejects_invalid_required_values() {
         let missing_url = json!({ "width": 640, "height": 360 });
         assert!(RtmpSinkConfig::from_json(&missing_url, 48_000)
@@ -750,6 +814,29 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("fps"));
+
+        let partial_dimensions = json!({ "url": "rtmp://x", "width": 640 });
+        assert!(RtmpSinkConfig::from_json(&partial_dimensions, 48_000)
+            .unwrap_err()
+            .to_string()
+            .contains("width and config.height"));
+
+        let bad_resolution = json!({ "url": "rtmp://x", "resolution": "nope" });
+        assert!(RtmpSinkConfig::from_json(&bad_resolution, 48_000)
+            .unwrap_err()
+            .to_string()
+            .contains("resolution"));
+
+        let bad_bitrate = json!({
+            "url": "rtmp://x",
+            "width": 640,
+            "height": 360,
+            "audio_bitrate": true
+        });
+        assert!(RtmpSinkConfig::from_json(&bad_bitrate, 48_000)
+            .unwrap_err()
+            .to_string()
+            .contains("audio_bitrate"));
     }
 
     #[test]
@@ -922,6 +1009,57 @@ PY
             let stats = handle.finish();
             assert!(stats.restarts > 0, "{stats:?}");
             assert!(stats.last_error.is_some(), "{stats:?}");
+        }
+
+        #[test]
+        fn real_ffmpeg_writes_local_flv_when_enabled() {
+            if std::env::var("FUGUE_RTMP_SINK_REAL_FFMPEG").ok().as_deref() != Some("1") {
+                eprintln!("set FUGUE_RTMP_SINK_REAL_FFMPEG=1 to run real ffmpeg smoke");
+                return;
+            }
+
+            NativeRtmpSinkShared::validate_ffmpeg("ffmpeg").unwrap();
+            let dir = temp_dir("real-ffmpeg");
+            fs::create_dir_all(&dir).unwrap();
+            let output = dir.join("smoke.flv");
+            let config = RtmpSinkConfig::from_json(
+                &json!({
+                    "url": output.to_string_lossy(),
+                    "resolution": "16x16",
+                    "fps": 5,
+                    "video_bitrate": 200,
+                    "audio_bitrate": 64,
+                    "buffer_frames": 512,
+                    "video_queue_frames": 8,
+                    "monitor": false
+                }),
+                48_000,
+            )
+            .unwrap();
+            let (mut sink, handle) = RtmpSink::new_native(config).unwrap();
+
+            for frame_index in 0..10 {
+                let mut frame = vec![0u8; 16 * 16 * 4];
+                for pixel in frame.chunks_exact_mut(4) {
+                    pixel[0] = (frame_index * 20) as u8;
+                    pixel[1] = 64;
+                    pixel[2] = 192;
+                    pixel[3] = 255;
+                }
+                handle.push_video_rgba(&frame).unwrap();
+
+                for sample_index in 0..4_800 {
+                    let phase = (sample_index as f32 / 48_000.0) * 440.0 * std::f32::consts::TAU;
+                    sink.set_input("audio", phase.sin() * 0.1).unwrap();
+                    sink.process(1);
+                }
+            }
+
+            let stats = handle.finish();
+            assert!(stats.audio_frames_sent > 0, "{stats:?}");
+            assert!(stats.video_frames_sent > 0, "{stats:?}");
+            let metadata = fs::metadata(&output).unwrap();
+            assert!(metadata.len() > 0, "expected non-empty FLV at {output:?}");
         }
     }
 }
