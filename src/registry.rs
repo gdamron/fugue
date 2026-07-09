@@ -140,6 +140,8 @@ impl Default for ModuleRegistry {
         reg.register(VcaFactory);
         reg.register(MelodyFactory);
         reg.register(ReverbFactory);
+        #[cfg(not(target_arch = "wasm32"))]
+        reg.register(crate::modules::RtmpSinkFactory);
         reg.register(SamplePlayerFactory);
         reg.register(StepSequencerFactory);
         reg.register(DacFactory);

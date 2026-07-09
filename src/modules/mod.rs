@@ -31,6 +31,8 @@ pub mod melody;
 pub mod mixer;
 pub mod oscillator;
 pub mod reverb;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod rtmp_sink;
 pub mod sample_player;
 pub mod step_sequencer;
 pub mod vca;
@@ -61,6 +63,8 @@ pub use melody::{MelodyControls, MelodyGenerator};
 pub use mixer::{Mixer, MixerControls};
 pub use oscillator::{Oscillator, OscillatorControls, OscillatorType};
 pub use reverb::{Reverb, ReverbControls};
+#[cfg(not(target_arch = "wasm32"))]
+pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};
 pub use sample_player::{SamplePlayer, SamplePlayerControls};
 pub use step_sequencer::{Step, StepSequencer};
 pub use vca::{Vca, VcaControls};
@@ -79,6 +83,8 @@ pub use melody::MelodyFactory;
 pub use mixer::MixerFactory;
 pub use oscillator::OscillatorFactory;
 pub use reverb::ReverbFactory;
+#[cfg(not(target_arch = "wasm32"))]
+pub use rtmp_sink::RtmpSinkFactory;
 pub use sample_player::SamplePlayerFactory;
 pub use step_sequencer::StepSequencerFactory;
 pub use vca::VcaFactory;
