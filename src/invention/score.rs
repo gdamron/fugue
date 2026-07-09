@@ -2,7 +2,7 @@
 //!
 //! A score is a declarative, general-purpose container for the musical content
 //! of a piece — a bank of `cells`, each a sequence of steps in the same
-//! `{ note, gate, held }` shape consumed by [`step_sequencer`] and
+//! `{ note, gate, held, amplitude }` shape consumed by [`step_sequencer`] and
 //! [`cell_sequencer`], plus light metadata (title, composer, key, tempo, an
 //! optional tempo map for score-scheduled tempo changes, time signature,
 //! base-note hint, rhythm grid).
@@ -18,6 +18,35 @@
 //! mechanism, so the same asset file can be spliced directly into a sequencer's
 //! `config`. The asset is intentionally kept general-purpose: piece-specific
 //! data lives in the score file, not baked into any module.
+//!
+//! # Dynamics
+//!
+//! Notated dynamics are recorded per step as an optional `amplitude` in
+//! `0.0..=1.0` on note steps (the field has always existed in the sequencer
+//! step shape, so this is a v1-compatible extension — scores without dynamics
+//! stay valid and unchanged). The canonical mark → amplitude mapping is the
+//! conventional MIDI velocity for each mark, normalized by 127:
+//!
+//! | mark | velocity | amplitude |
+//! |------|----------|-----------|
+//! | pppp | 10       | 0.079     |
+//! | ppp  | 16       | 0.126     |
+//! | pp   | 33       | 0.260     |
+//! | p    | 49       | 0.386     |
+//! | mp   | 64       | 0.504     |
+//! | mf   | 80       | 0.630     |
+//! | f    | 96       | 0.756     |
+//! | ff   | 112      | 0.882     |
+//! | fff  | 126      | 0.992     |
+//! | ffff | 127      | 1.000     |
+//!
+//! A mark holds until the next dynamic event. Hairpins (cresc./dim. wedges)
+//! interpolate linearly across their span from the level at the wedge start
+//! to the next explicit mark after the wedge; a hairpin with no following
+//! mark (or one that contradicts its direction) moves one mark level. Only
+//! note onsets carry `amplitude` — held continuations and rests never do; how
+//! a voice realizes the value (level, brightness) is an interpretation
+//! concern, not the score's.
 //!
 //! [`validate_score`] is the authoritative checker (mirroring the agent
 //! module's `fugue.step_pattern.v1` validation in
@@ -323,6 +352,15 @@ fn validate_step(value: &Value) -> Result<(), String> {
             .ok_or_else(|| "step.gate must be a number".to_string())?;
         if !(0.0..=1.0).contains(&gate) {
             return Err("step.gate must be between 0 and 1".to_string());
+        }
+    }
+
+    if let Some(amplitude) = object.get("amplitude").filter(|v| !v.is_null()) {
+        let amplitude = amplitude
+            .as_f64()
+            .ok_or_else(|| "step.amplitude must be a number".to_string())?;
+        if !(0.0..=1.0).contains(&amplitude) {
+            return Err("step.amplitude must be between 0 and 1".to_string());
         }
     }
 

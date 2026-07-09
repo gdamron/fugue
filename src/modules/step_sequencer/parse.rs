@@ -51,11 +51,16 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, Box<dyn std:
             .and_then(|v| v.as_f64())
             .map(|v| (v as f32).clamp(0.0, 1.0));
 
+        let amplitude = obj
+            .get("amplitude")
+            .and_then(|v| v.as_f64())
+            .map(|v| (v as f32).clamp(0.0, 1.0));
+
         return Ok(Step {
             note,
             gate_length,
             held: false,
-            amplitude: None,
+            amplitude,
         });
     }
 

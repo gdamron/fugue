@@ -3,6 +3,14 @@
 //! The cell sequencer extends the deterministic step sequencer with multiple
 //! stored sequences and controls for selecting or advancing between them.
 //!
+//! # Dynamics
+//!
+//! The `velocity` output carries the most recently struck step's `amplitude`
+//! (1.0 when the step has none), updating only at note onsets — holds, rests,
+//! and releases keep the struck level so a ringing tail never jumps. Patch it
+//! into a voice's level/brightness (e.g. a VCA `cv`) to realize the score's
+//! dynamic marks.
+//!
 //! # Playback modes
 //!
 //! The `mode` control selects `loop` (default: the active cell repeats until
@@ -67,6 +75,11 @@ pub struct CellSequencer {
     /// One-shot playback of the bank has completed; `end` latches high and
     /// clock edges are ignored until reset or an explicit cell selection.
     finished: bool,
+    /// Velocity of the most recently struck note (the step's `amplitude`,
+    /// 1.0 when unset). Held on the `velocity` output across holds, rests,
+    /// and releases so a ringing tail never sees its level jump; it only
+    /// changes when a new note starts.
+    active_velocity: f32,
     last_gate_in: f32,
     last_reset_in: f32,
     last_next_sequence_in: f32,
@@ -104,6 +117,7 @@ impl CellSequencer {
             first_gate_received: false,
             active_note: None,
             finished: false,
+            active_velocity: 1.0,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             last_next_sequence_in: 0.0,
@@ -254,6 +268,7 @@ impl CellSequencer {
         let voice_active = match step.note {
             Some(offset) => {
                 self.active_note = Some(offset);
+                self.active_velocity = step.amplitude.unwrap_or(1.0);
                 true
             }
             None if step.held && self.active_note.is_some() => true,
@@ -393,6 +408,7 @@ impl CellSequencer {
             i,
             frequency,
             gate,
+            self.active_velocity,
             self.current_step as f32,
             self.current_sequence as f32,
             if self.finished { 1.0 } else { 0.0 },
