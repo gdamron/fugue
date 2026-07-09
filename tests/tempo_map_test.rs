@@ -129,6 +129,64 @@ fn tempo_map_render_is_byte_identical() {
 }
 
 #[test]
+fn tempo_map_ramp_slows_smoothly_ritardando() {
+    // A ramped tempo_map entry (ritardando) glides the clock from 120 to 40
+    // BPM over 8 steps; the 16th-note grid must slow monotonically and
+    // continuously, with no jump at the seam.
+    let mut engine = RenderEngine::new(48_000);
+    engine
+        .load_json(
+            r#"{
+            "version": "1.0.0",
+            "modules": [
+                { "id": "clock", "type": "clock", "config": { "bpm": 120.0, "gate_duration": 0.5 } },
+                {
+                    "id": "tempo",
+                    "type": "control_scheduler",
+                    "config": {
+                        "tempo_map": [
+                            { "at_step": 0, "bpm": 120.0 },
+                            { "at_step": 4, "bpm": 40.0, "ramp": 8 }
+                        ]
+                    }
+                },
+                { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+            ],
+            "connections": [
+                { "from": "clock", "from_port": "gate_x4", "to": "tempo", "to_port": "gate" },
+                { "from": "clock", "from_port": "gate_x4", "to": "dac", "to_port": "audio_left" }
+            ]
+        }"#,
+        )
+        .unwrap();
+    engine.set_block_size(64);
+
+    let gate = render_gate(&mut engine, 48_000 * 5);
+    let edges = rising_edges(&gate);
+    let spacings: Vec<i64> = edges.windows(2).map(|w| w[1] as i64 - w[0] as i64).collect();
+
+    // Steps before the ramp are ♩=120 (6000 samples/16th).
+    assert!(
+        spacings[1..4].iter().all(|&s| (5999..=6001).contains(&s)),
+        "pre-ramp grid should be ~6000 samples, got {spacings:?}"
+    );
+    // Through the ramp the spacing grows every step (monotonic slowing) and
+    // never jumps backward — phase-continuous.
+    let ramp = &spacings[4..12];
+    for pair in ramp.windows(2) {
+        assert!(
+            pair[1] > pair[0],
+            "ritardando must slow monotonically, got {ramp:?}"
+        );
+    }
+    // Settles at ♩=40 (18000 samples/16th).
+    assert!(
+        spacings[13..16].iter().all(|&s| (17999..=18001).contains(&s)),
+        "post-ramp grid should settle at ~18000 samples, got {spacings:?}"
+    );
+}
+
+#[test]
 fn tempo_map_scale_multiplies_the_written_bpm() {
     // bpm_scale is the invention's interpretation knob: a notated map (♩=60 →
     // ♩=30) with a x100 scale drives the clock at 6000 → 3000 BPM. (6000 BPM =

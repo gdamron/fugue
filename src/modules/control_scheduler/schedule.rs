@@ -79,16 +79,22 @@ pub(crate) fn parse_schedule(value: &serde_json::Value) -> Result<Vec<ScheduleEn
 struct TempoMapPoint {
     at_step: u64,
     bpm: f32,
+    /// Optional gradual glide to `bpm` over this many steps (ritardando /
+    /// accelerando); absent = an instantaneous change.
+    #[serde(default)]
+    ramp: Option<u64>,
 }
 
 /// Compiles a score tempo map into schedule entries that write a clock's tempo
 /// control at each change's step boundary.
 ///
-/// Each `{ at_step, bpm }` becomes `{ at: at_step, module, control, value:
-/// bpm * bpm_scale }`. `bpm_scale` is the invention's interpretation knob
-/// (default `1.0`): the score records the notated quarter-note tempo, and the
-/// invention decides how its clock realizes it. Returned entries carry no
-/// ramp — a notated tempo change is an instantaneous step at its boundary.
+/// Each `{ at_step, bpm, ramp? }` becomes `{ at: at_step, module, control,
+/// value: bpm * bpm_scale, ramp? }`. `bpm_scale` is the invention's
+/// interpretation knob (default `1.0`): the score records the notated
+/// quarter-note tempo, and the invention decides how its clock realizes it. An
+/// entry's optional `ramp` glides the tempo over that many steps (ritardando /
+/// accelerando); without it the change is an instantaneous step at its
+/// boundary.
 pub(crate) fn compile_tempo_map(
     value: &serde_json::Value,
     module: &str,
@@ -112,12 +118,20 @@ pub(crate) fn compile_tempo_map(
                 point.at_step, value
             ));
         }
+        if let Some(ramp) = point.ramp {
+            if ramp < 1 {
+                return Err(format!(
+                    "tempo_map entry at step {}: ramp must be at least 1 step",
+                    point.at_step
+                ));
+            }
+        }
         entries.push(ScheduleEntry {
             at: point.at_step,
             module: module.to_string(),
             control: control.to_string(),
             value: ScheduleValue::Number(value),
-            ramp: None,
+            ramp: point.ramp,
         });
     }
     Ok(entries)

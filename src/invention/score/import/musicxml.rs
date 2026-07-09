@@ -200,7 +200,11 @@ fn build_tempo_map(
                 continue;
             }
         }
-        map.push(TempoPoint { at_step, bpm });
+        map.push(TempoPoint {
+            at_step,
+            bpm,
+            ramp: None,
+        });
     }
 
     let tempo = map.first().map(|point| point.bpm);
@@ -245,6 +249,20 @@ fn tempo_from(element: roxmltree::Node) -> Option<f32> {
         .and_then(|n| n.attribute("tempo"))
         .and_then(|t| t.parse::<f32>().ok())
         .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
+}
+
+/// Whether a direction carries gradual-tempo text (ritardando / accelerando /
+/// rallentando / allargando), which MusicXML notates without a target tempo.
+fn has_gradual_tempo_text(element: roxmltree::Node) -> bool {
+    element.descendants().any(|node| {
+        node.has_tag_name("words")
+            && node.text().is_some_and(|text| {
+                let text = text.trim().to_ascii_lowercase();
+                ["rit", "rall", "accel", "allarg"]
+                    .iter()
+                    .any(|marking| text.starts_with(marking))
+            })
+    })
 }
 
 fn convert_part(
@@ -369,6 +387,16 @@ fn convert_part(
                     // Tempo marks apply at the current time position.
                     if let Some(bpm) = tempo_from(element) {
                         tempo_events.push((measure_start + cursor, bpm));
+                    }
+                    // A gradual change (rit./accel.) is a text direction with
+                    // no target tempo, so it cannot be encoded faithfully.
+                    if has_gradual_tempo_text(element) {
+                        report.warnings.push(format!(
+                            "measure {}: a gradual tempo change (rit./accel.) is notated as text \
+                             with no target tempo; it is not encoded in the tempo_map — realize \
+                             it as a tempo_map ramp or an invention interpretation",
+                            number
+                        ));
                     }
                 }
                 _ => {}

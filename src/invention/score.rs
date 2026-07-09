@@ -102,6 +102,12 @@ pub struct TempoPoint {
     pub at_step: u64,
     /// Notated tempo in quarter-note BPM; must be finite and positive.
     pub bpm: f32,
+    /// Optional gradual change (ritardando / accelerando): the number of steps
+    /// over which the tempo glides from the previous entry's value to this
+    /// `bpm`, reaching it at `at_step + ramp`. Absent = an instantaneous change
+    /// at `at_step`. Must be at least 1 when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ramp: Option<u64>,
 }
 
 impl Score {
@@ -232,6 +238,17 @@ fn validate_tempo_map(value: &Value) -> Result<(), String> {
                 return Err(format!(
                     "score.tempo_map[{}].at_step ({}) must be greater than the previous entry ({})",
                     index, at_step, previous
+                ));
+            }
+        }
+        if let Some(ramp) = object.get("ramp").filter(|v| !v.is_null()) {
+            let ramp = ramp.as_u64().ok_or_else(|| {
+                format!("score.tempo_map[{}].ramp must be a non-negative integer", index)
+            })?;
+            if ramp < 1 {
+                return Err(format!(
+                    "score.tempo_map[{}].ramp must be at least 1 step",
+                    index
                 ));
             }
         }

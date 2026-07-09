@@ -289,9 +289,41 @@ fn tempo_changes_compile_into_a_tempo_map() {
     assert_eq!(
         score.tempo_map,
         vec![
-            TempoPoint { at_step: 0, bpm: 60.0 },
-            TempoPoint { at_step: 1, bpm: 124.0 },
+            TempoPoint { at_step: 0, bpm: 60.0, ramp: None },
+            TempoPoint { at_step: 1, bpm: 124.0, ramp: None },
         ]
+    );
+}
+
+#[test]
+fn warns_on_gradual_tempo_text_direction() {
+    // A rit./accel. text direction has no target tempo, so it can't be encoded
+    // faithfully — the import warns rather than guessing.
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          <direction><sound tempo="60"/></direction>
+          {}
+          <direction placement="below">
+            <direction-type><words>rit.</words></direction-type>
+            <direction-type><dashes type="start" number="1"/></direction-type>
+          </direction>
+          {}
+        </measure>"#,
+        note("C", 4, None, 1, ""),
+        note("D", 4, None, 1, "")
+    ));
+    // The single tempo mark yields no map (constant), and the rit. warns.
+    assert_eq!(score.tempo, Some(60.0));
+    assert!(score.tempo_map.is_empty());
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("gradual tempo change") && w.contains("rit")),
+        "expected a rit. warning, got {:?}",
+        report.warnings
     );
 }
 

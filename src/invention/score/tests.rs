@@ -188,6 +188,33 @@ fn rejects_unordered_tempo_map() {
 }
 
 #[test]
+fn tempo_map_ramp_validates_and_round_trips() {
+    let value = json!({
+        "tempo_map": [
+            { "at_step": 0, "bpm": 60.0 },
+            { "at_step": 100, "bpm": 40.0, "ramp": 32 }
+        ],
+        "cells": [[ 0 ]]
+    });
+    validate_score(&value).expect("ramped tempo_map validates");
+    let score = Score::from_json(&value.to_string()).expect("parses");
+    assert_eq!(score.tempo_map[1].ramp, Some(32));
+    // A no-ramp entry omits the field on re-serialization.
+    let reserialized: Value = serde_json::from_str(&score.to_json().unwrap()).unwrap();
+    assert!(reserialized["tempo_map"][0].get("ramp").is_none());
+}
+
+#[test]
+fn rejects_zero_ramp_in_tempo_map() {
+    let value = json!({
+        "tempo_map": [ { "at_step": 0, "bpm": 60.0, "ramp": 0 } ],
+        "cells": [[ 0 ]]
+    });
+    let err = validate_score(&value).unwrap_err();
+    assert!(err.contains("ramp must be at least 1 step"), "{err}");
+}
+
+#[test]
 fn rejects_non_positive_tempo_map_bpm() {
     let value = json!({
         "tempo_map": [ { "at_step": 0, "bpm": 0.0 } ],
