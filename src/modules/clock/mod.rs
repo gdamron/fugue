@@ -56,12 +56,27 @@ impl ModuleFactory for ClockFactory {
 /// A master clock that generates timing signals for tempo-synchronized modules.
 ///
 /// Outputs timing information via the `gate` port for triggering downstream modules.
+///
+/// # Tempo changes are phase-continuous
+///
+/// The running beat count is anchored to a *tempo epoch* — the
+/// `(sample, beats)` point at which the tempo last changed. Beats past the
+/// epoch accrue at the current samples-per-beat, so when `bpm` changes (e.g.
+/// a [`control_scheduler`](crate::modules::control_scheduler) writing a score
+/// tempo map) the beat count, and therefore every gate's phase, is continuous
+/// across the seam — no clipped or doubled pulse. With a constant tempo the
+/// epoch stays at `(0, 0)` and the beat count is simply `sample_count / spb`.
 pub struct Clock {
     sample_rate: u32,
     ctrl: ClockControls,
     sample_count: u64,
     beats_per_measure: u32,
-    // Timing state (previously in ClockSignal)
+    // Tempo epoch: the (sample, beats) anchor the continuous beat count is
+    // measured from. Re-anchored on every bpm change to keep phase continuous.
+    epoch_sample: u64,
+    epoch_beats: f64,
+    last_bpm: f64,
+    // Timing state derived from the continuous beat count.
     beats: f64,
     phase: f32,
     measure: u64,
@@ -75,11 +90,15 @@ impl Clock {
     ///
     /// Defaults to 4 beats per measure (4/4 time).
     pub fn new(sample_rate: u32, controls: ClockControls) -> Self {
+        let bpm = controls.bpm();
         let mut clock = Self {
             sample_rate,
             ctrl: controls,
             sample_count: 0,
             beats_per_measure: 4,
+            epoch_sample: 0,
+            epoch_beats: 0.0,
+            last_bpm: bpm,
             beats: 0.0,
             phase: 0.0,
             measure: 0,
@@ -100,47 +119,51 @@ impl Clock {
     }
 
     fn update_signal(&mut self) {
-        let beats = self.beats_elapsed();
+        let bpm = self.ctrl.bpm();
+        // Re-anchor the epoch on a tempo change so the beat count stays
+        // continuous: beats accrued so far are preserved, and the new tempo
+        // takes effect from the previous sample forward.
+        if bpm != self.last_bpm {
+            self.epoch_beats = self.beats;
+            self.epoch_sample = self.sample_count.saturating_sub(1);
+            self.last_bpm = bpm;
+        }
+
         let samples_per_beat = self.ctrl.samples_per_beat(self.sample_rate);
-        let phase = (self.sample_count as f64 % samples_per_beat) / samples_per_beat;
-        let measure = (beats / self.beats_per_measure as f64).floor() as u64;
-        let beat_in_measure = (beats % self.beats_per_measure as f64).floor() as u32;
+        let elapsed = self.sample_count.saturating_sub(self.epoch_sample) as f64;
+        let beats = self.epoch_beats + elapsed / samples_per_beat;
 
         self.beats = beats;
-        self.phase = phase as f32;
-        self.measure = measure;
-        self.beat_in_measure = beat_in_measure;
+        self.phase = beats.fract() as f32;
+        self.measure = (beats / self.beats_per_measure as f64).floor() as u64;
+        self.beat_in_measure = (beats % self.beats_per_measure as f64).floor() as u32;
     }
 
     fn update_cached_outputs(&mut self, i: usize) {
-        let samples_per_beat = self.ctrl.samples_per_beat(self.sample_rate);
         let gate_duration = self.ctrl.gate_duration();
-        let sample_count = self.sample_count;
+        let beats = self.beats;
 
-        // PWM gate at a given subdivision period (in samples). Duty cycle
-        // scales with the period so a shorter note still has a proportional
-        // gap between pulses at any `gate_duration`. Period stays in f64 so
-        // fractional sample boundaries (e.g. 16th notes at 120 BPM) don't
-        // accumulate drift over many pulses.
-        let pwm = |period_samples: f64| -> f32 {
-            let period = period_samples.max(1.0);
-            let in_period = (sample_count as f64) % period;
-            let high_samples = period * gate_duration;
-            if in_period < high_samples {
+        // PWM gate at a subdivision of `pulses_per_beat` pulses per beat. The
+        // pulse phase is the fractional position within the current pulse;
+        // `gate_duration` is the duty cycle, so a shorter note keeps a
+        // proportional gap. Phase comes from the continuous beat count, so a
+        // mid-stream tempo change never clips or doubles a pulse at the seam.
+        let pwm = |pulses_per_beat: f64| -> f32 {
+            let phase = (beats * pulses_per_beat).fract();
+            if phase < gate_duration {
                 1.0
             } else {
                 0.0
             }
         };
 
-        let beat = samples_per_beat;
         self.outputs.set_all(
             i,
-            pwm(beat),       // gate: beat rate
-            pwm(beat * 4.0), // gate_d4: whole note (¼× beat rate)
-            pwm(beat * 2.0), // gate_d2: half note (½× beat rate)
-            pwm(beat / 2.0), // gate_x2: 8th note (2× beat rate)
-            pwm(beat / 4.0), // gate_x4: 16th note (4× beat rate)
+            pwm(1.0),  // gate: beat rate
+            pwm(0.25), // gate_d4: whole note (¼× beat rate)
+            pwm(0.5),  // gate_d2: half note (½× beat rate)
+            pwm(2.0),  // gate_x2: 8th note (2× beat rate)
+            pwm(4.0),  // gate_x4: 16th note (4× beat rate)
         );
     }
 
@@ -167,8 +190,12 @@ impl Clock {
     }
 
     /// Returns the total number of beats elapsed since the clock started.
+    ///
+    /// This is the continuous beat count: across a tempo change it advances
+    /// smoothly rather than jumping, so it stays musically meaningful when the
+    /// clock's `bpm` is automated.
     pub fn beats_elapsed(&self) -> f64 {
-        self.sample_count as f64 / self.ctrl.samples_per_beat(self.sample_rate)
+        self.beats
     }
 
     /// Returns a reference to the controls.

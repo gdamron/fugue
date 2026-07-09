@@ -55,6 +55,32 @@
 //!
 //! Schedules are plain JSON data, so they can be spliced in via `$asset`
 //! references and replaced during playback through the `schedule` control.
+//!
+//! # Tempo maps
+//!
+//! A scheduler can also compile a score's tempo map into tempo automation. Set
+//! `tempo_map` to a `[{ at_step, bpm }]` array (typically spliced from a
+//! `fugue.score.v1` asset) and the module appends one schedule entry per
+//! change, writing the target clock's tempo at each step boundary:
+//!
+//! ```json
+//! {
+//!   "id": "tempo",
+//!   "type": "control_scheduler",
+//!   "config": {
+//!     "tempo_map": { "$asset": "score", "path": "/tempo_map" },
+//!     "tempo_target": "clock",
+//!     "bpm_scale": 1.0
+//!   }
+//! }
+//! ```
+//!
+//! `tempo_target` (default `"clock"`) and `tempo_control` (default `"bpm"`)
+//! name the control to write; `bpm_scale` (default `1.0`) is the invention's
+//! interpretation knob, since the score records the notated quarter-note
+//! tempo and the invention decides how its clock realizes it. Compiled tempo
+//! entries merge with any explicit `schedule`. Patch the same clock gate that
+//! drives the sequencers into this module's `gate` input.
 
 use std::sync::Arc;
 
@@ -90,8 +116,27 @@ impl ModuleFactory for ControlSchedulerFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let spec =
+        let mut spec =
             schedule::parse_schedule(config.get("schedule").unwrap_or(&serde_json::Value::Null))?;
+        // A score tempo map (spliced in via `$asset`) compiles into schedule
+        // entries that write a clock's tempo at each change's step boundary.
+        if let Some(tempo_map) = config.get("tempo_map").filter(|value| !value.is_null()) {
+            let module = config
+                .get("tempo_target")
+                .and_then(|value| value.as_str())
+                .unwrap_or("clock");
+            let control = config
+                .get("tempo_control")
+                .and_then(|value| value.as_str())
+                .unwrap_or("bpm");
+            let bpm_scale = config
+                .get("bpm_scale")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(1.0) as f32;
+            spec.extend(schedule::compile_tempo_map(
+                tempo_map, module, control, bpm_scale,
+            )?);
+        }
         let controls = ControlSchedulerControls::new(spec);
         let module = ControlScheduler::new(sample_rate, controls.clone());
 

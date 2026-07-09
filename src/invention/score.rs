@@ -3,8 +3,9 @@
 //! A score is a declarative, general-purpose container for the musical content
 //! of a piece — a bank of `cells`, each a sequence of steps in the same
 //! `{ note, gate, held }` shape consumed by [`step_sequencer`] and
-//! [`cell_sequencer`], plus light metadata (title, composer, key, tempo, time
-//! signature, base-note hint, rhythm grid).
+//! [`cell_sequencer`], plus light metadata (title, composer, key, tempo, an
+//! optional tempo map for score-scheduled tempo changes, time signature,
+//! base-note hint, rhythm grid).
 //!
 //! A through-composed piece that is a single sequence is just a bank of one
 //! cell (`cells: [[ ...steps... ]]`); a flat-sequence consumer can pull it via
@@ -60,8 +61,22 @@ pub struct Score {
     pub key: Option<String>,
 
     /// Tempo in BPM; must be positive when present.
+    ///
+    /// The initial tempo of the piece. When a [`tempo_map`](Self::tempo_map) is
+    /// present it should equal the map's first entry; consumers that ignore the
+    /// map fall back to this single value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tempo: Option<f32>,
+
+    /// Ordered tempo map: the notated tempo at each step where it changes.
+    ///
+    /// Entries are ordered by ascending `at_step`; the first entry is the
+    /// piece's initial tempo (and should match [`tempo`](Self::tempo)). A score
+    /// with a constant tempo omits the map entirely (existing `v1` scores stay
+    /// valid). Tempos are the *notated* quarter-note BPM — how an invention
+    /// realizes them (clock rate, subdivision) is an interpretation concern.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tempo_map: Vec<TempoPoint>,
 
     /// Time signature (beats per measure + beat unit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -77,6 +92,22 @@ pub struct Score {
 
     /// Bank of cells, each a sequence of steps.
     pub cells: Vec<Vec<Step>>,
+}
+
+/// One entry in a score's [`tempo_map`](Score::tempo_map): the notated tempo
+/// that takes effect at a given step and holds until the next entry.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TempoPoint {
+    /// Step index at which this tempo takes effect (0 = the first step).
+    pub at_step: u64,
+    /// Notated tempo in quarter-note BPM; must be finite and positive.
+    pub bpm: f32,
+    /// Optional gradual change (ritardando / accelerando): the number of steps
+    /// over which the tempo glides from the previous entry's value to this
+    /// `bpm`, reaching it at `at_step + ramp`. Absent = an instantaneous change
+    /// at `at_step`. Must be at least 1 when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ramp: Option<u64>,
 }
 
 impl Score {
@@ -134,6 +165,10 @@ pub fn validate_score(value: &Value) -> Result<(), String> {
         }
     }
 
+    if let Some(tempo_map) = object.get("tempo_map").filter(|v| !v.is_null()) {
+        validate_tempo_map(tempo_map)?;
+    }
+
     if let Some(base) = object.get("base_note_hint").filter(|v| !v.is_null()) {
         let base = base
             .as_i64()
@@ -168,6 +203,57 @@ pub fn validate_score(value: &Value) -> Result<(), String> {
         }
     }
 
+    Ok(())
+}
+
+/// Validates a `tempo_map`: an array of `{ at_step, bpm }` entries ordered by
+/// strictly ascending `at_step`, each with a finite positive `bpm`.
+fn validate_tempo_map(value: &Value) -> Result<(), String> {
+    let entries = value
+        .as_array()
+        .ok_or_else(|| "score.tempo_map must be an array".to_string())?;
+    let mut previous: Option<u64> = None;
+    for (index, entry) in entries.iter().enumerate() {
+        let object = entry.as_object().ok_or_else(|| {
+            format!("score.tempo_map[{}] must be an object", index)
+        })?;
+        let at_step = object
+            .get("at_step")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                format!("score.tempo_map[{}].at_step must be a non-negative integer", index)
+            })?;
+        let bpm = object
+            .get("bpm")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| format!("score.tempo_map[{}].bpm must be a number", index))?;
+        if !(bpm.is_finite() && bpm > 0.0) {
+            return Err(format!(
+                "score.tempo_map[{}].bpm must be a positive number",
+                index
+            ));
+        }
+        if let Some(previous) = previous {
+            if at_step <= previous {
+                return Err(format!(
+                    "score.tempo_map[{}].at_step ({}) must be greater than the previous entry ({})",
+                    index, at_step, previous
+                ));
+            }
+        }
+        if let Some(ramp) = object.get("ramp").filter(|v| !v.is_null()) {
+            let ramp = ramp.as_u64().ok_or_else(|| {
+                format!("score.tempo_map[{}].ramp must be a non-negative integer", index)
+            })?;
+            if ramp < 1 {
+                return Err(format!(
+                    "score.tempo_map[{}].ramp must be at least 1 step",
+                    index
+                ));
+            }
+        }
+        previous = Some(at_step);
+    }
     Ok(())
 }
 

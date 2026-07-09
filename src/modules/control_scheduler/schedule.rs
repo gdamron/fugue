@@ -72,6 +72,71 @@ pub(crate) fn parse_schedule(value: &serde_json::Value) -> Result<Vec<ScheduleEn
     Ok(entries)
 }
 
+/// One `{ at_step, bpm }` entry of a score tempo map, as spliced in from a
+/// `fugue.score.v1` asset. Kept local (rather than importing the score type)
+/// so the module layer stays independent of the score/invention layer.
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct TempoMapPoint {
+    at_step: u64,
+    bpm: f32,
+    /// Optional gradual glide to `bpm` over this many steps (ritardando /
+    /// accelerando); absent = an instantaneous change.
+    #[serde(default)]
+    ramp: Option<u64>,
+}
+
+/// Compiles a score tempo map into schedule entries that write a clock's tempo
+/// control at each change's step boundary.
+///
+/// Each `{ at_step, bpm, ramp? }` becomes `{ at: at_step, module, control,
+/// value: bpm * bpm_scale, ramp? }`. `bpm_scale` is the invention's
+/// interpretation knob (default `1.0`): the score records the notated
+/// quarter-note tempo, and the invention decides how its clock realizes it. An
+/// entry's optional `ramp` glides the tempo over that many steps (ritardando /
+/// accelerando); without it the change is an instantaneous step at its
+/// boundary.
+pub(crate) fn compile_tempo_map(
+    value: &serde_json::Value,
+    module: &str,
+    control: &str,
+    bpm_scale: f32,
+) -> Result<Vec<ScheduleEntry>, String> {
+    if !(bpm_scale.is_finite() && bpm_scale > 0.0) {
+        return Err(format!(
+            "tempo_map bpm_scale must be a positive number, got {}",
+            bpm_scale
+        ));
+    }
+    let points: Vec<TempoMapPoint> = serde_json::from_value(value.clone())
+        .map_err(|err| format!("invalid tempo_map: {}", err))?;
+    let mut entries = Vec::with_capacity(points.len());
+    for point in points {
+        let value = point.bpm * bpm_scale;
+        if !(value.is_finite() && value > 0.0) {
+            return Err(format!(
+                "tempo_map entry at step {}: scaled bpm ({}) must be positive",
+                point.at_step, value
+            ));
+        }
+        if let Some(ramp) = point.ramp {
+            if ramp < 1 {
+                return Err(format!(
+                    "tempo_map entry at step {}: ramp must be at least 1 step",
+                    point.at_step
+                ));
+            }
+        }
+        entries.push(ScheduleEntry {
+            at: point.at_step,
+            module: module.to_string(),
+            control: control.to_string(),
+            value: ScheduleValue::Number(value),
+            ramp: point.ramp,
+        });
+    }
+    Ok(entries)
+}
+
 /// Parses and validates a schedule from JSON text.
 pub(crate) fn parse_schedule_json(json: &str) -> Result<Vec<ScheduleEntry>, String> {
     let entries: Vec<ScheduleEntry> =

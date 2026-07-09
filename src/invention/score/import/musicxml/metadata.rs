@@ -1,17 +1,18 @@
 //! Piece metadata extraction for MusicXML conversion.
-
-use std::fmt::Write as _;
+//!
+//! Tempo is handled separately, in the main converter, because it is
+//! positional: `<sound tempo>` marks compile into the score's tempo map at
+//! their step positions rather than being read here as a single scalar.
 
 use crate::invention::TimeSignature;
 
-use super::{child_text, ConvertReport};
+use super::child_text;
 use crate::music::{key_signature_name, KeyMode};
 
 pub(super) struct Metadata {
     pub(super) title: Option<String>,
     pub(super) composer: Option<String>,
     pub(super) key: Option<String>,
-    pub(super) tempo: Option<f32>,
     pub(super) time_signature: Option<TimeSignature>,
 }
 
@@ -19,7 +20,7 @@ pub(super) struct Metadata {
 /// `<work>`/`<identification>` fields because notation editors frequently
 /// leave the latter as placeholders ("Untitled score") while the credits carry
 /// the text actually printed on the page.
-pub(super) fn extract_metadata(root: roxmltree::Node, report: &mut ConvertReport) -> Metadata {
+pub(super) fn extract_metadata(root: roxmltree::Node) -> Metadata {
     let credit = |kind: &str| -> Option<String> {
         root.children()
             .filter(|n| n.has_tag_name("credit"))
@@ -65,8 +66,6 @@ pub(super) fn extract_metadata(root: roxmltree::Node, report: &mut ConvertReport
 
     let mut key = None;
     let mut time_signature = None;
-    let mut tempo = None;
-    let mut tempo_changes = Vec::new();
     for node in root.descendants() {
         if key.is_none() && node.has_tag_name("key") {
             if let Some(fifths) = child_text(node, "fifths").and_then(|t| t.parse::<i32>().ok()) {
@@ -92,35 +91,12 @@ pub(super) fn extract_metadata(root: roxmltree::Node, report: &mut ConvertReport
                 }
             }
         }
-        if node.has_tag_name("sound") {
-            if let Some(bpm) = node.attribute("tempo").and_then(|t| t.parse::<f32>().ok()) {
-                if tempo.is_none() {
-                    tempo = Some(bpm);
-                } else if Some(bpm) != tempo && !tempo_changes.contains(&bpm) {
-                    tempo_changes.push(bpm);
-                }
-            }
-        }
-    }
-    if !tempo_changes.is_empty() {
-        let mut list = String::new();
-        for (i, bpm) in tempo_changes.iter().enumerate() {
-            if i > 0 {
-                let _ = write!(list, ", ");
-            }
-            let _ = write!(list, "{}", bpm);
-        }
-        report.warnings.push(format!(
-            "tempo changes ({} bpm) are not representable in fugue.score.v1; kept the initial tempo",
-            list
-        ));
     }
 
     Metadata {
         title,
         composer,
         key,
-        tempo,
         time_signature,
     }
 }
