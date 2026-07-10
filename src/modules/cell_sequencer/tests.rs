@@ -403,7 +403,7 @@ fn test_cell_sequencer_factory_and_registry() {
     assert!(result.control_surface.is_some());
     assert_eq!(
         result.module.module().outputs(),
-        &["frequency", "gate", "step", "sequence", "end"]
+        &["frequency", "gate", "velocity", "step", "sequence", "end"]
     );
 
     let registry = ModuleRegistry::default();
@@ -592,4 +592,31 @@ fn test_cells_hold_long_sequences() {
     }
     advance_gate(&mut seq);
     assert_eq!(seq.get_output("end").unwrap(), 1.0, "ends after 604 steps");
+}
+
+#[test]
+fn test_cell_sequencer_velocity_follows_step_amplitude() {
+    let mut soft = Step::note(0);
+    soft.amplitude = Some(0.25);
+    let mut seq = CellSequencer::new(10).with_steps(4).with_sequences(vec![vec![
+        soft,
+        Step::held(),
+        Step::rest(),
+        Step::note(7), // No amplitude: velocity returns to full.
+    ]]);
+
+    assert_eq!(seq.get_output("velocity").unwrap(), 1.0);
+
+    advance_gate(&mut seq);
+    assert_eq!(seq.get_output("velocity").unwrap(), 0.25);
+
+    // Holds, rests, and releases keep the struck velocity: a ringing tail
+    // must never see its level jump.
+    advance_gate(&mut seq);
+    assert_eq!(seq.get_output("velocity").unwrap(), 0.25);
+    advance_gate(&mut seq);
+    assert_eq!(seq.get_output("velocity").unwrap(), 0.25);
+
+    advance_gate(&mut seq);
+    assert_eq!(seq.get_output("velocity").unwrap(), 1.0);
 }

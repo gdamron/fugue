@@ -118,6 +118,29 @@ fn rejects_gate_above_one() {
 }
 
 #[test]
+fn rejects_amplitude_above_one() {
+    let err =
+        validate_score(&json!({ "cells": [[ { "note": 0, "amplitude": 1.5 } ]] })).unwrap_err();
+    assert!(
+        err.contains("step.amplitude must be between 0 and 1"),
+        "{err}"
+    );
+}
+
+#[test]
+fn rejects_non_numeric_amplitude() {
+    let err =
+        validate_score(&json!({ "cells": [[ { "note": 0, "amplitude": "f" } ]] })).unwrap_err();
+    assert!(err.contains("step.amplitude must be a number"), "{err}");
+}
+
+#[test]
+fn accepts_amplitude_on_note_steps() {
+    validate_score(&json!({ "cells": [[ { "note": 0, "amplitude": 0.5 } ]] }))
+        .expect("amplitude in range must validate");
+}
+
+#[test]
 fn rejects_held_with_extra_keys() {
     let value = json!({ "cells": [[ { "held": true, "note": 0 } ]] });
     let err = validate_score(&value).unwrap_err();

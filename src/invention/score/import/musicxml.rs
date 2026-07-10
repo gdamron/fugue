@@ -16,6 +16,11 @@
 //! - Ties merge into a single note event and render as `{ "held": true }`
 //!   continuation steps; rests are `{ "note": null }` steps.
 //! - Note offsets are relative to a fixed `base_note_hint` of middle C (60).
+//! - Dynamic marks and hairpin wedges become per-step `amplitude` on note
+//!   onsets, using the canonical mark → amplitude table documented on
+//!   [`crate::invention::score`]. Dynamics are tracked per part (a piano
+//!   `p` governs both staves) and hairpins interpolate linearly across
+//!   their span toward the next explicit mark.
 
 mod metadata;
 
@@ -47,8 +52,56 @@ pub struct ConvertReport {
     pub ties_merged: usize,
     /// Grace/cue notes skipped (they occupy no grid time).
     pub grace_notes_skipped: usize,
+    /// Dynamic marks (pp…fff) captured as step amplitudes.
+    pub dynamic_marks: usize,
+    /// Hairpin wedges (cresc./dim.) captured as amplitude ramps.
+    pub hairpins: usize,
     /// Warnings to surface to the user.
     pub warnings: Vec<String>,
+}
+
+/// Canonical dynamic mark → amplitude table (see the score module docs):
+/// each mark's conventional MIDI velocity normalized by 127, quiet to loud.
+const DYNAMIC_MARKS: &[(&str, f32)] = &[
+    ("pppp", 10.0 / 127.0),
+    ("ppp", 16.0 / 127.0),
+    ("pp", 33.0 / 127.0),
+    ("p", 49.0 / 127.0),
+    ("mp", 64.0 / 127.0),
+    ("mf", 80.0 / 127.0),
+    ("f", 96.0 / 127.0),
+    ("ff", 112.0 / 127.0),
+    ("fff", 126.0 / 127.0),
+    ("ffff", 1.0),
+];
+
+/// Amplitude for a `<dynamics>` child element name, if it names a level.
+/// Accent-type marks (sf, sfz, fp, rf…) are attack events, not levels, and
+/// return `None`.
+fn mark_amplitude(name: &str) -> Option<f32> {
+    DYNAMIC_MARKS
+        .iter()
+        .find(|(mark, _)| *mark == name)
+        .map(|(_, amplitude)| *amplitude)
+}
+
+/// One mark level up (`true`) or down from `from`, for hairpins with no
+/// usable target mark: snap to the nearest table entry, then step once.
+fn adjacent_mark_level(from: f32, up: bool) -> f32 {
+    let nearest = DYNAMIC_MARKS
+        .iter()
+        .enumerate()
+        .min_by(|(_, (_, a)), (_, (_, b))| {
+            (a - from).abs().partial_cmp(&(b - from).abs()).unwrap()
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let stepped = if up {
+        (nearest + 1).min(DYNAMIC_MARKS.len() - 1)
+    } else {
+        nearest.saturating_sub(1)
+    };
+    DYNAMIC_MARKS[stepped].1
 }
 
 /// Converts a MusicXML string into a validated-shape [`Score`].
@@ -133,8 +186,14 @@ pub fn convert_musicxml(xml: &str) -> Result<(Score, ConvertReport), String> {
     let mut cells: Vec<Vec<Step>> = Vec::new();
     let multi_part = parts.len() > 1;
     for part in &parts {
+        // The part's dynamic curve; each merged note samples it at its onset
+        // (a tie chain keeps the level struck at its first note).
+        let dynamics = build_dynamic_curve(&part.dynamic_events, &mut report);
         for (key, events) in &part.voices {
-            let merged = merge_ties(events.clone(), &mut report);
+            let mut merged = merge_ties(events.clone(), &mut report);
+            for event in &mut merged {
+                event.amplitude = amplitude_at(&dynamics, event.onset);
+            }
             let lanes = assign_lanes(merged);
             let label = if multi_part {
                 format!("part {} voice {}", part.id, key.1)
@@ -221,6 +280,156 @@ struct NoteEvent {
     midi: i64,
     tie_start: bool,
     tie_stop: bool,
+    /// Dynamic level at this onset; assigned from the part's dynamic curve
+    /// after ties merge, `None` when the part has no dynamics.
+    amplitude: Option<f32>,
+}
+
+/// A positioned dynamics event scanned from a part, in document order.
+#[derive(Debug, Clone, Copy)]
+enum DynamicEvent {
+    /// An explicit mark (p, mf, …) already mapped to an amplitude.
+    Mark { onset: Rat, amplitude: f32 },
+    /// A hairpin opening (`<wedge type="crescendo|diminuendo">`).
+    WedgeStart { onset: Rat, crescendo: bool },
+    /// A hairpin closing (`<wedge type="stop">`).
+    WedgeStop { onset: Rat },
+}
+
+impl DynamicEvent {
+    fn onset(&self) -> Rat {
+        match self {
+            DynamicEvent::Mark { onset, .. }
+            | DynamicEvent::WedgeStart { onset, .. }
+            | DynamicEvent::WedgeStop { onset } => *onset,
+        }
+    }
+}
+
+/// One linear span of a part's dynamic level: `from` at `start`, arriving at
+/// `to` by `end`, then constant `to` until the next segment begins.
+struct DynamicSegment {
+    start: Rat,
+    end: Rat,
+    from: f32,
+    to: f32,
+}
+
+/// Compiles a part's dynamics events into an ordered piecewise-linear curve.
+///
+/// Marks are instantaneous level changes. A wedge interpolates from the level
+/// at its start to the next explicit mark after it; when no mark follows
+/// before another wedge opens — or the mark moves against the hairpin's
+/// direction (a dim. "into" a louder section) — the wedge moves one mark
+/// level instead. A wedge with no stop event ends at the interrupting mark.
+fn build_dynamic_curve(
+    events: &[DynamicEvent],
+    report: &mut ConvertReport,
+) -> Vec<DynamicSegment> {
+    let mut events = events.to_vec();
+    // Stable: document order breaks ties at equal onsets.
+    events.sort_by_key(|event| event.onset());
+
+    let mut segments: Vec<DynamicSegment> = Vec::new();
+    let mut current: Option<f32> = None;
+    let mut index = 0;
+    while index < events.len() {
+        match events[index] {
+            DynamicEvent::Mark { onset, amplitude } => {
+                segments.push(DynamicSegment {
+                    start: onset,
+                    end: onset,
+                    from: amplitude,
+                    to: amplitude,
+                });
+                current = Some(amplitude);
+            }
+            // A stop is consumed by its opening wedge; a stray one is inert.
+            DynamicEvent::WedgeStop { .. } => {}
+            DynamicEvent::WedgeStart { onset: start, crescendo } => {
+                report.hairpins += 1;
+                let mut end: Option<Rat> = None;
+                let mut target: Option<f32> = None;
+                for later in &events[index + 1..] {
+                    match later {
+                        DynamicEvent::WedgeStop { onset } => {
+                            if end.is_none() {
+                                end = Some(*onset);
+                            }
+                        }
+                        DynamicEvent::Mark { onset, amplitude } => {
+                            // A mark interrupting an unstopped wedge ends it.
+                            if end.is_none() {
+                                end = Some(*onset);
+                            }
+                            target = Some(*amplitude);
+                            break;
+                        }
+                        DynamicEvent::WedgeStart { .. } => {
+                            if end.is_some() {
+                                // The next mark belongs to the next wedge.
+                                break;
+                            }
+                            // Overlapping wedges: keep looking for our stop.
+                        }
+                    }
+                }
+                let Some(end) = end else {
+                    report.warnings.push(
+                        "a hairpin has no stop event and no following dynamic mark; ignored"
+                            .to_string(),
+                    );
+                    index += 1;
+                    continue;
+                };
+                let from = match (current, target) {
+                    (Some(level), _) => level,
+                    // No anchor before the wedge: start one level away from
+                    // the target, against the hairpin's direction.
+                    (None, Some(mark)) => adjacent_mark_level(mark, !crescendo),
+                    (None, None) => {
+                        report.warnings.push(
+                            "a hairpin has no dynamic mark before or after it; ignored"
+                                .to_string(),
+                        );
+                        index += 1;
+                        continue;
+                    }
+                };
+                let to = match target {
+                    // The target must agree with the hairpin's direction.
+                    Some(mark) if crescendo == (mark > from) => mark,
+                    _ => adjacent_mark_level(from, crescendo),
+                };
+                segments.push(DynamicSegment {
+                    start,
+                    end: end.max(start),
+                    from,
+                    to,
+                });
+                current = Some(to);
+            }
+        }
+        index += 1;
+    }
+    segments
+}
+
+/// The part's dynamic level at `onset`: linear inside a hairpin span, the
+/// arrival level after it, `None` before the first dynamic event.
+fn amplitude_at(segments: &[DynamicSegment], onset: Rat) -> Option<f32> {
+    let segment = segments
+        .iter()
+        .take_while(|segment| segment.start <= onset)
+        .last()?;
+    if onset >= segment.end || segment.end <= segment.start {
+        return Some(segment.to);
+    }
+    let elapsed = onset - segment.start;
+    let span = segment.end - segment.start;
+    let progress = (elapsed.num() as f32 / elapsed.den() as f32)
+        / (span.num() as f32 / span.den() as f32);
+    Some(segment.from + (segment.to - segment.from) * progress)
 }
 
 /// One `<part>` reduced to per-voice note events plus measure lengths.
@@ -233,6 +442,9 @@ struct PartEvents {
     /// BPM)`, in document order. Sourced from `<sound tempo>` elements, which
     /// is how notation editors encode tempo and metric modulations.
     tempo_events: Vec<(Rat, f32)>,
+    /// Dynamics marks and hairpins, in document order. Part-level: a piano
+    /// dynamic governs both staves, so `<staff>` on the direction is ignored.
+    dynamic_events: Vec<DynamicEvent>,
 }
 
 /// Reads a quarter-note BPM from a `<sound tempo>` element or a `<direction>`
@@ -249,6 +461,73 @@ fn tempo_from(element: roxmltree::Node) -> Option<f32> {
         .and_then(|n| n.attribute("tempo"))
         .and_then(|t| t.parse::<f32>().ok())
         .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
+}
+
+/// Scans a `<direction>` for dynamics content: an explicit mark and/or
+/// hairpin wedges. Marks map through [`mark_amplitude`]; an unrecognized
+/// mark (sf, sfz, fp, …) falls back to the direction's `<sound dynamics>`
+/// percentage when present (velocity = 90 × pct / 100, normalized by 127),
+/// otherwise it is skipped with a warning.
+fn collect_dynamics(
+    element: roxmltree::Node,
+    onset: Rat,
+    measure: &str,
+    events: &mut Vec<DynamicEvent>,
+    report: &mut ConvertReport,
+) {
+    if let Some(dynamics) = element
+        .descendants()
+        .find(|node| node.has_tag_name("dynamics"))
+    {
+        let mark = dynamics
+            .children()
+            .find(|node| node.is_element())
+            .map(|node| node.tag_name().name().to_string());
+        let amplitude = mark.as_deref().and_then(mark_amplitude).or_else(|| {
+            element
+                .descendants()
+                .find(|node| node.has_tag_name("sound"))
+                .and_then(|node| node.attribute("dynamics"))
+                .and_then(|pct| pct.parse::<f32>().ok())
+                .filter(|pct| pct.is_finite() && *pct > 0.0)
+                .map(|pct| (pct * 0.9 / 127.0).clamp(0.0, 1.0))
+        });
+        match amplitude {
+            Some(amplitude) => {
+                events.push(DynamicEvent::Mark { onset, amplitude });
+                report.dynamic_marks += 1;
+            }
+            None => report.warnings.push(format!(
+                "measure {}: dynamic mark '{}' names no level (accent-type \
+                 marks are not encoded); skipped",
+                measure,
+                mark.as_deref().unwrap_or("?")
+            )),
+        }
+    }
+
+    for wedge in element
+        .descendants()
+        .filter(|node| node.has_tag_name("wedge"))
+    {
+        match wedge.attribute("type") {
+            Some("crescendo") => events.push(DynamicEvent::WedgeStart {
+                onset,
+                crescendo: true,
+            }),
+            Some("diminuendo") => events.push(DynamicEvent::WedgeStart {
+                onset,
+                crescendo: false,
+            }),
+            Some("stop") => events.push(DynamicEvent::WedgeStop { onset }),
+            // "continue" spans need no event; anything else is unknown.
+            Some("continue") | None => {}
+            Some(other) => report.warnings.push(format!(
+                "measure {}: unknown wedge type '{}'; skipped",
+                measure, other
+            )),
+        }
+    }
 }
 
 /// Whether a direction carries gradual-tempo text (ritardando / accelerando /
@@ -273,6 +552,7 @@ fn convert_part(
     let mut voices: BTreeMap<(u32, String), Vec<NoteEvent>> = BTreeMap::new();
     let mut capacities = Vec::new();
     let mut tempo_events: Vec<(Rat, f32)> = Vec::new();
+    let mut dynamic_events: Vec<DynamicEvent> = Vec::new();
     let mut divisions: i64 = 1;
     let mut time_signature = TimeSignature::default();
     let mut seen_time = false;
@@ -374,6 +654,7 @@ fn convert_part(
                             midi,
                             tie_start,
                             tie_stop,
+                            amplitude: None,
                         });
                     }
 
@@ -388,6 +669,13 @@ fn convert_part(
                     if let Some(bpm) = tempo_from(element) {
                         tempo_events.push((measure_start + cursor, bpm));
                     }
+                    collect_dynamics(
+                        element,
+                        measure_start + cursor,
+                        number,
+                        &mut dynamic_events,
+                        report,
+                    );
                     // A gradual change (rit./accel.) is a text direction with
                     // no target tempo, so it cannot be encoded faithfully.
                     if has_gradual_tempo_text(element) {
@@ -432,6 +720,7 @@ fn convert_part(
         voices,
         capacities,
         tempo_events,
+        dynamic_events,
     })
 }
 
@@ -602,7 +891,9 @@ fn emit_lane(
                 label
             ));
         }
-        steps[start] = Step::note((event.midi - BASE_NOTE) as i8);
+        let mut note = Step::note((event.midi - BASE_NOTE) as i8);
+        note.amplitude = event.amplitude;
+        steps[start] = note;
         for step in steps.iter_mut().skip(start + 1).take(len - 1) {
             *step = Step::held();
         }

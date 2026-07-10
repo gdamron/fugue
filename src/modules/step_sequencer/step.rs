@@ -13,8 +13,9 @@ pub struct Step {
     pub gate_length: Option<f32>,
     /// Continue the previous active note without retriggering.
     pub held: bool,
-    /// Optional amplitude for this step (0.0-1.0). If None, uses the
-    /// sequencer's default amplitude.
+    /// Optional amplitude for this step (0.0-1.0), from the score's
+    /// dynamics. If None, the sequencer's velocity output stays at full
+    /// (1.0).
     pub amplitude: Option<f32>,
 }
 
@@ -87,11 +88,14 @@ impl Serialize for Step {
             return map.end();
         }
 
-        let entries = if self.gate_length.is_some() { 2 } else { 1 };
+        let entries = 1 + usize::from(self.gate_length.is_some()) + usize::from(self.amplitude.is_some());
         let mut map = serializer.serialize_map(Some(entries))?;
         map.serialize_entry("note", &self.note)?;
         if let Some(gate_length) = self.gate_length {
             map.serialize_entry("gate", &gate_length)?;
+        }
+        if let Some(amplitude) = self.amplitude {
+            map.serialize_entry("amplitude", &amplitude)?;
         }
         map.end()
     }

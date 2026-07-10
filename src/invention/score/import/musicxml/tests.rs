@@ -440,3 +440,200 @@ fn output_validates_and_is_deterministic() {
     let value = serde_json::to_value(&first).expect("to_value");
     crate::invention::score::validate_score(&value).expect("output must validate");
 }
+
+/// Amplitudes of a cell's steps: `Some` only on note onsets that carry one.
+fn amplitudes(steps: &[Step]) -> Vec<Option<f32>> {
+    steps.iter().map(|step| step.amplitude).collect()
+}
+
+fn dynamic(mark: &str) -> String {
+    format!(
+        "<direction><direction-type><dynamics><{}/></dynamics></direction-type></direction>",
+        mark
+    )
+}
+
+fn wedge(kind: &str) -> String {
+    format!(
+        r#"<direction><direction-type><wedge type="{}"/></direction-type></direction>"#,
+        kind
+    )
+}
+
+#[test]
+fn dynamic_marks_set_step_amplitude_at_onsets() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {}{}{}{}
+        </measure>"#,
+        dynamic("p"),
+        note("C", 4, None, 1, ""),
+        dynamic("f"),
+        note("D", 4, None, 1, "")
+    ));
+    assert_eq!(report.dynamic_marks, 2);
+    assert_eq!(
+        amplitudes(&score.cells[0]),
+        vec![Some(49.0 / 127.0), Some(96.0 / 127.0)]
+    );
+}
+
+#[test]
+fn notes_before_the_first_mark_carry_no_amplitude() {
+    let (score, _) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {}{}{}
+        </measure>"#,
+        note("C", 4, None, 1, ""),
+        dynamic("mf"),
+        note("D", 4, None, 1, "")
+    ));
+    assert_eq!(
+        amplitudes(&score.cells[0]),
+        vec![None, Some(80.0 / 127.0)]
+    );
+}
+
+#[test]
+fn hairpin_interpolates_to_the_next_mark_across_its_span() {
+    // p, cresc across two quarters, f: the midpoint onset sits halfway.
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>4</beats><beat-type>4</beat-type></time></attributes>
+          {p}{cresc}{c}{d}{stop}{f}{e}{c2}
+        </measure>"#,
+        p = dynamic("p"),
+        cresc = wedge("crescendo"),
+        c = note("C", 4, None, 1, ""),
+        d = note("D", 4, None, 1, ""),
+        stop = wedge("stop"),
+        f = dynamic("f"),
+        e = note("E", 4, None, 1, ""),
+        c2 = note("C", 5, None, 1, "")
+    ));
+    assert_eq!(report.hairpins, 1);
+    let p = 49.0 / 127.0;
+    let f = 96.0 / 127.0;
+    assert_eq!(
+        amplitudes(&score.cells[0]),
+        vec![Some(p), Some(p + (f - p) * 0.5), Some(f), Some(f)]
+    );
+}
+
+#[test]
+fn hairpin_without_target_moves_one_mark_level() {
+    // A dim. with a stop but no following mark lands one level below p.
+    let (score, _) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>3</beats><beat-type>4</beat-type></time></attributes>
+          {p}{c}{dim}{d}{stop}{e}
+        </measure>"#,
+        p = dynamic("p"),
+        c = note("C", 4, None, 1, ""),
+        dim = wedge("diminuendo"),
+        d = note("D", 4, None, 1, ""),
+        stop = wedge("stop"),
+        e = note("E", 4, None, 1, "")
+    ));
+    let p = 49.0 / 127.0;
+    let pp = 33.0 / 127.0;
+    assert_eq!(
+        amplitudes(&score.cells[0]),
+        vec![Some(p), Some(p), Some(pp)]
+    );
+}
+
+#[test]
+fn hairpin_target_contradicting_direction_falls_back_one_level() {
+    // dim … then a *louder* mark: the wedge must not rise into it.
+    let (score, _) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>3</beats><beat-type>4</beat-type></time></attributes>
+          {p}{dim}{c}{stop}{d}{ff}{e}
+        </measure>"#,
+        p = dynamic("p"),
+        dim = wedge("diminuendo"),
+        c = note("C", 4, None, 1, ""),
+        stop = wedge("stop"),
+        d = note("D", 4, None, 1, ""),
+        ff = dynamic("ff"),
+        e = note("E", 4, None, 1, "")
+    ));
+    let p = 49.0 / 127.0;
+    let pp = 33.0 / 127.0;
+    let ff = 112.0 / 127.0;
+    assert_eq!(
+        amplitudes(&score.cells[0]),
+        vec![Some(p), Some(pp), Some(ff)]
+    );
+}
+
+#[test]
+fn tied_notes_keep_the_amplitude_struck_at_their_first_onset() {
+    // The tie starts under p; the mark changes mid-tie but the held chain
+    // keeps its struck level (held steps never carry amplitude).
+    let (score, _) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {p}{tie_start}{ff}{tie_stop}
+        </measure>"#,
+        p = dynamic("p"),
+        tie_start = note("C", 4, None, 1, r#"<tie type="start"/>"#),
+        ff = dynamic("ff"),
+        tie_stop = note("C", 4, None, 1, r#"<tie type="stop"/>"#)
+    ));
+    assert_eq!(shape(&score.cells[0]), "0 H");
+    assert_eq!(amplitudes(&score.cells[0]), vec![Some(49.0 / 127.0), None]);
+}
+
+#[test]
+fn accent_marks_warn_and_use_sound_dynamics_fallback() {
+    // sfz names no level: with a <sound dynamics>, the percentage is used
+    // (90 × pct / 100 / 127); without one it is skipped with a warning.
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          <direction><direction-type><dynamics><sfz/></dynamics></direction-type>
+            <sound dynamics="100"/></direction>
+          {c}
+          <direction><direction-type><dynamics><sf/></dynamics></direction-type></direction>
+          {d}
+        </measure>"#,
+        c = note("C", 4, None, 1, ""),
+        d = note("D", 4, None, 1, "")
+    ));
+    assert_eq!(report.dynamic_marks, 1);
+    assert!(report.warnings.iter().any(|w| w.contains("'sf'")), "{:?}", report.warnings);
+    let sfz = 0.9 * 100.0 / 127.0;
+    assert_eq!(amplitudes(&score.cells[0]), vec![Some(sfz), Some(sfz)]);
+}
+
+#[test]
+fn dynamics_serialize_and_validate_as_score_v1() {
+    let (score, _) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {}{}{}
+        </measure>"#,
+        dynamic("pp"),
+        note("C", 4, None, 1, ""),
+        note("D", 4, None, 1, "")
+    ));
+    let json = score.to_json().expect("serializes");
+    assert!(json.contains("\"amplitude\""), "{}", json);
+    let reparsed = Score::from_json(&json).expect("round-trips through validation");
+    assert_eq!(
+        amplitudes(&reparsed.cells[0]),
+        amplitudes(&score.cells[0])
+    );
+}
