@@ -35,11 +35,17 @@ fn voice_library_presets_load_as_standalone_developments() {
         );
         assert_eq!(
             invention.inputs.len(),
-            2,
-            "{file_name} should expose two inputs"
+            3,
+            "{file_name} should expose three inputs"
         );
         assert_eq!(invention.inputs[0].name, "frequency");
         assert_eq!(invention.inputs[1].name, "gate");
+        assert_eq!(invention.inputs[2].name, "sustain");
+        assert_eq!(
+            invention.inputs[2].mode,
+            Some(fugue::DevelopmentInputMode::Broadcast),
+            "{file_name} sustain must broadcast so the pedal reaches ringing voices"
+        );
         assert_eq!(
             invention.outputs.len(),
             1,

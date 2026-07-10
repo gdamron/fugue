@@ -2,8 +2,15 @@
 
 Reusable voice developments. Register each one under `developments` and instantiate it like a normal module — every preset exposes the same interface so they are interchangeable:
 
-- **Inputs:** `frequency`, `gate`
+- **Inputs:** `frequency`, `gate`, `sustain`
 - **Output:** `audio`
+
+The `sustain` input is a sustain-pedal gate: while high, a gate-off does not
+release the note — it keeps its natural decay and rings; when `sustain` falls,
+every ringing note releases together. Instantiate a voice with
+`"config": {"voices": N}` to give it a pre-sized polyphonic pool (steal-oldest)
+so pedaled notes can overlap; `sustain` is a `broadcast` input, so the pedal
+reaches ringing voices, while `frequency` latches per note.
 
 ## Presets
 

@@ -637,3 +637,119 @@ fn dynamics_serialize_and_validate_as_score_v1() {
         amplitudes(&score.cells[0])
     );
 }
+
+/// A `<direction>` carrying one `<pedal>` element of the given type.
+fn pedal(kind: &str) -> String {
+    format!(
+        "<direction><direction-type><pedal type=\"{}\"/></direction-type></direction>",
+        kind
+    )
+}
+
+#[test]
+fn pedal_span_becomes_gate_lane() {
+    // Pedal down through measure 1, up at the measure 2 barline.
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>4</beats><beat-type>4</beat-type></time></attributes>
+          {p}{c}{c}{c}{c}
+        </measure>
+        <measure number="2">
+          {u}{c}{c}{c}{c}
+        </measure>"#,
+        p = pedal("start"),
+        u = pedal("stop"),
+        c = note("C", 4, None, 1, "")
+    ));
+    assert_eq!(report.pedal_events, 2);
+    assert_eq!(report.pedal_lanes, 1);
+    assert_eq!(score.pedal.len(), 1);
+    assert_eq!(shape(&score.pedal[0]), "0 H H H . . . .");
+}
+
+#[test]
+fn pedal_change_retakes_mid_span() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>4</beats><beat-type>4</beat-type></time></attributes>
+          {p}{c}{c}{r}{c}{c}
+        </measure>
+        <measure number="2">
+          {u}{c}{c}{c}{c}
+        </measure>"#,
+        p = pedal("start"),
+        r = pedal("change"),
+        u = pedal("stop"),
+        c = note("C", 4, None, 1, "")
+    ));
+    assert_eq!(report.pedal_events, 3);
+    // The retake ends the first span and strikes a new one at beat 3.
+    assert_eq!(shape(&score.pedal[0]), "0 H 0 H . . . .");
+}
+
+#[test]
+fn pedal_open_span_holds_to_end() {
+    let (score, _) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>4</beats><beat-type>4</beat-type></time></attributes>
+          {p}{c}{c}{c}{c}
+        </measure>"#,
+        p = pedal("start"),
+        c = note("C", 4, None, 1, "")
+    ));
+    assert_eq!(shape(&score.pedal[0]), "0 H H H");
+}
+
+#[test]
+fn stray_pedal_stop_warns() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {u}{c}{c}
+        </measure>"#,
+        u = pedal("stop"),
+        c = note("C", 4, None, 1, "")
+    ));
+    assert!(
+        report.warnings.iter().any(|w| w.contains("pedal stop")),
+        "{:?}",
+        report.warnings
+    );
+    assert_eq!(shape(&score.pedal[0]), ". .");
+}
+
+#[test]
+fn score_without_pedal_omits_field() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {c}{c}
+        </measure>"#,
+        c = note("C", 4, None, 1, "")
+    ));
+    assert_eq!(report.pedal_events, 0);
+    assert!(score.pedal.is_empty());
+    let json = score.to_json().expect("serializes");
+    assert!(!json.contains("\"pedal\""), "{}", json);
+}
+
+#[test]
+fn pedal_lane_serializes_and_validates_as_score_v1() {
+    let (score, _) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {p}{c}{c}
+        </measure>"#,
+        p = pedal("start"),
+        c = note("C", 4, None, 1, "")
+    ));
+    let json = score.to_json().expect("serializes");
+    let reparsed = Score::from_json(&json).expect("round-trips through validation");
+    assert_eq!(shape(&reparsed.pedal[0]), shape(&score.pedal[0]));
+}

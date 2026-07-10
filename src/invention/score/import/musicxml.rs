@@ -56,6 +56,10 @@ pub struct ConvertReport {
     pub dynamic_marks: usize,
     /// Hairpin wedges (cresc./dim.) captured as amplitude ramps.
     pub hairpins: usize,
+    /// Pedal events (`<pedal>` start/stop/change) captured into pedal lanes.
+    pub pedal_events: usize,
+    /// Pedal gate lanes emitted (one per part with pedal events).
+    pub pedal_lanes: usize,
     /// Warnings to surface to the user.
     pub warnings: Vec<String>,
 }
@@ -207,6 +211,22 @@ pub fn convert_musicxml(xml: &str) -> Result<(Score, ConvertReport), String> {
         }
     }
 
+    // Compile each part's pedal events into a gate lane on the same grid.
+    let mut pedal: Vec<Vec<Step>> = Vec::new();
+    for part in &parts {
+        if part.pedal_events.is_empty() {
+            continue;
+        }
+        pedal.push(build_pedal_lane(
+            &part.pedal_events,
+            grid,
+            steps_per_cell as usize,
+            &part.id,
+            &mut report,
+        )?);
+    }
+    report.pedal_lanes = pedal.len();
+
     // Compile positioned tempo marks (first part is authoritative, matching
     // measure lengths) into an ordered tempo map on the step grid.
     let (tempo, tempo_map) = build_tempo_map(&first.tempo_events, grid)?;
@@ -223,8 +243,87 @@ pub fn convert_musicxml(xml: &str) -> Result<(Score, ConvertReport), String> {
         base_note_hint: Some(BASE_NOTE),
         rhythm_grid: Some(report.rhythm_grid.clone()),
         cells,
+        pedal,
     };
     Ok((score, report))
+}
+
+/// Compiles a part's pedal events into one gate lane on the step grid:
+/// pedal-down is a note-0 onset with `held` continuations for the span,
+/// pedal-up returns to rests, a retake starts a fresh onset (its release gap
+/// is the pedal lift). Odd sequences degrade gracefully with a warning: a
+/// down while already down is treated as a retake, an up or change while up
+/// is ignored, and a span left open at the end holds to the final step.
+fn build_pedal_lane(
+    events: &[PedalEvent],
+    grid: Rat,
+    steps_per_cell: usize,
+    part: &str,
+    report: &mut ConvertReport,
+) -> Result<Vec<Step>, String> {
+    let mut events = events.to_vec();
+    // Stable: document order breaks ties at equal onsets.
+    events.sort_by_key(|event| event.onset());
+
+    let mut steps = vec![Step::rest(); steps_per_cell];
+    // Step index of the open pedal-down span, if any.
+    let mut down_at: Option<usize> = None;
+
+    let mut close_span = |steps: &mut Vec<Step>, from: usize, to: usize| {
+        for step in steps.iter_mut().take(to).skip(from + 1) {
+            *step = Step::held();
+        }
+    };
+
+    for event in &events {
+        let at = event
+            .onset()
+            .div_exact(grid)
+            .ok_or_else(|| format!("internal: part {} pedal mark off the rhythm grid", part))?
+            as usize;
+        let at = at.min(steps_per_cell.saturating_sub(1));
+
+        match event {
+            PedalEvent::Down(_) => {
+                if let Some(from) = down_at {
+                    report.warnings.push(format!(
+                        "part {}: pedal starts while already down; treated as a retake",
+                        part
+                    ));
+                    close_span(&mut steps, from, at);
+                }
+                steps[at] = Step::note(0);
+                down_at = Some(at);
+            }
+            PedalEvent::Retake(_) => match down_at {
+                Some(from) => {
+                    close_span(&mut steps, from, at);
+                    steps[at] = Step::note(0);
+                    down_at = Some(at);
+                }
+                None => {
+                    report.warnings.push(format!(
+                        "part {}: pedal change with no pedal down; ignored",
+                        part
+                    ));
+                }
+            },
+            PedalEvent::Up(_) => match down_at.take() {
+                Some(from) => close_span(&mut steps, from, at),
+                None => report.warnings.push(format!(
+                    "part {}: pedal stop with no pedal down; ignored",
+                    part
+                )),
+            },
+        }
+    }
+
+    // A span left open holds to the end of the piece.
+    if let Some(from) = down_at {
+        close_span(&mut steps, from, steps_per_cell);
+    }
+
+    Ok(steps)
 }
 
 /// Turns positioned tempo marks into `(initial tempo, tempo_map)`.
@@ -302,6 +401,25 @@ impl DynamicEvent {
             DynamicEvent::Mark { onset, .. }
             | DynamicEvent::WedgeStart { onset, .. }
             | DynamicEvent::WedgeStop { onset } => *onset,
+        }
+    }
+}
+
+/// A positioned sustain-pedal event scanned from a part, in document order.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PedalEvent {
+    /// `<pedal type="start">` — dampers up from this onset.
+    Down(Rat),
+    /// `<pedal type="stop">` — dampers back down at this onset.
+    Up(Rat),
+    /// `<pedal type="change">` — a retake: up and immediately down again.
+    Retake(Rat),
+}
+
+impl PedalEvent {
+    fn onset(&self) -> Rat {
+        match self {
+            PedalEvent::Down(onset) | PedalEvent::Up(onset) | PedalEvent::Retake(onset) => *onset,
         }
     }
 }
@@ -445,6 +563,9 @@ struct PartEvents {
     /// Dynamics marks and hairpins, in document order. Part-level: a piano
     /// dynamic governs both staves, so `<staff>` on the direction is ignored.
     dynamic_events: Vec<DynamicEvent>,
+    /// Sustain-pedal events, in document order. Part-level like dynamics:
+    /// one pedal governs the whole instrument.
+    pedal_events: Vec<PedalEvent>,
 }
 
 /// Reads a quarter-note BPM from a `<sound tempo>` element or a `<direction>`
@@ -530,6 +651,38 @@ fn collect_dynamics(
     }
 }
 
+/// Scans a `<direction>` for `<pedal>` elements. `start`/`stop`/`change`
+/// become pedal events; `continue` spans (line drawing) need none; sostenuto
+/// and other types are not modeled and warn.
+fn collect_pedal(
+    element: roxmltree::Node,
+    onset: Rat,
+    measure: &str,
+    events: &mut Vec<PedalEvent>,
+    report: &mut ConvertReport,
+) {
+    for pedal in element
+        .descendants()
+        .filter(|node| node.has_tag_name("pedal"))
+    {
+        match pedal.attribute("type") {
+            Some("start") | Some("resume") => events.push(PedalEvent::Down(onset)),
+            Some("stop") | Some("discontinue") => events.push(PedalEvent::Up(onset)),
+            Some("change") => events.push(PedalEvent::Retake(onset)),
+            // "continue" only extends the drawn pedal line.
+            Some("continue") | None => continue,
+            Some(other) => {
+                report.warnings.push(format!(
+                    "measure {}: pedal type '{}' is not modeled; skipped",
+                    measure, other
+                ));
+                continue;
+            }
+        }
+        report.pedal_events += 1;
+    }
+}
+
 /// Whether a direction carries gradual-tempo text (ritardando / accelerando /
 /// rallentando / allargando), which MusicXML notates without a target tempo.
 fn has_gradual_tempo_text(element: roxmltree::Node) -> bool {
@@ -553,6 +706,7 @@ fn convert_part(
     let mut capacities = Vec::new();
     let mut tempo_events: Vec<(Rat, f32)> = Vec::new();
     let mut dynamic_events: Vec<DynamicEvent> = Vec::new();
+    let mut pedal_events: Vec<PedalEvent> = Vec::new();
     let mut divisions: i64 = 1;
     let mut time_signature = TimeSignature::default();
     let mut seen_time = false;
@@ -676,6 +830,13 @@ fn convert_part(
                         &mut dynamic_events,
                         report,
                     );
+                    collect_pedal(
+                        element,
+                        measure_start + cursor,
+                        number,
+                        &mut pedal_events,
+                        report,
+                    );
                     // A gradual change (rit./accel.) is a text direction with
                     // no target tempo, so it cannot be encoded faithfully.
                     if has_gradual_tempo_text(element) {
@@ -721,6 +882,7 @@ fn convert_part(
         capacities,
         tempo_events,
         dynamic_events,
+        pedal_events,
     })
 }
 

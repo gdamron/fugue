@@ -34,6 +34,7 @@ fn voice_development() -> Invention {
             name: "frequency".to_string(),
             to: "osc".to_string(),
             to_port: "frequency".to_string(),
+            mode: None,
         }],
         outputs: vec![DevelopmentOutput {
             name: "audio".to_string(),
@@ -155,11 +156,13 @@ fn development_fans_out_exposed_inputs_and_caches_outputs() {
                 name: "signal".to_string(),
                 to: "full".to_string(),
                 to_port: "audio".to_string(),
+                mode: None,
             },
             DevelopmentInput {
                 name: "signal".to_string(),
                 to: "half".to_string(),
                 to_port: "audio".to_string(),
+                mode: None,
             },
         ],
         outputs: vec![

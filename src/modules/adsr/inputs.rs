@@ -2,7 +2,7 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 5] = ["gate", "attack", "decay", "sustain", "release"];
+pub const INPUTS: [&str; 6] = ["gate", "attack", "decay", "sustain", "release", "pedal"];
 
 pub struct AdsrInputs {
     gate: [f32; MAX_BLOCK],
@@ -10,6 +10,7 @@ pub struct AdsrInputs {
     decay: [f32; MAX_BLOCK],
     sustain: [f32; MAX_BLOCK],
     release: [f32; MAX_BLOCK],
+    pedal: [f32; MAX_BLOCK],
     attack_connected: bool,
     decay_connected: bool,
     sustain_connected: bool,
@@ -24,6 +25,7 @@ impl AdsrInputs {
             decay: [0.0; MAX_BLOCK],
             sustain: [0.0; MAX_BLOCK],
             release: [0.0; MAX_BLOCK],
+            pedal: [0.0; MAX_BLOCK],
             attack_connected: false,
             decay_connected: false,
             sustain_connected: false,
@@ -58,6 +60,10 @@ impl AdsrInputs {
                 self.release_connected = true;
                 Ok(())
             }
+            "pedal" => {
+                self.pedal.fill(value);
+                Ok(())
+            }
             _ => Err(format!("Unknown input port: {}", port)),
         }
     }
@@ -70,7 +76,8 @@ impl AdsrInputs {
             1 => &mut self.attack,
             2 => &mut self.decay,
             3 => &mut self.sustain,
-            _ => &mut self.release,
+            4 => &mut self.release,
+            _ => &mut self.pedal,
         }
     }
 
@@ -88,6 +95,11 @@ impl AdsrInputs {
     #[inline]
     pub fn gate(&self, i: usize) -> f32 {
         self.gate[i]
+    }
+
+    #[inline]
+    pub fn pedal(&self, i: usize) -> f32 {
+        self.pedal[i]
     }
 
     #[inline]

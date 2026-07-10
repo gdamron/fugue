@@ -79,6 +79,12 @@
       "name": "gate",
       "to": "env",
       "to_port": "gate"
+    },
+    {
+      "name": "sustain",
+      "to": "env",
+      "to_port": "pedal",
+      "mode": "broadcast"
     }
   ],
   "outputs": [

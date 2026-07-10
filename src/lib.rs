@@ -56,7 +56,8 @@ pub use modules::{RtmpSink, RtmpSinkConfig, RtmpSinkFactory, RtmpSinkHandle, Rtm
 // Re-export invention system
 pub use invention::{
     validate_score, AssetSpec, CodeModuleRuntimeInfo, Connection, ControlOverride,
-    DevelopmentControl, DevelopmentInput, DevelopmentOutput, DevelopmentSpec, GraphCommandError,
+    DevelopmentControl, DevelopmentInput, DevelopmentInputMode, DevelopmentOutput,
+    DevelopmentSpec, GraphCommandError,
     Invention, InventionBuilder, InventionHandles, InventionRuntime, ModuleSpec,
     OrchestrationRuntime, RenderEngine, RunningInvention, RuntimeConnectionInfo, RuntimeController,
     RuntimeModuleInfo, RuntimeSnapshot, RuntimeState, RuntimeStatus, Score, TimeSignature,

@@ -117,6 +117,27 @@ pub struct DevelopmentInput {
     pub name: String,
     pub to: String,
     pub to_port: String,
+
+    /// How a polyphonic instance (`config: {"voices": N}`) routes this input.
+    /// Ignored when the development is monophonic (the default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<DevelopmentInputMode>,
+}
+
+/// Routing behavior of a development input across a polyphonic voice pool.
+///
+/// The input named `gate` is always the note gate — its rising edge allocates
+/// a pool voice and its falling edge gates that note off — regardless of mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum DevelopmentInputMode {
+    /// Sampled at note-on and held constant for that voice's note (the
+    /// default): pitch, velocity — anything that belongs to the struck note.
+    Latch,
+    /// Fed live to every pool voice each block: shared performance signals
+    /// such as a sustain pedal, which must reach already-ringing notes.
+    Broadcast,
 }
 
 /// Maps an exposed development output to an internal module output.

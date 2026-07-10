@@ -15,11 +15,13 @@ use super::builder::InventionBuilder;
 
 mod compiled_graph;
 mod control_surface;
+mod poly;
 
 use compiled_graph::{
     unique_port_names, CompiledDevelopmentGraph, ExternalInputRoute, ExternalOutputRoute,
 };
 use control_surface::DevelopmentControlSurface;
+use poly::{PolyControlSurface, PolyDevelopmentModule, MAX_VOICES};
 
 pub(crate) struct DevelopmentFactory {
     pub(crate) name: String,
@@ -36,21 +38,60 @@ impl ModuleFactory for DevelopmentFactory {
     fn build(
         &self,
         sample_rate: u32,
-        _config: &serde_json::Value,
+        config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let builder = InventionBuilder::with_registry_and_registered(
-            sample_rate,
-            self.registry.clone(),
-            self.registered.clone(),
-        );
-        let (runtime, _handles) = builder.build(self.definition.clone())?;
-        let (module, control_surface) =
-            DevelopmentModule::new(&self.name, runtime, &self.definition)?;
+        // `voices: N` turns the development into a polyphonic pool of N
+        // identical instances (see `poly.rs`); 1 (the default) is the plain
+        // monophonic development.
+        let voices = config
+            .get("voices")
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|&count| (1..=MAX_VOICES as u64).contains(&count))
+                    .ok_or_else(|| {
+                        format!(
+                            "development '{}': voices must be an integer in 1..={}",
+                            self.name, MAX_VOICES
+                        )
+                    })
+            })
+            .transpose()?
+            .unwrap_or(1) as usize;
+
+        let build_voice = || -> Result<_, Box<dyn std::error::Error>> {
+            let builder = InventionBuilder::with_registry_and_registered(
+                sample_rate,
+                self.registry.clone(),
+                self.registered.clone(),
+            );
+            let (runtime, _handles) = builder.build(self.definition.clone())?;
+            DevelopmentModule::new(&self.name, runtime, &self.definition)
+        };
+
+        if voices == 1 {
+            let (module, control_surface) = build_voice()?;
+            return Ok(ModuleBuildResult {
+                module: GraphModule::Module(Box::new(module)),
+                handles: Vec::<(String, Arc<dyn Any + Send + Sync>)>::new(),
+                control_surface: Some(control_surface as Arc<dyn ControlSurface + Send + Sync>),
+                sink: None,
+            });
+        }
+
+        let mut pool = Vec::with_capacity(voices);
+        let mut surfaces = Vec::with_capacity(voices);
+        for _ in 0..voices {
+            let (module, control_surface) = build_voice()?;
+            pool.push(module);
+            surfaces.push(control_surface);
+        }
+        let module = PolyDevelopmentModule::new(&self.name, pool, &self.definition)?;
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(module)),
             handles: Vec::<(String, Arc<dyn Any + Send + Sync>)>::new(),
-            control_surface: Some(control_surface),
+            control_surface: Some(Arc::new(PolyControlSurface::new(surfaces))),
             sink: None,
         })
     }
@@ -74,7 +115,7 @@ impl DevelopmentModule {
         name: &str,
         runtime: InventionRuntime,
         definition: &Invention,
-    ) -> Result<(Self, Arc<dyn ControlSurface + Send + Sync>), Box<dyn std::error::Error>> {
+    ) -> Result<(Self, Arc<DevelopmentControlSurface>), Box<dyn std::error::Error>> {
         for input in &definition.inputs {
             let module = runtime
                 .modules
