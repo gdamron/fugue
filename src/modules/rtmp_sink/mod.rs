@@ -1,9 +1,10 @@
 //! RTMP streaming tap backed by an ffmpeg subprocess.
 //!
 //! Audio passes through the module unchanged and is also handed off to the
-//! shared streaming backend through a lock-free ring. Video is pushed by the host
-//! through [`RtmpSinkHandle::push_video_rgba`]. The native backend owns ffmpeg
-//! and all socket/process I/O on a worker thread.
+//! shared streaming backend through a lock-free ring. Video can be pushed by the
+//! host through [`RtmpSinkHandle::push_video_rgba`] or decoded from the optional
+//! `background_video` config. Native workers own ffmpeg, media-clock pacing,
+//! looping, and all socket/process I/O.
 //!
 //! Requires an `ffmpeg` executable in `PATH` by default. Set
 //! `config.ffmpeg_path` to an explicit executable path when the host bundles or
@@ -195,15 +196,43 @@ impl SinkModule for RtmpSink {
 }
 
 impl RtmpSinkHandle {
+    /// Pushes one output-sized RGBA frame directly to the stream queue.
     pub fn push_video_rgba(&self, frame: &[u8]) -> Result<(), String> {
         self.shared.push_video_rgba(frame)
     }
 
+    /// Returns whether this sink was configured with a background video.
+    pub fn has_background_video(&self) -> bool {
+        self.shared.has_background_video()
+    }
+
+    /// Starts or resumes background video playback.
+    pub fn play_background_video(&self) -> Result<(), String> {
+        self.shared.play_background_video()
+    }
+
+    /// Pauses background video playback without affecting audio streaming.
+    pub fn pause_background_video(&self) -> Result<(), String> {
+        self.shared.pause_background_video()
+    }
+
+    /// Rewinds the background video and resumes playback from its first frame.
+    pub fn restart_background_video(&self) -> Result<(), String> {
+        self.shared.restart_background_video()
+    }
+
+    /// Enables or disables looping at the next end-of-file boundary.
+    pub fn set_background_video_loop(&self, enabled: bool) -> Result<(), String> {
+        self.shared.set_background_video_loop(enabled)
+    }
+
+    /// Stops workers, drains the streaming backend, and returns final statistics.
     pub fn finish(&self) -> RtmpSinkStats {
         self.shared.finish();
         self.stats()
     }
 
+    /// Returns a snapshot of stream and background-video diagnostics.
     pub fn stats(&self) -> RtmpSinkStats {
         self.shared.stats().into()
     }
