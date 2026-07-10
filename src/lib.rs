@@ -15,6 +15,7 @@ pub mod plugins;
 pub mod registry;
 pub mod rpc;
 pub mod scripting;
+pub(crate) mod streaming;
 pub mod traits;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
