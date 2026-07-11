@@ -620,3 +620,43 @@ fn test_cell_sequencer_velocity_follows_step_amplitude() {
     advance_gate(&mut seq);
     assert_eq!(seq.get_output("velocity").unwrap(), 1.0);
 }
+
+/// FUG-188 regression: the very first step's duration is a default estimate
+/// (sample_rate / 2) until the second clock edge measures the real one. At a
+/// faster tempo the opening note's gate would overrun the whole first step
+/// and swallow the retrigger of a note on step 1 — the sequencer must force
+/// a one-sample release edge so consecutive opening notes both strike.
+#[test]
+fn test_first_step_overrun_still_retriggers_next_note() {
+    // sample_rate 1000 -> default step estimate 500 samples; the actual
+    // clock runs a step every 100 samples, so the first gate (0.95 * 500)
+    // would otherwise stay high straight through the second onset.
+    let mut seq = CellSequencer::new(1000)
+        .with_steps(4)
+        .with_gate_length(0.95)
+        .with_sequences(vec![vec![
+            Step::note(0),
+            Step::note(5),
+            Step::rest(),
+            Step::rest(),
+        ]]);
+
+    let mut rising_edges = 0;
+    let mut last_gate = 0.0;
+    for sample in 0..400 {
+        let clock = if sample % 100 < 50 { 1.0 } else { 0.0 };
+        seq.set_input("gate", clock).unwrap();
+        seq.process(1);
+        let gate = seq.get_output("gate").unwrap();
+        if gate > 0.5 && last_gate <= 0.5 {
+            rising_edges += 1;
+        }
+        last_gate = gate;
+    }
+
+    assert_eq!(
+        rising_edges, 2,
+        "both opening notes must produce a rising edge even though the \
+         first step's duration was over-estimated"
+    );
+}
