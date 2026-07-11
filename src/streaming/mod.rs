@@ -2,3 +2,5 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod ffmpeg;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod video;

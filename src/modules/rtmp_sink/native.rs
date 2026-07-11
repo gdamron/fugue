@@ -1,13 +1,23 @@
 //! Native adapter between [`RtmpSink`](super::RtmpSink) and the shared ffmpeg backend.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use crate::streaming::ffmpeg::{
     FfmpegStreamBackend, FfmpegStreamConfig, FfmpegStreamHandle, FfmpegStreamStats,
     DEFAULT_AUDIO_BUFFER_FRAMES, DEFAULT_VIDEO_QUEUE_FRAMES,
 };
+use crate::streaming::video::{
+    VideoFrameTarget, VideoPlayback, VideoPlaybackConfig, VideoPlaybackHandle,
+};
 
 use super::{RtmpSink, RtmpSinkHandle, RtmpSinkStats};
 
-pub(super) type SharedHandle = FfmpegStreamHandle;
+#[derive(Clone)]
+pub(super) struct SharedHandle {
+    stream: FfmpegStreamHandle,
+    background_video: Option<VideoPlaybackHandle>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtmpSinkConfig {
@@ -107,6 +117,20 @@ impl RtmpSinkConfig {
             video_queue_frames: self.video_queue_frames,
         }
     }
+
+    fn video_playback_config(&self) -> Option<VideoPlaybackConfig> {
+        self.background_video
+            .as_ref()
+            .map(|path| VideoPlaybackConfig {
+                ffmpeg_path: self.ffmpeg_path.clone(),
+                path: PathBuf::from(path),
+                width: self.width,
+                height: self.height,
+                fps: self.fps,
+                autoplay: true,
+                loop_enabled: true,
+            })
+    }
 }
 
 impl RtmpSink {
@@ -115,8 +139,103 @@ impl RtmpSink {
     ) -> Result<(Self, RtmpSinkHandle), Box<dyn std::error::Error>> {
         let soft_clip = config.soft_clip;
         let monitor = config.monitor;
-        let shared = FfmpegStreamBackend::start(config.stream_config())?;
+        let stream = FfmpegStreamBackend::start(config.stream_config())?;
+        let background_video = if let Some(playback_config) = config.video_playback_config() {
+            let target_stream = stream.clone();
+            let target: VideoFrameTarget =
+                Arc::new(move |frame| target_stream.push_video_rgba(frame));
+            match VideoPlayback::start(playback_config, target) {
+                Ok(playback) => Some(playback),
+                Err(err) => {
+                    stream.finish();
+                    return Err(err);
+                }
+            }
+        } else {
+            None
+        };
+        let shared = SharedHandle {
+            stream,
+            background_video,
+        };
         Ok(Self::from_shared(shared, soft_clip, monitor))
+    }
+}
+
+impl SharedHandle {
+    #[inline]
+    pub(super) fn push_audio(&self, left: f32, right: f32) {
+        self.stream.push_audio(left, right);
+    }
+
+    #[inline]
+    pub(super) fn is_stopping(&self) -> bool {
+        self.stream.is_stopping()
+    }
+
+    pub(super) fn push_video_rgba(&self, frame: &[u8]) -> Result<(), String> {
+        self.stream.push_video_rgba(frame)
+    }
+
+    pub(super) fn has_background_video(&self) -> bool {
+        self.background_video.is_some()
+    }
+
+    pub(super) fn play_background_video(&self) -> Result<(), String> {
+        self.background_video
+            .as_ref()
+            .ok_or_else(|| "rtmp_sink has no background video".to_string())?
+            .play();
+        Ok(())
+    }
+
+    pub(super) fn pause_background_video(&self) -> Result<(), String> {
+        self.background_video
+            .as_ref()
+            .ok_or_else(|| "rtmp_sink has no background video".to_string())?
+            .pause();
+        Ok(())
+    }
+
+    pub(super) fn restart_background_video(&self) -> Result<(), String> {
+        self.background_video
+            .as_ref()
+            .ok_or_else(|| "rtmp_sink has no background video".to_string())?
+            .restart();
+        Ok(())
+    }
+
+    pub(super) fn set_background_video_loop(&self, enabled: bool) -> Result<(), String> {
+        self.background_video
+            .as_ref()
+            .ok_or_else(|| "rtmp_sink has no background video".to_string())?
+            .set_loop_enabled(enabled);
+        Ok(())
+    }
+
+    pub(super) fn stop(&self) {
+        if let Some(background_video) = &self.background_video {
+            background_video.stop();
+        }
+        self.stream.stop();
+    }
+
+    pub(super) fn finish(&self) {
+        if let Some(background_video) = &self.background_video {
+            background_video.finish();
+        }
+        self.stream.finish();
+    }
+
+    pub(super) fn stats(&self) -> FfmpegStreamStats {
+        let mut stats = self.stream.stats();
+        if stats.last_error.is_none() {
+            stats.last_error = self
+                .background_video
+                .as_ref()
+                .and_then(|video| video.stats().last_error);
+        }
+        stats
     }
 }
 
@@ -401,7 +520,9 @@ import time
 
 urls = [arg for arg in sys.argv[1:] if arg.startswith("tcp://")]
 if len(urls) < 2:
-    sys.exit(10)
+    sys.stdout.buffer.write(bytes([64]) * 16)
+    sys.stdout.flush()
+    sys.exit(0)
 
 def port(url):
     match = re.search(r":(\d+)(?:\?|$)", url)
@@ -464,6 +585,37 @@ PY
             assert_eq!(right[0], -2.0);
 
             handle.finish();
+        }
+
+        #[test]
+        fn configured_background_video_feeds_stream_backend() {
+            let fake = fake_ffmpeg();
+            let video = fake.parent().unwrap().join("loop.mp4");
+            fs::write(&video, b"fake video").unwrap();
+            let config = RtmpSinkConfig::from_json(
+                &json!({
+                    "ffmpeg_path": fake.to_string_lossy(),
+                    "url": "rtmp://example.test/live/fugue",
+                    "width": 2,
+                    "height": 2,
+                    "fps": 20,
+                    "buffer_frames": 64,
+                    "video_queue_frames": 2,
+                    "background_video": video.to_string_lossy()
+                }),
+                48_000,
+            )
+            .unwrap();
+            let (_sink, handle) = RtmpSink::new_native(config).unwrap();
+            assert!(handle.has_background_video());
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while handle.stats().video_frames_sent == 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+
+            let stats = handle.finish();
+            assert!(stats.video_frames_sent > 0, "{stats:?}");
         }
     }
 }
