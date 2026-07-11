@@ -2,50 +2,98 @@
 //! their gate ends on their own decay — with the reverb fully dry, so the
 //! tail demonstrably comes from the voices, not a room.
 //!
-//! A sequencer plays two 16th-ish notes (C4 then G4) into a polyphonic voice
-//! pool while a second sequencer lane holds the pedal down for the whole
-//! render — the "simple case" from the issue: a gate lane driven into the
-//! voice's `sustain` input. Long after both note gates end, both pitches must
-//! still be sounding above a floor; without the pedal lane the same patch is
-//! silent there.
+//! The pedal model is built from small, explicitly wired modules: a
+//! `sustain` module inside each voice (gate + pedal → gate) and a `divisi`
+//! allocator fanning the note line across an explicit bank of voices. A
+//! sequencer plays two notes (C4 then G4) into the bank while a second
+//! sequencer lane holds the pedal for the whole render — the "simple case"
+//! from the issue: a gate lane driven into the bank's `pedal` input, which
+//! fans out to every voice by explicit connections. Long after both note
+//! gates end, both pitches must still be sounding above a floor; without the
+//! pedal lane the same patch is silent there.
 
 use fugue::RenderEngine;
 
 const SAMPLE_RATE: u32 = 44_100;
 
-/// Two-note invention. The voice's release (20 ms) is far shorter than its
-/// decay (2.5 s), so only the pedal can make a note outlive its gate.
-/// `pedaled` patches the pedal lane's gate into the voice's sustain input.
+/// Two-note invention. Each voice's envelope has sustain level 0 (a struck
+/// voice decays to silence even while held) and a release (20 ms) far
+/// shorter than its decay (2.5 s), so only the pedal can make a note outlive
+/// its gate. `pedaled` patches the pedal lane's gate into the bank's pedal
+/// input.
 fn invention(pedaled: bool) -> String {
     let pedal_connection = if pedaled {
-        r#",{ "from": "seq_pedal", "from_port": "gate", "to": "voice", "to_port": "sustain" }"#
+        r#",{ "from": "seq_pedal", "from_port": "gate", "to": "bank", "to_port": "pedal" }"#
     } else {
         ""
     };
+
+    // The bank: divisi fans the line across four explicit ring_voice
+    // instances; the pedal input fans out to each voice's sustain module.
+    let mut bank_modules = vec![
+        r#"{ "id": "div", "type": "divisi", "config": { "voices": 4 } }"#.to_string(),
+    ];
+    let mut bank_connections = Vec::new();
+    let mut bank_inputs = vec![
+        r#"{ "name": "frequency", "to": "div", "to_port": "frequency" }"#.to_string(),
+        r#"{ "name": "gate", "to": "div", "to_port": "gate" }"#.to_string(),
+    ];
+    for n in 1..=4 {
+        bank_modules.push(format!(r#"{{ "id": "v{n}", "type": "ring_voice" }}"#));
+        bank_connections.push(format!(
+            r#"{{ "from": "div", "from_port": "frequency{n}", "to": "v{n}", "to_port": "frequency" }}"#
+        ));
+        bank_connections.push(format!(
+            r#"{{ "from": "div", "from_port": "gate{n}", "to": "v{n}", "to_port": "gate" }}"#
+        ));
+        bank_connections.push(format!(
+            r#"{{ "from": "v{n}", "from_port": "audio", "to": "mix", "to_port": "in{n}" }}"#
+        ));
+        bank_inputs.push(format!(
+            r#"{{ "name": "pedal", "to": "v{n}", "to_port": "pedal" }}"#
+        ));
+    }
+    bank_modules.push(
+        r#"{ "id": "mix", "type": "mixer", "config": { "channels": 4, "levels": [1.0, 1.0, 1.0, 1.0] } }"#
+            .to_string(),
+    );
+
     format!(
         r#"{{
         "version": "1.0.0",
         "developments": [
             {{
-                "name": "test_voice",
+                "name": "ring_bank",
                 "definition": {{
-                    "modules": [
-                        {{ "id": "osc", "type": "oscillator", "config": {{ "oscillator_type": "sine" }} }},
-                        {{ "id": "env", "type": "adsr",
-                           "config": {{ "attack": 0.002, "decay": 2.5, "sustain": 0.1, "release": 0.02 }} }},
-                        {{ "id": "vca", "type": "vca" }}
+                    "developments": [
+                        {{ "name": "ring_voice", "definition": {{
+                            "modules": [
+                                {{ "id": "osc", "type": "oscillator", "config": {{ "oscillator_type": "sine" }} }},
+                                {{ "id": "sus", "type": "sustain" }},
+                                {{ "id": "env", "type": "adsr",
+                                   "config": {{ "attack": 0.002, "decay": 2.5, "sustain": 0.0, "release": 0.02 }} }},
+                                {{ "id": "vca", "type": "vca" }}
+                            ],
+                            "connections": [
+                                {{ "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" }},
+                                {{ "from": "sus", "from_port": "gate", "to": "env", "to_port": "gate" }},
+                                {{ "from": "env", "from_port": "envelope", "to": "vca", "to_port": "cv" }}
+                            ],
+                            "inputs": [
+                                {{ "name": "frequency", "to": "osc", "to_port": "frequency" }},
+                                {{ "name": "gate", "to": "sus", "to_port": "gate" }},
+                                {{ "name": "pedal", "to": "sus", "to_port": "pedal" }}
+                            ],
+                            "outputs": [
+                                {{ "name": "audio", "from": "vca", "from_port": "audio" }}
+                            ]
+                        }} }}
                     ],
-                    "connections": [
-                        {{ "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" }},
-                        {{ "from": "env", "from_port": "envelope", "to": "vca", "to_port": "cv" }}
-                    ],
-                    "inputs": [
-                        {{ "name": "frequency", "to": "osc", "to_port": "frequency" }},
-                        {{ "name": "gate", "to": "env", "to_port": "gate" }},
-                        {{ "name": "sustain", "to": "env", "to_port": "pedal", "mode": "broadcast" }}
-                    ],
+                    "modules": [ {bank_modules} ],
+                    "connections": [ {bank_connections} ],
+                    "inputs": [ {bank_inputs} ],
                     "outputs": [
-                        {{ "name": "audio", "from": "vca", "from_port": "audio" }}
+                        {{ "name": "audio", "from": "mix", "from_port": "left" }}
                     ]
                 }}
             }}
@@ -62,7 +110,7 @@ fn invention(pedaled: bool) -> String {
                                             {{ "held": true }}, {{ "held": true }}, {{ "held": true }}, {{ "held": true }},
                                             {{ "held": true }}, {{ "held": true }}, {{ "held": true }}, {{ "held": true }},
                                             {{ "held": true }}, {{ "held": true }}, {{ "held": true }}, {{ "held": true }} ]] }} }},
-            {{ "id": "voice", "type": "test_voice", "config": {{ "voices": 4 }} }},
+            {{ "id": "bank", "type": "ring_bank", "config": {{}} }},
             {{ "id": "reverb", "type": "reverb",
                "config": {{ "room_size": 0.85, "decay": 0.8, "damping": 0.35, "wet": 0.0, "dry": 1.0 }} }},
             {{ "id": "dac", "type": "dac", "config": {{ "soft_clip": false }} }}
@@ -70,16 +118,19 @@ fn invention(pedaled: bool) -> String {
         "connections": [
             {{ "from": "clock", "from_port": "gate", "to": "seq_notes", "to_port": "gate" }},
             {{ "from": "clock", "from_port": "gate", "to": "seq_pedal", "to_port": "gate" }},
-            {{ "from": "seq_notes", "from_port": "frequency", "to": "voice", "to_port": "frequency" }},
-            {{ "from": "seq_notes", "from_port": "gate", "to": "voice", "to_port": "gate" }},
-            {{ "from": "voice", "from_port": "audio", "to": "reverb", "to_port": "left" }},
-            {{ "from": "voice", "from_port": "audio", "to": "reverb", "to_port": "right" }},
+            {{ "from": "seq_notes", "from_port": "frequency", "to": "bank", "to_port": "frequency" }},
+            {{ "from": "seq_notes", "from_port": "gate", "to": "bank", "to_port": "gate" }},
+            {{ "from": "bank", "from_port": "audio", "to": "reverb", "to_port": "left" }},
+            {{ "from": "bank", "from_port": "audio", "to": "reverb", "to_port": "right" }},
             {{ "from": "reverb", "from_port": "left", "to": "dac", "to_port": "audio_left" }},
             {{ "from": "reverb", "from_port": "right", "to": "dac", "to_port": "audio_right" }}
-            {}
+            {pedal_connection}
         ]
     }}"#,
-        pedal_connection
+        bank_modules = bank_modules.join(",\n"),
+        bank_connections = bank_connections.join(",\n"),
+        bank_inputs = bank_inputs.join(",\n"),
+        pedal_connection = pedal_connection
     )
 }
 
@@ -115,10 +166,9 @@ fn rms(signal: &[f32]) -> f32 {
 }
 
 /// The pattern opens with a rest so the sequencer has measured the true step
-/// duration before the first note (it estimates the first step from a
-/// default, which would stretch the opening gate). Note gates: C4 spans
-/// 0.25–0.375 s, G4 spans 0.5–0.625 s (240 BPM quarters, gate_length 0.5).
-/// The probe window sits well past both.
+/// duration before the first note. Note gates: C4 spans 0.25–0.375 s, G4
+/// spans 0.5–0.625 s (240 BPM quarters, gate_length 0.5). The probe window
+/// sits well past both.
 const WINDOW_START: f32 = 1.0;
 const WINDOW_END: f32 = 1.4;
 

@@ -68,10 +68,6 @@ impl ModuleFactory for AdsrFactory {
 /// - `decay`: Decay time in seconds (overrides control if connected)
 /// - `sustain`: Sustain level 0.0-1.0 (overrides control if connected)
 /// - `release`: Release time in seconds (overrides control if connected)
-/// - `pedal`: Sustain-pedal gate (>0.0 = dampers up). While high, a gate-off
-///   does not enter release: the note *rings*, continuing its natural decay
-///   past the sustain level toward silence. When the pedal falls, a ringing
-///   note enters release. A note whose gate is still high is unaffected.
 ///
 /// # Outputs
 /// - `envelope`: Envelope value 0.0-1.0 suitable for VCA control
@@ -108,11 +104,6 @@ pub struct Adsr {
     // State
     envelope_value: f32,
     last_gate_high: bool,
-    last_pedal_high: bool,
-    /// The gate has ended but the sustain pedal is holding the note: it keeps
-    /// its natural decay (through the sustain level, toward silence) instead
-    /// of entering release. Cleared by a new gate or by the pedal falling.
-    ringing: bool,
     phase: EnvelopePhase,
 }
 
@@ -141,8 +132,6 @@ impl Adsr {
             outputs: outputs::AdsrOutputs::new(),
             envelope_value: 0.0,
             last_gate_high: false,
-            last_pedal_high: false,
-            ringing: false,
             phase: EnvelopePhase::Idle,
         }
     }
@@ -180,24 +169,12 @@ impl Adsr {
         let gate_high = self.inputs.gate(i) > 0.0;
         let gate_triggered = gate_high && !self.last_gate_high;
         let gate_released = !gate_high && self.last_gate_high;
-        let pedal_high = self.inputs.pedal(i) > 0.0;
-        let pedal_released = !pedal_high && self.last_pedal_high;
 
         // State transitions
         if gate_triggered {
             self.phase = EnvelopePhase::Attack;
-            self.ringing = false;
         } else if gate_released {
-            if pedal_high {
-                // Dampers are up: keep the natural decay instead of releasing.
-                self.ringing = true;
-            } else {
-                self.phase = EnvelopePhase::Release;
-            }
-        }
-        if pedal_released && self.ringing {
             self.phase = EnvelopePhase::Release;
-            self.ringing = false;
         }
 
         // Get effective values
@@ -205,14 +182,11 @@ impl Adsr {
         let decay = self.effective_decay(i);
         let sustain = self.effective_sustain(i);
         let release = self.effective_release(i);
-        // A ringing note decays past the sustain level toward silence.
-        let decay_floor = if self.ringing { 0.0 } else { sustain };
 
         // Process based on phase
         match self.phase {
             EnvelopePhase::Idle => {
                 self.envelope_value = 0.0;
-                self.ringing = false;
             }
             EnvelopePhase::Attack => {
                 let rate = self.rate_per_sample(attack);
@@ -225,23 +199,13 @@ impl Adsr {
             EnvelopePhase::Decay => {
                 let rate = self.rate_per_sample(decay);
                 self.envelope_value -= rate;
-                if self.envelope_value <= decay_floor {
-                    self.envelope_value = decay_floor;
-                    self.phase = if self.ringing {
-                        EnvelopePhase::Idle
-                    } else {
-                        EnvelopePhase::Sustain
-                    };
+                if self.envelope_value <= sustain {
+                    self.envelope_value = sustain;
+                    self.phase = EnvelopePhase::Sustain;
                 }
             }
             EnvelopePhase::Sustain => {
-                if self.ringing {
-                    // The gate ended at the sustain plateau: resume the
-                    // natural decay toward silence.
-                    self.phase = EnvelopePhase::Decay;
-                } else {
-                    self.envelope_value = sustain;
-                }
+                self.envelope_value = sustain;
             }
             EnvelopePhase::Release => {
                 let rate = self.rate_per_sample(release);
@@ -254,7 +218,6 @@ impl Adsr {
         }
 
         self.last_gate_high = gate_high;
-        self.last_pedal_high = pedal_high;
         self.outputs.set(i, self.envelope_value);
     }
 }
@@ -455,131 +418,6 @@ mod tests {
         assert!(adsr.set_control("invalid", 0.5).is_err());
     }
 
-    /// Advances the envelope one sample at a time, so `get_output` (which
-    /// reads frame 0 of the last block) reflects the final sample.
-    fn run(adsr: &mut Adsr, samples: usize) {
-        for _ in 0..samples {
-            adsr.process(1);
-        }
-    }
-
-    #[test]
-    fn test_pedal_holds_natural_decay_past_gate_off() {
-        let mut adsr = Adsr::new(44100);
-        adsr.set_control("attack", 0.0).unwrap();
-        adsr.set_control("decay", 1.0).unwrap();
-        adsr.set_control("sustain", 0.2).unwrap();
-        adsr.set_control("release", 0.001).unwrap();
-
-        // Strike with the pedal down, then lift the key almost immediately.
-        adsr.set_input("pedal", 1.0).unwrap();
-        adsr.set_input("gate", 1.0).unwrap();
-        run(&mut adsr, 10);
-        adsr.set_input("gate", 0.0).unwrap();
-
-        // Long past the 0.001s release time, the note still rings...
-        run(&mut adsr, 4410); // 0.1s
-        let ringing = adsr.get_output("envelope").unwrap();
-        assert!(
-            ringing > 0.2,
-            "pedal-held note should still ring well above silence, got {}",
-            ringing
-        );
-
-        // ...and it decays *through* the sustain level toward silence.
-        run(&mut adsr, 2 * 44100);
-        assert_eq!(adsr.get_output("envelope").unwrap(), 0.0);
-    }
-
-    #[test]
-    fn test_pedal_up_releases_ringing_note() {
-        let mut adsr = Adsr::new(44100);
-        adsr.set_control("attack", 0.0).unwrap();
-        adsr.set_control("decay", 10.0).unwrap();
-        adsr.set_control("sustain", 0.2).unwrap();
-        adsr.set_control("release", 0.01).unwrap();
-
-        adsr.set_input("pedal", 1.0).unwrap();
-        adsr.set_input("gate", 1.0).unwrap();
-        run(&mut adsr, 10);
-        adsr.set_input("gate", 0.0).unwrap();
-        run(&mut adsr, 100);
-        let before = adsr.get_output("envelope").unwrap();
-        assert!(before > 0.9, "slow decay should still be near peak");
-
-        // Pedal up: the ringing note releases (0.01s) instead of decaying
-        // for the remaining ~10s.
-        adsr.set_input("pedal", 0.0).unwrap();
-        run(&mut adsr, (0.01 * 44100.0) as usize + 10);
-        assert_eq!(adsr.get_output("envelope").unwrap(), 0.0);
-    }
-
-    #[test]
-    fn test_pedal_does_not_affect_held_gate() {
-        let mut adsr = Adsr::new(44100);
-        adsr.set_control("attack", 0.0).unwrap();
-        adsr.set_control("decay", 0.0).unwrap();
-        adsr.set_control("sustain", 0.5).unwrap();
-
-        // Key held through a pedal up/down cycle: stays at sustain.
-        adsr.set_input("gate", 1.0).unwrap();
-        adsr.set_input("pedal", 1.0).unwrap();
-        run(&mut adsr, 100);
-        adsr.set_input("pedal", 0.0).unwrap();
-        run(&mut adsr, 100);
-        let envelope = adsr.get_output("envelope").unwrap();
-        assert!((envelope - 0.5).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_pedal_sustain_from_plateau_resumes_decay() {
-        let mut adsr = Adsr::new(44100);
-        adsr.set_control("attack", 0.0).unwrap();
-        adsr.set_control("decay", 0.01).unwrap();
-        adsr.set_control("sustain", 0.5).unwrap();
-        adsr.set_control("release", 10.0).unwrap();
-
-        // Reach the sustain plateau with the key down.
-        adsr.set_input("gate", 1.0).unwrap();
-        run(&mut adsr, 1000);
-        let plateau = adsr.get_output("envelope").unwrap();
-        assert!((plateau - 0.5).abs() < 0.01);
-
-        // Lift the key with the pedal down: the note leaves the plateau and
-        // decays to silence at the (fast) decay rate, not the 10s release.
-        adsr.set_input("pedal", 1.0).unwrap();
-        run(&mut adsr, 1);
-        adsr.set_input("gate", 0.0).unwrap();
-        run(&mut adsr, 1000);
-        assert_eq!(adsr.get_output("envelope").unwrap(), 0.0);
-    }
-
-    #[test]
-    fn test_retrigger_while_ringing_clears_pedal_hold() {
-        let mut adsr = Adsr::new(44100);
-        adsr.set_control("attack", 0.0).unwrap();
-        adsr.set_control("decay", 10.0).unwrap();
-        adsr.set_control("sustain", 0.2).unwrap();
-        adsr.set_control("release", 0.01).unwrap();
-
-        // Ring a note on the pedal, then strike again and release the key
-        // after the pedal is already up: normal release applies.
-        adsr.set_input("pedal", 1.0).unwrap();
-        adsr.set_input("gate", 1.0).unwrap();
-        run(&mut adsr, 10);
-        adsr.set_input("gate", 0.0).unwrap();
-        run(&mut adsr, 10);
-        adsr.set_input("gate", 1.0).unwrap();
-        run(&mut adsr, 10);
-        adsr.set_input("pedal", 0.0).unwrap();
-        run(&mut adsr, 10);
-        let held = adsr.get_output("envelope").unwrap();
-        assert!(held > 0.9, "retriggered note should be near peak");
-        adsr.set_input("gate", 0.0).unwrap();
-        run(&mut adsr, (0.01 * 44100.0) as usize + 10);
-        assert_eq!(adsr.get_output("envelope").unwrap(), 0.0);
-    }
-
     #[test]
     fn test_adsr_signal_overrides_control() {
         let mut adsr = Adsr::new(44100);
@@ -596,4 +434,3 @@ mod tests {
         assert_eq!(adsr.effective_attack(0), 0.5);
     }
 }
-

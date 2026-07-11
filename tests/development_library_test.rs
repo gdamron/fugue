@@ -40,11 +40,9 @@ fn voice_library_presets_load_as_standalone_developments() {
         );
         assert_eq!(invention.inputs[0].name, "frequency");
         assert_eq!(invention.inputs[1].name, "gate");
-        assert_eq!(invention.inputs[2].name, "sustain");
         assert_eq!(
-            invention.inputs[2].mode,
-            Some(fugue::DevelopmentInputMode::Broadcast),
-            "{file_name} sustain must broadcast so the pedal reaches ringing voices"
+            invention.inputs[2].name, "pedal",
+            "{file_name} should route a pedal input to its sustain module"
         );
         assert_eq!(
             invention.outputs.len(),

@@ -344,7 +344,15 @@ impl InventionBuilder {
         for development in &invention.developments {
             {
                 let mut registered = self.registered.lock().unwrap();
-                if registered.contains(&development.name) {
+                // The shared `registered` set is a guard across the whole
+                // build chain, but each nested builder works on a registry
+                // *snapshot*: a development registered by a sibling instance
+                // is in the set without being in this registry, so it must
+                // still be (re-)registered here. Skip only when this registry
+                // already carries the factory.
+                if registered.contains(&development.name)
+                    && self.registry.has_type(&development.name)
+                {
                     continue;
                 }
                 registered.insert(development.name.clone());

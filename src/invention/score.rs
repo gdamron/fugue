@@ -59,7 +59,8 @@
 //! whose release gap before the new onset is the pedal lift. The lane is
 //! consumed like any other: splice it into a sequencer via `$asset` path
 //! `/pedal/N` and patch the sequencer's `gate` output into a voice's
-//! `sustain` input. Text instructions ("with pedal", "con pedale") name no
+//! `pedal` input (the `sustain` module's pedal port). Text instructions
+//! ("with pedal", "con pedale") name no
 //! spans and are not encoded — realizing them is interpretation, which lives
 //! in the invention.
 //!

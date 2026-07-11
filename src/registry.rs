@@ -120,9 +120,9 @@ impl Default for ModuleRegistry {
     fn default() -> Self {
         use crate::modules::{
             AdsrFactory, AgentFactory, AudioFileSinkFactory, CellSequencerFactory, ClockFactory,
-            CodeFactory, ControlSchedulerFactory, DacFactory, FilterFactory, LfoFactory,
-            MelodyFactory, MixerFactory, OscillatorFactory, ReverbFactory, SamplePlayerFactory,
-            StepSequencerFactory, VcaFactory,
+            CodeFactory, ControlSchedulerFactory, DacFactory, DivisiFactory, FilterFactory,
+            LfoFactory, MelodyFactory, MixerFactory, OscillatorFactory, ReverbFactory,
+            SamplePlayerFactory, StepSequencerFactory, VcaFactory,
         };
 
         let mut reg = Self::new();
@@ -130,6 +130,7 @@ impl Default for ModuleRegistry {
         reg.register(AudioFileSinkFactory);
         reg.register(CellSequencerFactory);
         reg.register(ClockFactory);
+        reg.register(DivisiFactory);
         reg.register(CodeFactory);
         reg.register(ControlSchedulerFactory);
         reg.register(OscillatorFactory);
@@ -144,6 +145,7 @@ impl Default for ModuleRegistry {
         reg.register(crate::modules::RtmpSinkFactory);
         reg.register(SamplePlayerFactory);
         reg.register(StepSequencerFactory);
+        reg.register(crate::modules::sustain::SustainFactory);
         reg.register(DacFactory);
         #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
         reg.register(crate::WasmModuleFactory);

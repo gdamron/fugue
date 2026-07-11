@@ -29,6 +29,10 @@
       }
     },
     {
+      "id": "sus",
+      "type": "sustain"
+    },
+    {
       "id": "env",
       "type": "adsr",
       "config": {
@@ -67,6 +71,12 @@
       "from_port": "envelope",
       "to": "vca",
       "to_port": "cv"
+    },
+    {
+      "from": "sus",
+      "from_port": "gate",
+      "to": "env",
+      "to_port": "gate"
     }
   ],
   "inputs": [
@@ -77,14 +87,13 @@
     },
     {
       "name": "gate",
-      "to": "env",
+      "to": "sus",
       "to_port": "gate"
     },
     {
-      "name": "sustain",
-      "to": "env",
-      "to_port": "pedal",
-      "mode": "broadcast"
+      "name": "pedal",
+      "to": "sus",
+      "to_port": "pedal"
     }
   ],
   "outputs": [
