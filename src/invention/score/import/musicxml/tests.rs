@@ -203,21 +203,183 @@ fn all_cells_share_the_measure_grid_length() {
     assert_eq!(shape(&score.cells[1]), ". . -12 H");
 }
 
+/// A grace-note element, no duration (it occupies no grid time).
+fn grace_note(pitch: &str, octave: i32) -> String {
+    format!(
+        "<note><grace/><pitch><step>{}</step><octave>{}</octave></pitch><voice>1</voice></note>",
+        pitch, octave
+    )
+}
+
+fn grace_offsets(step: &Step) -> Vec<i8> {
+    step.grace.iter().collect()
+}
+
 #[test]
-fn skips_grace_notes_without_consuming_grid_time() {
+fn captures_grace_notes_without_consuming_grid_time() {
     let (score, report) = convert(&format!(
         r#"<measure number="1">
           <attributes><divisions>1</divisions>
             <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
-          <note><grace/><pitch><step>B</step><octave>4</octave></pitch>
-            <voice>1</voice></note>
+          {}
+          {}{}
+        </measure>"#,
+        grace_note("B", 4),
+        note("C", 4, None, 1, ""),
+        note("D", 4, None, 1, "")
+    ));
+    assert_eq!(report.grace_notes, 1);
+    assert_eq!(report.grace_notes_skipped, 0);
+    // The grid is untouched; the grace rides on the step it decorates.
+    assert_eq!(shape(&score.cells[0]), "0 2");
+    assert_eq!(grace_offsets(&score.cells[0][0]), vec![11]); // B4 = midi 71
+    assert!(score.cells[0][1].grace.is_empty());
+}
+
+#[test]
+fn double_grace_chain_keeps_played_order() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {}
+          {}
+          {}{}
+        </measure>"#,
+        grace_note("A", 4),
+        grace_note("B", 4),
+        note("C", 5, None, 1, ""),
+        note("D", 5, None, 1, "")
+    ));
+    assert_eq!(report.grace_notes, 2);
+    assert_eq!(grace_offsets(&score.cells[0][0]), vec![9, 11]);
+}
+
+#[test]
+fn grace_before_rest_warns_and_skips() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {}
+          <note><rest/><duration>1</duration><voice>1</voice></note>
+          {}
+        </measure>"#,
+        grace_note("B", 4),
+        note("C", 4, None, 1, "")
+    ));
+    assert_eq!(report.grace_notes, 0);
+    assert_eq!(report.grace_notes_skipped, 1);
+    assert!(report.warnings.iter().any(|w| w.contains("precede a rest")));
+    assert!(score.cells[0][1].grace.is_empty());
+}
+
+#[test]
+fn grace_at_part_end_warns_and_skips() {
+    let (_, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {}{}
+          {}
+        </measure>"#,
+        note("C", 4, None, 1, ""),
+        note("D", 4, None, 1, ""),
+        grace_note("B", 4)
+    ));
+    assert_eq!(report.grace_notes, 0);
+    assert_eq!(report.grace_notes_skipped, 1);
+    assert!(report
+        .warnings
+        .iter()
+        .any(|w| w.contains("no principal note")));
+}
+
+#[test]
+fn cue_notes_are_still_skipped() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          <note><cue/><pitch><step>B</step><octave>4</octave></pitch>
+            <duration>1</duration><voice>1</voice></note>
           {}{}
         </measure>"#,
         note("C", 4, None, 1, ""),
         note("D", 4, None, 1, "")
     ));
+    assert_eq!(report.grace_notes, 0);
     assert_eq!(report.grace_notes_skipped, 1);
     assert_eq!(shape(&score.cells[0]), "0 2");
+}
+
+#[test]
+fn grace_attaches_across_a_barline() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>1</beats><beat-type>4</beat-type></time></attributes>
+          {}
+          {}
+        </measure>
+        <measure number="2">
+          {}
+        </measure>"#,
+        note("C", 4, None, 1, ""),
+        grace_note("B", 4),
+        note("D", 4, None, 1, "")
+    ));
+    assert_eq!(report.grace_notes, 1);
+    assert_eq!(grace_offsets(&score.cells[0][1]), vec![11]);
+}
+
+#[test]
+fn grace_into_a_tie_continuation_is_skipped() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>1</beats><beat-type>4</beat-type></time></attributes>
+          {}
+        </measure>
+        <measure number="2">
+          {}
+          {}
+        </measure>"#,
+        note("C", 4, None, 1, r#"<tie type="start"/>"#),
+        grace_note("B", 4),
+        note("C", 4, None, 1, r#"<tie type="stop"/>"#)
+    ));
+    assert_eq!(report.grace_notes, 0);
+    assert_eq!(report.grace_notes_skipped, 1);
+    assert!(report
+        .warnings
+        .iter()
+        .any(|w| w.contains("tie continuation")));
+    assert_eq!(shape(&score.cells[0]), "0 H");
+    assert!(score.cells[0][0].grace.is_empty());
+}
+
+#[test]
+fn long_grace_chain_truncates_with_warning() {
+    let (score, report) = convert(&format!(
+        r#"<measure number="1">
+          <attributes><divisions>1</divisions>
+            <time><beats>2</beats><beat-type>4</beat-type></time></attributes>
+          {}{}{}{}{}
+          {}{}
+        </measure>"#,
+        grace_note("C", 4),
+        grace_note("D", 4),
+        grace_note("E", 4),
+        grace_note("F", 4),
+        grace_note("G", 4),
+        note("A", 4, None, 1, ""),
+        note("B", 4, None, 1, "")
+    ));
+    assert_eq!(report.grace_notes, 4);
+    assert_eq!(report.grace_notes_skipped, 1);
+    assert!(report.warnings.iter().any(|w| w.contains("truncated")));
+    assert_eq!(score.cells[0][0].grace.len(), 4);
 }
 
 #[test]
@@ -289,8 +451,16 @@ fn tempo_changes_compile_into_a_tempo_map() {
     assert_eq!(
         score.tempo_map,
         vec![
-            TempoPoint { at_step: 0, bpm: 60.0, ramp: None },
-            TempoPoint { at_step: 1, bpm: 124.0, ramp: None },
+            TempoPoint {
+                at_step: 0,
+                bpm: 60.0,
+                ramp: None
+            },
+            TempoPoint {
+                at_step: 1,
+                bpm: 124.0,
+                ramp: None
+            },
         ]
     );
 }
@@ -492,10 +662,7 @@ fn notes_before_the_first_mark_carry_no_amplitude() {
         dynamic("mf"),
         note("D", 4, None, 1, "")
     ));
-    assert_eq!(
-        amplitudes(&score.cells[0]),
-        vec![None, Some(80.0 / 127.0)]
-    );
+    assert_eq!(amplitudes(&score.cells[0]), vec![None, Some(80.0 / 127.0)]);
 }
 
 #[test]
@@ -612,7 +779,11 @@ fn accent_marks_warn_and_use_sound_dynamics_fallback() {
         d = note("D", 4, None, 1, "")
     ));
     assert_eq!(report.dynamic_marks, 1);
-    assert!(report.warnings.iter().any(|w| w.contains("'sf'")), "{:?}", report.warnings);
+    assert!(
+        report.warnings.iter().any(|w| w.contains("'sf'")),
+        "{:?}",
+        report.warnings
+    );
     let sfz = 0.9 * 100.0 / 127.0;
     assert_eq!(amplitudes(&score.cells[0]), vec![Some(sfz), Some(sfz)]);
 }
@@ -632,10 +803,7 @@ fn dynamics_serialize_and_validate_as_score_v1() {
     let json = score.to_json().expect("serializes");
     assert!(json.contains("\"amplitude\""), "{}", json);
     let reparsed = Score::from_json(&json).expect("round-trips through validation");
-    assert_eq!(
-        amplitudes(&reparsed.cells[0]),
-        amplitudes(&score.cells[0])
-    );
+    assert_eq!(amplitudes(&reparsed.cells[0]), amplitudes(&score.cells[0]));
 }
 
 /// A `<direction>` carrying one `<pedal>` element of the given type.

@@ -44,8 +44,7 @@ fn encode_test_flac(sample_rate: u32, channels: usize, frames: &[[f32; 2]]) -> V
     let config = flacenc::config::Encoder::default().into_verified().unwrap();
     let source =
         flacenc::source::MemSource::from_samples(&samples, channels, 16, sample_rate as usize);
-    let stream =
-        flacenc::encode_with_fixed_block_size(&config, source, config.block_size).unwrap();
+    let stream = flacenc::encode_with_fixed_block_size(&config, source, config.block_size).unwrap();
     let mut sink = flacenc::bitsink::ByteSink::new();
     stream.write(&mut sink).unwrap();
     sink.as_slice().to_vec()
@@ -183,9 +182,13 @@ fn test_sample_player_resamples_on_load() {
 /// Counts how many `process()` calls it takes to reach the end-of-sample
 /// gate at a given pitch ratio.
 fn frames_to_end(path: &std::path::Path, pitch_ratio: f32) -> usize {
-    let controls =
-        SamplePlayerControls::new(44_100, Some(path.to_str().unwrap()), Some(true), Some(false))
-            .unwrap();
+    let controls = SamplePlayerControls::new(
+        44_100,
+        Some(path.to_str().unwrap()),
+        Some(true),
+        Some(false),
+    )
+    .unwrap();
     controls
         .set_control("pitch_ratio", ControlValue::Number(pitch_ratio))
         .unwrap();
@@ -250,7 +253,11 @@ fn test_sample_player_pitch_input_overrides_control() {
     }
 
     // 64 frames at 2x ≈ 32 process calls, well under the 64 a 1x read needs.
-    assert!(count <= 40, "expected ~32 frames with pitch CV 2x, got {}", count);
+    assert!(
+        count <= 40,
+        "expected ~32 frames with pitch CV 2x, got {}",
+        count
+    );
 
     let _ = std::fs::remove_file(path);
 }
@@ -260,13 +267,17 @@ fn test_sample_player_caches_resampled_buffer() {
     let path = write_test_wav(22_050, 1, &[[0.0, 0.0], [0.5, 0.0], [1.0, 0.0], [0.5, 0.0]]);
     let source = path.to_str().unwrap();
 
-    let first =
-        SamplePlayerControls::new(44_100, Some(source), Some(false), Some(false)).unwrap();
-    let second =
-        SamplePlayerControls::new(44_100, Some(source), Some(false), Some(false)).unwrap();
+    let first = SamplePlayerControls::new(44_100, Some(source), Some(false), Some(false)).unwrap();
+    let second = SamplePlayerControls::new(44_100, Some(source), Some(false), Some(false)).unwrap();
 
     let first_buf = first.shared.lock().unwrap().pending_sample.clone().unwrap();
-    let second_buf = second.shared.lock().unwrap().pending_sample.clone().unwrap();
+    let second_buf = second
+        .shared
+        .lock()
+        .unwrap()
+        .pending_sample
+        .clone()
+        .unwrap();
 
     // Same source + target rate must hand back the same cached Arc.
     assert!(Arc::ptr_eq(&first_buf, &second_buf));
@@ -289,9 +300,13 @@ fn test_sample_player_loads_flac() {
     let path = temp_flac_path("load");
     std::fs::write(&path, encode_test_flac(44_100, 2, &frames)).unwrap();
 
-    let controls =
-        SamplePlayerControls::new(44_100, Some(path.to_str().unwrap()), Some(false), Some(false))
-            .unwrap();
+    let controls = SamplePlayerControls::new(
+        44_100,
+        Some(path.to_str().unwrap()),
+        Some(false),
+        Some(false),
+    )
+    .unwrap();
 
     let shared = controls.shared.lock().unwrap();
     let sample = shared.pending_sample.as_ref().unwrap();
@@ -314,9 +329,13 @@ fn test_sample_player_detects_flac_by_header() {
     let path = temp_wav_path("flac-as-wav");
     std::fs::write(&path, encode_test_flac(44_100, 1, &frames)).unwrap();
 
-    let controls =
-        SamplePlayerControls::new(44_100, Some(path.to_str().unwrap()), Some(false), Some(false))
-            .unwrap();
+    let controls = SamplePlayerControls::new(
+        44_100,
+        Some(path.to_str().unwrap()),
+        Some(false),
+        Some(false),
+    )
+    .unwrap();
 
     let shared = controls.shared.lock().unwrap();
     let sample = shared.pending_sample.as_ref().unwrap();

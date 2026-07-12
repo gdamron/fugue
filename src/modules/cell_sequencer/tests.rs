@@ -598,12 +598,14 @@ fn test_cells_hold_long_sequences() {
 fn test_cell_sequencer_velocity_follows_step_amplitude() {
     let mut soft = Step::note(0);
     soft.amplitude = Some(0.25);
-    let mut seq = CellSequencer::new(10).with_steps(4).with_sequences(vec![vec![
-        soft,
-        Step::held(),
-        Step::rest(),
-        Step::note(7), // No amplitude: velocity returns to full.
-    ]]);
+    let mut seq = CellSequencer::new(10)
+        .with_steps(4)
+        .with_sequences(vec![vec![
+            soft,
+            Step::held(),
+            Step::rest(),
+            Step::note(7), // No amplitude: velocity returns to full.
+        ]]);
 
     assert_eq!(seq.get_output("velocity").unwrap(), 1.0);
 
@@ -658,5 +660,336 @@ fn test_first_step_overrun_still_retriggers_next_note() {
         rising_edges, 2,
         "both opening notes must produce a rising edge even though the \
          first step's duration was over-estimated"
+    );
+}
+
+// --- Grace-note realization (FUG-190) ---
+//
+// Harness: sample rate 1000 Hz so grace_duration_ms maps 1:1 to samples
+// (default 60 ms = 60 samples), with a synthetic clock driven one sample at
+// a time so gate/frequency/velocity streams can be inspected per sample.
+
+/// Runs `edges` clock edges of `period` samples each, recording
+/// (frequency, gate, velocity) per sample.
+fn run_grace_clock(seq: &mut CellSequencer, period: usize, edges: usize) -> Vec<(f32, f32, f32)> {
+    let mut stream = Vec::with_capacity(period * edges);
+    for _ in 0..edges {
+        for s in 0..period {
+            let gate_in = if s < 2 { 1.0 } else { 0.0 };
+            seq.set_input("gate", gate_in).unwrap();
+            seq.process(1);
+            stream.push((
+                seq.get_output("frequency").unwrap(),
+                seq.get_output("gate").unwrap(),
+                seq.get_output("velocity").unwrap(),
+            ));
+        }
+    }
+    stream
+}
+
+fn rising_edges(stream: &[(f32, f32, f32)], range: std::ops::Range<usize>) -> Vec<usize> {
+    let mut edges = Vec::new();
+    for t in range {
+        let prev = if t == 0 { 0.0 } else { stream[t - 1].1 };
+        if stream[t].1 > 0.5 && prev <= 0.5 {
+            edges.push(t);
+        }
+    }
+    edges
+}
+
+fn freq_of(offset: i8) -> f32 {
+    Note::new((DEFAULT_BASE_NOTE as i16 + offset as i16) as u8).frequency()
+}
+
+#[test]
+fn test_grace_before_beat_two_attacks_principal_on_grid() {
+    let mut seq = CellSequencer::new(1000)
+        .with_steps(4)
+        .with_sequences(vec![vec![
+            Step::note(0),
+            Step::rest(),
+            Step::note_with_grace(10, &[8]),
+            Step::rest(),
+        ]]);
+
+    let stream = run_grace_clock(&mut seq, 200, 4);
+
+    // The grace steals the tail of the rest step; the principal lands
+    // exactly on its clock edge (t = 400).
+    let onsets = rising_edges(&stream, 300..600);
+    assert_eq!(
+        onsets.len(),
+        2,
+        "grace + principal must be two distinct attacks, got {:?}",
+        onsets
+    );
+    let (grace_onset, principal_onset) = (onsets[0], onsets[1]);
+    assert_eq!(principal_onset, 400, "principal must stay on the grid");
+    assert!(
+        (330..360).contains(&grace_onset),
+        "grace (60 samples) starts near the tail of the previous step, got {}",
+        grace_onset
+    );
+
+    // Pitches: the grace sounds its own offset, then the principal's.
+    assert!((stream[grace_onset].0 - freq_of(8)).abs() < 0.01);
+    assert!((stream[principal_onset + 5].0 - freq_of(10)).abs() < 0.01);
+
+    // A real multi-sample release gap separates grace from principal.
+    let gap: Vec<usize> = (grace_onset..principal_onset)
+        .filter(|&t| stream[t].1 <= 0.5)
+        .collect();
+    assert!(
+        gap.len() >= 2,
+        "grace must release with a real gap before the principal"
+    );
+}
+
+#[test]
+fn test_grace_on_beat_delays_principal() {
+    let seq_ctrl = CellSequencerControls::new();
+    seq_ctrl.set_grace_placement("on_beat").unwrap();
+    seq_ctrl.set_sequences(vec![vec![
+        Step::note(0),
+        Step::rest(),
+        Step::note_with_grace(10, &[8]),
+        Step::rest(),
+    ]]);
+    seq_ctrl.set_steps(4);
+    let mut seq = CellSequencer::new_with_controls(1000, seq_ctrl);
+
+    let stream = run_grace_clock(&mut seq, 200, 4);
+
+    // The chain starts at the decorated step's edge; the principal follows
+    // once the 60-sample grace ends.
+    let onsets = rising_edges(&stream, 390..600);
+    assert_eq!(onsets.len(), 2, "got {:?}", onsets);
+    assert_eq!(onsets[0], 400, "on_beat chain starts at the step edge");
+    assert!(
+        (455..470).contains(&onsets[1]),
+        "principal is delayed by the grace duration, got {}",
+        onsets[1]
+    );
+    assert!((stream[onsets[0]].0 - freq_of(8)).abs() < 0.01);
+    assert!((stream[onsets[1] + 5].0 - freq_of(10)).abs() < 0.01);
+}
+
+#[test]
+fn test_grace_cold_start_falls_back_to_on_beat() {
+    // Step 0 has no previous step to steal from: the chain plays from the
+    // first edge and the principal follows (still two attacks).
+    let mut seq = CellSequencer::new(1000)
+        .with_steps(2)
+        .with_sequences(vec![vec![Step::note_with_grace(10, &[8]), Step::rest()]]);
+
+    let stream = run_grace_clock(&mut seq, 200, 2);
+
+    let onsets = rising_edges(&stream, 0..200);
+    assert_eq!(onsets.len(), 2, "got {:?}", onsets);
+    assert_eq!(onsets[0], 0);
+    assert!((stream[onsets[0]].0 - freq_of(8)).abs() < 0.01);
+    assert!((stream[onsets[1] + 5].0 - freq_of(10)).abs() < 0.01);
+}
+
+#[test]
+fn test_grace_chain_plays_in_order() {
+    let mut seq = CellSequencer::new(1000)
+        .with_steps(4)
+        .with_sequences(vec![vec![
+            Step::note(0),
+            Step::rest(),
+            Step::note_with_grace(12, &[-24, -12]),
+            Step::rest(),
+        ]]);
+
+    let stream = run_grace_clock(&mut seq, 200, 4);
+
+    // Two graces clamp to 50 samples each (half the 200-sample step / 2
+    // graces), so the chain occupies t = 300..400 ahead of the principal.
+    let onsets = rising_edges(&stream, 250..600);
+    assert_eq!(onsets.len(), 3, "two graces + principal, got {:?}", onsets);
+    assert!((stream[onsets[0]].0 - freq_of(-24)).abs() < 0.01);
+    assert!((stream[onsets[1]].0 - freq_of(-12)).abs() < 0.01);
+    assert!((stream[onsets[2] + 5].0 - freq_of(12)).abs() < 0.01);
+    assert_eq!(onsets[2], 400, "principal stays on the grid");
+}
+
+#[test]
+fn test_grace_velocity_scales_from_decorated_step() {
+    let mut decorated = Step::note_with_grace(10, &[8]);
+    decorated.amplitude = Some(0.5);
+    let mut seq = CellSequencer::new(1000)
+        .with_steps(4)
+        .with_sequences(vec![vec![
+            Step::note(0),
+            Step::rest(),
+            decorated,
+            Step::rest(),
+        ]]);
+
+    let stream = run_grace_clock(&mut seq, 200, 4);
+
+    let onsets = rising_edges(&stream, 300..600);
+    assert_eq!(onsets.len(), 2);
+    // Grace velocity = decorated amplitude (0.5) x grace_velocity (0.8).
+    assert!((stream[onsets[0] + 5].2 - 0.4).abs() < 1e-6);
+    // The principal restores the step's own amplitude.
+    assert!((stream[onsets[1] + 5].2 - 0.5).abs() < 1e-6);
+}
+
+#[test]
+fn test_grace_truncated_by_early_edge_principal_wins() {
+    // The chain is pre-scheduled against the measured 200-sample step, but
+    // the decorated step's edge arrives early (accelerando): the chain is
+    // cut short and the principal still retriggers.
+    let mut seq = CellSequencer::new(1000)
+        .with_steps(4)
+        .with_sequences(vec![vec![
+            Step::note(0),
+            Step::rest(),
+            Step::note_with_grace(10, &[8]),
+            Step::rest(),
+        ]]);
+
+    // Edge 0 at t = 0 (step 0), edge 1 at t = 200 (rest step; the chain is
+    // pre-scheduled to start at t ≈ 339 against the measured 200-sample
+    // step), then the decorated step's edge arrives early at t = 350 —
+    // mid-chain.
+    fn drive(seq: &mut CellSequencer, samples: usize, stream: &mut Vec<(f32, f32, f32)>) {
+        for s in 0..samples {
+            let gate_in = if s < 2 { 1.0 } else { 0.0 };
+            seq.set_input("gate", gate_in).unwrap();
+            seq.process(1);
+            stream.push((
+                seq.get_output("frequency").unwrap(),
+                seq.get_output("gate").unwrap(),
+                seq.get_output("velocity").unwrap(),
+            ));
+        }
+    }
+    let mut stream = Vec::new();
+    drive(&mut seq, 200, &mut stream);
+    drive(&mut seq, 150, &mut stream);
+    drive(&mut seq, 150, &mut stream);
+
+    let onsets = rising_edges(&stream, 300..500);
+    assert_eq!(onsets.len(), 2, "grace onset + principal, got {:?}", onsets);
+    assert!(
+        (330..350).contains(&onsets[0]),
+        "chain starts as pre-scheduled, got {}",
+        onsets[0]
+    );
+    assert!(
+        (350..=352).contains(&onsets[1]),
+        "principal must retrigger right at the early edge (after the forced dip), got {}",
+        onsets[1]
+    );
+    assert!((stream[onsets[1] + 5].0 - freq_of(10)).abs() < 0.01);
+}
+
+#[test]
+fn test_grace_clamps_to_fast_clock() {
+    // 40-sample steps: a 60-sample grace shrinks to half a step (20).
+    let mut seq = CellSequencer::new(1000)
+        .with_steps(4)
+        .with_sequences(vec![vec![
+            Step::note(0),
+            Step::rest(),
+            Step::note_with_grace(10, &[8]),
+            Step::rest(),
+        ]]);
+
+    let stream = run_grace_clock(&mut seq, 40, 4);
+
+    // Edges land at t = 0, 40, 80, 120; the decorated step's edge is t = 80.
+    let onsets = rising_edges(&stream, 50..120);
+    assert_eq!(onsets.len(), 2, "got {:?}", onsets);
+    assert_eq!(onsets[1], 80, "principal stays on the grid");
+    assert!(
+        onsets[1] - onsets[0] <= 21,
+        "chain must clamp inside half a step, got onset {} before principal",
+        onsets[0]
+    );
+    assert!((stream[onsets[0]].0 - freq_of(8)).abs() < 0.01);
+}
+
+#[test]
+fn test_held_chain_releases_before_grace() {
+    let mut seq = CellSequencer::new(1000)
+        .with_steps(4)
+        .with_sequences(vec![vec![
+            Step::note(0),
+            Step::held(),
+            Step::note_with_grace(7, &[5]),
+            Step::rest(),
+        ]]);
+
+    let stream = run_grace_clock(&mut seq, 200, 4);
+
+    let onsets = rising_edges(&stream, 250..600);
+    assert_eq!(onsets.len(), 2, "grace + principal, got {:?}", onsets);
+    let grace_onset = onsets[0];
+    // The held step (which would otherwise sustain toward the boundary)
+    // must be silent for a real gap before the grace onset.
+    assert!(stream[grace_onset - 1].1 <= 0.5);
+    assert!(stream[grace_onset - 2].1 <= 0.5);
+    assert!((stream[grace_onset].0 - freq_of(5)).abs() < 0.01);
+    assert_eq!(onsets[1], 400);
+}
+
+#[test]
+fn test_grace_realization_is_deterministic() {
+    let make = || {
+        CellSequencer::new(1000)
+            .with_steps(4)
+            .with_sequences(vec![vec![
+                Step::note(0),
+                Step::rest(),
+                Step::note_with_grace(10, &[8, 3]),
+                Step::rest(),
+            ]])
+    };
+    let mut a = make();
+    let mut b = make();
+    let stream_a = run_grace_clock(&mut a, 200, 4);
+    let stream_b = run_grace_clock(&mut b, 200, 4);
+    assert_eq!(stream_a, stream_b);
+}
+
+#[test]
+fn test_grace_controls_round_trip() {
+    let mut seq = CellSequencer::new(1000);
+    seq.set_control("grace_duration_ms", 80.0).unwrap();
+    assert_eq!(seq.get_control("grace_duration_ms").unwrap(), 80.0);
+    seq.set_control("grace_velocity", 0.5).unwrap();
+    assert_eq!(seq.get_control("grace_velocity").unwrap(), 0.5);
+    seq.set_control("grace_placement", 1.0).unwrap();
+    assert_eq!(seq.get_control("grace_placement").unwrap(), 1.0);
+
+    // String surface: placement round-trips as before | on_beat.
+    let ctrl = CellSequencerControls::new();
+    ctrl.set_control("grace_placement", "on_beat".into())
+        .unwrap();
+    assert_eq!(
+        ctrl.get_control("grace_placement")
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "on_beat"
+    );
+    assert!(ctrl
+        .set_control("grace_placement", "sideways".into())
+        .is_err());
+    // Duration clamps to its range.
+    ctrl.set_control("grace_duration_ms", 1000.0_f32.into())
+        .unwrap();
+    assert_eq!(
+        ctrl.get_control("grace_duration_ms")
+            .unwrap()
+            .as_number()
+            .unwrap(),
+        200.0
     );
 }

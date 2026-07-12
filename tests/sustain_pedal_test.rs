@@ -30,9 +30,8 @@ fn invention(pedaled: bool) -> String {
 
     // The bank: divisi fans the line across four explicit ring_voice
     // instances; the pedal input fans out to each voice's sustain module.
-    let mut bank_modules = vec![
-        r#"{ "id": "div", "type": "divisi", "config": { "voices": 4 } }"#.to_string(),
-    ];
+    let mut bank_modules =
+        vec![r#"{ "id": "div", "type": "divisi", "config": { "voices": 4 } }"#.to_string()];
     let mut bank_connections = Vec::new();
     let mut bank_inputs = vec![
         r#"{ "name": "frequency", "to": "div", "to_port": "frequency" }"#.to_string(),

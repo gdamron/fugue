@@ -11,6 +11,28 @@
 //! into a voice's level/brightness (e.g. a VCA `cv`) to realize the score's
 //! dynamic marks.
 //!
+//! # Grace notes
+//!
+//! A step's `grace` chain (see the score module docs) is realized as short
+//! separate attacks on the same mono frequency/gate/velocity stream, each
+//! followed by a real release gap so downstream envelopes and voice
+//! allocators (`divisi`) see distinct rising edges. Realization is a
+//! performance decision, deterministic given three controls:
+//!
+//! - `grace_duration_ms` (default 60): duration of each grace. The whole
+//!   chain is clamped to half the measured step duration, shrinking
+//!   proportionally rather than dropping graces.
+//! - `grace_velocity` (default 0.8): velocity scale relative to the
+//!   decorated step's `amplitude`.
+//! - `grace_placement` (default `before`): `before` steals the tail of the
+//!   previous step so the principal lands on the grid (acciaccatura);
+//!   `on_beat` starts the chain at the step edge and delays the principal
+//!   (appoggiatura-leaning). With `before`, a decorated step that has no
+//!   previous step to steal from (cold start, or step 0 after a cell
+//!   boundary — the look-ahead never crosses cells) falls back to on-beat
+//!   realization; if the real clock edge arrives while a chain is still
+//!   sounding (accelerando), the chain is truncated and the principal wins.
+//!
 //! # Playback modes
 //!
 //! The `mode` control selects `loop` (default: the active cell repeats until
@@ -30,7 +52,11 @@ use crate::music::Note;
 use crate::traits::ControlMeta;
 use crate::Module;
 
-use super::step_sequencer::{parse_pattern, Step};
+use super::step_sequencer::grace::{clamp_per_grace, release_gap, GracePlayer, GraceVoice};
+pub(crate) use super::step_sequencer::grace::{
+    DEFAULT_GRACE_DURATION_MS, DEFAULT_GRACE_VELOCITY, MAX_GRACE_DURATION_MS, MIN_GRACE_DURATION_MS,
+};
+use super::step_sequencer::{parse_pattern, GraceChain, Step};
 
 pub use self::controls::CellSequencerControls;
 
@@ -54,7 +80,6 @@ pub const MAX_SEQUENCES: usize = 64;
 pub const MAX_STEPS: usize = 1024;
 
 pub struct CellSequencer {
-    #[allow(dead_code)]
     sample_rate: u32,
     ctrl: CellSequencerControls,
     sequences: Vec<Vec<Step>>,
@@ -86,6 +111,30 @@ pub struct CellSequencer {
     /// and releases so a ringing tail never sees its level jump; it only
     /// changes when a new note starts.
     active_velocity: f32,
+    /// Plays a step's grace chain as short attacks ahead of its principal.
+    grace_player: GracePlayer,
+    /// Countdown to a pre-scheduled (before-the-beat) grace chain for the
+    /// upcoming step, in samples from the current step's edge; 0 = none.
+    grace_countdown: u32,
+    pending_grace: GraceChain,
+    pending_grace_velocity: f32,
+    pending_grace_per: u32,
+    /// The upcoming step's chain actually started sounding off the previous
+    /// step's tail (before placement), so `start_step` must not replay it on
+    /// the beat. Left false when a pre-scheduled countdown never fired (the
+    /// edge came early), which falls back to on-beat realization.
+    grace_prescheduled: bool,
+    /// Principal note waiting for an on-beat grace chain to finish, with
+    /// its velocity, remaining gate samples, and whether it bridges into a
+    /// following held step.
+    deferred_note: Option<i8>,
+    deferred_velocity: f32,
+    deferred_gate_samples: u32,
+    deferred_gate_continuous: bool,
+    /// Block-rate caches of the grace controls (read once per `process`).
+    grace_samples_cfg: u32,
+    grace_velocity_cfg: f32,
+    grace_on_beat_cfg: bool,
     last_gate_in: f32,
     last_reset_in: f32,
     last_next_sequence_in: f32,
@@ -125,6 +174,19 @@ impl CellSequencer {
             finished: false,
             retrigger_dip: false,
             active_velocity: 1.0,
+            grace_player: GracePlayer::idle(),
+            grace_countdown: 0,
+            pending_grace: GraceChain::default(),
+            pending_grace_velocity: 1.0,
+            pending_grace_per: 0,
+            grace_prescheduled: false,
+            deferred_note: None,
+            deferred_velocity: 1.0,
+            deferred_gate_samples: 0,
+            deferred_gate_continuous: false,
+            grace_samples_cfg: 0,
+            grace_velocity_cfg: DEFAULT_GRACE_VELOCITY,
+            grace_on_beat_cfg: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             last_next_sequence_in: 0.0,
@@ -199,6 +261,7 @@ impl CellSequencer {
             self.gate_samples_remaining = 0;
             self.gate_continuous = false;
             self.active_note = None;
+            self.clear_grace_state();
             self.last_control_selected_sequence = 0;
             self.ctrl.set_current_cell(0);
             self.ctrl.set_loop_count(0);
@@ -246,7 +309,10 @@ impl CellSequencer {
     fn next_step_starts_note(&self) -> bool {
         let next_step = self.current_step + 1;
         next_step < self.step_count()
-            && self.get_step(self.current_sequence, next_step).note.is_some()
+            && self
+                .get_step(self.current_sequence, next_step)
+                .note
+                .is_some()
     }
 
     fn gate_samples_for_step(&self, step: &Step, retrigger_follows: bool) -> u32 {
@@ -273,19 +339,58 @@ impl CellSequencer {
         // correctly measured step releases before the boundary (the FUG-189
         // gap), but an over-estimated duration — the cold start before the
         // second clock edge, or a sudden accelerando — can leave it high.
-        let gate_still_high = self.gate_continuous || self.gate_samples_remaining > 0;
+        let gate_still_high = self.gate_continuous
+            || self.gate_samples_remaining > 0
+            || self.grace_player.is_active();
         let step = self.current_step_value();
         let next_held = self.next_step_is_held();
 
+        // The edge closes out any grace playback in flight: an overrunning
+        // chain is truncated (the principal always wins), and a stale
+        // pre-schedule whose countdown never fired (the edge came earlier
+        // than the measured step duration predicted) is dropped.
+        let prescheduled = self.grace_prescheduled;
+        self.grace_prescheduled = false;
+        self.grace_countdown = 0;
+        self.grace_player.cancel();
+        // An unsounded deferred principal is musically past; the new step wins.
+        self.deferred_note = None;
+        self.deferred_gate_continuous = false;
+
         let voice_active = match step.note {
             Some(offset) => {
-                // A new note needs a rising edge; force the release the
+                // A new onset needs a rising edge; force the release the
                 // previous step failed to provide.
                 if gate_still_high {
                     self.retrigger_dip = true;
                 }
-                self.active_note = Some(offset);
-                self.active_velocity = step.amplitude.unwrap_or(1.0);
+                let chain_on_beat =
+                    !step.grace.is_empty() && (self.grace_on_beat_cfg || !prescheduled);
+                if chain_on_beat {
+                    // Play the chain from this edge and defer the principal
+                    // until it ends: on_beat placement, or the fallback when
+                    // no previous step could host a before-the-beat chain
+                    // (cold start, or step 0 after a cell boundary — the
+                    // look-ahead never crosses cells).
+                    let per = clamp_per_grace(
+                        &step.grace,
+                        self.grace_samples_cfg,
+                        self.step_duration_samples / 2,
+                    );
+                    let velocity = step.amplitude.unwrap_or(1.0);
+                    self.grace_player
+                        .start(step.grace, velocity * self.grace_velocity_cfg, per);
+                    self.deferred_note = Some(offset);
+                    self.deferred_velocity = velocity;
+                    self.deferred_gate_continuous = next_held;
+                    let chain_total = GracePlayer::chain_samples(&step.grace, per);
+                    self.deferred_gate_samples = self
+                        .gate_samples_for_step(&step, self.next_step_starts_note())
+                        .saturating_sub(chain_total);
+                } else {
+                    self.active_note = Some(offset);
+                    self.active_velocity = step.amplitude.unwrap_or(1.0);
+                }
                 true
             }
             None if step.held && self.active_note.is_some() => true,
@@ -295,13 +400,12 @@ impl CellSequencer {
             }
         };
 
-        if !voice_active {
+        if !voice_active || self.deferred_note.is_some() {
+            // Silent step, or the gate belongs to the grace chain until the
+            // deferred principal starts.
             self.gate_continuous = false;
             self.gate_samples_remaining = 0;
-            return;
-        }
-
-        if next_held {
+        } else if next_held {
             // Bridge the gate across the upcoming clock boundary so the
             // downstream envelope doesn't see a one-sample dip and retrigger.
             self.gate_continuous = true;
@@ -311,6 +415,64 @@ impl CellSequencer {
             let retrigger_follows = self.next_step_starts_note();
             self.gate_samples_remaining = self.gate_samples_for_step(&step, retrigger_follows);
         }
+
+        // Before-the-beat placement: a decorated upcoming step steals this
+        // step's tail so its principal lands on the grid. Runs for every
+        // step (a rest can host a chain too).
+        self.maybe_preschedule_next();
+    }
+
+    /// Schedules the next step's grace chain (before-the-beat placement) to
+    /// sound at the tail of the current step, ending at the predicted next
+    /// edge, and releases this step's gate early enough that the chain's
+    /// first onset presents a real rising edge. The look-ahead stays within
+    /// the current cell; a decorated step 0 of the following cell falls back
+    /// to on-beat realization in `start_step` instead.
+    fn maybe_preschedule_next(&mut self) {
+        if self.grace_on_beat_cfg {
+            return;
+        }
+        let next_index = self.current_step + 1;
+        if next_index >= self.step_count() {
+            return;
+        }
+        let next = self.get_step(self.current_sequence, next_index);
+        if next.note.is_none() || next.grace.is_empty() {
+            return;
+        }
+
+        let per = clamp_per_grace(
+            &next.grace,
+            self.grace_samples_cfg,
+            self.step_duration_samples / 2,
+        );
+        let total = GracePlayer::chain_samples(&next.grace, per);
+        let start_at = self.step_duration_samples.saturating_sub(total);
+        if start_at == 0 {
+            return;
+        }
+
+        self.pending_grace = next.grace;
+        self.pending_grace_velocity = next.amplitude.unwrap_or(1.0) * self.grace_velocity_cfg;
+        self.pending_grace_per = per;
+        self.grace_countdown = start_at;
+
+        // The chain has a note step ahead of it, so `next_held` was false
+        // and the gate is sample-counted (never a held bridge): cap it so it
+        // releases a gap before the chain's first onset.
+        let cap = start_at.saturating_sub(release_gap(per));
+        self.gate_samples_remaining = self.gate_samples_remaining.min(cap);
+        self.deferred_gate_samples = self.deferred_gate_samples.min(cap);
+    }
+
+    /// Silences any grace playback and scheduling (reset, cell change, end
+    /// of a one-shot bank).
+    fn clear_grace_state(&mut self) {
+        self.grace_player.cancel();
+        self.grace_countdown = 0;
+        self.grace_prescheduled = false;
+        self.deferred_note = None;
+        self.deferred_gate_continuous = false;
     }
 
     fn prime_current_note(&mut self) {
@@ -324,6 +486,7 @@ impl CellSequencer {
         self.active_note = None;
         self.gate_samples_remaining = 0;
         self.gate_continuous = false;
+        self.clear_grace_state();
     }
 
     /// Updates `finished` and mirrors it into the controls' read-only `ended`
@@ -353,6 +516,7 @@ impl CellSequencer {
         self.gate_continuous = false;
         self.active_note = None;
         self.pending_sequence = None;
+        self.clear_grace_state();
         self.prime_current_note();
         self.ctrl.set_selected_sequence(sequence_index);
         self.last_control_selected_sequence = sequence_index;
@@ -368,6 +532,7 @@ impl CellSequencer {
             self.gate_samples_remaining = 0;
             self.gate_continuous = false;
             self.active_note = None;
+            self.clear_grace_state();
             self.ctrl.set_selected_sequence(0);
             self.last_control_selected_sequence = 0;
             return;
@@ -414,13 +579,26 @@ impl CellSequencer {
         freq
     }
 
-    fn update_outputs(&mut self, i: usize) {
-        let frequency = self.frequency_for_active_note();
+    fn update_outputs(&mut self, i: usize, grace: Option<GraceVoice>) {
+        // An active grace chain owns the mono output stream; the principal
+        // (and its cached frequency) resume when the chain ends.
+        let (frequency, gate_high, velocity) = match grace {
+            Some(voice) => (
+                self.note_frequency(voice.offset),
+                voice.gate,
+                voice.velocity,
+            ),
+            None => (
+                self.frequency_for_active_note(),
+                self.gate_continuous || self.gate_samples_remaining > 0,
+                self.active_velocity,
+            ),
+        };
         let gate = if self.retrigger_dip {
             // One-sample forced release so the incoming note retriggers.
             self.retrigger_dip = false;
             0.0
-        } else if self.gate_continuous || self.gate_samples_remaining > 0 {
+        } else if gate_high {
             1.0
         } else {
             0.0
@@ -429,7 +607,7 @@ impl CellSequencer {
             i,
             frequency,
             gate,
-            self.active_velocity,
+            velocity,
             self.current_step as f32,
             self.current_sequence as f32,
             if self.finished { 1.0 } else { 0.0 },
@@ -461,6 +639,7 @@ impl CellSequencer {
             self.gate_samples_remaining = 0;
             self.gate_continuous = false;
             self.active_note = None;
+            self.clear_grace_state();
             self.set_finished(false);
         }
 
@@ -533,13 +712,64 @@ impl CellSequencer {
             }
         }
 
+        // Grace machinery ticks between clock edges: fire a pre-scheduled
+        // before-the-beat chain at the tail of this step, and hand the
+        // stream back to a deferred principal once its on-beat chain ends.
+        if !self.finished {
+            if self.grace_countdown > 0 {
+                self.grace_countdown -= 1;
+                if self.grace_countdown == 0 {
+                    if self.gate_continuous || self.gate_samples_remaining > 0 {
+                        // The cap in maybe_preschedule_next should have
+                        // released already; force the edge the chain's
+                        // first onset needs.
+                        self.retrigger_dip = true;
+                        self.gate_continuous = false;
+                        self.gate_samples_remaining = 0;
+                    }
+                    self.grace_prescheduled = true;
+                    self.grace_player.start(
+                        self.pending_grace,
+                        self.pending_grace_velocity,
+                        self.pending_grace_per,
+                    );
+                }
+            }
+
+            if self.deferred_note.is_some() && !self.grace_player.is_active() {
+                self.active_note = self.deferred_note.take();
+                self.active_velocity = self.deferred_velocity;
+                if self.deferred_gate_continuous {
+                    self.deferred_gate_continuous = false;
+                    self.gate_continuous = true;
+                    self.gate_samples_remaining = 0;
+                } else {
+                    let mut gate_samples = self.deferred_gate_samples;
+                    if self.grace_countdown > 0 {
+                        // A chain for the next step is already counting
+                        // down; release before its first onset.
+                        gate_samples = gate_samples.min(
+                            self.grace_countdown
+                                .saturating_sub(release_gap(self.pending_grace_per)),
+                        );
+                    }
+                    self.gate_samples_remaining = gate_samples;
+                }
+            }
+        }
+        let grace_voice = if self.finished {
+            None
+        } else {
+            self.grace_player.tick()
+        };
+
         self.samples_since_gate += 1;
 
         if self.gate_samples_remaining > 0 {
             self.gate_samples_remaining -= 1;
         }
 
-        self.update_outputs(i);
+        self.update_outputs(i, grace_voice);
 
         self.last_gate_in = self.inputs.gate(i);
         self.last_reset_in = self.inputs.reset_gate(i);
@@ -555,8 +785,13 @@ impl Module for CellSequencer {
 
     fn process(&mut self, frames: usize) -> bool {
         // Mode is control-plane state: read it once per block so the
-        // per-sample loop carries no atomic load for it.
+        // per-sample loop carries no atomic load for it. Likewise the grace
+        // controls, converting ms to samples once per block.
         let one_shot = self.ctrl.one_shot();
+        self.grace_samples_cfg =
+            (self.ctrl.grace_duration_ms() * self.sample_rate as f32 / 1000.0) as u32;
+        self.grace_velocity_cfg = self.ctrl.grace_velocity();
+        self.grace_on_beat_cfg = self.ctrl.grace_on_beat();
         for i in 0..frames {
             self.process_sample(i, one_shot);
         }
@@ -611,6 +846,21 @@ impl Module for CellSequencer {
             )
             .with_options(vec!["loop".to_string(), "one_shot".to_string()])
             .with_default("loop"),
+            ControlMeta::new("grace_duration_ms", "Duration of a single grace note in ms")
+                .with_range(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS)
+                .with_default(DEFAULT_GRACE_DURATION_MS),
+            ControlMeta::new(
+                "grace_velocity",
+                "Velocity scale for grace notes relative to the decorated step",
+            )
+            .with_range(0.0, 1.0)
+            .with_default(DEFAULT_GRACE_VELOCITY),
+            ControlMeta::new(
+                "grace_placement",
+                "Grace placement: 0 = before the beat, 1 = on the beat",
+            )
+            .with_range(0.0, 1.0)
+            .with_default(0.0),
         ]
     }
 
@@ -622,6 +872,10 @@ impl Module for CellSequencer {
             "selected_sequence" => Ok(self.ctrl.selected_sequence() as f32),
             // Numeric view of the string `mode` control: 0.0 = loop, 1.0 = one_shot.
             "mode" => Ok(if self.ctrl.one_shot() { 1.0 } else { 0.0 }),
+            "grace_duration_ms" => Ok(self.ctrl.grace_duration_ms()),
+            "grace_velocity" => Ok(self.ctrl.grace_velocity()),
+            // Numeric view of `grace_placement`: 0.0 = before, 1.0 = on_beat.
+            "grace_placement" => Ok(if self.ctrl.grace_on_beat() { 1.0 } else { 0.0 }),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -633,6 +887,9 @@ impl Module for CellSequencer {
             "gate_length" => self.ctrl.set_gate_length(value),
             "selected_sequence" => self.ctrl.set_selected_sequence(value.max(0.0) as usize),
             "mode" => self.ctrl.set_one_shot(value > 0.5),
+            "grace_duration_ms" => self.ctrl.set_grace_duration_ms(value),
+            "grace_velocity" => self.ctrl.set_grace_velocity(value),
+            "grace_placement" => self.ctrl.set_grace_on_beat(value > 0.5),
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
@@ -687,6 +944,24 @@ impl ModuleFactory for CellSequencerFactory {
         );
         if let Some(mode) = config.get("mode").and_then(|value| value.as_str()) {
             controls.set_mode(mode)?;
+        }
+        if let Some(ms) = config
+            .get("grace_duration_ms")
+            .and_then(|value| value.as_f64())
+        {
+            controls.set_grace_duration_ms(ms as f32);
+        }
+        if let Some(scale) = config
+            .get("grace_velocity")
+            .and_then(|value| value.as_f64())
+        {
+            controls.set_grace_velocity(scale as f32);
+        }
+        if let Some(placement) = config
+            .get("grace_placement")
+            .and_then(|value| value.as_str())
+        {
+            controls.set_grace_placement(placement)?;
         }
         let module = CellSequencer::new_with_controls(sample_rate, controls.clone());
 

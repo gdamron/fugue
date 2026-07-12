@@ -217,7 +217,11 @@ fn float_to_i24(sample: f32) -> i32 {
 }
 
 /// Encodes interleaved stereo 24-bit samples to FLAC and writes them to `file`.
-fn encode_flac(file: &mut BufWriter<File>, samples: &[i32], sample_rate: u32) -> Result<(), String> {
+fn encode_flac(
+    file: &mut BufWriter<File>,
+    samples: &[i32],
+    sample_rate: u32,
+) -> Result<(), String> {
     use flacenc::component::BitRepr;
     use flacenc::error::Verify;
 
@@ -458,8 +462,14 @@ mod tests {
 
     #[test]
     fn output_format_from_path_detects_flac() {
-        assert_eq!(OutputFormat::from_path("/tmp/song.flac"), OutputFormat::Flac);
-        assert_eq!(OutputFormat::from_path("/tmp/song.FLAC"), OutputFormat::Flac);
+        assert_eq!(
+            OutputFormat::from_path("/tmp/song.flac"),
+            OutputFormat::Flac
+        );
+        assert_eq!(
+            OutputFormat::from_path("/tmp/song.FLAC"),
+            OutputFormat::Flac
+        );
         assert_eq!(OutputFormat::from_path("/tmp/song.wav"), OutputFormat::Wav);
         assert_eq!(
             OutputFormat::from_path("/tmp/no_extension"),

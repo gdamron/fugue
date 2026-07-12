@@ -36,7 +36,10 @@ impl SampleData {
     /// cubic interpolation kernel. Used for audio-rate pitched playback.
     #[inline]
     pub(crate) fn sample_at(&self, pos: f64) -> (f32, f32) {
-        (cubic_sample(&self.left, pos), cubic_sample(&self.right, pos))
+        (
+            cubic_sample(&self.left, pos),
+            cubic_sample(&self.right, pos),
+        )
     }
 
     fn from_interleaved(
@@ -356,8 +359,8 @@ fn decode_wav<R: Read>(reader: R) -> Result<(usize, u32, Vec<f32>), String> {
 /// downstream contract.
 #[cfg(not(target_arch = "wasm32"))]
 fn decode_flac<R: Read>(reader: R) -> Result<(usize, u32, Vec<f32>), String> {
-    let mut flac = claxon::FlacReader::new(reader)
-        .map_err(|err| format!("Failed to decode FLAC: {}", err))?;
+    let mut flac =
+        claxon::FlacReader::new(reader).map_err(|err| format!("Failed to decode FLAC: {}", err))?;
     let info = flac.streaminfo();
     let channels = info.channels.max(1) as usize;
     let sample_rate = info.sample_rate;

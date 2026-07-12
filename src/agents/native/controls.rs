@@ -14,7 +14,11 @@ pub(super) fn get_bool(controller: &RuntimeController, module_id: &str, key: &st
     }
 }
 
-pub(super) fn get_string(controller: &RuntimeController, module_id: &str, key: &str) -> Option<String> {
+pub(super) fn get_string(
+    controller: &RuntimeController,
+    module_id: &str,
+    key: &str,
+) -> Option<String> {
     match controller.snapshot.get_control(module_id, key) {
         Ok(ControlValue::String(value)) => Some(value),
         _ => None,
@@ -22,11 +26,10 @@ pub(super) fn get_string(controller: &RuntimeController, module_id: &str, key: &
 }
 
 pub(super) fn set_string(controller: &RuntimeController, module_id: &str, key: &str, value: &str) {
-    let _ = controller.snapshot.set_control(
-        module_id,
-        key,
-        ControlValue::String(value.to_string()),
-    );
+    let _ =
+        controller
+            .snapshot
+            .set_control(module_id, key, ControlValue::String(value.to_string()));
 }
 
 pub(super) fn control_value_to_json(value: ControlValue) -> Value {
@@ -73,8 +76,7 @@ pub(super) fn trim_history(history: &mut Vec<Value>, limits: &HistoryLimits) {
     while history.len() > limits.max_turns {
         history.remove(0);
     }
-    while Value::Array(history.clone()).to_string().len() > limits.max_chars
-        && !history.is_empty()
+    while Value::Array(history.clone()).to_string().len() > limits.max_chars && !history.is_empty()
     {
         history.remove(0);
     }

@@ -37,9 +37,7 @@ pub(super) fn validate_response(response_config: &Value, response: &Value) -> Re
         }
     }
 
-    if response_config.get("schema_ref").and_then(Value::as_str)
-        == Some("fugue.step_pattern.v1")
-    {
+    if response_config.get("schema_ref").and_then(Value::as_str) == Some("fugue.step_pattern.v1") {
         validate_step_pattern(
             response
                 .get("payload")

@@ -56,11 +56,14 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, Box<dyn std:
             .and_then(|v| v.as_f64())
             .map(|v| (v as f32).clamp(0.0, 1.0));
 
+        let grace = parse_grace(obj.get("grace"), note)?;
+
         return Ok(Step {
             note,
             gate_length,
             held: false,
             amplitude,
+            grace,
         });
     }
 
@@ -70,4 +73,47 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, Box<dyn std:
     }
 
     Err(format!("Invalid step format: {:?}", value).into())
+}
+
+/// Parses the optional `grace` array on a note step. Absent, null, and empty
+/// arrays all mean "no grace notes"; a non-empty chain requires a principal
+/// note to resolve into.
+fn parse_grace(
+    value: Option<&serde_json::Value>,
+    note: Option<i8>,
+) -> Result<GraceChain, Box<dyn std::error::Error>> {
+    let items = match value {
+        None | Some(serde_json::Value::Null) => return Ok(GraceChain::default()),
+        Some(serde_json::Value::Array(items)) => items,
+        Some(_) => return Err("step.grace must be an array of integer offsets".into()),
+    };
+
+    if items.is_empty() {
+        return Ok(GraceChain::default());
+    }
+    if note.is_none() {
+        return Err("step.grace requires a principal note".into());
+    }
+    if items.len() > MAX_GRACE_NOTES {
+        return Err(format!(
+            "step.grace holds at most {} offsets (got {})",
+            MAX_GRACE_NOTES,
+            items.len()
+        )
+        .into());
+    }
+
+    let mut offsets = [0i8; MAX_GRACE_NOTES];
+    for (index, item) in items.iter().enumerate() {
+        let offset = item.as_i64().ok_or("step.grace entries must be integers")?;
+        if !(i8::MIN as i64..=i8::MAX as i64).contains(&offset) {
+            return Err(format!(
+                "step.grace offset {} out of range (must fit in -128..=127)",
+                offset
+            )
+            .into());
+        }
+        offsets[index] = offset as i8;
+    }
+    Ok(GraceChain::from_slice(&offsets[..items.len()])?)
 }

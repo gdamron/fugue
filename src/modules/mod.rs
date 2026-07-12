@@ -70,7 +70,7 @@ pub use reverb::{Reverb, ReverbControls};
 #[cfg(not(target_arch = "wasm32"))]
 pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};
 pub use sample_player::{SamplePlayer, SamplePlayerControls};
-pub use step_sequencer::{Step, StepSequencer};
+pub use step_sequencer::{GraceChain, Step, StepSequencer, MAX_GRACE_NOTES};
 pub use sustain::{Sustain, SustainFactory};
 pub use vca::{Vca, VcaControls};
 #[cfg(not(target_arch = "wasm32"))]

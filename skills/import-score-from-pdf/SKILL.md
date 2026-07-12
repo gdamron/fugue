@@ -6,7 +6,7 @@ description: Transcribe a score PDF into a validated fugue.score.v1 asset. Use w
 # Import score from PDF
 
 Turn a notated score **PDF** into a `fugue.score.v1` asset (a bank of cells in the
-`{ note, gate, held, amplitude }` step shape the sequencers consume).
+`{ note, gate, held, amplitude, grace }` step shape the sequencers consume).
 
 This skill is **cross-platform**: the rendering/anchor step is a plain script
 (`scripts/prep_pdf.sh` for macOS/Linux/WSL, `scripts/prep_pdf.ps1` for Windows).
@@ -90,10 +90,19 @@ Each step is one of:
 
 - `null` — a rest.
 - an integer — a note, as a semitone offset from `base_note_hint`.
-- `{ "note": <int|null>, "gate": <0..1>, "held": <bool>, "amplitude": <0..1> }` —
+- `{ "note": <int|null>, "gate": <0..1>, "held": <bool>, "amplitude": <0..1>, "grace": [<int>, …] }` —
   `held: true` continues the previous note without retriggering (ties / sustains);
   `note: null` is a rest; `gate` shortens the step's duration; `amplitude` is the
-  dynamic level at this onset.
+  dynamic level at this onset; `grace` is the step's grace-note chain.
+
+**Grace notes**: the small slashed or small-head notes (acciaccaturas /
+appoggiaturas) attach to the note step they decorate as a `grace` array of
+semitone offsets from `base_note_hint`, in played order (the last grace
+resolves into the principal). They are off the grid by definition: never give
+a grace its own step or grid time, and never widen the `rhythm_grid` to fit
+one. At most four per step; only note steps may carry `grace`. How a chain
+sounds — timing, whether it steals from the previous beat, velocity — is the
+sequencer's interpretation, not the score's.
 
 **Dynamics**: capture dynamic marks (pp…fff) and hairpins as per-step `amplitude`
 on note onsets, using the canonical mark → amplitude table in the score module
@@ -136,7 +145,8 @@ If the CLI is not available, self-check the same shape the validator enforces
 - `cells` is present and non-empty, and every cell is non-empty;
 - every step is `null`, an integer in `-128..=127`, or an object whose `note` is
   an integer/null and `gate` and `amplitude` are in `0..1`; a `held` step carries
-  only `{ "held": true }`;
+  only `{ "held": true }`; `grace` is a non-empty array of at most 4 integers in
+  `-128..=127`, only on steps with an integer `note`;
 - `base_note_hint` is `0..=127`; `tempo` > 0; time-signature fields are positive.
 
 ## 5 — Self-verify (numeric guards) and iterate

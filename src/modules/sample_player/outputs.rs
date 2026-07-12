@@ -27,7 +27,14 @@ impl SamplePlayerOutputs {
     }
 
     #[inline]
-    pub fn set(&mut self, i: usize, audio_left: f32, audio_right: f32, start_gate: f32, end_gate: f32) {
+    pub fn set(
+        &mut self,
+        i: usize,
+        audio_left: f32,
+        audio_right: f32,
+        start_gate: f32,
+        end_gate: f32,
+    ) {
         self.audio_left[i] = audio_left;
         self.audio_right[i] = audio_right;
         self.sample_start_gate[i] = start_gate;

@@ -11,12 +11,20 @@
 //! compared separately. Unmatched notes are additionally classified into two
 //! diagnostic buckets (octave errors, near-miss timing) to make transcription
 //! failure modes legible in reports.
+//!
+//! Grace chains are step-attached annotations, so they compare like durations:
+//! on each matched principal pair the two chains must agree (same absolute
+//! pitches, same order). Graces never enter precision/recall/F1 — a wrong
+//! ornament is not a wrong note, and historical F1 numbers stay comparable —
+//! but any grace mismatch (or differing grace totals) breaks `exact`, so a
+//! `--require-exact` gate demands grace fidelity.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
 use crate::invention::score::Score;
+use crate::modules::MAX_GRACE_NOTES;
 use crate::music::{note_value_from_name, Rat};
 
 /// Default base note when a score omits `base_note_hint` (middle C, matching
@@ -42,6 +50,19 @@ pub struct CompareReport {
     pub duration_matches: usize,
     /// duration_matches / matched (1.0 when nothing matched).
     pub duration_accuracy: f64,
+    /// Grace notes attached to candidate steps (total pitches).
+    pub candidate_grace_notes: usize,
+    /// Grace notes attached to reference steps (total pitches).
+    pub reference_grace_notes: usize,
+    /// Matched principal pairs whose grace chains agree exactly (same
+    /// absolute pitches in the same order), counted over pairs where either
+    /// side carries graces.
+    pub grace_matches: usize,
+    /// Matched principal pairs whose grace chains differ (including one side
+    /// missing its chain entirely).
+    pub grace_mismatches: usize,
+    /// grace_matches / grace-bearing matched pairs (1.0 when none).
+    pub grace_accuracy: f64,
     /// Unmatched pairs at the same onset whose pitches differ by octaves.
     pub octave_errors: usize,
     /// Unmatched pairs with the same pitch within one grid step.
@@ -66,6 +87,26 @@ struct NoteEvent {
     onset: Rat,
     duration: Rat,
     pitch: i64,
+    grace: GracePitches,
+}
+
+/// A step's grace chain as absolute MIDI pitches (each side's
+/// `base_note_hint` already applied), so chains compare across scores with
+/// different hints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct GracePitches {
+    len: u8,
+    pitches: [i64; MAX_GRACE_NOTES],
+}
+
+impl GracePitches {
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn count(&self) -> usize {
+        self.len as usize
+    }
 }
 
 /// Compares `candidate` against `reference` at the note level.
@@ -79,41 +120,59 @@ pub fn compare_scores(candidate: &Score, reference: &Score) -> Result<CompareRep
     let candidate_events = flatten(candidate, candidate_grid);
     let reference_events = flatten(reference, reference_grid);
 
-    // Index the reference by (onset, pitch); values are the durations of
-    // every reference note at that position (chords across cells can double
-    // a pitch, so this is a multiset).
-    let mut unmatched_reference: BTreeMap<(Rat, i64), Vec<Rat>> = BTreeMap::new();
+    // Index the reference by (onset, pitch); values are the (duration,
+    // grace chain) of every reference note at that position (chords across
+    // cells can double a pitch, so this is a multiset).
+    let mut unmatched_reference: BTreeMap<(Rat, i64), Vec<(Rat, GracePitches)>> = BTreeMap::new();
     for event in &reference_events {
         unmatched_reference
             .entry((event.onset, event.pitch))
             .or_default()
-            .push(event.duration);
+            .push((event.duration, event.grace));
     }
 
     let mut matched = 0usize;
     let mut duration_matches = 0usize;
+    let mut grace_matches = 0usize;
+    let mut grace_mismatches = 0usize;
     let mut candidate_leftover: Vec<NoteEvent> = Vec::new();
     for event in &candidate_events {
-        let Some(durations) = unmatched_reference.get_mut(&(event.onset, event.pitch)) else {
+        let Some(entries) = unmatched_reference.get_mut(&(event.onset, event.pitch)) else {
             candidate_leftover.push(*event);
             continue;
         };
-        if durations.is_empty() {
+        if entries.is_empty() {
             candidate_leftover.push(*event);
             continue;
         }
         matched += 1;
-        // Prefer a duration-exact pairing when one exists.
-        if let Some(index) = durations.iter().position(|d| *d == event.duration) {
-            durations.swap_remove(index);
+        // Deterministic pairing preference within the bucket:
+        // duration+grace exact > duration exact > grace exact > any.
+        let (_, reference_grace) = if let Some(index) = entries
+            .iter()
+            .position(|(d, g)| *d == event.duration && *g == event.grace)
+        {
             duration_matches += 1;
+            entries.swap_remove(index)
+        } else if let Some(index) = entries.iter().position(|(d, _)| *d == event.duration) {
+            duration_matches += 1;
+            entries.swap_remove(index)
+        } else if let Some(index) = entries.iter().position(|(_, g)| *g == event.grace) {
+            entries.swap_remove(index)
         } else {
-            durations.pop();
+            entries.pop().expect("bucket checked non-empty")
+        };
+        if !(event.grace.is_empty() && reference_grace.is_empty()) {
+            if event.grace == reference_grace {
+                grace_matches += 1;
+            } else {
+                grace_mismatches += 1;
+            }
         }
     }
     let reference_leftover: Vec<(Rat, i64)> = unmatched_reference
         .iter()
-        .flat_map(|(&key, durations)| durations.iter().map(move |_| key))
+        .flat_map(|(&key, entries)| entries.iter().map(move |_| key))
         .collect();
 
     // Diagnostics: classify unmatched pairs without consuming them twice.
@@ -152,11 +211,16 @@ pub fn compare_scores(candidate: &Score, reference: &Score) -> Result<CompareRep
         0.0
     };
     let duration_accuracy = ratio(duration_matches, matched);
+    let candidate_grace_notes: usize = candidate_events.iter().map(|e| e.grace.count()).sum();
+    let reference_grace_notes: usize = reference_events.iter().map(|e| e.grace.count()).sum();
+    let grace_accuracy = ratio(grace_matches, grace_matches + grace_mismatches);
     let total_duration_match = candidate_total == reference_total;
     let exact = matched == candidate_count
         && matched == reference_count
         && duration_matches == matched
-        && total_duration_match;
+        && total_duration_match
+        && grace_mismatches == 0
+        && candidate_grace_notes == reference_grace_notes;
 
     Ok(CompareReport {
         matched,
@@ -167,6 +231,11 @@ pub fn compare_scores(candidate: &Score, reference: &Score) -> Result<CompareRep
         f1,
         duration_matches,
         duration_accuracy,
+        candidate_grace_notes,
+        reference_grace_notes,
+        grace_matches,
+        grace_mismatches,
+        grace_accuracy,
         octave_errors,
         timing_near_misses,
         candidate_duration_quarters: format_quarters(candidate_total),
@@ -192,6 +261,7 @@ fn flatten(score: &Score, grid: Rat) -> Vec<NoteEvent> {
     let mut events = Vec::new();
     for cell in &score.cells {
         let mut current: Option<(usize, i64)> = None;
+        let mut current_grace = GracePitches::default();
         let mut end = 0usize;
         for (index, step) in cell.iter().enumerate() {
             if step.held && current.is_some() {
@@ -199,25 +269,32 @@ fn flatten(score: &Score, grid: Rat) -> Vec<NoteEvent> {
                 continue;
             }
             if let Some((start, pitch)) = current.take() {
-                events.push(event_at(start, end, pitch, grid));
+                events.push(event_at(start, end, pitch, grid, current_grace));
             }
             if let Some(offset) = step.note {
+                let mut grace = GracePitches::default();
+                for grace_offset in step.grace.iter() {
+                    grace.pitches[grace.len as usize] = base + i64::from(grace_offset);
+                    grace.len += 1;
+                }
                 current = Some((index, base + i64::from(offset)));
+                current_grace = grace;
                 end = index + 1;
             }
         }
         if let Some((start, pitch)) = current.take() {
-            events.push(event_at(start, end, pitch, grid));
+            events.push(event_at(start, end, pitch, grid, current_grace));
         }
     }
     events
 }
 
-fn event_at(start: usize, end: usize, pitch: i64, grid: Rat) -> NoteEvent {
+fn event_at(start: usize, end: usize, pitch: i64, grid: Rat, grace: GracePitches) -> NoteEvent {
     NoteEvent {
         onset: Rat::new(start as i64 * grid.num(), grid.den()),
         duration: Rat::new((end - start) as i64 * grid.num(), grid.den()),
         pitch,
+        grace,
     }
 }
 

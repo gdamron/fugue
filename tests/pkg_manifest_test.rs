@@ -81,8 +81,10 @@ fn rejects_empty_targets() {
 
 #[test]
 fn rejects_unknown_capability() {
-    let json = include_str!("../src/pkg/examples/module.json")
-        .replace("\"capabilities\": [\"random\"]", "\"capabilities\": [\"wat:nope\"]");
+    let json = include_str!("../src/pkg/examples/module.json").replace(
+        "\"capabilities\": [\"random\"]",
+        "\"capabilities\": [\"wat:nope\"]",
+    );
     let err = parse_str(&json).unwrap_err();
     assert!(matches!(
         err,

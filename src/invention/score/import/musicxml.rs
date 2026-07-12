@@ -16,6 +16,9 @@
 //! - Ties merge into a single note event and render as `{ "held": true }`
 //!   continuation steps; rests are `{ "note": null }` steps.
 //! - Note offsets are relative to a fixed `base_note_hint` of middle C (60).
+//! - Grace notes (`<grace>`) attach to the following pitched note in the
+//!   same voice as the step's `grace` offset chain, in played order; they
+//!   occupy no grid time. Cue notes are skipped.
 //! - Dynamic marks and hairpin wedges become per-step `amplitude` on note
 //!   onsets, using the canonical mark → amplitude table documented on
 //!   [`crate::invention::score`]. Dynamics are tracked per part (a piano
@@ -28,7 +31,7 @@ use std::collections::BTreeMap;
 
 use crate::invention::score::{Score, TempoPoint, SCORE_SCHEMA_V1};
 use crate::invention::TimeSignature;
-use crate::modules::Step;
+use crate::modules::{GraceChain, Step, MAX_GRACE_NOTES};
 
 use crate::music::{note_value_name, Note, Rat};
 use metadata::extract_metadata;
@@ -50,7 +53,9 @@ pub struct ConvertReport {
     pub lanes: Vec<(String, usize)>,
     /// Tie stop events merged into a preceding note.
     pub ties_merged: usize,
-    /// Grace/cue notes skipped (they occupy no grid time).
+    /// Grace notes captured onto the step they decorate.
+    pub grace_notes: usize,
+    /// Cue notes and unattachable/overflow grace notes skipped.
     pub grace_notes_skipped: usize,
     /// Dynamic marks (pp…fff) captured as step amplitudes.
     pub dynamic_marks: usize,
@@ -95,9 +100,7 @@ fn adjacent_mark_level(from: f32, up: bool) -> f32 {
     let nearest = DYNAMIC_MARKS
         .iter()
         .enumerate()
-        .min_by(|(_, (_, a)), (_, (_, b))| {
-            (a - from).abs().partial_cmp(&(b - from).abs()).unwrap()
-        })
+        .min_by(|(_, (_, a)), (_, (_, b))| (a - from).abs().partial_cmp(&(b - from).abs()).unwrap())
         .map(|(index, _)| index)
         .unwrap_or(0);
     let stepped = if up {
@@ -197,6 +200,17 @@ pub fn convert_musicxml(xml: &str) -> Result<(Score, ConvertReport), String> {
             let mut merged = merge_ties(events.clone(), &mut report);
             for event in &mut merged {
                 event.amplitude = amplitude_at(&dynamics, event.onset);
+                if event.grace.len() > MAX_GRACE_NOTES {
+                    let excess = event.grace.len() - MAX_GRACE_NOTES;
+                    event.grace.truncate(MAX_GRACE_NOTES);
+                    report.grace_notes_skipped += excess;
+                    report.warnings.push(format!(
+                        "a chain of more than {} grace notes into pitch {} was truncated \
+                         ({} skipped)",
+                        MAX_GRACE_NOTES, event.midi, excess
+                    ));
+                }
+                report.grace_notes += event.grace.len();
             }
             let lanes = assign_lanes(merged);
             let label = if multi_part {
@@ -382,6 +396,8 @@ struct NoteEvent {
     /// Dynamic level at this onset; assigned from the part's dynamic curve
     /// after ties merge, `None` when the part has no dynamics.
     amplitude: Option<f32>,
+    /// Grace-note pitches (MIDI) decorating this onset, in played order.
+    grace: Vec<i64>,
 }
 
 /// A positioned dynamics event scanned from a part, in document order.
@@ -440,10 +456,7 @@ struct DynamicSegment {
 /// before another wedge opens — or the mark moves against the hairpin's
 /// direction (a dim. "into" a louder section) — the wedge moves one mark
 /// level instead. A wedge with no stop event ends at the interrupting mark.
-fn build_dynamic_curve(
-    events: &[DynamicEvent],
-    report: &mut ConvertReport,
-) -> Vec<DynamicSegment> {
+fn build_dynamic_curve(events: &[DynamicEvent], report: &mut ConvertReport) -> Vec<DynamicSegment> {
     let mut events = events.to_vec();
     // Stable: document order breaks ties at equal onsets.
     events.sort_by_key(|event| event.onset());
@@ -464,7 +477,10 @@ fn build_dynamic_curve(
             }
             // A stop is consumed by its opening wedge; a stray one is inert.
             DynamicEvent::WedgeStop { .. } => {}
-            DynamicEvent::WedgeStart { onset: start, crescendo } => {
+            DynamicEvent::WedgeStart {
+                onset: start,
+                crescendo,
+            } => {
                 report.hairpins += 1;
                 let mut end: Option<Rat> = None;
                 let mut target: Option<f32> = None;
@@ -507,8 +523,7 @@ fn build_dynamic_curve(
                     (None, Some(mark)) => adjacent_mark_level(mark, !crescendo),
                     (None, None) => {
                         report.warnings.push(
-                            "a hairpin has no dynamic mark before or after it; ignored"
-                                .to_string(),
+                            "a hairpin has no dynamic mark before or after it; ignored".to_string(),
                         );
                         index += 1;
                         continue;
@@ -545,8 +560,8 @@ fn amplitude_at(segments: &[DynamicSegment], onset: Rat) -> Option<f32> {
     }
     let elapsed = onset - segment.start;
     let span = segment.end - segment.start;
-    let progress = (elapsed.num() as f32 / elapsed.den() as f32)
-        / (span.num() as f32 / span.den() as f32);
+    let progress =
+        (elapsed.num() as f32 / elapsed.den() as f32) / (span.num() as f32 / span.den() as f32);
     Some(segment.from + (segment.to - segment.from) * progress)
 }
 
@@ -703,6 +718,8 @@ fn convert_part(
     report: &mut ConvertReport,
 ) -> Result<PartEvents, String> {
     let mut voices: BTreeMap<(u32, String), Vec<NoteEvent>> = BTreeMap::new();
+    // Grace notes awaiting the next pitched note in their voice.
+    let mut pending_graces: BTreeMap<(u32, String), Vec<i64>> = BTreeMap::new();
     let mut capacities = Vec::new();
     let mut tempo_events: Vec<(Rat, f32)> = Vec::new();
     let mut dynamic_events: Vec<DynamicEvent> = Vec::new();
@@ -776,10 +793,28 @@ fn convert_part(
                     high_water = high_water.max(cursor);
                 }
                 "note" => {
-                    if element.children().any(|n| n.has_tag_name("grace"))
-                        || element.children().any(|n| n.has_tag_name("cue"))
-                    {
+                    let voice = element
+                        .children()
+                        .find(|n| n.has_tag_name("voice"))
+                        .and_then(|n| n.text())
+                        .unwrap_or("1")
+                        .trim()
+                        .to_string();
+                    let sort = voice.parse::<u32>().unwrap_or(u32::MAX);
+
+                    if element.children().any(|n| n.has_tag_name("cue")) {
                         report.grace_notes_skipped += 1;
+                        continue;
+                    }
+                    if element.children().any(|n| n.has_tag_name("grace")) {
+                        // A grace occupies no grid time; hold its pitch until
+                        // the next pitched note in this voice consumes it.
+                        match note_midi(element, number)? {
+                            Some(midi) => {
+                                pending_graces.entry((sort, voice)).or_default().push(midi)
+                            }
+                            None => report.grace_notes_skipped += 1,
+                        }
                         continue;
                     }
                     let duration = required_duration(element, number, divisions)?;
@@ -793,15 +828,10 @@ fn convert_part(
                     };
 
                     if let Some(midi) = note_midi(element, number)? {
-                        let voice = element
-                            .children()
-                            .find(|n| n.has_tag_name("voice"))
-                            .and_then(|n| n.text())
-                            .unwrap_or("1")
-                            .trim()
-                            .to_string();
-                        let sort = voice.parse::<u32>().unwrap_or(u32::MAX);
                         let (tie_start, tie_stop) = tie_flags(element);
+                        let grace = pending_graces
+                            .remove(&(sort, voice.clone()))
+                            .unwrap_or_default();
                         voices.entry((sort, voice)).or_default().push(NoteEvent {
                             onset: measure_start + onset,
                             duration,
@@ -809,7 +839,18 @@ fn convert_part(
                             tie_start,
                             tie_stop,
                             amplitude: None,
+                            grace,
                         });
+                    } else if let Some(orphans) = pending_graces.remove(&(sort, voice)) {
+                        // A rest interrupts the voice before the graces could
+                        // resolve into a principal note.
+                        report.grace_notes_skipped += orphans.len();
+                        report.warnings.push(format!(
+                            "measure {}: {} grace note(s) precede a rest and could not attach \
+                             to a principal note; skipped",
+                            number,
+                            orphans.len()
+                        ));
                     }
 
                     if !is_chord {
@@ -874,6 +915,16 @@ fn convert_part(
         }
         measure_start = measure_start + capacity;
         capacities.push(capacity);
+    }
+
+    for ((_, voice), orphans) in pending_graces {
+        report.grace_notes_skipped += orphans.len();
+        report.warnings.push(format!(
+            "{} grace note(s) at the end of voice {} have no principal note to attach to; \
+             skipped",
+            orphans.len(),
+            voice
+        ));
     }
 
     Ok(PartEvents {
@@ -985,6 +1036,17 @@ fn merge_ties(mut events: Vec<NoteEvent>, report: &mut ConvertReport) -> Vec<Not
                 if end == event.onset {
                     merged[idx].duration = merged[idx].duration + event.duration;
                     report.ties_merged += 1;
+                    if !event.grace.is_empty() {
+                        // A grace into a tie continuation has no onset of its
+                        // own to decorate; the chain on the tie's first note
+                        // (if any) is kept.
+                        report.grace_notes_skipped += event.grace.len();
+                        report.warnings.push(format!(
+                            "{} grace note(s) into a tie continuation of pitch {} skipped",
+                            event.grace.len(),
+                            event.midi
+                        ));
+                    }
                     if !event.tie_start {
                         open.remove(&event.midi);
                     }
@@ -1055,6 +1117,16 @@ fn emit_lane(
         }
         let mut note = Step::note((event.midi - BASE_NOTE) as i8);
         note.amplitude = event.amplitude;
+        if !event.grace.is_empty() {
+            // Chains longer than MAX_GRACE_NOTES were truncated (with a
+            // warning) before lane assignment.
+            let mut offsets: Vec<i8> = Vec::with_capacity(event.grace.len());
+            for &midi in &event.grace {
+                offsets.push((midi - BASE_NOTE) as i8);
+            }
+            note.grace = GraceChain::from_slice(&offsets)
+                .map_err(|err| format!("internal: {} grace chain: {}", label, err))?;
+        }
         steps[start] = note;
         for step in steps.iter_mut().skip(start + 1).take(len - 1) {
             *step = Step::held();

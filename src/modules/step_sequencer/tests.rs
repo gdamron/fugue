@@ -328,13 +328,15 @@ fn test_step_sequencer_controls_metadata() {
     let seq = StepSequencer::new(44100);
     let controls = Module::controls(&seq);
 
-    assert_eq!(controls.len(), 4);
+    assert_eq!(controls.len(), 6);
 
     let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
     assert!(keys.contains(&"base_note"));
     assert!(keys.contains(&"steps"));
     assert!(keys.contains(&"gate_length"));
     assert!(keys.contains(&"mode"));
+    assert!(keys.contains(&"grace_duration_ms"));
+    assert!(keys.contains(&"grace_placement"));
 }
 
 #[test]
@@ -511,4 +513,122 @@ fn test_mode_control_round_trips() {
     controls.set_mode("one_shot").unwrap();
     assert_eq!(controls.mode(), "one_shot");
     assert!(controls.set_mode("bounce").is_err());
+}
+
+#[test]
+fn test_parse_step_grace_formats() {
+    let step = parse_step(&serde_json::json!({"note": 10, "grace": [-2]})).unwrap();
+    assert_eq!(step.note, Some(10));
+    assert_eq!(step.grace.iter().collect::<Vec<_>>(), vec![-2]);
+
+    // Absent, null, and empty arrays all mean "no graces".
+    for value in [
+        serde_json::json!({"note": 10}),
+        serde_json::json!({"note": 10, "grace": null}),
+        serde_json::json!({"note": 10, "grace": []}),
+    ] {
+        assert!(parse_step(&value).unwrap().grace.is_empty());
+    }
+
+    assert!(parse_step(&serde_json::json!({"note": null, "grace": [5]})).is_err());
+    assert!(parse_step(&serde_json::json!({"note": 0, "grace": [1, 2, 3, 4, 5]})).is_err());
+    assert!(parse_step(&serde_json::json!({"note": 0, "grace": "fast"})).is_err());
+    assert!(parse_step(&serde_json::json!({"note": 0, "grace": [900]})).is_err());
+    assert!(parse_step(&serde_json::json!({"held": true, "grace": [5]})).is_err());
+}
+
+#[test]
+fn test_step_grace_serde_round_trip() {
+    let step = Step::note_with_grace(10, &[-2, 3]);
+    let value = serde_json::to_value(&step).unwrap();
+    assert_eq!(value, serde_json::json!({"note": 10, "grace": [-2, 3]}));
+
+    let parsed: Step = serde_json::from_value(value).unwrap();
+    assert_eq!(parsed.note, Some(10));
+    assert_eq!(parsed.grace, step.grace);
+
+    // Steps without graces serialize exactly as before the field existed.
+    let value = serde_json::to_value(Step::note(5)).unwrap();
+    assert_eq!(value, serde_json::json!({"note": 5}));
+}
+
+// --- Grace-note realization (FUG-190; full behavior coverage lives in the
+// cell_sequencer tests — the two sequencers share the GracePlayer) ---
+
+#[test]
+fn test_grace_before_beat_two_attacks() {
+    // Sample rate 1000 so the default 60 ms grace is 60 samples.
+    let mut seq = StepSequencer::new(1000).with_steps(4).with_pattern(vec![
+        Step::note(0),
+        Step::rest(),
+        Step::note_with_grace(10, &[8]),
+        Step::rest(),
+    ]);
+
+    let mut stream: Vec<(f32, f32)> = Vec::new();
+    for _ in 0..4 {
+        for s in 0..200 {
+            let gate_in = if s < 2 { 1.0 } else { 0.0 };
+            seq.set_input("gate", gate_in).unwrap();
+            seq.process(1);
+            stream.push((
+                seq.get_output("frequency").unwrap(),
+                seq.get_output("gate").unwrap(),
+            ));
+        }
+    }
+
+    let mut onsets = Vec::new();
+    for t in 300..600 {
+        if stream[t].1 > 0.5 && stream[t - 1].1 <= 0.5 {
+            onsets.push(t);
+        }
+    }
+    assert_eq!(onsets.len(), 2, "grace + principal, got {:?}", onsets);
+    assert_eq!(onsets[1], 400, "principal stays on the grid");
+    let grace_freq = Note::new((DEFAULT_BASE_NOTE as i16 + 8) as u8).frequency();
+    let principal_freq = Note::new((DEFAULT_BASE_NOTE as i16 + 10) as u8).frequency();
+    assert!((stream[onsets[0]].0 - grace_freq).abs() < 0.01);
+    assert!((stream[onsets[1] + 5].0 - principal_freq).abs() < 0.01);
+}
+
+#[test]
+fn test_grace_placement_control_on_beat() {
+    let mut seq = StepSequencer::new(1000)
+        .with_steps(2)
+        .with_pattern(vec![Step::note(0), Step::note_with_grace(10, &[8])]);
+    seq.set_control("grace_placement", 1.0).unwrap();
+
+    let mut stream: Vec<(f32, f32)> = Vec::new();
+    for _ in 0..3 {
+        for s in 0..200 {
+            let gate_in = if s < 2 { 1.0 } else { 0.0 };
+            seq.set_input("gate", gate_in).unwrap();
+            seq.process(1);
+            stream.push((
+                seq.get_output("frequency").unwrap(),
+                seq.get_output("gate").unwrap(),
+            ));
+        }
+    }
+
+    // Decorated step's edge is t = 200: chain at the edge, principal ~60
+    // samples later.
+    let mut onsets = Vec::new();
+    for t in 195..400 {
+        if stream[t].1 > 0.5 && stream[t - 1].1 <= 0.5 {
+            onsets.push(t);
+        }
+    }
+    assert_eq!(onsets.len(), 2, "got {:?}", onsets);
+    // The chain starts at the edge (one sample later when the previous
+    // step's over-estimated cold-start gate forces a retrigger dip).
+    assert!((200..=201).contains(&onsets[0]), "got {}", onsets[0]);
+    assert!(
+        (255..271).contains(&onsets[1]),
+        "principal is delayed by the grace duration, got {}",
+        onsets[1]
+    );
+    let grace_freq = Note::new((DEFAULT_BASE_NOTE as i16 + 8) as u8).frequency();
+    assert!((stream[onsets[0]].0 - grace_freq).abs() < 0.01);
 }
