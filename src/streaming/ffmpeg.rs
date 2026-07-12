@@ -24,6 +24,7 @@ pub(crate) type FfmpegStreamHandle = Arc<FfmpegStreamBackend>;
 pub(crate) struct FfmpegStreamConfig {
     pub ffmpeg_path: String,
     pub url: String,
+    pub tee_to_disk: Option<String>,
     pub width: u32,
     pub height: u32,
     pub fps: u32,
@@ -116,16 +117,44 @@ impl FfmpegCommandSpec {
             config.audio_encoder.clone(),
             "-b:a".to_string(),
             config.audio_bitrate.clone(),
-            "-f".to_string(),
-            "flv".to_string(),
-            config.url.clone(),
         ]);
+
+        if let Some(archive_path) = &config.tee_to_disk {
+            args.extend([
+                "-flags".to_string(),
+                "+global_header".to_string(),
+                "-map".to_string(),
+                "1:v:0".to_string(),
+                "-map".to_string(),
+                "0:a:0".to_string(),
+                "-f".to_string(),
+                "tee".to_string(),
+                format!(
+                    "[f=flv]{}|[onfail=ignore]{}",
+                    escape_tee_name(&config.url),
+                    escape_tee_name(archive_path)
+                ),
+            ]);
+        } else {
+            args.extend(["-f".to_string(), "flv".to_string(), config.url.clone()]);
+        }
 
         Self {
             program: config.ffmpeg_path.clone(),
             args,
         }
     }
+}
+
+fn escape_tee_name(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(character, '\\' | '\'' | '|' | '[' | ']') || character.is_whitespace() {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
 }
 
 pub(crate) struct FfmpegStreamBackend {
@@ -641,6 +670,7 @@ mod tests {
         FfmpegStreamConfig {
             ffmpeg_path: "ffmpeg".to_string(),
             url: "rtmp://example.test/live/fugue".to_string(),
+            tee_to_disk: None,
             width: 640,
             height: 360,
             fps: 30,
@@ -685,6 +715,23 @@ mod tests {
         let args = spec.args.join(" ");
 
         assert!(args.contains("-minrate 10000k -maxrate 10000k -bufsize 10000k"));
+    }
+
+    #[test]
+    fn builds_tee_output_with_explicit_maps_and_escaped_names() {
+        let mut config = minimal_config();
+        config.url = "rtmp://example.test/live/fugue|backup".to_string();
+        config.tee_to_disk = Some("archive captures/session's [mix].mkv".to_string());
+        let spec = FfmpegCommandSpec::for_ports(&config, 12_345, 23_456);
+
+        let output_index = spec.args.iter().position(|arg| arg == "tee").unwrap() + 1;
+        assert_eq!(
+            spec.args[output_index],
+            "[f=flv]rtmp://example.test/live/fugue\\|backup|[onfail=ignore]archive\\ captures/session\\'s\\ \\[mix\\].mkv"
+        );
+        let args = spec.args.join(" ");
+        assert!(args.contains("-flags +global_header"));
+        assert!(args.contains("-map 1:v:0 -map 0:a:0 -f tee"));
     }
 
     #[test]
@@ -811,6 +858,7 @@ PY
             FfmpegStreamConfig {
                 ffmpeg_path: path.to_string_lossy().into_owned(),
                 url: url.to_string(),
+                tee_to_disk: None,
                 width: 2,
                 height: 2,
                 fps: 2,
@@ -823,6 +871,25 @@ PY
                 constant_video_bitrate: false,
                 audio_buffer_frames: 64,
                 video_queue_frames: 2,
+            }
+        }
+
+        fn push_smoke_media(backend: &FfmpegStreamBackend) {
+            for frame_index in 0..10 {
+                let mut frame = vec![0u8; 16 * 16 * 4];
+                for pixel in frame.chunks_exact_mut(4) {
+                    pixel[0] = (frame_index * 20) as u8;
+                    pixel[1] = 64;
+                    pixel[2] = 192;
+                    pixel[3] = 255;
+                }
+                backend.push_video_rgba(&frame).unwrap();
+
+                for sample_index in 0..4_800 {
+                    let phase = (sample_index as f32 / 48_000.0) * 440.0 * std::f32::consts::TAU;
+                    let sample = phase.sin() * 0.1;
+                    backend.push_audio(sample, sample);
+                }
             }
         }
 
@@ -896,6 +963,7 @@ PY
             let backend = FfmpegStreamBackend::start(FfmpegStreamConfig {
                 ffmpeg_path: "ffmpeg".to_string(),
                 url: output.to_string_lossy().into_owned(),
+                tee_to_disk: None,
                 width: 16,
                 height: 16,
                 fps: 5,
@@ -911,22 +979,7 @@ PY
             })
             .unwrap();
 
-            for frame_index in 0..10 {
-                let mut frame = vec![0u8; 16 * 16 * 4];
-                for pixel in frame.chunks_exact_mut(4) {
-                    pixel[0] = (frame_index * 20) as u8;
-                    pixel[1] = 64;
-                    pixel[2] = 192;
-                    pixel[3] = 255;
-                }
-                backend.push_video_rgba(&frame).unwrap();
-
-                for sample_index in 0..4_800 {
-                    let phase = (sample_index as f32 / 48_000.0) * 440.0 * std::f32::consts::TAU;
-                    let sample = phase.sin() * 0.1;
-                    backend.push_audio(sample, sample);
-                }
-            }
+            push_smoke_media(&backend);
 
             backend.finish();
             let stats = backend.stats();
@@ -934,6 +987,49 @@ PY
             assert!(stats.video_frames_sent > 0, "{stats:?}");
             let metadata = fs::metadata(&output).unwrap();
             assert!(metadata.len() > 0, "expected non-empty FLV at {output:?}");
+        }
+
+        #[test]
+        fn real_ffmpeg_tees_stream_to_local_archive_when_enabled() {
+            if std::env::var("FUGUE_RTMP_SINK_REAL_FFMPEG").ok().as_deref() != Some("1") {
+                eprintln!("set FUGUE_RTMP_SINK_REAL_FFMPEG=1 to run real ffmpeg smoke");
+                return;
+            }
+
+            FfmpegStreamBackend::validate_ffmpeg("ffmpeg").unwrap();
+            let dir = temp_dir("real-ffmpeg-tee");
+            let archive_dir = dir.join("archive captures");
+            fs::create_dir_all(&archive_dir).unwrap();
+            let stream_output = dir.join("stream.flv");
+            let archive_output = archive_dir.join("session's [mix].mkv");
+            let backend = FfmpegStreamBackend::start(FfmpegStreamConfig {
+                ffmpeg_path: "ffmpeg".to_string(),
+                url: stream_output.to_string_lossy().into_owned(),
+                tee_to_disk: Some(archive_output.to_string_lossy().into_owned()),
+                width: 16,
+                height: 16,
+                fps: 5,
+                sample_rate: 48_000,
+                video_encoder: "libx264".to_string(),
+                audio_encoder: "aac".to_string(),
+                video_bitrate: "200k".to_string(),
+                audio_bitrate: "64k".to_string(),
+                gop_seconds: 2,
+                constant_video_bitrate: false,
+                audio_buffer_frames: 512,
+                video_queue_frames: 8,
+            })
+            .unwrap();
+
+            push_smoke_media(&backend);
+            backend.finish();
+
+            let stats = backend.stats();
+            assert!(stats.audio_frames_sent > 0, "{stats:?}");
+            assert!(stats.video_frames_sent > 0, "{stats:?}");
+            assert_eq!(stats.last_error, None, "{stats:?}");
+            assert!(fs::metadata(&stream_output).unwrap().len() > 0);
+            assert!(fs::metadata(&archive_output).unwrap().len() > 0);
         }
     }
 }

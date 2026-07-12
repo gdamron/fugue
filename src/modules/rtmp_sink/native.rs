@@ -25,6 +25,7 @@ pub(super) struct SharedHandle {
 pub struct RtmpSinkConfig {
     pub ffmpeg_path: String,
     pub url: String,
+    pub tee_to_disk: Option<String>,
     pub width: u32,
     pub height: u32,
     pub fps: u32,
@@ -85,6 +86,7 @@ impl RtmpSinkConfig {
         Ok(Self {
             ffmpeg_path: optional_string(config, "ffmpeg_path", "ffmpeg"),
             url,
+            tee_to_disk: optional_nonempty_string_value(config, "tee_to_disk")?,
             width,
             height,
             fps,
@@ -106,6 +108,7 @@ impl RtmpSinkConfig {
         FfmpegStreamConfig {
             ffmpeg_path: self.ffmpeg_path.clone(),
             url: self.url.clone(),
+            tee_to_disk: self.tee_to_disk.clone(),
             width: self.width,
             height: self.height,
             fps: self.fps,
@@ -355,6 +358,18 @@ fn optional_string_value(
     }
 }
 
+fn optional_nonempty_string_value(
+    config: &serde_json::Value,
+    key: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    match optional_string_value(config, key)? {
+        Some(value) if value.trim().is_empty() => {
+            Err(format!("rtmp_sink config.{key} must not be empty").into())
+        }
+        value => Ok(value),
+    }
+}
+
 fn optional_bitrate(
     config: &serde_json::Value,
     key: &str,
@@ -427,6 +442,7 @@ mod tests {
 
         assert_eq!(config.ffmpeg_path, "ffmpeg");
         assert_eq!(config.url, "rtmp://example.test/live/fugue");
+        assert_eq!(config.tee_to_disk, None);
         assert_eq!(config.width, 640);
         assert_eq!(config.height, 360);
         assert_eq!(config.fps, 30);
@@ -452,7 +468,8 @@ mod tests {
                 "video_bitrate": 4500,
                 "audio_bitrate": 128,
                 "fps": 60,
-                "background_video": "./loop.mp4"
+                "background_video": "./loop.mp4",
+                "tee_to_disk": "./broadcast.mkv"
             }),
             48_000,
         )
@@ -464,6 +481,7 @@ mod tests {
         assert_eq!(config.audio_bitrate, "128k");
         assert_eq!(config.fps, 60);
         assert_eq!(config.background_video.as_deref(), Some("./loop.mp4"));
+        assert_eq!(config.tee_to_disk.as_deref(), Some("./broadcast.mkv"));
     }
 
     #[test]
@@ -519,6 +537,17 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("background_video"));
+
+        let empty_tee_path = json!({
+            "url": "rtmp://x",
+            "width": 640,
+            "height": 360,
+            "tee_to_disk": "  "
+        });
+        assert!(RtmpSinkConfig::from_json(&empty_tee_path, 48_000)
+            .unwrap_err()
+            .to_string()
+            .contains("tee_to_disk"));
     }
 
     #[test]

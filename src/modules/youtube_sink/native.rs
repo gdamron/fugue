@@ -166,7 +166,8 @@ mod tests {
                 "resolution": "1280x720",
                 "fps": 60,
                 "video_bitrate": 6000,
-                "background_video": "./loop.mp4"
+                "background_video": "./loop.mp4",
+                "tee_to_disk": "./broadcast.mkv"
             }),
             44_100,
             |_| None,
@@ -182,6 +183,7 @@ mod tests {
         assert_eq!(config.video_bitrate, "6000k");
         assert_eq!(config.sample_rate, 44_100);
         assert_eq!(config.background_video.as_deref(), Some("./loop.mp4"));
+        assert_eq!(config.tee_to_disk.as_deref(), Some("./broadcast.mkv"));
     }
 
     #[test]
