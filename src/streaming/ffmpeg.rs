@@ -131,8 +131,8 @@ impl FfmpegCommandSpec {
                 "tee".to_string(),
                 format!(
                     "[f=flv]{}|[onfail=ignore]{}",
-                    escape_tee_slave_name(&config.url),
-                    escape_tee_slave_name(archive_path)
+                    escape_tee_name(&config.url),
+                    escape_tee_name(archive_path)
                 ),
             ]);
         } else {
@@ -146,7 +146,7 @@ impl FfmpegCommandSpec {
     }
 }
 
-fn escape_tee_slave_name(value: &str) -> String {
+fn escape_tee_name(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
         if matches!(character, '\\' | '\'' | '|' | '[' | ']') || character.is_whitespace() {
@@ -718,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_tee_output_with_explicit_maps_and_escaped_slave_names() {
+    fn builds_tee_output_with_explicit_maps_and_escaped_names() {
         let mut config = minimal_config();
         config.url = "rtmp://example.test/live/fugue|backup".to_string();
         config.tee_to_disk = Some("archive captures/session's [mix].mkv".to_string());
