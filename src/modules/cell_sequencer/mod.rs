@@ -75,6 +75,12 @@ pub struct CellSequencer {
     /// One-shot playback of the bank has completed; `end` latches high and
     /// clock edges are ignored until reset or an explicit cell selection.
     finished: bool,
+    /// Force the output gate low for exactly this sample: a new note is
+    /// starting while the previous step's gate is still sounding (its
+    /// duration was over-estimated — the cold start before the second clock
+    /// edge, or a sudden accelerando), so the downstream envelope needs an
+    /// explicit release edge to retrigger. Cleared by `update_outputs`.
+    retrigger_dip: bool,
     /// Velocity of the most recently struck note (the step's `amplitude`,
     /// 1.0 when unset). Held on the `velocity` output across holds, rests,
     /// and releases so a ringing tail never sees its level jump; it only
@@ -117,6 +123,7 @@ impl CellSequencer {
             first_gate_received: false,
             active_note: None,
             finished: false,
+            retrigger_dip: false,
             active_velocity: 1.0,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
@@ -262,11 +269,21 @@ impl CellSequencer {
     }
 
     fn start_step(&mut self) {
+        // Whether the previous step's gate is still sounding at this edge. A
+        // correctly measured step releases before the boundary (the FUG-189
+        // gap), but an over-estimated duration — the cold start before the
+        // second clock edge, or a sudden accelerando — can leave it high.
+        let gate_still_high = self.gate_continuous || self.gate_samples_remaining > 0;
         let step = self.current_step_value();
         let next_held = self.next_step_is_held();
 
         let voice_active = match step.note {
             Some(offset) => {
+                // A new note needs a rising edge; force the release the
+                // previous step failed to provide.
+                if gate_still_high {
+                    self.retrigger_dip = true;
+                }
                 self.active_note = Some(offset);
                 self.active_velocity = step.amplitude.unwrap_or(1.0);
                 true
@@ -399,7 +416,11 @@ impl CellSequencer {
 
     fn update_outputs(&mut self, i: usize) {
         let frequency = self.frequency_for_active_note();
-        let gate = if self.gate_continuous || self.gate_samples_remaining > 0 {
+        let gate = if self.retrigger_dip {
+            // One-sample forced release so the incoming note retriggers.
+            self.retrigger_dip = false;
+            0.0
+        } else if self.gate_continuous || self.gate_samples_remaining > 0 {
             1.0
         } else {
             0.0

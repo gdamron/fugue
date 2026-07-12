@@ -35,11 +35,15 @@ fn voice_library_presets_load_as_standalone_developments() {
         );
         assert_eq!(
             invention.inputs.len(),
-            2,
-            "{file_name} should expose two inputs"
+            3,
+            "{file_name} should expose three inputs"
         );
         assert_eq!(invention.inputs[0].name, "frequency");
         assert_eq!(invention.inputs[1].name, "gate");
+        assert_eq!(
+            invention.inputs[2].name, "pedal",
+            "{file_name} should route a pedal input to its sustain module"
+        );
         assert_eq!(
             invention.outputs.len(),
             1,

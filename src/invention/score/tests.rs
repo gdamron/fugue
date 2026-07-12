@@ -246,3 +246,28 @@ fn rejects_non_positive_tempo_map_bpm() {
     let err = validate_score(&value).unwrap_err();
     assert!(err.contains("tempo_map[0].bpm must be a positive number"), "{err}");
 }
+
+#[test]
+fn accepts_pedal_lanes() {
+    validate_score(&json!({
+        "cells": [[0, null]],
+        "pedal": [[ { "note": 0 }, { "held": true } ]]
+    }))
+    .unwrap();
+}
+
+#[test]
+fn rejects_empty_pedal_lane() {
+    let err = validate_score(&json!({ "cells": [[0]], "pedal": [[]] })).unwrap_err();
+    assert!(err.contains("pedal[0] must not be empty"), "{err}");
+}
+
+#[test]
+fn rejects_malformed_pedal_step() {
+    let err = validate_score(&json!({
+        "cells": [[0]],
+        "pedal": [[ { "note": "down" } ]]
+    }))
+    .unwrap_err();
+    assert!(err.contains("pedal[0]"), "{err}");
+}

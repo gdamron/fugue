@@ -25,6 +25,7 @@ pub mod clock;
 pub mod code;
 pub mod control_scheduler;
 pub mod dac;
+pub mod divisi;
 pub mod filter;
 pub mod lfo;
 pub mod melody;
@@ -35,6 +36,7 @@ pub mod reverb;
 pub mod rtmp_sink;
 pub mod sample_player;
 pub mod step_sequencer;
+pub mod sustain;
 pub mod vca;
 
 // Re-export module types
@@ -67,6 +69,7 @@ pub use reverb::{Reverb, ReverbControls};
 pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};
 pub use sample_player::{SamplePlayer, SamplePlayerControls};
 pub use step_sequencer::{Step, StepSequencer};
+pub use sustain::{Sustain, SustainFactory};
 pub use vca::{Vca, VcaControls};
 
 // Re-export factory types
@@ -74,6 +77,7 @@ pub use adsr::AdsrFactory;
 pub use agent::AgentFactory;
 pub use cell_sequencer::CellSequencerFactory;
 pub use clock::ClockFactory;
+pub use divisi::{Divisi, DivisiFactory};
 pub use code::CodeFactory;
 pub use control_scheduler::ControlSchedulerFactory;
 pub use dac::DacFactory;

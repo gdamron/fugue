@@ -21,6 +21,10 @@
       }
     },
     {
+      "id": "sus",
+      "type": "sustain"
+    },
+    {
       "id": "env",
       "type": "adsr",
       "config": {
@@ -59,6 +63,12 @@
       "from_port": "envelope",
       "to": "filter",
       "to_port": "cutoff_cv"
+    },
+    {
+      "from": "sus",
+      "from_port": "gate",
+      "to": "env",
+      "to_port": "gate"
     }
   ],
   "inputs": [
@@ -69,8 +79,13 @@
     },
     {
       "name": "gate",
-      "to": "env",
+      "to": "sus",
       "to_port": "gate"
+    },
+    {
+      "name": "pedal",
+      "to": "sus",
+      "to_port": "pedal"
     }
   ],
   "outputs": [

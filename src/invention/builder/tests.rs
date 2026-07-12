@@ -463,3 +463,173 @@ fn supports_nested_developments() {
 
     assert!(runtime.modules.contains_key("lead"));
 }
+
+/// A development may list the same control key several times to fan a write
+/// out across internal modules — the explicit-list equivalent of a bank-wide
+/// knob (e.g. one `decay` reaching every voice of a divisi bank).
+#[test]
+fn duplicate_development_control_keys_fan_out_writes() {
+    let development = Invention {
+        version: "1.0.0".to_string(),
+        title: Some("bank".to_string()),
+        description: None,
+        developments: vec![],
+        assets: BTreeMap::new(),
+        modules: vec![
+            crate::ModuleSpec {
+                id: "env_a".to_string(),
+                module_type: "adsr".to_string(),
+                config: serde_json::json!({"decay": 0.1}),
+            },
+            crate::ModuleSpec {
+                id: "env_b".to_string(),
+                module_type: "adsr".to_string(),
+                config: serde_json::json!({"decay": 0.1}),
+            },
+        ],
+        connections: vec![],
+        inputs: vec![DevelopmentInput {
+            name: "gate".to_string(),
+            to: "env_a".to_string(),
+            to_port: "gate".to_string(),
+        }],
+        outputs: vec![DevelopmentOutput {
+            name: "audio".to_string(),
+            from: "env_a".to_string(),
+            from_port: "envelope".to_string(),
+        }],
+        controls: vec![
+            DevelopmentControl {
+                key: "decay".to_string(),
+                module: "env_a".to_string(),
+                control: "decay".to_string(),
+            },
+            DevelopmentControl {
+                key: "decay".to_string(),
+                module: "env_b".to_string(),
+                control: "decay".to_string(),
+            },
+        ],
+        source_path: None,
+    };
+    let root = root_invention_with_voice(DevelopmentSpec {
+        name: "voice".to_string(),
+        path: None,
+        definition: Some(Box::new(development)),
+    });
+
+    let builder = InventionBuilder::new(44_100);
+    let (runtime, _) = builder.build(root).unwrap();
+    let surface = runtime
+        .control_surfaces
+        .lock()
+        .unwrap()
+        .get("lead")
+        .cloned()
+        .unwrap();
+
+    // The key lists once, and a write reaches every aliased module. Reading
+    // back through the surface sees the shared value.
+    let listed = surface.controls();
+    assert_eq!(
+        listed.iter().filter(|meta| meta.key == "decay").count(),
+        1,
+        "a fanned-out key should be listed once"
+    );
+    surface
+        .set_control("decay", ControlValue::Number(2.5))
+        .unwrap();
+    assert_eq!(
+        surface.get_control("decay").unwrap(),
+        ControlValue::Number(2.5)
+    );
+}
+
+/// Two instances of a development that itself nests a development: the
+/// second instance's nested builder works on a fresh registry snapshot, so
+/// the inner development must be re-registered even though the shared
+/// build-chain guard has already seen its name (regression: the second
+/// piano_bank in an invention failed with "Unknown module type").
+#[test]
+fn multiple_instances_of_nested_developments_build() {
+    let inner = Invention {
+        version: "1.0.0".to_string(),
+        title: Some("inner".to_string()),
+        description: None,
+        developments: vec![],
+        assets: BTreeMap::new(),
+        modules: vec![crate::ModuleSpec {
+            id: "osc".to_string(),
+            module_type: "oscillator".to_string(),
+            config: serde_json::json!({"frequency": 440.0}),
+        }],
+        connections: vec![],
+        inputs: vec![],
+        outputs: vec![DevelopmentOutput {
+            name: "audio".to_string(),
+            from: "osc".to_string(),
+            from_port: "audio".to_string(),
+        }],
+        controls: vec![],
+        source_path: None,
+    };
+    let outer = Invention {
+        version: "1.0.0".to_string(),
+        title: Some("outer".to_string()),
+        description: None,
+        developments: vec![DevelopmentSpec {
+            name: "inner_voice".to_string(),
+            path: None,
+            definition: Some(Box::new(inner)),
+        }],
+        assets: BTreeMap::new(),
+        modules: vec![crate::ModuleSpec {
+            id: "voice".to_string(),
+            module_type: "inner_voice".to_string(),
+            config: serde_json::Value::Null,
+        }],
+        connections: vec![],
+        inputs: vec![],
+        outputs: vec![DevelopmentOutput {
+            name: "audio".to_string(),
+            from: "voice".to_string(),
+            from_port: "audio".to_string(),
+        }],
+        controls: vec![],
+        source_path: None,
+    };
+
+    let root = Invention {
+        version: "1.0.0".to_string(),
+        title: Some("root".to_string()),
+        description: None,
+        developments: vec![DevelopmentSpec {
+            name: "outer_voice".to_string(),
+            path: None,
+            definition: Some(Box::new(outer)),
+        }],
+        assets: BTreeMap::new(),
+        modules: vec![
+            crate::ModuleSpec {
+                id: "a".to_string(),
+                module_type: "outer_voice".to_string(),
+                config: serde_json::Value::Null,
+            },
+            crate::ModuleSpec {
+                id: "b".to_string(),
+                module_type: "outer_voice".to_string(),
+                config: serde_json::Value::Null,
+            },
+        ],
+        connections: vec![],
+        inputs: vec![],
+        outputs: vec![],
+        controls: vec![],
+        source_path: None,
+    };
+
+    let builder = InventionBuilder::new(44_100);
+    let (runtime, _) = builder.build(root).unwrap();
+    assert!(runtime.modules.contains_key("a"));
+    assert!(runtime.modules.contains_key("b"));
+}

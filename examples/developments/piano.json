@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "title": "Piano Voice",
-  "description": "Sawtooth voice with a shared amplitude and filter envelope: bright on attack, warmly decaying — piano-like struck character without vibrato.",
+  "description": "Sawtooth voice with a shared amplitude and filter envelope: bright on attack, warmly decaying \u2014 piano-like struck character without vibrato.",
   "modules": [
     {
       "id": "osc",
@@ -21,12 +21,16 @@
       }
     },
     {
+      "id": "sus",
+      "type": "sustain"
+    },
+    {
       "id": "env",
       "type": "adsr",
       "config": {
         "attack": 0.003,
         "decay": 1.2,
-        "sustain": 0.2,
+        "sustain": 0.0,
         "release": 2.5
       }
     },
@@ -59,6 +63,12 @@
       "from_port": "envelope",
       "to": "filter",
       "to_port": "cutoff_cv"
+    },
+    {
+      "from": "sus",
+      "from_port": "gate",
+      "to": "env",
+      "to_port": "gate"
     }
   ],
   "inputs": [
@@ -69,8 +79,13 @@
     },
     {
       "name": "gate",
-      "to": "env",
+      "to": "sus",
       "to_port": "gate"
+    },
+    {
+      "name": "pedal",
+      "to": "sus",
+      "to_port": "pedal"
     }
   ],
   "outputs": [

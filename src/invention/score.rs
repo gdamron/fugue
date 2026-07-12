@@ -48,6 +48,22 @@
 //! a voice realizes the value (level, brightness) is an interpretation
 //! concern, not the score's.
 //!
+//! # Pedal
+//!
+//! Notated sustain-pedal spans (`Ped.`/`*` marks, MusicXML `<pedal>`) are
+//! recorded in the optional `pedal` field: one gate lane per part that has
+//! pedal events, in the same step shape as `cells` (a v1-compatible
+//! extension — scores without pedal stay valid and unchanged). Pedal-down is
+//! a `{ "note": 0 }` onset followed by `{ "held": true }` continuations for
+//! the span; pedal-up returns to rests; a retake (`change`) is a fresh onset,
+//! whose release gap before the new onset is the pedal lift. The lane is
+//! consumed like any other: splice it into a sequencer via `$asset` path
+//! `/pedal/N` and patch the sequencer's `gate` output into a voice's
+//! `pedal` input (the `sustain` module's pedal port). Text instructions
+//! ("with pedal", "con pedale") name no
+//! spans and are not encoded — realizing them is interpretation, which lives
+//! in the invention.
+//!
 //! [`validate_score`] is the authoritative checker (mirroring the agent
 //! module's `fugue.step_pattern.v1` validation in
 //! `crate::agents`); the typed [`Score`] is a convenience model for producers
@@ -121,6 +137,12 @@ pub struct Score {
 
     /// Bank of cells, each a sequence of steps.
     pub cells: Vec<Vec<Step>>,
+
+    /// Notated sustain-pedal gate lanes, one per part with pedal events, in
+    /// the same step shape as `cells` (see the module docs). Empty when the
+    /// score notates no pedal spans.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pedal: Vec<Vec<Step>>,
 }
 
 /// One entry in a score's [`tempo_map`](Score::tempo_map): the notated tempo
@@ -229,6 +251,23 @@ pub fn validate_score(value: &Value) -> Result<(), String> {
         }
         for step in steps {
             validate_step(step).map_err(|err| format!("score.cells[{}]: {}", index, err))?;
+        }
+    }
+
+    if let Some(pedal) = object.get("pedal").filter(|v| !v.is_null()) {
+        let lanes = pedal
+            .as_array()
+            .ok_or_else(|| "score.pedal must be an array of lanes".to_string())?;
+        for (index, lane) in lanes.iter().enumerate() {
+            let steps = lane
+                .as_array()
+                .ok_or_else(|| format!("score.pedal[{}] must be an array of steps", index))?;
+            if steps.is_empty() {
+                return Err(format!("score.pedal[{}] must not be empty", index));
+            }
+            for step in steps {
+                validate_step(step).map_err(|err| format!("score.pedal[{}]: {}", index, err))?;
+            }
         }
     }
 

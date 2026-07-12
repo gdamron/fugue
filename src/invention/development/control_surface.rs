@@ -67,8 +67,12 @@ impl DevelopmentControlSurface {
 
 impl ControlSurface for DevelopmentControlSurface {
     fn controls(&self) -> Vec<ControlMeta> {
+        // A key may alias several internal controls (an explicit fan-out);
+        // list it once.
+        let mut seen = std::collections::HashSet::new();
         self.controls
             .iter()
+            .filter(|entry| seen.insert(entry.meta.key.as_str()))
             .map(|entry| entry.meta.clone())
             .collect()
     }
@@ -79,7 +83,22 @@ impl ControlSurface for DevelopmentControlSurface {
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        let (control, surface) = self.lookup(key)?;
-        surface.set_control(&control.key, value)
+        // A development may list the same key several times to fan a control
+        // out across internal modules (e.g. one `decay` reaching every voice
+        // of a bank); apply the write to every aliased target.
+        let mut found = false;
+        for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
+            let surface = self
+                .surfaces
+                .get(&control.module_id)
+                .ok_or_else(|| format!("Unknown control module: {}", control.module_id))?;
+            surface.set_control(&control.key, value.clone())?;
+            found = true;
+        }
+        if found {
+            Ok(())
+        } else {
+            Err(format!("Unknown control: {}", key))
+        }
     }
 }

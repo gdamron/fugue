@@ -143,6 +143,12 @@ pub struct StepSequencer {
     /// One-shot playback has completed; the `end` output latches high and
     /// clock edges are ignored until reset (or a switch back to loop mode).
     finished: bool,
+    /// Force the output gate low for exactly this sample: a new note is
+    /// starting while the previous step's gate is still sounding (its
+    /// duration was over-estimated — the cold start before the second clock
+    /// edge, or a sudden accelerando), so the downstream envelope needs an
+    /// explicit release edge to retrigger. Cleared when the outputs are set.
+    retrigger_dip: bool,
 
     // Edge detection state
     last_gate_in: f32,
@@ -168,6 +174,7 @@ impl StepSequencer {
             first_gate_received: false,
             active_note: None,
             finished: false,
+            retrigger_dip: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
@@ -187,6 +194,7 @@ impl StepSequencer {
             first_gate_received: false,
             active_note: None,
             finished: false,
+            retrigger_dip: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
@@ -291,6 +299,12 @@ impl StepSequencer {
         let step = self.get_step(self.current_step);
         match step.note {
             Some(offset) => {
+                // A new note while the previous gate is still sounding (its
+                // duration was over-estimated) needs a forced release edge
+                // to retrigger the downstream envelope.
+                if self.gate_samples_remaining > 0 {
+                    self.retrigger_dip = true;
+                }
                 self.active_note = Some(offset);
                 self.gate_samples_remaining = self.calculate_gate_samples(&step);
             }
@@ -388,7 +402,10 @@ impl StepSequencer {
             self.active_note
                 .map(|offset| self.note_frequency(offset))
                 .unwrap_or(0.0),
-            if self.gate_samples_remaining > 0 {
+            if self.retrigger_dip {
+                // One-sample forced release so the incoming note retriggers.
+                0.0
+            } else if self.gate_samples_remaining > 0 {
                 1.0
             } else {
                 0.0
@@ -396,6 +413,8 @@ impl StepSequencer {
             self.current_step as f32,
             if self.finished { 1.0 } else { 0.0 },
         );
+        // The forced release lasts exactly one sample.
+        self.retrigger_dip = false;
 
         // Store for edge detection
         self.last_gate_in = self.inputs.gate(i);
@@ -498,3 +517,38 @@ impl Module for StepSequencer {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod retrigger_dip_tests {
+    use super::*;
+
+    /// FUG-188 regression (mirrors the cell_sequencer test): an over-estimated
+    /// first step must not swallow the retrigger of a note on step 1.
+    #[test]
+    fn first_step_overrun_still_retriggers_next_note() {
+        let mut seq = StepSequencer::new(1000)
+            .with_steps(4)
+            .with_gate_length(0.95)
+            .with_pattern(vec![
+                Step::note(0),
+                Step::note(5),
+                Step::rest(),
+                Step::rest(),
+            ]);
+
+        let mut rising_edges = 0;
+        let mut last_gate = 0.0;
+        for sample in 0..400 {
+            let clock = if sample % 100 < 50 { 1.0 } else { 0.0 };
+            seq.set_input("gate", clock).unwrap();
+            seq.process(1);
+            let gate = seq.get_output("gate").unwrap();
+            if gate > 0.5 && last_gate <= 0.5 {
+                rising_edges += 1;
+            }
+            last_gate = gate;
+        }
+
+        assert_eq!(rising_edges, 2);
+    }
+}
