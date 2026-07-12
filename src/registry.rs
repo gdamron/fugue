@@ -143,6 +143,8 @@ impl Default for ModuleRegistry {
         reg.register(ReverbFactory);
         #[cfg(not(target_arch = "wasm32"))]
         reg.register(crate::modules::RtmpSinkFactory);
+        #[cfg(not(target_arch = "wasm32"))]
+        reg.register(crate::modules::YoutubeSinkFactory);
         reg.register(SamplePlayerFactory);
         reg.register(StepSequencerFactory);
         reg.register(crate::modules::sustain::SustainFactory);

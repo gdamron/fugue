@@ -8,7 +8,8 @@ use crate::streaming::ffmpeg::{
     DEFAULT_AUDIO_BUFFER_FRAMES, DEFAULT_VIDEO_QUEUE_FRAMES,
 };
 use crate::streaming::video::{
-    VideoFrameTarget, VideoPlayback, VideoPlaybackConfig, VideoPlaybackHandle,
+    BlackVideoFallback, BlackVideoFallbackHandle, VideoFrameTarget, VideoPlayback,
+    VideoPlaybackConfig, VideoPlaybackHandle,
 };
 
 use super::{RtmpSink, RtmpSinkHandle, RtmpSinkStats};
@@ -17,6 +18,7 @@ use super::{RtmpSink, RtmpSinkHandle, RtmpSinkStats};
 pub(super) struct SharedHandle {
     stream: FfmpegStreamHandle,
     background_video: Option<VideoPlaybackHandle>,
+    black_video_fallback: Option<BlackVideoFallbackHandle>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +51,7 @@ pub(super) fn build(
 }
 
 impl RtmpSinkConfig {
-    fn from_json(
+    pub(crate) fn from_json(
         config: &serde_json::Value,
         sample_rate: u32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -100,7 +102,7 @@ impl RtmpSinkConfig {
         })
     }
 
-    fn stream_config(&self) -> FfmpegStreamConfig {
+    fn stream_config(&self, constant_video_bitrate: bool) -> FfmpegStreamConfig {
         FfmpegStreamConfig {
             ffmpeg_path: self.ffmpeg_path.clone(),
             url: self.url.clone(),
@@ -113,6 +115,7 @@ impl RtmpSinkConfig {
             video_bitrate: self.video_bitrate.clone(),
             audio_bitrate: self.audio_bitrate.clone(),
             gop_seconds: self.gop_seconds,
+            constant_video_bitrate,
             audio_buffer_frames: self.buffer_frames,
             video_queue_frames: self.video_queue_frames,
         }
@@ -137,9 +140,17 @@ impl RtmpSink {
     pub fn new_native(
         config: RtmpSinkConfig,
     ) -> Result<(Self, RtmpSinkHandle), Box<dyn std::error::Error>> {
+        Self::new_native_with_options(config, false, false)
+    }
+
+    pub(crate) fn new_native_with_options(
+        config: RtmpSinkConfig,
+        constant_video_bitrate: bool,
+        black_video_fallback: bool,
+    ) -> Result<(Self, RtmpSinkHandle), Box<dyn std::error::Error>> {
         let soft_clip = config.soft_clip;
         let monitor = config.monitor;
-        let stream = FfmpegStreamBackend::start(config.stream_config())?;
+        let stream = FfmpegStreamBackend::start(config.stream_config(constant_video_bitrate))?;
         let background_video = if let Some(playback_config) = config.video_playback_config() {
             let target_stream = stream.clone();
             let target: VideoFrameTarget =
@@ -154,9 +165,24 @@ impl RtmpSink {
         } else {
             None
         };
+        let black_video_fallback = if black_video_fallback && background_video.is_none() {
+            let target_stream = stream.clone();
+            let target: VideoFrameTarget =
+                Arc::new(move |frame| target_stream.push_video_rgba(frame));
+            match BlackVideoFallback::start(config.width, config.height, config.fps, target) {
+                Ok(fallback) => Some(fallback),
+                Err(err) => {
+                    stream.finish();
+                    return Err(err);
+                }
+            }
+        } else {
+            None
+        };
         let shared = SharedHandle {
             stream,
             background_video,
+            black_video_fallback,
         };
         Ok(Self::from_shared(shared, soft_clip, monitor))
     }
@@ -174,7 +200,11 @@ impl SharedHandle {
     }
 
     pub(super) fn push_video_rgba(&self, frame: &[u8]) -> Result<(), String> {
-        self.stream.push_video_rgba(frame)
+        self.stream.push_video_rgba(frame)?;
+        if let Some(fallback) = &self.black_video_fallback {
+            fallback.external_video_started();
+        }
+        Ok(())
     }
 
     pub(super) fn has_background_video(&self) -> bool {
@@ -217,12 +247,18 @@ impl SharedHandle {
         if let Some(background_video) = &self.background_video {
             background_video.stop();
         }
+        if let Some(fallback) = &self.black_video_fallback {
+            fallback.stop();
+        }
         self.stream.stop();
     }
 
     pub(super) fn finish(&self) {
         if let Some(background_video) = &self.background_video {
             background_video.finish();
+        }
+        if let Some(fallback) = &self.black_video_fallback {
+            fallback.finish();
         }
         self.stream.finish();
     }
@@ -234,6 +270,12 @@ impl SharedHandle {
                 .background_video
                 .as_ref()
                 .and_then(|video| video.stats().last_error);
+        }
+        if stats.last_error.is_none() {
+            stats.last_error = self
+                .black_video_fallback
+                .as_ref()
+                .and_then(BlackVideoFallbackHandle::last_error);
         }
         stats
     }

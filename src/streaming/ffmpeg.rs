@@ -33,6 +33,7 @@ pub(crate) struct FfmpegStreamConfig {
     pub video_bitrate: String,
     pub audio_bitrate: String,
     pub gop_seconds: u32,
+    pub constant_video_bitrate: bool,
     pub audio_buffer_frames: usize,
     pub video_queue_frames: usize,
 }
@@ -97,6 +98,17 @@ impl FfmpegCommandSpec {
 
         if config.video_encoder == "libx264" {
             args.extend(["-preset".to_string(), "veryfast".to_string()]);
+        }
+
+        if config.constant_video_bitrate {
+            args.extend([
+                "-minrate".to_string(),
+                config.video_bitrate.clone(),
+                "-maxrate".to_string(),
+                config.video_bitrate.clone(),
+                "-bufsize".to_string(),
+                config.video_bitrate.clone(),
+            ]);
         }
 
         args.extend([
@@ -208,7 +220,8 @@ impl FfmpegStreamBackend {
     }
 
     fn set_error(&self, error: impl Into<String>) {
-        *self.last_error.lock().unwrap() = Some(error.into());
+        let error = redact_stream_url(error.into(), &self.config.url);
+        *self.last_error.lock().unwrap() = Some(error);
     }
 
     fn append_stderr(&self, bytes: &[u8]) {
@@ -229,6 +242,10 @@ impl FfmpegStreamBackend {
             Some(String::from_utf8_lossy(tail.make_contiguous()).to_string())
         }
     }
+}
+
+fn redact_stream_url(error: String, url: &str) -> String {
+    error.replace(url, "<redacted-stream-url>")
 }
 
 struct AudioFrameRing {
@@ -294,18 +311,24 @@ impl AudioFrameRing {
 }
 
 struct VideoFrameQueue {
-    frames: VecDeque<Vec<u8>>,
+    frames: Vec<Option<Box<[u8]>>>,
     capacity: usize,
     frame_bytes: usize,
+    read_index: usize,
+    write_index: usize,
+    len: usize,
     dropped: usize,
 }
 
 impl VideoFrameQueue {
     fn new(capacity: usize, frame_bytes: usize) -> Self {
         Self {
-            frames: VecDeque::with_capacity(capacity),
+            frames: (0..capacity).map(|_| None).collect(),
             capacity,
             frame_bytes,
+            read_index: 0,
+            write_index: 0,
+            len: 0,
             dropped: 0,
         }
     }
@@ -318,20 +341,46 @@ impl VideoFrameQueue {
                 frame.len()
             ));
         }
-        if self.frames.len() == self.capacity {
-            self.frames.pop_front();
+        if self.len == self.capacity {
+            self.read_index = self.advance(self.read_index);
+            self.len -= 1;
             self.dropped += 1;
         }
-        self.frames.push_back(frame.to_vec());
+        match &mut self.frames[self.write_index] {
+            Some(slot) => slot.copy_from_slice(frame),
+            slot @ None => *slot = Some(frame.to_vec().into_boxed_slice()),
+        }
+        self.write_index = self.advance(self.write_index);
+        self.len += 1;
         Ok(())
     }
 
-    fn pop(&mut self) -> Option<Vec<u8>> {
-        self.frames.pop_front()
+    fn pop_into(&mut self, frame: &mut [u8]) -> bool {
+        if self.len == 0 {
+            return false;
+        }
+        frame.copy_from_slice(
+            self.frames[self.read_index]
+                .as_deref()
+                .expect("queued video frame slot is initialized"),
+        );
+        self.read_index = self.advance(self.read_index);
+        self.len -= 1;
+        true
     }
 
     fn is_empty(&self) -> bool {
-        self.frames.is_empty()
+        self.len == 0
+    }
+
+    #[inline]
+    fn advance(&self, index: usize) -> usize {
+        let next = index + 1;
+        if next == self.capacity {
+            0
+        } else {
+            next
+        }
     }
 }
 
@@ -487,6 +536,7 @@ fn accept_input_streams(
 
 fn run_session(shared: &FfmpegStreamBackend, session: &mut FfmpegSession) -> SessionOutcome {
     let mut audio_bytes = Vec::with_capacity(4096 * 8);
+    let mut video_frame = vec![0; shared.config.video_frame_bytes()];
     loop {
         if shared.stopping.load(Ordering::Acquire) && queues_drained(shared) {
             return SessionOutcome::GracefulStop;
@@ -526,9 +576,13 @@ fn run_session(shared: &FfmpegStreamBackend, session: &mut FfmpegSession) -> Ses
             did_work = true;
         }
 
-        let frame = shared.video_queue.lock().unwrap().pop();
-        if let Some(frame) = frame {
-            if let Err(err) = session.video.write_all(&frame) {
+        let has_video_frame = shared
+            .video_queue
+            .lock()
+            .unwrap()
+            .pop_into(&mut video_frame);
+        if has_video_frame {
+            if let Err(err) = session.video.write_all(&video_frame) {
                 return SessionOutcome::IoError(format!("ffmpeg video write failed: {err}"));
             }
             shared.video_frames_sent.fetch_add(1, Ordering::Relaxed);
@@ -596,6 +650,7 @@ mod tests {
             video_bitrate: "2500k".to_string(),
             audio_bitrate: "128k".to_string(),
             gop_seconds: 2,
+            constant_video_bitrate: false,
             audio_buffer_frames: DEFAULT_AUDIO_BUFFER_FRAMES,
             video_queue_frames: DEFAULT_VIDEO_QUEUE_FRAMES,
         }
@@ -618,6 +673,56 @@ mod tests {
         ));
         assert!(args.contains("-c:v libx264 -b:v 3000k -g 90 -pix_fmt yuv420p"));
         assert!(args.contains("-c:a aac -b:a 160k -f flv rtmp://example.test/live/fugue"));
+        assert!(!args.contains("-minrate"));
+    }
+
+    #[test]
+    fn builds_constant_bitrate_arguments_when_requested() {
+        let mut config = minimal_config();
+        config.video_bitrate = "10000k".to_string();
+        config.constant_video_bitrate = true;
+        let spec = FfmpegCommandSpec::for_ports(&config, 12_345, 23_456);
+        let args = spec.args.join(" ");
+
+        assert!(args.contains("-minrate 10000k -maxrate 10000k -bufsize 10000k"));
+    }
+
+    #[test]
+    fn redacts_stream_urls_from_diagnostics() {
+        let url = "rtmps://example.test/live/secret-stream-key";
+        let error = redact_stream_url(format!("could not open {url}"), url);
+
+        assert_eq!(error, "could not open <redacted-stream-url>");
+        assert!(!error.contains("secret-stream-key"));
+    }
+
+    #[test]
+    fn video_queue_reuses_allocated_slots_and_drops_oldest_frame() {
+        let mut queue = VideoFrameQueue::new(2, 4);
+        queue.push(&[1; 4]).unwrap();
+        queue.push(&[2; 4]).unwrap();
+        let slot_addresses: Vec<usize> = queue
+            .frames
+            .iter()
+            .map(|frame| frame.as_deref().unwrap().as_ptr() as usize)
+            .collect();
+        queue.push(&[3; 4]).unwrap();
+
+        let mut frame = [0; 4];
+        assert!(queue.pop_into(&mut frame));
+        assert_eq!(frame, [2; 4]);
+        assert!(queue.pop_into(&mut frame));
+        assert_eq!(frame, [3; 4]);
+        assert!(!queue.pop_into(&mut frame));
+        assert_eq!(queue.dropped, 1);
+        assert_eq!(
+            queue
+                .frames
+                .iter()
+                .map(|frame| frame.as_deref().unwrap().as_ptr() as usize)
+                .collect::<Vec<_>>(),
+            slot_addresses
+        );
     }
 
     #[test]
@@ -715,6 +820,7 @@ PY
                 video_bitrate: "2500k".to_string(),
                 audio_bitrate: "128k".to_string(),
                 gop_seconds: 2,
+                constant_video_bitrate: false,
                 audio_buffer_frames: 64,
                 video_queue_frames: 2,
             }
@@ -799,6 +905,7 @@ PY
                 video_bitrate: "200k".to_string(),
                 audio_bitrate: "64k".to_string(),
                 gop_seconds: 2,
+                constant_video_bitrate: false,
                 audio_buffer_frames: 512,
                 video_queue_frames: 8,
             })

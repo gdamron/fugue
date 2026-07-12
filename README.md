@@ -192,6 +192,53 @@ Type `help` for the full command reference.
 The JavaScript browser player is packaged separately as `@ilusiv/fugue-js`.
 This repository owns the Rust engine and wasm exports that package consumes.
 
+## YouTube Live Streaming
+
+Native hosts can add a `youtube_sink` as a composable streaming tap. Audio is
+passed through unchanged while a copy is sent to YouTube through `ffmpeg`.
+Broadcast creation, scheduling, and privacy are managed in YouTube Studio.
+
+Put the stream key from YouTube Live Control Room in the environment and keep it
+out of invention JSON:
+
+```sh
+export YOUTUBE_STREAM_KEY='your-stream-key'
+```
+
+```json
+{
+  "id": "youtube",
+  "type": "youtube_sink",
+  "config": {
+    "background_video": "./loop.mp4"
+  }
+}
+```
+
+The default profile is RTMPS, 1920x1080 at 30 fps, H.264 at 10 Mbps, AAC stereo
+at 128 kbps, and a two-second GOP. Without `background_video`, the sink emits
+black video so an audio-only invention still produces a valid A/V stream. The
+sink has the same `audio`, `audio_left`, and `audio_right` inputs and outputs as
+`rtmp_sink` and never lets streaming failure alter the pass-through signal.
+
+Configuration overrides include `server_url`, `resolution` or `width`/`height`,
+`fps`, `video_bitrate`, `audio_bitrate`, `video_encoder`, `audio_encoder`,
+`gop_seconds`, `ffmpeg_path`, `monitor`, `soft_clip`, `buffer_frames`, and
+`video_queue_frames`. Use `stream_key_env` to name a different environment
+variable. An explicit `stream_key_env` wins over `stream_key`; inline
+`stream_key` is supported for convenience but is retained in invention/runtime
+snapshots. In all modes, the resolved destination is necessarily passed to the
+local `ffmpeg` process and may be visible to users who can inspect process
+arguments.
+
+`ffmpeg` must be installed and available in `PATH`. A real ingestion smoke test
+is opt-in and should target an operator-created unlisted broadcast:
+
+```sh
+FUGUE_YOUTUBE_SINK_REAL_FFMPEG=1 \
+  cargo test --lib real_youtube_ingestion_smoke -- --ignored
+```
+
 ## MCP Server (AI-Driven Composition)
 
 The MCP server now lives in the separate
