@@ -38,6 +38,8 @@ pub mod sample_player;
 pub mod step_sequencer;
 pub mod sustain;
 pub mod vca;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod youtube_sink;
 
 // Re-export module types
 pub use adsr::{Adsr, AdsrControls};
@@ -71,16 +73,18 @@ pub use sample_player::{SamplePlayer, SamplePlayerControls};
 pub use step_sequencer::{Step, StepSequencer};
 pub use sustain::{Sustain, SustainFactory};
 pub use vca::{Vca, VcaControls};
+#[cfg(not(target_arch = "wasm32"))]
+pub use youtube_sink::{YoutubeSink, YoutubeSinkHandle, YoutubeSinkStats};
 
 // Re-export factory types
 pub use adsr::AdsrFactory;
 pub use agent::AgentFactory;
 pub use cell_sequencer::CellSequencerFactory;
 pub use clock::ClockFactory;
-pub use divisi::{Divisi, DivisiFactory};
 pub use code::CodeFactory;
 pub use control_scheduler::ControlSchedulerFactory;
 pub use dac::DacFactory;
+pub use divisi::{Divisi, DivisiFactory};
 pub use filter::FilterFactory;
 pub use lfo::LfoFactory;
 pub use melody::MelodyFactory;
@@ -92,3 +96,5 @@ pub use rtmp_sink::RtmpSinkFactory;
 pub use sample_player::SamplePlayerFactory;
 pub use step_sequencer::StepSequencerFactory;
 pub use vca::VcaFactory;
+#[cfg(not(target_arch = "wasm32"))]
+pub use youtube_sink::YoutubeSinkFactory;
