@@ -73,6 +73,12 @@ impl ModuleFactory for StepSequencerFactory {
         if let Some(mode) = config.get("mode").and_then(|v| v.as_str()) {
             controls.set_mode(mode)?;
         }
+        if let Some(ms) = config.get("grace_duration_ms").and_then(|v| v.as_f64()) {
+            controls.set_grace_duration_ms(ms as f32);
+        }
+        if let Some(placement) = config.get("grace_placement").and_then(|v| v.as_str()) {
+            controls.set_grace_placement(placement)?;
+        }
 
         let seq =
             StepSequencer::new_with_controls(sample_rate, controls.clone()).with_pattern(pattern);

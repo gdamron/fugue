@@ -6,7 +6,6 @@ pub(super) struct HistoryLimits {
     pub(super) max_chars: usize,
 }
 
-
 /// Builds the structured packet sent to local/API backends.
 ///
 /// The packet separates task text, explicit context bindings, optional
@@ -51,7 +50,10 @@ pub(super) fn build_request_packet(
 /// Supported sources are original module config, a single control, or a set
 /// of controls matched by exact key or simple suffix wildcard such as
 /// `degree.*`.
-pub(super) fn build_context(config: &Value, controller: &RuntimeController) -> Result<Value, String> {
+pub(super) fn build_context(
+    config: &Value,
+    controller: &RuntimeController,
+) -> Result<Value, String> {
     let mut map = serde_json::Map::new();
     let Some(bindings) = config.get("context").and_then(Value::as_array) else {
         return Ok(Value::Object(map));
@@ -119,8 +121,7 @@ pub(super) fn build_context(config: &Value, controller: &RuntimeController) -> R
                                 .snapshot
                                 .get_control(module_id, &control.key)
                                 .map_err(|e| e.to_string())?;
-                            controls_map
-                                .insert(control.key.clone(), control_value_to_json(value));
+                            controls_map.insert(control.key.clone(), control_value_to_json(value));
                         }
                     }
                 }

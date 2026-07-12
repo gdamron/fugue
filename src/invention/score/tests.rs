@@ -207,7 +207,10 @@ fn rejects_unordered_tempo_map() {
         "cells": [[ 0 ]]
     });
     let err = validate_score(&value).unwrap_err();
-    assert!(err.contains("must be greater than the previous entry"), "{err}");
+    assert!(
+        err.contains("must be greater than the previous entry"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -244,7 +247,10 @@ fn rejects_non_positive_tempo_map_bpm() {
         "cells": [[ 0 ]]
     });
     let err = validate_score(&value).unwrap_err();
-    assert!(err.contains("tempo_map[0].bpm must be a positive number"), "{err}");
+    assert!(
+        err.contains("tempo_map[0].bpm must be a positive number"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -270,4 +276,67 @@ fn rejects_malformed_pedal_step() {
     }))
     .unwrap_err();
     assert!(err.contains("pedal[0]"), "{err}");
+}
+
+#[test]
+fn accepts_grace_on_note_steps() {
+    let value = json!({ "cells": [[ { "note": 24, "grace": [12] }, { "held": true } ]] });
+    validate_score(&value).expect("grace on a note step validates");
+
+    let value = json!({ "cells": [[ { "note": 0, "grace": [-1, -3, -1, 0] } ]] });
+    validate_score(&value).expect("a four-note grace chain validates");
+}
+
+#[test]
+fn rejects_grace_on_rests_and_held_steps() {
+    let err =
+        validate_score(&json!({ "cells": [[ { "note": null, "grace": [5] } ]] })).unwrap_err();
+    assert!(err.contains("requires a principal note"), "{err}");
+
+    let err = validate_score(&json!({ "cells": [[ { "grace": [5] } ]] })).unwrap_err();
+    assert!(err.contains("requires a principal note"), "{err}");
+
+    // Held steps may carry nothing else, so the existing held rule rejects it.
+    let err =
+        validate_score(&json!({ "cells": [[ { "note": 0 }, { "held": true, "grace": [5] } ]] }))
+            .unwrap_err();
+    assert!(err.contains("held"), "{err}");
+}
+
+#[test]
+fn rejects_malformed_grace() {
+    let err = validate_score(&json!({ "cells": [[ { "note": 0, "grace": [] } ]] })).unwrap_err();
+    assert!(err.contains("must not be empty"), "{err}");
+
+    let err = validate_score(&json!({ "cells": [[ { "note": 0, "grace": [1, 2, 3, 4, 5] } ]] }))
+        .unwrap_err();
+    assert!(err.contains("at most 4"), "{err}");
+
+    let err = validate_score(&json!({ "cells": [[ { "note": 0, "grace": [1.5] } ]] })).unwrap_err();
+    assert!(err.contains("must be integers"), "{err}");
+
+    let err = validate_score(&json!({ "cells": [[ { "note": 0, "grace": [200] } ]] })).unwrap_err();
+    assert!(err.contains("out of range"), "{err}");
+
+    // The object form is reserved for future ornament kinds (trills etc.).
+    let err =
+        validate_score(&json!({ "cells": [[ { "note": 0, "grace": { "kind": "trill" } } ]] }))
+            .unwrap_err();
+    assert!(err.contains("reserved"), "{err}");
+}
+
+#[test]
+fn grace_round_trips_through_typed_model() {
+    let value = json!({
+        "schema": "fugue.score.v1",
+        "cells": [[ { "note": 34, "grace": [22], "amplitude": 0.5 }, { "held": true } ]]
+    });
+    let json = serde_json::to_string(&value).unwrap();
+    let score = Score::from_json(&json).expect("typed parse");
+    assert_eq!(score.cells[0][0].grace.iter().collect::<Vec<_>>(), vec![22]);
+
+    let reserialized = score.to_json().expect("serialize");
+    let reparsed: Value = serde_json::from_str(&reserialized).unwrap();
+    validate_score(&reparsed).expect("re-serialized score still validates");
+    assert_eq!(reparsed["cells"][0][0]["grace"], json!([22]));
 }

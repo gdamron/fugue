@@ -105,7 +105,10 @@ impl CompiledDevelopmentGraph {
 
         // Per-internal-module output block buffers.
         let out_counts: Vec<usize> = modules.iter().map(|m| m.module().outputs().len()).collect();
-        let out_bufs: Vec<Vec<f32>> = out_counts.iter().map(|&c| vec![0.0; c * MAX_BLOCK]).collect();
+        let out_bufs: Vec<Vec<f32>> = out_counts
+            .iter()
+            .map(|&c| vec![0.0; c * MAX_BLOCK])
+            .collect();
 
         Ok(Self {
             modules,

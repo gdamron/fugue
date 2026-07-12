@@ -81,7 +81,10 @@ impl fmt::Display for ValidationError {
                 write!(f, "invalid id `{id}`: expected reverse-dns like `fugue.ns.name` (lowercase, dot-separated, ≥3 segments)")
             }
             ValidationError::InvalidVersion(v) => {
-                write!(f, "invalid version `{v}`: expected semver (MAJOR.MINOR.PATCH)")
+                write!(
+                    f,
+                    "invalid version `{v}`: expected semver (MAJOR.MINOR.PATCH)"
+                )
             }
             ValidationError::EmptyLicense => write!(f, "license must not be empty"),
             ValidationError::EmptyTargets => write!(f, "targets must list at least one surface"),
@@ -210,10 +213,7 @@ fn is_valid_semver(v: &str) -> bool {
             if ident.is_empty() {
                 return false;
             }
-            if !ident
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-')
-            {
+            if !ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
                 return false;
             }
         }

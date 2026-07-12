@@ -14,7 +14,6 @@ pub(super) struct LocalHarness {
     build_args: fn(&Value, &Value) -> Vec<String>,
 }
 
-
 /// Dispatches a request packet to the configured backend.
 ///
 /// `test:*` backends are deterministic in-process fakes for tests,

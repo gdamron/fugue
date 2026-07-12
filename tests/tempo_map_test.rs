@@ -106,7 +106,11 @@ fn tempo_map_beat_edges_are_phase_continuous_across_the_change() {
     );
 
     // The new tempo holds: subsequent beats are 100 samples apart.
-    let post: Vec<usize> = edges.iter().copied().filter(|&f| f >= first_after).collect();
+    let post: Vec<usize> = edges
+        .iter()
+        .copied()
+        .filter(|&f| f >= first_after)
+        .collect();
     for pair in post.windows(2) {
         assert_eq!(
             pair[1] - pair[0],
@@ -125,7 +129,10 @@ fn tempo_map_render_is_byte_identical() {
     };
     let first: Vec<u32> = render().into_iter().map(f32::to_bits).collect();
     let second: Vec<u32> = render().into_iter().map(f32::to_bits).collect();
-    assert_eq!(first, second, "two tempo-map renders must be byte-identical");
+    assert_eq!(
+        first, second,
+        "two tempo-map renders must be byte-identical"
+    );
 }
 
 #[test]
@@ -163,7 +170,10 @@ fn tempo_map_ramp_slows_smoothly_ritardando() {
 
     let gate = render_gate(&mut engine, 48_000 * 5);
     let edges = rising_edges(&gate);
-    let spacings: Vec<i64> = edges.windows(2).map(|w| w[1] as i64 - w[0] as i64).collect();
+    let spacings: Vec<i64> = edges
+        .windows(2)
+        .map(|w| w[1] as i64 - w[0] as i64)
+        .collect();
 
     // Steps before the ramp are ♩=120 (6000 samples/16th).
     assert!(
@@ -181,7 +191,9 @@ fn tempo_map_ramp_slows_smoothly_ritardando() {
     }
     // Settles at ♩=40 (18000 samples/16th).
     assert!(
-        spacings[13..16].iter().all(|&s| (17999..=18001).contains(&s)),
+        spacings[13..16]
+            .iter()
+            .all(|&s| (17999..=18001).contains(&s)),
         "post-ramp grid should settle at ~18000 samples, got {spacings:?}"
     );
 }

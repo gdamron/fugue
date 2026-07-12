@@ -63,14 +63,19 @@ pub use self::controls::StepSequencerControls;
 
 mod controls;
 mod factory;
+pub(crate) mod grace;
 mod inputs;
 mod outputs;
 mod parse;
 mod step;
 
 pub use factory::StepSequencerFactory;
+use grace::{
+    clamp_per_grace, release_gap, GracePlayer, DEFAULT_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS,
+    MIN_GRACE_DURATION_MS,
+};
 pub(crate) use parse::{parse_pattern, parse_step};
-pub use step::Step;
+pub use step::{GraceChain, Step, MAX_GRACE_NOTES};
 
 /// Default number of steps in a pattern.
 pub const DEFAULT_STEPS: usize = 16;
@@ -99,6 +104,19 @@ pub const DEFAULT_BASE_NOTE: u8 = 48;
 /// - `end` - End-of-sequence gate: 0.0 while playing; latches to 1.0 when a
 ///   one-shot pattern completes (exactly one rising edge per playthrough) and
 ///   stays high until `reset` or a switch back to loop mode
+///
+/// # Grace notes
+///
+/// A step's `grace` chain plays as short separate attacks on the mono
+/// frequency/gate stream ahead of the principal, each followed by a real
+/// release gap so downstream envelopes retrigger. `grace_duration_ms`
+/// (default 60) sets each grace's length (the chain clamps to half the
+/// measured step duration); `grace_placement` selects `before` (default:
+/// steal the previous step's tail, principal on the grid) or `on_beat`
+/// (chain starts at the edge and delays the principal). A decorated step
+/// with no previous step to steal from falls back to on-beat realization;
+/// a chain overrun by the next clock edge is truncated — the principal
+/// always wins.
 ///
 /// # Playback modes
 ///
@@ -149,6 +167,25 @@ pub struct StepSequencer {
     /// edge, or a sudden accelerando), so the downstream envelope needs an
     /// explicit release edge to retrigger. Cleared when the outputs are set.
     retrigger_dip: bool,
+    /// Plays a step's grace chain as short attacks ahead of its principal.
+    grace_player: GracePlayer,
+    /// Countdown to a pre-scheduled (before-the-beat) grace chain for the
+    /// upcoming step, in samples from the current step's edge; 0 = none.
+    grace_countdown: u32,
+    pending_grace: GraceChain,
+    pending_grace_per: u32,
+    /// The upcoming step's chain actually started sounding off the previous
+    /// step's tail (before placement), so `start_step` must not replay it on
+    /// the beat. Left false when a pre-scheduled countdown never fired (the
+    /// edge came early), which falls back to on-beat realization.
+    grace_prescheduled: bool,
+    /// Principal note waiting for an on-beat grace chain to finish, with
+    /// its remaining gate samples.
+    deferred_note: Option<i8>,
+    deferred_gate_samples: u32,
+    /// Block-rate caches of the grace controls (read once per `process`).
+    grace_samples_cfg: u32,
+    grace_on_beat_cfg: bool,
 
     // Edge detection state
     last_gate_in: f32,
@@ -175,6 +212,15 @@ impl StepSequencer {
             active_note: None,
             finished: false,
             retrigger_dip: false,
+            grace_player: GracePlayer::idle(),
+            grace_countdown: 0,
+            pending_grace: GraceChain::default(),
+            pending_grace_per: 0,
+            grace_prescheduled: false,
+            deferred_note: None,
+            deferred_gate_samples: 0,
+            grace_samples_cfg: 0,
+            grace_on_beat_cfg: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
@@ -195,6 +241,15 @@ impl StepSequencer {
             active_note: None,
             finished: false,
             retrigger_dip: false,
+            grace_player: GracePlayer::idle(),
+            grace_countdown: 0,
+            pending_grace: GraceChain::default(),
+            pending_grace_per: 0,
+            grace_prescheduled: false,
+            deferred_note: None,
+            deferred_gate_samples: 0,
+            grace_samples_cfg: 0,
+            grace_on_beat_cfg: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
@@ -297,16 +352,49 @@ impl StepSequencer {
 
     fn start_step(&mut self) {
         let step = self.get_step(self.current_step);
+        let gate_still_high = self.gate_samples_remaining > 0 || self.grace_player.is_active();
+
+        // The edge closes out any grace playback in flight: an overrunning
+        // chain is truncated (the principal always wins), and a stale
+        // pre-schedule whose countdown never fired is dropped.
+        let prescheduled = self.grace_prescheduled;
+        self.grace_prescheduled = false;
+        self.grace_countdown = 0;
+        self.grace_player.cancel();
+        // An unsounded deferred principal is musically past; the new step wins.
+        self.deferred_note = None;
+
         match step.note {
             Some(offset) => {
                 // A new note while the previous gate is still sounding (its
                 // duration was over-estimated) needs a forced release edge
                 // to retrigger the downstream envelope.
-                if self.gate_samples_remaining > 0 {
+                if gate_still_high {
                     self.retrigger_dip = true;
                 }
-                self.active_note = Some(offset);
-                self.gate_samples_remaining = self.calculate_gate_samples(&step);
+                let chain_on_beat =
+                    !step.grace.is_empty() && (self.grace_on_beat_cfg || !prescheduled);
+                if chain_on_beat {
+                    // Play the chain from this edge and defer the principal
+                    // until it ends: on_beat placement, or the fallback when
+                    // no previous step could host a before-the-beat chain
+                    // (cold start or pattern wrap).
+                    let per = clamp_per_grace(
+                        &step.grace,
+                        self.grace_samples_cfg,
+                        self.step_duration_samples / 2,
+                    );
+                    self.grace_player.start(step.grace, 1.0, per);
+                    self.deferred_note = Some(offset);
+                    let chain_total = GracePlayer::chain_samples(&step.grace, per);
+                    self.deferred_gate_samples = self
+                        .calculate_gate_samples(&step)
+                        .saturating_sub(chain_total);
+                    self.gate_samples_remaining = 0;
+                } else {
+                    self.active_note = Some(offset);
+                    self.gate_samples_remaining = self.calculate_gate_samples(&step);
+                }
             }
             None if step.held && self.active_note.is_some() => {
                 self.gate_samples_remaining = self.calculate_gate_samples(&step);
@@ -316,6 +404,60 @@ impl StepSequencer {
                 self.gate_samples_remaining = 0;
             }
         }
+
+        // Before-the-beat placement: a decorated upcoming step steals this
+        // step's tail so its principal lands on the grid. Runs for every
+        // step (a rest can host a chain too).
+        self.maybe_preschedule_next();
+    }
+
+    /// Schedules the next step's grace chain (before-the-beat placement) to
+    /// sound at the tail of the current step, ending at the predicted next
+    /// edge, and releases this step's gate early enough that the chain's
+    /// first onset presents a real rising edge. The look-ahead does not wrap
+    /// the pattern: a decorated step 0 falls back to on-beat realization in
+    /// `start_step` instead.
+    fn maybe_preschedule_next(&mut self) {
+        if self.grace_on_beat_cfg {
+            return;
+        }
+        let next_index = self.current_step + 1;
+        if next_index >= self.ctrl.steps() {
+            return;
+        }
+        let next = self.get_step(next_index);
+        if next.note.is_none() || next.grace.is_empty() {
+            return;
+        }
+
+        let per = clamp_per_grace(
+            &next.grace,
+            self.grace_samples_cfg,
+            self.step_duration_samples / 2,
+        );
+        let total = GracePlayer::chain_samples(&next.grace, per);
+        let start_at = self.step_duration_samples.saturating_sub(total);
+        if start_at == 0 {
+            return;
+        }
+
+        self.pending_grace = next.grace;
+        self.pending_grace_per = per;
+        self.grace_countdown = start_at;
+
+        // Release the current step's gate a gap before the chain's first
+        // onset so the onset presents a real rising edge.
+        let cap = start_at.saturating_sub(release_gap(per));
+        self.gate_samples_remaining = self.gate_samples_remaining.min(cap);
+        self.deferred_gate_samples = self.deferred_gate_samples.min(cap);
+    }
+
+    /// Silences any grace playback and scheduling (reset or end of one-shot).
+    fn clear_grace_state(&mut self) {
+        self.grace_player.cancel();
+        self.grace_countdown = 0;
+        self.grace_prescheduled = false;
+        self.deferred_note = None;
     }
 
     /// Advances to the next step.
@@ -328,6 +470,7 @@ impl StepSequencer {
         self.current_step = 0;
         self.gate_samples_remaining = 0;
         self.active_note = None;
+        self.clear_grace_state();
         self.set_finished(false);
     }
 
@@ -336,6 +479,7 @@ impl StepSequencer {
         self.set_finished(true);
         self.active_note = None;
         self.gate_samples_remaining = 0;
+        self.clear_grace_state();
     }
 
     /// Updates `finished` and mirrors it into the controls' read-only `ended`
@@ -388,6 +532,46 @@ impl StepSequencer {
             }
         }
 
+        // Grace machinery ticks between clock edges: fire a pre-scheduled
+        // before-the-beat chain at the tail of this step, and hand the
+        // stream back to a deferred principal once its on-beat chain ends.
+        if !self.finished {
+            if self.grace_countdown > 0 {
+                self.grace_countdown -= 1;
+                if self.grace_countdown == 0 {
+                    if self.gate_samples_remaining > 0 {
+                        // The cap in maybe_preschedule_next should have
+                        // released already; force the edge the chain's
+                        // first onset needs.
+                        self.retrigger_dip = true;
+                        self.gate_samples_remaining = 0;
+                    }
+                    self.grace_prescheduled = true;
+                    self.grace_player
+                        .start(self.pending_grace, 1.0, self.pending_grace_per);
+                }
+            }
+
+            if self.deferred_note.is_some() && !self.grace_player.is_active() {
+                self.active_note = self.deferred_note.take();
+                let mut gate_samples = self.deferred_gate_samples;
+                if self.grace_countdown > 0 {
+                    // A chain for the next step is already counting down;
+                    // release before its first onset.
+                    gate_samples = gate_samples.min(
+                        self.grace_countdown
+                            .saturating_sub(release_gap(self.pending_grace_per)),
+                    );
+                }
+                self.gate_samples_remaining = gate_samples;
+            }
+        }
+        let grace_voice = if self.finished {
+            None
+        } else {
+            self.grace_player.tick()
+        };
+
         // Count samples for step duration measurement
         self.samples_since_gate += 1;
 
@@ -396,16 +580,24 @@ impl StepSequencer {
             self.gate_samples_remaining -= 1;
         }
 
-        // Update cached outputs
+        // Update cached outputs. An active grace chain owns the mono
+        // frequency/gate stream; the principal resumes when it ends.
+        let (frequency, gate_high) = match grace_voice {
+            Some(voice) => (self.note_frequency(voice.offset), voice.gate),
+            None => (
+                self.active_note
+                    .map(|offset| self.note_frequency(offset))
+                    .unwrap_or(0.0),
+                self.gate_samples_remaining > 0,
+            ),
+        };
         self.outputs.set(
             i,
-            self.active_note
-                .map(|offset| self.note_frequency(offset))
-                .unwrap_or(0.0),
+            frequency,
             if self.retrigger_dip {
                 // One-sample forced release so the incoming note retriggers.
                 0.0
-            } else if self.gate_samples_remaining > 0 {
+            } else if gate_high {
                 1.0
             } else {
                 0.0
@@ -429,8 +621,12 @@ impl Module for StepSequencer {
 
     fn process(&mut self, frames: usize) -> bool {
         // Mode is control-plane state: read it once per block so the
-        // per-sample loop carries no atomic load for it.
+        // per-sample loop carries no atomic load for it. Likewise the grace
+        // controls, converting ms to samples once per block.
         let one_shot = self.ctrl.one_shot();
+        self.grace_samples_cfg =
+            (self.ctrl.grace_duration_ms() * self.sample_rate as f32 / 1000.0) as u32;
+        self.grace_on_beat_cfg = self.ctrl.grace_on_beat();
         for i in 0..frames {
             self.process_sample(i, one_shot);
         }
@@ -478,6 +674,15 @@ impl Module for StepSequencer {
             )
             .with_options(vec!["loop".to_string(), "one_shot".to_string()])
             .with_default("loop"),
+            ControlMeta::new("grace_duration_ms", "Duration of a single grace note in ms")
+                .with_range(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS)
+                .with_default(DEFAULT_GRACE_DURATION_MS),
+            ControlMeta::new(
+                "grace_placement",
+                "Grace placement: 0 = before the beat, 1 = on the beat",
+            )
+            .with_range(0.0, 1.0)
+            .with_default(0.0),
         ]
     }
 
@@ -488,6 +693,9 @@ impl Module for StepSequencer {
             "gate_length" => Ok(self.ctrl.gate_length()),
             // Numeric view of the string `mode` control: 0.0 = loop, 1.0 = one_shot.
             "mode" => Ok(if self.ctrl.one_shot() { 1.0 } else { 0.0 }),
+            "grace_duration_ms" => Ok(self.ctrl.grace_duration_ms()),
+            // Numeric view of `grace_placement`: 0.0 = before, 1.0 = on_beat.
+            "grace_placement" => Ok(if self.ctrl.grace_on_beat() { 1.0 } else { 0.0 }),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -508,6 +716,14 @@ impl Module for StepSequencer {
             }
             "mode" => {
                 self.ctrl.set_one_shot(value > 0.5);
+                Ok(())
+            }
+            "grace_duration_ms" => {
+                self.ctrl.set_grace_duration_ms(value);
+                Ok(())
+            }
+            "grace_placement" => {
+                self.ctrl.set_grace_on_beat(value > 0.5);
                 Ok(())
             }
             _ => Err(format!("Unknown control: {}", key)),

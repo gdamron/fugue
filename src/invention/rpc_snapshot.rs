@@ -181,7 +181,11 @@ mod tests {
         let snapshot = RuntimeFullSnapshot {
             status: empty_status(),
             modules: vec![
-                module("osc", "oscillator", serde_json::json!({ "frequency": 440.0 })),
+                module(
+                    "osc",
+                    "oscillator",
+                    serde_json::json!({ "frequency": 440.0 }),
+                ),
                 module("dac", "dac", serde_json::Value::Null),
             ],
             connections: vec![
@@ -284,11 +288,9 @@ mod tests {
 
         // The runtime mutation is captured as an override and re-applies cleanly.
         let overrides = snapshot.control_overrides();
-        assert!(overrides
-            .iter()
-            .any(|(module, key, value)| module == "vca"
-                && key == "cv"
-                && *value == ControlValue::Number(0.5)));
+        assert!(overrides.iter().any(|(module, key, value)| module == "vca"
+            && key == "cv"
+            && *value == ControlValue::Number(0.5)));
         for (module, key, value) in overrides {
             rebuilt.set_control(&module, &key, value).unwrap();
         }

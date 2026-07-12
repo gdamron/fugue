@@ -3,8 +3,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::atomic::AtomicF32;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
+use super::grace::{DEFAULT_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS, MIN_GRACE_DURATION_MS};
 use super::{Step, DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS};
 
 /// Thread-safe controls for the StepSequencer module.
@@ -37,6 +39,12 @@ pub struct StepSequencerControls {
     /// cleared on re-arm), so live surfaces can observe the end without
     /// touching the graph. Exposed as the read-only `ended` control.
     pub(crate) ended: Arc<AtomicBool>,
+    /// Duration of a single grace note in milliseconds; read once per block
+    /// by the audio thread.
+    pub(crate) grace_duration_ms: Arc<AtomicF32>,
+    /// Grace placement (the `grace_placement` control): `false` = before the
+    /// beat, `true` = on the beat.
+    pub(crate) grace_on_beat: Arc<AtomicBool>,
 }
 
 impl StepSequencerControls {
@@ -49,6 +57,8 @@ impl StepSequencerControls {
             pattern: Arc::new(Mutex::new(Vec::new())),
             one_shot: Arc::new(AtomicBool::new(false)),
             ended: Arc::new(AtomicBool::new(false)),
+            grace_duration_ms: Arc::new(AtomicF32::new(DEFAULT_GRACE_DURATION_MS)),
+            grace_on_beat: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -61,6 +71,8 @@ impl StepSequencerControls {
             pattern: Arc::new(Mutex::new(Vec::new())),
             one_shot: Arc::new(AtomicBool::new(false)),
             ended: Arc::new(AtomicBool::new(false)),
+            grace_duration_ms: Arc::new(AtomicF32::new(DEFAULT_GRACE_DURATION_MS)),
+            grace_on_beat: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -121,6 +133,50 @@ impl StepSequencerControls {
             other => {
                 return Err(format!(
                     "Unknown mode '{}' (expected loop | one_shot)",
+                    other
+                ))
+            }
+        }
+        Ok(())
+    }
+
+    /// Duration of a single grace note in milliseconds.
+    pub fn grace_duration_ms(&self) -> f32 {
+        self.grace_duration_ms.load()
+    }
+
+    pub fn set_grace_duration_ms(&self, ms: f32) {
+        self.grace_duration_ms
+            .store(ms.clamp(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS));
+    }
+
+    /// Whether grace chains play on the beat (delaying the principal) rather
+    /// than before it.
+    pub fn grace_on_beat(&self) -> bool {
+        self.grace_on_beat.load(Ordering::Relaxed)
+    }
+
+    pub fn set_grace_on_beat(&self, on_beat: bool) {
+        self.grace_on_beat.store(on_beat, Ordering::Relaxed);
+    }
+
+    /// Gets the grace placement as its control string (`before` or `on_beat`).
+    pub fn grace_placement(&self) -> &'static str {
+        if self.grace_on_beat() {
+            "on_beat"
+        } else {
+            "before"
+        }
+    }
+
+    /// Sets the grace placement from its control string.
+    pub fn set_grace_placement(&self, placement: &str) -> Result<(), String> {
+        match placement {
+            "before" => self.set_grace_on_beat(false),
+            "on_beat" => self.set_grace_on_beat(true),
+            other => {
+                return Err(format!(
+                    "Unknown grace_placement '{}' (expected before | on_beat)",
                     other
                 ))
             }
@@ -197,6 +253,15 @@ impl ControlSurface for StepSequencerControls {
             )
             .with_options(vec!["loop".to_string(), "one_shot".to_string()])
             .with_default(self.mode()),
+            ControlMeta::number("grace_duration_ms", "Duration of a single grace note in ms")
+                .with_range(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS)
+                .with_default(self.grace_duration_ms()),
+            ControlMeta::string(
+                "grace_placement",
+                "Grace placement: before steals the previous step's tail; on_beat delays the principal",
+            )
+            .with_options(vec!["before".to_string(), "on_beat".to_string()])
+            .with_default(self.grace_placement()),
         ]
     }
 
@@ -207,6 +272,8 @@ impl ControlSurface for StepSequencerControls {
             "gate_length" => Ok(self.gate_length().into()),
             "pattern_json" => Ok(self.pattern_json().into()),
             "mode" => Ok(self.mode().into()),
+            "grace_duration_ms" => Ok(self.grace_duration_ms().into()),
+            "grace_placement" => Ok(self.grace_placement().into()),
             "ended" => Ok(self.ended().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
@@ -219,6 +286,8 @@ impl ControlSurface for StepSequencerControls {
             "gate_length" => self.set_gate_length(value.as_number()?),
             "pattern_json" => self.set_pattern_json(value.as_string()?)?,
             "mode" => self.set_mode(value.as_string()?)?,
+            "grace_duration_ms" => self.set_grace_duration_ms(value.as_number()?),
+            "grace_placement" => self.set_grace_placement(value.as_string()?)?,
             "ended" => return Err("Control 'ended' is read-only".to_string()),
             _ => return Err(format!("Unknown control: {}", key)),
         }

@@ -268,8 +268,7 @@ mod tests {
             .add("a", "1.0.0", &["c@^1.0"])
             .add("b", "1.0.0", &["c@>=1.0"])
             .add("c", "1.5.0", &[]);
-        let resolved =
-            resolve_transitive(&["a@^1.0".into(), "b@^1.0".into()], &provider).unwrap();
+        let resolved = resolve_transitive(&["a@^1.0".into(), "b@^1.0".into()], &provider).unwrap();
         assert_eq!(
             provider
                 .acquired

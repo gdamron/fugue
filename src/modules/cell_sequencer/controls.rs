@@ -12,8 +12,9 @@ use crate::atomic::AtomicF32;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::{
-    parse_sequence_bank_json, Step, DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS,
-    MAX_SEQUENCES, MAX_STEPS,
+    parse_sequence_bank_json, Step, DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH,
+    DEFAULT_GRACE_DURATION_MS, DEFAULT_GRACE_VELOCITY, DEFAULT_STEPS, MAX_GRACE_DURATION_MS,
+    MAX_SEQUENCES, MAX_STEPS, MIN_GRACE_DURATION_MS,
 };
 
 #[derive(Clone)]
@@ -34,6 +35,18 @@ pub(crate) struct CellSequencerShared {
     /// One-shot playback flag (the `mode` control: loop | one_shot). The
     /// audio thread reads it at sample rate.
     pub(crate) one_shot: AtomicBool,
+    /// Duration of a single grace note in milliseconds. Milliseconds, not a
+    /// step fraction: acciaccaturas are "as fast as possible" and roughly
+    /// tempo-independent. Read once per block by the audio thread.
+    pub(crate) grace_duration_ms: AtomicF32,
+    /// Velocity scale applied to grace notes relative to the decorated
+    /// step's amplitude.
+    pub(crate) grace_velocity: AtomicF32,
+    /// Grace placement (the `grace_placement` control): `false` = before the
+    /// beat (steal the previous step's tail; the principal stays on the
+    /// grid), `true` = on the beat (the chain starts at the step edge and
+    /// delays the principal).
+    pub(crate) grace_on_beat: AtomicBool,
     /// Written by the audio thread when a one-shot bank playthrough
     /// completes (cleared on re-arm). Exposed as the read-only `ended`
     /// control so live surfaces can observe the end without graph access.
@@ -74,6 +87,9 @@ impl CellSequencerControls {
                 current_cell: AtomicUsize::new(selected_sequence),
                 advance_request_count: AtomicU64::new(0),
                 one_shot: AtomicBool::new(false),
+                grace_duration_ms: AtomicF32::new(DEFAULT_GRACE_DURATION_MS),
+                grace_velocity: AtomicF32::new(DEFAULT_GRACE_VELOCITY),
+                grace_on_beat: AtomicBool::new(false),
                 ended: AtomicBool::new(false),
                 sequences: Mutex::new(sequences),
             }),
@@ -157,6 +173,61 @@ impl CellSequencerControls {
             other => {
                 return Err(format!(
                     "Unknown mode '{}' (expected loop | one_shot)",
+                    other
+                ))
+            }
+        }
+        Ok(())
+    }
+
+    /// Duration of a single grace note in milliseconds.
+    pub fn grace_duration_ms(&self) -> f32 {
+        self.shared.grace_duration_ms.load()
+    }
+
+    pub fn set_grace_duration_ms(&self, ms: f32) {
+        self.shared
+            .grace_duration_ms
+            .store(ms.clamp(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS));
+    }
+
+    /// Velocity scale applied to grace notes (relative to the decorated
+    /// step's amplitude).
+    pub fn grace_velocity(&self) -> f32 {
+        self.shared.grace_velocity.load()
+    }
+
+    pub fn set_grace_velocity(&self, scale: f32) {
+        self.shared.grace_velocity.store(scale.clamp(0.0, 1.0));
+    }
+
+    /// Whether grace chains play on the beat (delaying the principal) rather
+    /// than before it.
+    pub fn grace_on_beat(&self) -> bool {
+        self.shared.grace_on_beat.load(Ordering::Relaxed)
+    }
+
+    pub fn set_grace_on_beat(&self, on_beat: bool) {
+        self.shared.grace_on_beat.store(on_beat, Ordering::Relaxed);
+    }
+
+    /// Gets the grace placement as its control string (`before` or `on_beat`).
+    pub fn grace_placement(&self) -> &'static str {
+        if self.grace_on_beat() {
+            "on_beat"
+        } else {
+            "before"
+        }
+    }
+
+    /// Sets the grace placement from its control string.
+    pub fn set_grace_placement(&self, placement: &str) -> Result<(), String> {
+        match placement {
+            "before" => self.set_grace_on_beat(false),
+            "on_beat" => self.set_grace_on_beat(true),
+            other => {
+                return Err(format!(
+                    "Unknown grace_placement '{}' (expected before | on_beat)",
                     other
                 ))
             }
@@ -282,6 +353,21 @@ impl ControlSurface for CellSequencerControls {
                 "Trigger: rising edge advances to the next cell",
             )
             .with_default(0.0),
+            ControlMeta::number("grace_duration_ms", "Duration of a single grace note in ms")
+                .with_range(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS)
+                .with_default(self.grace_duration_ms()),
+            ControlMeta::number(
+                "grace_velocity",
+                "Velocity scale for grace notes relative to the decorated step",
+            )
+            .with_range(0.0, 1.0)
+            .with_default(self.grace_velocity()),
+            ControlMeta::string(
+                "grace_placement",
+                "Grace placement: before steals the previous step's tail (principal stays on the grid); on_beat starts the chain at the step edge and delays the principal",
+            )
+            .with_options(vec!["before".to_string(), "on_beat".to_string()])
+            .with_default(self.grace_placement()),
             ControlMeta::boolean(
                 "ended",
                 "Read-only: a one_shot bank playthrough has completed",
@@ -299,6 +385,9 @@ impl ControlSurface for CellSequencerControls {
             "wait_for_cycle_end" => Ok(self.wait_for_cycle_end().into()),
             "sequences_json" => Ok(self.sequences_json().into()),
             "mode" => Ok(self.mode().into()),
+            "grace_duration_ms" => Ok(self.grace_duration_ms().into()),
+            "grace_velocity" => Ok(self.grace_velocity().into()),
+            "grace_placement" => Ok(self.grace_placement().into()),
             "ended" => Ok(self.ended().into()),
             "loop_count" => Ok((self.loop_count() as f32).into()),
             "current_cell" => Ok((self.current_cell() as f32).into()),
@@ -317,6 +406,9 @@ impl ControlSurface for CellSequencerControls {
             "wait_for_cycle_end" => self.set_wait_for_cycle_end(value.as_bool()?),
             "sequences_json" => self.set_sequences_json(value.as_string()?)?,
             "mode" => self.set_mode(value.as_string()?)?,
+            "grace_duration_ms" => self.set_grace_duration_ms(value.as_number()?),
+            "grace_velocity" => self.set_grace_velocity(value.as_number()?),
+            "grace_placement" => self.set_grace_placement(value.as_string()?)?,
             "advance" => {
                 if value.as_number()? > 0.5 {
                     self.request_advance();

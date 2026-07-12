@@ -371,7 +371,7 @@ mod tests {
         divisi.set_input("frequency", 500.0).unwrap();
         divisi.set_input("gate", 1.0).unwrap();
         divisi.process(1); // voice 1 again
-        // Voice 1's gate is still high; the next strike steals it mid-gate.
+                           // Voice 1's gate is still high; the next strike steals it mid-gate.
         divisi.set_input("gate", 0.0).unwrap();
         divisi.process(1);
         divisi.set_input("gate", 1.0).unwrap();

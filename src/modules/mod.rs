@@ -68,7 +68,7 @@ pub use reverb::{Reverb, ReverbControls};
 #[cfg(not(target_arch = "wasm32"))]
 pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};
 pub use sample_player::{SamplePlayer, SamplePlayerControls};
-pub use step_sequencer::{Step, StepSequencer};
+pub use step_sequencer::{GraceChain, Step, StepSequencer, MAX_GRACE_NOTES};
 pub use sustain::{Sustain, SustainFactory};
 pub use vca::{Vca, VcaControls};
 
@@ -77,10 +77,10 @@ pub use adsr::AdsrFactory;
 pub use agent::AgentFactory;
 pub use cell_sequencer::CellSequencerFactory;
 pub use clock::ClockFactory;
-pub use divisi::{Divisi, DivisiFactory};
 pub use code::CodeFactory;
 pub use control_scheduler::ControlSchedulerFactory;
 pub use dac::DacFactory;
+pub use divisi::{Divisi, DivisiFactory};
 pub use filter::FilterFactory;
 pub use lfo::LfoFactory;
 pub use melody::MelodyFactory;

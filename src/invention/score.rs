@@ -2,7 +2,7 @@
 //!
 //! A score is a declarative, general-purpose container for the musical content
 //! of a piece — a bank of `cells`, each a sequence of steps in the same
-//! `{ note, gate, held, amplitude }` shape consumed by [`step_sequencer`] and
+//! `{ note, gate, held, amplitude, grace }` shape consumed by [`step_sequencer`] and
 //! [`cell_sequencer`], plus light metadata (title, composer, key, tempo, an
 //! optional tempo map for score-scheduled tempo changes, time signature,
 //! base-note hint, rhythm grid).
@@ -64,6 +64,20 @@
 //! spans and are not encoded — realizing them is interpretation, which lives
 //! in the invention.
 //!
+//! # Grace notes
+//!
+//! Notated grace notes (acciaccaturas/appoggiaturas — the small slashed or
+//! small-head notes) are recorded per step as an optional `grace` array on the
+//! note step they decorate: integer offsets from the base note, in played
+//! order, the last resolving into the step's principal note (a v1-compatible
+//! extension — scores without graces stay valid and unchanged). Graces are off
+//! the grid by definition: they never occupy a step of their own and never
+//! consume grid time. At most four offsets per step; the object form
+//! (`{"kind": ...}`) is reserved for future ornament types (trills, mordents,
+//! turns). How a chain is realized — duration, whether it steals time from the
+//! previous step or the decorated one, velocity scaling — is a performance
+//! decision that lives in the sequencer's controls, not the score's.
+//!
 //! [`validate_score`] is the authoritative checker (mirroring the agent
 //! module's `fugue.step_pattern.v1` validation in
 //! `crate::agents`); the typed [`Score`] is a convenience model for producers
@@ -76,7 +90,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::invention::format::TimeSignature;
-use crate::modules::Step;
+use crate::modules::{Step, MAX_GRACE_NOTES};
 
 /// Current score schema identifier. A score document may carry this as its
 /// `schema` field to opt into load-time validation; when absent, the document
@@ -282,14 +296,17 @@ fn validate_tempo_map(value: &Value) -> Result<(), String> {
         .ok_or_else(|| "score.tempo_map must be an array".to_string())?;
     let mut previous: Option<u64> = None;
     for (index, entry) in entries.iter().enumerate() {
-        let object = entry.as_object().ok_or_else(|| {
-            format!("score.tempo_map[{}] must be an object", index)
-        })?;
+        let object = entry
+            .as_object()
+            .ok_or_else(|| format!("score.tempo_map[{}] must be an object", index))?;
         let at_step = object
             .get("at_step")
             .and_then(Value::as_u64)
             .ok_or_else(|| {
-                format!("score.tempo_map[{}].at_step must be a non-negative integer", index)
+                format!(
+                    "score.tempo_map[{}].at_step must be a non-negative integer",
+                    index
+                )
             })?;
         let bpm = object
             .get("bpm")
@@ -311,7 +328,10 @@ fn validate_tempo_map(value: &Value) -> Result<(), String> {
         }
         if let Some(ramp) = object.get("ramp").filter(|v| !v.is_null()) {
             let ramp = ramp.as_u64().ok_or_else(|| {
-                format!("score.tempo_map[{}].ramp must be a non-negative integer", index)
+                format!(
+                    "score.tempo_map[{}].ramp must be a non-negative integer",
+                    index
+                )
             })?;
             if ramp < 1 {
                 return Err(format!(
@@ -403,6 +423,54 @@ fn validate_step(value: &Value) -> Result<(), String> {
         }
     }
 
+    if let Some(grace) = object.get("grace").filter(|v| !v.is_null()) {
+        validate_grace(grace, object)?;
+    }
+
+    Ok(())
+}
+
+/// Validates a step's `grace` field: a non-empty array of at most
+/// [`MAX_GRACE_NOTES`] integer offsets, only on note steps. The object form is
+/// reserved so richer ornaments (`{"kind": "trill", ...}`) can be added later
+/// without a schema break.
+fn validate_grace(value: &Value, step: &serde_json::Map<String, Value>) -> Result<(), String> {
+    if value.is_object() {
+        return Err(
+            "step.grace must be an array of integer offsets (the {\"kind\": ...} ornament \
+             form is reserved for future ornament types)"
+                .to_string(),
+        );
+    }
+    let items = value
+        .as_array()
+        .ok_or_else(|| "step.grace must be an array of integer offsets".to_string())?;
+
+    let has_note = matches!(step.get("note"), Some(Value::Number(_)));
+    if !has_note {
+        return Err("step.grace requires a principal note".to_string());
+    }
+    if items.is_empty() {
+        return Err("step.grace must not be empty (omit the field instead)".to_string());
+    }
+    if items.len() > MAX_GRACE_NOTES {
+        return Err(format!(
+            "step.grace holds at most {} offsets (got {})",
+            MAX_GRACE_NOTES,
+            items.len()
+        ));
+    }
+    for item in items {
+        let offset = item
+            .as_i64()
+            .ok_or_else(|| "step.grace entries must be integers".to_string())?;
+        if !(i8::MIN as i64..=i8::MAX as i64).contains(&offset) {
+            return Err(format!(
+                "step.grace offset {} out of range (must fit in -128..=127)",
+                offset
+            ));
+        }
+    }
     Ok(())
 }
 

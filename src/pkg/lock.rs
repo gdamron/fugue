@@ -363,7 +363,11 @@ mod fs_ops {
     }
 
     /// Collect normalized (`/`-separated) relative file paths under `root`.
-    fn collect_files(root: &Path, current: &Path, out: &mut Vec<String>) -> Result<(), Box<dyn Error>> {
+    fn collect_files(
+        root: &Path,
+        current: &Path,
+        out: &mut Vec<String>,
+    ) -> Result<(), Box<dyn Error>> {
         for entry in fs::read_dir(current)? {
             let entry = entry?;
             let file_type = entry.file_type()?;
@@ -495,7 +499,12 @@ mod fs_tests {
     use super::*;
     use std::fs;
 
-    fn write_pkg(root: &std::path::Path, id: &str, version: &str, body: &str) -> std::path::PathBuf {
+    fn write_pkg(
+        root: &std::path::Path,
+        id: &str,
+        version: &str,
+        body: &str,
+    ) -> std::path::PathBuf {
         let dir = root.join(id).join(version);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("fugue.pkg.json"), body).unwrap();
@@ -551,7 +560,9 @@ mod fs_tests {
         let entry = |version: &str| LockedPackage {
             version: version.to_string(),
             kind: "development".into(),
-            source: LockSource::Local { path: "/pkg".into() },
+            source: LockSource::Local {
+                path: "/pkg".into(),
+            },
             integrity: "sha256:abc".into(),
             path: PathBuf::from("/packs"),
             dependencies: Vec::new(),
@@ -615,7 +626,9 @@ mod fs_tests {
             LockedPackage {
                 version: "2.0.0".into(),
                 kind: "module".into(),
-                source: LockSource::Local { path: String::new() },
+                source: LockSource::Local {
+                    path: String::new(),
+                },
                 integrity: "sha256:deadbeef".into(),
                 path: PathBuf::new(),
                 dependencies: Vec::new(),

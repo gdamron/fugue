@@ -79,7 +79,8 @@ const PLAYABLE_EXAMPLES: [ExampleDefinition; 13] = [
     ExampleDefinition {
         file_name: "in_c.json",
         title: "In C — Terry Riley",
-        summary: "13-voice generative performance of Terry Riley's In C with self-progressing voices.",
+        summary:
+            "13-voice generative performance of Terry Riley's In C with self-progressing voices.",
     },
 ];
 
@@ -248,7 +249,10 @@ mod tests {
 
         assert_eq!(bare.file_name, "developments/voice_library_trio.json");
         assert_eq!(nested.file_name, "developments/voice_library_trio.json");
-        assert_eq!(with_examples_prefix.file_name, "developments/voice_library_trio.json");
+        assert_eq!(
+            with_examples_prefix.file_name,
+            "developments/voice_library_trio.json"
+        );
     }
 
     #[test]

@@ -181,3 +181,84 @@ fn report_serializes_for_json_output() {
     assert_eq!(json["exact"], true);
     assert_eq!(json["reference_duration_quarters"], "1");
 }
+
+// --- Grace-aware matching (FUG-190) ---
+
+/// Attaches a grace chain to the note step starting at `step_index` in
+/// `cell_index`.
+fn with_grace(mut score: Score, cell_index: usize, step_index: usize, grace: &[i8]) -> Score {
+    score.cells[cell_index][step_index].grace =
+        crate::modules::GraceChain::from_slice(grace).expect("chain fits");
+    score
+}
+
+#[test]
+fn matching_grace_chains_stay_exact() {
+    let reference = with_grace(score(vec![vec![(Some(0), 4), (Some(34), 8)]]), 0, 4, &[22]);
+    let candidate = with_grace(score(vec![vec![(Some(0), 4), (Some(34), 8)]]), 0, 4, &[22]);
+    let report = compare_scores(&candidate, &reference).expect("comparable");
+    assert!(report.exact);
+    assert_eq!(report.candidate_grace_notes, 1);
+    assert_eq!(report.reference_grace_notes, 1);
+    assert_eq!(report.grace_matches, 1);
+    assert_eq!(report.grace_mismatches, 0);
+    assert_eq!(report.grace_accuracy, 1.0);
+}
+
+#[test]
+fn grace_mismatch_breaks_exact_but_not_f1() {
+    let reference = with_grace(score(vec![vec![(Some(0), 4), (Some(34), 8)]]), 0, 4, &[22]);
+    // Same notes, wrong grace pitch.
+    let candidate = with_grace(score(vec![vec![(Some(0), 4), (Some(34), 8)]]), 0, 4, &[24]);
+    let report = compare_scores(&candidate, &reference).expect("comparable");
+    assert_eq!(report.f1, 1.0, "graces never enter F1");
+    assert_eq!(report.duration_accuracy, 1.0);
+    assert_eq!(report.grace_mismatches, 1);
+    assert_eq!(report.grace_accuracy, 0.0);
+    assert!(!report.exact, "a grace mismatch must break exact");
+}
+
+#[test]
+fn missing_grace_on_one_side_is_a_mismatch() {
+    let reference = with_grace(score(vec![vec![(Some(0), 4), (Some(34), 8)]]), 0, 4, &[22]);
+    let candidate = score(vec![vec![(Some(0), 4), (Some(34), 8)]]);
+    let report = compare_scores(&candidate, &reference).expect("comparable");
+    assert_eq!(report.f1, 1.0);
+    assert_eq!(report.candidate_grace_notes, 0);
+    assert_eq!(report.reference_grace_notes, 1);
+    assert_eq!(report.grace_mismatches, 1);
+    assert!(!report.exact);
+}
+
+#[test]
+fn grace_chain_order_matters() {
+    let reference = with_grace(score(vec![vec![(Some(0), 8)]]), 0, 0, &[-2, 3]);
+    let candidate = with_grace(score(vec![vec![(Some(0), 8)]]), 0, 0, &[3, -2]);
+    let report = compare_scores(&candidate, &reference).expect("comparable");
+    assert_eq!(report.grace_mismatches, 1);
+    assert!(!report.exact);
+}
+
+#[test]
+fn grace_chains_compare_as_absolute_pitches_across_base_hints() {
+    // Same sounding music, different base_note_hint: offsets differ but the
+    // absolute grace pitches agree.
+    let reference = with_grace(score(vec![vec![(Some(12), 8)]]), 0, 0, &[10]);
+    let mut candidate = with_grace(score(vec![vec![(Some(0), 8)]]), 0, 0, &[-2]);
+    candidate.base_note_hint = Some(72);
+    let report = compare_scores(&candidate, &reference).expect("comparable");
+    assert_eq!(report.matched, 1);
+    assert_eq!(report.grace_matches, 1);
+    assert!(report.exact);
+}
+
+#[test]
+fn scores_without_graces_report_neutral_grace_fields() {
+    let reference = score(vec![vec![(Some(0), 4), (Some(7), 4)]]);
+    let report = compare_scores(&reference, &reference).expect("comparable");
+    assert_eq!(report.candidate_grace_notes, 0);
+    assert_eq!(report.grace_matches, 0);
+    assert_eq!(report.grace_mismatches, 0);
+    assert_eq!(report.grace_accuracy, 1.0);
+    assert!(report.exact);
+}
