@@ -52,6 +52,11 @@ impl VcaInputs {
     }
 
     #[inline]
+    pub fn cv_connected(&self) -> bool {
+        self.cv_connected
+    }
+
+    #[inline]
     pub fn audio(&self, i: usize) -> f32 {
         self.audio[i]
     }

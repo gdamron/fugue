@@ -137,23 +137,9 @@ impl Adsr {
     }
 
     /// Returns the effective attack time (signal or control) at frame `i`.
+    #[cfg(test)]
     fn effective_attack(&self, i: usize) -> f32 {
         self.inputs.attack(i, self.ctrl.attack())
-    }
-
-    /// Returns the effective decay time (signal or control) at frame `i`.
-    fn effective_decay(&self, i: usize) -> f32 {
-        self.inputs.decay(i, self.ctrl.decay())
-    }
-
-    /// Returns the effective sustain level (signal or control) at frame `i`.
-    fn effective_sustain(&self, i: usize) -> f32 {
-        self.inputs.sustain(i, self.ctrl.sustain())
-    }
-
-    /// Returns the effective release time (signal or control) at frame `i`.
-    fn effective_release(&self, i: usize) -> f32 {
-        self.inputs.release(i, self.ctrl.release())
     }
 
     /// Computes rate of change per sample for a given time duration.
@@ -164,8 +150,17 @@ impl Adsr {
         1.0 / (time_seconds * self.sample_rate as f32)
     }
 
-    /// Processes one sample of the envelope at frame `i`.
-    fn process_envelope(&mut self, i: usize) {
+    /// Processes one sample using scalar controls captured for this process
+    /// call. Gate and connected parameter inputs remain audio-rate.
+    #[inline(always)]
+    fn process_envelope_with(
+        &mut self,
+        i: usize,
+        control_attack: f32,
+        control_decay: f32,
+        control_sustain: f32,
+        control_release: f32,
+    ) {
         let gate_high = self.inputs.gate(i) > 0.0;
         let gate_triggered = gate_high && !self.last_gate_high;
         let gate_released = !gate_high && self.last_gate_high;
@@ -178,10 +173,10 @@ impl Adsr {
         }
 
         // Get effective values
-        let attack = self.effective_attack(i);
-        let decay = self.effective_decay(i);
-        let sustain = self.effective_sustain(i);
-        let release = self.effective_release(i);
+        let attack = self.inputs.attack(i, control_attack);
+        let decay = self.inputs.decay(i, control_decay);
+        let sustain = self.inputs.sustain(i, control_sustain);
+        let release = self.inputs.release(i, control_release);
 
         // Process based on phase
         match self.phase {
@@ -228,8 +223,37 @@ impl Module for Adsr {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        for i in 0..frames {
-            self.process_envelope(i);
+        let control_attack = if self.inputs.attack_connected() {
+            0.0
+        } else {
+            self.ctrl.attack()
+        };
+        let control_decay = if self.inputs.decay_connected() {
+            0.0
+        } else {
+            self.ctrl.decay()
+        };
+        let control_sustain = if self.inputs.sustain_connected() {
+            0.0
+        } else {
+            self.ctrl.sustain()
+        };
+        let control_release = if self.inputs.release_connected() {
+            0.0
+        } else {
+            self.ctrl.release()
+        };
+
+        let mut i = 0;
+        while i < frames {
+            self.process_envelope_with(
+                i,
+                control_attack,
+                control_decay,
+                control_sustain,
+                control_release,
+            );
+            i += 1;
         }
         true
     }

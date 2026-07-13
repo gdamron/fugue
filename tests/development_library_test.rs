@@ -220,3 +220,92 @@ fn in_c_render_throughput() {
         worst.as_secs_f64() / deadline.as_secs_f64() * 100.0
     );
 }
+
+/// Public-data stress case for the nested-development polyphony that exposed
+/// the debug-runtime regression. Seventy-two piano voices share one sequencer,
+/// matching the voice count without embedding the private composition.
+#[test]
+#[ignore = "local performance check; run with --ignored --nocapture"]
+fn high_polyphony_nested_development_throughput() {
+    const VOICES: usize = 72;
+    let piano: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(development_path("piano.json")).unwrap())
+            .unwrap();
+
+    let mut modules = vec![
+        serde_json::json!({
+            "id": "clock",
+            "type": "clock",
+            "config": { "bpm": 120.0 }
+        }),
+        serde_json::json!({
+            "id": "seq",
+            "type": "step_sequencer",
+            "config": {
+                "base_note": 60,
+                "steps": 1,
+                "gate_length": 0.8,
+                "pattern": [{ "note": 0, "gate": 0.8 }]
+            }
+        }),
+    ];
+    let mut connections = vec![serde_json::json!({
+        "from": "clock",
+        "from_port": "gate_x4",
+        "to": "seq",
+        "to_port": "gate"
+    })];
+
+    for voice in 0..VOICES {
+        let id = format!("voice_{voice}");
+        modules.push(serde_json::json!({ "id": &id, "type": "piano_voice" }));
+        connections.push(serde_json::json!({
+            "from": "seq", "from_port": "frequency", "to": &id, "to_port": "frequency"
+        }));
+        connections.push(serde_json::json!({
+            "from": "seq", "from_port": "gate", "to": &id, "to_port": "gate"
+        }));
+        connections.push(serde_json::json!({
+            "from": &id, "from_port": "audio", "to": "dac", "to_port": "audio"
+        }));
+    }
+    modules.push(serde_json::json!({
+        "id": "dac",
+        "type": "dac",
+        "config": { "soft_clip": false }
+    }));
+
+    let invention = serde_json::json!({
+        "version": "1.0.0",
+        "developments": [{ "name": "piano_voice", "definition": piano }],
+        "modules": modules,
+        "connections": connections
+    });
+    let mut engine = RenderEngine::new(SAMPLE_RATE);
+    engine.load_json(&invention.to_string()).unwrap();
+
+    let device_frames = 512usize;
+    let total_frames = SAMPLE_RATE as usize * 2;
+    let mut buffer = vec![0.0f32; device_frames * 2];
+    engine.render_interleaved(&mut buffer).unwrap();
+
+    let deadline = Duration::from_secs_f64(device_frames as f64 / SAMPLE_RATE as f64);
+    let mut worst = Duration::ZERO;
+    let start = Instant::now();
+    let mut rendered = 0usize;
+    while rendered < total_frames {
+        let callback_start = Instant::now();
+        engine.render_interleaved(&mut buffer).unwrap();
+        worst = worst.max(callback_start.elapsed());
+        rendered += device_frames;
+    }
+    let elapsed = start.elapsed();
+    std::hint::black_box(buffer);
+
+    eprintln!(
+        "{VOICES}-voice nested piano: {rendered} frames in {elapsed:?} ({:.2}x realtime); \
+         worst callback {worst:?} vs {deadline:?} ({:.1}% of budget)",
+        (rendered as f64 / SAMPLE_RATE as f64) / elapsed.as_secs_f64(),
+        worst.as_secs_f64() / deadline.as_secs_f64() * 100.0
+    );
+}

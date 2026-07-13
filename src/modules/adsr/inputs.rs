@@ -86,6 +86,26 @@ impl AdsrInputs {
     }
 
     #[inline]
+    pub fn attack_connected(&self) -> bool {
+        self.attack_connected
+    }
+
+    #[inline]
+    pub fn decay_connected(&self) -> bool {
+        self.decay_connected
+    }
+
+    #[inline]
+    pub fn sustain_connected(&self) -> bool {
+        self.sustain_connected
+    }
+
+    #[inline]
+    pub fn release_connected(&self) -> bool {
+        self.release_connected
+    }
+
+    #[inline]
     pub fn gate(&self, i: usize) -> f32 {
         self.gate[i]
     }

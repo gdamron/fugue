@@ -111,11 +111,19 @@ impl Module for Vca {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        for i in 0..frames {
-            // Read the control per frame (cheap atomic load) so a control-driven
-            // gain responds sample-accurately rather than stepping per block.
-            let value = self.inputs.audio(i) * self.inputs.cv(i, self.ctrl.cv());
+        // Skip the fallback atomic entirely for connected CV, otherwise sample
+        // the scalar control once for this process call.
+        let control_cv = if self.inputs.cv_connected() {
+            0.0
+        } else {
+            self.ctrl.cv()
+        };
+
+        let mut i = 0;
+        while i < frames {
+            let value = self.inputs.audio(i) * self.inputs.cv(i, control_cv);
             self.outputs.set(i, value);
+            i += 1;
         }
         true
     }
@@ -263,5 +271,17 @@ mod tests {
         vca.set_input_connected(1, false);
         vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.5);
+    }
+
+    #[test]
+    fn test_connected_cv_remains_audio_rate() {
+        let mut vca = Vca::new();
+        vca.input_block_mut(0)[..3].copy_from_slice(&[1.0, 0.5, -1.0]);
+        vca.input_block_mut(1)[..3].copy_from_slice(&[0.0, 0.5, 1.0]);
+        vca.set_input_connected(1, true);
+
+        vca.process(3);
+
+        assert_eq!(&vca.output_block(0)[..3], &[0.0, 0.25, -1.0]);
     }
 }

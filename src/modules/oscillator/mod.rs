@@ -179,13 +179,18 @@ impl Oscillator {
         self.ctrl.set_am_amount(amount);
     }
 
-    /// Generates the sample for frame `i`, reading per-sample modulation inputs.
-    pub(crate) fn generate_sample(&mut self, i: usize) -> f32 {
-        let base_freq = self.inputs.frequency(i, self.ctrl.frequency());
-        let fm_amount = self.ctrl.fm_amount();
-        let am_amount = self.ctrl.am_amount();
-        let osc_type = self.ctrl.oscillator_type();
-
+    /// Generates frame `i` from scalar controls sampled for this process call
+    /// and modulation inputs that remain audio-rate.
+    #[inline(always)]
+    fn generate_sample_with(
+        &mut self,
+        i: usize,
+        control_frequency: f32,
+        fm_amount: f32,
+        am_amount: f32,
+        osc_type: OscillatorType,
+    ) -> f32 {
+        let base_freq = self.inputs.frequency(i, control_frequency);
         let modulated_freq = base_freq + (self.inputs.fm(i) * fm_amount);
 
         let sample = match osc_type {
@@ -214,6 +219,22 @@ impl Oscillator {
         sample * amp_scale
     }
 
+    /// Generates the sample for frame `i`, reading per-sample modulation inputs.
+    pub(crate) fn generate_sample(&mut self, i: usize) -> f32 {
+        let control_frequency = if self.inputs.frequency_connected() {
+            0.0
+        } else {
+            self.ctrl.frequency()
+        };
+        self.generate_sample_with(
+            i,
+            control_frequency,
+            self.ctrl.fm_amount(),
+            self.ctrl.am_amount(),
+            self.ctrl.oscillator_type(),
+        )
+    }
+
     /// Resets the oscillator phase to zero.
     pub fn reset(&mut self) {
         self.phase = 0.0;
@@ -231,9 +252,23 @@ impl Module for Oscillator {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        for i in 0..frames {
-            let audio = self.generate_sample(i);
+        // Scalar controls are block-rate. Signal/FM/AM inputs remain
+        // audio-rate, and feedback groups call process(1).
+        let control_frequency = if self.inputs.frequency_connected() {
+            0.0
+        } else {
+            self.ctrl.frequency()
+        };
+        let fm_amount = self.ctrl.fm_amount();
+        let am_amount = self.ctrl.am_amount();
+        let osc_type = self.ctrl.oscillator_type();
+
+        let mut i = 0;
+        while i < frames {
+            let audio =
+                self.generate_sample_with(i, control_frequency, fm_amount, am_amount, osc_type);
             self.outputs.set(i, audio);
+            i += 1;
         }
         true
     }
@@ -397,5 +432,18 @@ mod tests {
         // After disconnecting the frequency port, should use control again
         osc.set_input_connected(0, false);
         assert_eq!(osc.effective_frequency(), 440.0);
+    }
+
+    #[test]
+    fn test_connected_frequency_remains_audio_rate() {
+        let sample_rate = 44_100;
+        let mut osc = Oscillator::new(sample_rate, OscillatorType::Sawtooth);
+        let frequency = osc.input_block_mut(0);
+        frequency[..3].copy_from_slice(&[0.0, sample_rate as f32 / 4.0, 0.0]);
+        osc.set_input_connected(0, true);
+
+        osc.process(3);
+
+        assert_eq!(&osc.output_block(0)[..3], &[-1.0, -1.0, -0.5]);
     }
 }
