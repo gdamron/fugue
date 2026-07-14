@@ -58,6 +58,11 @@ impl OscillatorInputs {
         }
     }
 
+    #[inline]
+    pub fn frequency_connected(&self) -> bool {
+        self.frequency_connected
+    }
+
     /// Effective frequency at frame `i`: the connected signal or the control default.
     #[inline]
     pub fn frequency(&self, i: usize, control: f32) -> f32 {

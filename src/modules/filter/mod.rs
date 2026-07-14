@@ -165,16 +165,6 @@ impl Filter {
         }
     }
 
-    /// Returns the effective cutoff (signal or control) at frame `i`.
-    fn effective_cutoff(&self, i: usize) -> f32 {
-        self.inputs.cutoff(i, self.ctrl.cutoff())
-    }
-
-    /// Returns the effective resonance (signal or control) at frame `i`.
-    fn effective_resonance(&self, i: usize) -> f32 {
-        self.inputs.resonance(i, self.ctrl.resonance())
-    }
-
     /// Sets the filter type (legacy API).
     pub fn with_filter_type(self, filter_type: FilterType) -> Self {
         self.ctrl.set_filter_type(filter_type);
@@ -216,12 +206,17 @@ impl Filter {
 
     /// Processes one sample through the filter using the trapezoidal integrated
     /// SVF (Andrew Simper / Cytomic). Unconditionally stable at all frequencies.
-    fn process_sample(&mut self, i: usize) -> f32 {
-        let base_cutoff = self.effective_cutoff(i);
-        let cv_amount = self.ctrl.cv_amount();
-        let base_resonance = self.effective_resonance(i);
-        let filter_type = self.ctrl.filter_type();
-
+    #[inline(always)]
+    fn process_sample_with(
+        &mut self,
+        i: usize,
+        control_cutoff: f32,
+        control_resonance: f32,
+        cv_amount: f32,
+        filter_type: FilterType,
+    ) -> f32 {
+        let base_cutoff = self.inputs.cutoff(i, control_cutoff);
+        let base_resonance = self.inputs.resonance(i, control_resonance);
         let effective_cutoff =
             (base_cutoff + self.inputs.cutoff_cv(i) * cv_amount).clamp(20.0, 20000.0);
         let effective_resonance = base_resonance.clamp(0.0, 0.99);
@@ -271,9 +266,32 @@ impl Module for Filter {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        for i in 0..frames {
-            let audio = self.process_sample(i);
+        // Scalar controls are block-rate. Cutoff, cutoff CV, and resonance
+        // signal inputs remain audio-rate, and feedback groups call process(1).
+        let control_cutoff = if self.inputs.cutoff_connected() {
+            0.0
+        } else {
+            self.ctrl.cutoff()
+        };
+        let control_resonance = if self.inputs.resonance_connected() {
+            0.0
+        } else {
+            self.ctrl.resonance()
+        };
+        let cv_amount = self.ctrl.cv_amount();
+        let filter_type = self.ctrl.filter_type();
+
+        let mut i = 0;
+        while i < frames {
+            let audio = self.process_sample_with(
+                i,
+                control_cutoff,
+                control_resonance,
+                cv_amount,
+                filter_type,
+            );
             self.outputs.set(i, audio);
+            i += 1;
         }
         true
     }

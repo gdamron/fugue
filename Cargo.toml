@@ -55,3 +55,8 @@ wit-bindgen = "0.51.0"
 [[example]]
 name = "examples"
 path = "examples/examples.rs"
+
+# Keep dev builds debuggable while giving the audio hot path enough headroom
+# for high-polyphony inventions. Debug info and debug assertions stay enabled.
+[profile.dev.package.fugue]
+opt-level = 1

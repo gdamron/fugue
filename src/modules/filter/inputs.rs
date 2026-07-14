@@ -71,6 +71,16 @@ impl FilterInputs {
     }
 
     #[inline]
+    pub fn cutoff_connected(&self) -> bool {
+        self.cutoff_connected
+    }
+
+    #[inline]
+    pub fn resonance_connected(&self) -> bool {
+        self.resonance_connected
+    }
+
+    #[inline]
     pub fn audio(&self, i: usize) -> f32 {
         self.audio[i]
     }
