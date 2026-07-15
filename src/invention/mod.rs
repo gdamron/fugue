@@ -22,6 +22,7 @@ pub mod reload;
 pub mod render;
 pub mod rpc_snapshot;
 pub mod runtime;
+pub mod save;
 pub mod score;
 pub mod state;
 

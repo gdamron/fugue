@@ -139,8 +139,19 @@ impl RuntimeSnapshot {
                 .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
         };
         surface
-            .set_control(key, value)
-            .map_err(GraphCommandError::ControlError)
+            .set_control(key, value.clone())
+            .map_err(GraphCommandError::ControlError)?;
+        self.state
+            .lock()
+            .unwrap()
+            .document_write_control(module_id, key, &value);
+        Ok(())
+    }
+
+    /// Returns the declarative document describing the current graph (see
+    /// [`RuntimeState::document`]).
+    pub fn document(&self) -> Option<crate::Invention> {
+        self.state.lock().unwrap().document()
     }
 }
 
@@ -234,14 +245,18 @@ impl RuntimeController {
             .unwrap()
             .insert(module_id.to_string(), ports);
 
-        self.snapshot.state.lock().unwrap().modules.insert(
-            module_id.to_string(),
-            RuntimeModuleInfo {
-                id: module_id.to_string(),
-                module_type: module_type.to_string(),
-                config: config.clone(),
-            },
-        );
+        {
+            let mut state = self.snapshot.state.lock().unwrap();
+            state.modules.insert(
+                module_id.to_string(),
+                RuntimeModuleInfo {
+                    id: module_id.to_string(),
+                    module_type: module_type.to_string(),
+                    config: config.clone(),
+                },
+            );
+            state.document_upsert_module(module_id, module_type, config);
+        }
 
         Ok(handles
             .into_iter()
@@ -265,6 +280,7 @@ impl RuntimeController {
         state
             .connections
             .retain(|conn| conn.from != module_id && conn.to != module_id);
+        state.document_remove_module(module_id);
         Ok(())
     }
 

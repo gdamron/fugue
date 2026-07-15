@@ -252,7 +252,7 @@ fn control_updates_for(
     Some(updates)
 }
 
-fn scalar_control_value(value: &serde_json::Value) -> Option<ControlValue> {
+pub(crate) fn scalar_control_value(value: &serde_json::Value) -> Option<ControlValue> {
     match value {
         serde_json::Value::Number(number) => Some(ControlValue::Number(number.as_f64()? as f32)),
         serde_json::Value::Bool(flag) => Some(ControlValue::Bool(*flag)),
@@ -319,6 +319,9 @@ impl RunningInvention {
     /// On [`ReloadError::Apply`] the graph may be partially updated and the
     /// caller should fall back to a clean rebuild of the same document.
     pub fn reload(&mut self, invention: Invention) -> Result<ReloadReport, ReloadError> {
+        // Kept as authored (assets unresolved) to become the retained
+        // document once the diff applies.
+        let document = invention.clone();
         let resolved = resolve_invention_assets(invention)
             .map_err(|error| ReloadError::Invalid(error.to_string()))?;
         let new_definitions = DevelopmentDefinitions::resolve(&resolved)
@@ -357,7 +360,13 @@ impl RunningInvention {
         // modules build against the new development factories.
         self.adopt_definitions(new_registry, new_definitions);
 
-        self.apply_reload_plan(plan)
+        let report = self.apply_reload_plan(plan)?;
+        // The new document is now what the graph was built from. Applied
+        // after the plan so plan mutations cannot leave stale specs in it;
+        // on an apply error the caller rebuilds cleanly, which retains the
+        // document through the normal build path.
+        self.state.lock().unwrap().document = Some(document);
+        Ok(report)
     }
 
     fn apply_reload_plan(&self, plan: ReloadPlan) -> Result<ReloadReport, ReloadError> {
