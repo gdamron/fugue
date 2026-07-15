@@ -81,7 +81,9 @@ impl BlackVideoFallback {
                             "could not deliver black fallback video frame: {err}"
                         ));
                     }
-                    next_frame_at = Instant::now() + frame_duration;
+                    // Advance from the media deadline so frame delivery work
+                    // does not accumulate as permanent playback-clock drift.
+                    next_frame_at += frame_duration;
                 }
             }
         });
@@ -362,10 +364,6 @@ fn playback_worker(shared: Arc<VideoPlaybackShared>) {
         if snapshot.stopping {
             break;
         }
-        if !preserve_deadline {
-            next_frame_at = Instant::now();
-        }
-
         let mut decoder = match spawn_decoder(&shared) {
             Ok(decoder) => decoder,
             Err(err) => {
@@ -385,12 +383,12 @@ fn playback_worker(shared: Arc<VideoPlaybackShared>) {
             }
             continue;
         }
-
         let outcome = decode_frames(
             &shared,
             &mut decoder,
             snapshot.restart_generation,
             &mut next_frame_at,
+            !preserve_deadline,
         );
         let status = reap_decoder(&shared);
 
@@ -479,6 +477,7 @@ fn decode_frames(
     decoder: &mut Decoder,
     restart_generation: u64,
     next_frame_at: &mut Instant,
+    mut reset_deadline_on_first_frame: bool,
 ) -> DecodeOutcome {
     let frame_bytes = match shared.config.frame_bytes() {
         Ok(frame_bytes) => frame_bytes,
@@ -503,6 +502,12 @@ fn decode_frames(
                 )
             }
         }
+        if reset_deadline_on_first_frame {
+            // Decoder startup is outside the media timeline. Anchor initial
+            // playback to the first decoded frame, not process spawn time.
+            *next_frame_at = Instant::now();
+            reset_deadline_on_first_frame = false;
+        }
 
         match wait_for_delivery(shared, restart_generation, next_frame_at) {
             DecodeOutcome::End => {}
@@ -513,7 +518,9 @@ fn decode_frames(
             shared.set_error(format!("could not deliver background video frame: {err}"));
         }
         shared.frames_emitted.fetch_add(1, Ordering::Relaxed);
-        *next_frame_at = Instant::now() + frame_duration;
+        // Advance from the media deadline so decoding and delivery overhead
+        // does not lower the effective frame rate over time.
+        *next_frame_at += frame_duration;
     }
 }
 
