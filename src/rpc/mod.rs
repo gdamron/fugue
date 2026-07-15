@@ -109,6 +109,24 @@ pub enum RpcCommand {
         #[serde(default)]
         preserve_connections: bool,
     },
+    /// Reload a full invention document into the running graph as a diff of
+    /// runtime mutations, keeping the audio stream alive and preserving the
+    /// state of modules the diff does not touch. Falls back to a clean
+    /// rebuild when the diff cannot be applied; loads normally when nothing
+    /// is running. An invalid document is rejected with playback continuing
+    /// on the last good version.
+    ReloadInvention {
+        invention: Box<Invention>,
+        /// Base path for resolving the document's relative development and
+        /// asset references. `Invention::source_path` does not cross the
+        /// wire, so file-loaded documents pass their path here.
+        #[serde(default)]
+        source_path: Option<String>,
+        /// When true (the default), the daemon validates `fugue.lock.json`
+        /// integrity before reloading and refuses on a mismatch.
+        #[serde(default = "default_frozen")]
+        frozen: bool,
+    },
     InstallPackage(PackageInstallRequest),
     ListPackages,
     DescribeModuleTypes,
@@ -157,7 +175,35 @@ pub enum RpcResponsePayload {
     Snapshot(RuntimeFullSnapshot),
     Packages(PackageList),
     ModuleTypes(ModuleTypeList),
+    Reload(ReloadOutcome),
     Error(RpcError),
+}
+
+/// How a [`RpcCommand::ReloadInvention`] landed.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ReloadMode {
+    /// The document was applied as runtime mutations; the audio stream never
+    /// stopped and unchanged modules kept their state.
+    Diff,
+    /// The daemon rebuilt the graph from scratch (nothing was running, or
+    /// the diff could not be applied); module state restarted.
+    Rebuild,
+}
+
+/// Response payload for [`RpcCommand::ReloadInvention`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct ReloadOutcome {
+    pub mode: ReloadMode,
+    /// Why the daemon fell back to a rebuild, when it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// What the diff changed; present only for [`ReloadMode::Diff`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<crate::ReloadReport>,
+    pub snapshot: RuntimeFullSnapshot,
 }
 
 /// A server-pushed event envelope.

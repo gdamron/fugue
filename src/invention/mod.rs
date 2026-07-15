@@ -18,6 +18,7 @@ pub mod format;
 pub mod graph;
 pub mod handles;
 pub mod orchestration;
+pub mod reload;
 pub mod render;
 pub mod rpc_snapshot;
 pub mod runtime;
@@ -31,6 +32,7 @@ pub use format::{
 };
 pub use handles::InventionHandles;
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
+pub use reload::{DevelopmentDefinitions, ReloadError, ReloadReport};
 pub use render::{CodeModuleRuntimeInfo, RenderEngine};
 pub use rpc_snapshot::ControlOverride;
 pub use runtime::{GraphCommandError, InventionRuntime, RunningInvention};

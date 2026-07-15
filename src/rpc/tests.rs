@@ -62,6 +62,11 @@ fn rpc_commands_round_trip_json() {
             config: serde_json::json!({ "frequency": 2.0 }),
             preserve_connections: true,
         },
+        RpcCommand::ReloadInvention {
+            invention: Box::new(test_invention()),
+            source_path: Some("/tmp/invention.json".to_string()),
+            frozen: true,
+        },
         RpcCommand::InstallPackage(PackageInstallRequest {
             package: "demo".to_string(),
             version: Some("1.2.3".to_string()),
@@ -77,6 +82,56 @@ fn rpc_commands_round_trip_json() {
         assert_eq!(decoded.schema_version, RPC_SCHEMA_VERSION);
         assert_eq!(decoded.payload, RpcRequestPayload::Command(command));
     }
+}
+
+#[test]
+fn reload_command_defaults_and_outcome_round_trip() {
+    // A client omitting the optional fields still decodes (wire back-compat).
+    let decoded: RpcCommand = serde_json::from_str(
+        r#"{ "command": "reload_invention",
+             "invention": { "modules": [], "connections": [] } }"#,
+    )
+    .unwrap();
+    match decoded {
+        RpcCommand::ReloadInvention {
+            source_path,
+            frozen,
+            ..
+        } => {
+            assert_eq!(source_path, None);
+            assert!(frozen, "frozen defaults to lockfile validation on");
+        }
+        other => panic!("expected reload command, got {other:?}"),
+    }
+
+    let outcome = ReloadOutcome {
+        mode: ReloadMode::Diff,
+        reason: None,
+        report: Some(crate::ReloadReport {
+            added: vec!["osc".to_string()],
+            controls_updated: vec!["osc.frequency".to_string()],
+            unchanged: 2,
+            ..Default::default()
+        }),
+        snapshot: RuntimeFullSnapshot {
+            status: crate::RuntimeStatus {
+                running: true,
+                sample_rate: 48_000,
+                module_count: 3,
+                connection_count: 2,
+                diagnostics: None,
+            },
+            modules: Vec::new(),
+            connections: Vec::new(),
+        },
+    };
+    let response = RpcResponse::ok(
+        Some("req-1".to_string()),
+        RpcResponsePayload::Reload(outcome.clone()),
+    );
+    let json = serde_json::to_string(&response).unwrap();
+    let decoded: RpcResponse = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded.payload, RpcResponsePayload::Reload(outcome));
 }
 
 #[test]

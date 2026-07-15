@@ -93,7 +93,10 @@ impl InventionBuilder {
         mut self,
         invention: Invention,
     ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
-        let invention = self.resolve_assets(invention)?;
+        let base_registry = self.registry.clone();
+        let invention = resolve_invention_assets(invention)?;
+        let development_definitions =
+            crate::invention::reload::DevelopmentDefinitions::resolve(&invention)?;
         self.register_developments(&invention)?;
         self.validate_invention(&invention)?;
 
@@ -141,69 +144,13 @@ impl InventionBuilder {
             control_surfaces,
             routing,
             registry: self.registry,
+            base_registry,
+            development_definitions,
             sample_rate: self.sample_rate,
             state,
         };
 
         Ok((runtime, handles))
-    }
-
-    fn resolve_assets(
-        &self,
-        mut invention: Invention,
-    ) -> Result<Invention, Box<dyn std::error::Error>> {
-        if invention.assets.is_empty() {
-            return Ok(invention);
-        }
-
-        let mut assets = HashMap::new();
-        for (name, asset) in &invention.assets {
-            let resolved = resolve_asset_path(invention.source_path.as_deref(), &asset.path)?;
-            let contents = std::fs::read_to_string(&resolved).map_err(|err| {
-                format!(
-                    "Failed to read asset '{}' from '{}': {}",
-                    name,
-                    resolved.display(),
-                    err
-                )
-            })?;
-            let is_json = resolved
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
-            let value = if is_json {
-                serde_json::from_str(&contents).map_err(|err| {
-                    format!(
-                        "Failed to parse asset '{}' from '{}': {}",
-                        name,
-                        resolved.display(),
-                        err
-                    )
-                })?
-            } else {
-                serde_json::Value::String(contents)
-            };
-            // Assets that declare themselves as scores opt into load-time
-            // validation against `fugue.score.v1`. Other JSON assets are left
-            // as-is, since assets are a general-purpose mechanism.
-            if declares_score_schema(&value) {
-                crate::invention::score::validate_score(&value).map_err(|err| {
-                    format!(
-                        "Invalid score asset '{}' from '{}': {}",
-                        name,
-                        resolved.display(),
-                        err
-                    )
-                })?;
-            }
-            assets.insert(name.clone(), value);
-        }
-
-        for module in &mut invention.modules {
-            module.config = resolve_asset_refs(&module.config, &assets)?;
-        }
-
-        Ok(invention)
     }
 
     fn build_runtime_state(&self, invention: &Invention) -> RuntimeState {
@@ -358,7 +305,7 @@ impl InventionBuilder {
                 registered.insert(development.name.clone());
             }
 
-            let definition = self.load_development_definition(invention, development)?;
+            let definition = load_development_definition(invention, development)?;
             let factory = DevelopmentFactory {
                 name: development.name.clone(),
                 definition,
@@ -374,29 +321,93 @@ impl InventionBuilder {
         Ok(())
     }
 
-    fn load_development_definition(
-        &self,
-        invention: &Invention,
-        development: &super::format::DevelopmentSpec,
-    ) -> Result<Invention, Box<dyn std::error::Error>> {
-        match (&development.path, &development.definition) {
-            (Some(path), None) => {
-                let resolved = resolve_development_path(invention.source_path.as_deref(), path)?;
-                Invention::from_file(&resolved.to_string_lossy())
-            }
-            (None, Some(definition)) => Ok((**definition).clone()),
-            (Some(_), Some(_)) => Err(format!(
-                "Development '{}' must set either 'path' or 'definition', not both",
-                development.name
-            )
-            .into()),
-            (None, None) => Err(format!(
-                "Development '{}' must set either 'path' or 'definition'",
-                development.name
-            )
-            .into()),
+}
+
+/// Loads a development's definition: from its file for path-based specs
+/// (relative to the parent document's source path) or by cloning an inline
+/// definition. Shared with reload, which re-resolves definitions to detect
+/// changes on disk.
+pub(crate) fn load_development_definition(
+    invention: &Invention,
+    development: &super::format::DevelopmentSpec,
+) -> Result<Invention, Box<dyn std::error::Error>> {
+    match (&development.path, &development.definition) {
+        (Some(path), None) => {
+            let resolved = resolve_development_path(invention.source_path.as_deref(), path)?;
+            Invention::from_file(&resolved.to_string_lossy())
         }
+        (None, Some(definition)) => Ok((**definition).clone()),
+        (Some(_), Some(_)) => Err(format!(
+            "Development '{}' must set either 'path' or 'definition', not both",
+            development.name
+        )
+        .into()),
+        (None, None) => Err(format!(
+            "Development '{}' must set either 'path' or 'definition'",
+            development.name
+        )
+        .into()),
     }
+}
+
+/// Resolves `$asset` references in module configs against the document's
+/// declared assets. Configs are compared post-resolution at runtime, so
+/// reload resolves the new document the same way before diffing.
+pub(crate) fn resolve_invention_assets(
+    mut invention: Invention,
+) -> Result<Invention, Box<dyn std::error::Error>> {
+    if invention.assets.is_empty() {
+        return Ok(invention);
+    }
+
+    let mut assets = HashMap::new();
+    for (name, asset) in &invention.assets {
+        let resolved = resolve_asset_path(invention.source_path.as_deref(), &asset.path)?;
+        let contents = std::fs::read_to_string(&resolved).map_err(|err| {
+            format!(
+                "Failed to read asset '{}' from '{}': {}",
+                name,
+                resolved.display(),
+                err
+            )
+        })?;
+        let is_json = resolved
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+        let value = if is_json {
+            serde_json::from_str(&contents).map_err(|err| {
+                format!(
+                    "Failed to parse asset '{}' from '{}': {}",
+                    name,
+                    resolved.display(),
+                    err
+                )
+            })?
+        } else {
+            serde_json::Value::String(contents)
+        };
+        // Assets that declare themselves as scores opt into load-time
+        // validation against `fugue.score.v1`. Other JSON assets are left
+        // as-is, since assets are a general-purpose mechanism.
+        if declares_score_schema(&value) {
+            crate::invention::score::validate_score(&value).map_err(|err| {
+                format!(
+                    "Invalid score asset '{}' from '{}': {}",
+                    name,
+                    resolved.display(),
+                    err
+                )
+            })?;
+        }
+        assets.insert(name.clone(), value);
+    }
+
+    for module in &mut invention.modules {
+        module.config = resolve_asset_refs(&module.config, &assets)?;
+    }
+
+    Ok(invention)
 }
 
 fn resolve_development_path(

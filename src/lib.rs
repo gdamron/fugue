@@ -31,10 +31,10 @@ pub use factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 pub use registry::ModuleRegistry;
 pub use rpc::{
     validate_schema_version, ModuleTypeInfo, ModuleTypeList, PackageInfo, PackageInstallRequest,
-    PackageList, PackageSource, RpcCommand, RpcError, RpcErrorCode, RpcEvent, RpcEventPayload,
-    RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse, RpcResponsePayload,
-    RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot,
-    RuntimePortInfo, SinkStatusState, RPC_SCHEMA_VERSION,
+    PackageList, PackageSource, ReloadMode, ReloadOutcome, RpcCommand, RpcError, RpcErrorCode,
+    RpcEvent, RpcEventPayload, RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse,
+    RpcResponsePayload, RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot,
+    RuntimeModuleSnapshot, RuntimePortInfo, SinkStatusState, RPC_SCHEMA_VERSION,
 };
 
 // Re-export modules
@@ -59,11 +59,11 @@ pub use modules::{
 // Re-export invention system
 pub use invention::{
     validate_score, AssetSpec, CodeModuleRuntimeInfo, Connection, ControlOverride,
-    DevelopmentControl, DevelopmentInput, DevelopmentOutput, DevelopmentSpec, GraphCommandError,
-    Invention, InventionBuilder, InventionHandles, InventionRuntime, ModuleSpec,
-    OrchestrationRuntime, RenderEngine, RunningInvention, RuntimeConnectionInfo, RuntimeController,
-    RuntimeModuleInfo, RuntimeSnapshot, RuntimeState, RuntimeStatus, Score, TimeSignature,
-    SCORE_SCHEMA_V1,
+    DevelopmentControl, DevelopmentDefinitions, DevelopmentInput, DevelopmentOutput,
+    DevelopmentSpec, GraphCommandError, Invention, InventionBuilder, InventionHandles,
+    InventionRuntime, ModuleSpec, OrchestrationRuntime, ReloadError, ReloadReport, RenderEngine,
+    RunningInvention, RuntimeConnectionInfo, RuntimeController, RuntimeModuleInfo, RuntimeSnapshot,
+    RuntimeState, RuntimeStatus, Score, TimeSignature, SCORE_SCHEMA_V1,
 };
 
 // Re-export music theory

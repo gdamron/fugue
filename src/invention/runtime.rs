@@ -39,6 +39,12 @@ pub struct InventionRuntime {
     pub(crate) routing: Vec<RoutingConnection>,
     /// Module registry for building new modules at runtime.
     pub(crate) registry: ModuleRegistry,
+    /// The registry as it was before development factories were registered,
+    /// kept so a reload can re-validate a new document from a clean slate.
+    pub(crate) base_registry: ModuleRegistry,
+    /// Development definitions as loaded for this document, kept so a reload
+    /// can detect definitions that changed on disk.
+    pub(crate) development_definitions: crate::invention::reload::DevelopmentDefinitions,
     /// Sample rate for building new modules at runtime.
     pub(crate) sample_rate: u32,
     /// Shared runtime snapshot for orchestration and introspection.
@@ -114,6 +120,8 @@ impl InventionRuntime {
             control_surfaces,
             command_tx,
             registry: self.registry,
+            base_registry: self.base_registry,
+            development_definitions: self.development_definitions,
             sample_rate: self.sample_rate,
             state: self.state,
             module_ports,
@@ -173,14 +181,28 @@ pub struct RunningInvention {
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     command_tx: mpsc::Sender<GraphCommand>,
     registry: ModuleRegistry,
-    sample_rate: u32,
-    state: Arc<Mutex<RuntimeState>>,
+    pub(crate) base_registry: ModuleRegistry,
+    pub(crate) development_definitions: crate::invention::reload::DevelopmentDefinitions,
+    pub(crate) sample_rate: u32,
+    pub(crate) state: Arc<Mutex<RuntimeState>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
     scripts: ScriptManager,
     agents: AgentManager,
 }
 
 impl RunningInvention {
+    /// Adopts the registry and development definitions produced by a reload's
+    /// validation build, so subsequent module builds use the new development
+    /// factories.
+    pub(crate) fn adopt_definitions(
+        &mut self,
+        registry: ModuleRegistry,
+        definitions: crate::invention::reload::DevelopmentDefinitions,
+    ) {
+        self.registry = registry;
+        self.development_definitions = definitions;
+    }
+
     /// Returns whether a one-shot playthrough has ended (see
     /// [`end_reached_in`]): observed via module controls, so it is safe to
     /// poll from a control thread while audio runs.
