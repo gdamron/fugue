@@ -6,7 +6,7 @@
 //! user-facing controls.
 
 use std::collections::VecDeque;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -98,7 +98,20 @@ impl FfmpegCommandSpec {
         ];
 
         if config.video_encoder == "libx264" {
-            args.extend(["-preset".to_string(), "veryfast".to_string()]);
+            args.extend(["-preset".to_string(), "ultrafast".to_string()]);
+            if config.constant_video_bitrate {
+                args.extend([
+                    "-x264-params".to_string(),
+                    "nal-hrd=cbr:force-cfr=1".to_string(),
+                ]);
+            }
+        } else if config.video_encoder == "h264_videotoolbox" {
+            args.extend([
+                "-constant_bit_rate".to_string(),
+                "true".to_string(),
+                "-realtime".to_string(),
+                "true".to_string(),
+            ]);
         }
 
         if config.constant_video_bitrate {
@@ -113,6 +126,8 @@ impl FfmpegCommandSpec {
         }
 
         args.extend([
+            "-af".to_string(),
+            "aresample=async=1000".to_string(),
             "-c:a".to_string(),
             config.audio_encoder.clone(),
             "-b:a".to_string(),
@@ -250,6 +265,7 @@ impl FfmpegStreamBackend {
 
     fn set_error(&self, error: impl Into<String>) {
         let error = redact_stream_url(error.into(), &self.config.url);
+        eprintln!("ffmpeg stream error: {error}");
         *self.last_error.lock().unwrap() = Some(error);
     }
 
@@ -274,7 +290,15 @@ impl FfmpegStreamBackend {
 }
 
 fn redact_stream_url(error: String, url: &str) -> String {
-    error.replace(url, "<redacted-stream-url>")
+    let redacted = error.replace(url, "<redacted-stream-url>");
+    let Some((_, stream_key)) = url.rsplit_once('/') else {
+        return redacted;
+    };
+    if stream_key.is_empty() {
+        redacted
+    } else {
+        redacted.replace(stream_key, "<redacted-stream-key>")
+    }
 }
 
 struct AudioFrameRing {
@@ -489,14 +513,21 @@ fn start_session(shared: Arc<FfmpegStreamBackend>) -> Result<FfmpegSession, Stri
         .spawn()
         .map_err(|err| format!("failed to spawn ffmpeg '{}': {err}", spec.program))?;
 
-    let stderr_reader = child.stderr.take().map(|mut stderr| {
+    let stderr_reader = child.stderr.take().map(|stderr| {
         let reader_shared = shared.clone();
         thread::spawn(move || {
-            let mut buffer = [0u8; 1024];
+            let mut stderr = BufReader::new(stderr);
+            let mut line = Vec::with_capacity(1024);
             loop {
-                match stderr.read(&mut buffer) {
+                line.clear();
+                match stderr.read_until(b'\n', &mut line) {
                     Ok(0) => break,
-                    Ok(n) => reader_shared.append_stderr(&buffer[..n]),
+                    Ok(_) => {
+                        reader_shared.append_stderr(&line);
+                        let line = String::from_utf8_lossy(&line);
+                        let line = redact_stream_url(line.into_owned(), &reader_shared.config.url);
+                        eprint!("ffmpeg stderr: {line}");
+                    }
                     Err(_) => break,
                 }
             }
@@ -504,6 +535,19 @@ fn start_session(shared: Arc<FfmpegStreamBackend>) -> Result<FfmpegSession, Stri
     });
 
     let (audio, video) = accept_input_streams(&mut child, &audio_listener, &video_listener)?;
+    audio
+        .set_nonblocking(false)
+        .map_err(|err| format!("audio stream blocking mode failed: {err}"))?;
+    video
+        .set_nonblocking(false)
+        .map_err(|err| format!("video stream blocking mode failed: {err}"))?;
+    let write_timeout = Some(Duration::from_secs(2));
+    audio
+        .set_write_timeout(write_timeout)
+        .map_err(|err| format!("audio stream write timeout failed: {err}"))?;
+    video
+        .set_write_timeout(write_timeout)
+        .map_err(|err| format!("video stream write timeout failed: {err}"))?;
     audio
         .set_nodelay(true)
         .map_err(|err| format!("audio stream nodelay failed: {err}"))?;
@@ -714,7 +758,21 @@ mod tests {
         let spec = FfmpegCommandSpec::for_ports(&config, 12_345, 23_456);
         let args = spec.args.join(" ");
 
+        assert!(args.contains("-preset ultrafast"));
+        assert!(args.contains("-x264-params nal-hrd=cbr:force-cfr=1"));
         assert!(args.contains("-minrate 10000k -maxrate 10000k -bufsize 10000k"));
+    }
+
+    #[test]
+    fn enables_realtime_constant_bitrate_for_videotoolbox() {
+        let mut config = minimal_config();
+        config.video_encoder = "h264_videotoolbox".to_string();
+        let spec = FfmpegCommandSpec::for_ports(&config, 12_345, 23_456);
+        let args = spec.args.join(" ");
+
+        assert!(args.contains("-c:v h264_videotoolbox"));
+        assert!(args.contains("-constant_bit_rate true -realtime true"));
+        assert!(!args.contains("-preset"));
     }
 
     #[test]
