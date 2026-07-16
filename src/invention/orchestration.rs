@@ -122,8 +122,27 @@ impl RuntimeSnapshot {
             .map_err(GraphCommandError::ControlError)
     }
 
-    /// Sets the current value of a module control.
+    /// Sets the current value of a module control and records it in the
+    /// retained document so the change survives a save/rebuild.
     pub fn set_control(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+    ) -> Result<(), GraphCommandError> {
+        self.set_control_transient(module_id, key, value.clone())?;
+        self.state
+            .lock()
+            .unwrap()
+            .document_write_control(module_id, key, &value);
+        Ok(())
+    }
+
+    /// Sets a control without recording it in the retained document. For
+    /// runtime telemetry controls (`status`, `last_error`, agent history)
+    /// that describe live activity rather than authored configuration —
+    /// they must not end up in a saved invention file.
+    pub fn set_control_transient(
         &self,
         module_id: &str,
         key: &str,
@@ -139,13 +158,8 @@ impl RuntimeSnapshot {
                 .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
         };
         surface
-            .set_control(key, value.clone())
-            .map_err(GraphCommandError::ControlError)?;
-        self.state
-            .lock()
-            .unwrap()
-            .document_write_control(module_id, key, &value);
-        Ok(())
+            .set_control(key, value)
+            .map_err(GraphCommandError::ControlError)
     }
 
     /// Returns the declarative document describing the current graph (see

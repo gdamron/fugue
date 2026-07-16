@@ -227,7 +227,7 @@ fn service_request(
     );
 
     let count = get_number(controller, module_id, "request_count") as u64 + 1;
-    let _ = controller.snapshot.set_control(
+    let _ = controller.snapshot.set_control_transient(
         module_id,
         "request_count",
         ControlValue::Number(count as f32),

@@ -143,6 +143,59 @@ fn mutated_invention_round_trips_to_an_equivalent_graph() {
 }
 
 #[test]
+fn integral_control_values_save_as_json_integers() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = invention_with_path_development(dir.path());
+    let running = start_from_file(&source);
+
+    running
+        .set_control("lead", "cv", ControlValue::Number(16.0))
+        .unwrap();
+    let document = running.document().expect("document retained");
+    running.stop();
+
+    let lead = document
+        .modules
+        .iter()
+        .find(|module| module.id == "lead")
+        .unwrap();
+    // 16.0f32 lands as the integer 16, so a reload diff against an authored
+    // integer sees no spurious change.
+    assert!(lead.config["cv"].is_i64(), "{:?}", lead.config["cv"]);
+    assert_eq!(lead.config["cv"], 16);
+}
+
+#[test]
+fn transient_control_writes_stay_out_of_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = invention_with_path_development(dir.path());
+    let running = start_from_file(&source);
+
+    running
+        .snapshot()
+        .set_control_transient("lead", "cv", ControlValue::Number(0.9))
+        .unwrap();
+    let document = running.document().expect("document retained");
+
+    let lead = document
+        .modules
+        .iter()
+        .find(|module| module.id == "lead")
+        .unwrap();
+    assert!(
+        lead.config.get("cv").is_none(),
+        "transient write leaked into the document: {:?}",
+        lead.config
+    );
+    // The live control still changed.
+    assert_eq!(
+        running.get_control("lead", "cv").unwrap(),
+        ControlValue::Number(0.9)
+    );
+    running.stop();
+}
+
+#[test]
 fn removed_module_disappears_from_the_document() {
     let dir = tempfile::tempdir().unwrap();
     let source = invention_with_path_development(dir.path());

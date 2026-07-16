@@ -158,8 +158,11 @@ impl RenderEngine {
         module_id: &str,
         status: impl Into<String>,
     ) -> Result<(), GraphCommandError> {
-        self.snapshot()
-            .set_control(module_id, "status", ControlValue::String(status.into()))
+        self.snapshot().set_control_transient(
+            module_id,
+            "status",
+            ControlValue::String(status.into()),
+        )
     }
 
     /// Updates the last-error string for a `code` module.
@@ -168,8 +171,11 @@ impl RenderEngine {
         module_id: &str,
         error: impl Into<String>,
     ) -> Result<(), GraphCommandError> {
-        self.snapshot()
-            .set_control(module_id, "last_error", ControlValue::String(error.into()))
+        self.snapshot().set_control_transient(
+            module_id,
+            "last_error",
+            ControlValue::String(error.into()),
+        )
     }
 
     /// Loads an invention from a parsed value.

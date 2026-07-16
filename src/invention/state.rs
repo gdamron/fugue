@@ -108,9 +108,14 @@ impl RuntimeState {
             return;
         };
         let value = match value {
-            // Widen through the shortest decimal form of the f32 (its
-            // Display output) so 0.7f32 lands in the document as 0.7, not
-            // 0.699999988079071.
+            // Integral values stay JSON integers (a step count written as
+            // 16.0 would spuriously differ from the authored 16 on every
+            // reload diff); fractional values widen through the shortest
+            // decimal form of the f32 (its Display output) so 0.7f32 lands
+            // in the document as 0.7, not 0.699999988079071.
+            ControlValue::Number(number) if number.fract() == 0.0 && number.abs() < 2e15 => {
+                serde_json::json!(*number as i64)
+            }
             ControlValue::Number(number) => number
                 .to_string()
                 .parse::<f64>()
