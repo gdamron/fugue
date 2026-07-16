@@ -53,6 +53,10 @@ rejects manifests whose `entry` shape doesn't match `kind`.
 | `agent`       | `{ "definition": "<path>" }`  |
 | `sample-pack` | `{ "samples": "<path>" }`     |
 
+A `sample-pack`'s entry file (conventionally `samples.json`) has its own
+kind-specific schema — licensing, attribution, sample rates, tags, and
+slice points. See [SAMPLE_PACK.md](SAMPLE_PACK.md).
+
 ## Examples
 
 One per kind lives in [`examples/`](examples/):
@@ -65,7 +69,9 @@ One per kind lives in [`examples/`](examples/):
 - [`sample-pack.json`](examples/sample-pack.json)
 
 These files are exercised by `tests/pkg_manifest_test.rs`, so they stay
-in sync with the validator.
+in sync with the validator. The sample-pack entry file has its own
+example, [`sample-pack.samples.json`](examples/sample-pack.samples.json),
+exercised by `tests/pkg_sample_pack_test.rs`.
 
 ## Initial Scope
 

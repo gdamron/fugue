@@ -77,6 +77,12 @@ pub use pkg::{
     Target as PkgTarget, ValidationError as PkgValidationError,
 };
 
+// Re-export sample-pack entry types
+pub use pkg::{
+    parse_sample_pack_str, validate_sample_pack, SampleFile, SamplePackError, SamplePackManifest,
+    SamplePackValidationError, SampleSlice,
+};
+
 // Re-export lockfile types
 #[cfg(not(target_arch = "wasm32"))]
 pub use pkg::compute_integrity;

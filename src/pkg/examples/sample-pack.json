@@ -9,5 +9,5 @@
   "requires": {
     "capabilities": ["fs:read:samples/"]
   },
-  "entry": { "samples": "index.json" }
+  "entry": { "samples": "samples.json" }
 }
