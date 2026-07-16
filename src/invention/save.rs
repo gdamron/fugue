@@ -75,10 +75,14 @@ fn rebase(
     }
     let resolved = std::path::absolute(source_dir.join(&authored_path))?;
     let rebased = match resolved.strip_prefix(target_dir) {
-        Ok(relative) => relative.to_path_buf(),
-        Err(_) => resolved,
+        // Relative references in the invention format are portable: always
+        // forward slashes, whatever the platform separator.
+        Ok(relative) => relative
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/"),
+        Err(_) => resolved.to_string_lossy().into_owned(),
     };
-    Ok(rebased.to_string_lossy().into_owned())
+    Ok(rebased)
 }
 
 #[cfg(test)]
