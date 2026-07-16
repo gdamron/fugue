@@ -353,14 +353,18 @@ impl RunningInvention {
             module: result.module,
         })?;
 
-        self.state.lock().unwrap().modules.insert(
-            module_id.clone(),
-            RuntimeModuleInfo {
-                id: module_id.clone(),
-                module_type: module_type.to_string(),
-                config: config.clone(),
-            },
-        );
+        {
+            let mut state = self.state.lock().unwrap();
+            state.modules.insert(
+                module_id.clone(),
+                RuntimeModuleInfo {
+                    id: module_id.clone(),
+                    module_type: module_type.to_string(),
+                    config: config.clone(),
+                },
+            );
+            state.document_upsert_module(&module_id, module_type, config);
+        }
 
         if module_type == "code" {
             self.scripts.start_module(
@@ -526,6 +530,7 @@ impl RunningInvention {
             .connections
             .retain(|conn| conn.from != module_id && conn.to != module_id);
         state.connections.extend(preserved_connections);
+        state.document_upsert_module(&module_id, module_type, config);
         drop(state);
 
         if module_type == "code" {
@@ -690,8 +695,13 @@ impl RunningInvention {
                 .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
         };
         control_surface
-            .set_control(key, value)
-            .map_err(GraphCommandError::ControlError)
+            .set_control(key, value.clone())
+            .map_err(GraphCommandError::ControlError)?;
+        self.state
+            .lock()
+            .unwrap()
+            .document_write_control(module_id, key, &value);
+        Ok(())
     }
 
     /// Removes a module from the running graph.
@@ -716,7 +726,16 @@ impl RunningInvention {
         state
             .connections
             .retain(|conn| conn.from != module_id && conn.to != module_id);
+        state.document_remove_module(&module_id);
         Ok(())
+    }
+
+    /// Returns the declarative document describing the current graph: the
+    /// authored document as loaded, updated by runtime mutations, with
+    /// connections mirrored from the live topology. `None` when the graph
+    /// was assembled without a document.
+    pub fn document(&self) -> Option<crate::Invention> {
+        self.state.lock().unwrap().document()
     }
 }
 

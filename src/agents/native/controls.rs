@@ -25,11 +25,15 @@ pub(super) fn get_string(
     }
 }
 
+/// Writes an agent telemetry control (`status`, `last_error`, history).
+/// Transient: live activity is not authored configuration, so it must not
+/// land in the retained document.
 pub(super) fn set_string(controller: &RuntimeController, module_id: &str, key: &str, value: &str) {
-    let _ =
-        controller
-            .snapshot
-            .set_control(module_id, key, ControlValue::String(value.to_string()));
+    let _ = controller.snapshot.set_control_transient(
+        module_id,
+        key,
+        ControlValue::String(value.to_string()),
+    );
 }
 
 pub(super) fn control_value_to_json(value: ControlValue) -> Value {

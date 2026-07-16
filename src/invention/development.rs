@@ -36,7 +36,7 @@ impl ModuleFactory for DevelopmentFactory {
     fn build(
         &self,
         sample_rate: u32,
-        _config: &serde_json::Value,
+        config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let builder = InventionBuilder::with_registry_and_registered(
             sample_rate,
@@ -46,6 +46,7 @@ impl ModuleFactory for DevelopmentFactory {
         let (runtime, _handles) = builder.build(self.definition.clone())?;
         let (module, control_surface) =
             DevelopmentModule::new(&self.name, runtime, &self.definition)?;
+        apply_development_config(&self.name, config, control_surface.as_ref())?;
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(module)),
@@ -54,6 +55,35 @@ impl ModuleFactory for DevelopmentFactory {
             sink: None,
         })
     }
+}
+
+/// Applies a development instance's config as initial values for its exposed
+/// controls. A development has no other config surface, so every key must
+/// name an exposed control and every value must be a scalar; this is what
+/// lets a document whose control changes were written into a development
+/// instance's config rebuild with the same values on a cold load.
+fn apply_development_config(
+    name: &str,
+    config: &serde_json::Value,
+    surface: &(dyn ControlSurface + Send + Sync),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let map = match config {
+        serde_json::Value::Null => return Ok(()),
+        serde_json::Value::Object(map) => map,
+        _ => return Err(format!("Development '{}' config must be an object", name).into()),
+    };
+    for (key, value) in map {
+        let value = crate::invention::reload::scalar_control_value(value).ok_or_else(|| {
+            format!(
+                "Development '{}' config key '{}' must be a number, bool, or string",
+                name, key
+            )
+        })?;
+        surface
+            .set_control(key, value)
+            .map_err(|err| format!("Development '{}' config: {}", name, err))?;
+    }
+    Ok(())
 }
 
 pub(crate) struct DevelopmentModule {

@@ -81,6 +81,13 @@ impl RenderEngine {
         self.snapshot().full_snapshot_with_ports(&module_ports)
     }
 
+    /// Returns the declarative document describing the current graph: the
+    /// authored document as loaded, updated by runtime mutations, with
+    /// connections mirrored from the live topology.
+    pub fn document(&self) -> Option<Invention> {
+        self.snapshot().document()
+    }
+
     pub fn controller(&self) -> Option<RuntimeController> {
         Some(RuntimeController {
             snapshot: self.snapshot(),
@@ -151,8 +158,11 @@ impl RenderEngine {
         module_id: &str,
         status: impl Into<String>,
     ) -> Result<(), GraphCommandError> {
-        self.snapshot()
-            .set_control(module_id, "status", ControlValue::String(status.into()))
+        self.snapshot().set_control_transient(
+            module_id,
+            "status",
+            ControlValue::String(status.into()),
+        )
     }
 
     /// Updates the last-error string for a `code` module.
@@ -161,8 +171,11 @@ impl RenderEngine {
         module_id: &str,
         error: impl Into<String>,
     ) -> Result<(), GraphCommandError> {
-        self.snapshot()
-            .set_control(module_id, "last_error", ControlValue::String(error.into()))
+        self.snapshot().set_control_transient(
+            module_id,
+            "last_error",
+            ControlValue::String(error.into()),
+        )
     }
 
     /// Loads an invention from a parsed value.
@@ -480,14 +493,18 @@ impl RenderEngine {
                 module: result.module,
             });
 
-        self.state.lock().unwrap().modules.insert(
-            module_id.to_string(),
-            RuntimeModuleInfo {
-                id: module_id.to_string(),
-                module_type: module_type.to_string(),
-                config: config.clone(),
-            },
-        );
+        {
+            let mut state = self.state.lock().unwrap();
+            state.modules.insert(
+                module_id.to_string(),
+                RuntimeModuleInfo {
+                    id: module_id.to_string(),
+                    module_type: module_type.to_string(),
+                    config: config.clone(),
+                },
+            );
+            state.document_upsert_module(module_id, module_type, config);
+        }
 
         if module_type == "code" {
             self.scripts.start_module(
@@ -540,6 +557,7 @@ impl RenderEngine {
         state
             .connections
             .retain(|conn| conn.from != module_id && conn.to != module_id);
+        state.document_remove_module(module_id);
         Ok(())
     }
 

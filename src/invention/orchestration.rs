@@ -122,8 +122,27 @@ impl RuntimeSnapshot {
             .map_err(GraphCommandError::ControlError)
     }
 
-    /// Sets the current value of a module control.
+    /// Sets the current value of a module control and records it in the
+    /// retained document so the change survives a save/rebuild.
     pub fn set_control(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+    ) -> Result<(), GraphCommandError> {
+        self.set_control_transient(module_id, key, value.clone())?;
+        self.state
+            .lock()
+            .unwrap()
+            .document_write_control(module_id, key, &value);
+        Ok(())
+    }
+
+    /// Sets a control without recording it in the retained document. For
+    /// runtime telemetry controls (`status`, `last_error`, agent history)
+    /// that describe live activity rather than authored configuration —
+    /// they must not end up in a saved invention file.
+    pub fn set_control_transient(
         &self,
         module_id: &str,
         key: &str,
@@ -141,6 +160,12 @@ impl RuntimeSnapshot {
         surface
             .set_control(key, value)
             .map_err(GraphCommandError::ControlError)
+    }
+
+    /// Returns the declarative document describing the current graph (see
+    /// [`RuntimeState::document`]).
+    pub fn document(&self) -> Option<crate::Invention> {
+        self.state.lock().unwrap().document()
     }
 }
 
@@ -234,14 +259,18 @@ impl RuntimeController {
             .unwrap()
             .insert(module_id.to_string(), ports);
 
-        self.snapshot.state.lock().unwrap().modules.insert(
-            module_id.to_string(),
-            RuntimeModuleInfo {
-                id: module_id.to_string(),
-                module_type: module_type.to_string(),
-                config: config.clone(),
-            },
-        );
+        {
+            let mut state = self.snapshot.state.lock().unwrap();
+            state.modules.insert(
+                module_id.to_string(),
+                RuntimeModuleInfo {
+                    id: module_id.to_string(),
+                    module_type: module_type.to_string(),
+                    config: config.clone(),
+                },
+            );
+            state.document_upsert_module(module_id, module_type, config);
+        }
 
         Ok(handles
             .into_iter()
@@ -265,6 +294,7 @@ impl RuntimeController {
         state
             .connections
             .retain(|conn| conn.from != module_id && conn.to != module_id);
+        state.document_remove_module(module_id);
         Ok(())
     }
 

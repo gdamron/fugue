@@ -94,6 +94,10 @@ impl InventionBuilder {
         invention: Invention,
     ) -> Result<(InventionRuntime, InventionHandles), Box<dyn std::error::Error>> {
         let base_registry = self.registry.clone();
+        // Retain the authored document (before asset resolution) so the
+        // runtime can be saved back to disk without inlining `$asset`
+        // references or losing developments, title, and the exposed sections.
+        let document = invention.clone();
         let invention = resolve_invention_assets(invention)?;
         let development_definitions =
             crate::invention::reload::DevelopmentDefinitions::resolve(&invention)?;
@@ -136,7 +140,7 @@ impl InventionBuilder {
         // Build the routing graph
         let routing = self.build_routing(&invention, &modules)?;
 
-        let state = Arc::new(Mutex::new(self.build_runtime_state(&invention)));
+        let state = Arc::new(Mutex::new(self.build_runtime_state(&invention, document)));
 
         let runtime = InventionRuntime {
             modules,
@@ -153,7 +157,7 @@ impl InventionBuilder {
         Ok((runtime, handles))
     }
 
-    fn build_runtime_state(&self, invention: &Invention) -> RuntimeState {
+    fn build_runtime_state(&self, invention: &Invention, document: Invention) -> RuntimeState {
         let mut modules = IndexMap::new();
         for spec in &invention.modules {
             modules.insert(
@@ -184,6 +188,7 @@ impl InventionBuilder {
             connections,
             sample_rate: self.sample_rate,
             running: false,
+            document: Some(document),
         }
     }
 

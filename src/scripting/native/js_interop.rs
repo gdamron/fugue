@@ -130,7 +130,7 @@ pub(super) fn js_err(message: impl Into<String>) -> boa_engine::JsError {
 }
 
 pub(super) fn set_status(controller: &RuntimeController, module_id: &str, status: &str) {
-    let _ = controller.snapshot.set_control(
+    let _ = controller.snapshot.set_control_transient(
         module_id,
         "status",
         ControlValue::String(status.to_string()),
@@ -138,7 +138,7 @@ pub(super) fn set_status(controller: &RuntimeController, module_id: &str, status
 }
 
 pub(super) fn clear_error(controller: &RuntimeController, module_id: &str) {
-    let _ = controller.snapshot.set_control(
+    let _ = controller.snapshot.set_control_transient(
         module_id,
         "last_error",
         ControlValue::String(String::new()),
@@ -147,7 +147,7 @@ pub(super) fn clear_error(controller: &RuntimeController, module_id: &str) {
 
 pub(super) fn set_error(controller: &RuntimeController, module_id: &str, error: &str) {
     set_status(controller, module_id, "error");
-    let _ = controller.snapshot.set_control(
+    let _ = controller.snapshot.set_control_transient(
         module_id,
         "last_error",
         ControlValue::String(error.to_string()),

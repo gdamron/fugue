@@ -34,7 +34,7 @@ pub use rpc::{
     PackageList, PackageSource, ReloadMode, ReloadOutcome, RpcCommand, RpcError, RpcErrorCode,
     RpcEvent, RpcEventPayload, RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse,
     RpcResponsePayload, RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot,
-    RuntimeModuleSnapshot, RuntimePortInfo, SinkStatusState, RPC_SCHEMA_VERSION,
+    RuntimeModuleSnapshot, RuntimePortInfo, SaveReport, SinkStatusState, RPC_SCHEMA_VERSION,
 };
 
 // Re-export modules

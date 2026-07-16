@@ -127,6 +127,16 @@ pub enum RpcCommand {
         #[serde(default = "default_frozen")]
         frozen: bool,
     },
+    /// Write the daemon's retained declarative document — the authored
+    /// invention updated by runtime mutations — to a file. Lossless:
+    /// developments, assets, title/description, and the exposed
+    /// inputs/outputs/controls sections are preserved, and control changes
+    /// appear in module configs.
+    SaveInvention {
+        /// Destination file path. Clients should pass an absolute path; a
+        /// relative path resolves against the daemon's working directory.
+        path: String,
+    },
     InstallPackage(PackageInstallRequest),
     ListPackages,
     DescribeModuleTypes,
@@ -176,7 +186,19 @@ pub enum RpcResponsePayload {
     Packages(PackageList),
     ModuleTypes(ModuleTypeList),
     Reload(ReloadOutcome),
+    Saved(SaveReport),
     Error(RpcError),
+}
+
+/// Response payload for [`RpcCommand::SaveInvention`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct SaveReport {
+    /// The path the document was written to.
+    pub path: String,
+    pub modules: usize,
+    pub connections: usize,
+    pub developments: usize,
 }
 
 /// How a [`RpcCommand::ReloadInvention`] landed.
