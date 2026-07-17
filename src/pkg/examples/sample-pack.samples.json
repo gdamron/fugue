@@ -1,0 +1,30 @@
+{
+  "license": "CC0-1.0",
+  "attribution": [{ "name": "Example Sampler", "url": "https://example.com" }],
+  "sample_rate": [44100, 48000],
+  "tags": { "genre": "electronic", "instrument": "drums", "bpm": "120" },
+  "files": [
+    {
+      "path": "samples/kick.wav",
+      "sample_rate": 48000,
+      "tags": { "instrument": "kick drum" }
+    },
+    {
+      "path": "samples/snare.wav",
+      "sample_rate": 48000,
+      "tags": { "instrument": "snare drum" }
+    },
+    {
+      "path": "samples/break.wav",
+      "sample_rate": 44100,
+      "license": "CC-BY-4.0",
+      "attribution": [{ "name": "Break Creator" }],
+      "tags": { "instrument": "drum loop", "key": "C" },
+      "slices": [
+        { "start_frames": 0, "end_frames": 22050, "name": "kick" },
+        { "start_frames": 22050, "end_frames": 44100, "name": "snare" },
+        { "start_frames": 44100, "end_frames": 88200 }
+      ]
+    }
+  ]
+}
