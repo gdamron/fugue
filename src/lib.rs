@@ -47,7 +47,8 @@ pub use modules::{
     FilterType, Lfo, LfoControls, LfoFactory, MelodyControls, MelodyFactory, MelodyGenerator,
     Mixer, MixerControls, MixerFactory, Oscillator, OscillatorControls, OscillatorFactory,
     OscillatorType, SampleKit, SampleKitControls, SampleKitFactory, SamplePlayer,
-    SamplePlayerControls, SamplePlayerFactory, Vca, VcaControls, VcaFactory,
+    SamplePlayerControls, SamplePlayerFactory, SampleSlicer, SampleSlicerFactory, Vca, VcaControls,
+    VcaFactory,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
