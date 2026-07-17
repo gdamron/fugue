@@ -118,8 +118,11 @@ impl SamplePlayerControls {
     }
 
     pub fn set_source(&self, source: &str) -> Result<(), String> {
-        let sample = load_cached_sample(source, self.sample_rate)?;
+        let target = resolve_source(source)?;
+        let sample = load_cached_sample(&target, self.sample_rate)?;
         let mut shared = self.shared.lock().unwrap();
+        // The authored ref stays the control value, so a saved document keeps
+        // the portable form rather than this machine's cache path.
         shared.source = source.to_string();
         shared.pending_sample = Some(sample);
         Ok(())
@@ -159,8 +162,12 @@ impl SamplePlayerControls {
 impl ControlSurface for SamplePlayerControls {
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::string("source", "Audio sample path or https URL (WAV or FLAC)")
-                .with_default(self.source()),
+            ControlMeta::string(
+                "source",
+                "Audio sample path, https URL, or package ref like \
+                 'fugue.drums.808@1.2.0:kick/long.wav' (WAV or FLAC)",
+            )
+            .with_default(self.source()),
             ControlMeta::boolean("play", "Start or stop sample playback", self.play()),
             ControlMeta::boolean("loop", "Loop playback when enabled", self.loop_enabled()),
             ControlMeta::number(
@@ -194,6 +201,31 @@ impl ControlSurface for SamplePlayerControls {
     }
 }
 
+/// Package refs (`id@requirement:file`) resolve through the installed package
+/// cache; any other string loads unchanged as a path or https URL. Note the
+/// resample cache below is keyed by the resolved path, so two spellings of
+/// the same sample share one buffer.
+fn resolve_source(source: &str) -> Result<String, String> {
+    let Some(reference) = crate::pkg::PackageAudioRef::parse(source) else {
+        return Ok(source.to_string());
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(format!(
+            "package asset ref '{}' is not available on wasm32",
+            reference
+        ))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let packages_dir = crate::pkg::default_packages_dir()?;
+        let resolved = crate::pkg::resolve_package_asset(&reference, &packages_dir, None)?;
+        Ok(resolved.file.to_string_lossy().into_owned())
+    }
+}
+
 /// Audio container formats the sample player can decode.
 enum AudioFormat {
     Wav,
@@ -206,8 +238,8 @@ enum AudioFormat {
 /// touches the resulting `Arc<SampleData>`. Deduplicates work and memory when
 /// several players reference the same asset at the same rate.
 //
-// NOTE: keyed by the resolved `source` path today. Once FUG-130 lands a stable
-// asset id, the key should switch to `(asset_id, target_rate)`.
+// Keyed by the *resolved* source path (`resolve_source`), so a package ref
+// and the direct path to the same installed file share one buffer.
 type SampleCache = Mutex<HashMap<(String, u32), Arc<SampleData>>>;
 
 fn sample_cache() -> &'static SampleCache {

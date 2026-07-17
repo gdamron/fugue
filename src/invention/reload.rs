@@ -164,24 +164,23 @@ pub(crate) fn plan_reload(
         .cloned()
         .collect();
 
-    let desired: Vec<RuntimeConnectionInfo> = new
-        .connections
-        .iter()
-        .map(|conn| {
-            Ok(RuntimeConnectionInfo {
-                from: conn.from.clone(),
-                from_port: conn
-                    .from_port
-                    .clone()
-                    .ok_or_else(|| format!("Missing from_port in connection from {}", conn.from))?,
-                to: conn.to.clone(),
-                to_port: conn
-                    .to_port
-                    .clone()
-                    .ok_or_else(|| format!("Missing to_port in connection to {}", conn.to))?,
+    let desired: Vec<RuntimeConnectionInfo> =
+        new.connections
+            .iter()
+            .map(|conn| {
+                Ok(RuntimeConnectionInfo {
+                    from: conn.from.clone(),
+                    from_port: conn.from_port.clone().ok_or_else(|| {
+                        format!("Missing from_port in connection from {}", conn.from)
+                    })?,
+                    to: conn.to.clone(),
+                    to_port: conn
+                        .to_port
+                        .clone()
+                        .ok_or_else(|| format!("Missing to_port in connection to {}", conn.to))?,
+                })
             })
-        })
-        .collect::<Result<_, String>>()?;
+            .collect::<Result<_, String>>()?;
 
     // Connections touching a removed module are cleaned up by remove_module,
     // so only surviving endpoints need explicit disconnects.
@@ -332,8 +331,7 @@ impl RunningInvention {
         // removed from the document is an error, exactly as on a cold load.
         // The built runtime is discarded; its registry carries the freshly
         // registered development factories the diff needs.
-        let builder =
-            InventionBuilder::with_registry(self.sample_rate, self.base_registry.clone());
+        let builder = InventionBuilder::with_registry(self.sample_rate, self.base_registry.clone());
         let (validated, _) = builder
             .build(resolved.clone())
             .map_err(|error| ReloadError::Invalid(error.to_string()))?;

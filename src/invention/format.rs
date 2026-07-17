@@ -153,6 +153,15 @@ pub struct ModuleSpec {
     /// Each module factory knows how to parse its own configuration.
     /// This allows modules to define their own config structure without
     /// requiring changes to the invention format.
+    ///
+    /// Two config keys have format-level meaning: values containing
+    /// `{ "$asset": ... }` objects are expanded from the document's declared
+    /// [`assets`](Invention::assets), and a top-level `asset` key is an audio
+    /// asset reference ([`crate::pkg::AudioAssetRef`]) — a package ref like
+    /// `"fugue.drums.808@1.2.0:kick/long.wav"` or a local path object like
+    /// `{ "path": "./loops/melody.wav" }` — resolved to a concrete file path
+    /// before the module is built (package cache → relative to the invention
+    /// file → absolute).
     #[serde(default)]
     pub config: serde_json::Value,
 }

@@ -83,6 +83,11 @@ pub use pkg::{
     SamplePackValidationError, SampleSlice,
 };
 
+// Re-export audio asset reference types
+#[cfg(not(target_arch = "wasm32"))]
+pub use pkg::{default_packages_dir, resolve_package_asset, ResolvedPackageAsset};
+pub use pkg::{AudioAssetRef, PackageAudioRef};
+
 // Re-export lockfile types
 #[cfg(not(target_arch = "wasm32"))]
 pub use pkg::compute_integrity;

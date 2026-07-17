@@ -387,7 +387,7 @@ pub fn parse_path(
 
 /// Relative-path check: non-empty, `/`-separated, no absolute prefix, no
 /// `.`/`..` segments, no backslashes (portability).
-fn is_valid_relative_path(path: &str) -> bool {
+pub(crate) fn is_valid_relative_path(path: &str) -> bool {
     if path.is_empty() || path.starts_with('/') || path.contains('\\') {
         return false;
     }

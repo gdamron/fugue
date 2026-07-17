@@ -24,7 +24,27 @@ impl ModuleFactory for SamplePlayerFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        // `asset` is the hybrid reference form (package ref string or
+        // `{ "path": ... }` object); `source` remains the plain string form.
+        // Invention loads resolve `asset` to a concrete path before this
+        // factory runs; a module added live may still carry a package ref,
+        // which `set_source` resolves through the package cache.
+        let asset = config
+            .get("asset")
+            .map(|value| {
+                serde_json::from_value::<crate::pkg::AudioAssetRef>(value.clone())
+                    .map_err(|err| format!("invalid asset reference {}: {}", value, err))
+            })
+            .transpose()?;
         let source = config.get("source").and_then(|value| value.as_str());
+        if asset.is_some() && source.is_some() {
+            return Err("config accepts either 'asset' or 'source', not both".into());
+        }
+        let asset = asset.map(|asset| match asset {
+            crate::pkg::AudioAssetRef::Text(text) => text,
+            crate::pkg::AudioAssetRef::Local { path } => path,
+        });
+        let source = asset.as_deref().or(source);
         let play = config.get("play").and_then(|value| value.as_bool());
         let loop_enabled = config.get("loop_enabled").and_then(|value| value.as_bool());
         let controls = SamplePlayerControls::new(sample_rate, source, play, loop_enabled)?;

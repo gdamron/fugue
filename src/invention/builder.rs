@@ -325,7 +325,6 @@ impl InventionBuilder {
 
         Ok(())
     }
-
 }
 
 /// Loads a development's definition: from its file for path-based specs
@@ -356,13 +355,25 @@ pub(crate) fn load_development_definition(
 }
 
 /// Resolves `$asset` references in module configs against the document's
-/// declared assets. Configs are compared post-resolution at runtime, so
-/// reload resolves the new document the same way before diffing.
+/// declared assets, then resolves module `asset` audio references (package
+/// cache → relative to the invention file → absolute; see
+/// `crate::invention::audio_assets`). Configs are compared post-resolution at
+/// runtime, so reload resolves the new document the same way before diffing.
 pub(crate) fn resolve_invention_assets(
     mut invention: Invention,
 ) -> Result<Invention, Box<dyn std::error::Error>> {
+    resolve_json_assets(&mut invention)?;
+    // After `$asset` expansion, so an audio ref may itself come from a
+    // shared JSON asset.
+    crate::invention::audio_assets::resolve_audio_assets(&mut invention)?;
+    Ok(invention)
+}
+
+/// The `$asset` half of [`resolve_invention_assets`]: loads declared JSON
+/// assets and expands `$asset` references in module configs.
+fn resolve_json_assets(invention: &mut Invention) -> Result<(), Box<dyn std::error::Error>> {
     if invention.assets.is_empty() {
-        return Ok(invention);
+        return Ok(());
     }
 
     let mut assets = HashMap::new();
@@ -412,7 +423,7 @@ pub(crate) fn resolve_invention_assets(
         module.config = resolve_asset_refs(&module.config, &assets)?;
     }
 
-    Ok(invention)
+    Ok(())
 }
 
 fn resolve_development_path(
