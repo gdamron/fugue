@@ -128,14 +128,18 @@ mod non_wasm {
         }
     }
 
-    /// Local path resolution: URLs and absolute paths pass through; relative
+    /// Local path resolution: URLs and rooted paths pass through; relative
     /// paths join the invention file's directory when one is known.
     fn resolve_local(path: &str, base_dir: Option<&Path>) -> String {
         if path.starts_with("https://") || path.starts_with("http://") {
             return path.to_string();
         }
         let candidate = Path::new(path);
-        if candidate.is_absolute() {
+        // `has_root`, not `is_absolute`: on Windows a rooted path like
+        // `/abs/kick.wav` is not "absolute" (no drive prefix), and `join`
+        // would splice it onto the invention's drive instead of passing the
+        // authored path through.
+        if candidate.has_root() {
             return path.to_string();
         }
         match base_dir {
@@ -339,10 +343,15 @@ mod tests {
             );
             resolve_audio_assets(&mut invention).unwrap();
             let resolved = resolved_asset(&invention).to_string();
+            // Built with the resolver's own joins so separators match the
+            // platform (the file path segment stays `/`-separated as
+            // authored, appended whole).
             assert_eq!(
                 resolved,
                 packs
-                    .join("fugue.drums.808/1.2.0/kick/long.wav")
+                    .join("fugue.drums.808")
+                    .join("1.2.0")
+                    .join("kick/long.wav")
                     .to_string_lossy()
             );
 
