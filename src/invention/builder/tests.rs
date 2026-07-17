@@ -306,6 +306,71 @@ fn resolves_relative_asset_refs_in_module_configs() {
 }
 
 #[test]
+fn builds_sample_player_from_package_asset_ref() {
+    let tmp = tempfile::tempdir().unwrap();
+    let packs = tmp.path().join("packs");
+    let pack_dir = packs.join("fugue.test.kit").join("1.0.0");
+    std::fs::create_dir_all(&pack_dir).unwrap();
+    std::fs::write(
+        pack_dir.join("fugue.pkg.json"),
+        r#"{"id":"fugue.test.kit","version":"1.0.0","kind":"sample-pack"}"#,
+    )
+    .unwrap();
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 44_100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(pack_dir.join("kick.wav"), spec).unwrap();
+    writer.write_sample(i16::MAX / 2).unwrap();
+    writer.finalize().unwrap();
+
+    let inv_dir = tmp.path().join("song");
+    std::fs::create_dir_all(&inv_dir).unwrap();
+    let root_path = inv_dir.join("groove.json");
+    std::fs::write(
+        &root_path,
+        r#"{
+            "modules": [
+                {
+                    "id": "kick",
+                    "type": "sample_player",
+                    "config": { "asset": "fugue.test.kit@1.0.0:kick.wav" }
+                }
+            ],
+            "connections": []
+        }"#,
+    )
+    .unwrap();
+
+    crate::pkg::audio_asset::with_packs_dir(&packs, || {
+        let invention = Invention::from_file(&root_path.to_string_lossy()).unwrap();
+        let (runtime, _) = InventionBuilder::new(44_100).build(invention).unwrap();
+
+        // The built module's config carries the resolved cache path...
+        let state = runtime.state.lock().unwrap();
+        let config = &state.modules.get("kick").unwrap().config;
+        assert_eq!(
+            config["asset"],
+            pack_dir.join("kick.wav").to_string_lossy().as_ref()
+        );
+        // ...while the retained document keeps the authored, portable ref.
+        let document = state.document.as_ref().unwrap();
+        assert_eq!(
+            document.modules[0].config["asset"],
+            "fugue.test.kit@1.0.0:kick.wav"
+        );
+    });
+
+    // The resolution was recorded beside the invention file.
+    let lock = crate::pkg::Lockfile::read(&inv_dir.join(crate::pkg::LOCKFILE_NAME)).unwrap();
+    let entry = &lock.packages["fugue.test.kit"];
+    assert_eq!(entry.version, "1.0.0");
+    assert!(entry.integrity.starts_with("sha256:"));
+}
+
+#[test]
 fn text_assets_resolve_as_string_values() {
     let unique = format!(
         "fugue-text-asset-test-{}-{}",

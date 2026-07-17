@@ -285,6 +285,70 @@ fn test_sample_player_caches_resampled_buffer() {
     let _ = std::fs::remove_file(path);
 }
 
+#[test]
+fn test_factory_accepts_asset_path_object() {
+    use crate::factory::ModuleFactory;
+
+    let path = write_test_wav(44_100, 1, &[[0.4, 0.0], [0.2, 0.0]]);
+    let config = serde_json::json!({ "asset": { "path": path.to_str().unwrap() } });
+    let result = SamplePlayerFactory.build(44_100, &config).unwrap();
+    let controls: SamplePlayerControls = {
+        let handle = result
+            .handles
+            .iter()
+            .find(|(name, _)| name == "controls")
+            .unwrap();
+        handle
+            .1
+            .downcast_ref::<SamplePlayerControls>()
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(controls.source(), path.to_string_lossy());
+    assert!(controls.shared.lock().unwrap().pending_sample.is_some());
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn test_factory_rejects_asset_and_source_together() {
+    use crate::factory::ModuleFactory;
+
+    let config = serde_json::json!({
+        "asset": { "path": "/a.wav" },
+        "source": "/b.wav"
+    });
+    let err = SamplePlayerFactory
+        .build(44_100, &config)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("either 'asset' or 'source'"), "{err}");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_set_source_resolves_package_ref() {
+    // A package ref set live (set_control / add_module path) resolves through
+    // the cache dir; the authored ref stays the control value.
+    let tmp = tempfile::tempdir().unwrap();
+    let pack_dir = tmp.path().join("fugue.test.kit").join("1.0.0");
+    std::fs::create_dir_all(&pack_dir).unwrap();
+    let wav = write_test_wav(44_100, 1, &[[0.5, 0.0], [0.25, 0.0]]);
+    std::fs::rename(&wav, pack_dir.join("kick.wav")).unwrap();
+
+    // Route the default cache lookup at the temp dir for this call only.
+    let controls = SamplePlayerControls::new(44_100, None, None, None).unwrap();
+    crate::pkg::audio_asset::with_packs_dir(tmp.path(), || {
+        controls
+            .set_source("fugue.test.kit@1.0.0:kick.wav")
+            .unwrap();
+    });
+
+    assert_eq!(controls.source(), "fugue.test.kit@1.0.0:kick.wav");
+    assert!(controls.shared.lock().unwrap().pending_sample.is_some());
+}
+
 /// A stereo ramp at least one FLAC block (16 frames) long.
 #[cfg(not(target_arch = "wasm32"))]
 fn flac_test_frames() -> Vec<[f32; 2]> {

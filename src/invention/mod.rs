@@ -12,6 +12,7 @@
 //! - [`graph`] - Signal processing graph (pull-based)
 //! - [`handles`] - Runtime control handles
 
+pub(crate) mod audio_assets;
 pub mod builder;
 pub mod development;
 pub mod format;
