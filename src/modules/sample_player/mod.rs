@@ -66,7 +66,7 @@ pub struct SamplePlayer {
     ctrl: SamplePlayerControls,
     inputs: inputs::SamplePlayerInputs,
     outputs: outputs::SamplePlayerOutputs,
-    sample: Option<Arc<controls::SampleData>>,
+    sample: Option<Arc<crate::modules::sample_loading::SampleData>>,
     position: f64,
     playing: bool,
     last_play_input: f32,

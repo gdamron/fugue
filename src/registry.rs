@@ -122,7 +122,7 @@ impl Default for ModuleRegistry {
             AdsrFactory, AgentFactory, AudioFileSinkFactory, CellSequencerFactory, ClockFactory,
             CodeFactory, ControlSchedulerFactory, DacFactory, DivisiFactory, FilterFactory,
             LfoFactory, MelodyFactory, MixerFactory, OscillatorFactory, ReverbFactory,
-            SamplePlayerFactory, StepSequencerFactory, VcaFactory,
+            SampleKitFactory, SamplePlayerFactory, StepSequencerFactory, VcaFactory,
         };
 
         let mut reg = Self::new();
@@ -145,6 +145,7 @@ impl Default for ModuleRegistry {
         reg.register(crate::modules::RtmpSinkFactory);
         #[cfg(not(target_arch = "wasm32"))]
         reg.register(crate::modules::YoutubeSinkFactory);
+        reg.register(SampleKitFactory);
         reg.register(SamplePlayerFactory);
         reg.register(StepSequencerFactory);
         reg.register(crate::modules::sustain::SustainFactory);

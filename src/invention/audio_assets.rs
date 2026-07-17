@@ -1,10 +1,12 @@
 //! Load-time resolution of module `asset` config references (FUG-130).
 //!
 //! The invention format lets any module config reference an audio asset under
-//! a top-level `asset` key, authored either as a package ref string or as a
-//! local path object (see [`crate::pkg::AudioAssetRef`]). Before modules are
-//! built, [`resolve_audio_assets`] rewrites each reference to the concrete
-//! file path it resolves to, in this order:
+//! a top-level `asset` key — or, for multi-sample modules like `sample_kit`,
+//! an `asset` key inside each entry of a top-level `samples` array — authored
+//! either as a package ref string or as a local path object (see
+//! [`crate::pkg::AudioAssetRef`]). Before modules are built,
+//! [`resolve_audio_assets`] rewrites each reference to the concrete file path
+//! it resolves to, in this order:
 //!
 //! 1. **package cache** — refs like `fugue.drums.808@1.2.0:kick/long.wav`
 //!    resolve into the installed package cache,
@@ -43,21 +45,18 @@ pub(crate) fn resolve_audio_assets(
     let mut lock = LazyLockfile::new(base_dir.as_deref());
 
     for module in &mut invention.modules {
-        let Some(config) = module.config.as_object_mut() else {
-            continue;
-        };
-        let Some(value) = config.get("asset") else {
-            continue;
-        };
-        let asset: AudioAssetRef = serde_json::from_value(value.clone()).map_err(|err| {
-            format!(
-                "module '{}': invalid asset reference {}: {}",
-                module.id, value, err
-            )
-        })?;
-        let resolved = resolve_ref(&asset, base_dir.as_deref(), &mut lock)
-            .map_err(|err| format!("module '{}': {}", module.id, err))?;
-        config.insert("asset".to_string(), serde_json::Value::String(resolved));
+        let module_id = module.id.clone();
+        for value in module_asset_values(&mut module.config) {
+            let asset: AudioAssetRef = serde_json::from_value(value.clone()).map_err(|err| {
+                format!(
+                    "module '{}': invalid asset reference {}: {}",
+                    module_id, value, err
+                )
+            })?;
+            let resolved = resolve_ref(&asset, base_dir.as_deref(), &mut lock)
+                .map_err(|err| format!("module '{}': {}", module_id, err))?;
+            *value = serde_json::Value::String(resolved);
+        }
     }
 
     lock.write_if_dirty()
@@ -72,23 +71,52 @@ pub(crate) fn resolve_audio_assets(
     use crate::pkg::AudioAssetRef;
 
     for module in &mut invention.modules {
-        let Some(config) = module.config.as_object_mut() else {
-            continue;
-        };
-        let Some(value) = config.get("asset") else {
-            continue;
-        };
-        let asset: AudioAssetRef = serde_json::from_value(value.clone()).map_err(|err| {
-            format!(
-                "module '{}': invalid asset reference {}: {}",
-                module.id, value, err
-            )
-        })?;
-        if let AudioAssetRef::Local { path } = asset {
-            config.insert("asset".to_string(), serde_json::Value::String(path));
+        let module_id = module.id.clone();
+        for value in module_asset_values(&mut module.config) {
+            let asset: AudioAssetRef = serde_json::from_value(value.clone()).map_err(|err| {
+                format!(
+                    "module '{}': invalid asset reference {}: {}",
+                    module_id, value, err
+                )
+            })?;
+            if let AudioAssetRef::Local { path } = asset {
+                *value = serde_json::Value::String(path);
+            }
         }
     }
     Ok(())
+}
+
+/// The audio asset reference slots of one module config: the top-level
+/// `asset` value, plus each `asset` value inside entries of a top-level
+/// `samples` array (multi-sample modules like `sample_kit`).
+fn module_asset_values(
+    config: &mut serde_json::Value,
+) -> impl Iterator<Item = &mut serde_json::Value> {
+    let (asset, samples) = match config.as_object_mut() {
+        Some(object) => {
+            // Split borrows: `remove`-free simultaneous access needs raw
+            // iteration, so walk the map once and keep the two keys apart.
+            let mut asset = None;
+            let mut samples = None;
+            for (key, value) in object.iter_mut() {
+                match key.as_str() {
+                    "asset" => asset = Some(value),
+                    "samples" => samples = value.as_array_mut(),
+                    _ => {}
+                }
+            }
+            (asset, samples)
+        }
+        None => (None, None),
+    };
+
+    asset.into_iter().chain(
+        samples
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.as_object_mut()?.get_mut("asset")),
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -440,5 +468,47 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("invalid asset reference"), "{err}");
+    }
+
+    #[test]
+    fn sample_slot_refs_resolve_and_record_lockfile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let packs = tmp.path().join("packs");
+        let inv_dir = tmp.path().join("song");
+        fs::create_dir_all(&inv_dir).unwrap();
+        install_pack(&packs, "fugue.drums.808", "1.2.0", &["kick.wav"]);
+        with_packs_dir(&packs, || {
+            // Multi-sample configs (sample_kit) nest refs in a `samples`
+            // array; both slots resolve and the package ref is locked.
+            let json = serde_json::json!({
+                "modules": [
+                    { "id": "kit", "type": "sample_kit", "config": { "samples": [
+                        { "key": 36, "asset": "fugue.drums.808@1.2.0:kick.wav" },
+                        { "key": 38, "asset": { "path": "./local/snare.wav" } }
+                    ] } }
+                ],
+                "connections": []
+            });
+            let mut invention = Invention::from_json(&json.to_string()).unwrap();
+            invention.source_path = Some(inv_dir.join("groove.json"));
+            resolve_audio_assets(&mut invention).unwrap();
+
+            let samples = invention.modules[0].config["samples"].as_array().unwrap();
+            assert_eq!(
+                samples[0]["asset"].as_str().unwrap(),
+                packs
+                    .join("fugue.drums.808")
+                    .join("1.2.0")
+                    .join("kick.wav")
+                    .to_string_lossy()
+            );
+            assert_eq!(
+                samples[1]["asset"].as_str().unwrap(),
+                inv_dir.join("./local/snare.wav").to_string_lossy()
+            );
+
+            let lock = Lockfile::read(&inv_dir.join(LOCKFILE_NAME)).unwrap();
+            assert_eq!(lock.packages["fugue.drums.808"].version, "1.2.0");
+        });
     }
 }
