@@ -215,3 +215,145 @@ fn registry_exposes_sample_slicer_ports_without_loading_an_asset() {
         Some(outputs::OUTPUTS.as_slice())
     );
 }
+
+fn elastic_config(path: &Path) -> serde_json::Value {
+    let mut config = explicit_config(path);
+    config["mode"] = serde_json::json!("elastic");
+    config
+}
+
+/// Longer fixture so elastic slices have room to scale: 8 frames, two
+/// 4-frame slices.
+fn elastic_fixture(dir: &Path) -> (std::path::PathBuf, serde_json::Value) {
+    let path = dir.join("elastic.wav");
+    let frames: Vec<[f32; 2]> = (0..8).map(|i| [0.1 + i as f32 * 0.1, 0.0]).collect();
+    write_test_wav(&path, 44_100, &frames);
+    let config = serde_json::json!({
+        "asset": { "path": path.to_str().unwrap() },
+        "mode": "elastic",
+        "slices": [
+            { "start_frames": 0, "end_frames": 4 },
+            { "start_frames": 4, "end_frames": 8 }
+        ]
+    });
+    (path, config)
+}
+
+#[test]
+fn elastic_mode_exposes_ratio_controls() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("controls.wav");
+    write_test_wav(
+        &path,
+        44_100,
+        &[[0.1, -0.1], [0.2, -0.2], [0.6, -0.6], [0.8, -0.8]],
+    );
+
+    // Classic build keeps the surface absent.
+    let classic = SampleSlicerFactory
+        .build(44_100, &explicit_config(&path))
+        .unwrap();
+    assert!(classic.control_surface.is_none());
+
+    let elastic = SampleSlicerFactory
+        .build(44_100, &elastic_config(&path))
+        .unwrap();
+    let surface = elastic.control_surface.unwrap();
+    let keys: Vec<String> = surface
+        .controls()
+        .iter()
+        .map(|meta| meta.key.clone())
+        .collect();
+    assert!(keys.contains(&"time_ratio".to_string()), "{keys:?}");
+    assert!(keys.contains(&"pitch_ratio".to_string()), "{keys:?}");
+}
+
+#[test]
+fn elastic_slice_matches_classic_gate_timing_at_unity() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("unity.wav");
+    write_test_wav(
+        &path,
+        44_100,
+        &[[0.1, -0.1], [0.2, -0.2], [0.6, -0.6], [0.8, -0.8]],
+    );
+    let mut built = SampleSlicerFactory
+        .build(44_100, &elastic_config(&path))
+        .unwrap();
+    let slicer = built.module.module_mut();
+
+    slicer.set_input("slice", 1.0).unwrap();
+    slicer.set_input("trigger", 1.0).unwrap();
+    slicer.process(1);
+    assert!(slicer.get_output("audio_left").unwrap() > 0.55);
+    assert!(slicer.get_output("audio_right").unwrap() < -0.55);
+    assert_eq!(slicer.get_output("slice_start_gate").unwrap(), 1.0);
+    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 0.0);
+
+    slicer.set_input("trigger", 0.0).unwrap();
+    slicer.process(1);
+    assert!(slicer.get_output("audio_left").unwrap() > 0.75);
+    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 1.0);
+
+    slicer.process(1);
+    assert_eq!(slicer.get_output("audio_left").unwrap(), 0.0);
+    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 0.0);
+}
+
+#[test]
+fn elastic_time_ratio_scales_slice_length() {
+    let temp = tempfile::tempdir().unwrap();
+    let (_path, config) = elastic_fixture(temp.path());
+    let mut built = SampleSlicerFactory.build(44_100, &config).unwrap();
+    let surface = built.control_surface.clone().unwrap();
+    let slicer = built.module.module_mut();
+
+    let frames_to_end = |slicer: &mut dyn Module| {
+        slicer.set_input("trigger", 1.0).unwrap();
+        for count in 1..100 {
+            slicer.process(1);
+            slicer.set_input("trigger", 0.0).unwrap();
+            if slicer.get_output("slice_end_gate").unwrap() > 0.5 {
+                return count;
+            }
+        }
+        panic!("slice never ended");
+    };
+
+    // 4 source frames at half speed occupy 8 output frames; at double
+    // speed, 2. Pitch alone must not change the count.
+    assert_eq!(frames_to_end(slicer), 4);
+    surface
+        .set_control("time_ratio", crate::ControlValue::Number(0.5))
+        .unwrap();
+    assert_eq!(frames_to_end(slicer), 8);
+    surface
+        .set_control("time_ratio", crate::ControlValue::Number(2.0))
+        .unwrap();
+    assert_eq!(frames_to_end(slicer), 2);
+    surface
+        .set_control("time_ratio", crate::ControlValue::Number(1.0))
+        .unwrap();
+    surface
+        .set_control("pitch_ratio", crate::ControlValue::Number(2.0))
+        .unwrap();
+    assert_eq!(frames_to_end(slicer), 4);
+}
+
+#[test]
+fn elastic_rejects_unknown_mode() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("badmode.wav");
+    write_test_wav(&path, 44_100, &[[0.1, 0.0], [0.2, 0.0]]);
+    let mut config = serde_json::json!({
+        "source": path.to_str().unwrap(),
+        "slices": [{ "start_frames": 0, "end_frames": 2 }]
+    });
+    config["mode"] = serde_json::json!("granular");
+    let err = SampleSlicerFactory
+        .build(44_100, &config)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("'mode'"), "{err}");
+}
