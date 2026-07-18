@@ -50,13 +50,13 @@ fn elastic_analysis_is_computed_once_per_asset() {
 
 #[test]
 fn unity_ratios_reconstruct_the_source() {
-    let len = 8192;
+    let len = 16_384;
     let sample = ramped_sine(len, 64.0);
     let mut reader = ElasticReader::new(RATE);
     reader.reset(0.0);
 
-    let out = render(&mut reader, &sample, len as f64, 1.0, 1.0, 4096);
-    assert_eq!(out.len(), 4096);
+    let out = render(&mut reader, &sample, len as f64, 1.0, 1.0, 8192);
+    assert_eq!(out.len(), 8192);
 
     // A fresh reader starts at full amplitude and every later window aligns
     // to its natural continuation, so unity playback matches the source.
@@ -111,6 +111,53 @@ fn pitch_ratio_shifts_pitch_without_changing_duration() {
         "expected ~2x zero-crossing rate, got {}x",
         ratio
     );
+}
+
+/// Regression test for continuation-chasing: off unity, the alignment
+/// search must not ride the previous window's exact continuation (which
+/// plays at native rate and then snaps back — an audible rate sawtooth with
+/// a pop at every resync). Windows must instead advance near the nominal
+/// stretched rate every single cycle.
+#[test]
+fn slowdown_advances_windows_at_a_steady_stretched_rate() {
+    let len = 32_768;
+    let sample = ramped_sine(len, 64.0);
+    let analysis = sample.elastic_analysis();
+    let mut reader = ElasticReader::new(RATE);
+    reader.reset(0.0);
+
+    let time_ratio = 0.7f32;
+    let mut bases: Vec<f64> = Vec::new();
+    let mut frames_between: Vec<usize> = Vec::new();
+    let mut since_last = 0usize;
+    for _ in 0..14_000 {
+        reader
+            .next(&sample, &analysis, 0.0, len as f64, time_ratio, 1.0)
+            .unwrap();
+        since_last += 1;
+        if bases.last() != Some(&reader.last_base()) {
+            bases.push(reader.last_base());
+            frames_between.push(since_last);
+            since_last = 0;
+        }
+    }
+    assert!(bases.len() >= 5, "expected several windows, got {bases:?}");
+
+    // Every window advance must sit near cycle * time_ratio; the chase bug
+    // produced advances alternating between ~cycle (native rate) and a
+    // compensating snap-back.
+    let cycle = frames_between[2] as f64;
+    let nominal = cycle * f64::from(time_ratio);
+    for pair in bases.windows(2).skip(1) {
+        let advance = pair[1] - pair[0];
+        assert!(
+            (advance - nominal).abs() < 200.0,
+            "window advance {} strayed from nominal {} (bases {:?})",
+            advance,
+            nominal,
+            bases
+        );
+    }
 }
 
 #[test]

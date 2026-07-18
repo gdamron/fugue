@@ -5,13 +5,31 @@
 //! against the tail of the previous cycle, and remembers the segment's
 //! natural continuation as the next tail. A bounded alignment search keeps
 //! successive windows phase-coherent: candidate offsets around the nominal
-//! head are scored by normalized cross-correlation against the tail, coarse
-//! first on a precomputed [`DECIM`]:1 mono signal, then refined at full rate.
+//! head are scored by normalized cross-correlation against the tail on a
+//! precomputed mono mix (a strided sweep of the whole range, then
+//! sample-exact refinement around the winner).
 //!
 //! Time and pitch are decoupled by construction: the nominal source head
 //! advances by `time_ratio` per emitted frame (so a region of `L` source
 //! frames always occupies `ceil(L / time_ratio)` output frames), while reads
 //! inside a window step by `pitch_ratio` through the shared cubic kernel.
+//!
+//! # Why the search is shaped the way it is
+//!
+//! The tail is the exact continuation of what was just played, so off unity
+//! the search would happily "chase" it — playing at native rate for a cycle
+//! or two, then snapping back to nominal — which turns a steady stretch into
+//! an audible rate sawtooth with a discontinuity at every resync. Two
+//! defenses keep the search a *phase* aligner instead of a rate cheat:
+//!
+//! - Geometry: the cycle is long relative to the seek radius, so for
+//!   `|1 - time_ratio| >= SEEK_SECS / CYCLE_SECS` the continuation falls
+//!   outside the search range entirely and every window re-anchors near the
+//!   nominal head.
+//! - A small quadratic penalty on offset magnitude breaks the near-ties in
+//!   the mild-ratio band in favor of staying anchored. At unity the
+//!   continuation sits at offset zero, is never penalized, and playback
+//!   reconstructs the source exactly.
 //!
 //! Split of work across threads:
 //! - [`ElasticAnalysis::analyze`] allocates and is called off the audio
@@ -22,31 +40,31 @@
 
 use super::SampleData;
 
-/// Decimation factor between the full-rate mono signal and the coarse
-/// alignment signal. The coarse search steps candidate offsets by this many
-/// frames, so the fine search only has to sweep `2 * DECIM - 1` candidates.
-const DECIM: usize = 8;
-
 /// Crossfade length between successive windows.
-const OVERLAP_SECS: f32 = 0.008;
+const OVERLAP_SECS: f32 = 0.010;
 
 /// Output frames emitted per synthesis cycle (includes the crossfade).
-const CYCLE_SECS: f32 = 0.030;
+/// Deliberately long relative to [`SEEK_SECS`]; see the module docs.
+const CYCLE_SECS: f32 = 0.060;
 
 /// Maximum alignment offset searched around the nominal head, each way.
 const SEEK_SECS: f32 = 0.012;
+
+/// Correlation-score penalty at full seek deviation. Scores are normalized
+/// to [-1, 1], so this is directly comparable to correlation differences:
+/// big enough to break near-ties against far offsets, small enough that a
+/// genuinely better phase alignment still wins.
+const SEEK_PENALTY: f32 = 0.1;
 
 /// Floor for both ratios so the read head always moves forward; zero or
 /// negative ratios would stall the reader.
 const MIN_RATIO: f32 = 1e-4;
 
-/// Per-asset analysis backing the alignment search. Immutable after
-/// construction, so readers on the audio thread share it by reference.
+/// Per-asset analysis backing the alignment search: the full-rate mono mix,
+/// precomputed so the audio thread never averages channels per candidate.
+/// Immutable after construction, so readers share it by reference.
 pub(crate) struct ElasticAnalysis {
-    /// Full-rate mono mix used by the fine alignment search.
     mono: Vec<f32>,
-    /// [`DECIM`]:1 mean-decimated mono used by the coarse alignment search.
-    coarse: Vec<f32>,
 }
 
 impl ElasticAnalysis {
@@ -56,11 +74,7 @@ impl ElasticAnalysis {
         for i in 0..len {
             mono.push(0.5 * (sample.left[i] + sample.right[i]));
         }
-        let mut coarse = Vec::with_capacity(len.div_ceil(DECIM));
-        for chunk in mono.chunks(DECIM) {
-            coarse.push(chunk.iter().sum::<f32>() / chunk.len() as f32);
-        }
-        Self { mono, coarse }
+        Self { mono }
     }
 }
 
@@ -77,12 +91,13 @@ pub(crate) struct ElasticReader {
     tail_left: Vec<f32>,
     tail_right: Vec<f32>,
     tail_mono: Vec<f32>,
-    tail_coarse: Vec<f32>,
     out_len: usize,
     out_pos: usize,
     /// Nominal source head in frames; advances by `time_ratio` per emitted
     /// frame regardless of pitch, so callers key gates and loops off it.
     src_head: f64,
+    /// Aligned read base of the most recent window (test observability).
+    last_base: f64,
     /// A fresh (post-hard-reset) window starts at full amplitude instead of
     /// crossfading, preserving transients at slice/sample starts.
     fresh: bool,
@@ -93,9 +108,10 @@ pub(crate) struct ElasticReader {
 impl ElasticReader {
     pub(crate) fn new(sample_rate: u32) -> Self {
         let rate = sample_rate.max(1) as f32;
-        let overlap = (((rate * OVERLAP_SECS) as usize) / DECIM).max(2) * DECIM;
+        let overlap = ((rate * OVERLAP_SECS) as usize).max(16);
         let cycle = ((rate * CYCLE_SECS) as usize).max(overlap * 2);
-        let seek = (((rate * SEEK_SECS) as usize) / DECIM).max(1) * DECIM;
+        // Even, so the strided offset sweep lands on zero exactly.
+        let seek = (((rate * SEEK_SECS) as usize) / 2).max(1) * 2;
         let fade_in = (0..overlap)
             .map(|k| {
                 let t = (k as f32 + 0.5) / overlap as f32;
@@ -112,10 +128,10 @@ impl ElasticReader {
             tail_left: vec![0.0; overlap],
             tail_right: vec![0.0; overlap],
             tail_mono: vec![0.0; overlap],
-            tail_coarse: vec![0.0; overlap / DECIM],
             out_len: 0,
             out_pos: 0,
             src_head: 0.0,
+            last_base: 0.0,
             fresh: true,
             started: false,
         }
@@ -127,7 +143,6 @@ impl ElasticReader {
         self.tail_left.fill(0.0);
         self.tail_right.fill(0.0);
         self.tail_mono.fill(0.0);
-        self.tail_coarse.fill(0.0);
         self.reset_crossfade(start);
         self.fresh = true;
     }
@@ -145,6 +160,13 @@ impl ElasticReader {
 
     pub(crate) fn source_position(&self) -> f64 {
         self.src_head
+    }
+
+    /// Aligned read base of the most recent synthesized window. Test-only:
+    /// lets stretch-smoothness tests observe how windows advance.
+    #[cfg(test)]
+    pub(crate) fn last_base(&self) -> f64 {
+        self.last_base
     }
 
     /// Emits one output frame, or `None` once the nominal head has passed
@@ -186,6 +208,7 @@ impl ElasticReader {
         } else {
             self.src_head.max(region_start)
         };
+        self.last_base = base;
 
         let blend = !self.fresh;
         for k in 0..self.cycle {
@@ -209,13 +232,6 @@ impl ElasticReader {
             self.tail_right[k] = r;
             self.tail_mono[k] = 0.5 * (l + r);
         }
-        for j in 0..self.tail_coarse.len() {
-            let mut acc = 0.0;
-            for k in j * DECIM..(j + 1) * DECIM {
-                acc += self.tail_mono[k];
-            }
-            self.tail_coarse[j] = acc / DECIM as f32;
-        }
 
         self.out_len = self.cycle;
         self.out_pos = 0;
@@ -223,8 +239,10 @@ impl ElasticReader {
         self.started = true;
     }
 
-    /// Coarse-to-fine search for the alignment offset (in source frames)
-    /// whose window best continues the previous tail.
+    /// Search for the alignment offset (in source frames) whose window best
+    /// continues the previous tail: a strided sweep of the full ±seek range,
+    /// then sample-exact refinement around the winner. Both passes run at
+    /// full rate on the precomputed mono mix.
     fn best_offset(
         &self,
         analysis: &ElasticAnalysis,
@@ -236,69 +254,110 @@ impl ElasticReader {
         let mut best = 0isize;
         let mut best_score = f32::MIN;
 
+        let sweep_energy = tap_energy(&self.tail_mono, 2);
         let mut d = -seek;
         while d <= seek {
-            let start = self.src_head + d as f64;
-            if start >= region_start && start < region_end {
-                let score = correlate(
-                    &self.tail_coarse,
-                    &analysis.coarse,
-                    start / DECIM as f64,
-                    pitch,
-                );
+            if let Some(score) = self.score(
+                analysis,
+                d,
+                region_start,
+                region_end,
+                pitch,
+                2,
+                sweep_energy,
+            ) {
                 if score > best_score {
                     best_score = score;
                     best = d;
                 }
             }
-            d += DECIM as isize;
+            d += 2;
         }
 
-        // The fine sweep spans a full coarse cell on both sides of the
-        // coarse winner (coarse scores are grid-quantized, so the true best
-        // offset can sit in the adjacent cell) and always re-checks the
-        // near-zero neighbourhood: for periodic material, offsets a whole
-        // period away near-tie in the coarse pass, and only the full-rate
-        // score separates the exact continuation from its lookalikes.
-        let coarse_best = best;
-        let radius = DECIM as isize;
+        let center = best;
+        let refine_energy = tap_energy(&self.tail_mono, 1);
         best_score = f32::MIN;
-        let around_coarse = (coarse_best - radius)..=(coarse_best + radius);
-        let near_zero = (-radius..=radius).filter(|d| (d - coarse_best).abs() > radius);
-        for d in around_coarse.chain(near_zero) {
+        for d in (center - 2)..=(center + 2) {
             if d.abs() > seek {
                 continue;
             }
-            let start = self.src_head + d as f64;
-            if start < region_start || start >= region_end {
-                continue;
-            }
-            let score = correlate(&self.tail_mono, &analysis.mono, start, pitch);
-            if score > best_score {
-                best_score = score;
-                best = d;
+            if let Some(score) = self.score(
+                analysis,
+                d,
+                region_start,
+                region_end,
+                pitch,
+                1,
+                refine_energy,
+            ) {
+                if score > best_score {
+                    best_score = score;
+                    best = d;
+                }
             }
         }
         best
     }
+
+    /// Penalized correlation score for one candidate offset, or `None` when
+    /// the candidate falls outside the region.
+    #[allow(clippy::too_many_arguments)]
+    fn score(
+        &self,
+        analysis: &ElasticAnalysis,
+        d: isize,
+        region_start: f64,
+        region_end: f64,
+        pitch: f64,
+        stride: usize,
+        reference_energy: f32,
+    ) -> Option<f32> {
+        let start = self.src_head + d as f64;
+        if start < region_start || start >= region_end {
+            return None;
+        }
+        let correlation = correlate(
+            &self.tail_mono,
+            &analysis.mono,
+            start,
+            pitch,
+            stride,
+            reference_energy,
+        );
+        let deviation = d as f32 / self.seek as f32;
+        Some(correlation - SEEK_PENALTY * deviation * deviation)
+    }
 }
 
-/// Normalized cross-correlation of `reference` against `signal` read from
-/// fractional `start` with `step` between taps. Nearest-neighbour reads:
-/// alignment scoring doesn't need interpolation accuracy. Normalizing by the
-/// candidate's energy alone is enough for the argmax, since the reference is
-/// fixed across candidates.
-fn correlate(reference: &[f32], signal: &[f32], start: f64, step: f64) -> f32 {
+/// Sum of squares over every `stride`-th tap of `reference`.
+fn tap_energy(reference: &[f32], stride: usize) -> f32 {
+    reference.iter().step_by(stride).map(|v| v * v).sum()
+}
+
+/// Fully normalized cross-correlation (in [-1, 1]) of every `stride`-th tap
+/// of `reference` against `signal` read from fractional `start` with `step`
+/// between taps. Nearest-neighbour reads: alignment scoring doesn't need
+/// interpolation accuracy. Full normalization keeps scores comparable to the
+/// absolute deviation penalty regardless of signal level.
+fn correlate(
+    reference: &[f32],
+    signal: &[f32],
+    start: f64,
+    step: f64,
+    stride: usize,
+    reference_energy: f32,
+) -> f32 {
     let mut dot = 0.0f32;
     let mut energy = 0.0f32;
-    for (k, &r) in reference.iter().enumerate() {
+    for (k, &r) in reference.iter().enumerate().step_by(stride) {
         let idx = (start + k as f64 * step + 0.5) as usize;
         let v = signal.get(idx).copied().unwrap_or(0.0);
         dot += r * v;
         energy += v * v;
     }
-    if energy > 1e-9 {
-        dot / energy.sqrt()
+    let norm = energy * reference_energy;
+    if norm > 1e-12 {
+        dot / norm.sqrt()
     } else {
         0.0
     }
