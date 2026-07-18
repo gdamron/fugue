@@ -1,9 +1,17 @@
 //! Sample player module for audio file playback.
+//!
+//! Two playback modes, chosen by the `mode` config key:
+//! - `"classic"` (default): the fractional read head advances by
+//!   `pitch_ratio`, so speed and pitch stay coupled (tape-style).
+//! - `"elastic"`: a shared WSOLA reader decouples them; `time_ratio`
+//!   controls speed and `pitch_ratio` controls pitch independently.
 
 use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::modules::sample_loading::elastic::ElasticReader;
+use crate::modules::sample_loading::elastic_mode_from_config;
 use crate::Module;
 
 pub use self::controls::SamplePlayerControls;
@@ -27,8 +35,14 @@ impl ModuleFactory for SamplePlayerFactory {
         let source = source_from_config(config)?;
         let play = config.get("play").and_then(|value| value.as_bool());
         let loop_enabled = config.get("loop_enabled").and_then(|value| value.as_bool());
-        let controls =
-            SamplePlayerControls::new(sample_rate, source.as_deref(), play, loop_enabled)?;
+        let elastic = elastic_mode_from_config("sample_player", config)?;
+        let controls = SamplePlayerControls::with_mode(
+            sample_rate,
+            source.as_deref(),
+            play,
+            loop_enabled,
+            elastic,
+        )?;
         let player = SamplePlayer::new_with_controls(controls.clone());
 
         Ok(ModuleBuildResult {
@@ -72,6 +86,8 @@ pub struct SamplePlayer {
     outputs: outputs::SamplePlayerOutputs,
     sample: Option<Arc<crate::modules::sample_loading::SampleData>>,
     position: f64,
+    /// Present iff the module was built in elastic mode.
+    reader: Option<ElasticReader>,
     playing: bool,
     last_play_input: f32,
     last_play_trigger: u64,
@@ -81,12 +97,16 @@ pub struct SamplePlayer {
 
 impl SamplePlayer {
     pub fn new_with_controls(controls: SamplePlayerControls) -> Self {
+        let reader = controls
+            .is_elastic()
+            .then(|| ElasticReader::new(controls.sample_rate()));
         Self {
             ctrl: controls,
             inputs: inputs::SamplePlayerInputs::new(),
             outputs: outputs::SamplePlayerOutputs::new(),
             sample: None,
             position: 0.0,
+            reader,
             playing: false,
             last_play_input: 0.0,
             last_play_trigger: 0,
@@ -96,6 +116,7 @@ impl SamplePlayer {
     }
 
     fn restart(&mut self) {
+        let was_audible = self.playing;
         self.position = 0.0;
         self.playing = self
             .sample
@@ -103,6 +124,13 @@ impl SamplePlayer {
             .map(|sample| sample.len() > 0)
             .unwrap_or(false);
         self.pending_start_gate = self.playing;
+        if let Some(reader) = self.reader.as_mut() {
+            if was_audible {
+                reader.reset_crossfade(0.0);
+            } else {
+                reader.reset(0.0);
+            }
+        }
     }
 }
 
@@ -128,6 +156,9 @@ impl Module for SamplePlayer {
             self.position = 0.0;
             self.playing = control_play;
             self.pending_start_gate = self.playing;
+            if let Some(reader) = self.reader.as_mut() {
+                reader.reset(0.0);
+            }
         }
 
         for i in 0..frames {
@@ -141,6 +172,9 @@ impl Module for SamplePlayer {
                 self.playing = false;
                 self.position = 0.0;
                 self.pending_start_gate = false;
+                if let Some(reader) = self.reader.as_mut() {
+                    reader.reset(0.0);
+                }
             }
 
             self.last_control_play = control_play;
@@ -159,26 +193,56 @@ impl Module for SamplePlayer {
             if let Some(sample) = &self.sample {
                 let len = sample.len();
                 if self.playing && len > 0 {
-                    let (l, r) = sample.sample_at(self.position);
-                    left = l;
-                    right = r;
-
                     let pitch = self.inputs.pitch(i, self.ctrl.pitch_ratio()).max(1e-4);
-                    self.position += pitch as f64;
 
-                    if self.position >= len as f64 {
-                        end_gate = 1.0;
-                        if loop_enabled {
-                            // `%=` keeps the fractional read head bounded without
-                            // accumulating drift across loops.
-                            self.position %= len as f64;
-                            self.pending_start_gate = true;
-                        } else {
-                            self.playing = false;
-                            self.position = 0.0;
-                            if control_play {
-                                self.ctrl.set_play(false);
-                                self.last_control_play = false;
+                    if let Some(reader) = self.reader.as_mut() {
+                        // Elastic: the reader decouples time (nominal head
+                        // advance) from pitch (in-window read step).
+                        let time = self.ctrl.time_ratio();
+                        if let Some(analysis) = sample.cached_elastic_analysis() {
+                            if let Some((l, r)) =
+                                reader.next(sample, analysis, 0.0, len as f64, time, pitch)
+                            {
+                                left = l;
+                                right = r;
+                            }
+                        }
+
+                        if reader.source_position() >= len as f64 {
+                            end_gate = 1.0;
+                            if loop_enabled {
+                                reader.reset_crossfade(0.0);
+                                self.pending_start_gate = true;
+                            } else {
+                                self.playing = false;
+                                reader.reset(0.0);
+                                if control_play {
+                                    self.ctrl.set_play(false);
+                                    self.last_control_play = false;
+                                }
+                            }
+                        }
+                    } else {
+                        let (l, r) = sample.sample_at(self.position);
+                        left = l;
+                        right = r;
+
+                        self.position += pitch as f64;
+
+                        if self.position >= len as f64 {
+                            end_gate = 1.0;
+                            if loop_enabled {
+                                // `%=` keeps the fractional read head bounded without
+                                // accumulating drift across loops.
+                                self.position %= len as f64;
+                                self.pending_start_gate = true;
+                            } else {
+                                self.playing = false;
+                                self.position = 0.0;
+                                if control_play {
+                                    self.ctrl.set_play(false);
+                                    self.last_control_play = false;
+                                }
                             }
                         }
                     }
