@@ -22,6 +22,13 @@
 //! them. Frame addresses are always interpreted in the source file's sample
 //! rate and scaled once at load time to the engine rate.
 //!
+//! With `mode: "elastic"` in config, slices play through the shared WSOLA
+//! reader and the module gains a control surface with independent
+//! `time_ratio` (speed) and `pitch_ratio` (pitch) controls, so slices can
+//! be tempo-fit without chipmunking. Under a `time_ratio` a slice occupies
+//! a scaled number of output frames, and `slice_end_gate` still fires when
+//! the end of the *source* region is reached.
+//!
 //! # Inputs
 //! - `trigger`: Rising edges start or retrigger the selected slice.
 //! - `slice`: Zero-based slice index, rounded to the nearest integer.
@@ -37,9 +44,13 @@ use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::pkg::SampleSlice;
 use crate::Module;
 
-use super::sample_loading::{load_sample_source, SampleData};
+use super::sample_loading::elastic::ElasticReader;
+use super::sample_loading::{elastic_mode_from_config, load_sample_source, SampleData};
 use super::sample_player::source_from_config;
 
+pub use self::controls::SampleSlicerControls;
+
+mod controls;
 mod inputs;
 mod outputs;
 
@@ -92,10 +103,40 @@ impl ModuleFactory for SampleSlicerFactory {
             .into());
         }
 
+        let elastic = elastic_mode_from_config("sample_slicer", config)?;
+        let (voice, handles, control_surface) = if elastic {
+            // Analysis is computed here, off the audio thread, and cached on
+            // the (process-cached) buffer for every module sharing it.
+            sample.elastic_analysis();
+            let controls = SampleSlicerControls::new();
+            let voice = ElasticVoice {
+                reader: ElasticReader::new(sample_rate),
+                controls: controls.clone(),
+                start: 0.0,
+                end: 0.0,
+            };
+            let handles: Vec<(String, Arc<dyn std::any::Any + Send + Sync>)> = vec![(
+                "controls".to_string(),
+                Arc::new(controls.clone()) as Arc<dyn std::any::Any + Send + Sync>,
+            )];
+            (
+                Some(voice),
+                handles,
+                Some(Arc::new(controls) as Arc<dyn crate::ControlSurface + Send + Sync>),
+            )
+        } else {
+            (None, Vec::new(), None)
+        };
+
         Ok(ModuleBuildResult {
-            module: GraphModule::Module(Box::new(SampleSlicer::new(sample, ranges, initial_slice))),
-            handles: Vec::new(),
-            control_surface: None,
+            module: GraphModule::Module(Box::new(SampleSlicer::new(
+                sample,
+                ranges,
+                initial_slice,
+                voice,
+            ))),
+            handles,
+            control_surface,
             sink: None,
         })
     }
@@ -109,6 +150,15 @@ impl ModuleFactory for SampleSlicerFactory {
     }
 }
 
+/// One elastic playback voice: the WSOLA reader plus the live ratios and
+/// the active slice region in source frames.
+struct ElasticVoice {
+    reader: ElasticReader,
+    controls: SampleSlicerControls,
+    start: f64,
+    end: f64,
+}
+
 /// Allocation-free, lock-free indexed slice player.
 pub struct SampleSlicer {
     sample: Arc<SampleData>,
@@ -117,12 +167,19 @@ pub struct SampleSlicer {
     outputs: outputs::SampleSlicerOutputs,
     position: usize,
     active_end: usize,
+    /// Present iff the module was built in elastic mode.
+    elastic: Option<ElasticVoice>,
     playing: bool,
     last_trigger: f32,
 }
 
 impl SampleSlicer {
-    fn new(sample: Arc<SampleData>, slices: Vec<SliceRange>, initial_slice: usize) -> Self {
+    fn new(
+        sample: Arc<SampleData>,
+        slices: Vec<SliceRange>,
+        initial_slice: usize,
+        elastic: Option<ElasticVoice>,
+    ) -> Self {
         Self {
             sample,
             slices,
@@ -130,6 +187,7 @@ impl SampleSlicer {
             outputs: outputs::SampleSlicerOutputs::new(),
             position: 0,
             active_end: 0,
+            elastic,
             playing: false,
             last_trigger: 0.0,
         }
@@ -141,6 +199,17 @@ impl SampleSlicer {
             self.playing = false;
             return false;
         };
+        if let Some(voice) = self.elastic.as_mut() {
+            voice.start = range.start as f64;
+            voice.end = range.end as f64;
+            if self.playing {
+                // Retrigger while audible: crossfade out of the old audio
+                // instead of cutting.
+                voice.reader.reset_crossfade(voice.start);
+            } else {
+                voice.reader.reset(voice.start);
+            }
+        }
         self.position = range.start;
         self.active_end = range.end;
         self.playing = true;
@@ -165,13 +234,39 @@ impl Module for SampleSlicer {
             }
 
             let (left, right) = if self.playing {
-                let frame = self.sample.sample_at(self.position as f64);
-                self.position += 1;
-                if self.position >= self.active_end {
-                    self.playing = false;
-                    end_gate = 1.0;
+                if let Some(voice) = self.elastic.as_mut() {
+                    let time = voice.controls.time_ratio();
+                    let pitch = voice.controls.pitch_ratio();
+                    let mut frame = (0.0, 0.0);
+                    if let Some(analysis) = self.sample.cached_elastic_analysis() {
+                        if let Some(value) = voice.reader.next(
+                            &self.sample,
+                            analysis,
+                            voice.start,
+                            voice.end,
+                            time,
+                            pitch,
+                        ) {
+                            frame = value;
+                        }
+                    }
+                    // The nominal head advances by time_ratio per output
+                    // frame, so the gate fires when the *source* region end
+                    // is reached and a slice occupies len/time_ratio frames.
+                    if voice.reader.source_position() >= voice.end {
+                        self.playing = false;
+                        end_gate = 1.0;
+                    }
+                    frame
+                } else {
+                    let frame = self.sample.sample_at(self.position as f64);
+                    self.position += 1;
+                    if self.position >= self.active_end {
+                        self.playing = false;
+                        end_gate = 1.0;
+                    }
+                    frame
                 }
-                frame
             } else {
                 (0.0, 0.0)
             };

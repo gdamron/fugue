@@ -409,3 +409,118 @@ fn test_sample_player_detects_flac_by_header() {
 
     let _ = std::fs::remove_file(path);
 }
+
+/// Counts process calls to end-gate for an elastic player at given ratios.
+fn elastic_frames_to_end(path: &std::path::Path, time_ratio: f32, pitch_ratio: f32) -> usize {
+    let controls = SamplePlayerControls::with_mode(
+        44_100,
+        Some(path.to_str().unwrap()),
+        Some(true),
+        Some(false),
+        true,
+    )
+    .unwrap();
+    controls
+        .set_control("time_ratio", ControlValue::Number(time_ratio))
+        .unwrap();
+    controls
+        .set_control("pitch_ratio", ControlValue::Number(pitch_ratio))
+        .unwrap();
+    let mut player = SamplePlayer::new_with_controls(controls);
+
+    for count in 1..1000 {
+        player.process(1);
+        if player.get_output("sample_end_gate").unwrap() > 0.5 {
+            return count;
+        }
+    }
+    panic!(
+        "sample never reached end gate at time {} pitch {}",
+        time_ratio, pitch_ratio
+    );
+}
+
+#[test]
+fn test_elastic_time_ratio_scales_duration_and_pitch_does_not() {
+    let frames: Vec<[f32; 2]> = (0..64).map(|i| [i as f32 / 128.0, 0.0]).collect();
+    let path = write_test_wav(44_100, 1, &frames);
+
+    // time_ratio governs duration exactly: 64 frames at 1x, 32 at 2x.
+    assert_eq!(elastic_frames_to_end(&path, 1.0, 1.0), 64);
+    assert_eq!(elastic_frames_to_end(&path, 2.0, 1.0), 32);
+    assert_eq!(elastic_frames_to_end(&path, 0.5, 1.0), 128);
+
+    // pitch_ratio must not change the duration in elastic mode.
+    assert_eq!(elastic_frames_to_end(&path, 1.0, 2.0), 64);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn test_elastic_mode_gates_time_ratio_control() {
+    let classic = SamplePlayerControls::new(44_100, None, None, None).unwrap();
+    assert!(classic
+        .set_control("time_ratio", ControlValue::Number(2.0))
+        .is_err());
+    assert!(!classic
+        .controls()
+        .iter()
+        .any(|meta| meta.key == "time_ratio"));
+
+    let elastic = SamplePlayerControls::with_mode(44_100, None, None, None, true).unwrap();
+    elastic
+        .set_control("time_ratio", ControlValue::Number(2.0))
+        .unwrap();
+    match elastic.get_control("time_ratio").unwrap() {
+        ControlValue::Number(value) => assert_eq!(value, 2.0),
+        other => panic!("unexpected control value {:?}", other),
+    }
+    assert!(elastic
+        .controls()
+        .iter()
+        .any(|meta| meta.key == "time_ratio"));
+}
+
+#[test]
+fn test_factory_parses_elastic_mode() {
+    use crate::factory::ModuleFactory;
+
+    let path = write_test_wav(44_100, 1, &[[0.4, 0.0], [0.2, 0.0]]);
+    let config = serde_json::json!({
+        "source": path.to_str().unwrap(),
+        "mode": "elastic"
+    });
+    let result = SamplePlayerFactory.build(44_100, &config).unwrap();
+    let surface = result.control_surface.unwrap();
+    surface
+        .set_control("time_ratio", ControlValue::Number(1.5))
+        .unwrap();
+
+    let bad = serde_json::json!({ "mode": "granular" });
+    let err = SamplePlayerFactory
+        .build(44_100, &bad)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("'mode'"), "{err}");
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn test_elastic_set_source_precomputes_analysis() {
+    let path = write_test_wav(44_100, 1, &[[0.5, 0.0], [0.25, 0.0]]);
+    let controls =
+        SamplePlayerControls::with_mode(44_100, Some(path.to_str().unwrap()), None, None, true)
+            .unwrap();
+
+    let shared = controls.shared.lock().unwrap();
+    let sample = shared.pending_sample.as_ref().unwrap();
+    assert!(
+        sample.cached_elastic_analysis().is_some(),
+        "elastic set_source must leave the analysis ready for the audio thread"
+    );
+    drop(shared);
+
+    let _ = std::fs::remove_file(path);
+}

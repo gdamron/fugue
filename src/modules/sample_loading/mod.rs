@@ -5,10 +5,20 @@
 //! conversion, and the process-wide buffer cache. Modules keep only the
 //! resulting `Arc<SampleData>` and read it allocation-free in `process()`
 //! via [`SampleData::sample_at`] / [`SampleData::frame_at`].
+//!
+//! The [`elastic`] submodule adds a shared WSOLA reader for independent
+//! time-stretch and pitch-shift on top of the same buffers; its per-asset
+//! analysis follows the same rule (computed off the audio thread on load,
+//! cached once per asset alongside the buffer).
 
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex, OnceLock};
+
+pub(crate) mod elastic;
+
+#[cfg(test)]
+mod tests;
 
 /// A decoded stereo sample at the engine sample rate.
 pub(crate) struct SampleData {
@@ -16,9 +26,28 @@ pub(crate) struct SampleData {
     pub(crate) right: Vec<f32>,
     source_sample_rate: u32,
     target_sample_rate: u32,
+    /// Per-asset elastic (WSOLA) analysis, computed lazily by
+    /// [`Self::elastic_analysis`] and cached here so it exists once per
+    /// process-cached buffer no matter how many modules read it.
+    elastic: OnceLock<Arc<elastic::ElasticAnalysis>>,
 }
 
 impl SampleData {
+    fn new(
+        left: Vec<f32>,
+        right: Vec<f32>,
+        source_sample_rate: u32,
+        target_sample_rate: u32,
+    ) -> Self {
+        Self {
+            left,
+            right,
+            source_sample_rate,
+            target_sample_rate,
+            elastic: OnceLock::new(),
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.left.len().min(self.right.len())
     }
@@ -50,6 +79,23 @@ impl SampleData {
         (self.left[frame], self.right[frame])
     }
 
+    /// Per-asset elastic analysis, computed on first request and then shared
+    /// by every reader of this buffer. Allocates: call from module build /
+    /// `set_source` (off the audio thread), never from `process()`.
+    pub(crate) fn elastic_analysis(&self) -> Arc<elastic::ElasticAnalysis> {
+        Arc::clone(
+            self.elastic
+                .get_or_init(|| Arc::new(elastic::ElasticAnalysis::analyze(self))),
+        )
+    }
+
+    /// Lock-free view of the cached analysis for the audio thread. `None`
+    /// until a loader has called [`Self::elastic_analysis`].
+    #[inline]
+    pub(crate) fn cached_elastic_analysis(&self) -> Option<&Arc<elastic::ElasticAnalysis>> {
+        self.elastic.get()
+    }
+
     pub(crate) fn from_interleaved(
         channels: usize,
         sample_rate: u32,
@@ -57,12 +103,7 @@ impl SampleData {
         samples: Vec<f32>,
     ) -> Self {
         if channels == 0 {
-            return Self {
-                left: Vec::new(),
-                right: Vec::new(),
-                source_sample_rate: sample_rate,
-                target_sample_rate,
-            };
+            return Self::new(Vec::new(), Vec::new(), sample_rate, target_sample_rate);
         }
 
         let frames = samples.len() / channels;
@@ -77,20 +118,35 @@ impl SampleData {
         }
 
         if sample_rate == target_sample_rate || left.is_empty() {
-            return Self {
-                left,
-                right,
-                source_sample_rate: sample_rate,
-                target_sample_rate,
-            };
+            return Self::new(left, right, sample_rate, target_sample_rate);
         }
 
-        Self {
-            left: resample_channel(&left, sample_rate, target_sample_rate),
-            right: resample_channel(&right, sample_rate, target_sample_rate),
-            source_sample_rate: sample_rate,
+        Self::new(
+            resample_channel(&left, sample_rate, target_sample_rate),
+            resample_channel(&right, sample_rate, target_sample_rate),
+            sample_rate,
             target_sample_rate,
-        }
+        )
+    }
+}
+
+/// Reads the shared `mode` config key used by sample-playback modules:
+/// `"classic"` (the default) keeps speed and pitch coupled; `"elastic"`
+/// enables the WSOLA reader with independent `time_ratio` / `pitch_ratio`.
+pub(crate) fn elastic_mode_from_config(
+    module: &str,
+    config: &serde_json::Value,
+) -> Result<bool, String> {
+    match config.get("mode") {
+        None => Ok(false),
+        Some(value) => match value.as_str() {
+            Some("classic") => Ok(false),
+            Some("elastic") => Ok(true),
+            _ => Err(format!(
+                "{}: 'mode' must be \"classic\" or \"elastic\"",
+                module
+            )),
+        },
     }
 }
 
