@@ -1,8 +1,9 @@
 //! Load-time resolution of module `asset` config references (FUG-130).
 //!
 //! The invention format lets any module config reference an audio asset under
-//! a top-level `asset` key — or, for multi-sample modules like `sample_kit`,
-//! an `asset` key inside each entry of a top-level `samples` array — authored
+//! a top-level `asset` key — or, for multi-sample modules like `sample_kit`
+//! and `sample_instrument`, an `asset` key inside each entry of a top-level
+//! `samples` or `zones` array — authored
 //! either as a package ref string or as a local path object (see
 //! [`crate::pkg::AudioAssetRef`]). Before modules are built,
 //! [`resolve_audio_assets`] rewrites each reference to the concrete file path
@@ -89,32 +90,36 @@ pub(crate) fn resolve_audio_assets(
 
 /// The audio asset reference slots of one module config: the top-level
 /// `asset` value, plus each `asset` value inside entries of a top-level
-/// `samples` array (multi-sample modules like `sample_kit`).
+/// `samples` array (multi-sample modules like `sample_kit`) or `zones`
+/// array (`sample_instrument`).
 fn module_asset_values(
     config: &mut serde_json::Value,
 ) -> impl Iterator<Item = &mut serde_json::Value> {
-    let (asset, samples) = match config.as_object_mut() {
+    let (asset, samples, zones) = match config.as_object_mut() {
         Some(object) => {
             // Split borrows: `remove`-free simultaneous access needs raw
-            // iteration, so walk the map once and keep the two keys apart.
+            // iteration, so walk the map once and keep the keys apart.
             let mut asset = None;
             let mut samples = None;
+            let mut zones = None;
             for (key, value) in object.iter_mut() {
                 match key.as_str() {
                     "asset" => asset = Some(value),
                     "samples" => samples = value.as_array_mut(),
+                    "zones" => zones = value.as_array_mut(),
                     _ => {}
                 }
             }
-            (asset, samples)
+            (asset, samples, zones)
         }
-        None => (None, None),
+        None => (None, None, None),
     };
 
     asset.into_iter().chain(
         samples
             .into_iter()
             .flatten()
+            .chain(zones.into_iter().flatten())
             .filter_map(|entry| entry.as_object_mut()?.get_mut("asset")),
     )
 }
@@ -509,6 +514,48 @@ mod tests {
 
             let lock = Lockfile::read(&inv_dir.join(LOCKFILE_NAME)).unwrap();
             assert_eq!(lock.packages["fugue.drums.808"].version, "1.2.0");
+        });
+    }
+
+    #[test]
+    fn zone_refs_resolve_and_record_lockfile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let packs = tmp.path().join("packs");
+        let inv_dir = tmp.path().join("song");
+        fs::create_dir_all(&inv_dir).unwrap();
+        install_pack(&packs, "fugue.keys.grand", "1.0.0", &["c4.wav"]);
+        with_packs_dir(&packs, || {
+            // Keymap configs (sample_instrument) nest refs in a `zones`
+            // array; both zones resolve and the package ref is locked.
+            let json = serde_json::json!({
+                "modules": [
+                    { "id": "piano", "type": "sample_instrument", "config": { "zones": [
+                        { "root": 60, "asset": "fugue.keys.grand@1.0.0:c4.wav" },
+                        { "root": 72, "asset": { "path": "./local/c5.wav" } }
+                    ] } }
+                ],
+                "connections": []
+            });
+            let mut invention = Invention::from_json(&json.to_string()).unwrap();
+            invention.source_path = Some(inv_dir.join("nocturne.json"));
+            resolve_audio_assets(&mut invention).unwrap();
+
+            let zones = invention.modules[0].config["zones"].as_array().unwrap();
+            assert_eq!(
+                zones[0]["asset"].as_str().unwrap(),
+                packs
+                    .join("fugue.keys.grand")
+                    .join("1.0.0")
+                    .join("c4.wav")
+                    .to_string_lossy()
+            );
+            assert_eq!(
+                zones[1]["asset"].as_str().unwrap(),
+                inv_dir.join("./local/c5.wav").to_string_lossy()
+            );
+
+            let lock = Lockfile::read(&inv_dir.join(LOCKFILE_NAME)).unwrap();
+            assert_eq!(lock.packages["fugue.keys.grand"].version, "1.0.0");
         });
     }
 }

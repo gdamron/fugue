@@ -157,8 +157,9 @@ pub struct ModuleSpec {
     /// Two config keys have format-level meaning: values containing
     /// `{ "$asset": ... }` objects are expanded from the document's declared
     /// [`assets`](Invention::assets), and a top-level `asset` key — or an
-    /// `asset` key inside each entry of a top-level `samples` array
-    /// (multi-sample modules like `sample_kit`) — is an audio asset
+    /// `asset` key inside each entry of a top-level `samples` or `zones`
+    /// array (multi-sample modules like `sample_kit` and
+    /// `sample_instrument`) — is an audio asset
     /// reference ([`crate::pkg::AudioAssetRef`]): a package ref like
     /// `"fugue.drums.808@1.2.0:kick/long.wav"` or a local path object like
     /// `{ "path": "./loops/melody.wav" }`, resolved to a concrete file path
