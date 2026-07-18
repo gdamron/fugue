@@ -13,6 +13,7 @@
 //! - [`DacModule`] - Audio output sink module
 //! - [`AudioFileSink`] - Audio file recording sink module
 //! - [`AudioDriver`] / [`AudioBackend`] - Audio output backends
+//! - [`SampleSlicer`] - Indexed slice playback for loops and breakbeats
 //!
 //! Each module also provides a factory for self-contained construction:
 //! - [`ClockFactory`], [`OscillatorFactory`], [`LfoFactory`], [`FilterFactory`], [`MixerFactory`], [`AdsrFactory`], [`VcaFactory`], [`MelodyFactory`], [`StepSequencerFactory`], [`DacFactory`]
@@ -37,6 +38,7 @@ pub mod rtmp_sink;
 pub mod sample_kit;
 pub(crate) mod sample_loading;
 pub mod sample_player;
+pub mod sample_slicer;
 pub mod step_sequencer;
 pub mod sustain;
 pub mod vca;
@@ -73,6 +75,7 @@ pub use reverb::{Reverb, ReverbControls};
 pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};
 pub use sample_kit::{SampleKit, SampleKitControls};
 pub use sample_player::{SamplePlayer, SamplePlayerControls};
+pub use sample_slicer::SampleSlicer;
 pub use step_sequencer::{GraceChain, Step, StepSequencer, MAX_GRACE_NOTES};
 pub use sustain::{Sustain, SustainFactory};
 pub use vca::{Vca, VcaControls};
@@ -98,6 +101,7 @@ pub use reverb::ReverbFactory;
 pub use rtmp_sink::RtmpSinkFactory;
 pub use sample_kit::SampleKitFactory;
 pub use sample_player::SamplePlayerFactory;
+pub use sample_slicer::SampleSlicerFactory;
 pub use step_sequencer::StepSequencerFactory;
 pub use vca::VcaFactory;
 #[cfg(not(target_arch = "wasm32"))]

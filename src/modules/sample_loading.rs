@@ -14,11 +14,22 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub(crate) struct SampleData {
     pub(crate) left: Vec<f32>,
     pub(crate) right: Vec<f32>,
+    source_sample_rate: u32,
+    target_sample_rate: u32,
 }
 
 impl SampleData {
     pub(crate) fn len(&self) -> usize {
         self.left.len().min(self.right.len())
+    }
+
+    /// Converts a frame address authored against the source file into this
+    /// buffer's (possibly resampled) frame domain.
+    pub(crate) fn scaled_frame(&self, frame: u64) -> Result<usize, String> {
+        let source_rate = u128::from(self.source_sample_rate.max(1));
+        let target_rate = u128::from(self.target_sample_rate);
+        let scaled = (u128::from(frame) * target_rate + source_rate / 2) / source_rate;
+        usize::try_from(scaled).map_err(|_| format!("sample frame {} is too large", frame))
     }
 
     /// Reads both channels at fractional frame position `pos` using the shared
@@ -49,6 +60,8 @@ impl SampleData {
             return Self {
                 left: Vec::new(),
                 right: Vec::new(),
+                source_sample_rate: sample_rate,
+                target_sample_rate,
             };
         }
 
@@ -64,12 +77,19 @@ impl SampleData {
         }
 
         if sample_rate == target_sample_rate || left.is_empty() {
-            return Self { left, right };
+            return Self {
+                left,
+                right,
+                source_sample_rate: sample_rate,
+                target_sample_rate,
+            };
         }
 
         Self {
             left: resample_channel(&left, sample_rate, target_sample_rate),
             right: resample_channel(&right, sample_rate, target_sample_rate),
+            source_sample_rate: sample_rate,
+            target_sample_rate,
         }
     }
 }
@@ -97,6 +117,18 @@ pub(crate) fn resolve_source(source: &str) -> Result<String, String> {
         let resolved = crate::pkg::resolve_package_asset(&reference, &packages_dir, None)?;
         Ok(resolved.file.to_string_lossy().into_owned())
     }
+}
+
+/// Resolves, decodes, resamples, and caches a sample outside the audio thread.
+/// Returns the concrete source path as well so package-aware callers can load
+/// metadata adjacent to the resolved asset.
+pub(crate) fn load_sample_source(
+    source: &str,
+    target_sample_rate: u32,
+) -> Result<(String, Arc<SampleData>), String> {
+    let resolved = resolve_source(source)?;
+    let sample = load_cached_sample(&resolved, target_sample_rate)?;
+    Ok((resolved, sample))
 }
 
 /// Audio container formats the loaders can decode.
