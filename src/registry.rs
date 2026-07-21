@@ -122,7 +122,8 @@ impl Default for ModuleRegistry {
             AdsrFactory, AgentFactory, AudioFileSinkFactory, CellSequencerFactory, ClockFactory,
             CodeFactory, ControlSchedulerFactory, DacFactory, DivisiFactory, FilterFactory,
             LfoFactory, MelodyFactory, MixerFactory, OscillatorFactory, ReverbFactory,
-            SampleKitFactory, SamplePlayerFactory, SampleSlicerFactory, StepSequencerFactory,
+            SampleInstrumentFactory, SampleKitFactory, SamplePlayerFactory, SampleSlicerFactory,
+            StepSequencerFactory,
             VcaFactory,
         };
 
@@ -146,6 +147,7 @@ impl Default for ModuleRegistry {
         reg.register(crate::modules::RtmpSinkFactory);
         #[cfg(not(target_arch = "wasm32"))]
         reg.register(crate::modules::YoutubeSinkFactory);
+        reg.register(SampleInstrumentFactory);
         reg.register(SampleKitFactory);
         reg.register(SamplePlayerFactory);
         reg.register(SampleSlicerFactory);
