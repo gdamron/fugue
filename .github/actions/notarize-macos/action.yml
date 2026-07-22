@@ -1,0 +1,203 @@
+name: "Sign and notarize macOS binary"
+description: >
+  Code-signs a standalone macOS Mach-O executable with a Developer ID
+  Application certificate (hardened runtime + secure timestamp), then notarizes
+  it with Apple's notary service via App Store Connect API key credentials.
+
+  This is the single source of truth for macOS release signing across Fugue's
+  binary repos (fugue-cli, fugue-mcp). Reference it as a local action after
+  checking out gdamron/fugue into ./fugue:
+
+      - uses: ./fugue/.github/actions/notarize-macos
+        with:
+          binary-path: fugue-cli/target/${{ matrix.target }}/release/fugue
+          certificate-base64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          api-key-id: ${{ secrets.MACOS_NOTARY_API_KEY_ID }}
+          api-issuer-id: ${{ secrets.MACOS_NOTARY_API_ISSUER_ID }}
+          api-key-base64: ${{ secrets.MACOS_NOTARY_API_KEY_BASE64 }}
+
+  Gated by design: if `certificate-base64` is empty (secrets not yet
+  provisioned) the action prints a notice and exits successfully without
+  signing, so releases keep shipping unsigned until the Developer ID cert is
+  added. Once every required secret is present it activates automatically — no
+  workflow edit required.
+
+  NOTE ON STAPLING: `xcrun stapler` only staples bundles/installers
+  (.app/.dmg/.pkg), not a bare command-line executable. A notarized CLI binary
+  shipped in a .tar.gz therefore carries no stapled ticket; Gatekeeper fetches
+  the ticket online on first run (the standard, supported path for CLI tools).
+  Stapling becomes possible once the binaries are wrapped in a .dmg/.pkg
+  (tracked separately under FUG-227).
+
+inputs:
+  binary-path:
+    description: "Path to the Mach-O executable to sign, relative to the workspace."
+    required: true
+  signing-identity:
+    description: >
+      Codesign identity to use. Leave empty to auto-detect the sole
+      "Developer ID Application" identity imported from the certificate.
+    required: false
+    default: ""
+  certificate-base64:
+    description: "Base64-encoded Developer ID Application certificate (.p12). Empty disables signing."
+    required: false
+    default: ""
+  certificate-password:
+    description: "Password for the .p12 certificate."
+    required: false
+    default: ""
+  api-key-id:
+    description: "App Store Connect API key ID (notarytool --key-id)."
+    required: false
+    default: ""
+  api-issuer-id:
+    description: "App Store Connect API issuer ID (notarytool --issuer)."
+    required: false
+    default: ""
+  api-key-base64:
+    description: "Base64-encoded App Store Connect API private key (.p8)."
+    required: false
+    default: ""
+
+outputs:
+  signed:
+    description: "'true' if the binary was signed and notarized, 'false' if skipped (secrets absent)."
+    value: ${{ steps.sign.outputs.signed }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Sign and notarize
+      id: sign
+      shell: bash
+      env:
+        BINARY_PATH: ${{ inputs.binary-path }}
+        SIGNING_IDENTITY: ${{ inputs.signing-identity }}
+        CERTIFICATE_BASE64: ${{ inputs.certificate-base64 }}
+        CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
+        API_KEY_ID: ${{ inputs.api-key-id }}
+        API_ISSUER_ID: ${{ inputs.api-issuer-id }}
+        API_KEY_BASE64: ${{ inputs.api-key-base64 }}
+      run: |
+        set -euo pipefail
+
+        echo "signed=false" >> "$GITHUB_OUTPUT"
+
+        # --- Gate: skip cleanly when signing secrets are not provisioned ------
+        if [[ -z "${CERTIFICATE_BASE64}" ]]; then
+          echo "::notice title=macOS signing skipped::MACOS_CERTIFICATE_BASE64 is empty; shipping unsigned binary. Provision the Developer ID cert + notary secrets to enable signing (FUG-226)."
+          exit 0
+        fi
+
+        # Fail loudly if the cert is set but the rest of the credential set is
+        # not — a half-configured secret set would silently produce unsigned or
+        # un-notarized artifacts, which is worse than an obvious failure.
+        missing=()
+        [[ -z "${CERTIFICATE_PASSWORD}" ]] && missing+=("MACOS_CERTIFICATE_PASSWORD")
+        [[ -z "${API_KEY_ID}" ]] && missing+=("MACOS_NOTARY_API_KEY_ID")
+        [[ -z "${API_ISSUER_ID}" ]] && missing+=("MACOS_NOTARY_API_ISSUER_ID")
+        [[ -z "${API_KEY_BASE64}" ]] && missing+=("MACOS_NOTARY_API_KEY_BASE64")
+        if (( ${#missing[@]} > 0 )); then
+          echo "::error title=Incomplete macOS signing secrets::Certificate is set but these are missing: ${missing[*]}"
+          exit 1
+        fi
+
+        if [[ ! -f "${BINARY_PATH}" ]]; then
+          echo "::error title=Binary not found::${BINARY_PATH} does not exist"
+          exit 1
+        fi
+
+        # --- Decode credentials into RUNNER_TEMP (auto-scrubbed after job) -----
+        WORK="${RUNNER_TEMP:-/tmp}/notarize-macos"
+        mkdir -p "${WORK}"
+        CERT_P12="${WORK}/certificate.p12"
+        API_KEY_P8="${WORK}/api-key.p8"
+        KEYCHAIN="${WORK}/signing.keychain-db"
+        # Random per-run keychain password; never leaves the runner.
+        KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+
+        echo "${CERTIFICATE_BASE64}" | base64 --decode > "${CERT_P12}"
+        echo "${API_KEY_BASE64}" | base64 --decode > "${API_KEY_P8}"
+
+        # Record paths for the always() cleanup step.
+        {
+          echo "NOTARIZE_KEYCHAIN=${KEYCHAIN}"
+          echo "NOTARIZE_WORK=${WORK}"
+        } >> "$GITHUB_ENV"
+
+        # --- Import the certificate into an ephemeral keychain ----------------
+        security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+        security set-keychain-settings -lut 21600 "${KEYCHAIN}"
+        security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+        security import "${CERT_P12}" \
+          -P "${CERTIFICATE_PASSWORD}" \
+          -A -t cert -f pkcs12 \
+          -k "${KEYCHAIN}"
+        # Allow codesign to use the key without an interactive prompt.
+        security set-key-partition-list \
+          -S apple-tool:,apple:,codesign: \
+          -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" >/dev/null
+        # Prepend our keychain to the search list so codesign can find the
+        # identity, preserving the runner's existing user keychains.
+        existing_keychains=()
+        while IFS= read -r kc; do
+          kc="${kc//\"/}"                      # strip surrounding quotes
+          kc="${kc#"${kc%%[![:space:]]*}"}"    # trim leading whitespace
+          [[ -n "${kc}" ]] && existing_keychains+=("${kc}")
+        done < <(security list-keychains -d user)
+        security list-keychains -d user -s "${KEYCHAIN}" "${existing_keychains[@]}"
+
+        # --- Resolve the signing identity -------------------------------------
+        IDENTITY="${SIGNING_IDENTITY}"
+        if [[ -z "${IDENTITY}" ]]; then
+          IDENTITY="$(security find-identity -v -p codesigning "${KEYCHAIN}" \
+            | grep 'Developer ID Application' \
+            | head -n1 \
+            | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]+[0-9A-F]+[[:space:]]+"(.*)"$/\1/')"
+        fi
+        if [[ -z "${IDENTITY}" ]]; then
+          echo "::error title=No signing identity::No 'Developer ID Application' identity found in the imported certificate"
+          exit 1
+        fi
+        echo "Signing with identity: ${IDENTITY}"
+
+        # --- Codesign: hardened runtime + secure timestamp --------------------
+        codesign --force --options runtime --timestamp \
+          --sign "${IDENTITY}" \
+          --keychain "${KEYCHAIN}" \
+          "${BINARY_PATH}"
+        codesign --verify --strict --verbose=2 "${BINARY_PATH}"
+
+        # --- Notarize (App Store Connect API key) -----------------------------
+        # notarytool needs an archive; zip the bare binary for submission.
+        BIN_NAME="$(basename "${BINARY_PATH}")"
+        NOTARIZE_ZIP="${WORK}/${BIN_NAME}.zip"
+        ditto -c -k --keepParent "${BINARY_PATH}" "${NOTARIZE_ZIP}"
+
+        xcrun notarytool submit "${NOTARIZE_ZIP}" \
+          --key "${API_KEY_P8}" \
+          --key-id "${API_KEY_ID}" \
+          --issuer "${API_ISSUER_ID}" \
+          --wait
+
+        # Stapling is intentionally omitted: `stapler` cannot staple a bare
+        # executable. The signed+notarized binary passes Gatekeeper online.
+        # Confirm the signature still validates as the shipped artifact.
+        codesign --verify --strict --verbose=2 "${BINARY_PATH}"
+
+        echo "signed=true" >> "$GITHUB_OUTPUT"
+        echo "::notice title=macOS signing complete::Signed and notarized ${BINARY_PATH}"
+
+    - name: Clean up signing keychain and secrets
+      if: always()
+      shell: bash
+      run: |
+        set -uo pipefail
+        if [[ -n "${NOTARIZE_KEYCHAIN:-}" && -f "${NOTARIZE_KEYCHAIN}" ]]; then
+          security delete-keychain "${NOTARIZE_KEYCHAIN}" || true
+        fi
+        if [[ -n "${NOTARIZE_WORK:-}" && -d "${NOTARIZE_WORK}" ]]; then
+          rm -rf "${NOTARIZE_WORK}" || true
+        fi
