@@ -22,17 +22,22 @@ function Get-AssetUrl([string]$Asset) {
   return "https://github.com/$Repo/releases/download/$Tag/$Asset"
 }
 
-function Install-FugueBinary([string]$Asset, [string]$Binary) {
+# Downloads the combined install unit and extracts every Fugue executable from
+# it. Installing them into the same directory lets fugue-mcp locate its sibling
+# fugue daemon without requiring $FugueBinDir on PATH.
+function Install-FugueUnit([string]$Asset, [string[]]$Binaries) {
   $Archive = Join-Path $Temp $Asset
-  Write-Info "Downloading $Binary ($Asset)"
+  Write-Info "Downloading Fugue ($Asset)"
   Invoke-WebRequest -Uri (Get-AssetUrl $Asset) -OutFile $Archive
   tar -C $Temp -xzf $Archive
-  $Extracted = Join-Path $Temp $Binary
-  if (-not (Test-Path $Extracted)) {
-    throw "archive $Asset did not contain expected binary '$Binary'"
+  foreach ($Binary in $Binaries) {
+    $Extracted = Join-Path $Temp $Binary
+    if (-not (Test-Path $Extracted)) {
+      throw "archive $Asset did not contain expected binary '$Binary'"
+    }
+    Copy-Item $Extracted (Join-Path $FugueBinDir $Binary) -Force
+    Write-Info "Installed $Binary -> $FugueBinDir"
   }
-  Copy-Item $Extracted (Join-Path $FugueBinDir $Binary) -Force
-  Write-Info "Installed $Binary -> $FugueBinDir"
 }
 
 New-Item -ItemType Directory -Force -Path $FugueBinDir | Out-Null
@@ -40,8 +45,7 @@ $Temp = Join-Path ([System.IO.Path]::GetTempPath()) "fugue-install-$([guid]::New
 New-Item -ItemType Directory -Force -Path $Temp | Out-Null
 
 try {
-  Install-FugueBinary "fugue-cli-$Target.tar.gz" "fugue.exe"
-  Install-FugueBinary "fugue-mcp-$Target.tar.gz" "fugue-mcp.exe"
+  Install-FugueUnit "fugue-tools-$Target.tar.gz" @("fugue.exe", "fugue-mcp.exe")
 } finally {
   Remove-Item -Recurse -Force $Temp -ErrorAction SilentlyContinue
 }

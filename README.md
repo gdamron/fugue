@@ -31,8 +31,10 @@ register the MCP server with Claude Code:
 claude mcp add fugue ~/.fugue/bin/fugue-mcp
 ```
 
-`fugue-mcp` auto-spawns `fugue serve` from your `PATH`, so installing both
-binaries together is all that's required to play audio.
+`fugue-mcp` auto-spawns `fugue serve` from the binary installed alongside it
+(falling back to your `PATH`), so installing the one unit is all that's required
+to play audio — the MCP finds its `fugue` daemon even if `~/.fugue/bin` is not on
+your `PATH`.
 
 Overrides: `FUGUE_BIN_DIR` (install location), `FUGUE_VERSION` (pin a specific
 release tag, default `latest`).

@@ -1,11 +1,12 @@
 #!/bin/sh
-# Fugue installer — downloads the prebuilt `fugue` and `fugue-mcp` binaries from
-# the public Fugue release and installs them into ~/.fugue/bin. No Rust toolchain
-# required.
+# Fugue installer — downloads the prebuilt Fugue install unit from the public
+# Fugue release and installs the `fugue` (incl. `fugue serve`) and `fugue-mcp`
+# binaries into ~/.fugue/bin. No Rust toolchain required.
 #
 #   curl -fsSL https://raw.githubusercontent.com/gdamron/fugue/main/install.sh | sh
 #
-# Both binaries are published together on the `gdamron/fugue` GitHub release.
+# Both binaries ship together in one signed archive (`fugue-tools-<target>.tar.gz`)
+# on the `gdamron/fugue` GitHub release.
 #
 # Environment overrides:
 #   FUGUE_BIN_DIR   install location          (default: $HOME/.fugue/bin)
@@ -92,20 +93,26 @@ verify_asset() {
   [ "$expected" = "$actual" ] || err "checksum mismatch for $asset (expected $expected, got $actual)"
 }
 
-# --- download + extract a single binary --------------------------------------
-install_binary() {
-  # $1 = asset basename, $2 = binary name inside the archive
-  asset="$1"; bin="$2"
+# --- download + extract the combined install unit ----------------------------
+# The install unit is a single archive containing every Fugue executable
+# (`fugue`, which includes `fugue serve`, and `fugue-mcp`). Installing them into
+# the same directory lets `fugue-mcp` locate its sibling `fugue` daemon without
+# requiring $BIN_DIR on PATH.
+install_unit() {
+  # $1 = asset basename; $2.. = binary names expected inside the archive
+  asset="$1"; shift
   url="$(asset_url "$asset")"
-  info "Downloading $bin ($asset)"
+  info "Downloading Fugue ($asset)"
   curl -fSL --proto '=https' --tlsv1.2 -o "$TMP/$asset" "$url" \
     || err "failed to download $url"
   verify_asset "$TMP/$asset" "$asset"
   tar -C "$TMP" -xzf "$TMP/$asset"
-  [ -f "$TMP/$bin" ] || err "archive $asset did not contain expected binary '$bin'"
-  install -m 0755 "$TMP/$bin" "$BIN_DIR/$bin" 2>/dev/null \
-    || { mkdir -p "$BIN_DIR" && cp "$TMP/$bin" "$BIN_DIR/$bin" && chmod 0755 "$BIN_DIR/$bin"; }
-  info "Installed $bin → $BIN_DIR/$bin"
+  for bin in "$@"; do
+    [ -f "$TMP/$bin" ] || err "archive $asset did not contain expected binary '$bin'"
+    install -m 0755 "$TMP/$bin" "$BIN_DIR/$bin" 2>/dev/null \
+      || { mkdir -p "$BIN_DIR" && cp "$TMP/$bin" "$BIN_DIR/$bin" && chmod 0755 "$BIN_DIR/$bin"; }
+    info "Installed $bin → $BIN_DIR/$bin"
+  done
 }
 
 TARGET="$(detect_target)"
@@ -126,8 +133,7 @@ SUMS="$TMP/SHA256SUMS.txt"
 curl -fSL --proto '=https' --tlsv1.2 -o "$SUMS" "$(asset_url SHA256SUMS.txt)" 2>/dev/null \
   || { warn "could not fetch SHA256SUMS.txt; binaries will not be checksum-verified"; rm -f "$SUMS"; }
 
-install_binary "fugue-cli-$TARGET.tar.gz" "fugue$EXE_SUFFIX"
-install_binary "fugue-mcp-$TARGET.tar.gz" "fugue-mcp$EXE_SUFFIX"
+install_unit "fugue-tools-$TARGET.tar.gz" "fugue$EXE_SUFFIX" "fugue-mcp$EXE_SUFFIX"
 
 # --- PATH guidance -----------------------------------------------------------
 case ":$PATH:" in
