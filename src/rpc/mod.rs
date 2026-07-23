@@ -9,6 +9,11 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+mod identity;
+pub use identity::{
+    verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch,
+};
+
 /// Current runtime RPC schema version.
 pub const RPC_SCHEMA_VERSION: u32 = 1;
 
@@ -51,6 +56,12 @@ pub enum RpcRequestPayload {
     Command(RpcCommand),
     Subscribe { topics: Vec<RpcSubscriptionTopic> },
     GetSnapshot,
+    /// Connect-time handshake: asks the daemon to report its
+    /// [`DaemonIdentity`] so the client can confirm it reached a compatible
+    /// daemon before driving it. Answered regardless of the request's
+    /// `schema_version` so a client can diagnose a schema gap rather than get
+    /// an opaque rejection.
+    Hello,
 }
 
 /// Commands accepted by the runtime daemon.
@@ -140,6 +151,13 @@ pub enum RpcCommand {
     InstallPackage(PackageInstallRequest),
     ListPackages,
     DescribeModuleTypes,
+    /// Ask the shared daemon to persist its session and shut down cleanly.
+    ///
+    /// Because a spawned shared daemon outlives the client that started it (so
+    /// one client exiting never cuts another's audio), this is how a client
+    /// deliberately stops it — there is no owning terminal to Ctrl+C when the
+    /// daemon was spawned detached.
+    Shutdown,
 }
 
 /// Package installation request placeholder for future package discovery work.
@@ -187,6 +205,10 @@ pub enum RpcResponsePayload {
     ModuleTypes(ModuleTypeList),
     Reload(ReloadOutcome),
     Saved(SaveReport),
+    /// The daemon's identity, in reply to [`RpcRequestPayload::Hello`]. Nested
+    /// (not flattened) so `DaemonIdentity::schema_version` does not collide with
+    /// the response envelope's own `schema_version`.
+    Identity { identity: DaemonIdentity },
     Error(RpcError),
 }
 

@@ -135,6 +135,58 @@ fn reload_command_defaults_and_outcome_round_trip() {
 }
 
 #[test]
+fn hello_request_round_trips() {
+    let request = RpcRequest {
+        schema_version: RPC_SCHEMA_VERSION,
+        request_id: Some("hello".to_string()),
+        payload: RpcRequestPayload::Hello,
+    };
+    let json = serde_json::to_string(&request).unwrap();
+    let decoded: RpcRequest = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded.payload, RpcRequestPayload::Hello);
+}
+
+#[test]
+fn identity_response_round_trips_without_schema_version_collision() {
+    // The identity carries its own `schema_version`; nesting it (rather than
+    // flattening) keeps it from colliding with the response envelope's field.
+    let identity = DaemonIdentity {
+        schema_version: RPC_SCHEMA_VERSION,
+        build: BuildFingerprint {
+            crate_version: "2026.6.0".to_string(),
+            git_sha: Some("abc123".to_string()),
+            dirty: Some(false),
+        },
+        session_id: "session-xyz".to_string(),
+        pid: 4242,
+    };
+    let response = RpcResponse::ok(
+        Some("hello".to_string()),
+        RpcResponsePayload::Identity {
+            identity: identity.clone(),
+        },
+    );
+    let json = serde_json::to_string(&response).unwrap();
+    let decoded: RpcResponse = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        decoded.payload,
+        RpcResponsePayload::Identity { identity }
+    );
+    assert_eq!(decoded.schema_version, RPC_SCHEMA_VERSION);
+}
+
+#[test]
+fn shutdown_command_round_trips() {
+    let request = RpcRequest::new(RpcCommand::Shutdown).with_request_id("req-1");
+    let json = serde_json::to_string(&request).unwrap();
+    let decoded: RpcRequest = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        decoded.payload,
+        RpcRequestPayload::Command(RpcCommand::Shutdown)
+    );
+}
+
+#[test]
 fn schema_version_rejects_incompatible_clients() {
     let error = validate_schema_version(RPC_SCHEMA_VERSION + 1).unwrap_err();
     assert_eq!(error.code, RpcErrorCode::IncompatibleSchemaVersion);
