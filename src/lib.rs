@@ -30,7 +30,8 @@ pub use traits::{
 pub use factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 pub use registry::ModuleRegistry;
 pub use rpc::{
-    validate_schema_version, ModuleTypeInfo, ModuleTypeList, PackageInfo, PackageInstallRequest,
+    validate_schema_version, verify_daemon_identity, BuildFingerprint, DaemonIdentity,
+    IdentityMismatch, ModuleTypeInfo, ModuleTypeList, PackageInfo, PackageInstallRequest,
     PackageList, PackageSource, ReloadMode, ReloadOutcome, RpcCommand, RpcError, RpcErrorCode,
     RpcEvent, RpcEventPayload, RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse,
     RpcResponsePayload, RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot,
