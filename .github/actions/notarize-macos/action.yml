@@ -6,16 +6,18 @@ description: >
 
   This is the single source of truth for macOS release signing across Fugue's
   binary repos (fugue-cli, fugue-mcp). Reference it as a local action after
-  checking out gdamron/fugue into ./fugue:
+  checking out gdamron/fugue into ./fugue. Wire the inputs from the calling
+  workflow, e.g. binary-path from the matrix target and the credentials from
+  the repo/organization secrets:
 
       - uses: ./fugue/.github/actions/notarize-macos
         with:
-          binary-path: fugue-cli/target/${{ matrix.target }}/release/fugue
-          certificate-base64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
-          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          api-key-id: ${{ secrets.MACOS_NOTARY_API_KEY_ID }}
-          api-issuer-id: ${{ secrets.MACOS_NOTARY_API_ISSUER_ID }}
-          api-key-base64: ${{ secrets.MACOS_NOTARY_API_KEY_BASE64 }}
+          binary-path: fugue-cli/target/<matrix.target>/release/fugue
+          certificate-base64: <secrets.MACOS_CERTIFICATE_BASE64>
+          certificate-password: <secrets.MACOS_CERTIFICATE_PASSWORD>
+          api-key-id: <secrets.MACOS_NOTARY_API_KEY_ID>
+          api-issuer-id: <secrets.MACOS_NOTARY_API_ISSUER_ID>
+          api-key-base64: <secrets.MACOS_NOTARY_API_KEY_BASE64>
 
   Gated by design: if `certificate-base64` is empty (secrets not yet
   provisioned) the action prints a notice and exits successfully without
