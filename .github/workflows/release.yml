@@ -229,3 +229,22 @@ jobs:
           files: |
             dist/**/*.tar.gz
             dist/SHA256SUMS.txt
+
+      # Tell the Homebrew tap to bump its formula to this release. Gated on the
+      # token: the default GITHUB_TOKEN can't reach another repo, so this needs
+      # a PAT (TAP_DISPATCH_TOKEN) with contents/PR write on gdamron/homebrew-tap.
+      # Absent that secret it skips cleanly, so releases still publish.
+      - name: Notify Homebrew tap of the new release
+        env:
+          TAP_DISPATCH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAP_DISPATCH_TOKEN}" ]]; then
+            echo "::notice title=Tap dispatch skipped::TAP_DISPATCH_TOKEN not set; the Homebrew formula won't auto-update. Run the tap's update-formula workflow manually or provision the token."
+            exit 0
+          fi
+          GH_TOKEN="${TAP_DISPATCH_TOKEN}" gh api repos/gdamron/homebrew-tap/dispatches \
+            -f event_type=fugue-release \
+            -F "client_payload[version]=${VERSION}"
+          echo "::notice title=Tap notified::Dispatched fugue-release (v${VERSION}) to gdamron/homebrew-tap."
