@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "fugue"
-version = "2026.6.0"
+version = "2026.7.0"
 dependencies = [
  "boa_engine",
  "claxon",
