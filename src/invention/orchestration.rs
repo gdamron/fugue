@@ -130,6 +130,17 @@ impl RuntimeSnapshot {
         key: &str,
         value: ControlValue,
     ) -> Result<(), GraphCommandError> {
+        // Coerce to the control's declared kind before applying and recording,
+        // so a stringified write lands and the retained document stays typed
+        // (see FUG-240). set_control_transient stays uncoerced: its callers are
+        // internal telemetry writes that already carry the right type.
+        let value = {
+            let controls = self.control_surfaces.lock().unwrap();
+            match controls.get(module_id) {
+                Some(surface) => surface.coerce_value(key, value),
+                None => value,
+            }
+        };
         self.set_control_transient(module_id, key, value.clone())?;
         self.state
             .lock()

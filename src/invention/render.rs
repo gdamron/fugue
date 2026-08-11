@@ -378,6 +378,9 @@ impl RenderEngine {
                 .cloned()
                 .ok_or_else(|| format!("unknown module: {}", module_id))?
         };
+        // Coerce to the control's declared kind so a stringified write lands,
+        // matching the live runtime's behavior (see FUG-240).
+        let value = control_surface.coerce_value(key, value);
         control_surface.set_control(key, value)?;
         Ok(())
     }

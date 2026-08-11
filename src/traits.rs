@@ -52,6 +52,41 @@ impl ControlValue {
             _ => Err("Expected string control value".to_string()),
         }
     }
+
+    /// Best-effort coercion of this value to the shape declared by `kind`.
+    ///
+    /// MCP clients (and other JSON front-ends) sometimes deliver every control
+    /// value as a string — a numeric control receives `"0.74"` rather than
+    /// `0.74` — or hand a bare number to a string control. Coercing against the
+    /// control's own declared kind lets those writes land without guessing:
+    /// the kind states exactly what the control expects. Values that already
+    /// match the kind, or that cannot represent it (e.g. a non-numeric string
+    /// for a number control), pass through unchanged so the module setter stays
+    /// the single source of validation errors.
+    pub fn coerced_to(self, kind: &ControlKind) -> ControlValue {
+        match kind {
+            ControlKind::Number { .. } => match self {
+                Self::String(value) => match value.trim().parse::<f32>() {
+                    Ok(number) => Self::Number(number),
+                    Err(_) => Self::String(value),
+                },
+                other => other,
+            },
+            ControlKind::Bool => match self {
+                Self::String(value) => match value.trim() {
+                    "true" => Self::Bool(true),
+                    "false" => Self::Bool(false),
+                    _ => Self::String(value),
+                },
+                other => other,
+            },
+            ControlKind::String { .. } => match self {
+                Self::Number(value) => Self::String(value.to_string()),
+                Self::Bool(value) => Self::String(value.to_string()),
+                other => other,
+            },
+        }
+    }
 }
 
 impl From<f32> for ControlValue {
@@ -187,6 +222,19 @@ pub trait ControlSurface: Send + Sync {
     fn controls(&self) -> Vec<ControlMeta>;
     fn get_control(&self, key: &str) -> Result<ControlValue, String>;
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String>;
+
+    /// Coerces `value` to `key`'s declared [`ControlKind`] via
+    /// [`ControlValue::coerced_to`]. Unknown keys pass through untouched so
+    /// [`ControlSurface::set_control`] still owns the "unknown control" error.
+    /// Control-plane callers use this so a write survives a client that
+    /// stringifies values; it is not for the audio thread (it allocates via
+    /// [`ControlSurface::controls`]).
+    fn coerce_value(&self, key: &str, value: ControlValue) -> ControlValue {
+        match self.controls().into_iter().find(|meta| meta.key == key) {
+            Some(meta) => value.coerced_to(&meta.kind),
+            None => value,
+        }
+    }
 }
 
 /// The core abstraction for all synthesis components.
