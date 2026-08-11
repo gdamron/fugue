@@ -694,6 +694,10 @@ impl RunningInvention {
                 .cloned()
                 .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
         };
+        // Coerce to the control's declared kind so a write survives a client
+        // that stringifies values (see FUG-240). Recording the coerced value
+        // keeps the retained document typed for save/reload.
+        let value = control_surface.coerce_value(key, value);
         control_surface
             .set_control(key, value.clone())
             .map_err(GraphCommandError::ControlError)?;

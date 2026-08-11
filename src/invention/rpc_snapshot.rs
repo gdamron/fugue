@@ -299,4 +299,41 @@ mod tests {
             ControlValue::Number(0.5)
         );
     }
+
+    #[test]
+    fn set_control_coerces_a_stringified_numeric_write() {
+        // Mirrors the FUG-240 failure: an MCP client stringifies the value, so
+        // a numeric control receives ControlValue::String("0.5"). The runtime
+        // must coerce it against the control's declared kind and land a number.
+        const INVENTION: &str = r#"{
+            "version": "1.0.0",
+            "title": "coercion",
+            "modules": [
+                { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+                { "id": "vca", "type": "vca", "config": { "level": 0.0 } },
+                { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+            ],
+            "connections": [
+                { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
+                { "from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio" }
+            ]
+        }"#;
+
+        let mut engine = RenderEngine::new(48_000);
+        engine.load_json(INVENTION).unwrap();
+        engine
+            .set_control("vca", "cv", ControlValue::String("0.5".to_string()))
+            .expect("stringified numeric write coerces and lands");
+        assert_eq!(
+            engine.get_control("vca", "cv").unwrap(),
+            ControlValue::Number(0.5)
+        );
+
+        // The retained document also records the coerced (typed) value, so a
+        // save/reload round-trip stays numeric rather than persisting a string.
+        let overrides = engine.full_snapshot().control_overrides();
+        assert!(overrides.iter().any(|(module, key, value)| module == "vca"
+            && key == "cv"
+            && *value == ControlValue::Number(0.5)));
+    }
 }

@@ -108,3 +108,63 @@ fn test_validate_port() {
     assert!(validate_port("cv", ports, "input").is_ok());
     assert!(validate_port("invalid", ports, "input").is_err());
 }
+
+#[test]
+fn coerce_stringified_values_to_declared_kind() {
+    let number = ControlKind::Number { min: 0.0, max: 1.0 };
+    let boolean = ControlKind::Bool;
+    let string = ControlKind::String { options: None };
+
+    // A stringified number/bool lands on a numeric/boolean control (FUG-240).
+    assert_eq!(
+        ControlValue::String("0.74".to_string()).coerced_to(&number),
+        ControlValue::Number(0.74)
+    );
+    assert_eq!(
+        ControlValue::String("  3 ".to_string()).coerced_to(&number),
+        ControlValue::Number(3.0)
+    );
+    assert_eq!(
+        ControlValue::String("true".to_string()).coerced_to(&boolean),
+        ControlValue::Bool(true)
+    );
+    assert_eq!(
+        ControlValue::String("false".to_string()).coerced_to(&boolean),
+        ControlValue::Bool(false)
+    );
+
+    // Already-correct values pass through untouched.
+    assert_eq!(
+        ControlValue::Number(0.74).coerced_to(&number),
+        ControlValue::Number(0.74)
+    );
+    assert_eq!(
+        ControlValue::Bool(true).coerced_to(&boolean),
+        ControlValue::Bool(true)
+    );
+    assert_eq!(
+        ControlValue::String("sine".to_string()).coerced_to(&string),
+        ControlValue::String("sine".to_string())
+    );
+
+    // A bare number/bool sent to a string control becomes its string form.
+    assert_eq!(
+        ControlValue::Number(3.0).coerced_to(&string),
+        ControlValue::String("3".to_string())
+    );
+    assert_eq!(
+        ControlValue::Bool(true).coerced_to(&string),
+        ControlValue::String("true".to_string())
+    );
+
+    // Values that cannot represent the kind pass through unchanged, leaving the
+    // module setter as the single source of validation errors.
+    assert_eq!(
+        ControlValue::String("sine".to_string()).coerced_to(&number),
+        ControlValue::String("sine".to_string())
+    );
+    assert_eq!(
+        ControlValue::String("maybe".to_string()).coerced_to(&boolean),
+        ControlValue::String("maybe".to_string())
+    );
+}
