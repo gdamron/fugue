@@ -336,4 +336,52 @@ mod tests {
             && key == "cv"
             && *value == ControlValue::Number(0.5)));
     }
+
+    #[test]
+    fn set_controls_applies_a_batch_in_one_call() {
+        use crate::invention::orchestration::OrchestrationRuntime;
+        use crate::ControlWrite;
+
+        const INVENTION: &str = r#"{
+            "version": "1.0.0",
+            "title": "batch",
+            "modules": [
+                { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+                { "id": "vca", "type": "vca", "config": { "level": 0.0 } },
+                { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+            ],
+            "connections": [
+                { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
+                { "from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio" }
+            ]
+        }"#;
+
+        let mut engine = RenderEngine::new(48_000);
+        engine.load_json(INVENTION).unwrap();
+
+        // A conducting-style gesture: several controls in one call, with one
+        // stringified value to confirm the batch path coerces like the single.
+        let writes = vec![
+            ControlWrite {
+                module_id: "vca".to_string(),
+                key: "cv".to_string(),
+                value: ControlValue::Number(0.8),
+            },
+            ControlWrite {
+                module_id: "osc".to_string(),
+                key: "frequency".to_string(),
+                value: ControlValue::String("330".to_string()),
+            },
+        ];
+        engine.set_controls(&writes).expect("batch applies");
+
+        assert_eq!(
+            engine.get_control("vca", "cv").unwrap(),
+            ControlValue::Number(0.8)
+        );
+        assert_eq!(
+            engine.get_control("osc", "frequency").unwrap(),
+            ControlValue::Number(330.0)
+        );
+    }
 }
