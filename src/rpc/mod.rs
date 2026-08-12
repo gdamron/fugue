@@ -64,6 +64,15 @@ pub enum RpcRequestPayload {
     Hello,
 }
 
+/// A single control write in a [`RpcCommand::SetControls`] batch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct ControlWrite {
+    pub module_id: String,
+    pub key: String,
+    pub value: ControlValue,
+}
+
 /// Commands accepted by the runtime daemon.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
@@ -71,6 +80,12 @@ pub enum RpcRequestPayload {
 pub enum RpcCommand {
     LoadInvention {
         invention: Box<Invention>,
+        /// Base path for resolving the document's relative development and
+        /// asset references. `Invention::source_path` does not cross the wire,
+        /// so file-loaded documents pass their path here (as `ReloadInvention`
+        /// does). `None` for inline documents with no relative references.
+        #[serde(default)]
+        source_path: Option<String>,
         /// When true (the default), the daemon validates `fugue.lock.json`
         /// integrity before loading and refuses on a mismatch. Defaulted for
         /// wire back-compatibility with clients that omit it.
@@ -90,6 +105,14 @@ pub enum RpcCommand {
         module_id: String,
         key: String,
         value: ControlValue,
+    },
+    /// Apply several control writes in one round trip. The daemon applies them
+    /// in order within a single command, so a multi-control conducting gesture
+    /// (cells + tempo + dynamics) lands together rather than smeared across N
+    /// separate requests. Each write coerces and emits a `ControlChanged` event
+    /// exactly as a single [`RpcCommand::SetControl`] would.
+    SetControls {
+        writes: Vec<ControlWrite>,
     },
     AddModule {
         id: String,

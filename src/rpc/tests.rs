@@ -26,6 +26,7 @@ fn rpc_commands_round_trip_json() {
     let commands = vec![
         RpcCommand::LoadInvention {
             invention: Box::new(test_invention()),
+            source_path: Some("/tmp/inv.json".to_string()),
             frozen: true,
             stop_on_end: true,
             end_source: Some("seq".to_string()),
@@ -35,6 +36,20 @@ fn rpc_commands_round_trip_json() {
             module_id: "osc".to_string(),
             key: "frequency".to_string(),
             value: ControlValue::Number(440.0),
+        },
+        RpcCommand::SetControls {
+            writes: vec![
+                crate::ControlWrite {
+                    module_id: "osc".to_string(),
+                    key: "frequency".to_string(),
+                    value: ControlValue::Number(330.0),
+                },
+                crate::ControlWrite {
+                    module_id: "mixer".to_string(),
+                    key: "master".to_string(),
+                    value: ControlValue::String("0.7".to_string()),
+                },
+            ],
         },
         RpcCommand::AddModule {
             id: "osc".to_string(),

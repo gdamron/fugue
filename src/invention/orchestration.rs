@@ -2,7 +2,7 @@ use crate::factory::ModuleBuildResult;
 use crate::invention::graph::{GraphCommand, SignalGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
-use crate::{ControlMeta, ControlValue};
+use crate::{ControlMeta, ControlValue, ControlWrite};
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::HashMap;
@@ -33,6 +33,19 @@ pub trait OrchestrationRuntime {
         key: &str,
         value: ControlValue,
     ) -> Result<(), GraphCommandError>;
+
+    /// Applies a batch of control writes in order within one call, so a
+    /// multi-control conducting gesture lands together rather than smeared
+    /// across separate requests. Each write goes through [`Self::set_control`]
+    /// (same coercion and document recording). Fails on the first bad write;
+    /// writes already applied before it stand, since control writes have no
+    /// rollback — validate keys with `list_controls` first if that matters.
+    fn set_controls(&self, writes: &[ControlWrite]) -> Result<(), GraphCommandError> {
+        for write in writes {
+            self.set_control(&write.module_id, &write.key, write.value.clone())?;
+        }
+        Ok(())
+    }
 }
 
 /// Cloneable read-oriented view over runtime state and control surfaces.
