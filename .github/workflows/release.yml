@@ -171,6 +171,27 @@ jobs:
           # first).
           gh release download "v$VERSION" -R gdamron/fugue-cli --pattern 'fugue-cli-*.tar.gz' --dir download
           gh release download "v$VERSION" -R gdamron/fugue-mcp --pattern 'fugue-mcp-*.tar.gz' --dir download
+          gh release download "v$VERSION" -R gdamron/fugue-mcp --pattern 'fugue-mcp-ui-provenance.txt' --dir download
+      - name: Validate MCP App provenance
+        run: |
+          set -euo pipefail
+          provenance=download/fugue-mcp-ui-provenance.txt
+          repository="$(sed -n 's/^repository=//p' "$provenance")"
+          revision="$(sed -n 's/^revision=//p' "$provenance")"
+          sha256="$(sed -n 's/^sha256=//p' "$provenance")"
+          if [[ "$repository" != "github.com/gdamron/fugue-ui" ]]; then
+            echo "Unexpected MCP App source repository: $repository" >&2
+            exit 1
+          fi
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid MCP App source revision: $revision" >&2
+            exit 1
+          fi
+          if [[ ! "$sha256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Invalid MCP App digest: $sha256" >&2
+            exit 1
+          fi
+          echo "Releasing fugue-mcp with MCP App $sha256 from fugue-ui@$revision"
       - name: Assemble combined install unit
         run: |
           set -euo pipefail
@@ -182,10 +203,13 @@ jobs:
           # Keep re-hosting the individual per-repo archives alongside the combined
           # unit for downstream/back-compat consumers.
           cp download/*.tar.gz dist/
+          cp download/fugue-mcp-ui-provenance.txt dist/
       - uses: actions/upload-artifact@v4
         with:
           name: client-binaries
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/fugue-mcp-ui-provenance.txt
 
   release:
     needs:
@@ -218,7 +242,7 @@ jobs:
       - name: Generate checksums
         run: |
           set -euo pipefail
-          find dist -type f -name '*.tar.gz' -print0 | sort -z | while IFS= read -r -d '' file; do
+          find dist -type f \( -name '*.tar.gz' -o -name 'fugue-mcp-ui-provenance.txt' \) -print0 | sort -z | while IFS= read -r -d '' file; do
             sha256sum "$file"
           done > dist/SHA256SUMS.txt
       - name: Publish GitHub release
@@ -228,6 +252,7 @@ jobs:
           target_commitish: ${{ env.RELEASE_REF }}
           files: |
             dist/**/*.tar.gz
+            dist/**/fugue-mcp-ui-provenance.txt
             dist/SHA256SUMS.txt
 
       # Tell the Homebrew tap to bump its formula to this release. Gated on the
