@@ -40,3 +40,30 @@ jobs:
 
       - name: Run Tests
         run: cargo test --lib --tests
+
+  feature-tests:
+    name: Run Feature-Gated Tests (Linux)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+      CARGO_NET_RETRY: 10
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Audio Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+
+      - name: Install Stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo Artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Feature-Gated Tests
+        run: cargo test --all-features --lib --tests
