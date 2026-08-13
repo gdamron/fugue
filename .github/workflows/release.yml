@@ -173,6 +173,8 @@ jobs:
           gh release download "v$VERSION" -R gdamron/fugue-mcp --pattern 'fugue-mcp-*.tar.gz' --dir download
           gh release download "v$VERSION" -R gdamron/fugue-mcp --pattern 'fugue-mcp-ui-provenance.txt' --dir download
       - name: Validate MCP App provenance
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           provenance=download/fugue-mcp-ui-provenance.txt
