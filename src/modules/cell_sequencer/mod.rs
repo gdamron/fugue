@@ -211,6 +211,11 @@ impl CellSequencer {
         self
     }
 
+    pub fn with_auto_steps(self, auto_steps: bool) -> Self {
+        self.ctrl.set_auto_steps(auto_steps);
+        self
+    }
+
     pub fn with_gate_length(self, gate_length: f32) -> Self {
         self.ctrl.set_gate_length(gate_length);
         self
@@ -560,6 +565,17 @@ impl CellSequencer {
     }
 
     fn step_count(&self) -> usize {
+        // In auto-steps mode the cycle spans the playing cell's own length, so a
+        // cell change of a different length needs no accompanying `steps` write
+        // (FUG-239 #10). Reads the audio thread's local bank snapshot — no lock.
+        // An empty or missing cell falls back to the manual `steps` control so
+        // the cycle length is never zero.
+        if self.ctrl.auto_steps() {
+            match self.sequences.get(self.current_sequence) {
+                Some(cell) if !cell.is_empty() => return cell.len().min(MAX_STEPS),
+                _ => {}
+            }
+        }
         self.ctrl.steps()
     }
 
@@ -834,6 +850,12 @@ impl Module for CellSequencer {
             ControlMeta::new("steps", "Number of steps per sequence")
                 .with_range(1.0, MAX_STEPS as f32)
                 .with_default(DEFAULT_STEPS as f32),
+            ControlMeta::new(
+                "auto_steps",
+                "1 = cycle length follows the selected cell's own length (ignores steps); 0 = use steps",
+            )
+            .with_range(0.0, 1.0)
+            .with_default(0.0),
             ControlMeta::new("gate_length", "Default gate length ratio")
                 .with_range(0.0, 1.0)
                 .with_default(DEFAULT_GATE_LENGTH),
@@ -868,6 +890,7 @@ impl Module for CellSequencer {
         match key {
             "base_note" => Ok(self.ctrl.base_note() as f32),
             "steps" => Ok(self.ctrl.steps() as f32),
+            "auto_steps" => Ok(if self.ctrl.auto_steps() { 1.0 } else { 0.0 }),
             "gate_length" => Ok(self.ctrl.gate_length()),
             "selected_sequence" => Ok(self.ctrl.selected_sequence() as f32),
             // Numeric view of the string `mode` control: 0.0 = loop, 1.0 = one_shot.
@@ -884,6 +907,7 @@ impl Module for CellSequencer {
         match key {
             "base_note" => self.ctrl.set_base_note(value as u8),
             "steps" => self.ctrl.set_steps(value as usize),
+            "auto_steps" => self.ctrl.set_auto_steps(value > 0.5),
             "gate_length" => self.ctrl.set_gate_length(value),
             "selected_sequence" => self.ctrl.set_selected_sequence(value.max(0.0) as usize),
             "mode" => self.ctrl.set_one_shot(value > 0.5),
@@ -942,6 +966,9 @@ impl ModuleFactory for CellSequencerFactory {
             wait_for_cycle_end,
             sequences.clone(),
         );
+        if let Some(auto_steps) = config.get("auto_steps").and_then(|value| value.as_bool()) {
+            controls.set_auto_steps(auto_steps);
+        }
         if let Some(mode) = config.get("mode").and_then(|value| value.as_str()) {
             controls.set_mode(mode)?;
         }

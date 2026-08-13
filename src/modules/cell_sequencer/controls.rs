@@ -27,6 +27,11 @@ pub(crate) struct CellSequencerShared {
     pub(crate) steps: AtomicUsize,
     pub(crate) gate_length: AtomicF32,
     pub(crate) selected_sequence: AtomicUsize,
+    /// When true, the effective cycle length follows the selected cell's own
+    /// length instead of the manual `steps` control, so switching to a cell of
+    /// a different length needs no accompanying `steps` write (FUG-239 #10).
+    /// Default false preserves the manual-`steps` behavior.
+    pub(crate) auto_steps: AtomicBool,
     pub(crate) wait_for_cycle_end: AtomicBool,
     pub(crate) sequence_bank_version: AtomicU64,
     pub(crate) loop_count: AtomicU32,
@@ -81,6 +86,7 @@ impl CellSequencerControls {
                 steps: AtomicUsize::new(steps.clamp(1, MAX_STEPS)),
                 gate_length: AtomicF32::new(gate_length.clamp(0.0, 1.0)),
                 selected_sequence: AtomicUsize::new(selected_sequence),
+                auto_steps: AtomicBool::new(false),
                 wait_for_cycle_end: AtomicBool::new(wait_for_cycle_end),
                 sequence_bank_version: AtomicU64::new(0),
                 loop_count: AtomicU32::new(0),
@@ -134,6 +140,16 @@ impl CellSequencerControls {
             clamp_sequence_index(selected_sequence, len),
             Ordering::Relaxed,
         );
+    }
+
+    /// Whether the cycle length follows the selected cell's own length rather
+    /// than the manual `steps` control (FUG-239 #10).
+    pub fn auto_steps(&self) -> bool {
+        self.shared.auto_steps.load(Ordering::Relaxed)
+    }
+
+    pub fn set_auto_steps(&self, auto_steps: bool) {
+        self.shared.auto_steps.store(auto_steps, Ordering::Relaxed);
     }
 
     pub fn wait_for_cycle_end(&self) -> bool {
