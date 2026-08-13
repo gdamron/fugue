@@ -13,6 +13,43 @@ fn advance_gate(module: &mut CellSequencer) {
 }
 
 #[test]
+fn auto_steps_wraps_the_cycle_at_the_selected_cell_length() {
+    // One 2-step cell, with a deliberately-wrong manual `steps` of 4.
+    let cell = || vec![vec![Step::note(0), Step::note(2)]];
+
+    // auto_steps OFF (default): manual steps=4 governs, so after three advances
+    // the cursor is still climbing (step 2), not wrapped.
+    let mut manual = CellSequencer::new(44_100)
+        .with_steps(4)
+        .with_sequences(cell());
+    for _ in 0..3 {
+        advance_gate(&mut manual);
+    }
+    assert_eq!(
+        manual.current_step(),
+        2,
+        "manual steps=4 keeps advancing past the 2-step cell"
+    );
+
+    // auto_steps ON: the selected cell's own length (2) governs, so the third
+    // advance wraps back to step 0 with no `steps` write (FUG-239 #10).
+    let mut auto = CellSequencer::new(44_100)
+        .with_steps(4)
+        .with_auto_steps(true)
+        .with_sequences(cell());
+    advance_gate(&mut auto);
+    assert_eq!(auto.current_step(), 0);
+    advance_gate(&mut auto);
+    assert_eq!(auto.current_step(), 1);
+    advance_gate(&mut auto);
+    assert_eq!(
+        auto.current_step(),
+        0,
+        "cell length 2 wraps the cycle regardless of steps=4"
+    );
+}
+
+#[test]
 fn test_cell_sequencer_basic_playback() {
     let mut seq = CellSequencer::new(44_100).with_sequences(vec![
         vec![Step::note(0), Step::rest(), Step::note(7)],
