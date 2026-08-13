@@ -163,6 +163,9 @@ pub(crate) struct SignalGraph {
     pub(crate) block_size: usize,
     /// Flag indicating topology changed and derived state needs recomputation.
     pub(crate) topo_dirty: bool,
+    /// Peak level of the mixed master output, folded in each block for an
+    /// off-thread sampler to drain into `MeterLevel` events (FUG-239 #5).
+    pub(crate) master_peak: crate::atomic::StereoPeak,
 }
 
 impl SignalGraph {
@@ -232,6 +235,17 @@ impl SignalGraph {
                 right[i] *= gain;
             }
         }
+
+        // Fold this block's master peak into the meter. Lock-free and
+        // allocation-free: one pass over buffers already in hand, then two
+        // atomic stores (FUG-239 #5).
+        let mut left_peak = 0.0f32;
+        let mut right_peak = 0.0f32;
+        for i in 0..frames {
+            left_peak = left_peak.max(left[i].abs());
+            right_peak = right_peak.max(right[i].abs());
+        }
+        self.master_peak.observe(left_peak, right_peak);
 
         self.store_carry(frames);
     }

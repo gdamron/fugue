@@ -77,6 +77,10 @@ impl InventionRuntime {
         let (command_tx, command_rx) = mpsc::channel();
         let module_ports = Arc::new(Mutex::new(module_ports(&self.modules)));
 
+        // Shared peak meter: the audio thread folds block peaks into it via the
+        // graph; the daemon samples the clone held on `RunningInvention`.
+        let master_peak = crate::atomic::StereoPeak::new();
+
         let mut graph = SignalGraph {
             modules: self.modules,
             sinks: self.sinks,
@@ -94,6 +98,7 @@ impl InventionRuntime {
             block_capacity: 0,
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
+            master_peak: master_peak.clone(),
         };
 
         let control_surfaces = self.control_surfaces;
@@ -128,6 +133,7 @@ impl InventionRuntime {
             scripts: ScriptManager::default(),
             agents: AgentManager::default(),
             event_sink: Arc::new(Mutex::new(None)),
+            master_peak,
         };
         running.scripts.start_all(running.controller());
         running.agents.start_all(running.controller());
@@ -194,6 +200,9 @@ pub struct RunningInvention {
     /// with scripts/agents started at build time) so an install is observed
     /// even by writers created before it.
     event_sink: super::orchestration::EventSinkSlot,
+    /// Master-output peak meter shared with the audio-thread graph; the daemon
+    /// drains it on a fixed cadence to emit `MeterLevel` (FUG-239 #5).
+    master_peak: crate::atomic::StereoPeak,
 }
 
 impl RunningInvention {
@@ -241,6 +250,13 @@ impl RunningInvention {
     /// to `sink` too.
     pub fn set_event_sink(&self, sink: Arc<dyn crate::RpcEventSink>) {
         *self.event_sink.lock().unwrap() = Some(sink);
+    }
+
+    /// Returns the peak magnitude of the mixed master output (left, right) since
+    /// the previous call, resetting the accumulator. Intended for a fixed-cadence
+    /// sampler that turns the reading into a `MeterLevel` event (FUG-239 #5).
+    pub fn master_meter(&self) -> (f32, f32) {
+        self.master_peak.drain()
     }
 
     pub fn full_snapshot(&self) -> crate::RuntimeFullSnapshot {

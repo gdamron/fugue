@@ -10,9 +10,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 mod identity;
-pub use identity::{
-    verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch,
-};
+pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
 
 /// Current runtime RPC schema version.
 pub const RPC_SCHEMA_VERSION: u32 = 1;
@@ -54,7 +52,9 @@ impl RpcRequest {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RpcRequestPayload {
     Command(RpcCommand),
-    Subscribe { topics: Vec<RpcSubscriptionTopic> },
+    Subscribe {
+        topics: Vec<RpcSubscriptionTopic>,
+    },
     GetSnapshot,
     /// Poll the daemon's bounded event log for events newer than `after` (the
     /// `latest_seq` from a previous poll; `None` returns everything still
@@ -64,6 +64,11 @@ pub enum RpcRequestPayload {
         #[serde(default)]
         after: Option<u64>,
     },
+    /// Read the latest sampled output levels. High-rate `MeterLevel` events are
+    /// broadcast to streaming subscribers only (never the event log), so a
+    /// poll-only client — notably MCP — reads current levels here instead of
+    /// draining them from the event stream (FUG-239 #5).
+    GetMeters,
     /// Connect-time handshake: asks the daemon to report its
     /// [`DaemonIdentity`] so the client can confirm it reached a compatible
     /// daemon before driving it. Answered regardless of the request's
@@ -233,6 +238,13 @@ pub enum RpcResponsePayload {
     Ack,
     Snapshot(RuntimeFullSnapshot),
     Events(EventPage),
+    /// The latest sampled output levels, in reply to
+    /// [`RpcRequestPayload::GetMeters`]. Empty when nothing is playing. A struct
+    /// variant (not a newtype over `Vec`) because this enum is internally
+    /// tagged, which cannot flatten a sequence.
+    Meters {
+        meters: Vec<MeterReading>,
+    },
     Packages(PackageList),
     ModuleTypes(ModuleTypeList),
     Reload(ReloadOutcome),
@@ -240,7 +252,9 @@ pub enum RpcResponsePayload {
     /// The daemon's identity, in reply to [`RpcRequestPayload::Hello`]. Nested
     /// (not flattened) so `DaemonIdentity::schema_version` does not collide with
     /// the response envelope's own `schema_version`.
-    Identity { identity: DaemonIdentity },
+    Identity {
+        identity: DaemonIdentity,
+    },
     Error(RpcError),
 }
 
@@ -346,6 +360,21 @@ pub enum RpcEventPayload {
 /// Minimal sink interface for transports that collect or broadcast RPC events.
 pub trait RpcEventSink: Send + Sync {
     fn emit(&self, event: RpcEvent);
+}
+
+/// One output source's latest sampled peak levels, in a [`GetMeters`] reply.
+///
+/// The same values are also broadcast continuously as
+/// [`RpcEventPayload::MeterLevel`]; this is the pull view for clients that do
+/// not hold a streaming socket (FUG-239 #5).
+///
+/// [`GetMeters`]: RpcRequestPayload::GetMeters
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct MeterReading {
+    pub sink_id: String,
+    pub left_peak: f32,
+    pub right_peak: f32,
 }
 
 /// One event in an [`EventPage`], tagged with its monotonic sequence number so
