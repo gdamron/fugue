@@ -127,6 +127,7 @@ impl InventionRuntime {
             module_ports,
             scripts: ScriptManager::default(),
             agents: AgentManager::default(),
+            event_sink: Arc::new(Mutex::new(None)),
         };
         running.scripts.start_all(running.controller());
         running.agents.start_all(running.controller());
@@ -188,6 +189,11 @@ pub struct RunningInvention {
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
     scripts: ScriptManager,
     agents: AgentManager,
+    /// Shared, late-bindable sink for runtime events. Empty until a host calls
+    /// [`Self::set_event_sink`]; shared by `Arc` with every snapshot (and thus
+    /// with scripts/agents started at build time) so an install is observed
+    /// even by writers created before it.
+    event_sink: super::orchestration::EventSinkSlot,
 }
 
 impl RunningInvention {
@@ -223,7 +229,18 @@ impl RunningInvention {
         RuntimeSnapshot {
             state: self.state.clone(),
             control_surfaces: self.control_surfaces.clone(),
+            event_sink: self.event_sink.clone(),
         }
+    }
+
+    /// Installs the sink that recorded control writes announce themselves to.
+    ///
+    /// Idempotent and safe to call after `start()`: the slot is shared with
+    /// every snapshot (including those already captured by conducting scripts
+    /// and agents), so writes from writers created before this call are routed
+    /// to `sink` too.
+    pub fn set_event_sink(&self, sink: Arc<dyn crate::RpcEventSink>) {
+        *self.event_sink.lock().unwrap() = Some(sink);
     }
 
     pub fn full_snapshot(&self) -> crate::RuntimeFullSnapshot {
@@ -678,34 +695,19 @@ impl RunningInvention {
             .map_err(GraphCommandError::ControlError)
     }
 
-    /// Sets the value of a module control.
+    /// Sets the value of a module control, recording it and announcing it as a
+    /// `ControlChanged` event.
+    ///
+    /// Delegates to [`RuntimeSnapshot::set_control`] so the daemon's single-write
+    /// RPC path shares the one choke point (coercion, document recording, and
+    /// event emission) with batch writes, scripts, and agents.
     pub fn set_control(
         &self,
         module_id: &str,
         key: &str,
         value: ControlValue,
     ) -> Result<(), GraphCommandError> {
-        // Invoke outside the directory lock: a scheduler's `schedule` write
-        // re-resolves its targets against this same directory.
-        let control_surface = {
-            let controls = self.control_surfaces.lock().unwrap();
-            controls
-                .get(module_id)
-                .cloned()
-                .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
-        };
-        // Coerce to the control's declared kind so a write survives a client
-        // that stringifies values (see FUG-240). Recording the coerced value
-        // keeps the retained document typed for save/reload.
-        let value = control_surface.coerce_value(key, value);
-        control_surface
-            .set_control(key, value.clone())
-            .map_err(GraphCommandError::ControlError)?;
-        self.state
-            .lock()
-            .unwrap()
-            .document_write_control(module_id, key, &value);
-        Ok(())
+        self.snapshot().set_control(module_id, key, value)
     }
 
     /// Removes a module from the running graph.

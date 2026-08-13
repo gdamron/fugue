@@ -189,6 +189,110 @@ fn running_invention_supports_returned_lifecycle_object() {
     running.stop();
 }
 
+/// Collects every event a runtime announces, for asserting emission.
+#[derive(Default)]
+struct RecordingSink {
+    events: Mutex<Vec<crate::RpcEventPayload>>,
+}
+
+impl crate::RpcEventSink for RecordingSink {
+    fn emit(&self, event: crate::RpcEvent) {
+        self.events.lock().unwrap().push(event.payload);
+    }
+}
+
+impl RecordingSink {
+    fn control_changes(&self) -> Vec<(String, String, ControlValue)> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                crate::RpcEventPayload::ControlChanged {
+                    module_id,
+                    key,
+                    value,
+                } => Some((module_id.clone(), key.clone(), value.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn installed_sink_observes_control_writes_with_the_applied_value() {
+    let invention = Invention::from_json(
+        r#"{
+            "version": "1.0.0",
+            "modules": [
+                { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+                { "id": "dac", "type": "dac" }
+            ],
+            "connections": [
+                { "from": "osc", "from_port": "audio", "to": "dac", "to_port": "audio" }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let running = runtime
+        .start_with_backend(TickBackend::new(48_000))
+        .unwrap();
+
+    let sink = Arc::new(RecordingSink::default());
+    running.set_event_sink(sink.clone());
+
+    // A stringified write coerces to the frequency control's Number kind; the
+    // event must carry the *applied* value, not the raw string (FUG-239 #7).
+    running
+        .set_control("osc", "frequency", ControlValue::String("660".to_string()))
+        .unwrap();
+    // A telemetry-only transient write must not surface as a control change.
+    running
+        .snapshot()
+        .set_control_transient("osc", "frequency", ControlValue::Number(770.0))
+        .unwrap();
+    // A batch lands one event per write.
+    running
+        .set_controls(&[
+            crate::ControlWrite {
+                module_id: "osc".to_string(),
+                key: "frequency".to_string(),
+                value: ControlValue::Number(880.0),
+            },
+            crate::ControlWrite {
+                module_id: "osc".to_string(),
+                key: "type".to_string(),
+                value: ControlValue::String("square".to_string()),
+            },
+        ])
+        .unwrap();
+
+    running.stop();
+
+    assert_eq!(
+        sink.control_changes(),
+        vec![
+            (
+                "osc".to_string(),
+                "frequency".to_string(),
+                ControlValue::Number(660.0)
+            ),
+            (
+                "osc".to_string(),
+                "frequency".to_string(),
+                ControlValue::Number(880.0)
+            ),
+            (
+                "osc".to_string(),
+                "type".to_string(),
+                ControlValue::String("square".to_string())
+            ),
+        ]
+    );
+}
+
 #[test]
 fn running_invention_keeps_legacy_globalthis_hooks_working() {
     let invention = Invention::from_json(

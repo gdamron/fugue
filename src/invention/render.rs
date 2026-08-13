@@ -32,6 +32,9 @@ pub struct RenderEngine {
     source_json: Option<String>,
     scripts: ScriptManager,
     agents: AgentManager,
+    /// Offline render has no event consumer, so this slot stays empty; it exists
+    /// only so snapshots share the [`RuntimeSnapshot`] shape with live runtimes.
+    event_sink: super::orchestration::EventSinkSlot,
 }
 
 /// Serializable config/state view for a `code` module.
@@ -61,6 +64,7 @@ impl RenderEngine {
             source_json: None,
             scripts: ScriptManager::default(),
             agents: AgentManager::default(),
+            event_sink: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -73,6 +77,7 @@ impl RenderEngine {
         RuntimeSnapshot {
             state: self.state.clone(),
             control_surfaces: self.control_surfaces.clone(),
+            event_sink: self.event_sink.clone(),
         }
     }
 
