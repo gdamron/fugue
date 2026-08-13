@@ -345,11 +345,12 @@ fn install_graph_api(
         .register_global_property(js_string!("graph"), graph, Attribute::all())
         .map_err(|err| err.to_string())?;
 
-    let log_fn = make_console_writer(module_id, ConsoleSink::Stdout, "log");
-    let info_fn = make_console_writer(module_id, ConsoleSink::Stdout, "info");
-    let warn_fn = make_console_writer(module_id, ConsoleSink::Stderr, "warn");
-    let error_fn = make_console_writer(module_id, ConsoleSink::Stderr, "error");
-    let debug_fn = make_console_writer(module_id, ConsoleSink::Stdout, "debug");
+    let event_sink = controller.snapshot.event_sink.clone();
+    let log_fn = make_console_writer(module_id, ConsoleSink::Stdout, "log", event_sink.clone());
+    let info_fn = make_console_writer(module_id, ConsoleSink::Stdout, "info", event_sink.clone());
+    let warn_fn = make_console_writer(module_id, ConsoleSink::Stderr, "warn", event_sink.clone());
+    let error_fn = make_console_writer(module_id, ConsoleSink::Stderr, "error", event_sink.clone());
+    let debug_fn = make_console_writer(module_id, ConsoleSink::Stdout, "debug", event_sink);
 
     let console = ObjectInitializer::new(context)
         .function(log_fn, js_string!("log"), 0)

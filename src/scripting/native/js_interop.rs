@@ -10,6 +10,7 @@ pub(super) fn make_console_writer(
     module_id: &str,
     sink: ConsoleSink,
     level: &'static str,
+    event_sink: crate::invention::orchestration::EventSinkSlot,
 ) -> NativeFunction {
     let module_id = module_id.to_string();
     unsafe {
@@ -27,8 +28,31 @@ pub(super) fn make_console_writer(
                 ConsoleSink::Stdout => println!("{}", line),
                 ConsoleSink::Stderr => eprintln!("{}", line),
             }
+            // Surface a code module's console output as an observable event so a
+            // conducting agent's narration reaches MCP (FUG-239 #6). Runs on the
+            // script thread — the sink is off the audio path. The level is kept
+            // in the text so an observer can tell a log from an error.
+            emit_agent_activity(&event_sink, &module_id, level, &buf);
             Ok(JsValue::undefined())
         })
+    }
+}
+
+/// Emits a code module's console line to the installed event sink, if any.
+fn emit_agent_activity(
+    event_sink: &crate::invention::orchestration::EventSinkSlot,
+    module_id: &str,
+    level: &str,
+    message: &str,
+) {
+    let sink = event_sink.lock().unwrap().clone();
+    if let Some(sink) = sink {
+        sink.emit(crate::RpcEvent::new(
+            crate::RpcEventPayload::AgentActivity {
+                module_id: module_id.to_string(),
+                activity: format!("[{level}] {message}"),
+            },
+        ));
     }
 }
 
