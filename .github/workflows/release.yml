@@ -177,10 +177,15 @@ jobs:
           set -euo pipefail
           provenance=download/fugue-mcp-ui-provenance.txt
           repository="$(sed -n 's/^repository=//p' "$provenance")"
+          release="$(sed -n 's/^release=//p' "$provenance")"
           revision="$(sed -n 's/^revision=//p' "$provenance")"
           sha256="$(sed -n 's/^sha256=//p' "$provenance")"
           if [[ "$repository" != "github.com/gdamron/fugue-ui" ]]; then
             echo "Unexpected MCP App source repository: $repository" >&2
+            exit 1
+          fi
+          if [[ "$release" != "v$VERSION" ]]; then
+            echo "MCP App release $release does not match Fugue release v$VERSION" >&2
             exit 1
           fi
           if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
@@ -191,7 +196,7 @@ jobs:
             echo "Invalid MCP App digest: $sha256" >&2
             exit 1
           fi
-          echo "Releasing fugue-mcp with MCP App $sha256 from fugue-ui@$revision"
+          echo "Releasing fugue-mcp with MCP App $sha256 from fugue-ui $release ($revision)"
       - name: Assemble combined install unit
         run: |
           set -euo pipefail
