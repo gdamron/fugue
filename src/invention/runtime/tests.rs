@@ -294,6 +294,38 @@ fn installed_sink_observes_control_writes_with_the_applied_value() {
 }
 
 #[test]
+fn master_meter_reports_output_peaks() {
+    let invention = Invention::from_json(
+        r#"{
+            "version": "1.0.0",
+            "modules": [
+                { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+                { "id": "dac", "type": "dac" }
+            ],
+            "connections": [
+                { "from": "osc", "from_port": "audio", "to": "dac", "to_port": "audio" }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let running = runtime
+        .start_with_backend(TickBackend::new(48_000))
+        .unwrap();
+
+    // Let the audio worker render enough blocks to fold in a peak.
+    thread::sleep(Duration::from_millis(60));
+
+    let (left, right) = running.master_meter();
+    assert!(left > 0.0, "expected a non-zero left peak, got {left}");
+    assert!(right > 0.0, "expected a non-zero right peak, got {right}");
+    assert!(left <= 1.0 && right <= 1.0, "peaks stay within full-scale");
+
+    running.stop();
+}
+
+#[test]
 fn running_invention_keeps_legacy_globalthis_hooks_working() {
     let invention = Invention::from_json(
         r#"{

@@ -671,6 +671,8 @@ impl RenderEngine {
             block_capacity: 0,
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
+            // Offline render has no sampler; the meter is inert here.
+            master_peak: crate::atomic::StereoPeak::new(),
         })));
         self.registry = runtime.registry;
         self.state = runtime.state;
