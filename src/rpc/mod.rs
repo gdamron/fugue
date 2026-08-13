@@ -56,6 +56,14 @@ pub enum RpcRequestPayload {
     Command(RpcCommand),
     Subscribe { topics: Vec<RpcSubscriptionTopic> },
     GetSnapshot,
+    /// Poll the daemon's bounded event log for events newer than `after` (the
+    /// `latest_seq` from a previous poll; `None` returns everything still
+    /// buffered). A request/response alternative to `Subscribe` for clients
+    /// that cannot hold a streaming socket open — notably MCP.
+    PollEvents {
+        #[serde(default)]
+        after: Option<u64>,
+    },
     /// Connect-time handshake: asks the daemon to report its
     /// [`DaemonIdentity`] so the client can confirm it reached a compatible
     /// daemon before driving it. Answered regardless of the request's
@@ -224,6 +232,7 @@ impl RpcResponse {
 pub enum RpcResponsePayload {
     Ack,
     Snapshot(RuntimeFullSnapshot),
+    Events(EventPage),
     Packages(PackageList),
     ModuleTypes(ModuleTypeList),
     Reload(ReloadOutcome),
@@ -337,6 +346,30 @@ pub enum RpcEventPayload {
 /// Minimal sink interface for transports that collect or broadcast RPC events.
 pub trait RpcEventSink: Send + Sync {
     fn emit(&self, event: RpcEvent);
+}
+
+/// One event in an [`EventPage`], tagged with its monotonic sequence number so
+/// a polling client can request everything after the last it saw.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct SeqEvent {
+    pub seq: u64,
+    #[serde(flatten)]
+    pub payload: RpcEventPayload,
+}
+
+/// Reply to [`RpcRequestPayload::PollEvents`]: the buffered events newer than
+/// the requested cursor, plus the newest sequence number to poll from next.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct EventPage {
+    pub events: Vec<SeqEvent>,
+    /// Newest sequence number the daemon has assigned (0 when nothing has been
+    /// emitted yet). Pass this as the next poll's `after`.
+    pub latest_seq: u64,
+    /// True when the cursor fell behind the bounded log and some events between
+    /// it and the oldest retained event were evicted unseen.
+    pub dropped: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

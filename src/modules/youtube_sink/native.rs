@@ -315,7 +315,12 @@ PY
             assert_eq!(sink.get_output("audio_left").unwrap(), 0.25);
             assert_eq!(sink.get_output("audio_right").unwrap(), -0.5);
 
-            let deadline = Instant::now() + Duration::from_secs(2);
+            // Generous headroom: the fake ffmpeg is a python3 subprocess whose
+            // cold-start + socket handshake + first paced frame can exceed a
+            // couple seconds on a loaded CI runner. The loop exits the instant a
+            // frame arrives, so this only affects slow machines, never the happy
+            // path.
+            let deadline = Instant::now() + Duration::from_secs(10);
             while handle.stats().video_frames_sent == 0 && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
             }

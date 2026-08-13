@@ -33,10 +33,11 @@ pub use rpc::{
     validate_schema_version, verify_daemon_identity, BuildFingerprint, ControlWrite,
     DaemonIdentity, IdentityMismatch, ModuleTypeInfo, ModuleTypeList, PackageInfo,
     PackageInstallRequest,
-    PackageList, PackageSource, ReloadMode, ReloadOutcome, RpcCommand, RpcError, RpcErrorCode,
-    RpcEvent, RpcEventPayload, RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse,
-    RpcResponsePayload, RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot,
-    RuntimeModuleSnapshot, RuntimePortInfo, SaveReport, SinkStatusState, RPC_SCHEMA_VERSION,
+    EventPage, PackageList, PackageSource, ReloadMode, ReloadOutcome, RpcCommand, RpcError,
+    RpcErrorCode, RpcEvent, RpcEventPayload, RpcEventSink, RpcRequest, RpcRequestPayload,
+    RpcResponse, RpcResponsePayload, RpcSubscriptionTopic, RuntimeControlSnapshot,
+    RuntimeFullSnapshot, RuntimeModuleSnapshot, RuntimePortInfo, SaveReport, SeqEvent,
+    SinkStatusState, RPC_SCHEMA_VERSION,
 };
 
 // Re-export modules

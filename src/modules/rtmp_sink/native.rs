@@ -680,7 +680,12 @@ PY
             let (_sink, handle) = RtmpSink::new_native(config).unwrap();
             assert!(handle.has_background_video());
 
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            // Generous headroom: the fake ffmpeg is a python3 subprocess whose
+            // cold-start + socket handshake + first paced frame can exceed a
+            // couple seconds on a loaded CI runner. The loop exits the instant a
+            // frame arrives, so this only affects slow machines, never the happy
+            // path.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
             while handle.stats().video_frames_sent == 0 && std::time::Instant::now() < deadline {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
