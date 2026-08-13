@@ -2,7 +2,7 @@ use crate::factory::ModuleBuildResult;
 use crate::invention::graph::{GraphCommand, SignalGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
-use crate::{ControlMeta, ControlValue, ControlWrite};
+use crate::{ControlMeta, ControlValue, ControlWrite, RpcEvent, RpcEventPayload, RpcEventSink};
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::HashMap;
@@ -48,11 +48,24 @@ pub trait OrchestrationRuntime {
     }
 }
 
+/// A late-bindable event sink shared by every clone of a runtime's snapshot.
+///
+/// Built empty; the daemon installs a sink after `start()` (see
+/// [`crate::RunningInvention::set_event_sink`]). Scripts and agents capture a
+/// snapshot at build time — before the sink lands — so the slot is shared by
+/// `Arc` and read at emit time, letting those already-running writers observe
+/// the sink once it is installed. Emission runs on control/script threads, never
+/// the audio callback, so the mutex here does not touch the hot path.
+pub type EventSinkSlot = Arc<Mutex<Option<Arc<dyn RpcEventSink>>>>;
+
 /// Cloneable read-oriented view over runtime state and control surfaces.
 #[derive(Clone)]
 pub struct RuntimeSnapshot {
     pub state: Arc<Mutex<RuntimeState>>,
     pub control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
+    /// Where recorded control writes announce themselves; empty until a host
+    /// installs a sink. Offline render runtimes leave it empty.
+    pub(crate) event_sink: EventSinkSlot,
 }
 
 /// Cloneable mutation handle used by orchestration hosts and external APIs.
@@ -135,14 +148,37 @@ impl RuntimeSnapshot {
             .map_err(GraphCommandError::ControlError)
     }
 
-    /// Sets the current value of a module control and records it in the
-    /// retained document so the change survives a save/rebuild.
+    /// Sets the current value of a module control, records it in the retained
+    /// document so the change survives a save/rebuild, and announces it as a
+    /// [`RpcEventPayload::ControlChanged`] carrying the *applied* value.
+    ///
+    /// This is the choke point for externally-initiated control writes — RPC
+    /// commands, conducting scripts, and agents — so an observer sees every one
+    /// of them (finding FUG-239 #7). Internal reconstruction that must stay
+    /// silent (a reload carrying values into the rebuilt graph) uses
+    /// [`Self::set_control_recorded`] instead.
     pub fn set_control(
         &self,
         module_id: &str,
         key: &str,
         value: ControlValue,
     ) -> Result<(), GraphCommandError> {
+        let applied = self.set_control_recorded(module_id, key, value)?;
+        self.emit_control_changed(module_id, key, applied);
+        Ok(())
+    }
+
+    /// Coerces, applies, and records a control write without emitting an event,
+    /// returning the applied (coerced) value. For internal callers that record
+    /// a change but must not surface it as a live, agent-visible
+    /// `ControlChanged` (e.g. a reload carrying authored values into a freshly
+    /// rebuilt graph, which is already conveyed by the reload's snapshot).
+    pub(crate) fn set_control_recorded(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+    ) -> Result<ControlValue, GraphCommandError> {
         // Coerce to the control's declared kind before applying and recording,
         // so a stringified write lands and the retained document stays typed
         // (see FUG-240). set_control_transient stays uncoerced: its callers are
@@ -159,7 +195,21 @@ impl RuntimeSnapshot {
             .lock()
             .unwrap()
             .document_write_control(module_id, key, &value);
-        Ok(())
+        Ok(value)
+    }
+
+    /// Announces a recorded control change to the installed event sink, if any.
+    fn emit_control_changed(&self, module_id: &str, key: &str, value: ControlValue) {
+        // Clone the sink out under the lock, then release it before emitting so
+        // a sink implementation can never re-enter this slot while we hold it.
+        let sink = self.event_sink.lock().unwrap().clone();
+        if let Some(sink) = sink {
+            sink.emit(RpcEvent::new(RpcEventPayload::ControlChanged {
+                module_id: module_id.to_string(),
+                key: key.to_string(),
+                value,
+            }));
+        }
     }
 
     /// Sets a control without recording it in the retained document. For

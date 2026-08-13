@@ -389,7 +389,13 @@ impl RunningInvention {
                 .map_err(ReloadError::Apply)?;
         }
         for (module_id, key, value) in &plan.control_updates {
-            self.set_control(module_id, key, value.clone())
+            // Quiet: carrying authored values into the rebuilt graph is
+            // reconstruction, not a live agent-initiated change. The reload's
+            // snapshot already conveys the new state, so emitting a
+            // `ControlChanged` per carried value would be redundant and would
+            // misattribute the reload as a conducting gesture (FUG-239 #7).
+            self.snapshot()
+                .set_control_recorded(module_id, key, value.clone())
                 .map_err(ReloadError::Apply)?;
         }
         if !plan.refreshed_configs.is_empty() {
