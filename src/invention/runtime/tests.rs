@@ -217,6 +217,21 @@ impl RecordingSink {
             })
             .collect()
     }
+
+    fn agent_activities(&self) -> Vec<(String, String)> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                crate::RpcEventPayload::AgentActivity {
+                    module_id,
+                    activity,
+                } => Some((module_id.clone(), activity.clone())),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[test]
@@ -290,6 +305,49 @@ fn installed_sink_observes_control_writes_with_the_applied_value() {
                 ControlValue::String("square".to_string())
             ),
         ]
+    );
+}
+
+#[test]
+fn installed_sink_observes_code_module_console_output() {
+    let invention = Invention::from_json(
+        r#"{
+            "version": "1.0.0",
+            "modules": [
+                {
+                    "id": "code1",
+                    "type": "code",
+                    "config": {
+                        "tick_hz": 20.0,
+                        "script": "function tick() { console.log('conducting', 'section B') }"
+                    }
+                },
+                { "id": "dac", "type": "dac" }
+            ],
+            "connections": []
+        }"#,
+    )
+    .unwrap();
+
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let running = runtime
+        .start_with_backend(TickBackend::new(48_000))
+        .unwrap();
+
+    let sink = Arc::new(RecordingSink::default());
+    running.set_event_sink(sink.clone());
+
+    // Let a few ticks run so the script's console.log fires with the sink in place.
+    thread::sleep(Duration::from_millis(120));
+    running.stop();
+
+    let activities = sink.agent_activities();
+    assert!(
+        activities
+            .iter()
+            .any(|(module_id, activity)| module_id == "code1"
+                && activity == "[log] conducting section B"),
+        "expected a code1 AgentActivity from console.log, got {activities:?}"
     );
 }
 
