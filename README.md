@@ -11,6 +11,20 @@ A system for composing algorithmic and generative music.
 
 ## Install
 
+### Claude Desktop (no terminal required)
+
+Download `fugue-<version>-<target>.mcpb` for your platform from the
+[latest release](https://github.com/gdamron/fugue/releases/latest) and
+double-click it. Claude Desktop installs the extension and registers the Fugue
+MCP server itself — there is no terminal step, no `PATH` to edit, and nothing
+else to install.
+
+The bundle carries the same signed `fugue` and `fugue-mcp` binaries as the
+archives below. Bundles are published for **macOS arm64** and **Windows x86_64**,
+the platforms Claude Desktop runs on.
+
+### Command line
+
 One-line install (macOS and Linux), no Rust toolchain required. This downloads
 the prebuilt `fugue` and `fugue-mcp` binaries into `~/.fugue/bin`:
 
