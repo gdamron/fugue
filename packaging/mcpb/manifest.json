@@ -1,0 +1,42 @@
+{
+  "manifest_version": "0.3",
+  "name": "fugue",
+  "display_name": "Fugue",
+  "version": "__VERSION__",
+  "description": "Compose algorithmic and generative music with Claude.",
+  "long_description": "Fugue is a system for composing algorithmic and generative music. This extension registers the Fugue MCP server so Claude can build inventions — declarative documents describing a module graph — and play them live, adjusting scales, rhythms, and synthesis parameters in real time.\n\nThe extension bundles the `fugue-mcp` adapter alongside the `fugue` CLI, which provides the shared `fugue serve` audio daemon. The adapter connects to an already-running daemon when one is present and spawns it otherwise, so a Fugue session started in the terminal and one driven from Claude land on the same live invention.",
+  "author": {
+    "name": "Grant Damron",
+    "url": "https://github.com/gdamron"
+  },
+  "homepage": "https://github.com/gdamron/fugue",
+  "documentation": "https://github.com/gdamron/fugue#readme",
+  "support": "https://github.com/gdamron/fugue/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gdamron/fugue"
+  },
+  "license": "MIT",
+  "keywords": [
+    "music",
+    "audio",
+    "synthesis",
+    "composition",
+    "generative"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/__MCP_BIN__",
+    "mcp_config": {
+      "command": "${__dirname}/server/__MCP_BIN__",
+      "args": [],
+      "env": {}
+    }
+  },
+  "tools_generated": true,
+  "compatibility": {
+    "platforms": [
+      "__PLATFORM__"
+    ]
+  }
+}
