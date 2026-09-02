@@ -81,21 +81,29 @@ for tools_archive in "$TOOLS_DIR"/fugue-tools-*.tar.gz; do
   fi
 
   stage="$(mktemp -d)"
+  extracted="$(mktemp -d)"
   mkdir -p "$stage/server"
-  tar -C "$stage/server" -xzf "$tools_archive"
+  tar -C "$extracted" -xzf "$tools_archive"
 
+  # Copy in only the binaries this bundle declares, rather than staging whatever
+  # the archive happens to hold. The install unit is shared with the installer,
+  # brew, and the macOS app, so it carries binaries an extension has no use for
+  # (the `fugue-setup` GUI, FUG-233); shipping those would bloat a bundle a user
+  # downloads through Claude Desktop with code it can never run.
   for bin in "$mcp_bin" "$cli_bin"; do
-    if [[ ! -f "$stage/server/$bin" ]]; then
+    if [[ ! -f "$extracted/$bin" ]]; then
       echo "::error::${base} did not contain expected binary '${bin}'" >&2
       exit 1
     fi
     # The archives already carry the bit; assert it rather than trust it, since
     # a bundle whose server is not executable fails only at install time.
-    if [[ ! -x "$stage/server/$bin" ]]; then
+    if [[ ! -x "$extracted/$bin" ]]; then
       echo "::error::${bin} in ${base} is not executable" >&2
       exit 1
     fi
+    cp -p "$extracted/$bin" "$stage/server/$bin"
   done
+  rm -rf "$extracted"
 
   sed -e "s|__VERSION__|${VERSION}|g" \
       -e "s|__MCP_BIN__|${mcp_bin}|g" \
