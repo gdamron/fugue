@@ -5,6 +5,7 @@
 //! - [`DacFactory`] - Factory for creating DacModule instances
 //! - [`AudioDriver`] - cpal-based audio output backend
 //! - [`AudioBackend`] - Trait for custom audio backends
+//! - [`NullBackend`] - Device-free backend for headless hosts
 //! - [`default_sample_rate`] - Get the system's audio sample rate
 
 mod diagnostics;
@@ -14,6 +15,7 @@ mod driver;
 mod driver_wasm;
 mod inputs;
 mod module;
+mod null;
 mod outputs;
 
 pub use diagnostics::{AudioDiagnostics, AudioDiagnosticsSnapshot};
@@ -22,3 +24,4 @@ pub use driver::{default_sample_rate, AudioBackend, AudioDriver, BlockRenderFn};
 #[cfg(target_arch = "wasm32")]
 pub use driver_wasm::{default_sample_rate, AudioBackend, AudioDriver, BlockRenderFn};
 pub use module::{DacFactory, DacModule};
+pub use null::NullBackend;

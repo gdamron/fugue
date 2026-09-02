@@ -1,33 +1,6 @@
 use super::*;
 use crate::invention::builder::InventionBuilder;
-use crate::modules::AudioBackend;
-
-/// Backend that starts instantly and never pulls audio: reload operates on
-/// the control side, so the tests need a running invention but no callback.
-/// The render closure owns the graph (and its command receiver), so it must
-/// stay alive for mutations to land.
-#[derive(Default)]
-struct NullBackend {
-    render: Option<Box<dyn FnMut(&mut [f32], &mut [f32]) + Send>>,
-}
-
-impl AudioBackend for NullBackend {
-    fn sample_rate(&self) -> u32 {
-        48_000
-    }
-
-    fn start(
-        &mut self,
-        render: Box<dyn FnMut(&mut [f32], &mut [f32]) + Send>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.render = Some(render);
-        Ok(())
-    }
-
-    fn stop(&mut self) {
-        self.render = None;
-    }
-}
+use crate::modules::NullBackend;
 
 fn doc(json: &str) -> Invention {
     Invention::from_json(json).unwrap()
@@ -35,7 +8,7 @@ fn doc(json: &str) -> Invention {
 
 fn start(json: &str) -> RunningInvention {
     let (runtime, _) = InventionBuilder::new(48_000).build(doc(json)).unwrap();
-    runtime.start_with_backend(NullBackend::default()).unwrap()
+    runtime.start_with_backend(NullBackend::new(48_000)).unwrap()
 }
 
 const BASE: &str = r#"{
