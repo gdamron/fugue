@@ -1,8 +1,12 @@
 name: "Sign and notarize macOS binary"
 description: >
-  Code-signs a standalone macOS Mach-O executable with a Developer ID
-  Application certificate (hardened runtime + secure timestamp), then notarizes
-  it with Apple's notary service via App Store Connect API key credentials.
+  Code-signs a macOS artifact with a Developer ID Application certificate
+  (hardened runtime + secure timestamp), then notarizes it with Apple's notary
+  service via App Store Connect API key credentials.
+
+  Handles three kinds, selected with the `kind` input: a bare `executable`
+  (the default), an `app` bundle, or a `dmg` disk image. Bundles and images are
+  also stapled, so they carry their notarization ticket offline.
 
   This is the single source of truth for macOS release signing across Fugue's
   binary repos (fugue-cli, fugue-mcp). Reference it as a local action after
@@ -29,13 +33,23 @@ description: >
   (.app/.dmg/.pkg), not a bare command-line executable. A notarized CLI binary
   shipped in a .tar.gz therefore carries no stapled ticket; Gatekeeper fetches
   the ticket online on first run (the standard, supported path for CLI tools).
-  Stapling becomes possible once the binaries are wrapped in a .dmg/.pkg
-  (tracked separately under FUG-227).
+  With `kind: app` or `kind: dmg` the artifact IS stapled, which is what makes
+  the GUI wrapper app work on a machine that is offline on first launch
+  (FUG-233).
 
 inputs:
   binary-path:
-    description: "Path to the Mach-O executable to sign, relative to the workspace."
+    description: >
+      Path to the artifact to sign, relative to the workspace: a Mach-O
+      executable, an .app bundle, or a .dmg, matching `kind`.
     required: true
+  kind:
+    description: >
+      What `binary-path` points at: `executable` (default), `app`, or `dmg`.
+      An `app` has its nested executables signed inner-to-outer before the
+      bundle itself; `app` and `dmg` are stapled after notarization.
+    required: false
+    default: "executable"
   signing-identity:
     description: >
       Codesign identity to use. Leave empty to auto-detect the sole
@@ -76,6 +90,7 @@ runs:
       shell: bash
       env:
         BINARY_PATH: ${{ inputs.binary-path }}
+        KIND: ${{ inputs.kind }}
         SIGNING_IDENTITY: ${{ inputs.signing-identity }}
         CERTIFICATE_BASE64: ${{ inputs.certificate-base64 }}
         CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
@@ -106,8 +121,22 @@ runs:
           exit 1
         fi
 
-        if [[ ! -f "${BINARY_PATH}" ]]; then
-          echo "::error title=Binary not found::${BINARY_PATH} does not exist"
+        case "${KIND}" in
+          executable|app|dmg) ;;
+          *)
+            echo "::error title=Invalid kind::kind must be executable, app, or dmg (got '${KIND}')"
+            exit 1
+            ;;
+        esac
+
+        # An .app is a directory; the other two are files.
+        if [[ "${KIND}" == "app" ]]; then
+          if [[ ! -d "${BINARY_PATH}" ]]; then
+            echo "::error title=Bundle not found::${BINARY_PATH} does not exist or is not a bundle"
+            exit 1
+          fi
+        elif [[ ! -f "${BINARY_PATH}" ]]; then
+          echo "::error title=Artifact not found::${BINARY_PATH} does not exist"
           exit 1
         fi
 
@@ -166,28 +195,64 @@ runs:
         echo "Signing with identity: ${IDENTITY}"
 
         # --- Codesign: hardened runtime + secure timestamp --------------------
-        codesign --force --options runtime --timestamp \
-          --sign "${IDENTITY}" \
-          --keychain "${KEYCHAIN}" \
-          "${BINARY_PATH}"
+        sign_one() {
+          codesign --force --options runtime --timestamp \
+            --sign "${IDENTITY}" \
+            --keychain "${KEYCHAIN}" \
+            "$1"
+        }
+
+        if [[ "${KIND}" == "app" ]]; then
+          # Sign nested code first, then the bundle. Deliberately NOT `--deep`:
+          # Apple deprecates it and it signs nested code with the *bundle's*
+          # options, which is how co-located helper executables end up without
+          # a hardened runtime and fail notarization.
+          while IFS= read -r nested; do
+            echo "Signing nested executable: ${nested}"
+            sign_one "${nested}"
+          done < <(find "${BINARY_PATH}/Contents/MacOS" -type f -perm -u+x | sort)
+          sign_one "${BINARY_PATH}"
+        else
+          sign_one "${BINARY_PATH}"
+        fi
+
         codesign --verify --strict --verbose=2 "${BINARY_PATH}"
 
         # --- Notarize (App Store Connect API key) -----------------------------
-        # notarytool needs an archive; zip the bare binary for submission.
+        # A .dmg is submitted as-is; an executable or bundle must be zipped.
         BIN_NAME="$(basename "${BINARY_PATH}")"
-        NOTARIZE_ZIP="${WORK}/${BIN_NAME}.zip"
-        ditto -c -k --keepParent "${BINARY_PATH}" "${NOTARIZE_ZIP}"
+        if [[ "${KIND}" == "dmg" ]]; then
+          NOTARIZE_INPUT="${BINARY_PATH}"
+        else
+          NOTARIZE_INPUT="${WORK}/${BIN_NAME}.zip"
+          ditto -c -k --keepParent "${BINARY_PATH}" "${NOTARIZE_INPUT}"
+        fi
 
-        xcrun notarytool submit "${NOTARIZE_ZIP}" \
+        xcrun notarytool submit "${NOTARIZE_INPUT}" \
           --key "${API_KEY_P8}" \
           --key-id "${API_KEY_ID}" \
           --issuer "${API_ISSUER_ID}" \
           --wait
 
-        # Stapling is intentionally omitted: `stapler` cannot staple a bare
-        # executable. The signed+notarized binary passes Gatekeeper online.
+        # --- Staple, where stapling is possible -------------------------------
+        # `stapler` cannot staple a bare executable, so an `executable` ships
+        # without a ticket and Gatekeeper fetches it online on first run (the
+        # standard path for CLI tools). A bundle or image gets the ticket
+        # attached, so it also works on a machine that is offline.
+        if [[ "${KIND}" == "executable" ]]; then
+          echo "::notice title=Stapling skipped::A bare executable cannot be stapled; Gatekeeper validates it online."
+        else
+          xcrun stapler staple "${BINARY_PATH}"
+          xcrun stapler validate "${BINARY_PATH}"
+        fi
+
         # Confirm the signature still validates as the shipped artifact.
         codesign --verify --strict --verbose=2 "${BINARY_PATH}"
+        # Gatekeeper's own verdict, which is what a user's machine actually
+        # applies. Not run for a dmg: `spctl -a` assesses the mounted app.
+        if [[ "${KIND}" == "app" ]]; then
+          spctl --assess --type execute --verbose=4 "${BINARY_PATH}"
+        fi
 
         echo "signed=true" >> "$GITHUB_OUTPUT"
         echo "::notice title=macOS signing complete::Signed and notarized ${BINARY_PATH}"

@@ -33,7 +33,10 @@ make_unit() {
   rm -rf "$stage"
 }
 
-make_unit aarch64-apple-darwin fugue fugue-mcp
+# The macOS unit carries `fugue-setup` too, because the install unit is shared
+# with the installer, brew, and the macOS app (FUG-233). The bundle must leave
+# it out, so the fixture includes it deliberately.
+make_unit aarch64-apple-darwin fugue fugue-mcp fugue-setup
 make_unit x86_64-pc-windows-msvc fugue.exe fugue-mcp.exe
 make_unit x86_64-unknown-linux-gnu fugue fugue-mcp
 
@@ -58,6 +61,17 @@ npx --yes "@anthropic-ai/mcpb@${MCPB_CLI_VERSION:-2.1.2}" unpack \
 
 [[ -x "$unpacked/server/fugue-mcp" ]] || fail "server/fugue-mcp is not executable"
 [[ -x "$unpacked/server/fugue" ]] || fail "sibling server/fugue is not executable"
+
+# The bundle carries only what it declares. A binary the extension cannot run
+# (the `fugue-setup` GUI) would be dead weight in a file users download through
+# Claude Desktop, so staging must copy in the declared binaries rather than
+# unpacking the whole install unit.
+[[ ! -e "$unpacked/server/fugue-setup" ]] \
+  || fail "bundle shipped fugue-setup; only the declared server binaries belong"
+
+actual_server="$(cd "$unpacked/server" && ls -A | sort | tr '\n' ' ')"
+[[ "$actual_server" == "fugue fugue-mcp " ]] \
+  || fail "unexpected server/ contents: '${actual_server}'"
 
 manifest="$unpacked/manifest.json"
 [[ -f "$manifest" ]] || fail "bundle has no manifest.json at its root"
