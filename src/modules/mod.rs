@@ -13,6 +13,7 @@
 //! - [`DacModule`] - Audio output sink module
 //! - [`AudioFileSink`] - Audio file recording sink module
 //! - [`AudioDriver`] / [`AudioBackend`] - Audio output backends
+//! - [`NullBackend`] - Device-free backend for headless hosts
 //! - [`SampleSlicer`] - Indexed slice playback for loops and breakbeats
 //!
 //! Each module also provides a factory for self-contained construction:
@@ -63,7 +64,7 @@ pub use control_scheduler::{
 #[allow(deprecated)]
 pub use dac::{
     default_sample_rate, AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver,
-    DacModule,
+    DacModule, NullBackend,
 };
 pub use filter::{Filter, FilterControls, FilterType};
 pub use lfo::{Lfo, LfoControls};
