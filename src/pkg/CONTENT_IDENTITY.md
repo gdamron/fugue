@@ -2,8 +2,8 @@
 
 Status: proposed contract for implementation. This document specifies new catalog
 and reference behavior; its examples are not claims that current loaders accept
-the new fields. Tracking: FUG-267; consumers: FUG-251 (developments), FUG-252
-(packages/install), FUG-253 (playable inventions). This decision owns schemas and
+the new fields. Consumers are development discovery, package installation, and
+playable invention discovery. This decision owns schemas and
 examples only, not tools, an index, content migration, or release packaging.
 
 ## Decision
@@ -388,12 +388,12 @@ Discover pad, inspect its four aliases, import via the returned reference, and
 save/reload successfully. Discover and load Bach with all assets/dependencies.
 Confirm In C and the unselected examples are absent from bundled discovery.
 
-FUG-251 owns development discovery and reference import support in the shared
-loader. FUG-252 owns installation/catalog refresh and coordinating offline
-starter staging. FUG-253 owns curated invention discovery and reference load
-support, plus arranging/validating the Bach starter content. These require core
+Development discovery work includes reference import support in the shared
+loader. Package installation work includes catalog refresh and coordinating
+offline starter staging. Playable invention discovery work includes reference
+load support and arranging/validating the Bach starter content. These require core
 library, packs, and release work as appropriate; surface adapters remain thin.
-Before implementation, reconcile these prerequisites with those issues rather
+Before implementation, reconcile these prerequisites with the implementation plans rather
 than silently claiming current package publication or loaders already suffice.
 
 Required consumer tests cover release/no-checkout use, empty roots, unreadable
