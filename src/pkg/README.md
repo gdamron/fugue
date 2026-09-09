@@ -11,6 +11,9 @@ helpers live in [`validate.rs`](validate.rs); the entry points are
 
 ## Schema
 
+For the proposed shared catalog and import contract, including bundled starter
+content, see [Musical content identity and resolution](CONTENT_IDENTITY.md).
+
 | Field         | Type                      | Required | Notes                                                                         |
 | ------------- | ------------------------- | -------- | ----------------------------------------------------------------------------- |
 | `id`          | string                    | yes      | Reverse-DNS, ≥3 lowercase segments (`fugue.ns.name`).                         |
