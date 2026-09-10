@@ -9,6 +9,9 @@ A system for composing algorithmic and generative music.
 - 🎚️ **Live control**: Update scales, rhythms, and synthesis parameters in real-time
 - 🤖 **MCP Server**: Collaborate with LLM agents
 
+See the [module discovery contract](src/rpc/DISCOVERY.md) for compact type
+indexes, configured inspection, live metadata, and response limits.
+
 ## Install
 
 ### Claude Desktop (no terminal required)

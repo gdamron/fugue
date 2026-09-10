@@ -21,6 +21,15 @@ const OUTPUTS: [&str; 3] = ["audio", "audio_left", "audio_right"];
 pub struct YoutubeSinkFactory;
 
 impl ModuleFactory for YoutubeSinkFactory {
+    fn build_for_inspection(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        native::from_json_with_env(config, sample_rate, |name| std::env::var(name).ok())?;
+        Ok(crate::factory::inspection_sink(&INPUTS, &OUTPUTS))
+    }
+
     fn type_id(&self) -> &'static str {
         "youtube_sink"
     }

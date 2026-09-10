@@ -17,7 +17,7 @@ pub(super) fn build(
     RtmpSink::new_native_with_options(config, true, true)
 }
 
-fn from_json_with_env(
+pub(super) fn from_json_with_env(
     config: &Value,
     sample_rate: u32,
     env: impl Fn(&str) -> Option<String>,

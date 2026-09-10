@@ -89,6 +89,49 @@ fn optional_port(port: &str) -> Option<String> {
 }
 
 impl RuntimeSnapshot {
+    /// Captures one existing module without enumerating controls for the rest
+    /// of the graph. Ports come from the instance captured at build/swap time.
+    pub(crate) fn module_snapshot_with_ports(
+        &self,
+        id: &str,
+        module_ports: &IndexMap<String, ModulePorts>,
+    ) -> Result<RuntimeModuleSnapshot, crate::RpcError> {
+        let info = self
+            .state
+            .lock()
+            .unwrap()
+            .modules
+            .get(id)
+            .cloned()
+            .ok_or_else(|| {
+                crate::RpcError::new(
+                    crate::RpcErrorCode::UnknownModule,
+                    format!("unknown module: {id}"),
+                )
+            })?;
+        let ports = module_ports.get(id).ok_or_else(|| {
+            crate::RpcError::new(
+                crate::RpcErrorCode::Internal,
+                format!("missing instance ports for module: {id}"),
+            )
+        })?;
+        let controls = self
+            .control_surfaces
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|surface| snapshot_controls(surface.as_ref()))
+            .unwrap_or_default();
+        Ok(RuntimeModuleSnapshot {
+            info,
+            ports: RuntimePortInfo {
+                inputs: ports.inputs.clone(),
+                outputs: ports.outputs.clone(),
+            },
+            controls,
+        })
+    }
+
     /// Builds a serializable RPC snapshot of topology, controls, and status.
     pub fn full_snapshot(&self) -> RuntimeFullSnapshot {
         self.full_snapshot_with_ports(&IndexMap::new())

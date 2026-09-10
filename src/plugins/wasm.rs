@@ -19,6 +19,14 @@ const CACHE_VERSION: &str = "v1";
 pub struct WasmModuleFactory;
 
 impl ModuleFactory for WasmModuleFactory {
+    fn build_for_inspection(
+        &self,
+        _sample_rate: u32,
+        _config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn Error>> {
+        Err("wasm_module inspection requires a running instance; construction may execute guest code".into())
+    }
+
     fn type_id(&self) -> &'static str {
         "wasm_module"
     }

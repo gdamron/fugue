@@ -31,6 +31,21 @@ use wasm::SharedHandle;
 pub struct AudioFileSinkFactory;
 
 impl ModuleFactory for AudioFileSinkFactory {
+    fn build_for_inspection(
+        &self,
+        _sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        native::inspection_config(config)?;
+        #[cfg(target_arch = "wasm32")]
+        wasm::max_frames(config, _sample_rate)?;
+        Ok(crate::factory::inspection_sink(
+            &inputs::INPUTS,
+            &outputs::OUTPUTS,
+        ))
+    }
+
     fn type_id(&self) -> &'static str {
         "audio_file_sink"
     }

@@ -32,6 +32,18 @@ pub struct RtmpSinkFactory;
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ModuleFactory for RtmpSinkFactory {
+    fn build_for_inspection(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        RtmpSinkConfig::from_json(config, sample_rate)?;
+        Ok(crate::factory::inspection_sink(
+            &inputs::INPUTS,
+            &outputs::OUTPUTS,
+        ))
+    }
+
     fn type_id(&self) -> &'static str {
         "rtmp_sink"
     }

@@ -58,6 +58,19 @@ pub trait ModuleFactory: Send + Sync + 'static {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>>;
 
+    /// Constructs a temporary instance for metadata inspection on the control
+    /// thread. It must not write files, start workers, or activate outputs.
+    /// Factories with such build-time effects must override this method with a
+    /// metadata-only implementation or return an explicit error. Asset reads
+    /// and ordinary in-memory construction are permitted.
+    fn build_for_inspection(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        self.build(sample_rate, config)
+    }
+
     /// Returns true if this factory produces sink modules.
     ///
     /// Sink modules are final destinations in the signal chain (e.g., audio output,
@@ -138,4 +151,50 @@ pub struct ModuleBuildResult {
     /// Sink modules are represented by [`GraphModule::Sink`] so the signal graph
     /// can process and collect output from the same owned object without locks.
     pub sink: Option<()>,
+}
+
+/// Inert representation of a sink whose ports are independent of config.
+/// Only inspection builds may use it; it never activates an output backend.
+pub(crate) fn inspection_sink(
+    inputs: &'static [&'static str],
+    outputs: &'static [&'static str],
+) -> ModuleBuildResult {
+    ModuleBuildResult {
+        module: GraphModule::Module(Box::new(InspectionSink { inputs, outputs })),
+        handles: Vec::new(),
+        control_surface: None,
+        sink: Some(()),
+    }
+}
+
+struct InspectionSink {
+    inputs: &'static [&'static str],
+    outputs: &'static [&'static str],
+}
+
+impl Module for InspectionSink {
+    fn name(&self) -> &str {
+        "inspection sink"
+    }
+    fn inputs(&self) -> &[&str] {
+        self.inputs
+    }
+    fn outputs(&self) -> &[&str] {
+        self.outputs
+    }
+    fn process(&mut self, _: usize) -> bool {
+        panic!("inspection modules cannot process audio")
+    }
+    fn input_block_mut(&mut self, _: usize) -> &mut [f32] {
+        panic!("inspection modules cannot process audio")
+    }
+    fn output_block(&self, _: usize) -> &[f32] {
+        panic!("inspection modules cannot process audio")
+    }
+    fn set_input(&mut self, _: &str, _: f32) -> Result<(), String> {
+        Err("inspection only".into())
+    }
+    fn get_output(&self, _: &str) -> Result<f32, String> {
+        Err("inspection only".into())
+    }
 }

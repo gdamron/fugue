@@ -33,6 +33,20 @@ impl ModuleFactory for DevelopmentFactory {
         "__development__"
     }
 
+    fn build_for_inspection(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        Self {
+            name: self.name.clone(),
+            definition: self.definition.clone(),
+            registry: self.registry.for_inspection(),
+            registered: Arc::new(Mutex::new(self.registered.lock().unwrap().clone())),
+        }
+        .build(sample_rate, config)
+    }
+
     fn build(
         &self,
         sample_rate: u32,

@@ -35,6 +35,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ModuleRegistry {
     factories: HashMap<String, Arc<dyn ModuleFactory>>,
+    inspection_only: bool,
 }
 
 impl ModuleRegistry {
@@ -42,6 +43,7 @@ impl ModuleRegistry {
     pub fn new() -> Self {
         Self {
             factories: HashMap::new(),
+            inspection_only: false,
         }
     }
 
@@ -77,10 +79,23 @@ impl ModuleRegistry {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        self.factories
+        let factory = self
+            .factories
             .get(type_id)
-            .ok_or_else(|| format!("Unknown module type: {}", type_id))?
-            .build(sample_rate, config)
+            .ok_or_else(|| format!("Unknown module type: {}", type_id))?;
+        if self.inspection_only {
+            factory.build_for_inspection(sample_rate, config)
+        } else {
+            factory.build(sample_rate, config)
+        }
+    }
+
+    /// Internal registry view that preserves inspection mode through nested
+    /// development builds. It must never be used to start an audio runtime.
+    pub(crate) fn for_inspection(&self) -> Self {
+        let mut registry = self.clone();
+        registry.inspection_only = true;
+        registry
     }
 
     /// Returns true if a factory is registered for the given type.
