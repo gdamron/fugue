@@ -22,6 +22,7 @@ zip = { version = "8", optional = true, default-features = false, features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sha2 = "0.10"
+fs2 = "0.4"
 cpal = "0.15"
 ureq = { version = "2.10", default-features = true }
 boa_engine = "0.21.1"

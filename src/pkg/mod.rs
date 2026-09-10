@@ -6,6 +6,7 @@
 //! CLI, and MCP server so they all read the same structs.
 
 pub mod audio_asset;
+pub mod content;
 pub mod lock;
 pub mod manifest;
 pub mod resolve;

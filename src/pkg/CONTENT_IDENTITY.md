@@ -1,8 +1,8 @@
 # Musical content identity and resolution
 
-Status: proposed contract for implementation. This document specifies new catalog
-and reference behavior; its examples are not claims that current loaders accept
-the new fields. Consumers are development discovery, package installation, and
+Status: development list/detail discovery and development reference imports are
+implemented. Package-install tools and playable-invention discovery remain
+separate implementation work. This document specifies the shared target contract. Consumers are development discovery, package installation, and
 playable invention discovery. This decision owns schemas and
 examples only, not tools, an index, content migration, or release packaging.
 
@@ -401,3 +401,26 @@ roots, duplicate titles/types/identities, exact-version selection, dependency
 base directories and cycles, workspace staleness, install rollback/refresh,
 pagination across generations, round-trip save/load, and unchanged live audio
 after failed loads. Content readiness also requires a listening review of Bach.
+
+
+## Development implementation
+
+The daemon exposes `list_developments` and `describe_development` RPC commands,
+with matching MCP tools. RPC requests nest catalog parameters under `query` to
+keep the catalog schema version separate from the transport schema version.
+The MCP tools take the catalog parameters directly. Discovery refreshes from
+disk on each call and expires cursors when the session's catalog changes.
+
+The native catalog additionally bounds traversal to 64 levels, 10,000 candidate
+entries or dependency files, and 16 MiB per document/asset read. Invalid candidates
+are diagnostic entries rather than usable references. Lookup requires exact
+references; display titles are never accepted as selectors.
+
+The CLI embeds a generated snapshot of the five instrument packages from the
+canonical packs repository and stages it offline before the daemon listener
+opens. Existing package versions are immutable. Per-version receipts under
+`packs/.receipts` retain existing `LockedPackage` metadata and bundled provenance;
+they do not add a lookup path or registry. Install and catalog reads share
+`packs/.catalog.lock`, preventing observation of incomplete install transactions.
+Legacy installs without receipts still use available lock integrity; reinstalling
+identical bytes records a receipt. The Bach starter remains separate work.

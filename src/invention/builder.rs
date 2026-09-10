@@ -293,7 +293,16 @@ impl InventionBuilder {
         &mut self,
         invention: &Invention,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut aliases = std::collections::HashSet::new();
+        let primitives = ModuleRegistry::default();
         for development in &invention.developments {
+            if !aliases.insert(&development.name) || primitives.has_type(&development.name) {
+                return Err(format!(
+                    "duplicate_type_name: Choose another development alias: {}",
+                    development.name
+                )
+                .into());
+            }
             {
                 let mut registered = self.registered.lock().unwrap();
                 // The shared `registered` set is a guard across the whole
@@ -335,6 +344,20 @@ pub(crate) fn load_development_definition(
     invention: &Invention,
     development: &super::format::DevelopmentSpec,
 ) -> Result<Invention, Box<dyn std::error::Error>> {
+    if let Some(reference) = &development.reference {
+        if development.path.is_some() || development.definition.is_some() {
+            return Err(
+                "invalid_request: Development requires exactly one of path, definition or ref"
+                    .into(),
+            );
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        return Ok(
+            crate::pkg::content::ContentRoots::from_environment()?.load_development(reference)?
+        );
+        #[cfg(target_arch = "wasm32")]
+        return Err("Catalog references require a daemon filesystem".into());
+    }
     match (&development.path, &development.definition) {
         (Some(path), None) => {
             let resolved = resolve_development_path(invention.source_path.as_deref(), path)?;
@@ -371,7 +394,9 @@ pub(crate) fn resolve_invention_assets(
 
 /// The `$asset` half of [`resolve_invention_assets`]: loads declared JSON
 /// assets and expands `$asset` references in module configs.
-fn resolve_json_assets(invention: &mut Invention) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn resolve_json_assets(
+    invention: &mut Invention,
+) -> Result<(), Box<dyn std::error::Error>> {
     if invention.assets.is_empty() {
         return Ok(());
     }

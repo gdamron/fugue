@@ -92,7 +92,7 @@ pub(crate) fn resolve_audio_assets(
 /// `asset` value, plus each `asset` value inside entries of a top-level
 /// `samples` array (multi-sample modules like `sample_kit`) or `zones`
 /// array (`sample_instrument`).
-fn module_asset_values(
+pub(crate) fn module_asset_values(
     config: &mut serde_json::Value,
 ) -> impl Iterator<Item = &mut serde_json::Value> {
     let (asset, samples, zones) = match config.as_object_mut() {

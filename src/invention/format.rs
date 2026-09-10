@@ -97,6 +97,10 @@ pub struct DevelopmentSpec {
     #[serde(default)]
     pub path: Option<String>,
 
+    /// Exact daemon-resolvable catalog reference, exclusive with path/definition.
+    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<crate::pkg::content::ContentRef>,
+
     /// Optional inline development definition.
     #[serde(default)]
     pub definition: Option<Box<Invention>>,

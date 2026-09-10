@@ -192,6 +192,14 @@ pub enum RpcCommand {
     },
     InstallPackage(PackageInstallRequest),
     ListPackages,
+    /// Discover available developments without registering or playing them.
+    ListDevelopments {
+        query: crate::pkg::content::ContentListQuery,
+    },
+    /// Inspect an exact reusable development and its authored aliases.
+    DescribeDevelopment {
+        query: crate::pkg::content::ContentDetailQuery,
+    },
     /// Discover registered types; defaults to a terse index.
     DescribeModuleTypes(ModuleTypeQuery),
     /// Inspect type defaults, supplied config, or an existing module instance.
@@ -255,6 +263,18 @@ pub enum RpcResponsePayload {
         meters: Vec<MeterReading>,
     },
     Packages(PackageList),
+    /// Available development page, independent of the current registry.
+    Developments {
+        catalog: crate::pkg::content::ContentPage,
+    },
+    /// Exact development detail.
+    DevelopmentDetail {
+        detail: crate::pkg::content::ContentDetail,
+    },
+    /// Versioned content error envelope used by musical-content consumers.
+    ContentError {
+        error: crate::pkg::content::ContentError,
+    },
     ModuleTypes {
         discovery: ModuleTypeList,
     },
