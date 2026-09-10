@@ -35,7 +35,7 @@ pub(super) fn build(
     AudioFileSink::new_wasm(sample_rate, soft_clip, monitor, max_frames)
 }
 
-fn max_frames(
+pub(super) fn max_frames(
     config: &serde_json::Value,
     sample_rate: u32,
 ) -> Result<usize, Box<dyn std::error::Error>> {

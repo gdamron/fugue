@@ -31,10 +31,7 @@ pub(super) fn build(
     config: &serde_json::Value,
     sample_rate: u32,
 ) -> Result<(AudioFileSink, AudioFileSinkHandle), Box<dyn std::error::Error>> {
-    let path = config
-        .get("path")
-        .and_then(|value| value.as_str())
-        .ok_or("audio_file_sink requires config.path")?;
+    let (path, buffer_frames) = inspection_config(config)?;
     let soft_clip = config
         .get("soft_clip")
         .and_then(|value| value.as_bool())
@@ -43,12 +40,6 @@ pub(super) fn build(
         .get("monitor")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    let buffer_frames = config
-        .get("buffer_frames")
-        .and_then(|value| value.as_u64())
-        .map(|value| value as usize)
-        .unwrap_or(DEFAULT_BUFFER_FRAMES);
-
     let format = OutputFormat::from_path(path);
     AudioFileSink::new(
         path.into(),
@@ -58,6 +49,25 @@ pub(super) fn build(
         monitor,
         buffer_frames,
     )
+}
+
+/// Validates construction parameters without opening the destination file.
+pub(super) fn inspection_config(
+    config: &serde_json::Value,
+) -> Result<(&str, usize), Box<dyn std::error::Error>> {
+    let path = config
+        .get("path")
+        .and_then(|value| value.as_str())
+        .ok_or("audio_file_sink requires config.path")?;
+    let buffer_frames = config
+        .get("buffer_frames")
+        .and_then(|value| value.as_u64())
+        .map(|value| value as usize)
+        .unwrap_or(DEFAULT_BUFFER_FRAMES);
+    if buffer_frames == 0 {
+        return Err("audio_file_sink buffer_frames must be greater than zero".into());
+    }
+    Ok((path, buffer_frames))
 }
 
 /// Container format for rendered audio, chosen from the output path extension.

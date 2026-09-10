@@ -9,7 +9,13 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+mod discovery;
 mod identity;
+pub use discovery::{
+    check_discovery_size, DescribeModuleQuery, MetadataSource, ModuleDescription, ModuleTypeDetail,
+    ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList, ModuleTypeQuery, RegistryScope, TypeDetail,
+    MAX_DISCOVERY_RESPONSE_BYTES, MAX_DISCOVERY_TYPES, MODULE_DISCOVERY_SCHEMA_VERSION,
+};
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
 
 /// Current runtime RPC schema version.
@@ -186,7 +192,10 @@ pub enum RpcCommand {
     },
     InstallPackage(PackageInstallRequest),
     ListPackages,
-    DescribeModuleTypes,
+    /// Discover registered types; defaults to a terse index.
+    DescribeModuleTypes(ModuleTypeQuery),
+    /// Inspect type defaults, supplied config, or an existing module instance.
+    DescribeModule(DescribeModuleQuery),
     /// Ask the shared daemon to persist its session and shut down cleanly.
     ///
     /// Because a spawned shared daemon outlives the client that started it (so
@@ -246,7 +255,12 @@ pub enum RpcResponsePayload {
         meters: Vec<MeterReading>,
     },
     Packages(PackageList),
-    ModuleTypes(ModuleTypeList),
+    ModuleTypes {
+        discovery: ModuleTypeList,
+    },
+    ModuleDescription {
+        description: ModuleDescription,
+    },
     Reload(ReloadOutcome),
     Saved(SaveReport),
     /// The daemon's identity, in reply to [`RpcRequestPayload::Hello`]. Nested
@@ -467,81 +481,6 @@ impl PackageList {
     }
 }
 
-/// Built-in module type discovery response.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
-pub struct ModuleTypeList {
-    pub module_types: Vec<ModuleTypeInfo>,
-}
-
-impl ModuleTypeList {
-    /// Returns port and control metadata for module types in the built-in registry.
-    pub fn built_in(registry: &ModuleRegistry, sample_rate: u32) -> Self {
-        let mut type_names: Vec<&str> = registry.types().collect();
-        type_names.sort();
-
-        let module_types = type_names
-            .into_iter()
-            .map(|type_name| {
-                let config = serde_json::Value::Null;
-                match registry.build(type_name, sample_rate, &config) {
-                    Ok(result) => {
-                        let module = result.module.module();
-                        ModuleTypeInfo {
-                            type_name: type_name.to_string(),
-                            inputs: module
-                                .inputs()
-                                .iter()
-                                .map(|port| port.to_string())
-                                .collect(),
-                            outputs: module
-                                .outputs()
-                                .iter()
-                                .map(|port| port.to_string())
-                                .collect(),
-                            controls: result
-                                .control_surface
-                                .as_ref()
-                                .map(|surface| surface.controls())
-                                .unwrap_or_default(),
-                            is_sink: registry.is_sink(type_name),
-                        }
-                    }
-                    Err(_) => ModuleTypeInfo {
-                        type_name: type_name.to_string(),
-                        inputs: registry
-                            .factory_input_ports(type_name)
-                            .unwrap_or_default()
-                            .iter()
-                            .map(|port| port.to_string())
-                            .collect(),
-                        outputs: registry
-                            .factory_output_ports(type_name)
-                            .unwrap_or_default()
-                            .iter()
-                            .map(|port| port.to_string())
-                            .collect(),
-                        controls: Vec::new(),
-                        is_sink: registry.is_sink(type_name),
-                    },
-                }
-            })
-            .collect();
-
-        Self { module_types }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
-pub struct ModuleTypeInfo {
-    pub type_name: String,
-    pub inputs: Vec<String>,
-    pub outputs: Vec<String>,
-    pub controls: Vec<ControlMeta>,
-    pub is_sink: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct PackageInfo {
@@ -583,6 +522,10 @@ impl RpcError {
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum RpcErrorCode {
+    /// The discovery request contains an invalid selector or exceeds an input limit.
+    InvalidRequest,
+    /// The discovery response exceeds its documented size bound.
+    ResponseTooLarge,
     IncompatibleSchemaVersion,
     AudioThreadStopped,
     UnknownModuleType,

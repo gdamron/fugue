@@ -31,14 +31,13 @@ pub use factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 pub use registry::ModuleRegistry;
 pub use rpc::{
     validate_schema_version, verify_daemon_identity, BuildFingerprint, ControlWrite,
-    DaemonIdentity, IdentityMismatch, ModuleTypeInfo, ModuleTypeList, PackageInfo,
-    PackageInstallRequest,
-    EventPage, MeterReading, PackageList, PackageSource, ReloadMode, ReloadOutcome, RpcCommand,
-    RpcError,
-    RpcErrorCode, RpcEvent, RpcEventPayload, RpcEventSink, RpcRequest, RpcRequestPayload,
-    RpcResponse, RpcResponsePayload, RpcSubscriptionTopic, RuntimeControlSnapshot,
-    RuntimeFullSnapshot, RuntimeModuleSnapshot, RuntimePortInfo, SaveReport, SeqEvent,
-    SinkStatusState, RPC_SCHEMA_VERSION,
+    DaemonIdentity, DescribeModuleQuery, EventPage, IdentityMismatch, MetadataSource, MeterReading,
+    ModuleDescription, ModuleTypeDetail, ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList,
+    ModuleTypeQuery, PackageInfo, PackageInstallRequest, PackageList, PackageSource, RegistryScope,
+    ReloadMode, ReloadOutcome, RpcCommand, RpcError, RpcErrorCode, RpcEvent, RpcEventPayload,
+    RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse, RpcResponsePayload,
+    RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot,
+    RuntimePortInfo, SaveReport, SeqEvent, SinkStatusState, TypeDetail, RPC_SCHEMA_VERSION,
 };
 
 // Re-export modules

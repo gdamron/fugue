@@ -87,7 +87,12 @@ fn rpc_commands_round_trip_json() {
             version: Some("1.2.3".to_string()),
         }),
         RpcCommand::ListPackages,
-        RpcCommand::DescribeModuleTypes,
+        RpcCommand::DescribeModuleTypes(ModuleTypeQuery::default()),
+        RpcCommand::DescribeModule(DescribeModuleQuery {
+            module_type: Some("mixer".into()),
+            config: Some(serde_json::json!({"channels":8})),
+            ..Default::default()
+        }),
     ];
 
     for command in commands {
@@ -296,31 +301,33 @@ fn built_in_packages_list_registry_types() {
 }
 
 #[test]
-fn built_in_module_types_include_ports_and_controls() {
+fn full_discovery_exposes_metadata_or_an_explicit_error() {
     let registry = ModuleRegistry::default();
-    let module_types = ModuleTypeList::built_in(&registry, 44_100);
-    let oscillator = module_types
-        .module_types
-        .iter()
-        .find(|module_type| module_type.type_name == "oscillator")
-        .expect("oscillator module type is listed");
-    assert!(oscillator.outputs.contains(&"audio".to_string()));
-    assert!(oscillator
-        .controls
-        .iter()
-        .any(|control| control.key == "frequency"));
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let audio_file_sink = module_types
-            .module_types
-            .iter()
-            .find(|module_type| module_type.type_name == "audio_file_sink")
-            .expect("audio_file_sink module type is listed");
-        assert!(audio_file_sink.is_sink);
-        assert!(audio_file_sink.inputs.contains(&"audio".to_string()));
-        assert!(audio_file_sink.outputs.contains(&"audio_left".to_string()));
+    let catalog = ModuleTypeList::from_registry(
+        &registry,
+        44_100,
+        RegistryScope::Builtins,
+        &ModuleTypeQuery {
+            types: Some(vec!["oscillator".into(), "audio_file_sink".into()]),
+            detail: TypeDetail::Full,
+        },
+    )
+    .unwrap();
+    let entries = catalog.details.unwrap();
+    assert!(
+        matches!(&entries[0], ModuleTypeDetail::Unavailable { type_name, error } if type_name == "audio_file_sink" && error.code == RpcErrorCode::ModuleBuildFailed)
+    );
+    match &entries[1] {
+        ModuleTypeDetail::Available { info } => {
+            assert_eq!(info.type_name, "oscillator");
+            assert!(info.outputs.contains(&"audio".into()));
+            assert!(info.controls.iter().any(|c| c.key == "frequency"));
+        }
+        _ => panic!("oscillator defaults should be inspectable"),
     }
+    let json = serde_json::to_value(&entries[0]).unwrap();
+    assert!(json.get("controls").is_none());
+    assert!(json.get("inputs").is_none());
 }
 
 #[test]
