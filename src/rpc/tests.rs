@@ -99,6 +99,29 @@ fn rpc_commands_round_trip_json() {
                 },
             },
         },
+        RpcCommand::ListExamples {
+            query: crate::pkg::content::ContentListQuery::default(),
+        },
+        RpcCommand::DescribeExample {
+            query: crate::pkg::content::ContentDetailQuery {
+                schema_version: 1,
+                reference: crate::pkg::content::ContentRef::Package {
+                    package: "fugue.starter.example".into(),
+                    version: "1.0.0".into(),
+                },
+            },
+        },
+        RpcCommand::LoadExample {
+            query: crate::pkg::content::ContentDetailQuery {
+                schema_version: 1,
+                reference: crate::pkg::content::ContentRef::Package {
+                    package: "fugue.starter.example".into(),
+                    version: "1.0.0".into(),
+                },
+            },
+            stop_on_end: true,
+            end_source: Some("melody".into()),
+        },
         RpcCommand::DescribeModuleTypes(ModuleTypeQuery::default()),
         RpcCommand::DescribeModule(DescribeModuleQuery {
             module_type: Some("mixer".into()),

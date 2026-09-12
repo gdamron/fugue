@@ -200,4 +200,13 @@ impl ContentCatalog {
         }
         Ok(detail)
     }
+
+    /// Revalidate and prepare an exact catalog invention for playback.
+    pub fn load_invention(&mut self, query: &ContentDetailQuery) -> Result<Invention> {
+        if query.schema_version != 1 {
+            return Err(err("invalid_request", "Use schema_version 1"));
+        }
+        self.refresh()?;
+        self.roots.load_invention(&query.reference)
+    }
 }
