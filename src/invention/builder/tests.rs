@@ -84,6 +84,7 @@ fn root_invention_with_voice(voice: DevelopmentSpec) -> Invention {
 #[test]
 fn builds_inline_development_as_module() {
     let invention = root_invention_with_voice(DevelopmentSpec {
+        reference: None,
         name: "voice".to_string(),
         path: None,
         definition: Some(Box::new(voice_development())),
@@ -105,6 +106,7 @@ fn builds_inline_development_as_module() {
 #[test]
 fn development_controls_alias_internal_surface() {
     let invention = root_invention_with_voice(DevelopmentSpec {
+        reference: None,
         name: "voice".to_string(),
         path: None,
         definition: Some(Box::new(voice_development())),
@@ -183,6 +185,7 @@ fn development_fans_out_exposed_inputs_and_caches_outputs() {
         title: Some("root".to_string()),
         description: None,
         developments: vec![DevelopmentSpec {
+            reference: None,
             name: "fanout".to_string(),
             path: None,
             definition: Some(Box::new(development)),
@@ -227,6 +230,7 @@ fn resolves_relative_development_paths() {
     std::fs::write(&development_path, voice_development().to_json().unwrap()).unwrap();
 
     let root = root_invention_with_voice(DevelopmentSpec {
+        reference: None,
         name: "voice".to_string(),
         path: Some("voice.json".to_string()),
         definition: None,
@@ -497,6 +501,7 @@ fn supports_nested_developments() {
         title: Some("outer".to_string()),
         description: None,
         developments: vec![DevelopmentSpec {
+            reference: None,
             name: "inner_voice".to_string(),
             path: None,
             definition: Some(Box::new(inner)),
@@ -518,6 +523,7 @@ fn supports_nested_developments() {
         source_path: None,
     };
     let root = root_invention_with_voice(DevelopmentSpec {
+        reference: None,
         name: "voice".to_string(),
         path: None,
         definition: Some(Box::new(outer)),
@@ -578,6 +584,7 @@ fn duplicate_development_control_keys_fan_out_writes() {
         source_path: None,
     };
     let root = root_invention_with_voice(DevelopmentSpec {
+        reference: None,
         name: "voice".to_string(),
         path: None,
         definition: Some(Box::new(development)),
@@ -643,6 +650,7 @@ fn multiple_instances_of_nested_developments_build() {
         title: Some("outer".to_string()),
         description: None,
         developments: vec![DevelopmentSpec {
+            reference: None,
             name: "inner_voice".to_string(),
             path: None,
             definition: Some(Box::new(inner)),
@@ -669,6 +677,7 @@ fn multiple_instances_of_nested_developments_build() {
         title: Some("root".to_string()),
         description: None,
         developments: vec![DevelopmentSpec {
+            reference: None,
             name: "outer_voice".to_string(),
             path: None,
             definition: Some(Box::new(outer)),
