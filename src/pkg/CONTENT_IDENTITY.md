@@ -33,11 +33,11 @@ Proposed initial coordinates (reserved by this decision, not published today):
 
 | ID | Version | Kind | Content source |
 | --- | --- | --- | --- |
-| `fugue.instruments.piano` | `0.1.0` | development | `examples/developments/piano.json` |
-| `fugue.instruments.marimba` | `0.1.0` | development | `examples/developments/marimba.json` |
-| `fugue.instruments.vibraphone` | `0.1.0` | development | `examples/developments/vibraphone.json` |
-| `fugue.instruments.pluck` | `0.1.0` | development | `examples/developments/pluck.json` |
-| `fugue.instruments.pad` | `0.1.0` | development | `examples/developments/pad.json` |
+| `fugue.instruments.piano` | `2026.9.0` | development | `examples/developments/piano.json` |
+| `fugue.instruments.marimba` | `2026.9.0` | development | `examples/developments/marimba.json` |
+| `fugue.instruments.vibraphone` | `2026.9.0` | development | `examples/developments/vibraphone.json` |
+| `fugue.instruments.pluck` | `2026.9.0` | development | `examples/developments/pluck.json` |
+| `fugue.instruments.pad` | `2026.9.0` | development | `examples/developments/pad.json` |
 | `fugue.starter.bwv772` | `0.1.0` | invention | Bach score plus a new playable arrangement |
 
 The Bach fixture is score data, not yet a runnable invention. Arrangement and
@@ -99,10 +99,10 @@ Use the entry document's title for `name`, falling back to the package ID or
 workspace path when absent. Package summaries come from the manifest; workspace
 summaries come from the document description.
 
-Package reference: `{ "package": "fugue.instruments.pad", "version": "0.1.0" }`.
+Package reference: `{ "package": "fugue.instruments.pad", "version": "2026.9.0" }`.
 Both strings are required, with no other fields. `version` is an exact SemVer,
 not a requirement. The loader obtains the entry path and kind from the manifest.
-It must use an exact requirement internally (`=0.1.0`), since a bare `0.1.0`
+It must use an exact requirement internally (`=2026.9.0`), since a bare `2026.9.0`
 in existing package requirement syntax has caret semantics. Package entry paths
 are implementation metadata, never something the agent must construct.
 
@@ -194,12 +194,12 @@ Illustrative response containing the selected pad (other entries omitted here):
   "generation": "session-a:7",
   "items": [{
     "id": "fugue.instruments.pad",
-    "version": "0.1.0",
+    "version": "2026.9.0",
     "kind": "development",
     "name": "Pad Voice",
     "summary": "A slow, sustained pad with a soft lowpass body and gentle LFO motion in the filter.",
     "source": "bundled",
-    "ref": {"package":"fugue.instruments.pad","version":"0.1.0"}
+    "ref": {"package":"fugue.instruments.pad","version":"2026.9.0"}
   }],
   "next_cursor": null
 }
@@ -215,7 +215,7 @@ cursor before exceeding it. If one entry cannot fit, return `response_too_large`
 Detail request:
 
 ```json
-{"schema_version":1,"ref":{"package":"fugue.instruments.pad","version":"0.1.0"}}
+{"schema_version":1,"ref":{"package":"fugue.instruments.pad","version":"2026.9.0"}}
 ```
 
 Detail returns `schema_version`, `generation`, the complete list `entry`, and
@@ -254,7 +254,7 @@ clock triggers a sustained A3 pad through the bundled instrument:
   "title":"Pad study",
   "developments":[{
     "name":"my_pad",
-    "ref":{"package":"fugue.instruments.pad","version":"0.1.0"}
+    "ref":{"package":"fugue.instruments.pad","version":"2026.9.0"}
   }],
   "modules":[
     {"id":"clock","type":"clock","config":{"bpm":60,"gate_duration":0.5}},
@@ -416,9 +416,11 @@ entries or dependency files, and 16 MiB per document/asset read. Invalid candida
 are diagnostic entries rather than usable references. Lookup requires exact
 references; display titles are never accepted as selectors.
 
-The CLI embeds a generated snapshot of the five instrument packages from the
-canonical packs repository and stages it offline before the daemon listener
-opens. Existing package versions are immutable. Per-version receipts under
+The CLI generates a hash-pinned snapshot of the five instrument packages from
+the canonical packs repository at build time and embeds it; no copy lives in the
+host repository. Every host that builds inventions stages that selection offline
+before it resolves a reference, and a staging failure warns rather than
+preventing playback. Existing package versions are immutable. Per-version receipts under
 `packs/.receipts` retain existing `LockedPackage` metadata and bundled provenance;
 they do not add a lookup path or registry. Install and catalog reads share
 `packs/.catalog.lock`, preventing observation of incomplete install transactions.

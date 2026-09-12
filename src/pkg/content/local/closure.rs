@@ -309,6 +309,12 @@ impl ContentRoots {
         manifest: &PackageManifest,
         closure: &mut Closure,
     ) -> Result<()> {
+        let key = format!("package:{}@{}", manifest.id, manifest.version);
+        // One hash per package per closure: a multi-zone sample instrument names
+        // the same sample library once per zone.
+        if closure.fingerprints.contains_key(&key) {
+            return Ok(());
+        }
         contained(&self.packages, root)?;
         let integrity = pkg::compute_integrity(root).map_err(|e| err("catalog_unavailable", e))?;
         if let Some(receipt) = read_receipt(&self.packages, &manifest.id, &manifest.version)? {
@@ -338,10 +344,7 @@ impl ContentRoots {
                 }
             }
         }
-        closure.fingerprints.insert(
-            format!("package:{}@{}", manifest.id, manifest.version),
-            integrity,
-        );
+        closure.fingerprints.insert(key, integrity);
         Ok(())
     }
 }
