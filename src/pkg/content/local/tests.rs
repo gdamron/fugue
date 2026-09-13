@@ -33,6 +33,24 @@ fn package(
         version: version.into(),
     }
 }
+fn invention_package(
+    roots: &ContentRoots,
+    id: &str,
+    version: &str,
+    document: &serde_json::Value,
+    deps: &[&str],
+) -> ContentRef {
+    let root = roots.packages.join(id).join(version);
+    write(
+        &root.join("fugue.pkg.json"),
+        &json!({"id":id,"version":version,"kind":"invention","license":"MIT","authors":[{"name":"Test"}],"targets":["external-agent"],"deps":deps,"entry":{"invention":"example.json"}}),
+    );
+    write(&root.join("example.json"), document);
+    ContentRef::Package {
+        package: id.into(),
+        version: version.into(),
+    }
+}
 fn query(reference: ContentRef) -> ContentDetailQuery {
     ContentDetailQuery {
         schema_version: 1,
@@ -177,6 +195,64 @@ fn detail_preserves_pad_aliases_and_can_build_without_checkout_paths() {
     assert_eq!(
         serde_json::to_value(&invention).unwrap()["developments"][0]["ref"],
         serde_json::to_value(reference).unwrap()
+    );
+}
+
+#[test]
+fn exact_invention_reference_loads_dependencies_and_assets_without_checkout_paths() {
+    let (_temp, roots) = roots();
+    let piano = package(&roots, "fugue.instruments.piano", "1.0.0", &voice());
+    let example = json!({
+        "title":"Bundled study",
+        "assets":{"score":{"path":"scores/study.json"}},
+        "developments":[{"name":"piano","ref":piano}],
+        "modules":[
+            {"id":"voice","type":"piano"},
+            {"id":"out","type":"dac"}
+        ],
+        "connections":[{"from":"voice","from_port":"audio","to":"out","to_port":"audio"}]
+    });
+    let reference = invention_package(
+        &roots,
+        "fugue.starter.study",
+        "1.0.0",
+        &example,
+        &["fugue.instruments.piano@=1.0.0"],
+    );
+    write(
+        &roots
+            .packages
+            .join("fugue.starter.study/1.0.0/scores/study.json"),
+        &json!({"cells":[]}),
+    );
+    let mut catalog = ContentCatalog::new(roots.clone(), "session");
+    let page = catalog
+        .list(&ContentListQuery {
+            kind: Some(ContentKind::Invention),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(page.items.len(), 1, "{:?}", page.diagnostics);
+    assert_eq!(page.items[0].reference, reference);
+    let detail = catalog.detail(&query(reference.clone())).unwrap();
+    assert!(detail.interface.is_none());
+    assert_eq!(detail.assets, ["scores/study.json"]);
+    assert_eq!(detail.dependencies, [piano]);
+
+    let loaded = catalog.load_invention(&query(reference)).unwrap();
+    assert!(loaded.developments[0].reference.is_some());
+    assert!(loaded.developments[0].definition.is_none());
+    crate::pkg::audio_asset::with_packs_dir(&roots.packages, || {
+        crate::InventionBuilder::new(48_000).build(loaded).unwrap();
+    });
+
+    let development = package(&roots, "fugue.test.not-an-example", "1.0.0", &voice());
+    assert_eq!(
+        catalog
+            .load_invention(&query(development))
+            .unwrap_err()
+            .code,
+        "kind_mismatch"
     );
 }
 

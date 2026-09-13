@@ -200,6 +200,22 @@ pub enum RpcCommand {
     DescribeDevelopment {
         query: crate::pkg::content::ContentDetailQuery,
     },
+    /// Discover complete playable inventions without loading them.
+    ListExamples {
+        query: crate::pkg::content::ContentListQuery,
+    },
+    /// Inspect an exact playable invention without starting playback.
+    DescribeExample {
+        query: crate::pkg::content::ContentDetailQuery,
+    },
+    /// Resolve an exact daemon-local invention reference and start playback.
+    LoadExample {
+        query: crate::pkg::content::ContentDetailQuery,
+        #[serde(default)]
+        stop_on_end: bool,
+        #[serde(default)]
+        end_source: Option<String>,
+    },
     /// Discover registered types; defaults to a terse index.
     DescribeModuleTypes(ModuleTypeQuery),
     /// Inspect type defaults, supplied config, or an existing module instance.
@@ -269,6 +285,14 @@ pub enum RpcResponsePayload {
     },
     /// Exact development detail.
     DevelopmentDetail {
+        detail: crate::pkg::content::ContentDetail,
+    },
+    /// Available playable invention page, independent of the running graph.
+    Examples {
+        catalog: crate::pkg::content::ContentPage,
+    },
+    /// Exact playable invention detail.
+    ExampleDetail {
         detail: crate::pkg::content::ContentDetail,
     },
     /// Versioned content error envelope used by musical-content consumers.

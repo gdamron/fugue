@@ -57,6 +57,23 @@ impl ContentRoots {
         Ok(document)
     }
 
+    /// Revalidate and prepare an exact invention reference for playback.
+    pub fn load_invention(&self, reference: &ContentRef) -> Result<Invention> {
+        let _guard = package_read_guard(&self.packages)?;
+        validate_reference(reference)?;
+        let resolved = self.inspect(reference)?;
+        if resolved.entry.kind != ContentKind::Invention {
+            return Err(err("kind_mismatch", "Select an invention reference"));
+        }
+        if self.inspect(reference)?.fingerprints != resolved.fingerprints {
+            return Err(err(
+                "stale_reference",
+                "Content changed while loading; inspect and retry",
+            ));
+        }
+        Ok(resolved.document)
+    }
+
     fn prepare_definition(&self, document: &mut Invention, depth: usize) -> Result<()> {
         if depth > 64 {
             return Err(err(
