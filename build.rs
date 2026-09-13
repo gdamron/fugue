@@ -24,7 +24,9 @@ fn main() {
     if let Some(sha) = git(&["rev-parse", "--short=12", "HEAD"]) {
         println!("cargo:rustc-env=FUGUE_GIT_SHA={sha}");
     }
-    if let Some(status) = git(&["status", "--porcelain"]) {
+    // Cargo marks a git dependency's checkout complete with an untracked
+    // `.cargo-ok`; counting it would report every dependent build as dirty.
+    if let Some(status) = git(&["status", "--porcelain", "--", ":(exclude).cargo-ok"]) {
         let dirty = if status.is_empty() { "0" } else { "1" };
         println!("cargo:rustc-env=FUGUE_GIT_DIRTY={dirty}");
     }
