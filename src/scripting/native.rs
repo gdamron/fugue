@@ -10,7 +10,7 @@ use boa_engine::{js_string, Context, JsResult, JsString, JsValue, NativeFunction
 use serde_json::json;
 
 use crate::invention::{RuntimeController, RuntimeModuleInfo};
-use crate::ControlValue;
+use crate::{ControlValue, ControlWriteIntent};
 
 mod js_interop;
 use js_interop::*;
@@ -245,9 +245,12 @@ fn install_graph_api(
             let module_id = string_arg(args.first(), context, "module_id")?;
             let key = string_arg(args.get(1), context, "key")?;
             let value = control_from_js(args.get(2), context)?;
+            // A conducting script performs: its writes are live gestures, not
+            // the invention's new starting state, so they stay out of the
+            // retained document and out of the authoring revision (FUG-266).
             set_control_controller
                 .snapshot
-                .set_control(&module_id, &key, value)
+                .set_control_with_intent(&module_id, &key, value, ControlWriteIntent::Perform)
                 .map_err(|err| js_err(err.to_string()))?;
             Ok(JsValue::undefined())
         })

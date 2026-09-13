@@ -2,7 +2,10 @@ use crate::factory::ModuleBuildResult;
 use crate::invention::graph::{GraphCommand, SignalGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
-use crate::{ControlMeta, ControlValue, ControlWrite, RpcEvent, RpcEventPayload, RpcEventSink};
+use crate::{
+    ControlMeta, ControlValue, ControlWrite, ControlWriteIntent, RpcEvent, RpcEventPayload,
+    RpcEventSink,
+};
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::HashMap;
@@ -34,15 +37,37 @@ pub trait OrchestrationRuntime {
         value: ControlValue,
     ) -> Result<(), GraphCommandError>;
 
+    /// Updates a control value, recording it in the retained document only
+    /// when the write is meant as the module's new starting state (FUG-266).
+    ///
+    /// Defaults to [`Self::set_control`] — authoring — for runtimes with no
+    /// concurrent clients to conflict with, notably offline render.
+    fn set_control_with_intent(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+        intent: ControlWriteIntent,
+    ) -> Result<(), GraphCommandError> {
+        let _ = intent;
+        self.set_control(module_id, key, value)
+    }
+
     /// Applies a batch of control writes in order within one call, so a
     /// multi-control conducting gesture lands together rather than smeared
-    /// across separate requests. Each write goes through [`Self::set_control`]
-    /// (same coercion and document recording). Fails on the first bad write;
+    /// across separate requests. Each write carries its own intent and goes
+    /// through [`Self::set_control_with_intent`] (same coercion). Fails on the
+    /// first bad write;
     /// writes already applied before it stand, since control writes have no
     /// rollback — validate keys with `list_controls` first if that matters.
     fn set_controls(&self, writes: &[ControlWrite]) -> Result<(), GraphCommandError> {
         for write in writes {
-            self.set_control(&write.module_id, &write.key, write.value.clone())?;
+            self.set_control_with_intent(
+                &write.module_id,
+                &write.key,
+                write.value.clone(),
+                write.intent,
+            )?;
         }
         Ok(())
     }
@@ -148,24 +173,69 @@ impl RuntimeSnapshot {
             .map_err(GraphCommandError::ControlError)
     }
 
-    /// Sets the current value of a module control, records it in the retained
-    /// document so the change survives a save/rebuild, and announces it as a
-    /// [`RpcEventPayload::ControlChanged`] carrying the *applied* value.
+    /// Sets the current value of a module control as an *authoring* change:
+    /// records it in the retained document so it survives a save/rebuild, and
+    /// announces it as a [`RpcEventPayload::ControlChanged`] carrying the
+    /// *applied* value.
     ///
-    /// This is the choke point for externally-initiated control writes — RPC
-    /// commands, conducting scripts, and agents — so an observer sees every one
-    /// of them (finding FUG-239 #7). Internal reconstruction that must stay
-    /// silent (a reload carrying values into the rebuilt graph) uses
-    /// [`Self::set_control_recorded`] instead.
+    /// Equivalent to [`Self::set_control_with_intent`] with
+    /// [`ControlWriteIntent::Author`].
     pub fn set_control(
         &self,
         module_id: &str,
         key: &str,
         value: ControlValue,
     ) -> Result<(), GraphCommandError> {
-        let applied = self.set_control_recorded(module_id, key, value)?;
+        self.set_control_with_intent(module_id, key, value, ControlWriteIntent::Author)
+    }
+
+    /// Sets a module control, recording it in the retained document only when
+    /// the write is meant as the module's new starting state.
+    ///
+    /// This is the choke point for externally-initiated control writes — RPC
+    /// commands, conducting scripts, and agents — so an observer sees every one
+    /// of them as a `ControlChanged` event regardless of intent (finding
+    /// FUG-239 #7). What intent changes is whether the value is *authored*:
+    /// a [`ControlWriteIntent::Perform`] write is a live gesture that must
+    /// neither land in a saved document nor advance the daemon's revision, so
+    /// a scheduler running at musical rate cannot make every peer's structural
+    /// edit stale (FUG-266).
+    ///
+    /// Internal reconstruction that must stay silent (a reload carrying values
+    /// into the rebuilt graph) uses [`Self::set_control_recorded`] instead.
+    pub fn set_control_with_intent(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+        intent: ControlWriteIntent,
+    ) -> Result<(), GraphCommandError> {
+        let applied = if intent.is_authoring() {
+            self.set_control_recorded(module_id, key, value)?
+        } else {
+            self.set_control_performed(module_id, key, value)?
+        };
         self.emit_control_changed(module_id, key, applied);
         Ok(())
+    }
+
+    /// Coerces and applies a control write without recording it in the
+    /// retained document, returning the applied (coerced) value.
+    ///
+    /// The performance counterpart to [`Self::set_control_recorded`]: same
+    /// coercion, same live effect, but the authored document is untouched.
+    /// Distinct from [`Self::set_control_transient`], which additionally skips
+    /// coercion because its callers are internal telemetry writes that already
+    /// carry the right type.
+    fn set_control_performed(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+    ) -> Result<ControlValue, GraphCommandError> {
+        let value = self.coerced(module_id, key, value);
+        self.set_control_transient(module_id, key, value.clone())?;
+        Ok(value)
     }
 
     /// Coerces, applies, and records a control write without emitting an event,
@@ -183,19 +253,23 @@ impl RuntimeSnapshot {
         // so a stringified write lands and the retained document stays typed
         // (see FUG-240). set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
-        let value = {
-            let controls = self.control_surfaces.lock().unwrap();
-            match controls.get(module_id) {
-                Some(surface) => surface.coerce_value(key, value),
-                None => value,
-            }
-        };
+        let value = self.coerced(module_id, key, value);
         self.set_control_transient(module_id, key, value.clone())?;
         self.state
             .lock()
             .unwrap()
             .document_write_control(module_id, key, &value);
         Ok(value)
+    }
+
+    /// Coerces a value to the control's declared kind, leaving it untouched
+    /// when the module is unknown (the write itself then reports the error).
+    fn coerced(&self, module_id: &str, key: &str, value: ControlValue) -> ControlValue {
+        let controls = self.control_surfaces.lock().unwrap();
+        match controls.get(module_id) {
+            Some(surface) => surface.coerce_value(key, value),
+            None => value,
+        }
     }
 
     /// Announces a recorded control change to the installed event sink, if any.

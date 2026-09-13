@@ -1,4 +1,5 @@
 use super::*;
+use crate::ControlWriteIntent;
 
 pub(super) fn parse_json_response(text: &str) -> Result<Value, String> {
     serde_json::from_str(text).or_else(|_| {
@@ -150,9 +151,17 @@ pub(super) fn apply_response(
     }
 
     for (target, control, control_value) in writes {
+        // An agent's applied response is a live gesture, not an authoring
+        // change: it must not land in a saved document or advance the
+        // daemon's revision (FUG-266).
         controller
             .snapshot
-            .set_control(&target, &control, control_value)
+            .set_control_with_intent(
+                &target,
+                &control,
+                control_value,
+                ControlWriteIntent::Perform,
+            )
             .map_err(|err| {
                 let message = err.to_string();
                 set_string(controller, module_id, "last_apply_error", &message);
