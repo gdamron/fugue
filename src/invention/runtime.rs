@@ -828,6 +828,17 @@ impl OrchestrationRuntime for RunningInvention {
     ) -> Result<(), GraphCommandError> {
         self.snapshot().set_control(module_id, key, value)
     }
+
+    fn set_control_with_intent(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+        intent: crate::ControlWriteIntent,
+    ) -> Result<(), GraphCommandError> {
+        self.snapshot()
+            .set_control_with_intent(module_id, key, value, intent)
+    }
 }
 
 #[cfg(test)]

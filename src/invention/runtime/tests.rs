@@ -271,16 +271,16 @@ fn installed_sink_observes_control_writes_with_the_applied_value() {
     // A batch lands one event per write.
     running
         .set_controls(&[
-            crate::ControlWrite {
-                module_id: "osc".to_string(),
-                key: "frequency".to_string(),
-                value: ControlValue::Number(880.0),
-            },
-            crate::ControlWrite {
-                module_id: "osc".to_string(),
-                key: "type".to_string(),
-                value: ControlValue::String("square".to_string()),
-            },
+            crate::ControlWrite::new(
+                "osc".to_string(),
+                "frequency".to_string(),
+                ControlValue::Number(880.0),
+            ),
+            crate::ControlWrite::new(
+                "osc".to_string(),
+                "type".to_string(),
+                ControlValue::String("square".to_string()),
+            ),
         ])
         .unwrap();
 
@@ -416,4 +416,83 @@ fn running_invention_keeps_legacy_globalthis_hooks_working() {
         .any(|module| module.id == "osc_from_legacy_live"));
 
     running.stop();
+}
+
+#[test]
+fn performed_control_writes_are_announced_but_never_authored() {
+    let invention = Invention::from_json(
+        r#"{
+            "version": "1.0.0",
+            "modules": [
+                { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+                { "id": "dac", "type": "dac" }
+            ],
+            "connections": [
+                { "from": "osc", "from_port": "audio", "to": "dac", "to_port": "audio" }
+            ]
+        }"#,
+    )
+    .unwrap();
+    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let running = runtime
+        .start_with_backend(TickBackend::new(48_000))
+        .unwrap();
+    let sink = Arc::new(RecordingSink::default());
+    running.set_event_sink(sink.clone());
+
+    let authored_frequency = |running: &RunningInvention| {
+        running
+            .document()
+            .unwrap()
+            .modules
+            .iter()
+            .find(|spec| spec.id == "osc")
+            .and_then(|spec| spec.config["frequency"].as_f64())
+    };
+
+    // A performed gesture (a scheduler, a script, a live knob) is applied and
+    // announced, but the authored starting state is untouched (FUG-266).
+    running
+        .snapshot()
+        .set_control_with_intent(
+            "osc",
+            "frequency",
+            ControlValue::String("660".to_string()),
+            crate::ControlWriteIntent::Perform,
+        )
+        .unwrap();
+    assert_eq!(
+        running.get_control("osc", "frequency").unwrap(),
+        ControlValue::Number(660.0),
+        "perform still coerces and applies"
+    );
+    assert_eq!(authored_frequency(&running), Some(440.0));
+
+    // An authoring write sets the new starting state.
+    running
+        .set_controls(&[crate::ControlWrite::new(
+            "osc",
+            "frequency",
+            ControlValue::Number(550.0),
+        )])
+        .unwrap();
+    assert_eq!(authored_frequency(&running), Some(550.0));
+
+    running.stop();
+    assert_eq!(
+        sink.control_changes(),
+        vec![
+            (
+                "osc".to_string(),
+                "frequency".to_string(),
+                ControlValue::Number(660.0)
+            ),
+            (
+                "osc".to_string(),
+                "frequency".to_string(),
+                ControlValue::Number(550.0)
+            ),
+        ],
+        "both intents are observable as control changes"
+    );
 }

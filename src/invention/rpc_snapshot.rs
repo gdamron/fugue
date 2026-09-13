@@ -405,16 +405,16 @@ mod tests {
         // A conducting-style gesture: several controls in one call, with one
         // stringified value to confirm the batch path coerces like the single.
         let writes = vec![
-            ControlWrite {
-                module_id: "vca".to_string(),
-                key: "cv".to_string(),
-                value: ControlValue::Number(0.8),
-            },
-            ControlWrite {
-                module_id: "osc".to_string(),
-                key: "frequency".to_string(),
-                value: ControlValue::String("330".to_string()),
-            },
+            ControlWrite::new(
+                "vca".to_string(),
+                "cv".to_string(),
+                ControlValue::Number(0.8),
+            ),
+            ControlWrite::new(
+                "osc".to_string(),
+                "frequency".to_string(),
+                ControlValue::String("330".to_string()),
+            ),
         ];
         engine.set_controls(&writes).expect("batch applies");
 

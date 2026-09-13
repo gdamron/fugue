@@ -30,14 +30,16 @@ pub use traits::{
 pub use factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 pub use registry::ModuleRegistry;
 pub use rpc::{
-    validate_schema_version, verify_daemon_identity, BuildFingerprint, ControlWrite,
-    DaemonIdentity, DescribeModuleQuery, EventPage, IdentityMismatch, MetadataSource, MeterReading,
-    ModuleDescription, ModuleTypeDetail, ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList,
-    ModuleTypeQuery, PackageInfo, PackageInstallRequest, PackageList, PackageSource, RegistryScope,
-    ReloadMode, ReloadOutcome, RpcCommand, RpcError, RpcErrorCode, RpcEvent, RpcEventPayload,
-    RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse, RpcResponsePayload,
+    validate_schema_version, verify_daemon_identity, BuildFingerprint, ConflictReason,
+    ControlWrite, ControlWriteIntent, DaemonIdentity, DescribeModuleQuery, EventPage,
+    IdentityMismatch, MetadataSource, MeterReading, ModuleDescription, ModuleTypeDetail,
+    ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList, ModuleTypeQuery, PackageInfo,
+    PackageInstallRequest, PackageList, PackageSource, RegistryScope, ReloadMode, ReloadOutcome,
+    RevisionConflict, RevisionTracker, RpcCommand, RpcError, RpcErrorCode, RpcEvent,
+    RpcEventPayload, RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse, RpcResponsePayload,
     RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot,
-    RuntimePortInfo, SaveReport, SeqEvent, SinkStatusState, TypeDetail, RPC_SCHEMA_VERSION,
+    RuntimePortInfo, RuntimeRevision, SaveReport, SeqEvent, SinkStatusState, TypeDetail,
+    RPC_SCHEMA_VERSION,
 };
 
 // Re-export modules
@@ -49,10 +51,9 @@ pub use modules::{
     ControlSchedulerFactory, DacFactory, DacModule, Filter, FilterControls, FilterFactory,
     FilterType, Lfo, LfoControls, LfoFactory, MelodyControls, MelodyFactory, MelodyGenerator,
     Mixer, MixerControls, MixerFactory, NullBackend, Oscillator, OscillatorControls,
-    OscillatorFactory,
-    OscillatorType, SampleKit, SampleKitControls, SampleKitFactory, SamplePlayer,
-    SamplePlayerControls, SamplePlayerFactory, SampleSlicer, SampleSlicerFactory, Vca, VcaControls,
-    VcaFactory,
+    OscillatorFactory, OscillatorType, SampleKit, SampleKitControls, SampleKitFactory,
+    SamplePlayer, SamplePlayerControls, SamplePlayerFactory, SampleSlicer, SampleSlicerFactory,
+    Vca, VcaControls, VcaFactory,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

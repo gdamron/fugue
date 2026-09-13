@@ -11,12 +11,16 @@ use serde::{Deserialize, Serialize};
 
 mod discovery;
 mod identity;
+mod revision;
 pub use discovery::{
     check_discovery_size, DescribeModuleQuery, MetadataSource, ModuleDescription, ModuleTypeDetail,
     ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList, ModuleTypeQuery, RegistryScope, TypeDetail,
     MAX_DISCOVERY_RESPONSE_BYTES, MAX_DISCOVERY_TYPES, MODULE_DISCOVERY_SCHEMA_VERSION,
 };
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
+pub use revision::{
+    ConflictReason, ControlWriteIntent, RevisionConflict, RevisionTracker, RuntimeRevision,
+};
 
 /// Current runtime RPC schema version.
 pub const RPC_SCHEMA_VERSION: u32 = 1;
@@ -33,6 +37,15 @@ pub struct RpcRequest {
     pub schema_version: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Optional precondition: apply this request only while the daemon is at
+    /// exactly this revision (see [`RevisionTracker::check`]).
+    ///
+    /// Omitting it makes the call **unconditional** — the documented behavior
+    /// for every client that predates revisions, and for a caller that
+    /// deliberately means "apply regardless". A mismatch is refused with
+    /// [`RpcErrorCode::RevisionConflict`] and nothing is mutated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<RuntimeRevision>,
     #[serde(flatten)]
     pub payload: RpcRequestPayload,
 }
@@ -42,12 +55,19 @@ impl RpcRequest {
         Self {
             schema_version: RPC_SCHEMA_VERSION,
             request_id: None,
+            expected_revision: None,
             payload: RpcRequestPayload::Command(command),
         }
     }
 
     pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
         self.request_id = Some(request_id.into());
+        self
+    }
+
+    /// Requires the daemon to be at `revision` for this request to apply.
+    pub fn expecting(mut self, revision: RuntimeRevision) -> Self {
+        self.expected_revision = Some(revision);
         self
     }
 }
@@ -90,6 +110,36 @@ pub struct ControlWrite {
     pub module_id: String,
     pub key: String,
     pub value: ControlValue,
+    /// Whether this write sets the module's new starting state or is a live
+    /// gesture. Defaults to [`ControlWriteIntent::Author`] for wire
+    /// back-compatibility with clients that omit it.
+    #[serde(default)]
+    pub intent: ControlWriteIntent,
+}
+
+impl ControlWrite {
+    /// An authoring write: the value becomes the module's new starting state.
+    pub fn new(module_id: impl Into<String>, key: impl Into<String>, value: ControlValue) -> Self {
+        Self {
+            module_id: module_id.into(),
+            key: key.into(),
+            value,
+            intent: ControlWriteIntent::Author,
+        }
+    }
+
+    /// A live performance gesture: applied and announced, but not recorded in
+    /// the retained document and not an authoring change.
+    pub fn performed(
+        module_id: impl Into<String>,
+        key: impl Into<String>,
+        value: ControlValue,
+    ) -> Self {
+        Self {
+            intent: ControlWriteIntent::Perform,
+            ..Self::new(module_id, key, value)
+        }
+    }
 }
 
 /// Commands accepted by the runtime daemon.
@@ -124,6 +174,12 @@ pub enum RpcCommand {
         module_id: String,
         key: String,
         value: ControlValue,
+        /// Whether this write sets the module's new starting state (recorded
+        /// in the retained document, advances the revision) or is a live
+        /// performance gesture (applied and announced only). Defaults to
+        /// [`ControlWriteIntent::Author`] for wire back-compatibility.
+        #[serde(default)]
+        intent: ControlWriteIntent,
     },
     /// Apply several control writes in one round trip. The daemon applies them
     /// in order within a single command, so a multi-control conducting gesture
@@ -245,6 +301,14 @@ pub struct RpcResponse {
     pub schema_version: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// The daemon's revision as of this reply, stamped on **every** response —
+    /// reads, mutation acknowledgements, and errors alike — so a client always
+    /// holds a fresh token to precondition its next edit on, and a rejected
+    /// client learns where the daemon stands without a second round trip.
+    ///
+    /// `None` only from a peer that does not track revisions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<RuntimeRevision>,
     #[serde(flatten)]
     pub payload: RpcResponsePayload,
 }
@@ -254,12 +318,19 @@ impl RpcResponse {
         Self {
             schema_version: RPC_SCHEMA_VERSION,
             request_id,
+            revision: None,
             payload,
         }
     }
 
     pub fn error(request_id: Option<String>, error: RpcError) -> Self {
         Self::ok(request_id, RpcResponsePayload::Error(error))
+    }
+
+    /// Stamps the daemon's current revision onto an outgoing response.
+    pub fn with_revision(mut self, revision: RuntimeRevision) -> Self {
+        self.revision = Some(revision);
+        self
     }
 }
 
@@ -547,6 +618,10 @@ pub enum PackageSource {
 pub struct RpcError {
     pub code: RpcErrorCode,
     pub message: String,
+    /// Present only on [`RpcErrorCode::RevisionConflict`]: the compact
+    /// structured body a client needs to re-read and rebase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<RevisionConflict>,
 }
 
 impl RpcError {
@@ -554,11 +629,22 @@ impl RpcError {
         Self {
             code,
             message: message.into(),
+            conflict: None,
         }
     }
 
     pub fn unsupported(message: impl Into<String>) -> Self {
         Self::new(RpcErrorCode::Unsupported, message)
+    }
+
+    /// Builds the refusal for an unmet revision precondition. The caller must
+    /// have mutated nothing.
+    pub fn revision_conflict(conflict: RevisionConflict) -> Self {
+        Self {
+            code: RpcErrorCode::RevisionConflict,
+            message: conflict.describe(),
+            conflict: Some(conflict),
+        }
     }
 }
 
@@ -571,6 +657,10 @@ pub enum RpcErrorCode {
     /// The discovery response exceeds its documented size bound.
     ResponseTooLarge,
     IncompatibleSchemaVersion,
+    /// The request's `expected_revision` did not match the daemon's current
+    /// revision. Nothing was mutated; the error carries a
+    /// [`RevisionConflict`] describing both sides.
+    RevisionConflict,
     AudioThreadStopped,
     UnknownModuleType,
     ModuleBuildFailed,

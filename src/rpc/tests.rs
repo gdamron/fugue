@@ -36,19 +36,20 @@ fn rpc_commands_round_trip_json() {
             module_id: "osc".to_string(),
             key: "frequency".to_string(),
             value: ControlValue::Number(440.0),
+            intent: ControlWriteIntent::Author,
         },
         RpcCommand::SetControls {
             writes: vec![
-                crate::ControlWrite {
-                    module_id: "osc".to_string(),
-                    key: "frequency".to_string(),
-                    value: ControlValue::Number(330.0),
-                },
-                crate::ControlWrite {
-                    module_id: "mixer".to_string(),
-                    key: "master".to_string(),
-                    value: ControlValue::String("0.7".to_string()),
-                },
+                ControlWrite::new(
+                    "osc".to_string(),
+                    "frequency".to_string(),
+                    ControlValue::Number(330.0),
+                ),
+                ControlWrite::new(
+                    "mixer".to_string(),
+                    "master".to_string(),
+                    ControlValue::String("0.7".to_string()),
+                ),
             ],
         },
         RpcCommand::AddModule {
@@ -195,6 +196,7 @@ fn poll_events_request_and_page_round_trip() {
 
     let request = RpcRequest {
         schema_version: RPC_SCHEMA_VERSION,
+        expected_revision: None,
         request_id: Some("poll".to_string()),
         payload: RpcRequestPayload::PollEvents { after: Some(7) },
     };
@@ -234,6 +236,7 @@ fn get_meters_request_and_reply_round_trip() {
 
     let request = RpcRequest {
         schema_version: RPC_SCHEMA_VERSION,
+        expected_revision: None,
         request_id: Some("meters".to_string()),
         payload: RpcRequestPayload::GetMeters,
     };
@@ -265,6 +268,7 @@ fn get_meters_request_and_reply_round_trip() {
 fn hello_request_round_trips() {
     let request = RpcRequest {
         schema_version: RPC_SCHEMA_VERSION,
+        expected_revision: None,
         request_id: Some("hello".to_string()),
         payload: RpcRequestPayload::Hello,
     };
@@ -438,4 +442,159 @@ fn load_invention_defaults_stop_on_end_fields() {
         }
         other => panic!("expected LoadInvention, got {:?}", other),
     }
+}
+
+fn revision(session: &str, revision: u64) -> RuntimeRevision {
+    RuntimeRevision {
+        session_id: session.to_string(),
+        revision,
+    }
+}
+
+#[test]
+fn control_writes_default_to_authoring_intent() {
+    // Clients that predate FUG-266 omit `intent`; their writes must keep
+    // authoring (recorded, revision-advancing) exactly as before.
+    let single: RpcCommand = serde_json::from_value(serde_json::json!({
+        "command": "set_control",
+        "module_id": "osc",
+        "key": "frequency",
+        "value": 440.0,
+    }))
+    .unwrap();
+    assert!(matches!(
+        single,
+        RpcCommand::SetControl {
+            intent: ControlWriteIntent::Author,
+            ..
+        }
+    ));
+
+    let batch: RpcCommand = serde_json::from_value(serde_json::json!({
+        "command": "set_controls",
+        "writes": [{ "module_id": "osc", "key": "frequency", "value": 330.0 }],
+    }))
+    .unwrap();
+    let RpcCommand::SetControls { writes } = batch else {
+        panic!("expected SetControls");
+    };
+    assert_eq!(writes[0].intent, ControlWriteIntent::Author);
+}
+
+#[test]
+fn perform_intent_round_trips_on_the_wire() {
+    let command = RpcCommand::SetControls {
+        writes: vec![ControlWrite::performed(
+            "osc",
+            "frequency",
+            ControlValue::Number(220.0),
+        )],
+    };
+    let json = serde_json::to_value(&command).unwrap();
+    assert_eq!(json["writes"][0]["intent"], "perform");
+    assert_eq!(serde_json::from_value::<RpcCommand>(json).unwrap(), command);
+}
+
+#[test]
+fn advances_revision_separates_authoring_from_performance() {
+    let author = |intent| RpcCommand::SetControl {
+        module_id: "osc".to_string(),
+        key: "frequency".to_string(),
+        value: ControlValue::Number(440.0),
+        intent,
+    };
+    assert!(author(ControlWriteIntent::Author).advances_revision());
+    assert!(!author(ControlWriteIntent::Perform).advances_revision());
+
+    // A batch authors if any one of its writes does.
+    let mixed = RpcCommand::SetControls {
+        writes: vec![
+            ControlWrite::performed("osc", "frequency", ControlValue::Number(1.0)),
+            ControlWrite::new("mixer", "master", ControlValue::Number(0.5)),
+        ],
+    };
+    assert!(mixed.advances_revision());
+    let performed = RpcCommand::SetControls {
+        writes: vec![ControlWrite::performed(
+            "osc",
+            "frequency",
+            ControlValue::Number(1.0),
+        )],
+    };
+    assert!(!performed.advances_revision());
+
+    // Structure always authors; reads and lifecycle never do.
+    assert!(RpcCommand::RemoveModule {
+        id: "osc".to_string()
+    }
+    .advances_revision());
+    assert!(RpcCommand::ReloadInvention {
+        invention: Box::new(test_invention()),
+        source_path: None,
+        frozen: true,
+    }
+    .advances_revision());
+    assert!(!RpcCommand::ListPackages.advances_revision());
+    assert!(!RpcCommand::SaveInvention {
+        path: "/tmp/x.json".to_string()
+    }
+    .advances_revision());
+    assert!(!RpcCommand::Shutdown.advances_revision());
+}
+
+#[test]
+fn unconditional_requests_omit_expected_revision_on_the_wire() {
+    let json = serde_json::to_value(RpcRequest::new(RpcCommand::UnloadInvention)).unwrap();
+    assert!(json.get("expected_revision").is_none());
+
+    // And a legacy request without the field parses as unconditional.
+    let parsed: RpcRequest = serde_json::from_value(serde_json::json!({
+        "schema_version": RPC_SCHEMA_VERSION,
+        "kind": "command",
+        "command": "unload_invention",
+    }))
+    .unwrap();
+    assert_eq!(parsed.expected_revision, None);
+}
+
+#[test]
+fn preconditioned_request_round_trips() {
+    let request = RpcRequest::new(RpcCommand::UnloadInvention).expecting(revision("session-a", 4));
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["expected_revision"]["session_id"], "session-a");
+    assert_eq!(json["expected_revision"]["revision"], 4);
+    assert_eq!(serde_json::from_value::<RpcRequest>(json).unwrap(), request);
+}
+
+#[test]
+fn revision_conflict_error_is_compact_and_structured() {
+    let conflict = RevisionConflict {
+        expected: revision("session-a", 3),
+        current: revision("session-a", 5),
+        reason: ConflictReason::StaleRevision,
+    };
+    let response = RpcResponse::error(
+        Some("edit".to_string()),
+        RpcError::revision_conflict(conflict.clone()),
+    )
+    .with_revision(revision("session-a", 5));
+
+    let json = serde_json::to_value(&response).unwrap();
+    // The envelope carries the current token alongside the error...
+    assert_eq!(json["revision"]["revision"], 5);
+    // ...and the error carries both sides plus a machine-readable reason.
+    assert_eq!(json["code"], "revision_conflict");
+    assert_eq!(json["conflict"]["reason"], "stale_revision");
+    assert_eq!(json["conflict"]["expected"]["revision"], 3);
+    assert_eq!(json["conflict"]["current"]["revision"], 5);
+    assert_eq!(
+        serde_json::from_value::<RpcResponse>(json).unwrap(),
+        response
+    );
+}
+
+#[test]
+fn ordinary_errors_carry_no_conflict_body() {
+    let json = serde_json::to_value(RpcError::unsupported("nope")).unwrap();
+    assert!(json.get("conflict").is_none());
 }
