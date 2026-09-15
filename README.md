@@ -166,15 +166,12 @@ running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 
 ## CLI and REPL
 
-The Fugue command-line host lives in the separate `fugue-cli` repository. It
-provides playback, rendering, daemon, and interactive REPL commands while this
+The `fugue` command-line host ships in the install unit (see [Install](#install)).
+It provides playback, rendering, daemon, and interactive REPL commands, while this
 repository stays focused on the core library and runtime.
 
-From a sibling checkout:
-
 ```bash
-cd ../fugue-cli
-cargo run -- repl
+fugue repl
 ```
 
 ### Example Session
@@ -208,8 +205,9 @@ Type `help` for the full command reference.
 
 ## Browser Playback
 
-The JavaScript browser player is packaged separately as `@ilusiv/fugue-js`.
-This repository owns the Rust engine and wasm exports that package consumes.
+The JavaScript browser player is published to npm as
+[`@ilusiv/fyug-js`](https://www.npmjs.com/package/@ilusiv/fyug-js). This
+repository owns the Rust engine and wasm exports that package consumes.
 
 ## YouTube Live Streaming
 
@@ -263,7 +261,6 @@ FUGUE_YOUTUBE_SINK_REAL_FFMPEG=1 \
 
 ## MCP Server (AI-Driven Composition)
 
-The MCP server now lives in the separate
-[`fugue-mcp`](https://github.com/gdamron/fugue-mcp) repository. It exposes the
-runtime API as tools and talks to `fugue serve` over the shared runtime RPC
-protocol.
+The `fugue-mcp` server ships in the install unit beside `fugue` (see
+[Install](#install)). It exposes the runtime API as tools and talks to
+`fugue serve` over the shared runtime RPC protocol.
