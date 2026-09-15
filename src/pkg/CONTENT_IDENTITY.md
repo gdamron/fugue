@@ -16,7 +16,7 @@ binds its reference to an invention-local module type name.
 
 Ship the five instruments currently in `examples/developments`: piano, marimba,
 vibraphone, pluck, and pad. Ship BWV 772 as the starter invention, using the
-MusicXML and score fixture currently in `fugue-cli/tests/fixtures/bwv772` as its
+MusicXML and score fixture in the Fugue CLI's `tests/fixtures/bwv772` as its
 source. Do not bundle In C, the demo pulse packages, or the remaining repository
 examples by default. `voice_library_trio.json` is an invention, not an instrument.
 

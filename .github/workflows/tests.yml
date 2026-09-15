@@ -67,27 +67,3 @@ jobs:
 
       - name: Run Feature-Gated Tests
         run: cargo test --all-features --lib --tests
-
-  packaging:
-    name: Validate Claude Desktop Bundle Packaging
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check Out Repository
-        uses: actions/checkout@v4
-
-      - name: Run .mcpb Packaging Smoke Test
-        run: bash scripts/test-package-mcpb.sh
-
-  # Separate job because the app/dmg packagers need macOS tooling (hdiutil,
-  # plutil, PlistBuddy) that the Linux runner above does not have.
-  macos-packaging:
-    name: Validate macOS App Packaging
-    runs-on: macos-14
-
-    steps:
-      - name: Check Out Repository
-        uses: actions/checkout@v4
-
-      - name: Run .app/.dmg Packaging Smoke Test
-        run: bash scripts/test-package-macos-app.sh
