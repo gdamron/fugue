@@ -9,9 +9,13 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+mod authored_snapshot;
 mod discovery;
 mod identity;
 mod revision;
+pub use authored_snapshot::{
+    AuthoredSnapshot, SnapshotDelivery, MAX_FILE_SNAPSHOT_BYTES, MAX_INLINE_SNAPSHOT_BYTES,
+};
 pub use discovery::{
     check_discovery_size, DescribeModuleQuery, MetadataSource, ModuleDescription, ModuleTypeDetail,
     ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList, ModuleTypeQuery, RegistryScope, TypeDetail,
@@ -236,6 +240,10 @@ pub enum RpcCommand {
         #[serde(default = "default_frozen")]
         frozen: bool,
     },
+    /// Retrieve the retained authored document with its revision and daemon source context.
+    GetInvention {
+        delivery: SnapshotDelivery,
+    },
     /// Write the daemon's retained declarative document — the authored
     /// invention updated by runtime mutations — to a file. Lossless:
     /// developments, assets, title/description, and the exposed
@@ -378,6 +386,10 @@ pub enum RpcResponsePayload {
     },
     Reload(ReloadOutcome),
     Saved(SaveReport),
+    /// A revision-stamped authored snapshot, never a flattened runtime graph.
+    AuthoredSnapshot {
+        snapshot: Box<AuthoredSnapshot>,
+    },
     /// The daemon's identity, in reply to [`RpcRequestPayload::Hello`]. Nested
     /// (not flattened) so `DaemonIdentity::schema_version` does not collide with
     /// the response envelope's own `schema_version`.
