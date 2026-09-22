@@ -225,7 +225,8 @@ impl RpcCommand {
             | Self::LoadExample { .. } => true,
             Self::SetControl { intent, .. } => intent.is_authoring(),
             Self::SetControls { writes } => writes.iter().any(|write| write.intent.is_authoring()),
-            Self::SaveInvention { .. }
+            Self::GetInvention { .. }
+            | Self::SaveInvention { .. }
             | Self::InstallPackage(_)
             | Self::ListPackages
             | Self::ListDevelopments { .. }
