@@ -673,6 +673,7 @@ impl RenderEngine {
             topo_dirty: true,
             // Offline render has no sampler; the meter is inert here.
             master_peak: crate::atomic::StereoPeak::new(),
+            master_spectrum: crate::spectrum::SpectrumTap::new(),
         })));
         self.registry = runtime.registry;
         self.state = runtime.state;

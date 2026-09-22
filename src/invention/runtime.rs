@@ -80,6 +80,9 @@ impl InventionRuntime {
         // Shared peak meter: the audio thread folds block peaks into it via the
         // graph; the daemon samples the clone held on `RunningInvention`.
         let master_peak = crate::atomic::StereoPeak::new();
+        // Spectrum tap shared with the graph; a daemon enables it only while
+        // something is subscribed to spectrogram events.
+        let master_spectrum = crate::spectrum::SpectrumTap::new();
 
         let mut graph = SignalGraph {
             modules: self.modules,
@@ -99,6 +102,7 @@ impl InventionRuntime {
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
             master_peak: master_peak.clone(),
+            master_spectrum: master_spectrum.clone(),
         };
 
         let control_surfaces = self.control_surfaces;
@@ -134,6 +138,7 @@ impl InventionRuntime {
             agents: AgentManager::default(),
             event_sink: Arc::new(Mutex::new(None)),
             master_peak,
+            master_spectrum,
         };
         running.scripts.start_all(running.controller());
         running.agents.start_all(running.controller());
@@ -203,6 +208,9 @@ pub struct RunningInvention {
     /// Master-output peak meter shared with the audio-thread graph; the daemon
     /// drains it on a fixed cadence to emit `MeterLevel` (FUG-239 #5).
     master_peak: crate::atomic::StereoPeak,
+    /// Mono master tap the audio thread feeds; an off-thread analyser turns it
+    /// into spectrogram tiles.
+    master_spectrum: crate::spectrum::SpectrumTap,
 }
 
 impl RunningInvention {
@@ -292,6 +300,14 @@ impl RunningInvention {
     /// sampler that turns the reading into a `MeterLevel` event (FUG-239 #5).
     pub fn master_meter(&self) -> (f32, f32) {
         self.master_peak.drain()
+    }
+
+    /// Returns the master-output tap a spectrum analyser reads.
+    ///
+    /// Collection stays off until an analyser enables it, so an invention
+    /// nobody is watching pays one relaxed load per block.
+    pub fn spectrum_tap(&self) -> crate::spectrum::SpectrumTap {
+        self.master_spectrum.clone()
     }
 
     pub fn full_snapshot(&self) -> crate::RuntimeFullSnapshot {

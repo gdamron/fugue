@@ -13,6 +13,7 @@ mod authored_snapshot;
 mod discovery;
 mod identity;
 mod revision;
+mod spectrogram;
 pub use authored_snapshot::{
     AuthoredSnapshot, SnapshotDelivery, MAX_FILE_SNAPSHOT_BYTES, MAX_INLINE_SNAPSHOT_BYTES,
 };
@@ -24,6 +25,11 @@ pub use discovery::{
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
 pub use revision::{
     ConflictReason, ControlWriteIntent, RevisionConflict, RevisionTracker, RuntimeRevision,
+};
+pub use spectrogram::{
+    SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding, SpectrogramFrequencyAxis,
+    SpectrogramLimits, SpectrogramProvenance, SpectrogramStreamMeta, SpectrogramTile,
+    SpectrogramWindow,
 };
 
 /// Current runtime RPC schema version.
@@ -462,6 +468,9 @@ impl RpcEvent {
 pub enum RpcSubscriptionTopic {
     ControlChanges,
     MeterLevels,
+    /// Display-rate spectrogram frames. Like meter levels, these are streamed
+    /// only: they are far too frequent for the polled event log.
+    Spectrograms,
     AgentActivity,
     SinkStatus,
     Errors,
@@ -493,6 +502,11 @@ pub enum RpcEventPayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// Announces a spectrogram stream: sent when a client subscribes and
+    /// whenever analysis restarts under a new `stream_id`.
+    SpectrogramStream(SpectrogramStreamMeta),
+    /// One run of spectrogram frames.
+    SpectrogramTile(SpectrogramTile),
     Error(RpcError),
     TopologyChanged,
     Snapshot(RuntimeFullSnapshot),

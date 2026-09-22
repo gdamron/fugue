@@ -166,6 +166,9 @@ pub(crate) struct SignalGraph {
     /// Peak level of the mixed master output, folded in each block for an
     /// off-thread sampler to drain into `MeterLevel` events (FUG-239 #5).
     pub(crate) master_peak: crate::atomic::StereoPeak,
+    /// Mono tap of the mixed master output for off-thread spectrum analysis.
+    /// Inert until something subscribes, and never analysed here.
+    pub(crate) master_spectrum: crate::spectrum::SpectrumTap,
 }
 
 impl SignalGraph {
@@ -246,6 +249,10 @@ impl SignalGraph {
             right_peak = right_peak.max(right[i].abs());
         }
         self.master_peak.observe(left_peak, right_peak);
+
+        // Hand the same block to the spectrum tap. Lock-free and
+        // allocation-free, and a single relaxed load when nobody is watching.
+        self.master_spectrum.observe_block(left, right, frames);
 
         self.store_carry(frames);
     }
