@@ -1,3 +1,5 @@
+mod dependencies;
+
 use super::*;
 use crate::Invention;
 use serde_json::json;
@@ -361,37 +363,6 @@ fn value_threshold_and_byte_limited_pages_are_exact() {
     assert!(page.entries.len() < 20);
     assert!(page.next_cursor.is_some());
     assert!(serde_json::to_vec(&page).unwrap().len() <= MAX_INSPECTION_BYTES);
-}
-
-#[test]
-fn nested_module_includes_inherited_development_declaration() {
-    let snapshot = snapshot(json!({"modules":[],"connections":[],"developments":[
-        {"name":"tone","path":"./tone.json"},
-        {"name":"layer","definition":{"modules":[{"id":"osc","type":"tone"}],"connections":[]}}
-    ]}));
-    for scope in ["/developments/01/definition", "/developments/+1/definition"] {
-        assert_eq!(
-            snapshot
-                .inspect(&query(InspectionSelection::Module {
-                    scope: scope.into(),
-                    id: "osc".into()
-                }))
-                .unwrap_err()
-                .code,
-            RpcErrorCode::InvalidRequest
-        );
-    }
-    let page = snapshot
-        .inspect(&query(InspectionSelection::Module {
-            scope: "/developments/1/definition".into(),
-            id: "osc".into(),
-        }))
-        .unwrap();
-    assert!(page
-        .entries
-        .iter()
-        .any(|e| e.pointer == "/developments/0"
-            && e.value.as_ref().unwrap()["path"] == "./tone.json"));
 }
 
 #[test]

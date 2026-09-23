@@ -227,6 +227,9 @@ fn development_entry(scope: &str, index: usize, development: &Value) -> Inspecti
 fn development_reference(root: &Value, scope: &str, name: &str, out: &mut Vec<InspectionEntry>) {
     // Nested factories inherit the registry as it existed when their declaration
     // was registered: only earlier declarations in each ancestor are visible.
+    // Registration skips aliases already inherited, so an outer match wins
+    // over the same name declared locally (even across multiple ancestors).
+    let mut selected = None;
     let mut scope = scope;
     let mut before = usize::MAX;
     loop {
@@ -237,11 +240,10 @@ fn development_reference(root: &Value, scope: &str, name: &str, out: &mut Vec<In
             .take(before)
             .find(|(_, d)| d["name"] == name)
         {
-            out.push(development_entry(scope, index, development));
-            return;
+            selected = Some((scope, index, development));
         }
         let Some((parent, tail)) = scope.rsplit_once("/developments/") else {
-            return;
+            break;
         };
         before = tail
             .split('/')
@@ -249,6 +251,9 @@ fn development_reference(root: &Value, scope: &str, name: &str, out: &mut Vec<In
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         scope = parent;
+    }
+    if let Some((scope, index, development)) = selected {
+        out.push(development_entry(scope, index, development));
     }
 }
 

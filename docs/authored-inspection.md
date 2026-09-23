@@ -27,7 +27,10 @@ JSON pointer escaping uses `~0` for `~` and `~1` for `/`.
 
 `module` includes locally declared shared JSON assets referenced recursively in
 its config, and its development declaration (including earlier ancestor
-registrations inherited by inline definitions). Other references, including
+registrations inherited by inline definitions). An inherited alias takes
+precedence over a same-named local declaration, matching runtime registration;
+the local declaration remains visible in authored inventory. Later ancestor
+declarations are not inherited. Other references, including
 audio asset paths/catalog refs, remain unchanged inside the authored config.
 A peer summary supplies an id and type to follow with another module query.
 
