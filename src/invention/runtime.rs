@@ -304,8 +304,12 @@ impl RunningInvention {
 
     /// Returns the master-output tap a spectrum analyser reads.
     ///
-    /// Collection stays off until an analyser enables it, so an invention
-    /// nobody is watching pays one relaxed load per block.
+    /// The handle returned here is the writing side; a consumer calls
+    /// [`SpectrumTap::take_reader`] for the single reading end. Collection
+    /// stays off until an analyser starts it, so an invention nobody is
+    /// watching pays one relaxed load per block.
+    ///
+    /// [`SpectrumTap::take_reader`]: crate::spectrum::SpectrumTap::take_reader
     pub fn spectrum_tap(&self) -> crate::spectrum::SpectrumTap {
         self.master_spectrum.clone()
     }

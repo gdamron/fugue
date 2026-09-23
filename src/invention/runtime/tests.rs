@@ -408,6 +408,9 @@ fn spectrum_tap_feeds_an_analyser_with_the_master_output() {
 
     let tap = running.spectrum_tap();
     assert!(!tap.is_enabled(), "collection stays off until asked for");
+    let reader = tap
+        .take_reader()
+        .expect("the tap hands out its reader once");
 
     let config = SpectrumConfig {
         fft_size: 2048,
@@ -415,7 +418,7 @@ fn spectrum_tap_feeds_an_analyser_with_the_master_output() {
         ..Default::default()
     };
     let bin_hz = 48_000.0 / config.fft_size as f32;
-    let mut analyzer = SpectrumAnalyzer::new(tap.clone(), 48_000, "master:1", config).unwrap();
+    let mut analyzer = SpectrumAnalyzer::new(reader, 48_000, "master:1", config).unwrap();
     assert!(tap.is_enabled(), "an analyser turns collection on");
 
     // Let the audio worker render enough blocks to fill several frames.
@@ -448,6 +451,11 @@ fn spectrum_tap_feeds_an_analyser_with_the_master_output() {
 
     analyzer.stop();
     assert!(!tap.is_enabled());
+    drop(analyzer);
+    assert!(
+        tap.take_reader().is_some(),
+        "a finished analyser returns the reading end"
+    );
     running.stop();
 }
 

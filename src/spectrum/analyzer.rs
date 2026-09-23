@@ -1,4 +1,4 @@
-use super::tap::SpectrumTap;
+use super::tap::SpectrumReader;
 use crate::dsp::fft::RealFft;
 use crate::rpc::{
     SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding, SpectrogramFrequencyAxis,
@@ -70,10 +70,16 @@ impl SpectrumConfig {
 /// frames that completed, so the caller decides the cadence by how often it
 /// calls [`poll`](Self::poll).
 ///
-/// All buffers are allocated up front. A pass allocates only the tile it
+/// Frame numbers come from each frame's position in the stream rather than
+/// from counting frames as they are produced, so they cannot drift away from
+/// wall-clock time however often analysis stalls. Audio the tap had to drop
+/// leaves a gap exactly where it was lost: frames whose windows would straddle
+/// the loss are never produced, rather than stitched across it.
+///
+/// All buffers are allocated up front; a pass allocates only the tile it
 /// returns.
 pub struct SpectrumAnalyzer {
-    tap: SpectrumTap,
+    reader: SpectrumReader,
     meta: SpectrogramStreamMeta,
     config: SpectrumConfig,
     fft: RealFft,
@@ -83,7 +89,7 @@ pub struct SpectrumAnalyzer {
     amplitude_scale: f32,
     /// The most recent `fft_size` samples, oldest first.
     frame: Vec<f32>,
-    /// How much of `frame` is filled while the stream starts up.
+    /// How much of `frame` is filled while the stream starts or restarts.
     filled: usize,
     /// Windowed copy handed to the transform.
     windowed: Vec<f32>,
@@ -91,15 +97,24 @@ pub struct SpectrumAnalyzer {
     magnitudes: Vec<f32>,
     /// Samples pulled from the tap in one read.
     scratch: Vec<f32>,
-    /// Absolute index of the next frame to be produced.
-    next_frame: u64,
+    /// Samples taken from the tap, including any discarded.
+    consumed: u64,
+    /// Samples lost to holes and already accounted for on the time axis.
+    skipped: u64,
+    /// Samples to discard before frames line up with the hop grid again.
+    align_debt: usize,
+    /// A hole the tap reported that the analyser has not reached yet.
+    hole: Option<(u64, u64)>,
+    /// A completed frame held back because it does not continue the tile
+    /// being built; it starts the next one.
+    ready_frame: Option<u64>,
     next_tile_seq: u64,
 }
 
 impl SpectrumAnalyzer {
-    /// Builds an analyser for `tap`, and enables collection.
+    /// Builds an analyser for `reader`, and starts collection.
     pub fn new(
-        tap: SpectrumTap,
+        mut reader: SpectrumReader,
         sample_rate: u32,
         stream_id: impl Into<String>,
         config: SpectrumConfig,
@@ -143,9 +158,9 @@ impl SpectrumAnalyzer {
             encoding: SpectrogramEncoding::F32Json,
         };
 
-        tap.set_enabled(true);
+        reader.start();
         Ok(Self {
-            tap,
+            reader,
             meta,
             fft,
             window,
@@ -154,8 +169,14 @@ impl SpectrumAnalyzer {
             filled: 0,
             windowed: vec![0.0; config.fft_size],
             magnitudes: vec![0.0; bin_count],
-            scratch: vec![0.0; config.hop_size],
-            next_frame: 0,
+            // Sized for the largest single read, which is a whole frame while
+            // the stream starts or restarts.
+            scratch: vec![0.0; config.fft_size],
+            consumed: 0,
+            skipped: 0,
+            align_debt: 0,
+            hole: None,
+            ready_frame: None,
             next_tile_seq: 0,
             config,
         })
@@ -169,28 +190,34 @@ impl SpectrumAnalyzer {
     /// Analyses whatever audio is waiting and returns one tile, or `None` when
     /// no frame completed. Call again while it keeps returning tiles.
     ///
-    /// Audio dropped because analysis fell behind advances the frame numbering
-    /// without producing frames, so viewers see a gap at the right place
-    /// instead of a seamless jump.
+    /// A tile holds consecutive frames only. Where audio was lost the tile
+    /// ends, and the next one resumes at the first frame past the gap.
     pub fn poll(&mut self) -> Option<SpectrogramTile> {
-        self.skip_dropped_audio();
-
         let bin_count = self.meta.frequency.bin_count as usize;
         let max_frames = self.config.max_frames_per_tile as usize;
         let mut magnitudes_db: Vec<f32> = Vec::new();
+        let mut start_frame = 0u64;
         let mut frames = 0usize;
-        let start_frame = self.next_frame;
 
         while frames < max_frames {
-            if !self.advance_one_hop() {
+            let Some(index) = self
+                .ready_frame
+                .take()
+                .or_else(|| self.advance_to_next_frame())
+            else {
                 break;
-            }
-            if magnitudes_db.is_empty() {
+            };
+            if frames == 0 {
+                start_frame = index;
                 magnitudes_db.reserve(max_frames * bin_count);
+            } else if index != start_frame + frames as u64 {
+                // A gap: this frame belongs to the next tile, and its audio is
+                // still in `frame` for that pass to analyse.
+                self.ready_frame = Some(index);
+                break;
             }
             self.analyze_current_frame(&mut magnitudes_db);
             frames += 1;
-            self.next_frame += 1;
         }
 
         if frames == 0 {
@@ -208,55 +235,108 @@ impl SpectrumAnalyzer {
     }
 
     /// Stops collection. The tap can be analysed again by a later stream.
-    pub fn stop(&self) {
-        self.tap.set_enabled(false);
+    pub fn stop(&mut self) {
+        self.reader.stop();
     }
 
-    /// Accounts for audio the tap had to drop: the frames it would have filled
-    /// are skipped, so later frames keep their true position in time.
-    fn skip_dropped_audio(&mut self) {
-        let dropped = self.tap.take_dropped();
-        if dropped == 0 {
-            return;
-        }
-        // The partly filled frame is no longer continuous with what follows.
-        self.filled = 0;
-        let hop = self.config.hop_size as u64;
-        self.next_frame += dropped.div_ceil(hop);
+    /// Where the next sample to be read sits in the stream, counting audio
+    /// that was lost as well as audio that arrived.
+    fn absolute_position(&self) -> u64 {
+        self.consumed + self.skipped
     }
 
-    /// Slides the analysis frame forward by one hop, if the tap has the audio.
-    fn advance_one_hop(&mut self) -> bool {
-        let hop = self.config.hop_size;
+    /// Fills the analysis frame until one is complete, returning its index on
+    /// the stream's hop grid, or `None` when the tap has run dry.
+    fn advance_to_next_frame(&mut self) -> Option<u64> {
         let size = self.config.fft_size;
-        // Starting up, the frame needs a whole transform's worth before the
-        // first hop can complete.
-        let needed = if self.filled < size {
-            (size - self.filled).min(hop.max(size - self.filled))
+        let hop = self.config.hop_size;
+
+        loop {
+            if self.hole.is_none() {
+                self.hole = self.reader.take_hole();
+            }
+            if let Some((at, len)) = self.hole {
+                if self.consumed >= at {
+                    self.apply_hole(len);
+                    continue;
+                }
+            }
+            if self.align_debt > 0 {
+                let wanted = self.align_debt;
+                if !self.discard(wanted) {
+                    return None;
+                }
+                self.align_debt -= wanted;
+                continue;
+            }
+
+            let needed = if self.filled < size {
+                size - self.filled
+            } else {
+                hop
+            };
+            // Never read across a hole: the audio beyond it is not continuous
+            // with what this frame already holds.
+            if let Some((at, _)) = self.hole {
+                let room = (at - self.consumed) as usize;
+                if room < needed {
+                    // Too little audio left before the loss to finish a frame,
+                    // so this run ends here.
+                    if !self.discard(room) {
+                        return None;
+                    }
+                    continue;
+                }
+            }
+            if self.reader.available() < needed {
+                return None;
+            }
+            let taken = self.reader.read_samples(&mut self.scratch[..needed]);
+            debug_assert_eq!(taken, needed, "availability was just checked");
+            self.consumed += taken as u64;
+
+            if self.filled < size {
+                self.frame[self.filled..self.filled + taken]
+                    .copy_from_slice(&self.scratch[..taken]);
+                self.filled += taken;
+            } else {
+                self.frame.copy_within(hop.., 0);
+                self.frame[size - hop..].copy_from_slice(&self.scratch[..hop]);
+            }
+
+            // The frame covers the `size` samples ending here, and the hop
+            // grid is kept aligned, so its index follows from its position.
+            let start = self.absolute_position() - size as u64;
+            debug_assert_eq!(start % hop as u64, 0, "frames stay on the hop grid");
+            return Some(start / hop as u64);
+        }
+    }
+
+    /// Accounts for `len` lost samples at the point they were lost, and lines
+    /// the next frame up with the hop grid on the far side of the gap.
+    fn apply_hole(&mut self, len: u64) {
+        self.skipped += len;
+        self.hole = None;
+        self.filled = 0;
+        let misaligned = self.absolute_position() % self.config.hop_size as u64;
+        self.align_debt = if misaligned == 0 {
+            0
         } else {
-            hop
+            (self.config.hop_size as u64 - misaligned) as usize
         };
-        if self.tap.available() < needed {
+    }
+
+    /// Throws away `count` samples, reporting whether they were all there.
+    fn discard(&mut self, count: usize) -> bool {
+        if count == 0 {
+            return true;
+        }
+        if self.reader.available() < count {
             return false;
         }
-        if self.scratch.len() < needed {
-            self.scratch.resize(needed, 0.0);
-        }
-        let taken = self.tap.read_samples(&mut self.scratch[..needed]);
-        if taken < needed {
-            return false;
-        }
-        if self.filled < size {
-            // Fill from the front while the stream starts.
-            let room = size - self.filled;
-            let count = taken.min(room);
-            self.frame[self.filled..self.filled + count].copy_from_slice(&self.scratch[..count]);
-            self.filled += count;
-            return self.filled == size;
-        }
-        self.frame.copy_within(hop.., 0);
-        self.frame[size - hop..].copy_from_slice(&self.scratch[..hop]);
-        true
+        let taken = self.reader.read_samples(&mut self.scratch[..count]);
+        self.consumed += taken as u64;
+        taken == count
     }
 
     /// Windows the current frame, transforms it, and appends its decibels.
@@ -266,8 +346,16 @@ impl SpectrumAnalyzer {
         }
         self.fft.magnitudes(&self.windowed, &mut self.magnitudes);
         let floor = self.config.floor_db;
-        let scale = self.amplitude_scale;
-        for magnitude in &self.magnitudes {
+        let last_bin = self.magnitudes.len() - 1;
+        for (bin, magnitude) in self.magnitudes.iter().enumerate() {
+            // Doubling accounts for a real signal's energy sitting at both the
+            // positive and the negative frequency. DC and Nyquist have no
+            // mirror image, so doubling them would read 6 dB high.
+            let scale = if bin == 0 || bin == last_bin {
+                0.5 * self.amplitude_scale
+            } else {
+                self.amplitude_scale
+            };
             let amplitude = magnitude * scale;
             let db = if amplitude > 0.0 {
                 20.0 * amplitude.log10()
@@ -298,216 +386,4 @@ fn window_coefficients(window: SpectrogramWindow, size: usize) -> Vec<f32> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const RATE: u32 = 48_000;
-
-    fn config() -> SpectrumConfig {
-        SpectrumConfig {
-            fft_size: 256,
-            hop_size: 128,
-            max_frames_per_tile: 4,
-            ..Default::default()
-        }
-    }
-
-    fn analyzer(config: SpectrumConfig) -> (SpectrumTap, SpectrumAnalyzer) {
-        let tap = SpectrumTap::new();
-        let analyzer = SpectrumAnalyzer::new(tap.clone(), RATE, "test", config).unwrap();
-        (tap, analyzer)
-    }
-
-    /// Feeds `frames` samples of a sine at `hz`, peaking at `amplitude`.
-    fn feed_tone(tap: &SpectrumTap, hz: f32, amplitude: f32, samples: usize, phase: &mut f32) {
-        let block: Vec<f32> = (0..samples)
-            .map(|_| {
-                let value = amplitude * (*phase).sin();
-                *phase += 2.0 * PI * hz / RATE as f32;
-                value
-            })
-            .collect();
-        tap.observe_block(&block, &block, block.len());
-    }
-
-    fn feed_silence(tap: &SpectrumTap, samples: usize) {
-        let block = vec![0.0; samples];
-        tap.observe_block(&block, &block, block.len());
-    }
-
-    /// Loudest bin of a tile's first frame.
-    fn peak_bin(tile: &SpectrogramTile, bin_count: usize) -> usize {
-        let frame = &tile.magnitudes_db[..bin_count];
-        frame
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .map(|(bin, _)| bin)
-            .unwrap()
-    }
-
-    #[test]
-    fn describes_its_own_analysis() {
-        let (_tap, analyzer) = analyzer(config());
-        let meta = analyzer.meta();
-        assert_eq!(meta.stream_id, "test");
-        assert_eq!(meta.provenance.fft_size, 256);
-        assert_eq!(meta.provenance.hop_size, 128);
-        assert_eq!(meta.frequency.bin_count, 129);
-        assert_eq!(meta.frequency.bin_hz, RATE as f32 / 256.0);
-        assert_eq!(meta.encoding, SpectrogramEncoding::F32Json);
-    }
-
-    #[test]
-    fn rejects_settings_a_stream_cannot_recover_from() {
-        for bad in [
-            SpectrumConfig {
-                fft_size: 300,
-                ..config()
-            },
-            SpectrumConfig {
-                hop_size: 0,
-                ..config()
-            },
-            SpectrumConfig {
-                hop_size: 512,
-                fft_size: 256,
-                ..config()
-            },
-            SpectrumConfig {
-                floor_db: 0.0,
-                ceiling_db: -100.0,
-                ..config()
-            },
-            SpectrumConfig {
-                history_frames: 0,
-                ..config()
-            },
-        ] {
-            assert!(bad.validate().is_err(), "accepted {bad:?}");
-        }
-        assert!(SpectrumAnalyzer::new(SpectrumTap::new(), 0, "s", config()).is_err());
-    }
-
-    #[test]
-    fn produces_nothing_until_a_whole_frame_is_available() {
-        let (tap, mut analyzer) = analyzer(config());
-        feed_silence(&tap, 255);
-        assert!(analyzer.poll().is_none());
-        feed_silence(&tap, 1);
-        let tile = analyzer.poll().expect("a full frame completed");
-        assert_eq!(tile.start_frame, 0);
-        assert_eq!(tile.frame_count, 1);
-    }
-
-    #[test]
-    fn reports_silence_at_the_floor() {
-        let (tap, mut analyzer) = analyzer(config());
-        feed_silence(&tap, 1024);
-        let tile = analyzer.poll().unwrap();
-        assert!(tile.magnitudes_db.iter().all(|db| *db == -100.0));
-        assert!(tile.magnitudes_db.iter().all(|db| db.is_finite()));
-    }
-
-    #[test]
-    fn puts_a_tone_in_its_own_bin_at_the_right_level() {
-        let (tap, mut analyzer) = analyzer(config());
-        let bin = 20;
-        let hz = bin as f32 * RATE as f32 / 256.0;
-        let mut phase = 0.0;
-        feed_tone(&tap, hz, 1.0, 4096, &mut phase);
-
-        let mut tile = analyzer.poll().unwrap();
-        // Skip the start-up frame, which is only partly filled by the tone.
-        tile = analyzer.poll().unwrap_or(tile);
-        assert_eq!(peak_bin(&tile, 129), bin);
-
-        let peak = tile.magnitudes_db[bin];
-        assert!(
-            (peak - 0.0).abs() < 0.5,
-            "a full-scale sine should read about 0 dBFS, got {peak}"
-        );
-    }
-
-    #[test]
-    fn scales_levels_with_amplitude() {
-        let mut levels = Vec::new();
-        for amplitude in [1.0, 0.5, 0.25] {
-            let (tap, mut analyzer) = analyzer(config());
-            let mut phase = 0.0;
-            feed_tone(
-                &tap,
-                20.0 * RATE as f32 / 256.0,
-                amplitude,
-                4096,
-                &mut phase,
-            );
-            analyzer.poll();
-            let tile = analyzer.poll().unwrap();
-            levels.push(tile.magnitudes_db[20]);
-        }
-        // Halving amplitude is 6 dB down, twice over.
-        assert!((levels[0] - levels[1] - 6.0).abs() < 0.5, "{levels:?}");
-        assert!((levels[1] - levels[2] - 6.0).abs() < 0.5, "{levels:?}");
-    }
-
-    #[test]
-    fn fills_tiles_up_to_the_declared_limit() {
-        let (tap, mut analyzer) = analyzer(config());
-        feed_silence(&tap, 256 + 128 * 9);
-        let first = analyzer.poll().unwrap();
-        assert_eq!(first.frame_count, 4);
-        assert_eq!(first.start_frame, 0);
-        assert_eq!(first.tile_seq, 0);
-        assert_eq!(first.magnitudes_db.len(), 4 * 129);
-        assert!(first.matches(analyzer.meta()));
-
-        let second = analyzer.poll().unwrap();
-        assert_eq!(second.start_frame, 4);
-        assert_eq!(second.tile_seq, 1);
-        assert!(second.frame_count <= 4);
-    }
-
-    #[test]
-    fn numbers_frames_continuously_across_polls() {
-        let (tap, mut analyzer) = analyzer(config());
-        let mut expected = 0u64;
-        for _ in 0..6 {
-            feed_silence(&tap, 128 * 4);
-            while let Some(tile) = analyzer.poll() {
-                assert_eq!(tile.start_frame, expected);
-                expected += tile.frame_count as u64;
-            }
-        }
-        assert!(expected > 10, "only {expected} frames");
-    }
-
-    #[test]
-    fn skips_frame_numbers_over_audio_the_tap_dropped() {
-        let (tap, mut analyzer) = analyzer(config());
-        feed_silence(&tap, 512);
-        while analyzer.poll().is_some() {}
-        let before = analyzer.next_frame;
-
-        // Overrun the tap, then keep feeding.
-        let flood = vec![0.0; 40_000];
-        tap.observe_block(&flood, &flood, flood.len());
-        let dropped = tap.dropped();
-        assert!(dropped > 0, "the tap should have overrun");
-
-        while analyzer.poll().is_some() {}
-        let hop = 128u64;
-        assert!(
-            analyzer.next_frame >= before + dropped.div_ceil(hop),
-            "dropped audio must advance the time axis"
-        );
-    }
-
-    #[test]
-    fn stops_collecting_when_told() {
-        let (tap, analyzer) = analyzer(config());
-        assert!(tap.is_enabled());
-        analyzer.stop();
-        assert!(!tap.is_enabled());
-    }
-}
+mod tests;
