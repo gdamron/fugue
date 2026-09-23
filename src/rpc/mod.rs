@@ -10,6 +10,11 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 mod authored_snapshot;
+mod inspection;
+pub use inspection::{
+    InspectionCoverage, InspectionCursor, InspectionEntry, InspectionPage, InspectionQuery,
+    InspectionSelection, MAX_INSPECTION_BYTES, MAX_INSPECTION_ENTRIES, MAX_INSPECTION_VALUE_BYTES,
+};
 mod discovery;
 mod identity;
 mod revision;
@@ -240,7 +245,11 @@ pub enum RpcCommand {
         #[serde(default = "default_frozen")]
         frozen: bool,
     },
-    /// Retrieve the retained authored document with its revision and daemon source context.
+    /// Inspect bounded authored selections with revision and source context.
+    InspectInvention {
+        query: InspectionQuery,
+    },
+    /// Retrieve the full retained authored snapshot.
     GetInvention {
         delivery: SnapshotDelivery,
     },
@@ -386,6 +395,10 @@ pub enum RpcResponsePayload {
     },
     Reload(ReloadOutcome),
     Saved(SaveReport),
+    /// A bounded view of authored state, including its session and revision.
+    InventionInspection {
+        page: Box<InspectionPage>,
+    },
     /// A revision-stamped authored snapshot, never a flattened runtime graph.
     AuthoredSnapshot {
         snapshot: Box<AuthoredSnapshot>,
