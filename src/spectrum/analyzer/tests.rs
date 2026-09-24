@@ -3,6 +3,9 @@
 use super::*;
 use crate::spectrum::SpectrumTap;
 
+mod timeline;
+use timeline::{frames_in, Timeline};
+
 const RATE: u32 = 48_000;
 
 fn config() -> SpectrumConfig {
@@ -97,6 +100,20 @@ fn rejects_settings_a_stream_cannot_recover_from() {
         },
         SpectrumConfig {
             history_frames: 0,
+            ..config()
+        },
+        SpectrumConfig {
+            fft_size: 8_192,
+            hop_size: 4_096,
+            ..config()
+        },
+        SpectrumConfig {
+            history_frames: MAX_HISTORY_FRAMES + 1,
+            ..config()
+        },
+        SpectrumConfig {
+            // Would ask for terabytes when a tile is allocated.
+            max_frames_per_tile: u32::MAX,
             ..config()
         },
     ] {
@@ -230,146 +247,181 @@ fn numbers_frames_by_position_in_the_stream() {
     }
 }
 
-/// The feature's headline claim: a stall must leave a gap where the audio
-/// was actually lost, and frames after it must keep their true position.
+/// Runs the analyser over everything waiting and checks it produced exactly
+/// the frames the timeline says it should: every frame whose window arrived
+/// whole, at its true position, and nothing stitched across a loss.
+fn assert_frames_match(timeline: &Timeline, tiles: &[SpectrogramTile], config: &SpectrumConfig) {
+    let expected = timeline.expected_frames(config.fft_size as u64, config.hop_size as u64);
+    let produced = frames_in(tiles);
+    if produced != expected {
+        let first_difference = produced
+            .iter()
+            .zip(&expected)
+            .position(|(p, e)| p != e)
+            .unwrap_or(produced.len().min(expected.len()));
+        panic!(
+            "produced {} frames, expected {}; first difference at index {first_difference}: \
+             produced {:?}, expected {:?} (lost {} samples)",
+            produced.len(),
+            expected.len(),
+            produced.get(first_difference),
+            expected.get(first_difference),
+            timeline.lost()
+        );
+    }
+    let bins = config.fft_size / 2 + 1;
+    for tile in tiles {
+        assert!(tile.frame_count <= config.max_frames_per_tile);
+        assert_eq!(
+            tile.magnitudes_db.len(),
+            tile.frame_count as usize * bins,
+            "tile {} is misshapen",
+            tile.tile_seq
+        );
+    }
+}
+
+/// The feature's headline claim: a stall leaves a gap exactly where the audio
+/// was lost, and every frame after it keeps its true position.
 #[test]
 fn places_the_gap_where_the_audio_was_lost() {
     let (tap, mut analyzer) = analyzer(config());
-    let hop = 128u64;
+    let mut timeline = Timeline::new(&tap);
     let mut tiles = Vec::new();
 
-    // A stretch of ordinary audio, analysed as it arrives.
-    let clean_before = 40 * 1_024u64;
     for _ in 0..40 {
-        feed_silence(&tap, 1_024);
+        timeline.feed(1_024);
         tiles.extend(drain(&mut analyzer));
     }
-    assert!(
-        !tiles.is_empty(),
-        "the clean audio should have been analysed"
-    );
-    assert_eq!(tap.dropped_total(), 0, "no loss before the stall");
-
-    // Now overrun: one huge block with nobody draining. The ring keeps
-    // what it can; the rest is lost *after* that accepted audio.
-    let flood = 200_000u64;
-    let block = vec![0.0; flood as usize];
-    tap.observe_block(&block, &block, block.len());
-    let dropped_at_flood = tap.dropped_total();
-    assert!(dropped_at_flood > 0, "the tap should have overrun");
-    let accepted = flood - dropped_at_flood;
-
-    // More ordinary audio afterwards.
+    // Overrun: far more than the ring holds, with nobody draining.
+    timeline.feed(200_000);
     for _ in 0..40 {
-        feed_silence(&tap, 1_024);
+        timeline.feed(1_024);
         tiles.extend(drain(&mut analyzer));
     }
-    let total_fed = clean_before + flood + 40 * 1_024;
-    // The ring stays full for the first feeds after the flood, so a little
-    // more audio is lost at the same point; it belongs to the same gap.
-    let dropped = tap.dropped_total();
-    assert!(dropped >= dropped_at_flood);
 
-    // Find where the frame numbering jumps: that is the gap.
-    let mut gap = None;
-    for pair in tiles.windows(2) {
-        let end = pair[0].start_frame + pair[0].frame_count as u64;
-        if pair[1].start_frame > end {
-            assert!(gap.is_none(), "one stall should make one gap");
-            gap = Some((end, pair[1].start_frame));
-        }
-    }
-    let (gap_start, gap_end) = gap.expect("the lost audio should leave a gap");
-
-    // The audio the ring accepted before the loss is continuous with what
-    // came before it, so the gap opens only after that audio — not where
-    // the analyser first heard about the loss.
-    let expected_start = (clean_before + accepted) / hop;
-    assert!(
-        gap_start.abs_diff(expected_start) <= 2,
-        "gap opens at frame {gap_start}, but the loss began at frame {expected_start}"
-    );
-    // It is as wide as the audio that went missing, plus the frames whose
-    // windows would have straddled the loss — those are rightly not
-    // produced rather than stitched across it.
-    let span = gap_end - gap_start;
-    let straddling = (256 / hop) + 1;
-    assert!(
-        span >= dropped / hop && span <= dropped / hop + straddling + 1,
-        "gap spans {span} frames for {dropped} lost samples (hop {hop})"
-    );
-
-    // Time still tracks the audio that was fed, gap included.
-    let last = tiles.last().unwrap();
-    let end_frame = last.start_frame + last.frame_count as u64;
-    assert!(
-        end_frame.abs_diff(total_fed / hop) <= 4,
-        "frame {end_frame} against {} frames of audio fed",
-        total_fed / hop
-    );
+    assert!(timeline.lost() > 0, "the tap should have overrun");
+    assert_frames_match(&timeline, &tiles, &config());
 }
 
-/// Frame numbering is derived from position, so repeated stalls cannot
-/// accumulate an offset the way incremental counting does.
+/// Stopping and restarting analysis on the same invention is designed in, so
+/// a second stream must place its gaps by its own audio, not the tap's life.
+#[test]
+fn a_later_stream_on_the_same_tap_places_its_gaps_correctly() {
+    let tap = SpectrumTap::new();
+    let mut first =
+        SpectrumAnalyzer::new(tap.take_reader().unwrap(), RATE, "first", config()).unwrap();
+    for _ in 0..50 {
+        feed_silence(&tap, 1_024);
+        drain(&mut first);
+    }
+    drop(first);
+
+    let mut second = SpectrumAnalyzer::new(
+        tap.take_reader().expect("returned"),
+        RATE,
+        "second",
+        config(),
+    )
+    .unwrap();
+    let mut timeline = Timeline::new(&tap);
+    let mut tiles = Vec::new();
+    for _ in 0..10 {
+        timeline.feed(1_024);
+        tiles.extend(drain(&mut second));
+    }
+    timeline.feed(100_000);
+    for _ in 0..20 {
+        timeline.feed(1_024);
+        tiles.extend(drain(&mut second));
+    }
+
+    assert!(timeline.lost() > 0);
+    assert_frames_match(&timeline, &tiles, &config());
+}
+
+/// Under sustained overload the analyser falls behind again and again before
+/// it reaches its first gap: it holds one loss while more queue up behind it.
+/// Audio accepted between losses must keep its place, and no frame may be
+/// stitched across any of them.
+#[test]
+fn keeps_audio_between_losses_in_its_place() {
+    let (tap, mut analyzer) = analyzer(config());
+    let mut timeline = Timeline::new(&tap);
+    let mut tiles = Vec::new();
+
+    for _ in 0..8 {
+        timeline.feed(1_024);
+        tiles.extend(drain(&mut analyzer));
+    }
+    // Stall, make a little progress, stall again — four times over, so the
+    // analyser is holding one loss while later ones are still queued.
+    timeline.feed(60_000);
+    for _ in 0..4 {
+        tiles.extend(analyzer.poll());
+        timeline.feed(2_048);
+    }
+    timeline.feed(60_000);
+    for _ in 0..30 {
+        timeline.feed(1_024);
+        tiles.extend(drain(&mut analyzer));
+    }
+
+    assert!(timeline.lost() > 0);
+    assert_frames_match(&timeline, &tiles, &config());
+}
+
+/// When audio after a gap is already waiting as the analyser reaches it, the
+/// first frame past the gap must start a new tile rather than continue the
+/// one before it.
+#[test]
+fn starts_a_new_tile_at_a_gap_even_mid_pass() {
+    let (tap, mut analyzer) = analyzer(config());
+    let mut timeline = Timeline::new(&tap);
+    let mut tiles = Vec::new();
+
+    for _ in 0..8 {
+        timeline.feed(1_024);
+        tiles.extend(drain(&mut analyzer));
+    }
+    timeline.feed(100_000);
+    tiles.extend(analyzer.poll());
+    timeline.feed(1_024); // audio past the gap, waiting before we reach it
+    tiles.extend(drain(&mut analyzer));
+
+    assert!(
+        tiles
+            .windows(2)
+            .any(|pair| pair[1].start_frame > pair[0].start_frame + pair[0].frame_count as u64),
+        "the scenario should produce a gap"
+    );
+    assert_frames_match(&timeline, &tiles, &config());
+}
+
+/// Frame numbering follows position, so repeated stalls cannot accumulate an
+/// offset; at four-times overlap, where counting drifts fastest, every frame
+/// still matches the audio that actually arrived.
 #[test]
 fn repeated_stalls_do_not_accumulate_drift() {
-    // Four-times overlap, where incremental counting drifts fastest.
     let config = SpectrumConfig {
         fft_size: 512,
         hop_size: 128,
         max_frames_per_tile: 8,
         ..Default::default()
     };
-    let (tap, mut analyzer) = analyzer(config);
-    let hop = 128u64;
-    let mut fed = 0u64;
-    let mut last_end = 0u64;
+    let tap = SpectrumTap::new();
+    let mut analyzer =
+        SpectrumAnalyzer::new(tap.take_reader().unwrap(), RATE, "drift", config.clone()).unwrap();
+    let mut timeline = Timeline::new(&tap);
+    let mut tiles = Vec::new();
 
-    for round in 0..6 {
-        // Stall: feed far more than the ring holds without draining.
-        let flood = vec![0.0; 60_000];
-        tap.observe_block(&flood, &flood, flood.len());
-        fed += 60_000;
-        // Then a spell of ordinary, drained audio.
+    for _ in 0..6 {
+        timeline.feed(60_000);
         for _ in 0..8 {
-            feed_silence(&tap, 2_048);
-            fed += 2_048;
-            for tile in drain(&mut analyzer) {
-                last_end = tile.start_frame + tile.frame_count as u64;
-            }
+            timeline.feed(2_048);
+            tiles.extend(drain(&mut analyzer));
         }
-        let fed_frames = fed / hop;
-        assert!(
-            last_end <= fed_frames + 1,
-            "round {round}: frame {last_end} runs ahead of the {fed_frames} frames fed"
-        );
-        // Position-derived numbering tracks the audio actually fed; a
-        // counter that lost frames per stall would fall steadily behind.
-        assert!(
-            last_end + 64 >= fed_frames,
-            "round {round}: frame {last_end} lags the {fed_frames} frames fed"
-        );
-    }
-}
-
-#[test]
-fn a_tile_never_spans_a_gap() {
-    let (tap, mut analyzer) = analyzer(config());
-    feed_silence(&tap, 4_096);
-    drain(&mut analyzer);
-
-    let flood = vec![0.0; 100_000];
-    tap.observe_block(&flood, &flood, flood.len());
-    for tile in drain(&mut analyzer) {
-        // Frames within a tile are consecutive by construction; the tile
-        // ends at a gap rather than stitching across it.
-        assert_eq!(
-            tile.magnitudes_db.len(),
-            tile.frame_count as usize * 129,
-            "tile {} is misshapen",
-            tile.tile_seq
-        );
-        assert!(tile.matches(analyzer.meta()));
+        assert_frames_match(&timeline, &tiles, &config);
     }
 }
 

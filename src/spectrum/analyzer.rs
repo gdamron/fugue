@@ -44,11 +44,25 @@ impl Default for SpectrumConfig {
     }
 }
 
+/// Largest transform a stream may use: 2,049 bins, the most a spectrogram view
+/// accepts. Larger sizes add no visible detail and cost memory on both ends.
+pub const MAX_FFT_SIZE: usize = 4096;
+
+/// Most frames a stream may ask a viewer to keep, matching the view's limit.
+pub const MAX_HISTORY_FRAMES: u32 = 2048;
+
+/// Largest tile a stream may send, matching the view's limit. Also bounds the
+/// one allocation each tile makes.
+pub const MAX_FRAMES_PER_TILE: u32 = 64;
+
 impl SpectrumConfig {
-    /// Checks the settings a stream cannot recover from.
+    /// Checks the settings a stream cannot recover from, and that the stream
+    /// fits within what a spectrogram view will accept.
     pub fn validate(&self) -> Result<(), String> {
-        if self.fft_size < 32 || !self.fft_size.is_power_of_two() {
-            return Err("fft_size must be a power of two of at least 32".to_string());
+        if self.fft_size < 32 || self.fft_size > MAX_FFT_SIZE || !self.fft_size.is_power_of_two() {
+            return Err(format!(
+                "fft_size must be a power of two from 32 to {MAX_FFT_SIZE}"
+            ));
         }
         if self.hop_size == 0 || self.hop_size > self.fft_size {
             return Err("hop_size must be 1..=fft_size".to_string());
@@ -56,8 +70,13 @@ impl SpectrumConfig {
         if self.floor_db >= self.ceiling_db {
             return Err("floor_db must be below ceiling_db".to_string());
         }
-        if self.history_frames == 0 || self.max_frames_per_tile == 0 {
-            return Err("history_frames and max_frames_per_tile must be positive".to_string());
+        if self.history_frames == 0 || self.history_frames > MAX_HISTORY_FRAMES {
+            return Err(format!("history_frames must be 1..={MAX_HISTORY_FRAMES}"));
+        }
+        if self.max_frames_per_tile == 0 || self.max_frames_per_tile > MAX_FRAMES_PER_TILE {
+            return Err(format!(
+                "max_frames_per_tile must be 1..={MAX_FRAMES_PER_TILE}"
+            ));
         }
         Ok(())
     }
@@ -97,8 +116,6 @@ pub struct SpectrumAnalyzer {
     magnitudes: Vec<f32>,
     /// Samples pulled from the tap in one read.
     scratch: Vec<f32>,
-    /// Samples taken from the tap, including any discarded.
-    consumed: u64,
     /// Samples lost to holes and already accounted for on the time axis.
     skipped: u64,
     /// Samples to discard before frames line up with the hop grid again.
@@ -172,7 +189,6 @@ impl SpectrumAnalyzer {
             // Sized for the largest single read, which is a whole frame while
             // the stream starts or restarts.
             scratch: vec![0.0; config.fft_size],
-            consumed: 0,
             skipped: 0,
             align_debt: 0,
             hole: None,
@@ -242,7 +258,7 @@ impl SpectrumAnalyzer {
     /// Where the next sample to be read sits in the stream, counting audio
     /// that was lost as well as audio that arrived.
     fn absolute_position(&self) -> u64 {
-        self.consumed + self.skipped
+        self.reader.position() + self.skipped
     }
 
     /// Fills the analysis frame until one is complete, returning its index on
@@ -252,21 +268,34 @@ impl SpectrumAnalyzer {
         let hop = self.config.hop_size;
 
         loop {
+            // Look at the audio before looking for losses. A loss is always
+            // published before the audio after it, so every loss that precedes
+            // what `available` covers is already visible below; reading no more
+            // than this can never run past one unannounced.
+            let available = self.reader.available();
             if self.hole.is_none() {
                 self.hole = self.reader.take_hole();
             }
+            let position = self.reader.position();
             if let Some((at, len)) = self.hole {
-                if self.consumed >= at {
+                if position >= at {
                     self.apply_hole(len);
                     continue;
                 }
             }
+            // Audio left before the next loss; nothing may be read past it.
+            let room = self
+                .hole
+                .map_or(usize::MAX, |(at, _)| (at - position) as usize);
+
             if self.align_debt > 0 {
-                let wanted = self.align_debt;
-                if !self.discard(wanted) {
+                // Stops at a loss if one comes first; reaching it recomputes
+                // the alignment from the far side.
+                let count = self.align_debt.min(room);
+                if !self.discard(count, available) {
                     return None;
                 }
-                self.align_debt -= wanted;
+                self.align_debt -= count;
                 continue;
             }
 
@@ -275,25 +304,19 @@ impl SpectrumAnalyzer {
             } else {
                 hop
             };
-            // Never read across a hole: the audio beyond it is not continuous
-            // with what this frame already holds.
-            if let Some((at, _)) = self.hole {
-                let room = (at - self.consumed) as usize;
-                if room < needed {
-                    // Too little audio left before the loss to finish a frame,
-                    // so this run ends here.
-                    if !self.discard(room) {
-                        return None;
-                    }
-                    continue;
+            if room < needed {
+                // Too little audio left before the loss to finish a frame, so
+                // this run ends here rather than reading across it.
+                if !self.discard(room, available) {
+                    return None;
                 }
+                continue;
             }
-            if self.reader.available() < needed {
+            if available < needed {
                 return None;
             }
             let taken = self.reader.read_samples(&mut self.scratch[..needed]);
             debug_assert_eq!(taken, needed, "availability was just checked");
-            self.consumed += taken as u64;
 
             if self.filled < size {
                 self.frame[self.filled..self.filled + taken]
@@ -326,17 +349,19 @@ impl SpectrumAnalyzer {
         };
     }
 
-    /// Throws away `count` samples, reporting whether they were all there.
-    fn discard(&mut self, count: usize) -> bool {
+    /// Throws away `count` samples if `available` covers them, reporting
+    /// whether it did.
+    fn discard(&mut self, count: usize, available: usize) -> bool {
         if count == 0 {
             return true;
         }
-        if self.reader.available() < count {
+        if available < count {
             return false;
         }
+        debug_assert!(count <= self.scratch.len(), "discards stay within a frame");
         let taken = self.reader.read_samples(&mut self.scratch[..count]);
-        self.consumed += taken as u64;
-        taken == count
+        debug_assert_eq!(taken, count, "availability was just checked");
+        true
     }
 
     /// Windows the current frame, transforms it, and appends its decibels.

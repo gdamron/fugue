@@ -9,5 +9,7 @@
 mod analyzer;
 mod tap;
 
-pub use analyzer::{SpectrumAnalyzer, SpectrumConfig};
-pub use tap::SpectrumTap;
+pub use analyzer::{
+    SpectrumAnalyzer, SpectrumConfig, MAX_FFT_SIZE, MAX_FRAMES_PER_TILE, MAX_HISTORY_FRAMES,
+};
+pub use tap::{SpectrumReader, SpectrumTap};

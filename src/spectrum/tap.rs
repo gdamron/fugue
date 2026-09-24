@@ -5,8 +5,11 @@ use std::sync::Arc;
 /// 48 kHz, far more than the few milliseconds between analysis passes.
 const CAPACITY: usize = 32_768;
 
-/// `hole_at` when no hole is waiting to be accounted for.
-const NO_HOLE: u64 = u64::MAX;
+/// Losses the writer can publish before the reader takes any. One is published
+/// per stall, so this is only reached when the analyser stalls this many times
+/// without reaching the first one — and even then no loss is miscounted: the
+/// writer keeps dropping into the loss it has not yet published.
+const HOLE_CAPACITY: usize = 32;
 
 /// The audio thread's end of a mono tap of the master output.
 ///
@@ -16,10 +19,10 @@ const NO_HOLE: u64 = u64::MAX;
 /// mutex and no `unsafe`. When no one is listening the tap is disabled and the
 /// write path returns after a single relaxed load.
 ///
-/// The reading end is a [`SpectrumReader`], which exists at most once per tap
-/// (see [`take_reader`](Self::take_reader)). That is what makes the index
-/// handover sound: one writer, one reader, neither doing a read-modify-write
-/// on the other's index.
+/// The reading end is a [`SpectrumReader`], which exists at most once at a
+/// time (see [`take_reader`](Self::take_reader)). One writer and one reader,
+/// each the only thread that stores to its own indices, is what makes every
+/// handover here sound.
 #[derive(Clone)]
 pub struct SpectrumTap {
     inner: Arc<TapInner>,
@@ -29,25 +32,46 @@ struct TapInner {
     /// Ring storage, one `f32`'s bits per slot.
     samples: Vec<AtomicU32>,
     /// Next slot the writer will fill. Published with `Release` so a reader
-    /// that sees it also sees the samples written before it.
+    /// that sees it also sees the samples, and any loss, written before it.
     write: AtomicUsize,
     /// Next slot the reader will take. Only the reader stores to this.
     read: AtomicUsize,
     enabled: AtomicBool,
-    /// Samples accepted into the ring since collection began. The reader
-    /// consumes them in order, so its own running count is directly
-    /// comparable with `hole_at`.
+    /// Bumped each time a reader starts a stream. Losses stamped with an
+    /// earlier value belong to a stream that no longer exists.
+    generation: AtomicU64,
+    /// Samples ever accepted into the ring. Writer only.
     accepted: AtomicU64,
-    /// Where the next unaccounted hole sits, counted in accepted samples, or
-    /// [`NO_HOLE`]. Positions the loss in the stream: the drop happened at the
-    /// writing end, while the reader may still be most of a ring behind.
-    hole_at: AtomicU64,
-    /// Samples lost at `hole_at`.
-    hole_len: AtomicU64,
+    /// Samples ever taken past the read index, read or discarded. Reader only.
+    /// Every accepted sample passes the read index exactly once, so this and
+    /// `accepted` count in the same units, and a loss's position can be
+    /// compared with the reader's without either side resetting anything.
+    taken: AtomicU64,
+    /// Published losses, oldest first: a single-producer, single-consumer
+    /// queue of immutable records.
+    holes: Vec<HoleRecord>,
+    /// Next record the reader will take. Reader only.
+    hole_head: AtomicUsize,
+    /// Next record the writer will fill. Writer only.
+    hole_tail: AtomicUsize,
+    /// The loss currently being dropped, not yet published because it is
+    /// still growing. Writer only; atomics only because `observe_block` takes
+    /// `&self`.
+    pending_at: AtomicU64,
+    pending_len: AtomicU64,
+    pending_generation: AtomicU64,
     /// Every sample ever dropped, for diagnostics.
     dropped_total: AtomicU64,
     /// Whether the single reader has been handed out.
     reader_taken: AtomicBool,
+}
+
+/// One published loss: `len` samples lost after `at` accepted samples.
+/// Written once by the writer, then only read.
+struct HoleRecord {
+    at: AtomicU64,
+    len: AtomicU64,
+    generation: AtomicU64,
 }
 
 impl SpectrumTap {
@@ -58,9 +82,21 @@ impl SpectrumTap {
                 write: AtomicUsize::new(0),
                 read: AtomicUsize::new(0),
                 enabled: AtomicBool::new(false),
+                generation: AtomicU64::new(0),
                 accepted: AtomicU64::new(0),
-                hole_at: AtomicU64::new(NO_HOLE),
-                hole_len: AtomicU64::new(0),
+                taken: AtomicU64::new(0),
+                holes: (0..HOLE_CAPACITY)
+                    .map(|_| HoleRecord {
+                        at: AtomicU64::new(0),
+                        len: AtomicU64::new(0),
+                        generation: AtomicU64::new(0),
+                    })
+                    .collect(),
+                hole_head: AtomicUsize::new(0),
+                hole_tail: AtomicUsize::new(0),
+                pending_at: AtomicU64::new(0),
+                pending_len: AtomicU64::new(0),
+                pending_generation: AtomicU64::new(0),
                 dropped_total: AtomicU64::new(0),
                 reader_taken: AtomicBool::new(false),
             }),
@@ -76,6 +112,8 @@ impl SpectrumTap {
             .ok()
             .map(|_| SpectrumReader {
                 inner: Arc::clone(&self.inner),
+                generation: 0,
+                base: 0,
             })
     }
 
@@ -90,14 +128,21 @@ impl SpectrumTap {
         self.inner.dropped_total.load(Ordering::Relaxed)
     }
 
+    /// Every sample ever accepted into the ring.
+    #[cfg(test)]
+    pub(crate) fn accepted_total(&self) -> u64 {
+        self.inner.accepted.load(Ordering::Acquire)
+    }
+
     /// Audio thread: fold one block of output into the tap as mono.
     ///
-    /// Allocation-free and lock-free. Returns immediately when disabled, so a
-    /// running invention nobody is watching pays one relaxed load per block.
+    /// Allocation-free and lock-free, and must only ever be called from one
+    /// thread. Returns immediately when disabled, so a running invention
+    /// nobody is watching pays one relaxed load per block.
     ///
     /// Channels are summed and halved; a signal panned hard to one side
     /// therefore reads 6 dB below its channel peak, and an out-of-phase pair
-    /// cancels. That is what `source` names as a mono analysis.
+    /// cancels.
     #[inline]
     pub(crate) fn observe_block(&self, left: &[f32], right: &[f32], frames: usize) {
         if !self.is_enabled() {
@@ -105,16 +150,23 @@ impl SpectrumTap {
         }
         let inner = &self.inner;
         let frames = frames.min(left.len()).min(right.len());
+        let generation = inner.generation.load(Ordering::Acquire);
         let read = inner.read.load(Ordering::Acquire);
         let mut write = inner.write.load(Ordering::Relaxed);
         let mut accepted = inner.accepted.load(Ordering::Relaxed);
 
+        // A loss is published before any audio that follows it, so the reader
+        // always learns of a hole before it can read past it. Until it can be
+        // published, audio keeps being dropped into it.
+        let blocked = inner.pending_len.load(Ordering::Relaxed) > 0
+            && !inner.publish_pending(generation, write, read);
+
         let mut dropped = 0u64;
         for i in 0..frames {
             let next = if write + 1 == CAPACITY { 0 } else { write + 1 };
-            if next == read {
-                // Full: the analyser has not caught up. Drop the rest of the
-                // block rather than overwrite samples it has not read.
+            if blocked || next == read {
+                // Full, or a loss is still waiting to be published. Drop the
+                // rest of the block rather than overwrite unread samples.
                 dropped = (frames - i) as u64;
                 break;
             }
@@ -123,30 +175,63 @@ impl SpectrumTap {
             write = next;
             accepted += 1;
         }
-        inner.write.store(write, Ordering::Release);
         inner.accepted.store(accepted, Ordering::Release);
+        inner.write.store(write, Ordering::Release);
         if dropped > 0 {
-            inner.record_hole(accepted, dropped);
+            inner.extend_pending(accepted, dropped, generation);
         }
     }
 }
 
 impl TapInner {
-    /// Writer only: notes that `len` samples were lost after `at` accepted
-    /// samples, so the reader can place the gap where it actually happened.
-    fn record_hole(&self, at: u64, len: u64) {
+    /// Writer only: publishes the loss being dropped, once there is room for
+    /// what follows it. Returns whether nothing is left pending.
+    fn publish_pending(&self, generation: u64, write: usize, read: usize) -> bool {
+        if self.pending_generation.load(Ordering::Relaxed) != generation {
+            // Left over from before a restart; that stream is gone.
+            self.pending_len.store(0, Ordering::Relaxed);
+            return true;
+        }
+        let next = if write + 1 == CAPACITY { 0 } else { write + 1 };
+        if next == read {
+            // Still full: the loss is still going on.
+            return false;
+        }
+        let tail = self.hole_tail.load(Ordering::Relaxed);
+        let next_tail = (tail + 1) % HOLE_CAPACITY;
+        if next_tail == self.hole_head.load(Ordering::Acquire) {
+            // Nowhere to publish it. Rather than lose track of where this loss
+            // sits, keep dropping, so it stays one loss at one position.
+            return false;
+        }
+        let record = &self.holes[tail];
+        record
+            .at
+            .store(self.pending_at.load(Ordering::Relaxed), Ordering::Relaxed);
+        record
+            .len
+            .store(self.pending_len.load(Ordering::Relaxed), Ordering::Relaxed);
+        record.generation.store(generation, Ordering::Relaxed);
+        // Publishes the record; the reader acquires this before reading it.
+        self.hole_tail.store(next_tail, Ordering::Release);
+        self.pending_len.store(0, Ordering::Relaxed);
+        true
+    }
+
+    /// Writer only: adds `len` dropped samples to the loss in progress, or
+    /// starts one after `at` accepted samples.
+    fn extend_pending(&self, at: u64, len: u64, generation: u64) {
         self.dropped_total.fetch_add(len, Ordering::Relaxed);
-        if self.hole_at.load(Ordering::Acquire) == NO_HOLE {
-            self.hole_len.store(len, Ordering::Relaxed);
-            // Publish the position last: a reader that sees it also sees the
-            // length that belongs to it.
-            self.hole_at.store(at, Ordering::Release);
+        let pending = self.pending_len.load(Ordering::Relaxed);
+        if pending > 0 && self.pending_generation.load(Ordering::Relaxed) == generation {
+            // Nothing has been accepted since this loss began, so it is the
+            // same loss at the same position.
+            debug_assert_eq!(self.pending_at.load(Ordering::Relaxed), at);
+            self.pending_len.store(pending + len, Ordering::Relaxed);
         } else {
-            // The reader has not reached the previous hole yet, which means it
-            // is more than a ring behind. Merge rather than queue: the two
-            // gaps are reported as one at the earlier position, which can only
-            // under-state how far apart they were.
-            self.hole_len.fetch_add(len, Ordering::Relaxed);
+            self.pending_at.store(at, Ordering::Relaxed);
+            self.pending_len.store(len, Ordering::Relaxed);
+            self.pending_generation.store(generation, Ordering::Relaxed);
         }
     }
 }
@@ -154,19 +239,30 @@ impl TapInner {
 /// The analyser's end of a [`SpectrumTap`]: the only consumer, and the only
 /// thing that stores to the read index.
 ///
-/// Dropping it stops collection and returns the reading end to the tap, so a
+/// Positions it reports count from the start of the current stream, so a
+/// second stream on the same tap sees its losses where they happened in *its*
+/// audio. Dropping it stops collection and returns the reading end, so a
 /// stream that ends by an early return or a panic cannot leave the audio
 /// thread filling a ring nobody drains.
 pub struct SpectrumReader {
     inner: Arc<TapInner>,
+    /// The tap's generation when this stream started.
+    generation: u64,
+    /// `taken` when this stream started: its position zero.
+    base: u64,
 }
 
 impl SpectrumReader {
-    /// Starts collection, discarding anything buffered so analysis begins from
-    /// live audio rather than stale samples.
+    /// Starts a stream: discards anything buffered, so analysis begins from
+    /// live audio rather than stale samples, and counts positions from here.
+    ///
+    /// A block the audio thread already had in flight may still land after
+    /// this; it is taken as the stream's first audio.
     pub fn start(&mut self) {
         self.discard_buffered();
-        self.inner.enabled.store(true, Ordering::Relaxed);
+        self.generation = self.inner.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.base = self.inner.taken.load(Ordering::Relaxed);
+        self.inner.enabled.store(true, Ordering::Release);
     }
 
     /// Stops collection.
@@ -179,7 +275,17 @@ impl SpectrumReader {
         self.inner.enabled.load(Ordering::Relaxed)
     }
 
+    /// Samples taken since this stream started, read or discarded: where the
+    /// next sample to be read sits in the stream's arrived audio.
+    pub fn position(&self) -> u64 {
+        self.inner.taken.load(Ordering::Relaxed) - self.base
+    }
+
     /// Samples waiting to be read.
+    ///
+    /// Any loss preceding these samples has already been published, so call
+    /// this before [`take_hole`](Self::take_hole) and read no more than it
+    /// reports to be sure of never reading past a loss unannounced.
     pub fn available(&self) -> usize {
         let write = self.inner.write.load(Ordering::Acquire);
         let read = self.inner.read.load(Ordering::Relaxed);
@@ -197,26 +303,36 @@ impl SpectrumReader {
             read = if read + 1 == CAPACITY { 0 } else { read + 1 };
         }
         self.inner.read.store(read, Ordering::Release);
+        self.advance_taken(count as u64);
         count
     }
 
-    /// The next hole waiting to be accounted for, as the number of samples
-    /// that had been accepted before it and the number lost there.
+    /// The next loss in this stream, as its [`position`](Self::position) and
+    /// the number of samples lost there. Losses come oldest first, and each
+    /// is reported once.
     ///
-    /// The caller compares the position with its own running count of samples
-    /// read, and applies the gap when it reaches that point — not when it
-    /// first hears about it, which is up to a ring of good audio too early.
+    /// The caller applies a loss when its position reaches it, not when it
+    /// first hears of it, which may be up to a ring of good audio too early.
     pub fn take_hole(&mut self) -> Option<(u64, u64)> {
-        if self.inner.hole_at.load(Ordering::Acquire) == NO_HOLE {
-            return None;
+        loop {
+            let head = self.inner.hole_head.load(Ordering::Relaxed);
+            if head == self.inner.hole_tail.load(Ordering::Acquire) {
+                return None;
+            }
+            let record = &self.inner.holes[head];
+            let at = record.at.load(Ordering::Relaxed);
+            let len = record.len.load(Ordering::Relaxed);
+            let generation = record.generation.load(Ordering::Relaxed);
+            // Frees the record; the writer acquires this before reusing it.
+            self.inner
+                .hole_head
+                .store((head + 1) % HOLE_CAPACITY, Ordering::Release);
+            if generation != self.generation || at < self.base {
+                // From an earlier stream on this tap.
+                continue;
+            }
+            return Some((at - self.base, len));
         }
-        let at = self.inner.hole_at.load(Ordering::Acquire);
-        let len = self.inner.hole_len.swap(0, Ordering::AcqRel);
-        self.inner.hole_at.store(NO_HOLE, Ordering::Release);
-        // A drop landing in the instant between those two stores is recorded
-        // against the next hole instead of this one; it is still counted in
-        // `dropped_total`, and costs only that burst's positional accuracy.
-        (len > 0).then_some((at, len))
     }
 
     /// Every sample ever dropped because analysis fell behind.
@@ -224,12 +340,20 @@ impl SpectrumReader {
         self.inner.dropped_total.load(Ordering::Relaxed)
     }
 
-    /// Drops everything buffered, along with any hole recorded in it.
+    fn advance_taken(&self, count: u64) {
+        let taken = self.inner.taken.load(Ordering::Relaxed);
+        self.inner.taken.store(taken + count, Ordering::Relaxed);
+    }
+
+    /// Drops everything buffered, along with every published loss.
     fn discard_buffered(&mut self) {
         let write = self.inner.write.load(Ordering::Acquire);
+        let read = self.inner.read.load(Ordering::Relaxed);
+        let skipped = (write + CAPACITY - read) % CAPACITY;
         self.inner.read.store(write, Ordering::Release);
-        self.inner.hole_at.store(NO_HOLE, Ordering::Release);
-        self.inner.hole_len.store(0, Ordering::Relaxed);
+        self.advance_taken(skipped as u64);
+        let tail = self.inner.hole_tail.load(Ordering::Acquire);
+        self.inner.hole_head.store(tail, Ordering::Release);
     }
 }
 
@@ -242,135 +366,4 @@ impl Drop for SpectrumReader {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn tap_and_reader() -> (SpectrumTap, SpectrumReader) {
-        let tap = SpectrumTap::new();
-        let mut reader = tap.take_reader().expect("a fresh tap has its reader");
-        reader.start();
-        (tap, reader)
-    }
-
-    #[test]
-    fn collects_nothing_until_started() {
-        let tap = SpectrumTap::new();
-        let reader = tap.take_reader().unwrap();
-        let values = [0.5; 64];
-        tap.observe_block(&values, &values, 64);
-        assert_eq!(reader.available(), 0);
-    }
-
-    #[test]
-    fn hands_out_its_reader_only_once() {
-        let tap = SpectrumTap::new();
-        let reader = tap.take_reader().expect("first take succeeds");
-        assert!(
-            tap.take_reader().is_none(),
-            "a second consumer would corrupt the read index"
-        );
-
-        drop(reader);
-        assert!(
-            tap.take_reader().is_some(),
-            "dropping the reader returns the reading end"
-        );
-    }
-
-    #[test]
-    fn dropping_the_reader_stops_collection() {
-        let (tap, reader) = tap_and_reader();
-        assert!(tap.is_enabled());
-        drop(reader);
-        assert!(
-            !tap.is_enabled(),
-            "an abandoned stream must not leave the audio thread collecting"
-        );
-    }
-
-    #[test]
-    fn sums_channels_to_mono() {
-        let (tap, mut reader) = tap_and_reader();
-        tap.observe_block(&[1.0, 0.0], &[0.0, 0.5], 2);
-        let mut out = [0.0; 2];
-        assert_eq!(reader.read_samples(&mut out), 2);
-        assert_eq!(out, [0.5, 0.25]);
-    }
-
-    #[test]
-    fn hands_samples_over_in_order_across_the_wrap() {
-        let (tap, mut reader) = tap_and_reader();
-        let mut out = vec![0.0; 1000];
-        // Push far more than the ring holds, draining as we go.
-        for round in 0..60u32 {
-            let values: Vec<f32> = (0..1000).map(|i| (round * 1000 + i) as f32).collect();
-            tap.observe_block(&values, &values, values.len());
-            let count = reader.read_samples(&mut out);
-            assert_eq!(count, 1000, "round {round} handed over {count}");
-            assert_eq!(&out[..count], &values[..]);
-        }
-        assert_eq!(reader.dropped_total(), 0);
-        assert!(reader.take_hole().is_none());
-    }
-
-    #[test]
-    fn records_where_a_hole_happened_not_just_how_big_it_was() {
-        let (tap, mut reader) = tap_and_reader();
-        let values = vec![0.25; CAPACITY];
-        tap.observe_block(&values, &values, values.len());
-        tap.observe_block(&values, &values, values.len());
-
-        // One slot is reserved to tell full from empty.
-        let accepted = (CAPACITY - 1) as u64;
-        assert_eq!(reader.available(), CAPACITY - 1);
-        assert_eq!(reader.dropped_total(), CAPACITY as u64 + 1);
-
-        let (at, len) = reader.take_hole().expect("a hole was recorded");
-        assert_eq!(at, accepted, "the hole sits after the audio already taken");
-        assert_eq!(len, CAPACITY as u64 + 1);
-        assert!(reader.take_hole().is_none(), "a hole is reported once");
-    }
-
-    #[test]
-    fn merges_a_second_hole_the_reader_has_not_reached() {
-        let (tap, mut reader) = tap_and_reader();
-        let values = vec![0.25; CAPACITY];
-        tap.observe_block(&values, &values, values.len());
-        tap.observe_block(&values, &values, values.len());
-        tap.observe_block(&values, &values, values.len());
-
-        let (_, len) = reader.take_hole().unwrap();
-        assert_eq!(
-            len,
-            reader.dropped_total(),
-            "every dropped sample is accounted for somewhere"
-        );
-    }
-
-    #[test]
-    fn keeps_the_oldest_unread_samples_when_it_overflows() {
-        let (tap, mut reader) = tap_and_reader();
-        let first: Vec<f32> = (0..CAPACITY).map(|i| i as f32).collect();
-        tap.observe_block(&first, &first, first.len());
-        let late = vec![-1.0; 512];
-        tap.observe_block(&late, &late, late.len());
-
-        let mut out = vec![0.0; 4];
-        reader.read_samples(&mut out);
-        assert_eq!(out, [0.0, 1.0, 2.0, 3.0], "unread audio was overwritten");
-    }
-
-    #[test]
-    fn restarting_discards_what_is_buffered() {
-        let (tap, mut reader) = tap_and_reader();
-        let values = [0.5; 128];
-        tap.observe_block(&values, &values, 128);
-        assert_eq!(reader.available(), 128);
-
-        reader.stop();
-        reader.start();
-        assert_eq!(reader.available(), 0);
-        tap.observe_block(&values, &values, 8);
-        assert_eq!(reader.available(), 8);
-    }
-}
+mod tests;
