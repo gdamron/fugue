@@ -8,13 +8,17 @@ use crate::agents::AgentManager;
 use crate::scripting::ScriptManager;
 use crate::{ControlValue, Invention, InventionBuilder, InventionHandles, ModuleRegistry};
 
-use super::graph::{GraphCommand, SignalGraph};
+use super::graph::SignalGraph;
 use super::orchestration::{ModulePorts, OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
-use super::runtime::{
-    module_ports, validate_input_port, validate_output_port, ControlSurfaceInstance,
-    GraphCommandError,
-};
+use super::runtime::{module_ports, ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
+
+#[cfg(target_arch = "wasm32")]
+mod audio_file_sink;
+mod code_modules;
+mod editing;
+
+pub use code_modules::CodeModuleRuntimeInfo;
 
 /// Offline renderer for inventions.
 ///
@@ -35,16 +39,6 @@ pub struct RenderEngine {
     /// Offline render has no event consumer, so this slot stays empty; it exists
     /// only so snapshots share the [`RuntimeSnapshot`] shape with live runtimes.
     event_sink: super::orchestration::EventSinkSlot,
-}
-
-/// Serializable config/state view for a `code` module.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct CodeModuleRuntimeInfo {
-    pub id: String,
-    pub script: String,
-    pub entrypoint: String,
-    pub enabled: bool,
-    pub tick_hz: f32,
 }
 
 impl RenderEngine {
@@ -102,85 +96,6 @@ impl RenderEngine {
             command_tx: None,
             module_ports: self.module_ports.clone(),
         })
-    }
-
-    /// Returns the current config/state for all `code` modules in the graph.
-    pub fn list_code_modules(&self) -> Result<Vec<CodeModuleRuntimeInfo>, GraphCommandError> {
-        let modules = self.list_modules();
-        let mut code_modules = Vec::new();
-        for module in modules {
-            if module.module_type != "code" {
-                continue;
-            }
-
-            let script = module
-                .config
-                .get("script")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let entrypoint = module
-                .config
-                .get("entrypoint")
-                .and_then(|value| value.as_str())
-                .unwrap_or("init")
-                .to_string();
-            let enabled = match self.snapshot().get_control(&module.id, "enabled")? {
-                ControlValue::Bool(value) => value,
-                _ => true,
-            };
-            let tick_hz = match self.snapshot().get_control(&module.id, "tick_hz")? {
-                ControlValue::Number(value) => value,
-                _ => 0.0,
-            };
-
-            code_modules.push(CodeModuleRuntimeInfo {
-                id: module.id,
-                script,
-                entrypoint,
-                enabled,
-                tick_hz,
-            });
-        }
-
-        Ok(code_modules)
-    }
-
-    /// Returns the current config/state for a single `code` module.
-    pub fn get_code_module(
-        &self,
-        module_id: &str,
-    ) -> Result<CodeModuleRuntimeInfo, GraphCommandError> {
-        self.list_code_modules()?
-            .into_iter()
-            .find(|module| module.id == module_id)
-            .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))
-    }
-
-    /// Updates the runtime status string for a `code` module.
-    pub fn set_code_module_status(
-        &self,
-        module_id: &str,
-        status: impl Into<String>,
-    ) -> Result<(), GraphCommandError> {
-        self.snapshot().set_control_transient(
-            module_id,
-            "status",
-            ControlValue::String(status.into()),
-        )
-    }
-
-    /// Updates the last-error string for a `code` module.
-    pub fn set_code_module_error(
-        &self,
-        module_id: &str,
-        error: impl Into<String>,
-    ) -> Result<(), GraphCommandError> {
-        self.snapshot().set_control_transient(
-            module_id,
-            "last_error",
-            ControlValue::String(error.into()),
-        )
     }
 
     /// Loads an invention from a parsed value.
@@ -328,37 +243,6 @@ impl RenderEngine {
         Ok(earliest)
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn finish_audio_file_sink(
-        &self,
-        module_id: &str,
-    ) -> Result<crate::AudioFileSinkStats, Box<dyn std::error::Error>> {
-        let handle = self.audio_file_sink_handle(module_id)?;
-        Ok(handle.finish())
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn audio_file_sink_wav_bytes(
-        &self,
-        module_id: &str,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let handle = self.audio_file_sink_handle(module_id)?;
-        handle.wav_bytes().map_err(Into::into)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn audio_file_sink_handle(
-        &self,
-        module_id: &str,
-    ) -> Result<crate::AudioFileSinkHandle, Box<dyn std::error::Error>> {
-        let key = format!("{}.handle", module_id);
-        self.handles
-            .lock()
-            .unwrap()
-            .get::<crate::AudioFileSinkHandle>(&key)
-            .ok_or_else(|| format!("unknown audio_file_sink handle: {}", module_id).into())
-    }
-
     /// Returns whether a one-shot playthrough has ended, observed via module
     /// controls (the same surface live playback uses; `scan_end_gate` is the
     /// frame-exact alternative for offline rendering).
@@ -422,230 +306,6 @@ impl RenderEngine {
         self.snapshot().list_controls(module_id)
     }
 
-    pub fn add_module(
-        &self,
-        module_id: &str,
-        module_type: &str,
-        config: &serde_json::Value,
-    ) -> Result<(), GraphCommandError> {
-        let graph = self
-            .graph
-            .as_ref()
-            .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))?
-            .clone();
-
-        if !self.registry.has_type(module_type) {
-            return Err(GraphCommandError::UnknownModuleType(
-                module_type.to_string(),
-            ));
-        }
-        let result = self
-            .registry
-            .build(module_type, self.sample_rate, config)
-            .map_err(|e| GraphCommandError::ModuleBuildFailed(e.to_string()))?;
-
-        let mut new_handles = std::collections::HashMap::new();
-        for (handle_name, handle) in result.handles {
-            let key = format!("{}.{}", module_id, handle_name);
-            new_handles.insert(key, handle);
-        }
-
-        // Attach schedulers before touching the graph, so a schedule that
-        // fails to resolve leaves the loaded invention unchanged.
-        if module_type == crate::modules::control_scheduler::CONTROL_SCHEDULER_TYPE_ID {
-            crate::modules::control_scheduler::attach_from_handle(
-                module_id,
-                new_handles.get(&format!("{}.controls", module_id)),
-                &self.control_surfaces,
-            )
-            .map_err(GraphCommandError::ModuleBuildFailed)?;
-        }
-
-        self.handles
-            .lock()
-            .unwrap()
-            .merge(InventionHandles::new(new_handles));
-
-        if let Some(control_surface) = result.control_surface {
-            self.control_surfaces
-                .lock()
-                .unwrap()
-                .insert(module_id.to_string(), control_surface);
-        }
-
-        self.module_ports.lock().unwrap().insert(
-            module_id.to_string(),
-            ModulePorts {
-                inputs: result
-                    .module
-                    .module()
-                    .inputs()
-                    .iter()
-                    .map(|port| (*port).to_string())
-                    .collect(),
-                outputs: result
-                    .module
-                    .module()
-                    .outputs()
-                    .iter()
-                    .map(|port| (*port).to_string())
-                    .collect(),
-            },
-        );
-
-        graph
-            .lock()
-            .unwrap()
-            .apply_command(GraphCommand::AddModule {
-                module_id: module_id.to_string(),
-                module: result.module,
-            });
-
-        {
-            let mut state = self.state.lock().unwrap();
-            state.modules.insert(
-                module_id.to_string(),
-                RuntimeModuleInfo {
-                    id: module_id.to_string(),
-                    module_type: module_type.to_string(),
-                    config: config.clone(),
-                },
-            );
-            state.document_upsert_module(module_id, module_type, config);
-        }
-
-        if module_type == "code" {
-            self.scripts.start_module(
-                self.controller().expect("render controller available"),
-                RuntimeModuleInfo {
-                    id: module_id.to_string(),
-                    module_type: module_type.to_string(),
-                    config: config.clone(),
-                },
-            );
-        }
-        if module_type == "agent" {
-            self.agents.start_module(
-                self.controller().expect("render controller available"),
-                RuntimeModuleInfo {
-                    id: module_id.to_string(),
-                    module_type: module_type.to_string(),
-                    config: config.clone(),
-                },
-            );
-        }
-
-        Ok(())
-    }
-
-    pub fn remove_module(&self, module_id: &str) -> Result<(), GraphCommandError> {
-        let graph = self
-            .graph
-            .as_ref()
-            .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))?;
-        self.scripts.stop_module(module_id);
-        self.agents.stop_module(module_id);
-        self.control_surfaces
-            .lock()
-            .unwrap()
-            .shift_remove(module_id);
-        self.handles
-            .lock()
-            .unwrap()
-            .remove_prefix(&format!("{}.", module_id));
-        self.module_ports.lock().unwrap().shift_remove(module_id);
-        graph
-            .lock()
-            .unwrap()
-            .apply_command(GraphCommand::RemoveModule {
-                module_id: module_id.to_string(),
-            });
-        let mut state = self.state.lock().unwrap();
-        state.modules.shift_remove(module_id);
-        state
-            .connections
-            .retain(|conn| conn.from != module_id && conn.to != module_id);
-        state.document_remove_module(module_id);
-        Ok(())
-    }
-
-    pub fn connect(
-        &self,
-        from_module: &str,
-        from_port: &str,
-        to_module: &str,
-        to_port: &str,
-    ) -> Result<(), GraphCommandError> {
-        let graph = self
-            .graph
-            .as_ref()
-            .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))?;
-        {
-            let graph = graph.lock().unwrap();
-            let source = graph
-                .modules
-                .get(from_module)
-                .ok_or_else(|| GraphCommandError::UnknownModule(from_module.to_string()))?;
-            validate_output_port(source, from_port)
-                .map_err(|e| GraphCommandError::InvalidPort(e.to_string()))?;
-            let dest = graph
-                .modules
-                .get(to_module)
-                .ok_or_else(|| GraphCommandError::UnknownModule(to_module.to_string()))?;
-            validate_input_port(dest, to_port)
-                .map_err(|e| GraphCommandError::InvalidPort(e.to_string()))?;
-        }
-        graph
-            .lock()
-            .unwrap()
-            .apply_command(GraphCommand::AddConnection {
-                from_module: from_module.to_string(),
-                from_port: from_port.to_string(),
-                to_module: to_module.to_string(),
-                to_port: to_port.to_string(),
-            });
-        self.state
-            .lock()
-            .unwrap()
-            .connections
-            .push(RuntimeConnectionInfo {
-                from: from_module.to_string(),
-                from_port: from_port.to_string(),
-                to: to_module.to_string(),
-                to_port: to_port.to_string(),
-            });
-        Ok(())
-    }
-
-    pub fn disconnect(
-        &self,
-        from_module: &str,
-        from_port: &str,
-        to_module: &str,
-        to_port: &str,
-    ) -> Result<(), GraphCommandError> {
-        let graph = self
-            .graph
-            .as_ref()
-            .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))?;
-        graph
-            .lock()
-            .unwrap()
-            .apply_command(GraphCommand::RemoveConnection {
-                from_module: from_module.to_string(),
-                from_port: from_port.to_string(),
-                to_module: to_module.to_string(),
-                to_port: to_port.to_string(),
-            });
-        self.state.lock().unwrap().connections.retain(|conn| {
-            !(conn.from == from_module
-                && conn.from_port == from_port
-                && conn.to == to_module
-                && conn.to_port == to_port)
-        });
-        Ok(())
-    }
-
     fn install_runtime(&mut self, runtime: super::runtime::InventionRuntime) {
         self.scripts.stop_all();
         self.agents.stop_all();
@@ -654,27 +314,15 @@ impl RenderEngine {
         runtime.state.lock().unwrap().running = true;
 
         *self.module_ports.lock().unwrap() = module_ports(&runtime.modules);
-        self.graph = Some(Arc::new(Mutex::new(SignalGraph {
-            modules: runtime.modules,
-            sinks: runtime.sinks,
-            edges: runtime.routing,
-            current_sample: 0,
+        self.graph = Some(Arc::new(Mutex::new(SignalGraph::new(
+            runtime.modules,
+            runtime.sinks,
+            runtime.routing,
             command_rx,
-            process_order: Vec::new(),
-            compiled_routes: Vec::new(),
-            connected_in_ports: Vec::new(),
-            process_groups: Vec::new(),
-            sink_indices: Vec::new(),
-            out_bufs: Vec::new(),
-            out_prev: Vec::new(),
-            out_counts: Vec::new(),
-            block_capacity: 0,
-            block_size: crate::DEFAULT_BLOCK_SIZE,
-            topo_dirty: true,
             // Offline render has no sampler; the meter is inert here.
-            master_peak: crate::atomic::StereoPeak::new(),
-            master_spectrum: crate::spectrum::SpectrumTap::new(),
-        })));
+            crate::atomic::StereoPeak::new(),
+            crate::spectrum::SpectrumTap::new(),
+        ))));
         self.registry = runtime.registry;
         self.state = runtime.state;
         // Adopt the runtime's directory (rather than copying its contents)

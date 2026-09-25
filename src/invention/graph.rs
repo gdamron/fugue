@@ -43,10 +43,11 @@ use crate::{GraphModule, MAX_BLOCK};
 
 use super::runtime::ModuleInstance;
 
-/// A command that can be sent to the audio thread for graph mutation.
+mod compile;
+mod process;
 mod scc;
-use scc::tarjan_scc;
 
+/// A command that can be sent to the audio thread for graph mutation.
 pub(crate) enum GraphCommand {
     /// Set a module's input port to a specific value.
     SetModuleInput {
@@ -172,6 +173,38 @@ pub(crate) struct SignalGraph {
 }
 
 impl SignalGraph {
+    /// Creates a graph over `modules` and `edges` with empty derived state.
+    /// The topology is compiled on the first processed block.
+    pub(crate) fn new(
+        modules: IndexMap<String, ModuleInstance>,
+        sinks: Vec<String>,
+        edges: Vec<RoutingConnection>,
+        command_rx: mpsc::Receiver<GraphCommand>,
+        master_peak: crate::atomic::StereoPeak,
+        master_spectrum: crate::spectrum::SpectrumTap,
+    ) -> Self {
+        Self {
+            modules,
+            sinks,
+            edges,
+            current_sample: 0,
+            command_rx,
+            process_order: Vec::new(),
+            compiled_routes: Vec::new(),
+            connected_in_ports: Vec::new(),
+            process_groups: Vec::new(),
+            sink_indices: Vec::new(),
+            out_bufs: Vec::new(),
+            out_prev: Vec::new(),
+            out_counts: Vec::new(),
+            block_capacity: 0,
+            block_size: crate::DEFAULT_BLOCK_SIZE,
+            topo_dirty: true,
+            master_peak,
+            master_spectrum,
+        }
+    }
+
     pub(crate) fn ensure_process_order(&mut self) {
         self.drain_commands();
         if self.topo_dirty {
@@ -187,175 +220,6 @@ impl SignalGraph {
         if block_size != self.block_size {
             self.block_size = block_size;
             self.topo_dirty = true;
-        }
-    }
-
-    /// Processes a block of `frames` frames (`frames == left.len() == right.len()`,
-    /// always `<= block_size`), mixing all sink outputs into `left`/`right`.
-    ///
-    /// Process groups run in topological order: acyclic modules a whole block at
-    /// a time, feedback cycles sample-by-sample. Zero heap allocations.
-    pub(crate) fn process_block(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.ensure_process_order();
-
-        let frames = left.len().min(right.len());
-        if frames == 0 {
-            return;
-        }
-        let frames = frames.min(self.block_capacity);
-        self.current_sample += frames as u64;
-
-        for g in 0..self.process_groups.len() {
-            if self.process_groups[g].feedback {
-                self.process_feedback_group(g, frames);
-            } else {
-                let module_idx = self.process_groups[g].members[0];
-                self.process_full_block(module_idx, frames);
-            }
-        }
-
-        // Mix sink output blocks.
-        for i in 0..frames {
-            left[i] = 0.0;
-            right[i] = 0.0;
-        }
-        let sink_count = self.sink_indices.len();
-        for si in 0..sink_count {
-            let sink_idx = self.sink_indices[si];
-            if let Some((_, inst)) = self.modules.get_index(sink_idx) {
-                if let Some((l, r)) = inst.sink_block() {
-                    for i in 0..frames {
-                        left[i] += l[i];
-                        right[i] += r[i];
-                    }
-                }
-            }
-        }
-        if sink_count > 1 {
-            let gain = 1.0 / (sink_count as f32).sqrt();
-            for i in 0..frames {
-                left[i] *= gain;
-                right[i] *= gain;
-            }
-        }
-
-        // Fold this block's master peak into the meter. Lock-free and
-        // allocation-free: one pass over buffers already in hand, then two
-        // atomic stores (FUG-239 #5).
-        let mut left_peak = 0.0f32;
-        let mut right_peak = 0.0f32;
-        for i in 0..frames {
-            left_peak = left_peak.max(left[i].abs());
-            right_peak = right_peak.max(right[i].abs());
-        }
-        self.master_peak.observe(left_peak, right_peak);
-
-        // Hand the same block to the spectrum tap. Lock-free and
-        // allocation-free, and a single relaxed load when nobody is watching.
-        self.master_spectrum.observe_block(left, right, frames);
-
-        self.store_carry(frames);
-    }
-
-    /// Processes a single acyclic module a whole block at a time.
-    fn process_full_block(&mut self, module_idx: usize, frames: usize) {
-        // Zero connected input ports, then sum every route feeding them.
-        let port_count = self.connected_in_ports[module_idx].len();
-        for pi in 0..port_count {
-            let port = self.connected_in_ports[module_idx][pi];
-            if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-                inst.module_mut().input_block_mut(port)[..frames].fill(0.0);
-            }
-        }
-
-        let route_count = self.compiled_routes[module_idx].len();
-        for r in 0..route_count {
-            let route = self.compiled_routes[module_idx][r];
-            let base = route.from_port * self.block_capacity;
-            if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-                let dst = inst.module_mut().input_block_mut(route.to_port);
-                let src = &self.out_bufs[route.from_module][base..base + frames];
-                for k in 0..frames {
-                    dst[k] += src[k];
-                }
-            }
-        }
-
-        if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-            inst.module_mut().process(frames);
-        }
-
-        let n_out = self.out_counts[module_idx];
-        for p in 0..n_out {
-            let base = p * self.block_capacity;
-            if let Some((_, inst)) = self.modules.get_index(module_idx) {
-                let src = inst.module().output_block(p);
-                self.out_bufs[module_idx][base..base + frames].copy_from_slice(&src[..frames]);
-            }
-        }
-    }
-
-    /// Processes a feedback group sample-by-sample so back-edges observe a
-    /// one-sample delay, preserving feedback fidelity regardless of block size.
-    fn process_feedback_group(&mut self, group: usize, frames: usize) {
-        for s in 0..frames {
-            let member_count = self.process_groups[group].members.len();
-            for mi in 0..member_count {
-                let module_idx = self.process_groups[group].members[mi];
-
-                // Zero connected input ports at frame 0, then sum routes.
-                let port_count = self.connected_in_ports[module_idx].len();
-                for pi in 0..port_count {
-                    let port = self.connected_in_ports[module_idx][pi];
-                    if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-                        inst.module_mut().input_block_mut(port)[0] = 0.0;
-                    }
-                }
-
-                let route_count = self.compiled_routes[module_idx].len();
-                for r in 0..route_count {
-                    let route = self.compiled_routes[module_idx][r];
-                    let value = if route.delayed {
-                        if s == 0 {
-                            self.out_prev[route.from_module][route.from_port]
-                        } else {
-                            self.out_bufs[route.from_module]
-                                [route.from_port * self.block_capacity + (s - 1)]
-                        }
-                    } else {
-                        self.out_bufs[route.from_module][route.from_port * self.block_capacity + s]
-                    };
-                    if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-                        inst.module_mut().input_block_mut(route.to_port)[0] += value;
-                    }
-                }
-
-                if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
-                    inst.module_mut().process(1);
-                }
-
-                let n_out = self.out_counts[module_idx];
-                for p in 0..n_out {
-                    let value = self
-                        .modules
-                        .get_index(module_idx)
-                        .map(|(_, inst)| inst.module().output_block(p)[0])
-                        .unwrap_or(0.0);
-                    self.out_bufs[module_idx][p * self.block_capacity + s] = value;
-                }
-            }
-        }
-    }
-
-    /// Records the final sample of each module output port for the next block's
-    /// frame-0 delayed feedback reads.
-    fn store_carry(&mut self, frames: usize) {
-        let n = self.modules.len();
-        for m in 0..n {
-            let n_out = self.out_counts[m];
-            for p in 0..n_out {
-                self.out_prev[m][p] = self.out_bufs[m][p * self.block_capacity + (frames - 1)];
-            }
         }
     }
 
@@ -422,206 +286,6 @@ impl SignalGraph {
                 self.topo_dirty = true;
             }
         }
-    }
-
-    /// Recomputes topological order, SCC process groups, compiled routes,
-    /// input connectivity, output buffers, and sink indices.
-    ///
-    /// Called only when topology changes, never on the audio hot path.
-    fn recompile(&mut self) {
-        let n = self.modules.len();
-
-        // Build adjacency using module indices.
-        let mut downstream: Vec<Vec<usize>> = (0..n).map(|_| Vec::new()).collect();
-        let mut has_self_loop = vec![false; n];
-        for edge in &self.edges {
-            let Some(from_idx) = self.modules.get_index_of(edge.from_module.as_str()) else {
-                continue;
-            };
-            let Some(to_idx) = self.modules.get_index_of(edge.to_module.as_str()) else {
-                continue;
-            };
-            downstream[from_idx].push(to_idx);
-            if from_idx == to_idx {
-                has_self_loop[from_idx] = true;
-            }
-        }
-
-        // Control-write targets are ordering dependencies without routes: a
-        // module that writes another module's controls during `process()`
-        // (see `Module::control_targets`) must run first so the write lands
-        // in the same block. These edges join the adjacency for the DFS and
-        // SCC passes but compile no routes; a resulting cycle simply becomes
-        // a feedback group, processed sample-by-sample.
-        for from_idx in 0..n {
-            let targets = self
-                .modules
-                .get_index(from_idx)
-                .map(|(_, inst)| inst.module().control_targets())
-                .unwrap_or_default();
-            for target in targets {
-                let Some(to_idx) = self.modules.get_index_of(target.as_str()) else {
-                    continue;
-                };
-                downstream[from_idx].push(to_idx);
-                if from_idx == to_idx {
-                    has_self_loop[from_idx] = true;
-                }
-            }
-        }
-
-        // Iterative DFS producing reverse post-order (topological order). State:
-        // 0 = unvisited, 1 = on stack (in progress), 2 = finished. Used for
-        // intra-SCC member ordering and back-edge classification.
-        let mut state = vec![0_u8; n];
-        let mut order: Vec<usize> = Vec::with_capacity(n);
-
-        for start in 0..n {
-            if state[start] != 0 {
-                continue;
-            }
-
-            let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
-            state[start] = 1;
-
-            while let Some((node, idx)) = stack.last_mut() {
-                let node = *node;
-                if *idx < downstream[node].len() {
-                    let next = downstream[node][*idx];
-                    *idx += 1;
-                    match state[next] {
-                        0 => {
-                            state[next] = 1;
-                            stack.push((next, 0));
-                        }
-                        _ => {
-                            // Back-edge (on stack) or already finished — skip.
-                        }
-                    }
-                } else {
-                    let (finished, _) = stack.pop().unwrap();
-                    state[finished] = 2;
-                    order.push(finished);
-                }
-            }
-        }
-
-        order.reverse();
-        let mut pos = vec![0usize; n];
-        for (i, &m) in order.iter().enumerate() {
-            pos[m] = i;
-        }
-        self.process_order = order;
-
-        // Strongly-connected components (Tarjan), in topological order.
-        let (comp_id, comps) = tarjan_scc(&downstream, n);
-
-        // Rebuild per-destination compiled route lists. Resolve port names to
-        // indices once here; classify back-edges for one-sample feedback delay.
-        self.compiled_routes = (0..n).map(|_| Vec::new()).collect();
-        for edge in &self.edges {
-            let Some(from_idx) = self.modules.get_index_of(edge.from_module.as_str()) else {
-                continue;
-            };
-            let Some(to_idx) = self.modules.get_index_of(edge.to_module.as_str()) else {
-                continue;
-            };
-            let Some((_, from_module)) = self.modules.get_index(from_idx) else {
-                continue;
-            };
-            let Some((_, to_module)) = self.modules.get_index(to_idx) else {
-                continue;
-            };
-            let Some(from_port) = from_module
-                .module()
-                .output_port_index(edge.from_port.as_str())
-            else {
-                continue;
-            };
-            let Some(to_port) = to_module.module().input_port_index(edge.to_port.as_str()) else {
-                continue;
-            };
-            // A back-edge connects two modules in the same SCC where the source
-            // is processed at or after the destination within the per-sample
-            // order, so the destination reads the source's previous sample.
-            let delayed = comp_id[from_idx] == comp_id[to_idx] && pos[from_idx] >= pos[to_idx];
-            self.compiled_routes[to_idx].push(CompiledRoute {
-                from_module: from_idx,
-                from_port,
-                to_port,
-                delayed,
-            });
-        }
-
-        // Reset input connectivity and clear input buffers, then mark connected
-        // ports. Connectivity lets modules arbitrate signal-vs-control default.
-        // Only the active block span is read, so zeroing the full MAX_BLOCK would
-        // be wasted work on the audio thread (recompile runs here).
-        let clear = self.block_size.clamp(1, MAX_BLOCK);
-        for mi in 0..n {
-            let n_in = self
-                .modules
-                .get_index(mi)
-                .map(|(_, m)| m.module().inputs().len())
-                .unwrap_or(0);
-            if let Some((_, inst)) = self.modules.get_index_mut(mi) {
-                let module = inst.module_mut();
-                for p in 0..n_in {
-                    module.input_block_mut(p)[..clear].fill(0.0);
-                    module.set_input_connected(p, false);
-                }
-            }
-        }
-        self.connected_in_ports = (0..n).map(|_| Vec::new()).collect();
-        for ti in 0..n {
-            let route_count = self.compiled_routes[ti].len();
-            for r in 0..route_count {
-                let to_port = self.compiled_routes[ti][r].to_port;
-                if let Some((_, inst)) = self.modules.get_index_mut(ti) {
-                    inst.module_mut().set_input_connected(to_port, true);
-                }
-                if !self.connected_in_ports[ti].contains(&to_port) {
-                    self.connected_in_ports[ti].push(to_port);
-                }
-            }
-        }
-
-        // Build process groups: SCCs in topological order, members ordered by
-        // their position in the per-sample order.
-        self.process_groups = comps
-            .into_iter()
-            .map(|mut members| {
-                members.sort_by_key(|&m| pos[m]);
-                let feedback =
-                    members.len() > 1 || (members.len() == 1 && has_self_loop[members[0]]);
-                ProcessGroup { members, feedback }
-            })
-            .collect();
-
-        // Allocate per-module output block buffers and carry storage.
-        self.out_counts = (0..n)
-            .map(|mi| {
-                self.modules
-                    .get_index(mi)
-                    .map(|(_, m)| m.module().outputs().len())
-                    .unwrap_or(0)
-            })
-            .collect();
-        let cap = self.block_size.clamp(1, MAX_BLOCK);
-        self.block_capacity = cap;
-        self.out_bufs = self
-            .out_counts
-            .iter()
-            .map(|&c| vec![0.0; c * cap])
-            .collect();
-        self.out_prev = self.out_counts.iter().map(|&c| vec![0.0; c]).collect();
-
-        // Cache sink indices.
-        self.sink_indices = self
-            .sinks
-            .iter()
-            .filter_map(|id| self.modules.get_index_of(id.as_str()))
-            .collect();
     }
 
     /// Returns the current processing order as module names (for testing).

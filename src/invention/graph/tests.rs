@@ -1,5 +1,4 @@
 use super::*;
-use crate::DEFAULT_BLOCK_SIZE;
 use std::sync::mpsc;
 
 /// Creates a minimal SignalGraph for testing process order.
@@ -28,26 +27,14 @@ fn test_graph(module_ids: &[&str], connections: &[(&str, &str)]) -> SignalGraph 
         })
         .collect();
 
-    let mut graph = SignalGraph {
+    let mut graph = SignalGraph::new(
         modules,
-        sinks: Vec::new(),
+        Vec::new(),
         edges,
-        current_sample: 0,
-        command_rx: rx,
-        process_order: Vec::new(),
-        compiled_routes: Vec::new(),
-        connected_in_ports: Vec::new(),
-        process_groups: Vec::new(),
-        sink_indices: Vec::new(),
-        out_bufs: Vec::new(),
-        out_prev: Vec::new(),
-        out_counts: Vec::new(),
-        block_capacity: 0,
-        block_size: DEFAULT_BLOCK_SIZE,
-        topo_dirty: true,
-        master_peak: crate::atomic::StereoPeak::new(),
-        master_spectrum: crate::spectrum::SpectrumTap::new(),
-    };
+        rx,
+        crate::atomic::StereoPeak::new(),
+        crate::spectrum::SpectrumTap::new(),
+    );
     graph.recompile();
     graph
 }
