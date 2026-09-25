@@ -109,6 +109,15 @@ pub enum RpcResponsePayload {
     Identity {
         identity: DaemonIdentity,
     },
+    /// The answer to a retried ticketed command whose original already
+    /// committed: nothing ran again. `committed_at` is the revision the
+    /// original produced; re-read state for anything the original reply
+    /// carried. Named apart from the envelope's own `revision`, which this
+    /// payload is flattened beside.
+    MutationCommitted {
+        mutation_id: String,
+        committed_at: RuntimeRevision,
+    },
     Error(RpcError),
 }
 
