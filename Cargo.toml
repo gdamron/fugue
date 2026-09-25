@@ -47,6 +47,10 @@ ffi = []
 plugins = ["dep:wasmtime", "dep:wasmtime-wasi"]
 rpc-schema = ["dep:schemars"]
 score-import = ["dep:roxmltree", "dep:zip"]
+# Spectrogram analysis of running audio: the master-output tap, the analyser
+# and its transform. Off by default so offline, wasm and embedded builds carry
+# none of it; the daemon enables it.
+spectrogram = []
 
 [dev-dependencies]
 tempfile = "3.27.0"

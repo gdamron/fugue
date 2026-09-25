@@ -32,8 +32,7 @@ fn test_graph(module_ids: &[&str], connections: &[(&str, &str)]) -> SignalGraph 
         Vec::new(),
         edges,
         rx,
-        crate::atomic::StereoPeak::new(),
-        crate::spectrum::SpectrumTap::new(),
+        super::MasterObservers::default(),
     );
     graph.recompile();
     graph

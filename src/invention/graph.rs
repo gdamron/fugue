@@ -44,8 +44,11 @@ use crate::{GraphModule, MAX_BLOCK};
 use super::runtime::ModuleInstance;
 
 mod compile;
+mod master;
 mod process;
 mod scc;
+
+pub(crate) use master::MasterObservers;
 
 /// A command that can be sent to the audio thread for graph mutation.
 pub(crate) enum GraphCommand {
@@ -164,12 +167,9 @@ pub(crate) struct SignalGraph {
     pub(crate) block_size: usize,
     /// Flag indicating topology changed and derived state needs recomputation.
     pub(crate) topo_dirty: bool,
-    /// Peak level of the mixed master output, folded in each block for an
-    /// off-thread sampler to drain into `MeterLevel` events (FUG-239 #5).
-    pub(crate) master_peak: crate::atomic::StereoPeak,
-    /// Mono tap of the mixed master output for off-thread spectrum analysis.
-    /// Inert until something subscribes, and never analysed here.
-    pub(crate) master_spectrum: crate::spectrum::SpectrumTap,
+    /// Observers of the mixed master output (peak meter, spectrum tap), fed
+    /// once per block for off-thread samplers to read.
+    pub(crate) master: MasterObservers,
 }
 
 impl SignalGraph {
@@ -180,8 +180,7 @@ impl SignalGraph {
         sinks: Vec<String>,
         edges: Vec<RoutingConnection>,
         command_rx: mpsc::Receiver<GraphCommand>,
-        master_peak: crate::atomic::StereoPeak,
-        master_spectrum: crate::spectrum::SpectrumTap,
+        master: MasterObservers,
     ) -> Self {
         Self {
             modules,
@@ -200,8 +199,7 @@ impl SignalGraph {
             block_capacity: 0,
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
-            master_peak,
-            master_spectrum,
+            master,
         }
     }
 

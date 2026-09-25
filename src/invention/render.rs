@@ -319,9 +319,9 @@ impl RenderEngine {
             runtime.sinks,
             runtime.routing,
             command_rx,
-            // Offline render has no sampler; the meter is inert here.
-            crate::atomic::StereoPeak::new(),
-            crate::spectrum::SpectrumTap::new(),
+            // Offline render has no sampler: a meter nobody drains, and no
+            // spectrum ring.
+            super::graph::MasterObservers::default(),
         ))));
         self.registry = runtime.registry;
         self.state = runtime.state;
