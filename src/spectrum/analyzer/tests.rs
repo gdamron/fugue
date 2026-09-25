@@ -63,7 +63,7 @@ fn drain(analyzer: &mut SpectrumAnalyzer) -> Vec<SpectrogramTile> {
 /// A tile's decibel levels, from JSON numbers.
 fn levels(tile: &SpectrogramTile) -> &[f32] {
     match &tile.magnitudes {
-        SpectrogramMagnitudes::F32Json(values) => values,
+        SpectrogramMagnitudes::Numbers(values) => values,
         other => panic!("expected decibels as numbers, got {other:?}"),
     }
 }

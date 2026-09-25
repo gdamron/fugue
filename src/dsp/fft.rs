@@ -12,7 +12,7 @@ use std::f32::consts::PI;
 /// costs about twice a real-optimized transform, which at analysis sizes (up
 /// to 4096 points, a few hundred times a second) is far cheaper than the
 /// complexity of a split-radix real transform.
-pub struct RealFft {
+pub(crate) struct RealFft {
     size: usize,
     /// Twiddles for the whole transform: `cos[j]`/`sin[j]` hold
     /// `cos(-2πj/size)` and `sin(-2πj/size)` for `j < size / 2`.
@@ -30,7 +30,7 @@ impl RealFft {
     /// # Panics
     ///
     /// Panics unless `size` is a power of two of at least 2.
-    pub fn new(size: usize) -> Self {
+    pub(crate) fn new(size: usize) -> Self {
         assert!(
             size >= 2 && size.is_power_of_two(),
             "fft size must be a power of two"
@@ -58,7 +58,7 @@ impl RealFft {
     }
 
     /// Number of bins produced, from DC to Nyquist inclusive.
-    pub fn bin_count(&self) -> usize {
+    pub(crate) fn bin_count(&self) -> usize {
         self.size / 2 + 1
     }
 
@@ -70,7 +70,7 @@ impl RealFft {
     ///
     /// Panics unless `input` holds the transform size in samples and `out` holds
     /// [`bin_count`](Self::bin_count) values.
-    pub fn power(&mut self, input: &[f32], out: &mut [f32]) {
+    pub(crate) fn power(&mut self, input: &[f32], out: &mut [f32]) {
         assert_eq!(input.len(), self.size, "input must hold size samples");
         assert_eq!(
             out.len(),

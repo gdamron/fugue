@@ -17,4 +17,4 @@ pub use allpass::Allpass;
 pub use damper::Damper;
 pub use delay_line::DelayLine;
 #[cfg(feature = "spectrogram")]
-pub use fft::RealFft;
+pub(crate) use fft::RealFft;

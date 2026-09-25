@@ -22,7 +22,8 @@ pub enum SpectrogramWindow {
 ///
 /// Named on every stream so encodings can be added without a schema version
 /// bump: a client reads this and picks a decoder, or reports the stream as
-/// unsupported instead of misreading it.
+/// unsupported instead of misreading it. An encoding this build does not know
+/// still parses, as [`Unsupported`](Self::Unsupported).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -30,24 +31,17 @@ pub enum SpectrogramEncoding {
     /// `magnitudes` is a base64 string (standard alphabet, padded) of one byte
     /// per value, linear in decibels: 0 is `floor_db`, 255 is `ceiling_db`,
     /// and level `q` decodes to `floor_db + q / 255 × (ceiling_db − floor_db)`.
-    /// Levels outside the range are clamped to it. About a seventh the size
-    /// of JSON numbers, at a resolution (0.4 dB over a 100 dB range) finer
-    /// than any colour map shows.
+    /// Levels outside the range are clamped to it. About a fifth the size
+    /// of `f32_json`, at a resolution (0.4 dB over a 100 dB range) finer than
+    /// any colour map shows.
     U8Base64,
     /// `magnitudes` is a JSON array of decibel values, rounded to 0.1 dB.
     /// Simple to read by eye, and the size to expect for it.
     F32Json,
-}
-
-impl SpectrogramEncoding {
-    /// Length on the wire of `values` magnitudes in this encoding: array
-    /// elements for JSON, characters for base64.
-    pub fn encoded_len(self, values: usize) -> usize {
-        match self {
-            Self::U8Base64 => values.div_ceil(3) * 4,
-            Self::F32Json => values,
-        }
-    }
+    /// An encoding this build does not know. Never produced; a client that
+    /// reads it reports the stream unsupported and ignores its tiles.
+    #[serde(other)]
+    Unsupported,
 }
 
 /// How bins are spaced along the frequency axis. This is how the producer
@@ -59,6 +53,10 @@ impl SpectrogramEncoding {
 pub enum SpectrogramBinSpacing {
     /// Bin `k` is centred on `min_hz + k × bin_hz`.
     Linear,
+    /// A spacing this build does not know. Never produced; a client that
+    /// reads it reports the stream unsupported.
+    #[serde(other)]
+    Unsupported,
 }
 
 /// What 0 dB means on a stream's scale.
@@ -140,32 +138,36 @@ pub struct SpectrogramStreamMeta {
 /// The magnitudes of a tile, encoded as its stream's
 /// [`encoding`](SpectrogramStreamMeta::encoding) says.
 ///
-/// Untagged on the wire: the stream's metadata already names the encoding,
-/// and the two forms are distinguishable by JSON type alone.
+/// Untagged on the wire, and named here by JSON shape rather than by
+/// encoding: the stream's metadata is what says how to read them, and a
+/// future text encoding would arrive as the same shape as `u8_base64`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum SpectrogramMagnitudes {
-    /// Base64 levels, for [`SpectrogramEncoding::U8Base64`].
-    U8Base64(String),
-    /// Decibels, for [`SpectrogramEncoding::F32Json`].
-    F32Json(Vec<f32>),
+    /// A string, as [`SpectrogramEncoding::U8Base64`] sends.
+    Text(String),
+    /// An array of numbers, as [`SpectrogramEncoding::F32Json`] sends.
+    Numbers(Vec<f32>),
 }
 
 impl SpectrogramMagnitudes {
-    /// The encoding these magnitudes are in.
-    pub fn encoding(&self) -> SpectrogramEncoding {
-        match self {
-            Self::U8Base64(_) => SpectrogramEncoding::U8Base64,
-            Self::F32Json(_) => SpectrogramEncoding::F32Json,
-        }
-    }
-
-    /// Length on the wire: array elements or base64 characters.
-    fn encoded_len(&self) -> usize {
-        match self {
-            Self::U8Base64(text) => text.len(),
-            Self::F32Json(values) => values.len(),
+    /// Whether these hold exactly `values` magnitudes in `encoding`.
+    ///
+    /// For base64 that means the right length and the right padding, which
+    /// together fix the byte count without decoding anything.
+    pub fn fit(&self, encoding: SpectrogramEncoding, values: usize) -> bool {
+        match (self, encoding) {
+            (Self::Numbers(numbers), SpectrogramEncoding::F32Json) => numbers.len() == values,
+            (Self::Text(text), SpectrogramEncoding::U8Base64) => {
+                let Some(expected) = values.div_ceil(3).checked_mul(4) else {
+                    return false;
+                };
+                let padding = (3 - values % 3) % 3;
+                let padded = text.bytes().rev().take_while(|byte| *byte == b'=').count();
+                text.len() == expected && padded == padding
+            }
+            _ => false,
         }
     }
 }
@@ -199,11 +201,19 @@ impl SpectrogramTile {
     /// Whether this tile's shape and encoding agree with the stream it
     /// belongs to.
     pub fn matches(&self, meta: &SpectrogramStreamMeta) -> bool {
-        let values = self.frame_count as usize * meta.frequency.bin_count as usize;
-        self.stream_id == meta.stream_id
-            && self.frame_count > 0
-            && self.frame_count <= meta.limits.max_frames_per_tile
-            && self.magnitudes.encoding() == meta.encoding
-            && self.magnitudes.encoded_len() == meta.encoding.encoded_len(values)
+        if self.stream_id != meta.stream_id
+            || self.frame_count == 0
+            || self.frame_count > meta.limits.max_frames_per_tile
+        {
+            return false;
+        }
+        // Checked, so a malformed tile or stream cannot overflow a 32-bit
+        // client into a panic.
+        let Some(values) =
+            (self.frame_count as usize).checked_mul(meta.frequency.bin_count as usize)
+        else {
+            return false;
+        };
+        self.magnitudes.fit(meta.encoding, values)
     }
 }
