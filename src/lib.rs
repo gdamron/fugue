@@ -15,6 +15,7 @@ pub mod plugins;
 pub mod registry;
 pub mod rpc;
 pub mod scripting;
+pub mod spectrum;
 pub(crate) mod streaming;
 pub mod traits;
 #[cfg(target_arch = "wasm32")]
@@ -38,8 +39,10 @@ pub use rpc::{
     RevisionConflict, RevisionTracker, RpcCommand, RpcError, RpcErrorCode, RpcEvent,
     RpcEventPayload, RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse, RpcResponsePayload,
     RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot,
-    RuntimePortInfo, RuntimeRevision, SaveReport, SeqEvent, SinkStatusState, TypeDetail,
-    RPC_SCHEMA_VERSION,
+    RuntimePortInfo, RuntimeRevision, SaveReport, SeqEvent, SinkStatusState,
+    SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding, SpectrogramFrequencyAxis,
+    SpectrogramLimits, SpectrogramProvenance, SpectrogramStreamMeta, SpectrogramTile,
+    SpectrogramWindow, TypeDetail, RPC_SCHEMA_VERSION,
 };
 
 // Re-export modules

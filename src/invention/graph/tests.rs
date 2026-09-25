@@ -46,6 +46,7 @@ fn test_graph(module_ids: &[&str], connections: &[(&str, &str)]) -> SignalGraph 
         block_size: DEFAULT_BLOCK_SIZE,
         topo_dirty: true,
         master_peak: crate::atomic::StereoPeak::new(),
+        master_spectrum: crate::spectrum::SpectrumTap::new(),
     };
     graph.recompile();
     graph
