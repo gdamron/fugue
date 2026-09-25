@@ -1,9 +1,13 @@
 use crate::rpc::SpectrogramWindow;
 use std::f32::consts::PI;
 
-/// How a spectrogram stream is analysed. Defaults suit a display-rate view of
-/// the master output: about 94 frames a second at 48 kHz, 513 bins, and a
-/// history of a few seconds.
+/// How a spectrogram stream is analysed and delivered. Defaults suit a
+/// display-rate view of the master output: about 94 frames a second at
+/// 48 kHz, 513 bins, and a history of a few seconds.
+///
+/// The first group of settings shapes the analysis; the rest are promises to
+/// the viewer about scale and size, carried in the stream's metadata. Which
+/// signal is analysed is not a setting: it comes from the reader.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectrumConfig {
     /// Transform size in samples; must be a power of two.
@@ -19,8 +23,6 @@ pub struct SpectrumConfig {
     pub history_frames: u32,
     /// Largest tile the analyser will emit.
     pub max_frames_per_tile: u32,
-    /// Which signal is analysed, as it appears to a reader.
-    pub source: String,
 }
 
 impl Default for SpectrumConfig {
@@ -33,7 +35,6 @@ impl Default for SpectrumConfig {
             ceiling_db: 0.0,
             history_frames: 512,
             max_frames_per_tile: 8,
-            source: "sink:master".to_string(),
         }
     }
 }

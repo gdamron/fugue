@@ -238,19 +238,28 @@ impl RunningInvention {
         self.master.peak.drain()
     }
 
-    /// Returns the master-output tap a spectrum analyser reads.
+    /// Starts reading the master output for spectrum analysis, from now on.
     ///
-    /// The handle returned here is the writing side; a consumer calls
-    /// [`SpectrumTap::take_reader`] for the single reading end. Collection
-    /// stays off until an analyser starts it, so an invention nobody is
-    /// watching pays one relaxed load per block.
-    ///
-    /// [`SpectrumTap::take_reader`]: crate::spectrum::SpectrumTap::take_reader
+    /// The audio thread collects only while a reader is alive, so an
+    /// invention nobody is watching pays one relaxed load per block. Any
+    /// number of readers may exist; each sees every sample written after it
+    /// started.
     #[cfg(feature = "spectrogram")]
-    pub fn spectrum_tap(&self) -> crate::spectrum::SpectrumTap {
+    pub fn spectrum_reader(&self) -> crate::spectrum::SpectrumReader {
+        self.spectrum_tap().reader()
+    }
+
+    /// Whether the audio thread is collecting for any spectrum reader.
+    #[cfg(feature = "spectrogram")]
+    pub fn spectrum_collecting(&self) -> bool {
+        self.spectrum_tap().is_collecting()
+    }
+
+    #[cfg(feature = "spectrogram")]
+    fn spectrum_tap(&self) -> &crate::spectrum::SpectrumTap {
         self.master
             .spectrum
-            .clone()
+            .as_ref()
             .expect("a live runtime always taps its master output")
     }
 
