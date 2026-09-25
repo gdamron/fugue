@@ -72,6 +72,9 @@ impl SpectrumConfig {
         if self.floor_db >= self.ceiling_db {
             return Err("floor_db must be below ceiling_db".to_string());
         }
+        if self.encoding == SpectrogramEncoding::Unsupported {
+            return Err("encoding must be one this build can produce".to_string());
+        }
         if self.history_frames == 0 || self.history_frames > MAX_HISTORY_FRAMES {
             return Err(format!("history_frames must be 1..={MAX_HISTORY_FRAMES}"));
         }

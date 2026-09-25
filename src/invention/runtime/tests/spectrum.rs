@@ -88,7 +88,7 @@ fn an_analyser_finds_the_tone_in_the_master_output() {
     assert!(tile.matches(analyzer.meta()));
 
     let bin_count = analyzer.meta().frequency.bin_count as usize;
-    let SpectrogramMagnitudes::F32Json(levels) = &tile.magnitudes else {
+    let SpectrogramMagnitudes::Numbers(levels) = &tile.magnitudes else {
         panic!("asked for decibels as numbers");
     };
     let peak = levels[..bin_count]

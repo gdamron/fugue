@@ -4,7 +4,7 @@ use super::*;
 
 /// Decodes a byte-encoded tile back to decibels, as a viewer would.
 fn decode(tile: &SpectrogramTile, meta: &SpectrogramStreamMeta) -> Vec<f32> {
-    let SpectrogramMagnitudes::U8Base64(text) = &tile.magnitudes else {
+    let SpectrogramMagnitudes::Text(text) = &tile.magnitudes else {
         panic!("expected base64 levels");
     };
     let bytes = base64::engine::general_purpose::STANDARD
@@ -89,4 +89,34 @@ fn a_default_frame_is_compact_on_the_wire() {
     let per_frame = bytes / tile.frame_count as usize;
     // 513 levels are 684 base64 characters; allow a little for the envelope.
     assert!(per_frame < 720, "{per_frame} bytes a frame");
+}
+
+/// Audio mixed far past full scale is heard clipped, so the spectrum shows
+/// the clipping's harmonics, and every level stays finite: numbers go out as
+/// numbers, not as `null`, and parse back.
+#[test]
+fn an_overdriven_mix_reads_as_what_is_heard() {
+    let (tap, mut analyzer) = analyzer(config());
+    let bin = 8;
+    let hz = bin as f32 * RATE as f32 / 256.0;
+    let mut phase = 0.0;
+    feed_tone(&tap, hz, 1.0e20, 1_024, &mut phase);
+    let tile = analyzer.poll().unwrap();
+
+    let levels = levels(&tile);
+    assert!(levels.iter().all(|db| db.is_finite()));
+    // A hard-clipped sine is nearly square: strong odd harmonics.
+    assert!(
+        levels[3 * bin] > -20.0,
+        "the third harmonic reads {} dB",
+        levels[3 * bin]
+    );
+
+    let event = crate::rpc::RpcEvent::new(crate::rpc::RpcEventPayload::SpectrogramTile(tile));
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(!json.contains("null"));
+    assert_eq!(
+        serde_json::from_str::<crate::rpc::RpcEvent>(&json).unwrap(),
+        event
+    );
 }

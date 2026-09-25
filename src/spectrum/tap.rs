@@ -77,9 +77,12 @@ impl SpectrumTap {
     /// Allocation-free and lock-free, and must only ever be called from one
     /// thread. Returns immediately when nobody is reading.
     ///
-    /// Channels are summed and halved; a signal panned hard to one side
-    /// therefore reads 6 dB below its channel peak, and an out-of-phase pair
-    /// cancels.
+    /// Each channel is first clamped to ±1, exactly as the DAC clamps what it
+    /// sends to the device, so the spectrum shows what the listener hears,
+    /// clipping harmonics included, and can never overflow to infinity.
+    /// Channels are then summed and halved, as the DAC folds to mono; a
+    /// signal panned hard to one side therefore reads 6 dB below its channel
+    /// peak, and an out-of-phase pair cancels.
     #[inline]
     pub(crate) fn observe_block(&self, left: &[f32], right: &[f32], frames: usize) {
         if !self.is_collecting() {
@@ -106,7 +109,8 @@ impl SpectrumTap {
             let l = &left[done..done + run];
             let r = &right[done..done + run];
             for ((dst, a), b) in slots.iter().zip(l).zip(r) {
-                dst.store((0.5 * (a + b)).to_bits(), Ordering::Relaxed);
+                let heard = 0.5 * (a.clamp(-1.0, 1.0) + b.clamp(-1.0, 1.0));
+                dst.store(heard.to_bits(), Ordering::Relaxed);
             }
             done += run;
             slot = 0;
@@ -185,7 +189,9 @@ impl SpectrumReader {
             .claimed
             .load(Ordering::Relaxed)
             .saturating_sub(CAPACITY as u64);
-        let torn = (valid_from.saturating_sub(start) as usize).min(count);
+        // Bounded in u64 before narrowing, so a 32-bit `usize` cannot
+        // truncate a reader that stalled for billions of samples.
+        let torn = valid_from.saturating_sub(start).min(count as u64) as usize;
         if torn > 0 {
             out.copy_within(torn..count, 0);
         }

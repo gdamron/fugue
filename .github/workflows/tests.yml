@@ -41,6 +41,11 @@ jobs:
       - name: Run Tests
         run: cargo test --lib --tests
 
+      # Spectrogram analysis is off by default, so the run above compiles
+      # none of it. Its tap is concurrent code: test it on every OS.
+      - name: Run Spectrogram Tests
+        run: cargo test --features spectrogram --lib --tests
+
   feature-tests:
     name: Run Feature-Gated Tests (Linux)
     runs-on: ubuntu-latest
@@ -67,3 +72,6 @@ jobs:
 
       - name: Run Feature-Gated Tests
         run: cargo test --all-features --lib --tests
+
+      - name: Check Spectrogram on wasm32
+        run: cargo check --lib --target wasm32-unknown-unknown --features spectrogram

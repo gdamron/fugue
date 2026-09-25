@@ -65,8 +65,8 @@ fn encodings_name_themselves_on_the_wire() {
 #[test]
 fn tiles_round_trip_in_either_encoding() {
     for magnitudes in [
-        SpectrogramMagnitudes::F32Json(vec![-98.4, -91.2, -72.5, -88.0]),
-        SpectrogramMagnitudes::U8Base64("BBkxzw==".to_string()),
+        SpectrogramMagnitudes::Numbers(vec![-98.4, -91.2, -72.5, -88.0]),
+        SpectrogramMagnitudes::Text("BBkxzw==".to_string()),
     ] {
         let tile = SpectrogramTile {
             stream_id: "master:1".to_string(),
@@ -83,8 +83,8 @@ fn tiles_round_trip_in_either_encoding() {
         assert_eq!(json["start_frame"], 1173);
         assert_eq!(json["frame_count"], 2);
         match &magnitudes {
-            SpectrogramMagnitudes::F32Json(_) => assert!(json["magnitudes"].is_array()),
-            SpectrogramMagnitudes::U8Base64(_) => assert!(json["magnitudes"].is_string()),
+            SpectrogramMagnitudes::Numbers(_) => assert!(json["magnitudes"].is_array()),
+            SpectrogramMagnitudes::Text(_) => assert!(json["magnitudes"].is_string()),
         }
         assert_eq!(serde_json::from_value::<RpcEvent>(json).unwrap(), event);
     }
@@ -102,7 +102,7 @@ fn a_tile_must_match_the_shape_and_encoding_its_stream_declared() {
         tile_seq: 0,
         start_frame: 0,
         frame_count: 2,
-        magnitudes: SpectrogramMagnitudes::F32Json(vec![-100.0, -90.0, -80.0, -70.0]),
+        magnitudes: SpectrogramMagnitudes::Numbers(vec![-100.0, -90.0, -80.0, -70.0]),
     };
     assert!(good.matches(&json_meta));
     assert!(
@@ -112,12 +112,12 @@ fn a_tile_must_match_the_shape_and_encoding_its_stream_declared() {
 
     // Four bytes take eight base64 characters.
     let packed = SpectrogramTile {
-        magnitudes: SpectrogramMagnitudes::U8Base64("AAECAw==".to_string()),
+        magnitudes: SpectrogramMagnitudes::Text("AAECAw==".to_string()),
         ..good.clone()
     };
     assert!(packed.matches(&base64_meta));
     let short_packed = SpectrogramTile {
-        magnitudes: SpectrogramMagnitudes::U8Base64("AAEC".to_string()),
+        magnitudes: SpectrogramMagnitudes::Text("AAEC".to_string()),
         ..good.clone()
     };
     assert!(!short_packed.matches(&base64_meta));
@@ -129,7 +129,7 @@ fn a_tile_must_match_the_shape_and_encoding_its_stream_declared() {
     assert!(!wrong_stream.matches(&json_meta));
 
     let wrong_length = SpectrogramTile {
-        magnitudes: SpectrogramMagnitudes::F32Json(vec![-100.0; 3]),
+        magnitudes: SpectrogramMagnitudes::Numbers(vec![-100.0; 3]),
         ..good.clone()
     };
     assert!(!wrong_length.matches(&json_meta));
@@ -142,10 +142,68 @@ fn a_tile_must_match_the_shape_and_encoding_its_stream_declared() {
 
     let empty = SpectrogramTile {
         frame_count: 0,
-        magnitudes: SpectrogramMagnitudes::F32Json(Vec::new()),
+        magnitudes: SpectrogramMagnitudes::Numbers(Vec::new()),
         ..good
     };
     assert!(!empty.matches(&json_meta));
+}
+
+/// Length alone cannot tell four bytes from five: both take eight
+/// characters. Padding can.
+#[test]
+fn base64_padding_fixes_the_byte_count() {
+    let mut meta = meta(SpectrogramEncoding::U8Base64);
+    meta.frequency.bin_count = 2;
+    let tile = |text: &str| SpectrogramTile {
+        stream_id: "master:1".to_string(),
+        tile_seq: 0,
+        start_frame: 0,
+        frame_count: 2,
+        magnitudes: SpectrogramMagnitudes::Text(text.to_string()),
+    };
+    assert!(tile("AAECAw==").matches(&meta), "four bytes");
+    assert!(!tile("AAECAwQ=").matches(&meta), "five bytes");
+    assert!(!tile("AAECAwQF").matches(&meta), "six bytes");
+}
+
+/// Encodings and spacings from a newer producer still parse, so a client can
+/// report the stream unsupported instead of failing on the announcement.
+#[test]
+fn unknown_encodings_and_spacings_parse_as_unsupported() {
+    let mut json = serde_json::to_value(meta(SpectrogramEncoding::U8Base64)).unwrap();
+    json["encoding"] = "zstd_f16".into();
+    json["frequency"]["spacing"] = "mel".into();
+    let parsed: SpectrogramStreamMeta = serde_json::from_value(json).unwrap();
+    assert_eq!(parsed.encoding, SpectrogramEncoding::Unsupported);
+    assert_eq!(parsed.frequency.spacing, SpectrogramBinSpacing::Unsupported);
+
+    let tile = SpectrogramTile {
+        stream_id: "master:1".to_string(),
+        tile_seq: 0,
+        start_frame: 0,
+        frame_count: 1,
+        magnitudes: SpectrogramMagnitudes::Text("AAAA".to_string()),
+    };
+    assert!(
+        !tile.matches(&parsed),
+        "nothing matches an unknown encoding"
+    );
+}
+
+/// A malformed tile or stream must be rejected, never overflow into a panic.
+#[test]
+fn absurd_shapes_are_rejected_without_overflow() {
+    let mut meta = meta(SpectrogramEncoding::U8Base64);
+    meta.frequency.bin_count = u32::MAX;
+    meta.limits.max_frames_per_tile = u32::MAX;
+    let tile = SpectrogramTile {
+        stream_id: "master:1".to_string(),
+        tile_seq: 0,
+        start_frame: 0,
+        frame_count: u32::MAX,
+        magnitudes: SpectrogramMagnitudes::Text(String::new()),
+    };
+    assert!(!tile.matches(&meta));
 }
 
 #[test]

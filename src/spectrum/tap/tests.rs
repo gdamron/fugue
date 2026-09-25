@@ -1,14 +1,20 @@
 //! Tests for the spectrum tap.
 //!
-//! Most feed samples whose value is their own index in the tap's lifetime, so
-//! any sample read out proves where it came from, and a loss is checked by the
-//! indices it skipped rather than by counts alone.
+//! Most feed samples whose value encodes their own index in the tap's
+//! lifetime, so any sample read out proves where it came from, and a loss is
+//! checked by the indices it skipped rather than by counts alone.
 
 use super::*;
 
+/// The sample value that stands for index `n`: `n / 2^24`, which stays below
+/// the tap's ±1 clamp and exact in `f32` for every index these tests reach.
+fn number(n: u64) -> f32 {
+    n as f32 / (1u32 << 24) as f32
+}
+
 /// Feeds `count` samples numbered from `first`, returning the next number.
 fn feed_numbered(tap: &SpectrumTap, first: u64, count: usize) -> u64 {
-    let block: Vec<f32> = (0..count as u64).map(|i| (first + i) as f32).collect();
+    let block: Vec<f32> = (0..count as u64).map(|i| number(first + i)).collect();
     tap.observe_block(&block, &block, block.len());
     first + count as u64
 }
@@ -51,6 +57,18 @@ fn sums_channels_to_mono() {
     assert_eq!(out, [0.5, 0.25]);
 }
 
+/// The tap hears what the DAC sends: each channel clipped to ±1 before
+/// the channels are folded together.
+#[test]
+fn clamps_each_channel_as_the_dac_does() {
+    let tap = SpectrumTap::new();
+    let mut reader = tap.reader();
+    tap.observe_block(&[3.0, -3.0, 2.0, f32::INFINITY], &[0.5, 0.0, -2.0, 0.0], 4);
+    let mut out = [0.0; 4];
+    assert_eq!(reader.read(&mut out).count, 4);
+    assert_eq!(out, [0.75, -0.5, 0.0, 0.5]);
+}
+
 #[test]
 fn a_reader_starts_at_the_live_edge() {
     let tap = SpectrumTap::new();
@@ -84,7 +102,7 @@ fn hands_samples_over_in_order_across_the_wrap() {
             },
             "round {round}"
         );
-        assert!(out.iter().zip(first..).all(|(v, i)| *v == i as f32));
+        assert!(out.iter().zip(first..).all(|(v, i)| *v == number(i)));
     }
     assert_eq!(reader.lost_total(), 0);
     assert_eq!(reader.position(), 60_000);
@@ -105,8 +123,12 @@ fn a_stalled_reader_resumes_on_the_newest_audio_and_counts_the_rest() {
     let oldest_kept = next - CAPACITY as u64;
     assert_eq!(read.lost, oldest_kept - 100, "everything overwritten");
     assert_eq!(read.count, CAPACITY, "the whole ring is still readable");
-    assert_eq!(out[0], oldest_kept as f32, "resumes at the oldest survivor");
-    assert_eq!(out[CAPACITY - 1], (next - 1) as f32);
+    assert_eq!(
+        out[0],
+        number(oldest_kept),
+        "resumes at the oldest survivor"
+    );
+    assert_eq!(out[CAPACITY - 1], number(next - 1));
     assert_eq!(reader.position(), next, "lost audio still moves time on");
     assert_eq!(reader.lost_total(), read.lost);
 }
@@ -118,9 +140,9 @@ fn a_short_read_leaves_the_rest_for_the_next() {
     feed_numbered(&tap, 0, 10);
     let mut out = [0.0; 4];
     assert_eq!(reader.read(&mut out).count, 4);
-    assert_eq!(out, [0.0, 1.0, 2.0, 3.0]);
+    assert_eq!(out, [0, 1, 2, 3].map(number));
     assert_eq!(reader.read(&mut out).count, 4);
-    assert_eq!(out, [4.0, 5.0, 6.0, 7.0]);
+    assert_eq!(out, [4, 5, 6, 7].map(number));
     assert_eq!(reader.read(&mut out).count, 2);
     assert_eq!(reader.position(), 10);
 }
@@ -138,7 +160,7 @@ fn readers_do_not_disturb_each_other() {
     }
     let read = slow.read(&mut out);
     assert_eq!(read.lost, next - CAPACITY as u64);
-    assert_eq!(out[0], (next - CAPACITY as u64) as f32);
+    assert_eq!(out[0], number(next - CAPACITY as u64));
     assert_eq!(fast.lost_total(), 0, "one reader's stall is its own");
 }
 
@@ -162,7 +184,11 @@ fn samples_being_overwritten_mid_read_count_as_lost() {
             count: CAPACITY - 10
         }
     );
-    assert_eq!(out[0], 10.0, "the first trustworthy sample comes first");
+    assert_eq!(
+        out[0],
+        number(10),
+        "the first trustworthy sample comes first"
+    );
     assert_eq!(reader.position(), next);
 }
 
@@ -182,8 +208,8 @@ fn a_block_longer_than_the_ring_keeps_its_newest_samples() {
             count: CAPACITY
         }
     );
-    assert_eq!(out[0], 123.0);
-    assert_eq!(out[CAPACITY - 1], (next - 1) as f32);
+    assert_eq!(out[0], number(123));
+    assert_eq!(out[CAPACITY - 1], number(next - 1));
 }
 
 /// The audio thread and an analyser really do run concurrently, and the
@@ -232,7 +258,7 @@ fn accounts_for_every_sample_across_threads() {
         for (offset, value) in out[..read.count].iter().enumerate() {
             assert_eq!(
                 *value,
-                (first + offset as u64) as f32,
+                number(first + offset as u64),
                 "sample at {} is from somewhere else",
                 first + offset as u64
             );

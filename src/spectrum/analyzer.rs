@@ -274,11 +274,15 @@ impl SpectrumAnalyzer {
                 self.power_scale
             };
             let squared_amplitude = power * scale;
+            // The tap clamps its input to ±1 as the DAC does, so power is
+            // bounded and every level finite; NaN fails the comparison and
+            // reads the floor.
             let db = if squared_amplitude > self.floor_power {
                 10.0 * squared_amplitude.log10()
             } else {
                 floor
             };
+            debug_assert!(db.is_finite(), "level {db} from power {squared_amplitude}");
             self.levels.push(db);
         }
     }
@@ -286,7 +290,7 @@ impl SpectrumAnalyzer {
     /// Encodes the tile's levels as the stream declared.
     fn encode_levels(&self) -> SpectrogramMagnitudes {
         match self.config.encoding {
-            SpectrogramEncoding::F32Json => SpectrogramMagnitudes::F32Json(
+            SpectrogramEncoding::F32Json => SpectrogramMagnitudes::Numbers(
                 self.levels
                     .iter()
                     .map(|db| (db * 10.0).round() / 10.0)
@@ -300,9 +304,10 @@ impl SpectrumAnalyzer {
                     .iter()
                     .map(|db| ((db - floor) * steps_per_db).round().clamp(0.0, 255.0) as u8)
                     .collect();
-                SpectrogramMagnitudes::U8Base64(
-                    base64::engine::general_purpose::STANDARD.encode(bytes),
-                )
+                SpectrogramMagnitudes::Text(base64::engine::general_purpose::STANDARD.encode(bytes))
+            }
+            SpectrogramEncoding::Unsupported => {
+                unreachable!("SpectrumConfig::validate rejects an unsupported encoding")
             }
         }
     }
