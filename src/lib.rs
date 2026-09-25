@@ -40,10 +40,10 @@ pub use rpc::{
     RevisionConflict, RevisionTracker, RpcCommand, RpcError, RpcErrorCode, RpcEvent,
     RpcEventPayload, RpcEventSink, RpcRequest, RpcRequestPayload, RpcResponse, RpcResponsePayload,
     RpcSubscriptionTopic, RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot,
-    RuntimePortInfo, RuntimeRevision, SaveReport, SeqEvent, SinkStatusState,
+    RuntimePortInfo, RuntimeRevision, SaveReport, SeqEvent, SinkStatusState, SpectrogramBinSpacing,
     SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding, SpectrogramFrequencyAxis,
-    SpectrogramLimits, SpectrogramProvenance, SpectrogramStreamMeta, SpectrogramTile,
-    SpectrogramWindow, TypeDetail, RPC_SCHEMA_VERSION,
+    SpectrogramLimits, SpectrogramMagnitudes, SpectrogramProvenance, SpectrogramStreamMeta,
+    SpectrogramTile, SpectrogramWindow, TypeDetail, RPC_SCHEMA_VERSION,
 };
 
 // Re-export modules

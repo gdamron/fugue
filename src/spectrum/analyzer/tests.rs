@@ -5,6 +5,7 @@ use crate::spectrum::tap::CAPACITY;
 use crate::spectrum::{SpectrumTap, MAX_HISTORY_FRAMES};
 use std::f32::consts::PI;
 
+mod encoding;
 mod timeline;
 use timeline::{expected_frames, frames_in};
 
@@ -15,6 +16,8 @@ fn config() -> SpectrumConfig {
         fft_size: 256,
         hop_size: 128,
         max_frames_per_tile: 4,
+        // Decibels as numbers, so levels can be checked to 0.1 dB.
+        encoding: SpectrogramEncoding::F32Json,
         ..Default::default()
     }
 }
@@ -57,9 +60,12 @@ fn drain(analyzer: &mut SpectrumAnalyzer) -> Vec<SpectrogramTile> {
     tiles
 }
 
-/// A tile's decibel levels.
+/// A tile's decibel levels, from JSON numbers.
 fn levels(tile: &SpectrogramTile) -> &[f32] {
-    &tile.magnitudes_db
+    match &tile.magnitudes {
+        SpectrogramMagnitudes::F32Json(values) => values,
+        other => panic!("expected decibels as numbers, got {other:?}"),
+    }
 }
 
 /// Loudest bin of a tile's first frame.
@@ -82,9 +88,18 @@ fn describes_its_own_analysis() {
     assert_eq!(meta.frequency.bin_count, 129);
     assert_eq!(meta.frequency.bin_hz, RATE as f32 / 256.0);
     assert_eq!(meta.encoding, SpectrogramEncoding::F32Json);
+    assert_eq!(meta.frequency.spacing, SpectrogramBinSpacing::Linear);
     assert_eq!(
         meta.provenance.source, "sink:master",
         "the source comes from the reader, not from configuration"
+    );
+}
+
+#[test]
+fn defaults_to_the_compact_encoding() {
+    assert_eq!(
+        SpectrumConfig::default().encoding,
+        SpectrogramEncoding::U8Base64
     );
 }
 
