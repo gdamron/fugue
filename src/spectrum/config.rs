@@ -1,9 +1,9 @@
-use crate::rpc::SpectrogramWindow;
+use crate::rpc::{SpectrogramEncoding, SpectrogramWindow};
 use std::f32::consts::PI;
 
 /// How a spectrogram stream is analysed and delivered. Defaults suit a
 /// display-rate view of the master output: about 94 frames a second at
-/// 48 kHz, 513 bins, and a history of a few seconds.
+/// 48 kHz, 513 bins, a history of a few seconds, and compact tiles.
 ///
 /// The first group of settings shapes the analysis; the rest are promises to
 /// the viewer about scale and size, carried in the stream's metadata. Which
@@ -17,8 +17,11 @@ pub struct SpectrumConfig {
     pub window: SpectrogramWindow,
     /// Quietest level reported; anything quieter is clamped here.
     pub floor_db: f32,
-    /// Loudest level a viewer needs to distinguish.
+    /// Loudest level a viewer needs to distinguish. With a byte encoding,
+    /// anything louder is clamped here too.
     pub ceiling_db: f32,
+    /// How tiles carry their magnitudes.
+    pub encoding: SpectrogramEncoding,
     /// Frames a viewer is expected to keep.
     pub history_frames: u32,
     /// Largest tile the analyser will emit.
@@ -33,6 +36,7 @@ impl Default for SpectrumConfig {
             window: SpectrogramWindow::Hann,
             floor_db: -100.0,
             ceiling_db: 0.0,
+            encoding: SpectrogramEncoding::U8Base64,
             history_frames: 512,
             max_frames_per_tile: 8,
         }

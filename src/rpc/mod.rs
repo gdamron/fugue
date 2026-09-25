@@ -43,9 +43,9 @@ pub use snapshot::{
     RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot, RuntimePortInfo,
 };
 pub use spectrogram::{
-    SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding, SpectrogramFrequencyAxis,
-    SpectrogramLimits, SpectrogramProvenance, SpectrogramStreamMeta, SpectrogramTile,
-    SpectrogramWindow,
+    SpectrogramBinSpacing, SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding,
+    SpectrogramFrequencyAxis, SpectrogramLimits, SpectrogramMagnitudes, SpectrogramProvenance,
+    SpectrogramStreamMeta, SpectrogramTile, SpectrogramWindow,
 };
 
 /// Current runtime RPC schema version.

@@ -20,15 +20,45 @@ pub enum SpectrogramWindow {
 
 /// How the magnitudes in a stream's tiles are encoded.
 ///
-/// Named from the first stream onwards so a compact encoding can be added
-/// without a schema version bump: a client reads this and picks a decoder,
-/// or reports the stream as unsupported instead of misreading it.
+/// Named on every stream so encodings can be added without a schema version
+/// bump: a client reads this and picks a decoder, or reports the stream as
+/// unsupported instead of misreading it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SpectrogramEncoding {
-    /// `magnitudes_db` is a JSON array of decibel values.
+    /// `magnitudes` is a base64 string (standard alphabet, padded) of one byte
+    /// per value, linear in decibels: 0 is `floor_db`, 255 is `ceiling_db`,
+    /// and level `q` decodes to `floor_db + q / 255 × (ceiling_db − floor_db)`.
+    /// Levels outside the range are clamped to it. About a seventh the size
+    /// of JSON numbers, at a resolution (0.4 dB over a 100 dB range) finer
+    /// than any colour map shows.
+    U8Base64,
+    /// `magnitudes` is a JSON array of decibel values, rounded to 0.1 dB.
+    /// Simple to read by eye, and the size to expect for it.
     F32Json,
+}
+
+impl SpectrogramEncoding {
+    /// Length on the wire of `values` magnitudes in this encoding: array
+    /// elements for JSON, characters for base64.
+    pub fn encoded_len(self, values: usize) -> usize {
+        match self {
+            Self::U8Base64 => values.div_ceil(3) * 4,
+            Self::F32Json => values,
+        }
+    }
+}
+
+/// How bins are spaced along the frequency axis. This is how the producer
+/// laid its bins out, not how a view draws them: a view may still draw a
+/// linearly spaced stream on a log axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum SpectrogramBinSpacing {
+    /// Bin `k` is centred on `min_hz + k × bin_hz`.
+    Linear,
 }
 
 /// What 0 dB means on a stream's scale.
@@ -56,9 +86,14 @@ pub struct SpectrogramProvenance {
 }
 
 /// The frequency axis: `bin_count` bins of `bin_hz` starting at `min_hz`.
+///
+/// `spacing` is named for the same reason as a stream's encoding: a reduced
+/// axis (log-spaced bands, say) can be added later as a new spacing rather
+/// than a schema version bump.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct SpectrogramFrequencyAxis {
+    pub spacing: SpectrogramBinSpacing,
     pub min_hz: f32,
     pub bin_hz: f32,
     pub bin_count: u32,
@@ -102,6 +137,39 @@ pub struct SpectrogramStreamMeta {
     pub encoding: SpectrogramEncoding,
 }
 
+/// The magnitudes of a tile, encoded as its stream's
+/// [`encoding`](SpectrogramStreamMeta::encoding) says.
+///
+/// Untagged on the wire: the stream's metadata already names the encoding,
+/// and the two forms are distinguishable by JSON type alone.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum SpectrogramMagnitudes {
+    /// Base64 levels, for [`SpectrogramEncoding::U8Base64`].
+    U8Base64(String),
+    /// Decibels, for [`SpectrogramEncoding::F32Json`].
+    F32Json(Vec<f32>),
+}
+
+impl SpectrogramMagnitudes {
+    /// The encoding these magnitudes are in.
+    pub fn encoding(&self) -> SpectrogramEncoding {
+        match self {
+            Self::U8Base64(_) => SpectrogramEncoding::U8Base64,
+            Self::F32Json(_) => SpectrogramEncoding::F32Json,
+        }
+    }
+
+    /// Length on the wire: array elements or base64 characters.
+    fn encoded_len(&self) -> usize {
+        match self {
+            Self::U8Base64(text) => text.len(),
+            Self::F32Json(values) => values.len(),
+        }
+    }
+}
+
 /// A run of consecutive analysis frames.
 ///
 /// Frame `n` covers the samples starting at `n × hop_size` of the stream, so
@@ -121,19 +189,21 @@ pub struct SpectrogramTile {
     /// Absolute index of this tile's first frame within the stream.
     pub start_frame: u64,
     pub frame_count: u32,
-    /// Frame-major decibel magnitudes: each frame's `bin_count` values from
-    /// lowest frequency to highest, one frame after another. Always finite;
-    /// silence is `floor_db`.
-    pub magnitudes_db: Vec<f32>,
+    /// Frame-major magnitudes: each frame's `bin_count` values from lowest
+    /// frequency to highest, one frame after another, encoded as the stream
+    /// declares. Always finite; silence is `floor_db`.
+    pub magnitudes: SpectrogramMagnitudes,
 }
 
 impl SpectrogramTile {
-    /// Whether this tile's shape agrees with the stream it belongs to.
+    /// Whether this tile's shape and encoding agree with the stream it
+    /// belongs to.
     pub fn matches(&self, meta: &SpectrogramStreamMeta) -> bool {
+        let values = self.frame_count as usize * meta.frequency.bin_count as usize;
         self.stream_id == meta.stream_id
             && self.frame_count > 0
             && self.frame_count <= meta.limits.max_frames_per_tile
-            && self.magnitudes_db.len()
-                == self.frame_count as usize * meta.frequency.bin_count as usize
+            && self.magnitudes.encoding() == meta.encoding
+            && self.magnitudes.encoded_len() == meta.encoding.encoded_len(values)
     }
 }

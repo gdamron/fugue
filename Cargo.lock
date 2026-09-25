@@ -1073,6 +1073,7 @@ dependencies = [
 name = "fugue"
 version = "2026.8.0"
 dependencies = [
+ "base64",
  "boa_engine",
  "claxon",
  "cpal",

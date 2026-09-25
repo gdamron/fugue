@@ -2,9 +2,11 @@ use super::config::{window_coefficients, SpectrumConfig};
 use super::tap::SpectrumReader;
 use crate::dsp::RealFft;
 use crate::rpc::{
-    SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding, SpectrogramFrequencyAxis,
-    SpectrogramLimits, SpectrogramProvenance, SpectrogramStreamMeta, SpectrogramTile,
+    SpectrogramBinSpacing, SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding,
+    SpectrogramFrequencyAxis, SpectrogramLimits, SpectrogramMagnitudes, SpectrogramProvenance,
+    SpectrogramStreamMeta, SpectrogramTile,
 };
+use base64::Engine as _;
 use std::ops::Range;
 
 /// Turns tapped audio into spectrogram tiles.
@@ -96,6 +98,7 @@ impl SpectrumAnalyzer {
                 source: reader.source().to_string(),
             },
             frequency: SpectrogramFrequencyAxis {
+                spacing: SpectrogramBinSpacing::Linear,
                 min_hz: 0.0,
                 bin_hz: sample_rate as f32 / config.fft_size as f32,
                 bin_count: bin_count as u32,
@@ -109,7 +112,7 @@ impl SpectrumAnalyzer {
                 history_frames: config.history_frames,
                 max_frames_per_tile: config.max_frames_per_tile,
             },
-            encoding: SpectrogramEncoding::F32Json,
+            encoding: config.encoding,
         };
 
         Ok(Self {
@@ -186,7 +189,7 @@ impl SpectrumAnalyzer {
             tile_seq: self.next_tile_seq,
             start_frame,
             frame_count: frames as u32,
-            magnitudes_db: self.levels.clone(),
+            magnitudes: self.encode_levels(),
         };
         self.next_tile_seq += 1;
         Some(tile)
@@ -277,6 +280,30 @@ impl SpectrumAnalyzer {
                 floor
             };
             self.levels.push(db);
+        }
+    }
+
+    /// Encodes the tile's levels as the stream declared.
+    fn encode_levels(&self) -> SpectrogramMagnitudes {
+        match self.config.encoding {
+            SpectrogramEncoding::F32Json => SpectrogramMagnitudes::F32Json(
+                self.levels
+                    .iter()
+                    .map(|db| (db * 10.0).round() / 10.0)
+                    .collect(),
+            ),
+            SpectrogramEncoding::U8Base64 => {
+                let floor = self.config.floor_db;
+                let steps_per_db = 255.0 / (self.config.ceiling_db - floor);
+                let bytes: Vec<u8> = self
+                    .levels
+                    .iter()
+                    .map(|db| ((db - floor) * steps_per_db).round().clamp(0.0, 255.0) as u8)
+                    .collect();
+                SpectrogramMagnitudes::U8Base64(
+                    base64::engine::general_purpose::STANDARD.encode(bytes),
+                )
+            }
         }
     }
 }

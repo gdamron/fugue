@@ -1,6 +1,7 @@
 //! The master spectrum tap, end to end through a running invention.
 
 use super::*;
+use crate::rpc::{SpectrogramEncoding, SpectrogramMagnitudes};
 use crate::spectrum::{SpectrumAnalyzer, SpectrumConfig};
 
 fn running_sine() -> RunningInvention {
@@ -65,6 +66,7 @@ fn an_analyser_finds_the_tone_in_the_master_output() {
     let config = SpectrumConfig {
         fft_size: 2048,
         hop_size: 1024,
+        encoding: SpectrogramEncoding::F32Json,
         ..Default::default()
     };
     let bin_hz = 48_000.0 / config.fft_size as f32;
@@ -86,7 +88,9 @@ fn an_analyser_finds_the_tone_in_the_master_output() {
     assert!(tile.matches(analyzer.meta()));
 
     let bin_count = analyzer.meta().frequency.bin_count as usize;
-    let levels = &tile.magnitudes_db;
+    let SpectrogramMagnitudes::F32Json(levels) = &tile.magnitudes else {
+        panic!("asked for decibels as numbers");
+    };
     let peak = levels[..bin_count]
         .iter()
         .enumerate()
