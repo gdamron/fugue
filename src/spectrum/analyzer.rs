@@ -5,19 +5,20 @@ use crate::rpc::{
     SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding, SpectrogramFrequencyAxis,
     SpectrogramLimits, SpectrogramProvenance, SpectrogramStreamMeta, SpectrogramTile,
 };
+use std::ops::Range;
 
 /// Turns tapped audio into spectrogram tiles.
 ///
 /// Built once per stream and driven from a control thread — never the audio
-/// thread. Each pass drains whatever the tap holds and emits tiles for the
+/// thread. Each pass drains whatever the reader holds and emits tiles for the
 /// frames that completed, so the caller decides the cadence by how often it
 /// calls [`poll`](Self::poll).
 ///
 /// Frame numbers come from each frame's position in the stream rather than
 /// from counting frames as they are produced, so they cannot drift away from
-/// wall-clock time however often analysis stalls. Audio the tap had to drop
-/// leaves a gap exactly where it was lost: frames whose windows would straddle
-/// the loss are never produced, rather than stitched across it.
+/// wall-clock time however often analysis stalls. Audio the reader lost leaves
+/// a gap exactly where it was lost: frames whose windows would straddle the
+/// loss are never produced, rather than stitched across it.
 ///
 /// All buffers are allocated up front; a pass allocates only the tile it
 /// returns.
@@ -37,30 +38,33 @@ pub struct SpectrumAnalyzer {
     floor_power: f32,
     /// The most recent `fft_size` samples, oldest first.
     frame: Vec<f32>,
-    /// How much of `frame` is filled while the stream starts or restarts.
+    /// How much of `frame` holds samples of the frame being built.
     filled: usize,
     /// Windowed copy handed to the transform.
     windowed: Vec<f32>,
     /// Power per bin from the transform.
     power: Vec<f32>,
-    /// Samples pulled from the tap in one read.
+    /// Samples pulled from the reader; `staged` is the part not yet used.
     scratch: Vec<f32>,
-    /// Samples lost to holes and already accounted for on the time axis.
-    skipped: u64,
+    staged: Range<usize>,
     /// Samples to discard before frames line up with the hop grid again.
     align_debt: usize,
-    /// A hole the tap reported that the analyser has not reached yet.
-    hole: Option<(u64, u64)>,
     /// A completed frame held back because it does not continue the tile
     /// being built; it starts the next one.
     ready_frame: Option<u64>,
+    /// Decibel levels of the tile being built, reused from tile to tile.
+    levels: Vec<f32>,
     next_tile_seq: u64,
+    /// Every loss met, as (stream position, length), for tests to check
+    /// frames against.
+    #[cfg(test)]
+    losses: Vec<(u64, u64)>,
 }
 
 impl SpectrumAnalyzer {
-    /// Builds an analyser for `reader`, and starts collection.
+    /// Builds an analyser reading from `reader`.
     pub fn new(
-        mut reader: SpectrumReader,
+        reader: SpectrumReader,
         sample_rate: u32,
         stream_id: impl Into<String>,
         config: SpectrumConfig,
@@ -89,7 +93,7 @@ impl SpectrumAnalyzer {
                 fft_size: config.fft_size as u32,
                 hop_size: config.hop_size as u32,
                 window: config.window,
-                source: config.source.clone(),
+                source: reader.source().to_string(),
             },
             frequency: SpectrogramFrequencyAxis {
                 min_hz: 0.0,
@@ -108,7 +112,6 @@ impl SpectrumAnalyzer {
             encoding: SpectrogramEncoding::F32Json,
         };
 
-        reader.start();
         Ok(Self {
             reader,
             meta,
@@ -121,14 +124,14 @@ impl SpectrumAnalyzer {
             filled: 0,
             windowed: vec![0.0; config.fft_size],
             power: vec![0.0; bin_count],
-            // Sized for the largest single read, which is a whole frame while
-            // the stream starts or restarts.
             scratch: vec![0.0; config.fft_size],
-            skipped: 0,
+            staged: 0..0,
             align_debt: 0,
-            hole: None,
             ready_frame: None,
+            levels: Vec::with_capacity(config.max_frames_per_tile as usize * bin_count),
             next_tile_seq: 0,
+            #[cfg(test)]
+            losses: Vec::new(),
             config,
         })
     }
@@ -138,15 +141,20 @@ impl SpectrumAnalyzer {
         &self.meta
     }
 
+    /// Every sample lost because analysis fell more than the tap's ring
+    /// behind the audio.
+    pub fn lost_total(&self) -> u64 {
+        self.reader.lost_total()
+    }
+
     /// Analyses whatever audio is waiting and returns one tile, or `None` when
     /// no frame completed. Call again while it keeps returning tiles.
     ///
     /// A tile holds consecutive frames only. Where audio was lost the tile
     /// ends, and the next one resumes at the first frame past the gap.
     pub fn poll(&mut self) -> Option<SpectrogramTile> {
-        let bin_count = self.meta.frequency.bin_count as usize;
         let max_frames = self.config.max_frames_per_tile as usize;
-        let mut magnitudes_db: Vec<f32> = Vec::new();
+        self.levels.clear();
         let mut start_frame = 0u64;
         let mut frames = 0usize;
 
@@ -160,14 +168,13 @@ impl SpectrumAnalyzer {
             };
             if frames == 0 {
                 start_frame = index;
-                magnitudes_db.reserve(max_frames * bin_count);
             } else if index != start_frame + frames as u64 {
                 // A gap: this frame belongs to the next tile, and its audio is
                 // still in `frame` for that pass to analyse.
                 self.ready_frame = Some(index);
                 break;
             }
-            self.analyze_current_frame(&mut magnitudes_db);
+            self.analyze_current_frame();
             frames += 1;
         }
 
@@ -179,128 +186,78 @@ impl SpectrumAnalyzer {
             tile_seq: self.next_tile_seq,
             start_frame,
             frame_count: frames as u32,
-            magnitudes_db,
+            magnitudes_db: self.levels.clone(),
         };
         self.next_tile_seq += 1;
         Some(tile)
     }
 
-    /// Stops collection. The tap can be analysed again by a later stream.
-    pub fn stop(&mut self) {
-        self.reader.stop();
-    }
-
-    /// Where the next sample to be read sits in the stream, counting audio
-    /// that was lost as well as audio that arrived.
-    fn absolute_position(&self) -> u64 {
-        self.reader.position() + self.skipped
-    }
-
     /// Fills the analysis frame until one is complete, returning its index on
-    /// the stream's hop grid, or `None` when the tap has run dry.
+    /// the stream's hop grid, or `None` when the reader has run dry.
     fn advance_to_next_frame(&mut self) -> Option<u64> {
         let size = self.config.fft_size;
         let hop = self.config.hop_size;
 
         loop {
-            // Look at the audio before looking for losses. A loss is always
-            // published before the audio after it, so every loss that precedes
-            // what `available` covers is already visible below; reading no more
-            // than this can never run past one unannounced.
-            let available = self.reader.available();
-            if self.hole.is_none() {
-                self.hole = self.reader.take_hole();
-            }
-            let position = self.reader.position();
-            if let Some((at, len)) = self.hole {
-                if position >= at {
-                    self.apply_hole(len);
-                    continue;
+            if self.staged.is_empty() {
+                let read = self.reader.read(&mut self.scratch);
+                if read.lost > 0 {
+                    self.restart_after_loss(read.lost, read.count);
                 }
+                if read.count == 0 {
+                    return None;
+                }
+                self.staged = 0..read.count;
             }
-            // Audio left before the next loss; nothing may be read past it.
-            let room = self
-                .hole
-                .map_or(usize::MAX, |(at, _)| (at - position) as usize);
 
             if self.align_debt > 0 {
-                // Stops at a loss if one comes first; reaching it recomputes
-                // the alignment from the far side.
-                let count = self.align_debt.min(room);
-                if !self.discard(count, available) {
-                    return None;
-                }
-                self.align_debt -= count;
+                let skip = self.align_debt.min(self.staged.len());
+                self.staged.start += skip;
+                self.align_debt -= skip;
                 continue;
             }
 
-            let needed = if self.filled < size {
-                size - self.filled
-            } else {
-                hop
-            };
-            if room < needed {
-                // Too little audio left before the loss to finish a frame, so
-                // this run ends here rather than reading across it.
-                if !self.discard(room, available) {
-                    return None;
-                }
-                continue;
-            }
-            if available < needed {
-                return None;
-            }
-            let taken = self.reader.read_samples(&mut self.scratch[..needed]);
-            debug_assert_eq!(taken, needed, "availability was just checked");
-
-            if self.filled < size {
-                self.frame[self.filled..self.filled + taken]
-                    .copy_from_slice(&self.scratch[..taken]);
-                self.filled += taken;
-            } else {
+            if self.filled == size {
+                // The last frame is done with: keep its newest samples as the
+                // start of the next, one hop on.
                 self.frame.copy_within(hop.., 0);
-                self.frame[size - hop..].copy_from_slice(&self.scratch[..hop]);
+                self.filled = size - hop;
+            }
+            let take = (size - self.filled).min(self.staged.len());
+            let staged = self.staged.start..self.staged.start + take;
+            self.frame[self.filled..self.filled + take].copy_from_slice(&self.scratch[staged]);
+            self.filled += take;
+            self.staged.start += take;
+            if self.filled < size {
+                continue;
             }
 
-            // The frame covers the `size` samples ending here, and the hop
-            // grid is kept aligned, so its index follows from its position.
-            let start = self.absolute_position() - size as u64;
+            // The frame ends where the unused samples begin, and the hop grid
+            // is kept aligned, so its index follows from its position.
+            let end = self.reader.position() - self.staged.len() as u64;
+            let start = end - size as u64;
             debug_assert_eq!(start % hop as u64, 0, "frames stay on the hop grid");
             return Some(start / hop as u64);
         }
     }
 
-    /// Accounts for `len` lost samples at the point they were lost, and lines
-    /// the next frame up with the hop grid on the far side of the gap.
-    fn apply_hole(&mut self, len: u64) {
-        self.skipped += len;
-        self.hole = None;
+    /// Drops the partial frame a loss interrupted, and lines the next frame
+    /// up with the hop grid on the far side of the gap. `count` samples
+    /// arrived after the loss in the same read.
+    fn restart_after_loss(&mut self, lost: u64, count: usize) {
+        let resume = self.reader.position() - count as u64;
+        #[cfg(test)]
+        self.losses.push((resume - lost, lost));
+        #[cfg(not(test))]
+        let _ = lost;
+
+        let hop = self.config.hop_size as u64;
         self.filled = 0;
-        let misaligned = self.absolute_position() % self.config.hop_size as u64;
-        self.align_debt = if misaligned == 0 {
-            0
-        } else {
-            (self.config.hop_size as u64 - misaligned) as usize
-        };
+        self.align_debt = ((hop - resume % hop) % hop) as usize;
     }
 
-    /// Throws away `count` samples if `available` covers them, reporting
-    /// whether it did.
-    fn discard(&mut self, count: usize, available: usize) -> bool {
-        if count == 0 {
-            return true;
-        }
-        if available < count {
-            return false;
-        }
-        debug_assert!(count <= self.scratch.len(), "discards stay within a frame");
-        let taken = self.reader.read_samples(&mut self.scratch[..count]);
-        debug_assert_eq!(taken, count, "availability was just checked");
-        true
-    }
-
-    /// Windows the current frame, transforms it, and appends its decibels.
-    fn analyze_current_frame(&mut self, out: &mut Vec<f32>) {
+    /// Windows the current frame, transforms it, and appends its levels.
+    fn analyze_current_frame(&mut self) {
         for ((out, sample), weight) in self.windowed.iter_mut().zip(&self.frame).zip(&self.window) {
             *out = sample * weight;
         }
@@ -319,7 +276,7 @@ impl SpectrumAnalyzer {
             } else {
                 floor
             };
-            out.push(db);
+            self.levels.push(db);
         }
     }
 }

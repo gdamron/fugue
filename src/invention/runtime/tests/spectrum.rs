@@ -3,8 +3,7 @@
 use super::*;
 use crate::spectrum::{SpectrumAnalyzer, SpectrumConfig};
 
-#[test]
-fn spectrum_tap_feeds_an_analyser_with_the_master_output() {
+fn running_sine() -> RunningInvention {
     let invention = Invention::from_json(
         r#"{
             "version": "1.0.0",
@@ -18,26 +17,59 @@ fn spectrum_tap_feeds_an_analyser_with_the_master_output() {
         }"#,
     )
     .unwrap();
-
     let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
-    let running = runtime
+    runtime
         .start_with_backend(TickBackend::new(48_000))
-        .unwrap();
+        .unwrap()
+}
 
-    let tap = running.spectrum_tap();
-    assert!(!tap.is_enabled(), "collection stays off until asked for");
-    let reader = tap
-        .take_reader()
-        .expect("the tap hands out its reader once");
+#[test]
+fn spectrum_reader_hears_the_master_output() {
+    let running = running_sine();
+    assert!(
+        !running.spectrum_collecting(),
+        "collection stays off until asked for"
+    );
 
+    let mut reader = running.spectrum_reader();
+    assert!(
+        running.spectrum_collecting(),
+        "a reader turns collection on"
+    );
+
+    let mut out = vec![0.0; 4_096];
+    let mut loudest = 0.0f32;
+    for _ in 0..40 {
+        thread::sleep(Duration::from_millis(25));
+        let read = reader.read(&mut out);
+        loudest = out[..read.count]
+            .iter()
+            .fold(loudest, |peak, sample| peak.max(sample.abs()));
+        if loudest > 0.1 {
+            break;
+        }
+    }
+    assert!(loudest > 0.1, "the tap carried only {loudest} of a sine");
+
+    drop(reader);
+    assert!(
+        !running.spectrum_collecting(),
+        "a dropped reader stops collection"
+    );
+    running.stop();
+}
+
+#[test]
+fn an_analyser_finds_the_tone_in_the_master_output() {
+    let running = running_sine();
     let config = SpectrumConfig {
         fft_size: 2048,
         hop_size: 1024,
         ..Default::default()
     };
     let bin_hz = 48_000.0 / config.fft_size as f32;
-    let mut analyzer = SpectrumAnalyzer::new(reader, 48_000, "master:1", config).unwrap();
-    assert!(tap.is_enabled(), "an analyser turns collection on");
+    let mut analyzer =
+        SpectrumAnalyzer::new(running.spectrum_reader(), 48_000, "master:1", config).unwrap();
 
     // Let the audio worker render enough blocks to fill several frames.
     let mut tile = None;
@@ -54,8 +86,8 @@ fn spectrum_tap_feeds_an_analyser_with_the_master_output() {
     assert!(tile.matches(analyzer.meta()));
 
     let bin_count = analyzer.meta().frequency.bin_count as usize;
-    let frame = &tile.magnitudes_db[..bin_count];
-    let peak = frame
+    let levels = &tile.magnitudes_db;
+    let peak = levels[..bin_count]
         .iter()
         .enumerate()
         .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
@@ -67,12 +99,10 @@ fn spectrum_tap_feeds_an_analyser_with_the_master_output() {
         "expected the peak near 440 Hz, got {peak_hz} Hz"
     );
 
-    analyzer.stop();
-    assert!(!tap.is_enabled());
     drop(analyzer);
     assert!(
-        tap.take_reader().is_some(),
-        "a finished analyser returns the reading end"
+        !running.spectrum_collecting(),
+        "a finished analyser stops collection"
     );
     running.stop();
 }

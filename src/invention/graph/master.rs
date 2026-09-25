@@ -50,3 +50,44 @@ impl MasterObservers {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
+    /// A tripwire for what the master observers cost the audio thread, idle
+    /// and with a spectrum reader attached. The budget is a hundredth of the
+    /// block's real-time duration: hundreds of times what an optimised build
+    /// spends, and still far below anything a listener could hear.
+    #[test]
+    fn observing_a_block_costs_a_sliver_of_its_duration() {
+        const FRAMES: usize = 128;
+        const BLOCKS: u32 = 20_000;
+        let budget = Duration::from_secs_f64(FRAMES as f64 / 48_000.0 / 100.0);
+        let left: Vec<f32> = (0..FRAMES).map(|i| (i as f32 * 0.01).sin()).collect();
+        let right: Vec<f32> = (0..FRAMES).map(|i| (i as f32 * 0.013).cos()).collect();
+        let per_block = |observers: &MasterObservers| {
+            let start = Instant::now();
+            for _ in 0..BLOCKS {
+                observers.observe(black_box(&left), black_box(&right), FRAMES);
+            }
+            start.elapsed() / BLOCKS
+        };
+
+        let observers = MasterObservers::live();
+        let idle = per_block(&observers);
+        assert!(idle < budget, "idle observers took {idle:?} a block");
+
+        #[cfg(feature = "spectrogram")]
+        {
+            let tap = observers.spectrum.as_ref().expect("live observers tap");
+            // A reader that never reads is the writer's steady state: it
+            // never looks at readers, so it just keeps overwriting.
+            let _reader = tap.reader();
+            let reading = per_block(&observers);
+            assert!(reading < budget, "with a reader, took {reading:?} a block");
+        }
+    }
+}

@@ -1,11 +1,12 @@
 //! Tests for the spectrum analyser.
 
 use super::*;
+use crate::spectrum::tap::CAPACITY;
 use crate::spectrum::{SpectrumTap, MAX_HISTORY_FRAMES};
 use std::f32::consts::PI;
 
 mod timeline;
-use timeline::{frames_in, Timeline};
+use timeline::{expected_frames, frames_in};
 
 const RATE: u32 = 48_000;
 
@@ -20,7 +21,7 @@ fn config() -> SpectrumConfig {
 
 fn analyzer(config: SpectrumConfig) -> (SpectrumTap, SpectrumAnalyzer) {
     let tap = SpectrumTap::new();
-    let reader = tap.take_reader().unwrap();
+    let reader = tap.reader();
     let analyzer = SpectrumAnalyzer::new(reader, RATE, "test", config).unwrap();
     (tap, analyzer)
 }
@@ -56,9 +57,14 @@ fn drain(analyzer: &mut SpectrumAnalyzer) -> Vec<SpectrogramTile> {
     tiles
 }
 
+/// A tile's decibel levels.
+fn levels(tile: &SpectrogramTile) -> &[f32] {
+    &tile.magnitudes_db
+}
+
 /// Loudest bin of a tile's first frame.
 fn peak_bin(tile: &SpectrogramTile, bin_count: usize) -> usize {
-    tile.magnitudes_db[..bin_count]
+    levels(tile)[..bin_count]
         .iter()
         .enumerate()
         .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
@@ -76,6 +82,10 @@ fn describes_its_own_analysis() {
     assert_eq!(meta.frequency.bin_count, 129);
     assert_eq!(meta.frequency.bin_hz, RATE as f32 / 256.0);
     assert_eq!(meta.encoding, SpectrogramEncoding::F32Json);
+    assert_eq!(
+        meta.provenance.source, "sink:master",
+        "the source comes from the reader, not from configuration"
+    );
 }
 
 #[test]
@@ -104,10 +114,6 @@ fn rejects_settings_a_stream_cannot_recover_from() {
             ..config()
         },
         SpectrumConfig {
-            floor_db: f32::NEG_INFINITY,
-            ..config()
-        },
-        SpectrumConfig {
             history_frames: 0,
             ..config()
         },
@@ -129,7 +135,7 @@ fn rejects_settings_a_stream_cannot_recover_from() {
         assert!(bad.validate().is_err(), "accepted {bad:?}");
     }
     let tap = SpectrumTap::new();
-    assert!(SpectrumAnalyzer::new(tap.take_reader().unwrap(), 0, "s", config()).is_err());
+    assert!(SpectrumAnalyzer::new(tap.reader(), 0, "s", config()).is_err());
 }
 
 #[test]
@@ -148,8 +154,7 @@ fn reports_silence_at_the_floor() {
     let (tap, mut analyzer) = analyzer(config());
     feed_silence(&tap, 1024);
     let tile = analyzer.poll().unwrap();
-    assert!(tile.magnitudes_db.iter().all(|db| *db == -100.0));
-    assert!(tile.magnitudes_db.iter().all(|db| db.is_finite()));
+    assert!(levels(&tile).iter().all(|db| *db == -100.0));
 }
 
 #[test]
@@ -164,7 +169,7 @@ fn puts_a_tone_in_its_own_bin_at_the_right_level() {
     let tile = analyzer.poll().expect("a steady-state frame");
     assert_eq!(peak_bin(&tile, 129), bin);
 
-    let peak = tile.magnitudes_db[bin];
+    let peak = levels(&tile)[bin];
     assert!(
         peak.abs() < 0.5,
         "a full-scale sine should read about 0 dBFS, got {peak}"
@@ -178,10 +183,7 @@ fn does_not_overstate_dc_or_nyquist() {
     let (dc_tap, mut dc_analyzer) = analyzer(config());
     feed_constant(&dc_tap, 1.0, 4096);
     dc_analyzer.poll().expect("the start-up frame");
-    let dc = dc_analyzer
-        .poll()
-        .expect("a steady-state frame")
-        .magnitudes_db[0];
+    let dc = levels(&dc_analyzer.poll().expect("a steady-state frame"))[0];
     assert!(dc.abs() < 0.5, "full-scale DC should read 0 dBFS, got {dc}");
 
     let (nyquist_tap, mut nyquist_analyzer) = analyzer(config());
@@ -191,7 +193,7 @@ fn does_not_overstate_dc_or_nyquist() {
     nyquist_tap.observe_block(&alternating, &alternating, alternating.len());
     nyquist_analyzer.poll().expect("the start-up frame");
     let tile = nyquist_analyzer.poll().expect("a steady-state frame");
-    let nyquist = tile.magnitudes_db[128];
+    let nyquist = levels(&tile)[128];
     assert!(
         nyquist.abs() < 0.5,
         "full-scale Nyquist should read 0 dBFS, got {nyquist}"
@@ -200,7 +202,7 @@ fn does_not_overstate_dc_or_nyquist() {
 
 #[test]
 fn scales_levels_with_amplitude() {
-    let mut levels = Vec::new();
+    let mut found = Vec::new();
     for amplitude in [1.0, 0.5, 0.25] {
         let (tap, mut analyzer) = analyzer(config());
         let mut phase = 0.0;
@@ -213,11 +215,11 @@ fn scales_levels_with_amplitude() {
         );
         analyzer.poll().expect("the start-up frame");
         let tile = analyzer.poll().expect("a steady-state frame");
-        levels.push(tile.magnitudes_db[20]);
+        found.push(levels(&tile)[20]);
     }
     // Halving amplitude is 6 dB down, twice over.
-    assert!((levels[0] - levels[1] - 6.0).abs() < 0.5, "{levels:?}");
-    assert!((levels[1] - levels[2] - 6.0).abs() < 0.5, "{levels:?}");
+    assert!((found[0] - found[1] - 6.0).abs() < 0.5, "{found:?}");
+    assert!((found[1] - found[2] - 6.0).abs() < 0.5, "{found:?}");
 }
 
 #[test]
@@ -228,7 +230,7 @@ fn fills_tiles_up_to_the_declared_limit() {
     assert_eq!(first.frame_count, 4, "a full tile is four frames here");
     assert_eq!(first.start_frame, 0);
     assert_eq!(first.tile_seq, 0);
-    assert_eq!(first.magnitudes_db.len(), 4 * 129);
+    assert_eq!(levels(&first).len(), 4 * 129);
     assert!(first.matches(analyzer.meta()));
 
     let second = analyzer.poll().unwrap();
@@ -256,11 +258,12 @@ fn numbers_frames_by_position_in_the_stream() {
     }
 }
 
-/// Runs the analyser over everything waiting and checks it produced exactly
-/// the frames the timeline says it should: every frame whose window arrived
-/// whole, at its true position, and nothing stitched across a loss.
-fn assert_frames_match(timeline: &Timeline, tiles: &[SpectrogramTile], config: &SpectrumConfig) {
-    let expected = timeline.expected_frames(config.fft_size as u64, config.hop_size as u64);
+/// Checks the analyser produced exactly the frames it should have: every
+/// frame whose window arrived whole, at its true position, and nothing
+/// stitched across a loss.
+fn assert_frames_match(analyzer: &SpectrumAnalyzer, tiles: &[SpectrogramTile]) {
+    let config = &analyzer.config;
+    let expected = expected_frames(analyzer);
     let produced = frames_in(tiles);
     if produced != expected {
         let first_difference = produced
@@ -270,20 +273,18 @@ fn assert_frames_match(timeline: &Timeline, tiles: &[SpectrogramTile], config: &
             .unwrap_or(produced.len().min(expected.len()));
         panic!(
             "produced {} frames, expected {}; first difference at index {first_difference}: \
-             produced {:?}, expected {:?} (lost {} samples)",
+             produced {:?}, expected {:?} (losses {:?})",
             produced.len(),
             expected.len(),
             produced.get(first_difference),
             expected.get(first_difference),
-            timeline.lost()
+            analyzer.losses
         );
     }
-    let bins = config.fft_size / 2 + 1;
     for tile in tiles {
         assert!(tile.frame_count <= config.max_frames_per_tile);
-        assert_eq!(
-            tile.magnitudes_db.len(),
-            tile.frame_count as usize * bins,
+        assert!(
+            tile.matches(analyzer.meta()),
             "tile {} is misshapen",
             tile.tile_seq
         );
@@ -295,107 +296,97 @@ fn assert_frames_match(timeline: &Timeline, tiles: &[SpectrogramTile], config: &
 #[test]
 fn places_the_gap_where_the_audio_was_lost() {
     let (tap, mut analyzer) = analyzer(config());
-    let mut timeline = Timeline::new(&tap);
     let mut tiles = Vec::new();
 
     for _ in 0..40 {
-        timeline.feed(1_024);
+        feed_silence(&tap, 1_024);
         tiles.extend(drain(&mut analyzer));
     }
     // Overrun: far more than the ring holds, with nobody draining.
-    timeline.feed(200_000);
+    feed_silence(&tap, 200_000);
     for _ in 0..40 {
-        timeline.feed(1_024);
+        feed_silence(&tap, 1_024);
         tiles.extend(drain(&mut analyzer));
     }
 
-    assert!(timeline.lost() > 0, "the tap should have overrun");
-    assert_frames_match(&timeline, &tiles, &config());
+    // Everything but the last ring-full before the first drain was lost.
+    assert_eq!(analyzer.lost_total(), 200_000 + 1_024 - CAPACITY as u64);
+    assert_eq!(analyzer.losses.len(), 1);
+    assert_frames_match(&analyzer, &tiles);
 }
 
 /// Stopping and restarting analysis on the same invention is designed in, so
-/// a second stream must place its gaps by its own audio, not the tap's life.
+/// a second stream must number its frames by its own audio, not the tap's
+/// life.
 #[test]
-fn a_later_stream_on_the_same_tap_places_its_gaps_correctly() {
+fn a_later_stream_on_the_same_tap_counts_from_its_own_start() {
     let tap = SpectrumTap::new();
-    let mut first =
-        SpectrumAnalyzer::new(tap.take_reader().unwrap(), RATE, "first", config()).unwrap();
+    let mut first = SpectrumAnalyzer::new(tap.reader(), RATE, "first", config()).unwrap();
     for _ in 0..50 {
         feed_silence(&tap, 1_024);
         drain(&mut first);
     }
     drop(first);
 
-    let mut second = SpectrumAnalyzer::new(
-        tap.take_reader().expect("returned"),
-        RATE,
-        "second",
-        config(),
-    )
-    .unwrap();
-    let mut timeline = Timeline::new(&tap);
+    let mut second = SpectrumAnalyzer::new(tap.reader(), RATE, "second", config()).unwrap();
     let mut tiles = Vec::new();
     for _ in 0..10 {
-        timeline.feed(1_024);
+        feed_silence(&tap, 1_024);
         tiles.extend(drain(&mut second));
     }
-    timeline.feed(100_000);
+    assert_eq!(tiles[0].start_frame, 0, "a new stream starts at frame zero");
+    feed_silence(&tap, 100_000);
     for _ in 0..20 {
-        timeline.feed(1_024);
+        feed_silence(&tap, 1_024);
         tiles.extend(drain(&mut second));
     }
 
-    assert!(timeline.lost() > 0);
-    assert_frames_match(&timeline, &tiles, &config());
+    assert!(second.lost_total() > 0);
+    assert_frames_match(&second, &tiles);
 }
 
-/// Under sustained overload the analyser falls behind again and again before
-/// it reaches its first gap: it holds one loss while more queue up behind it.
-/// Audio accepted between losses must keep its place, and no frame may be
-/// stitched across any of them.
+/// Under sustained overload the analyser falls behind again and again, making
+/// a little progress between stalls. Audio read between losses must keep its
+/// place, and no frame may be stitched across any of them.
 #[test]
 fn keeps_audio_between_losses_in_its_place() {
     let (tap, mut analyzer) = analyzer(config());
-    let mut timeline = Timeline::new(&tap);
     let mut tiles = Vec::new();
 
     for _ in 0..8 {
-        timeline.feed(1_024);
+        feed_silence(&tap, 1_024);
         tiles.extend(drain(&mut analyzer));
     }
-    // Stall, make a little progress, stall again — four times over, so the
-    // analyser is holding one loss while later ones are still queued.
-    timeline.feed(60_000);
     for _ in 0..4 {
+        feed_silence(&tap, 60_000);
         tiles.extend(analyzer.poll());
-        timeline.feed(2_048);
+        feed_silence(&tap, 2_048);
+        tiles.extend(analyzer.poll());
     }
-    timeline.feed(60_000);
     for _ in 0..30 {
-        timeline.feed(1_024);
+        feed_silence(&tap, 1_024);
         tiles.extend(drain(&mut analyzer));
     }
 
-    assert!(timeline.lost() > 0);
-    assert_frames_match(&timeline, &tiles, &config());
+    assert!(analyzer.losses.len() >= 4, "losses {:?}", analyzer.losses);
+    assert_frames_match(&analyzer, &tiles);
 }
 
-/// When audio after a gap is already waiting as the analyser reaches it, the
-/// first frame past the gap must start a new tile rather than continue the
-/// one before it.
+/// When audio from before a loss is still staged as the analyser reaches the
+/// loss, the frames on either side must land in separate tiles.
 #[test]
 fn starts_a_new_tile_at_a_gap_even_mid_pass() {
     let (tap, mut analyzer) = analyzer(config());
-    let mut timeline = Timeline::new(&tap);
     let mut tiles = Vec::new();
 
     for _ in 0..8 {
-        timeline.feed(1_024);
+        feed_silence(&tap, 1_024);
         tiles.extend(drain(&mut analyzer));
     }
-    timeline.feed(100_000);
+    // Leave some audio half-analysed, then overrun behind it.
+    feed_silence(&tap, 1_024);
     tiles.extend(analyzer.poll());
-    timeline.feed(1_024); // audio past the gap, waiting before we reach it
+    feed_silence(&tap, 100_000);
     tiles.extend(drain(&mut analyzer));
 
     assert!(
@@ -404,7 +395,7 @@ fn starts_a_new_tile_at_a_gap_even_mid_pass() {
             .any(|pair| pair[1].start_frame > pair[0].start_frame + pair[0].frame_count as u64),
         "the scenario should produce a gap"
     );
-    assert_frames_match(&timeline, &tiles, &config());
+    assert_frames_match(&analyzer, &tiles);
 }
 
 /// Frame numbering follows position, so repeated stalls cannot accumulate an
@@ -416,43 +407,29 @@ fn repeated_stalls_do_not_accumulate_drift() {
         fft_size: 512,
         hop_size: 128,
         max_frames_per_tile: 8,
-        ..Default::default()
+        ..config()
     };
-    let tap = SpectrumTap::new();
-    let mut analyzer =
-        SpectrumAnalyzer::new(tap.take_reader().unwrap(), RATE, "drift", config.clone()).unwrap();
-    let mut timeline = Timeline::new(&tap);
+    let (tap, mut analyzer) = analyzer(config);
     let mut tiles = Vec::new();
 
     for _ in 0..6 {
-        timeline.feed(60_000);
+        feed_silence(&tap, 60_000);
         for _ in 0..8 {
-            timeline.feed(2_048);
+            feed_silence(&tap, 2_048);
             tiles.extend(drain(&mut analyzer));
         }
-        assert_frames_match(&timeline, &tiles, &config);
+        assert_frames_match(&analyzer, &tiles);
     }
-}
-
-#[test]
-fn stops_collecting_when_told() {
-    let (tap, mut analyzer) = analyzer(config());
-    assert!(tap.is_enabled());
-    analyzer.stop();
-    assert!(!tap.is_enabled());
+    assert_eq!(analyzer.losses.len(), 6);
 }
 
 #[test]
 fn dropping_the_analyser_stops_collecting() {
     let (tap, analyzer) = analyzer(config());
-    assert!(tap.is_enabled());
+    assert!(tap.is_collecting());
     drop(analyzer);
     assert!(
-        !tap.is_enabled(),
+        !tap.is_collecting(),
         "an abandoned analyser must not leave the audio thread collecting"
-    );
-    assert!(
-        tap.take_reader().is_some(),
-        "and it must give the reading end back"
     );
 }
