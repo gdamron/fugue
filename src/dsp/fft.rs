@@ -6,13 +6,13 @@
 
 use std::f32::consts::PI;
 
-/// Magnitude spectrum of real input, using a precomputed radix-2 transform.
+/// Power spectrum of real input, using a precomputed radix-2 transform.
 ///
 /// Real input is transformed as complex data with zero imaginary parts. That
 /// costs about twice a real-optimized transform, which at analysis sizes (up
 /// to 4096 points, a few hundred times a second) is far cheaper than the
 /// complexity of a split-radix real transform.
-pub(crate) struct RealFft {
+pub struct RealFft {
     size: usize,
     /// Twiddles for the whole transform: `cos[j]`/`sin[j]` hold
     /// `cos(-2πj/size)` and `sin(-2πj/size)` for `j < size / 2`.
@@ -30,7 +30,7 @@ impl RealFft {
     /// # Panics
     ///
     /// Panics unless `size` is a power of two of at least 2.
-    pub(crate) fn new(size: usize) -> Self {
+    pub fn new(size: usize) -> Self {
         assert!(
             size >= 2 && size.is_power_of_two(),
             "fft size must be a power of two"
@@ -57,18 +57,20 @@ impl RealFft {
         }
     }
 
-    /// Number of magnitudes produced, from DC to Nyquist inclusive.
-    pub(crate) fn bin_count(&self) -> usize {
+    /// Number of bins produced, from DC to Nyquist inclusive.
+    pub fn bin_count(&self) -> usize {
         self.size / 2 + 1
     }
 
-    /// Writes the magnitudes of `input` into `out`, allocating nothing.
+    /// Writes the power (squared magnitude) of each bin of `input` into
+    /// `out`, allocating nothing. Power rather than magnitude, so a caller
+    /// converting to decibels takes no square root at all.
     ///
     /// # Panics
     ///
-    /// Panics unless `input` holds [`size`](Self::size) samples and `out` holds
+    /// Panics unless `input` holds the transform size in samples and `out` holds
     /// [`bin_count`](Self::bin_count) values.
-    pub(crate) fn magnitudes(&mut self, input: &[f32], out: &mut [f32]) {
+    pub fn power(&mut self, input: &[f32], out: &mut [f32]) {
         assert_eq!(input.len(), self.size, "input must hold size samples");
         assert_eq!(
             out.len(),
@@ -105,7 +107,7 @@ impl RealFft {
         }
 
         for (bin, value) in out.iter_mut().enumerate() {
-            *value = self.re[bin].hypot(self.im[bin]);
+            *value = self.re[bin] * self.re[bin] + self.im[bin] * self.im[bin];
         }
     }
 }
@@ -130,6 +132,14 @@ mod tests {
             .collect()
     }
 
+    /// Magnitudes from the power spectrum, for comparing with a naive DFT.
+    fn magnitudes(fft: &mut RealFft, input: &[f32], out: &mut [f32]) {
+        fft.power(input, out);
+        for value in out.iter_mut() {
+            *value = value.sqrt();
+        }
+    }
+
     fn tone(size: usize, bin: f32, amplitude: f32) -> Vec<f32> {
         (0..size)
             .map(|i| amplitude * (2.0 * PI * bin * (i as f32) / (size as f32)).sin())
@@ -143,7 +153,7 @@ mod tests {
             .map(|i| (i as f32 * 0.7).sin() * 0.4 + (i as f32 * 0.13).cos() * 0.25)
             .collect();
         let mut out = vec![0.0; fft.bin_count()];
-        fft.magnitudes(&input, &mut out);
+        magnitudes(&mut fft, &input, &mut out);
         for (got, want) in out.iter().zip(naive_magnitudes(&input)) {
             assert!((got - want).abs() < 1e-3, "got {got}, want {want}");
         }
@@ -154,7 +164,7 @@ mod tests {
         let size = 256;
         let mut fft = RealFft::new(size);
         let mut out = vec![0.0; fft.bin_count()];
-        fft.magnitudes(&tone(size, 8.0, 0.5), &mut out);
+        magnitudes(&mut fft, &tone(size, 8.0, 0.5), &mut out);
 
         // A sine at a bin centre splits its energy between +f and -f, so the
         // peak is amplitude * size / 2.
@@ -174,7 +184,7 @@ mod tests {
     fn reports_silence_as_zero() {
         let mut fft = RealFft::new(32);
         let mut out = vec![0.0; fft.bin_count()];
-        fft.magnitudes(&[0.0; 32], &mut out);
+        magnitudes(&mut fft, &[0.0; 32], &mut out);
         assert!(out.iter().all(|m| *m == 0.0));
     }
 
@@ -184,13 +194,13 @@ mod tests {
         let mut fft = RealFft::new(size);
         let mut out = vec![0.0; fft.bin_count()];
 
-        fft.magnitudes(&[1.0; 32], &mut out);
+        magnitudes(&mut fft, &[1.0; 32], &mut out);
         assert!((out[0] - size as f32).abs() < 1e-3);
 
         let alternating: Vec<f32> = (0..size)
             .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
             .collect();
-        fft.magnitudes(&alternating, &mut out);
+        magnitudes(&mut fft, &alternating, &mut out);
         assert!((out[size / 2] - size as f32).abs() < 1e-3);
     }
 
@@ -201,7 +211,7 @@ mod tests {
             let mut fft = RealFft::new(size);
             assert_eq!(fft.bin_count(), size / 2 + 1);
             let mut out = vec![0.0; fft.bin_count()];
-            fft.magnitudes(&tone(size, 1.0, 0.25), &mut out);
+            magnitudes(&mut fft, &tone(size, 1.0, 0.25), &mut out);
             assert!(out[1] > out[0] * 10.0, "size {size} missed its tone");
         }
     }

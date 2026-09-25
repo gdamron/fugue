@@ -1,86 +1,10 @@
+use super::config::{window_coefficients, SpectrumConfig};
 use super::tap::SpectrumReader;
-use crate::dsp::fft::RealFft;
+use crate::dsp::RealFft;
 use crate::rpc::{
     SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding, SpectrogramFrequencyAxis,
     SpectrogramLimits, SpectrogramProvenance, SpectrogramStreamMeta, SpectrogramTile,
-    SpectrogramWindow,
 };
-use std::f32::consts::PI;
-
-/// How a spectrogram stream is analysed. Defaults suit a display-rate view of
-/// the master output: about 94 frames a second at 48 kHz, 513 bins, and a
-/// history of a few seconds.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SpectrumConfig {
-    /// Transform size in samples; must be a power of two.
-    pub fft_size: usize,
-    /// Samples between consecutive frames.
-    pub hop_size: usize,
-    pub window: SpectrogramWindow,
-    /// Quietest level reported; anything quieter is clamped here.
-    pub floor_db: f32,
-    /// Loudest level a viewer needs to distinguish.
-    pub ceiling_db: f32,
-    /// Frames a viewer is expected to keep.
-    pub history_frames: u32,
-    /// Largest tile the analyser will emit.
-    pub max_frames_per_tile: u32,
-    /// Which signal is analysed, as it appears to a reader.
-    pub source: String,
-}
-
-impl Default for SpectrumConfig {
-    fn default() -> Self {
-        Self {
-            fft_size: 1024,
-            hop_size: 512,
-            window: SpectrogramWindow::Hann,
-            floor_db: -100.0,
-            ceiling_db: 0.0,
-            history_frames: 512,
-            max_frames_per_tile: 8,
-            source: "sink:master".to_string(),
-        }
-    }
-}
-
-/// Largest transform a stream may use: 2,049 bins, the most a spectrogram view
-/// accepts. Larger sizes add no visible detail and cost memory on both ends.
-pub const MAX_FFT_SIZE: usize = 4096;
-
-/// Most frames a stream may ask a viewer to keep, matching the view's limit.
-pub const MAX_HISTORY_FRAMES: u32 = 2048;
-
-/// Largest tile a stream may send, matching the view's limit. Also bounds the
-/// one allocation each tile makes.
-pub const MAX_FRAMES_PER_TILE: u32 = 64;
-
-impl SpectrumConfig {
-    /// Checks the settings a stream cannot recover from, and that the stream
-    /// fits within what a spectrogram view will accept.
-    pub fn validate(&self) -> Result<(), String> {
-        if self.fft_size < 32 || self.fft_size > MAX_FFT_SIZE || !self.fft_size.is_power_of_two() {
-            return Err(format!(
-                "fft_size must be a power of two from 32 to {MAX_FFT_SIZE}"
-            ));
-        }
-        if self.hop_size == 0 || self.hop_size > self.fft_size {
-            return Err("hop_size must be 1..=fft_size".to_string());
-        }
-        if self.floor_db >= self.ceiling_db {
-            return Err("floor_db must be below ceiling_db".to_string());
-        }
-        if self.history_frames == 0 || self.history_frames > MAX_HISTORY_FRAMES {
-            return Err(format!("history_frames must be 1..={MAX_HISTORY_FRAMES}"));
-        }
-        if self.max_frames_per_tile == 0 || self.max_frames_per_tile > MAX_FRAMES_PER_TILE {
-            return Err(format!(
-                "max_frames_per_tile must be 1..={MAX_FRAMES_PER_TILE}"
-            ));
-        }
-        Ok(())
-    }
-}
 
 /// Turns tapped audio into spectrogram tiles.
 ///
@@ -104,16 +28,21 @@ pub struct SpectrumAnalyzer {
     fft: RealFft,
     /// Window coefficients, one per transform point.
     window: Vec<f32>,
-    /// Scale from raw magnitude to amplitude, given the window's gain.
-    amplitude_scale: f32,
+    /// Scale from raw power to squared amplitude, for bins with a mirror
+    /// image and for DC and Nyquist, which have none.
+    power_scale: f32,
+    edge_power_scale: f32,
+    /// Squared amplitude at the floor; anything at or below it reads the
+    /// floor without a logarithm being taken.
+    floor_power: f32,
     /// The most recent `fft_size` samples, oldest first.
     frame: Vec<f32>,
     /// How much of `frame` is filled while the stream starts or restarts.
     filled: usize,
     /// Windowed copy handed to the transform.
     windowed: Vec<f32>,
-    /// Raw magnitudes from the transform.
-    magnitudes: Vec<f32>,
+    /// Power per bin from the transform.
+    power: Vec<f32>,
     /// Samples pulled from the tap in one read.
     scratch: Vec<f32>,
     /// Samples lost to holes and already accounted for on the time axis.
@@ -144,9 +73,13 @@ impl SpectrumAnalyzer {
         let window = window_coefficients(config.window, config.fft_size);
         // A sine at a bin centre puts amplitude * gain * size / 2 in its bin,
         // where gain is the window's mean. Undo that, so a full-scale sine
-        // reads 0 dBFS whatever the window and size.
+        // reads 0 dBFS whatever the window and size. Doubling accounts for a
+        // real signal's energy sitting at both the positive and the negative
+        // frequency; DC and Nyquist have no mirror image, so they are not
+        // doubled.
         let window_sum: f32 = window.iter().sum();
         let amplitude_scale = 2.0 / window_sum.max(f32::MIN_POSITIVE);
+        let edge_amplitude_scale = 0.5 * amplitude_scale;
         let bin_count = fft.bin_count();
 
         let meta = SpectrogramStreamMeta {
@@ -181,11 +114,13 @@ impl SpectrumAnalyzer {
             meta,
             fft,
             window,
-            amplitude_scale,
+            power_scale: amplitude_scale * amplitude_scale,
+            edge_power_scale: edge_amplitude_scale * edge_amplitude_scale,
+            floor_power: 10f32.powf(config.floor_db / 10.0),
             frame: vec![0.0; config.fft_size],
             filled: 0,
             windowed: vec![0.0; config.fft_size],
-            magnitudes: vec![0.0; bin_count],
+            power: vec![0.0; bin_count],
             // Sized for the largest single read, which is a whole frame while
             // the stream starts or restarts.
             scratch: vec![0.0; config.fft_size],
@@ -366,48 +301,27 @@ impl SpectrumAnalyzer {
 
     /// Windows the current frame, transforms it, and appends its decibels.
     fn analyze_current_frame(&mut self, out: &mut Vec<f32>) {
-        for (i, sample) in self.frame.iter().enumerate() {
-            self.windowed[i] = sample * self.window[i];
+        for ((out, sample), weight) in self.windowed.iter_mut().zip(&self.frame).zip(&self.window) {
+            *out = sample * weight;
         }
-        self.fft.magnitudes(&self.windowed, &mut self.magnitudes);
+        self.fft.power(&self.windowed, &mut self.power);
         let floor = self.config.floor_db;
-        let last_bin = self.magnitudes.len() - 1;
-        for (bin, magnitude) in self.magnitudes.iter().enumerate() {
-            // Doubling accounts for a real signal's energy sitting at both the
-            // positive and the negative frequency. DC and Nyquist have no
-            // mirror image, so doubling them would read 6 dB high.
+        let last_bin = self.power.len() - 1;
+        for (bin, power) in self.power.iter().enumerate() {
             let scale = if bin == 0 || bin == last_bin {
-                0.5 * self.amplitude_scale
+                self.edge_power_scale
             } else {
-                self.amplitude_scale
+                self.power_scale
             };
-            let amplitude = magnitude * scale;
-            let db = if amplitude > 0.0 {
-                20.0 * amplitude.log10()
+            let squared_amplitude = power * scale;
+            let db = if squared_amplitude > self.floor_power {
+                10.0 * squared_amplitude.log10()
             } else {
                 floor
             };
-            out.push(db.max(floor));
+            out.push(db);
         }
     }
-}
-
-/// Coefficients for one analysis window.
-fn window_coefficients(window: SpectrogramWindow, size: usize) -> Vec<f32> {
-    let denominator = (size - 1).max(1) as f32;
-    (0..size)
-        .map(|i| {
-            let t = i as f32 / denominator;
-            match window {
-                SpectrogramWindow::Rectangular => 1.0,
-                SpectrogramWindow::Hann => 0.5 - 0.5 * (2.0 * PI * t).cos(),
-                SpectrogramWindow::Hamming => 0.54 - 0.46 * (2.0 * PI * t).cos(),
-                SpectrogramWindow::Blackman => {
-                    0.42 - 0.5 * (2.0 * PI * t).cos() + 0.08 * (4.0 * PI * t).cos()
-                }
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]

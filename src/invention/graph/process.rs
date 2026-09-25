@@ -52,20 +52,9 @@ impl SignalGraph {
             }
         }
 
-        // Fold this block's master peak into the meter. Lock-free and
-        // allocation-free: one pass over buffers already in hand, then two
-        // atomic stores (FUG-239 #5).
-        let mut left_peak = 0.0f32;
-        let mut right_peak = 0.0f32;
-        for i in 0..frames {
-            left_peak = left_peak.max(left[i].abs());
-            right_peak = right_peak.max(right[i].abs());
-        }
-        self.master_peak.observe(left_peak, right_peak);
-
-        // Hand the same block to the spectrum tap. Lock-free and
-        // allocation-free, and a single relaxed load when nobody is watching.
-        self.master_spectrum.observe_block(left, right, frames);
+        // Hand the mixed block to the master observers. Lock-free and
+        // allocation-free.
+        self.master.observe(left, right, frames);
 
         self.store_carry(frames);
     }

@@ -79,20 +79,16 @@ impl InventionRuntime {
         let (command_tx, command_rx) = mpsc::channel();
         let module_ports = Arc::new(Mutex::new(module_ports(&self.modules)));
 
-        // Shared peak meter: the audio thread folds block peaks into it via the
-        // graph; the daemon samples the clone held on `RunningInvention`.
-        let master_peak = crate::atomic::StereoPeak::new();
-        // Spectrum tap shared with the graph; a daemon enables it only while
-        // something is subscribed to spectrogram events.
-        let master_spectrum = crate::spectrum::SpectrumTap::new();
+        // Master observers shared with the graph: the audio thread feeds them,
+        // and the daemon samples the clone held on `RunningInvention`.
+        let master = super::graph::MasterObservers::live();
 
         let mut graph = SignalGraph::new(
             self.modules,
             self.sinks,
             self.routing,
             command_rx,
-            master_peak.clone(),
-            master_spectrum.clone(),
+            master.clone(),
         );
 
         let control_surfaces = self.control_surfaces;
@@ -127,8 +123,7 @@ impl InventionRuntime {
             scripts: ScriptManager::default(),
             agents: AgentManager::default(),
             event_sink: Arc::new(Mutex::new(None)),
-            master_peak,
-            master_spectrum,
+            master,
         };
         running.scripts.start_all(running.controller());
         running.agents.start_all(running.controller());
@@ -195,12 +190,10 @@ pub struct RunningInvention {
     /// with scripts/agents started at build time) so an install is observed
     /// even by writers created before it.
     event_sink: super::orchestration::EventSinkSlot,
-    /// Master-output peak meter shared with the audio-thread graph; the daemon
-    /// drains it on a fixed cadence to emit `MeterLevel` (FUG-239 #5).
-    master_peak: crate::atomic::StereoPeak,
-    /// Mono master tap the audio thread feeds; an off-thread analyser turns it
-    /// into spectrogram tiles.
-    master_spectrum: crate::spectrum::SpectrumTap,
+    /// Master-output observers shared with the audio-thread graph: the peak
+    /// meter the daemon drains to emit `MeterLevel` (FUG-239 #5), and the
+    /// spectrum tap its analyser reads.
+    master: super::graph::MasterObservers,
 }
 
 impl RunningInvention {
@@ -242,7 +235,7 @@ impl RunningInvention {
     /// the previous call, resetting the accumulator. Intended for a fixed-cadence
     /// sampler that turns the reading into a `MeterLevel` event (FUG-239 #5).
     pub fn master_meter(&self) -> (f32, f32) {
-        self.master_peak.drain()
+        self.master.peak.drain()
     }
 
     /// Returns the master-output tap a spectrum analyser reads.
@@ -253,8 +246,12 @@ impl RunningInvention {
     /// watching pays one relaxed load per block.
     ///
     /// [`SpectrumTap::take_reader`]: crate::spectrum::SpectrumTap::take_reader
+    #[cfg(feature = "spectrogram")]
     pub fn spectrum_tap(&self) -> crate::spectrum::SpectrumTap {
-        self.master_spectrum.clone()
+        self.master
+            .spectrum
+            .clone()
+            .expect("a live runtime always taps its master output")
     }
 
     pub fn full_snapshot(&self) -> crate::RuntimeFullSnapshot {

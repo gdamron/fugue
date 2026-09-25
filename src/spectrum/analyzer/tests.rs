@@ -1,7 +1,8 @@
 //! Tests for the spectrum analyser.
 
 use super::*;
-use crate::spectrum::SpectrumTap;
+use crate::spectrum::{SpectrumTap, MAX_HISTORY_FRAMES};
+use std::f32::consts::PI;
 
 mod timeline;
 use timeline::{frames_in, Timeline};
@@ -96,6 +97,14 @@ fn rejects_settings_a_stream_cannot_recover_from() {
         SpectrumConfig {
             floor_db: 0.0,
             ceiling_db: -100.0,
+            ..config()
+        },
+        SpectrumConfig {
+            floor_db: f32::NEG_INFINITY,
+            ..config()
+        },
+        SpectrumConfig {
+            floor_db: f32::NEG_INFINITY,
             ..config()
         },
         SpectrumConfig {

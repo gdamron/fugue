@@ -7,9 +7,9 @@
 //! callback.
 
 mod analyzer;
+mod config;
 mod tap;
 
-pub use analyzer::{
-    SpectrumAnalyzer, SpectrumConfig, MAX_FFT_SIZE, MAX_FRAMES_PER_TILE, MAX_HISTORY_FRAMES,
-};
+pub use analyzer::SpectrumAnalyzer;
+pub use config::{SpectrumConfig, MAX_FFT_SIZE, MAX_FRAMES_PER_TILE, MAX_HISTORY_FRAMES};
 pub use tap::{SpectrumReader, SpectrumTap};
