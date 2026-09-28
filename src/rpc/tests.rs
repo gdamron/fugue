@@ -5,6 +5,7 @@ mod discovery;
 mod error;
 mod event;
 mod package;
+mod recovery;
 mod request;
 mod response;
 mod snapshot;

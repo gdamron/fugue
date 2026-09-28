@@ -14,6 +14,7 @@ mod error;
 mod event;
 mod identity;
 mod package;
+mod recovery;
 mod request;
 mod response;
 mod revision;
@@ -34,6 +35,10 @@ pub use event::{
 };
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
 pub use package::{PackageInfo, PackageList, PackageSource};
+pub use recovery::{
+    Admission, MutationLedger, MutationTicket, PendingMutation, ReplayPolicy,
+    MAX_MUTATION_ID_BYTES, MAX_RECORDED_MESSAGE_BYTES, MUTATION_LEDGER_CAPACITY,
+};
 pub use request::{ControlWrite, PackageInstallRequest, RpcCommand, RpcRequest, RpcRequestPayload};
 pub use response::{ReloadMode, ReloadOutcome, RpcResponse, RpcResponsePayload, SaveReport};
 pub use revision::{

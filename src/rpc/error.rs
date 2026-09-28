@@ -52,6 +52,10 @@ pub enum RpcErrorCode {
     /// revision. Nothing was mutated; the error carries a
     /// [`RevisionConflict`] describing both sides.
     RevisionConflict,
+    /// A retried ticketed command whose original is older than the daemon's
+    /// recovery ledger remembers. Nothing ran; the original may or may not
+    /// have applied, so re-read state before editing again.
+    MutationExpired,
     AudioThreadStopped,
     UnknownModuleType,
     ModuleBuildFailed,

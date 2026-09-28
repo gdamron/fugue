@@ -1,7 +1,7 @@
 //! Client request envelopes and the commands a daemon accepts.
 
 use super::{
-    ControlWriteIntent, DescribeModuleQuery, InspectionQuery, ModuleTypeQuery,
+    ControlWriteIntent, DescribeModuleQuery, InspectionQuery, ModuleTypeQuery, MutationTicket,
     RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, RPC_SCHEMA_VERSION,
 };
 use crate::{ControlValue, Invention};
@@ -31,6 +31,14 @@ pub struct RpcRequest {
     /// [`RpcErrorCode::RevisionConflict`]: super::RpcErrorCode::RevisionConflict
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<RuntimeRevision>,
+    /// Optional recovery identity for an authoring command, reused unchanged
+    /// when the command is retried after a lost response (see
+    /// [`MutationLedger`]). A retry carrying it is answered with the
+    /// original outcome instead of running again.
+    ///
+    /// [`MutationLedger`]: super::MutationLedger
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mutation: Option<MutationTicket>,
     #[serde(flatten)]
     pub payload: RpcRequestPayload,
 }
@@ -41,6 +49,7 @@ impl RpcRequest {
             schema_version: RPC_SCHEMA_VERSION,
             request_id: None,
             expected_revision: None,
+            mutation: None,
             payload: RpcRequestPayload::Command(command),
         }
     }
@@ -53,6 +62,12 @@ impl RpcRequest {
     /// Requires the daemon to be at `revision` for this request to apply.
     pub fn expecting(mut self, revision: RuntimeRevision) -> Self {
         self.expected_revision = Some(revision);
+        self
+    }
+
+    /// Attaches the recovery ticket this command keeps across retries.
+    pub fn with_mutation(mut self, ticket: MutationTicket) -> Self {
+        self.mutation = Some(ticket);
         self
     }
 }
