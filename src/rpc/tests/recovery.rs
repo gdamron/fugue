@@ -257,6 +257,53 @@ fn a_never_seen_ticket_after_the_horizon_runs() {
 }
 
 #[test]
+fn refusals_that_changed_nothing_do_not_expire_fresh_tickets() {
+    // A host that leaves the revision alone for refusals that changed nothing.
+    // Evicting those must not move the horizon up to the current revision, or
+    // every ticket minted there would be refused as expired.
+    let mut ledger = MutationLedger::with_capacity(2);
+    let mut revisions = RevisionTracker::new("s1");
+    let committed = ticket("c-1", revisions.current());
+    run(
+        &mut ledger,
+        &mut revisions,
+        &committed,
+        &add("a"),
+        RpcResponsePayload::Ack,
+    )
+    .unwrap();
+    for id in ["r-1", "r-2", "r-3"] {
+        let t = ticket(id, revisions.current());
+        let Admission::Execute(pending) = ledger.admit(&t, &add(id), &revisions).unwrap() else {
+            panic!("a new ticket should run");
+        };
+        let refusal = RpcResponsePayload::Error(RpcError::new(
+            RpcErrorCode::UnknownModuleType,
+            "no such module type",
+        ));
+        ledger.record(pending, &refusal, revisions.current());
+    }
+
+    // The committed edit was forgotten and still expires rather than rerun.
+    assert_eq!(
+        error_code(run(
+            &mut ledger,
+            &mut revisions,
+            &committed,
+            &add("a"),
+            RpcResponsePayload::Ack
+        )),
+        RpcErrorCode::MutationExpired
+    );
+    // A ticket minted at the current revision still runs.
+    let fresh = ticket("f-1", revisions.current());
+    assert!(matches!(
+        ledger.admit(&fresh, &add("f"), &revisions).unwrap(),
+        Admission::Execute(_)
+    ));
+}
+
+#[test]
 fn recorded_rejections_are_bounded() {
     let mut ledger = MutationLedger::default();
     let mut revisions = RevisionTracker::new("s1");

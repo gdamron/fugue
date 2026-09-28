@@ -31,19 +31,35 @@
 //!
 //! The ledger is scoped to one daemon session and holds the outcomes of the
 //! last [`MUTATION_LEDGER_CAPACITY`] ticketed commands that ran. There is no
-//! time-based expiry. Evicting an outcome moves the ledger's horizon to the
-//! revision at which that command ran. Because every recorded command is an
-//! authoring change that advances the revision, a ticket issued after the
-//! horizon cannot belong to a forgotten command, so its absence from the
-//! ledger proves it never ran. A ticket issued at or before the horizon might
-//! belong to a forgotten command, so it is refused with
-//! [`RpcErrorCode::MutationExpired`] rather than risk running twice.
+//! time-based expiry.
+//!
+//! The daemon advances the revision for every admitted command that may have
+//! changed state, whatever its outcome (a batch that fails part-way keeps its
+//! earlier writes). A command recorded without advancing the revision is taken
+//! to have changed nothing.
+//!
+//! Evicting the outcome of a command that advanced the revision moves the
+//! ledger's horizon to the revision at which that command ran. A ticket issued
+//! after the horizon cannot belong to a forgotten command that changed state,
+//! so its absence from the ledger proves that running it now is its only
+//! effect. A ticket issued at or before the horizon might belong to such a
+//! command, so it is refused with [`RpcErrorCode::MutationExpired`] rather than
+//! risk running twice. Evicting a command that changed nothing leaves the
+//! horizon alone, so a run of refusals at one revision cannot expire the
+//! tickets minted there.
 //!
 //! In practice a retry expires only when more than
-//! [`MUTATION_LEDGER_CAPACITY`] ticketed edits ran between the original and
-//! its retry. Commands refused before they ran (a stale precondition, a
-//! replaced session, an expired ticket) are not recorded: resending them is
-//! refused the same way again.
+//! [`MUTATION_LEDGER_CAPACITY`] ticketed edits ran between the ticket's
+//! `issued_at` and its retry. Commands refused before they ran (a stale
+//! precondition, a replaced session, an expired ticket) are not recorded:
+//! resending them is refused the same way again.
+//!
+//! A ticket expires by its `issued_at`, not by when it was sent. A client that
+//! mints from a revision it saw long ago, while peers ran more than a ledger's
+//! worth of edits, can have a ticket refused as expired on its **first**
+//! send. Only the client knows that send was the first. When it was, nothing
+//! with that ticket ran, so the client may mint a new ticket from the
+//! refusal's revision and send the command once more.
 //!
 //! # Re-reading after an unknown outcome
 //!
@@ -192,6 +208,9 @@ struct LedgerEntry {
     id: String,
     fingerprint: u64,
     executed_at: u64,
+    /// Whether the revision moved while the command ran. Only such commands
+    /// may have changed state, so only they move the horizon when evicted.
+    advanced: bool,
     outcome: RecordedOutcome,
 }
 
@@ -204,8 +223,8 @@ struct LedgerEntry {
 pub struct MutationLedger {
     entries: VecDeque<LedgerEntry>,
     capacity: usize,
-    /// The latest revision at which an evicted command ran. `None` until the
-    /// first eviction.
+    /// The latest revision at which an evicted command that advanced the
+    /// revision ran. `None` until the first such eviction.
     horizon: Option<u64>,
 }
 
@@ -307,12 +326,18 @@ impl MutationLedger {
 
     /// Records how an admitted command ended. `after` is the daemon's revision
     /// once the command finished.
+    ///
+    /// Advance the revision before recording for any command that may have
+    /// changed state, including one that failed part-way. A command whose
+    /// `after` equals the revision it ran at is taken to have changed nothing
+    /// (see the [module docs](self)).
     pub fn record(
         &mut self,
         pending: PendingMutation,
         response: &RpcResponsePayload,
         after: RuntimeRevision,
     ) {
+        let advanced = after.revision > pending.executed_at;
         let outcome = match response {
             RpcResponsePayload::Error(error) => {
                 RecordedOutcome::Rejected(Box::new(RpcResponsePayload::Error(bounded_error(error))))
@@ -326,16 +351,19 @@ impl MutationLedger {
         };
         if self.entries.len() == self.capacity {
             if let Some(evicted) = self.entries.pop_front() {
-                self.horizon = Some(
-                    self.horizon
-                        .map_or(evicted.executed_at, |h| h.max(evicted.executed_at)),
-                );
+                if evicted.advanced {
+                    self.horizon = Some(
+                        self.horizon
+                            .map_or(evicted.executed_at, |h| h.max(evicted.executed_at)),
+                    );
+                }
             }
         }
         self.entries.push_back(LedgerEntry {
             id: pending.id,
             fingerprint: pending.fingerprint,
             executed_at: pending.executed_at,
+            advanced,
             outcome,
         });
     }
