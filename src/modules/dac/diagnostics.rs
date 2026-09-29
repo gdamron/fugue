@@ -56,6 +56,10 @@ pub struct AudioDiagnosticsSnapshot {
     /// cause.
     #[serde(default)]
     pub last_callback_age_ms: Option<f64>,
+    /// Number of times the output stream was rebuilt after the host stopped
+    /// it, e.g. because the output device went away.
+    #[serde(default)]
+    pub stream_restart_count: u64,
 }
 
 /// Why the audio host reported a stream error other than an xrun.
@@ -63,12 +67,14 @@ pub struct AudioDiagnosticsSnapshot {
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum StreamErrorKind {
-    /// The output device went away. The stream has stopped.
+    /// The output device went away and the stream stopped. The driver
+    /// rebuilds it on the default output as soon as one is available.
     DeviceNotAvailable,
     /// The system default output moved to another device; the stream follows it.
     DeviceChanged,
     /// The stream configuration no longer matches the device, e.g. after a
-    /// device sample-rate change. The stream has stopped and must be rebuilt.
+    /// sample-rate change on some hosts. The stream stopped; the driver
+    /// rebuilds it.
     StreamInvalidated,
     /// The host refused real-time scheduling for the audio thread.
     RealtimeDenied,
@@ -77,6 +83,11 @@ pub enum StreamErrorKind {
 }
 
 impl StreamErrorKind {
+    /// Whether the host stops the stream on this error, so it must be rebuilt.
+    pub fn stops_stream(self) -> bool {
+        matches!(self, Self::DeviceNotAvailable | Self::StreamInvalidated)
+    }
+
     const ALL: [Self; 5] = [
         Self::DeviceNotAvailable,
         Self::DeviceChanged,
@@ -109,6 +120,7 @@ pub struct AudioDiagnostics {
     histogram: [AtomicU64; HISTOGRAM_BUCKET_NS.len()],
     stream_error_count: AtomicU64,
     last_stream_error: AtomicU8,
+    stream_restart_count: AtomicU64,
     /// Reference point for `last_callback_ns`.
     epoch: Instant,
     /// Nanoseconds from `epoch` to the latest callback, plus one; zero means
@@ -128,6 +140,7 @@ impl AudioDiagnostics {
             histogram: std::array::from_fn(|_| AtomicU64::new(0)),
             stream_error_count: AtomicU64::new(0),
             last_stream_error: AtomicU8::new(0),
+            stream_restart_count: AtomicU64::new(0),
             epoch: Instant::now(),
             last_callback_ns: AtomicU64::new(0),
         }
@@ -160,6 +173,11 @@ impl AudioDiagnostics {
     pub fn record_stream_error(&self, kind: StreamErrorKind) {
         self.stream_error_count.fetch_add(1, Ordering::Relaxed);
         self.last_stream_error.store(kind.code(), Ordering::Relaxed);
+    }
+
+    /// Records that the output stream was rebuilt.
+    pub fn record_stream_restart(&self) {
+        self.stream_restart_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Marks that the device asked for audio at `at`.
@@ -206,6 +224,7 @@ impl AudioDiagnostics {
             last_callback_age_ms: self
                 .last_callback_age_ns(Instant::now())
                 .map(|ns| ns_to_ms(ns as f64)),
+            stream_restart_count: self.stream_restart_count.load(Ordering::Relaxed),
         }
     }
 
@@ -342,5 +361,6 @@ mod tests {
         assert_eq!(snapshot.stream_error_count, 0);
         assert_eq!(snapshot.last_stream_error, None);
         assert_eq!(snapshot.last_callback_age_ms, None);
+        assert_eq!(snapshot.stream_restart_count, 0);
     }
 }

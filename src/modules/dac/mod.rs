@@ -17,6 +17,8 @@ mod inputs;
 mod module;
 mod null;
 mod outputs;
+#[cfg(not(target_arch = "wasm32"))]
+mod supervisor;
 
 pub use diagnostics::{AudioDiagnostics, AudioDiagnosticsSnapshot, StreamErrorKind};
 #[cfg(not(target_arch = "wasm32"))]
