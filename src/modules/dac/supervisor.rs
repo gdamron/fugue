@@ -86,7 +86,7 @@ impl Supervisor {
         let thread_shared = shared.clone();
         let handle = thread::Builder::new()
             .name("fugue-audio-output".into())
-            .spawn(move || supervise(thread_shared, ready_tx))?;
+            .spawn(move || supervise(thread_shared, ready_tx, open_stream))?;
 
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Self {
@@ -121,10 +121,21 @@ impl Drop for Supervisor {
 }
 
 /// The supervisor thread: opens the first stream, then rebuilds it whenever
-/// a callback asks, until shutdown.
-fn supervise(shared: Arc<Shared>, ready: SyncSender<Result<(), String>>) {
+/// a callback asks, until shutdown. `open` opens a stream; it is a parameter
+/// so tests can stand in for cpal.
+///
+/// Wakes are unpark tokens, and calls into cpal (opening or dropping a
+/// stream) may park this thread internally and consume one, e.g. while
+/// waiting on a channel. So after any such call the loop re-reads the
+/// shutdown and rebuild flags before it sleeps; it only parks with no cpal
+/// call between that check and the park, where a token cannot be lost.
+fn supervise<S>(
+    shared: Arc<Shared>,
+    ready: SyncSender<Result<(), String>>,
+    mut open: impl FnMut(&Arc<Shared>) -> Result<S, Box<dyn std::error::Error>>,
+) {
     let _ = shared.supervisor.set(thread::current());
-    let mut stream = match open_stream(&shared) {
+    let mut stream = match open(&shared) {
         Ok(stream) => {
             let _ = ready.send(Ok(()));
             Some(stream)
@@ -137,16 +148,21 @@ fn supervise(shared: Arc<Shared>, ready: SyncSender<Result<(), String>>) {
     drop(ready);
 
     let mut backoff = Backoff::default();
-    while !shared.shutdown.load(Ordering::Acquire) {
+    let mut retry_delay = None;
+    loop {
+        if shared.shutdown.load(Ordering::Acquire) {
+            break;
+        }
         let rebuild = shared.rebuild_requested.swap(false, Ordering::AcqRel);
         if rebuild || stream.is_none() {
             // Drop the stopped stream first, so its callbacks are gone before
             // the next stream takes over the render function.
             stream = None;
-            match open_stream(&shared) {
+            match open(&shared) {
                 Ok(next) => {
                     stream = Some(next);
                     backoff.reset();
+                    retry_delay = None;
                     shared.diagnostics.record_stream_restart();
                     eprintln!("Audio output restored");
                 }
@@ -154,13 +170,20 @@ fn supervise(shared: Arc<Shared>, ready: SyncSender<Result<(), String>>) {
                     if backoff.is_first_failure() {
                         eprintln!("Audio output unavailable, retrying: {error}");
                     }
-                    let delay = backoff.failed();
-                    thread::park_timeout(delay);
-                    continue;
+                    retry_delay = Some(backoff.failed());
                 }
             }
+            // Re-check the flags before sleeping; see above.
+            if shared.shutdown.load(Ordering::Acquire)
+                || shared.rebuild_requested.load(Ordering::Acquire)
+            {
+                continue;
+            }
         }
-        thread::park();
+        match retry_delay.take() {
+            Some(delay) => thread::park_timeout(delay),
+            None => thread::park(),
+        }
     }
     drop(stream);
 }
@@ -333,129 +356,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use cpal::SupportedBufferSize;
-    use std::sync::atomic::AtomicU64;
-
-    fn range(
-        channels: u16,
-        min: u32,
-        max: u32,
-        format: SampleFormat,
-    ) -> SupportedStreamConfigRange {
-        SupportedStreamConfigRange::new(channels, min, max, SupportedBufferSize::Unknown, format)
-    }
-
-    fn default_config() -> SupportedStreamConfig {
-        SupportedStreamConfig::new(2, 44_100, SupportedBufferSize::Unknown, SampleFormat::F32)
-    }
-
-    #[test]
-    fn backoff_doubles_up_to_the_cap_and_resets() {
-        let mut backoff = Backoff::default();
-        assert!(backoff.is_first_failure());
-        let delays: Vec<_> = (0..7).map(|_| backoff.failed()).collect();
-        assert_eq!(delays[0], Duration::from_millis(100));
-        assert_eq!(delays[1], Duration::from_millis(200));
-        assert_eq!(delays[4], Duration::from_millis(1600));
-        assert_eq!(delays[5], MAX_RETRY);
-        assert_eq!(delays[6], MAX_RETRY);
-        assert!(!backoff.is_first_failure());
-
-        backoff.reset();
-        assert_eq!(backoff.failed(), FIRST_RETRY);
-    }
-
-    #[test]
-    fn backoff_never_overflows() {
-        let mut backoff = Backoff { failures: u32::MAX };
-        assert_eq!(backoff.failed(), MAX_RETRY);
-    }
-
-    #[test]
-    fn rebuild_config_prefers_the_default_format_and_channels() {
-        let ranges = vec![
-            range(1, 8_000, 96_000, SampleFormat::F32),
-            range(2, 8_000, 96_000, SampleFormat::I16),
-            range(2, 8_000, 96_000, SampleFormat::F32),
-        ];
-        let config = config_at_rate(&default_config(), ranges, 48_000).unwrap();
-        assert_eq!(config.sample_rate(), 48_000);
-        assert_eq!(config.channels(), 2);
-        assert_eq!(config.sample_format(), SampleFormat::F32);
-    }
-
-    #[test]
-    fn rebuild_config_falls_back_to_matching_channels_then_anything() {
-        let ranges = vec![
-            range(1, 8_000, 96_000, SampleFormat::F32),
-            range(2, 8_000, 96_000, SampleFormat::I16),
-        ];
-        let config = config_at_rate(&default_config(), ranges, 48_000).unwrap();
-        assert_eq!(config.channels(), 2);
-        assert_eq!(config.sample_format(), SampleFormat::I16);
-
-        let ranges = vec![range(6, 8_000, 96_000, SampleFormat::I32)];
-        let config = config_at_rate(&default_config(), ranges, 48_000).unwrap();
-        assert_eq!(config.channels(), 6);
-    }
-
-    #[test]
-    fn rebuild_config_refuses_a_rate_no_range_supports() {
-        let ranges = vec![range(2, 44_100, 44_100, SampleFormat::F32)];
-        assert!(config_at_rate(&default_config(), ranges, 48_000).is_none());
-    }
-
-    #[test]
-    fn only_stopping_errors_request_a_rebuild() {
-        use super::super::StreamErrorKind;
-        assert!(StreamErrorKind::DeviceNotAvailable.stops_stream());
-        assert!(StreamErrorKind::StreamInvalidated.stops_stream());
-        assert!(!StreamErrorKind::DeviceChanged.stops_stream());
-        assert!(!StreamErrorKind::RealtimeDenied.stops_stream());
-        assert!(!StreamErrorKind::Other.stops_stream());
-    }
-
-    /// Exercises a real rebuild on the machine's default output. Plays
-    /// silence. Run with `cargo test -- --ignored` on a machine with audio.
-    #[test]
-    #[ignore = "needs an audio output device"]
-    fn a_requested_rebuild_keeps_the_same_render_function_playing() {
-        let sample_rate = super::super::default_sample_rate().expect("an output device");
-        let diagnostics = Arc::new(AudioDiagnostics::new());
-        let rendered = Arc::new(AtomicU64::new(0));
-        let counter = rendered.clone();
-        let render: BlockRenderFn = Box::new(move |left, right| {
-            counter.fetch_add(left.len() as u64, Ordering::Relaxed);
-            left.fill(0.0);
-            right.fill(0.0);
-        });
-        let mut supervisor =
-            Supervisor::start(render, diagnostics.clone(), sample_rate, false).unwrap();
-
-        thread::sleep(Duration::from_millis(300));
-        let before = rendered.load(Ordering::Relaxed);
-        assert!(before > 0, "the first stream rendered nothing");
-
-        supervisor.shared.request_rebuild();
-        thread::sleep(Duration::from_millis(500));
-
-        let snapshot = diagnostics.snapshot();
-        assert_eq!(snapshot.stream_restart_count, 1);
-        assert!(
-            rendered.load(Ordering::Relaxed) > before,
-            "no audio after the rebuild"
-        );
-        assert!(snapshot.last_callback_age_ms.unwrap() < 100.0);
-
-        supervisor.stop();
-        let stopped_at = rendered.load(Ordering::Relaxed);
-        thread::sleep(Duration::from_millis(100));
-        assert_eq!(
-            rendered.load(Ordering::Relaxed),
-            stopped_at,
-            "audio after stop"
-        );
-    }
-}
+mod tests;
