@@ -94,7 +94,7 @@ pub(super) fn workspace_refs(
     Ok(())
 }
 pub(super) fn hash(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format!("sha256:{}", crate::hex::lower_hex(&Sha256::digest(bytes)))
 }
 pub(super) fn revision_of(pairs: &BTreeMap<String, String>) -> Result<String> {
     Ok(hash(
