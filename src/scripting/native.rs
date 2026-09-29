@@ -311,13 +311,9 @@ fn install_graph_api(
     let fetch_fn = unsafe {
         NativeFunction::from_closure(move |_this, args, context| {
             let url = string_arg(args.first(), context, "url")?;
-            let response = ureq::get(&url)
-                .call()
-                .map_err(|err| js_err(err.to_string()))?;
-            let status = response.status();
-            let text = response
-                .into_string()
-                .map_err(|err| js_err(err.to_string()))?;
+            let mut response = crate::http::get(&url).map_err(js_err)?;
+            let status = response.status().as_u16();
+            let text = crate::http::read_text(response.body_mut()).map_err(js_err)?;
             json_to_js(
                 &json!({ "ok": status < 400, "status": status, "text": text }),
                 context,

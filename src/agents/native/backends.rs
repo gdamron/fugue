@@ -195,17 +195,22 @@ pub(super) fn call_openai(config: &Value, packet: &Value) -> Result<BackendResul
         "model": model,
         "input": input,
     });
-    let response: Value = ureq::post("https://api.openai.com/v1/responses")
-        .set("authorization", &format!("Bearer {}", key))
-        .set("content-type", "application/json")
-        .send_string(&body.to_string())
-        .map_err(|err| format!("OpenAI request failed: {}", err))?
-        .into_string()
-        .map_err(|err| format!("OpenAI response was not text: {}", err))
-        .and_then(|body| {
-            serde_json::from_str(&body)
-                .map_err(|err| format!("OpenAI response was not JSON: {}", err))
-        })?;
+    let response: Value = crate::http::post(
+        "https://api.openai.com/v1/responses",
+        &[
+            ("authorization", &format!("Bearer {}", key)),
+            ("content-type", "application/json"),
+        ],
+        &body.to_string(),
+    )
+    .map_err(|err| format!("OpenAI request failed: {}", err))
+    .and_then(|mut response| {
+        crate::http::read_text(response.body_mut())
+            .map_err(|err| format!("OpenAI response was not text: {}", err))
+    })
+    .and_then(|body| {
+        serde_json::from_str(&body).map_err(|err| format!("OpenAI response was not JSON: {}", err))
+    })?;
     let text = response
         .get("output_text")
         .and_then(Value::as_str)
@@ -241,18 +246,24 @@ pub(super) fn call_anthropic(config: &Value, packet: &Value) -> Result<BackendRe
             }
         ]
     });
-    let response: Value = ureq::post("https://api.anthropic.com/v1/messages")
-        .set("x-api-key", &key)
-        .set("anthropic-version", "2023-06-01")
-        .set("content-type", "application/json")
-        .send_string(&body.to_string())
-        .map_err(|err| format!("Anthropic request failed: {}", err))?
-        .into_string()
-        .map_err(|err| format!("Anthropic response was not text: {}", err))
-        .and_then(|body| {
-            serde_json::from_str(&body)
-                .map_err(|err| format!("Anthropic response was not JSON: {}", err))
-        })?;
+    let response: Value = crate::http::post(
+        "https://api.anthropic.com/v1/messages",
+        &[
+            ("x-api-key", &key),
+            ("anthropic-version", "2023-06-01"),
+            ("content-type", "application/json"),
+        ],
+        &body.to_string(),
+    )
+    .map_err(|err| format!("Anthropic request failed: {}", err))
+    .and_then(|mut response| {
+        crate::http::read_text(response.body_mut())
+            .map_err(|err| format!("Anthropic response was not text: {}", err))
+    })
+    .and_then(|body| {
+        serde_json::from_str(&body)
+            .map_err(|err| format!("Anthropic response was not JSON: {}", err))
+    })?;
     let text = response
         .get("content")
         .and_then(Value::as_array)
