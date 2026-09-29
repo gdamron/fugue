@@ -8,7 +8,7 @@ use crate::music::{Note, Scale};
 use crate::traits::ControlMeta;
 use crate::Module;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 pub use self::controls::MelodyControls;
 
@@ -112,7 +112,7 @@ impl MelodyGenerator {
         // one the historical entropy-seeded behavior is preserved.
         let rng = match controls.seed() {
             Some(seed) => StdRng::seed_from_u64(seed),
-            None => StdRng::from_entropy(),
+            None => rand::make_rng(),
         };
         let last_seed_version = controls.seed_version();
         Self {
@@ -139,7 +139,7 @@ impl MelodyGenerator {
         }
 
         let total_weight: f32 = weights.iter().sum();
-        let mut random_value = self.rng.gen::<f32>() * total_weight;
+        let mut random_value = self.rng.random::<f32>() * total_weight;
 
         for (i, &degree) in allowed.iter().enumerate() {
             let weight = weights.get(i).unwrap_or(&1.0);

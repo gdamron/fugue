@@ -359,7 +359,7 @@ fn cache_path_for(
     hasher.update(wasm_path.to_string_lossy().as_bytes());
     hasher.update(wasm);
     let digest = hasher.finalize();
-    let file = format!("{digest:x}.cwasm");
+    let file = format!("{}.cwasm", crate::hex::lower_hex(&digest));
     Ok(fugue_cache_dir()?.join(file))
 }
 

@@ -359,7 +359,10 @@ mod fs_ops {
             hasher.update((bytes.len() as u64).to_le_bytes());
             hasher.update(&bytes);
         }
-        Ok(format!("sha256:{:x}", hasher.finalize()))
+        Ok(format!(
+            "sha256:{}",
+            crate::hex::lower_hex(&hasher.finalize())
+        ))
     }
 
     /// Collect normalized (`/`-separated) relative file paths under `root`.
