@@ -6,6 +6,7 @@ use cpal::Stream;
 use std::sync::Arc;
 use std::time::Instant;
 
+use super::diagnostics::StreamErrorKind;
 use super::AudioDiagnostics;
 
 /// Renders a block of `frames` planar stereo samples, where
@@ -210,14 +211,22 @@ impl AudioBackend for AudioDriver {
     }
 }
 
+/// Largest `f32` below 1.0. cpal's f32 → I24/U24 conversions assume samples in
+/// `-1.0..1.0` and wrap +1.0 around to negative full scale, so the positive
+/// clamp stops just short of it. Other formats saturate either way.
+const MAX_BELOW_ONE: f32 = 1.0 - f32::EPSILON / 2.0;
+
 /// Writes one stereo frame in the device's sample format and channel layout.
 ///
-/// Output is clamped to ±1 first. A mono device gets the average of both
+/// Output is clamped to `-1.0..1.0` first. A mono device gets the average of both
 /// channels; devices with more than two channels get left on even and right
 /// on odd channels.
 #[inline]
 fn write_frame<T: cpal::Sample + cpal::FromSample<f32>>(frame: &mut [T], left: f32, right: f32) {
-    let (left, right) = (left.clamp(-1.0, 1.0), right.clamp(-1.0, 1.0));
+    let (left, right) = (
+        left.clamp(-1.0, MAX_BELOW_ONE),
+        right.clamp(-1.0, MAX_BELOW_ONE),
+    );
     match frame.len() {
         0 => {}
         1 => frame[0] = T::from_sample((left + right) * 0.5),
@@ -251,6 +260,7 @@ impl AudioDriver {
             config,
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
                 let started = Instant::now();
+                diagnostics.record_callback_at(started);
                 render_block(
                     data,
                     channels,
@@ -272,8 +282,9 @@ impl AudioDriver {
                 }
             },
             move |err: cpal::Error| {
-                if err.kind() == cpal::ErrorKind::Xrun {
-                    error_diagnostics.record_xrun();
+                match stream_error_kind(err.kind()) {
+                    None => error_diagnostics.record_xrun(),
+                    Some(kind) => error_diagnostics.record_stream_error(kind),
                 }
                 eprintln!("Stream error: {}", err);
             },
@@ -282,6 +293,18 @@ impl AudioDriver {
 
         Ok(stream)
     }
+}
+
+/// Maps a cpal error to a diagnostics kind, or `None` for an xrun.
+fn stream_error_kind(kind: cpal::ErrorKind) -> Option<StreamErrorKind> {
+    Some(match kind {
+        cpal::ErrorKind::Xrun => return None,
+        cpal::ErrorKind::DeviceNotAvailable => StreamErrorKind::DeviceNotAvailable,
+        cpal::ErrorKind::DeviceChanged => StreamErrorKind::DeviceChanged,
+        cpal::ErrorKind::StreamInvalidated => StreamErrorKind::StreamInvalidated,
+        cpal::ErrorKind::RealtimeDenied => StreamErrorKind::RealtimeDenied,
+        _ => StreamErrorKind::Other,
+    })
 }
 
 #[inline]
@@ -301,7 +324,7 @@ mod tests {
     fn write_frame_folds_mono_after_clamping() {
         let mut frame = [0.0f32; 1];
         write_frame(&mut frame, 2.0, 0.0);
-        assert_eq!(frame, [0.5]);
+        assert!((frame[0] - 0.5).abs() < 1e-6);
     }
 
     #[test]
@@ -312,19 +335,65 @@ mod tests {
     }
 
     #[test]
-    fn write_frame_converts_to_integer_formats() {
+    fn write_frame_saturates_integer_formats_at_full_scale() {
         let mut signed = [0i16; 2];
         write_frame(&mut signed, 1.5, -1.5);
-        assert!(signed[0] > 32_000 && signed[1] < -32_000);
+        assert_eq!(signed, [i16::MAX, i16::MIN]);
 
         let mut unsigned = [0u16; 2];
         write_frame(&mut unsigned, 0.0, -1.0);
         assert!(unsigned[0].abs_diff(32_768) <= 1);
         assert_eq!(unsigned[1], 0);
+    }
 
-        let mut wide = [<cpal::I24 as cpal::Sample>::EQUILIBRIUM; 1];
-        write_frame(&mut wide, 1.0, 1.0);
-        assert!(wide[0].inner() > 8_000_000);
+    #[test]
+    fn write_frame_keeps_24_bit_full_scale_in_range() {
+        const I24_MAX: i32 = (1 << 23) - 1;
+        const I24_MIN: i32 = -(1 << 23);
+        const U24_MAX: i32 = (1 << 24) - 1;
+
+        let mut signed = [<cpal::I24 as cpal::Sample>::EQUILIBRIUM; 2];
+        write_frame(&mut signed, 1.0, -1.0);
+        assert_eq!(signed[0].inner(), I24_MAX);
+        assert_eq!(signed[1].inner(), I24_MIN);
+
+        let mut unsigned = [<cpal::U24 as cpal::Sample>::EQUILIBRIUM; 2];
+        write_frame(&mut unsigned, 4.0, -4.0);
+        assert_eq!(unsigned[0].inner(), U24_MAX);
+        assert_eq!(unsigned[1].inner(), 0);
+    }
+
+    #[test]
+    fn render_block_ignores_a_trailing_partial_frame() {
+        let mut data = [9.0f32; 5];
+        let mut left = [0.0f32; MAX_BLOCK];
+        let mut right = [0.0f32; MAX_BLOCK];
+        let mut render = |l: &mut [f32], r: &mut [f32]| {
+            l.fill(0.25);
+            r.fill(-0.25);
+        };
+        render_block(
+            &mut data,
+            2,
+            &mut left,
+            &mut right,
+            &mut render,
+            write_frame::<f32>,
+        );
+        assert_eq!(data, [0.25, -0.25, 0.25, -0.25, 9.0]);
+    }
+
+    #[test]
+    fn only_xruns_skip_the_stream_error_count() {
+        assert_eq!(stream_error_kind(cpal::ErrorKind::Xrun), None);
+        assert_eq!(
+            stream_error_kind(cpal::ErrorKind::StreamInvalidated),
+            Some(StreamErrorKind::StreamInvalidated)
+        );
+        assert_eq!(
+            stream_error_kind(cpal::ErrorKind::BackendError),
+            Some(StreamErrorKind::Other)
+        );
     }
 
     #[test]

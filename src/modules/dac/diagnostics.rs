@@ -1,6 +1,7 @@
 //! Lock-free audio callback diagnostics shared by native audio backends.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +43,56 @@ pub struct AudioDiagnosticsSnapshot {
     pub p99_callback_ms: f64,
     /// Current device buffer period derived from callback frames and sample rate.
     pub buffer_period_ms: f64,
+    /// Number of stream errors other than xruns, such as device loss or an
+    /// invalidated stream.
+    #[serde(default)]
+    pub stream_error_count: u64,
+    /// Kind of the most recent non-xrun stream error, if any.
+    #[serde(default)]
+    pub last_stream_error: Option<StreamErrorKind>,
+    /// Time since the device last asked for audio, or `None` before the first
+    /// callback. While a stream plays this stays near `buffer_period_ms`; a
+    /// value growing well past it means the stream has stopped, whatever the
+    /// cause.
+    #[serde(default)]
+    pub last_callback_age_ms: Option<f64>,
+}
+
+/// Why the audio host reported a stream error other than an xrun.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum StreamErrorKind {
+    /// The output device went away. The stream has stopped.
+    DeviceNotAvailable,
+    /// The system default output moved to another device; the stream follows it.
+    DeviceChanged,
+    /// The stream configuration no longer matches the device, e.g. after a
+    /// device sample-rate change. The stream has stopped and must be rebuilt.
+    StreamInvalidated,
+    /// The host refused real-time scheduling for the audio thread.
+    RealtimeDenied,
+    /// Any other host error.
+    Other,
+}
+
+impl StreamErrorKind {
+    const ALL: [Self; 5] = [
+        Self::DeviceNotAvailable,
+        Self::DeviceChanged,
+        Self::StreamInvalidated,
+        Self::RealtimeDenied,
+        Self::Other,
+    ];
+
+    /// Nonzero code for atomic storage; zero means no error.
+    fn code(self) -> u8 {
+        Self::ALL.iter().position(|kind| *kind == self).unwrap_or(0) as u8 + 1
+    }
+
+    fn from_code(code: u8) -> Option<Self> {
+        Self::ALL.get(usize::from(code).checked_sub(1)?).copied()
+    }
 }
 
 /// Lock-free accumulator for native audio callback diagnostics.
@@ -56,6 +107,13 @@ pub struct AudioDiagnostics {
     max_callback_ns: AtomicU64,
     buffer_period_ns: AtomicU64,
     histogram: [AtomicU64; HISTOGRAM_BUCKET_NS.len()],
+    stream_error_count: AtomicU64,
+    last_stream_error: AtomicU8,
+    /// Reference point for `last_callback_ns`.
+    epoch: Instant,
+    /// Nanoseconds from `epoch` to the latest callback, plus one; zero means
+    /// no callback yet.
+    last_callback_ns: AtomicU64,
 }
 
 impl AudioDiagnostics {
@@ -68,6 +126,10 @@ impl AudioDiagnostics {
             max_callback_ns: AtomicU64::new(0),
             buffer_period_ns: AtomicU64::new(0),
             histogram: std::array::from_fn(|_| AtomicU64::new(0)),
+            stream_error_count: AtomicU64::new(0),
+            last_stream_error: AtomicU8::new(0),
+            epoch: Instant::now(),
+            last_callback_ns: AtomicU64::new(0),
         }
     }
 
@@ -93,6 +155,31 @@ impl AudioDiagnostics {
         self.xrun_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Records a stream error other than an xrun.
+    #[inline]
+    pub fn record_stream_error(&self, kind: StreamErrorKind) {
+        self.stream_error_count.fetch_add(1, Ordering::Relaxed);
+        self.last_stream_error.store(kind.code(), Ordering::Relaxed);
+    }
+
+    /// Marks that the device asked for audio at `at`.
+    #[inline]
+    pub fn record_callback_at(&self, at: Instant) {
+        let ns = at.saturating_duration_since(self.epoch).as_nanos();
+        let ns = ns.min(u128::from(u64::MAX - 1)) as u64;
+        self.last_callback_ns.store(ns + 1, Ordering::Relaxed);
+    }
+
+    fn last_callback_age_ns(&self, now: Instant) -> Option<u64> {
+        let stored = self
+            .last_callback_ns
+            .load(Ordering::Relaxed)
+            .checked_sub(1)?;
+        let now_ns = now.saturating_duration_since(self.epoch).as_nanos();
+        let now_ns = now_ns.min(u128::from(u64::MAX)) as u64;
+        Some(now_ns.saturating_sub(stored))
+    }
+
     pub fn snapshot(&self) -> AudioDiagnosticsSnapshot {
         let callback_count = self.callback_count.load(Ordering::Relaxed);
         let total_callback_ns = self.total_callback_ns.load(Ordering::Relaxed);
@@ -112,6 +199,13 @@ impl AudioDiagnostics {
             max_callback_ms: ns_to_ms(max_callback_ns as f64),
             p99_callback_ms: ns_to_ms(self.p99_callback_ns(callback_count, max_callback_ns) as f64),
             buffer_period_ms: ns_to_ms(self.buffer_period_ns.load(Ordering::Relaxed) as f64),
+            stream_error_count: self.stream_error_count.load(Ordering::Relaxed),
+            last_stream_error: StreamErrorKind::from_code(
+                self.last_stream_error.load(Ordering::Relaxed),
+            ),
+            last_callback_age_ms: self
+                .last_callback_age_ns(Instant::now())
+                .map(|ns| ns_to_ms(ns as f64)),
         }
     }
 
@@ -201,5 +295,52 @@ mod tests {
 
         assert_eq!(snapshot.callback_count, 0);
         assert_eq!(snapshot.p99_callback_ms, 0.0);
+        assert_eq!(snapshot.last_callback_age_ms, None);
+    }
+
+    #[test]
+    fn stream_errors_are_counted_apart_from_xruns() {
+        let diagnostics = AudioDiagnostics::new();
+        diagnostics.record_xrun();
+        diagnostics.record_stream_error(StreamErrorKind::DeviceChanged);
+        diagnostics.record_stream_error(StreamErrorKind::StreamInvalidated);
+
+        let snapshot = diagnostics.snapshot();
+        assert_eq!(snapshot.xrun_count, 1);
+        assert_eq!(snapshot.stream_error_count, 2);
+        assert_eq!(
+            snapshot.last_stream_error,
+            Some(StreamErrorKind::StreamInvalidated)
+        );
+    }
+
+    #[test]
+    fn stream_error_kinds_round_trip_through_codes() {
+        assert_eq!(StreamErrorKind::from_code(0), None);
+        for kind in StreamErrorKind::ALL {
+            assert_eq!(StreamErrorKind::from_code(kind.code()), Some(kind));
+        }
+    }
+
+    #[test]
+    fn callback_age_grows_after_the_last_callback() {
+        let diagnostics = AudioDiagnostics::new();
+        let at = diagnostics.epoch + std::time::Duration::from_millis(5);
+        diagnostics.record_callback_at(at);
+
+        let later = at + std::time::Duration::from_millis(250);
+        assert_eq!(diagnostics.last_callback_age_ns(at), Some(0));
+        assert_eq!(diagnostics.last_callback_age_ns(later), Some(250_000_000));
+    }
+
+    #[test]
+    fn snapshots_without_new_fields_still_deserialize() {
+        let json = r#"{"callback_count":1,"xrun_count":0,"missed_deadline_count":0,
+            "total_callback_ms":1.0,"average_callback_ms":1.0,"max_callback_ms":1.0,
+            "p99_callback_ms":1.0,"buffer_period_ms":10.0}"#;
+        let snapshot: AudioDiagnosticsSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snapshot.stream_error_count, 0);
+        assert_eq!(snapshot.last_stream_error, None);
+        assert_eq!(snapshot.last_callback_age_ms, None);
     }
 }

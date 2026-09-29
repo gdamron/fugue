@@ -64,7 +64,7 @@ pub use control_scheduler::{
 #[allow(deprecated)]
 pub use dac::{
     default_sample_rate, AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver,
-    DacModule, NullBackend,
+    DacModule, NullBackend, StreamErrorKind,
 };
 pub use filter::{Filter, FilterControls, FilterType};
 pub use lfo::{Lfo, LfoControls};
