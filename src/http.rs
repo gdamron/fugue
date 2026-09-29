@@ -70,7 +70,8 @@ pub(crate) fn get(url: &str) -> Result<Response<Body>, String> {
         let Some(location) = response
             .headers()
             .get(LOCATION)
-            .and_then(|value| value.to_str().ok())
+            // `to_str` rejects non-ASCII; ureq 2 accepted UTF-8 locations.
+            .and_then(|value| std::str::from_utf8(value.as_bytes()).ok())
         else {
             return check_status(url, response);
         };
@@ -255,6 +256,13 @@ mod tests {
         let mut response = get(&url).unwrap();
         assert_eq!(read_text(response.body_mut()).unwrap(), "ok");
         assert_eq!(paths.recv().unwrap(), "/samples/kick.wav?download=1");
+    }
+
+    #[test]
+    fn get_follows_utf8_redirects() {
+        let (url, paths) = serve_redirect("/samples/café.wav");
+        get(&url).unwrap();
+        assert_eq!(paths.recv().unwrap(), "/samples/caf%C3%A9.wav");
     }
 
     #[test]
