@@ -1,12 +1,11 @@
 //! Audio output backend abstraction and default cpal-based implementation.
 
 use crate::MAX_BLOCK;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::Stream;
+use cpal::traits::{DeviceTrait, HostTrait};
 use std::sync::Arc;
-use std::time::Instant;
 
 use super::diagnostics::StreamErrorKind;
+use super::supervisor::Supervisor;
 use super::AudioDiagnostics;
 
 /// Renders a block of `frames` planar stereo samples, where
@@ -15,7 +14,7 @@ pub type BlockRenderFn = Box<dyn FnMut(&mut [f32], &mut [f32]) + Send>;
 
 /// Renders a device buffer in `MAX_BLOCK`-frame chunks, converting each frame
 /// to the device sample format and channel layout via `write`.
-fn render_block<T>(
+pub(super) fn render_block<T>(
     data: &mut [T],
     channels: usize,
     left: &mut [f32; MAX_BLOCK],
@@ -109,8 +108,12 @@ pub trait AudioBackend: Send {
 ///
 /// Sends audio to the system's default output device.
 /// Supports every integer and float sample format cpal exposes.
+///
+/// If the host stops the stream, e.g. because the output device went away,
+/// the driver rebuilds it on the current default output at the same sample
+/// rate, retrying until a device is available.
 pub struct AudioDriver {
-    stream: Option<Stream>,
+    output: Option<Supervisor>,
     sample_rate: u32,
     diagnostics: Arc<AudioDiagnostics>,
 }
@@ -129,7 +132,7 @@ impl AudioDriver {
         let sample_rate = config.sample_rate();
 
         Ok(Self {
-            stream: None,
+            output: None,
             sample_rate,
             diagnostics: Arc::new(AudioDiagnostics::new()),
         })
@@ -142,68 +145,19 @@ impl AudioBackend for AudioDriver {
     }
 
     fn start(&mut self, render: BlockRenderFn) -> Result<(), Box<dyn std::error::Error>> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or("No output device available")?;
-
-        let config = device.default_output_config()?;
+        self.stop();
         let log_missed_deadlines = std::env::var_os("FUGUE_AUDIO_DIAGNOSTICS_LOG").is_some();
-
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                self.build_stream::<f32>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            cpal::SampleFormat::F64 => {
-                self.build_stream::<f64>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            cpal::SampleFormat::I8 => {
-                self.build_stream::<i8>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            cpal::SampleFormat::I16 => {
-                self.build_stream::<i16>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            cpal::SampleFormat::I24 => self.build_stream::<cpal::I24>(
-                &device,
-                config.into(),
-                render,
-                log_missed_deadlines,
-            )?,
-            cpal::SampleFormat::I32 => {
-                self.build_stream::<i32>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            cpal::SampleFormat::I64 => {
-                self.build_stream::<i64>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            cpal::SampleFormat::U8 => {
-                self.build_stream::<u8>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            cpal::SampleFormat::U16 => {
-                self.build_stream::<u16>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            cpal::SampleFormat::U24 => self.build_stream::<cpal::U24>(
-                &device,
-                config.into(),
-                render,
-                log_missed_deadlines,
-            )?,
-            cpal::SampleFormat::U32 => {
-                self.build_stream::<u32>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            cpal::SampleFormat::U64 => {
-                self.build_stream::<u64>(&device, config.into(), render, log_missed_deadlines)?
-            }
-            format => return Err(format!("Unsupported sample format: {format}").into()),
-        };
-
-        stream.play()?;
-        self.stream = Some(stream);
-
+        self.output = Some(Supervisor::start(
+            render,
+            self.diagnostics.clone(),
+            self.sample_rate,
+            log_missed_deadlines,
+        )?);
         Ok(())
     }
 
     fn stop(&mut self) {
-        self.stream = None;
+        self.output = None;
     }
 
     fn diagnostics(&self) -> Option<Arc<AudioDiagnostics>> {
@@ -222,7 +176,11 @@ const MAX_BELOW_ONE: f32 = 1.0 - f32::EPSILON / 2.0;
 /// channels; devices with more than two channels get left on even and right
 /// on odd channels.
 #[inline]
-fn write_frame<T: cpal::Sample + cpal::FromSample<f32>>(frame: &mut [T], left: f32, right: f32) {
+pub(super) fn write_frame<T: cpal::Sample + cpal::FromSample<f32>>(
+    frame: &mut [T],
+    left: f32,
+    right: f32,
+) {
     let (left, right) = (
         left.clamp(-1.0, MAX_BELOW_ONE),
         right.clamp(-1.0, MAX_BELOW_ONE),
@@ -239,64 +197,8 @@ fn write_frame<T: cpal::Sample + cpal::FromSample<f32>>(frame: &mut [T], left: f
     }
 }
 
-impl AudioDriver {
-    fn build_stream<T>(
-        &self,
-        device: &cpal::Device,
-        config: cpal::StreamConfig,
-        mut render: BlockRenderFn,
-        log_missed_deadlines: bool,
-    ) -> Result<Stream, Box<dyn std::error::Error>>
-    where
-        T: cpal::SizedSample + cpal::FromSample<f32>,
-    {
-        let channels = config.channels as usize;
-        let sample_rate = config.sample_rate;
-        let diagnostics = self.diagnostics.clone();
-        let error_diagnostics = self.diagnostics.clone();
-        let mut left = [0.0f32; MAX_BLOCK];
-        let mut right = [0.0f32; MAX_BLOCK];
-        let stream = device.build_output_stream(
-            config,
-            move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-                let started = Instant::now();
-                diagnostics.record_callback_at(started);
-                render_block(
-                    data,
-                    channels,
-                    &mut left,
-                    &mut right,
-                    &mut *render,
-                    write_frame::<T>,
-                );
-                let callback_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
-                let buffer_period_ns = buffer_period_ns(data.len(), channels, sample_rate);
-                if diagnostics.record_callback(callback_ns, buffer_period_ns)
-                    && log_missed_deadlines
-                {
-                    eprintln!(
-                        "Audio callback missed deadline: {:.3} ms > {:.3} ms",
-                        callback_ns as f64 / 1_000_000.0,
-                        buffer_period_ns as f64 / 1_000_000.0
-                    );
-                }
-            },
-            move |err: cpal::Error| {
-                match stream_error_kind(err.kind()) {
-                    None => error_diagnostics.record_xrun(),
-                    Some(kind) => error_diagnostics.record_stream_error(kind),
-                }
-                eprintln!("Stream error: {}", err);
-            },
-            None,
-        )?;
-
-        Ok(stream)
-    }
-}
-
 /// Maps a cpal error to a diagnostics kind, or `None` for an xrun.
-fn stream_error_kind(kind: cpal::ErrorKind) -> Option<StreamErrorKind> {
+pub(super) fn stream_error_kind(kind: cpal::ErrorKind) -> Option<StreamErrorKind> {
     Some(match kind {
         cpal::ErrorKind::Xrun => return None,
         cpal::ErrorKind::DeviceNotAvailable => StreamErrorKind::DeviceNotAvailable,
@@ -308,7 +210,7 @@ fn stream_error_kind(kind: cpal::ErrorKind) -> Option<StreamErrorKind> {
 }
 
 #[inline]
-fn buffer_period_ns(sample_count: usize, channels: usize, sample_rate: u32) -> u64 {
+pub(super) fn buffer_period_ns(sample_count: usize, channels: usize, sample_rate: u32) -> u64 {
     if channels == 0 || sample_rate == 0 {
         return 0;
     }
