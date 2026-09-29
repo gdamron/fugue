@@ -28,7 +28,7 @@ const HISTOGRAM_BUCKET_NS: [u64; 12] = [
 pub struct AudioDiagnosticsSnapshot {
     /// Number of device callbacks observed by the backend.
     pub callback_count: u64,
-    /// Number of cpal stream errors reported through the error callback.
+    /// Number of buffer underruns/overruns the audio host reported.
     pub xrun_count: u64,
     /// Number of callbacks whose measured render time exceeded the buffer period.
     pub missed_deadline_count: u64,
