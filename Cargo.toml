@@ -27,7 +27,12 @@ fs2 = "0.4"
 cpal = "0.18"
 ureq = "3.4"
 url = "2.5"
-boa_engine = "0.21.1"
+# 0.21's default features. 0.22 adds Temporal to the defaults, which no code
+# module can rely on yet and which adds the ICU calendar/timezone data.
+boa_engine = { version = "0.22.0", default-features = false, features = [
+  "float16",
+  "xsum",
+] }
 claxon = "0.4.3"
 flacenc = "0.5.1"
 wasmtime = { version = "49.0.1", optional = true, features = [
