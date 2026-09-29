@@ -6,6 +6,7 @@ use cpal::Stream;
 use std::sync::Arc;
 use std::time::Instant;
 
+use super::diagnostics::StreamErrorKind;
 use super::AudioDiagnostics;
 
 /// Renders a block of `frames` planar stereo samples, where
@@ -64,7 +65,7 @@ pub fn default_sample_rate() -> Result<u32, Box<dyn std::error::Error>> {
         .default_output_device()
         .ok_or("No output device available")?;
     let config = device.default_output_config()?;
-    Ok(config.sample_rate().0)
+    Ok(config.sample_rate())
 }
 
 /// Trait for audio output backends.
@@ -107,18 +108,12 @@ pub trait AudioBackend: Send {
 /// Default audio backend using the cpal library.
 ///
 /// Sends audio to the system's default output device.
-/// Supports F32, I16, and U16 sample formats.
+/// Supports every integer and float sample format cpal exposes.
 pub struct AudioDriver {
     stream: Option<Stream>,
     sample_rate: u32,
     diagnostics: Arc<AudioDiagnostics>,
 }
-
-/// Safety: AudioDriver is safe to send between threads. The contained cpal::Stream
-/// uses `PhantomData<*mut ()>` which prevents auto-impl of Send, but the stream's
-/// audio callback runs on its own dedicated thread regardless of which thread
-/// owns the Stream handle. We only call play() and drop() on it.
-unsafe impl Send for AudioDriver {}
 
 impl AudioDriver {
     /// Creates a new AudioDriver using the system's default output device.
@@ -131,7 +126,7 @@ impl AudioDriver {
             .ok_or("No output device available")?;
 
         let config = device.default_output_config()?;
-        let sample_rate = config.sample_rate().0;
+        let sample_rate = config.sample_rate();
 
         Ok(Self {
             stream: None,
@@ -153,82 +148,52 @@ impl AudioBackend for AudioDriver {
             .ok_or("No output device available")?;
 
         let config = device.default_output_config()?;
-        let channels = config.channels() as usize;
-        let sample_rate = config.sample_rate().0;
-        let diagnostics = self.diagnostics.clone();
         let log_missed_deadlines = std::env::var_os("FUGUE_AUDIO_DIAGNOSTICS_LOG").is_some();
 
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
-                let mut render = render;
-                let mut left = [0.0f32; MAX_BLOCK];
-                let mut right = [0.0f32; MAX_BLOCK];
-                Self::build_stream::<f32>(
-                    &device,
-                    &config.into(),
-                    channels,
-                    sample_rate,
-                    diagnostics.clone(),
-                    log_missed_deadlines,
-                    move |data: &mut [f32]| {
-                        render_block(
-                            data,
-                            channels,
-                            &mut left,
-                            &mut right,
-                            &mut *render,
-                            write_frame_f32,
-                        );
-                    },
-                )?
+                self.build_stream::<f32>(&device, config.into(), render, log_missed_deadlines)?
+            }
+            cpal::SampleFormat::F64 => {
+                self.build_stream::<f64>(&device, config.into(), render, log_missed_deadlines)?
+            }
+            cpal::SampleFormat::I8 => {
+                self.build_stream::<i8>(&device, config.into(), render, log_missed_deadlines)?
             }
             cpal::SampleFormat::I16 => {
-                let mut render = render;
-                let mut left = [0.0f32; MAX_BLOCK];
-                let mut right = [0.0f32; MAX_BLOCK];
-                Self::build_stream::<i16>(
-                    &device,
-                    &config.into(),
-                    channels,
-                    sample_rate,
-                    diagnostics.clone(),
-                    log_missed_deadlines,
-                    move |data: &mut [i16]| {
-                        render_block(
-                            data,
-                            channels,
-                            &mut left,
-                            &mut right,
-                            &mut *render,
-                            write_frame_i16,
-                        );
-                    },
-                )?
+                self.build_stream::<i16>(&device, config.into(), render, log_missed_deadlines)?
+            }
+            cpal::SampleFormat::I24 => self.build_stream::<cpal::I24>(
+                &device,
+                config.into(),
+                render,
+                log_missed_deadlines,
+            )?,
+            cpal::SampleFormat::I32 => {
+                self.build_stream::<i32>(&device, config.into(), render, log_missed_deadlines)?
+            }
+            cpal::SampleFormat::I64 => {
+                self.build_stream::<i64>(&device, config.into(), render, log_missed_deadlines)?
+            }
+            cpal::SampleFormat::U8 => {
+                self.build_stream::<u8>(&device, config.into(), render, log_missed_deadlines)?
             }
             cpal::SampleFormat::U16 => {
-                let mut render = render;
-                let mut left = [0.0f32; MAX_BLOCK];
-                let mut right = [0.0f32; MAX_BLOCK];
-                Self::build_stream::<u16>(
-                    &device,
-                    &config.into(),
-                    channels,
-                    sample_rate,
-                    diagnostics.clone(),
-                    log_missed_deadlines,
-                    move |data: &mut [u16]| {
-                        render_block(
-                            data,
-                            channels,
-                            &mut left,
-                            &mut right,
-                            &mut *render,
-                            write_frame_u16,
-                        );
-                    },
-                )?
+                self.build_stream::<u16>(&device, config.into(), render, log_missed_deadlines)?
             }
-            _ => return Err("Unsupported sample format".into()),
+            cpal::SampleFormat::U24 => self.build_stream::<cpal::U24>(
+                &device,
+                config.into(),
+                render,
+                log_missed_deadlines,
+            )?,
+            cpal::SampleFormat::U32 => {
+                self.build_stream::<u32>(&device, config.into(), render, log_missed_deadlines)?
+            }
+            cpal::SampleFormat::U64 => {
+                self.build_stream::<u64>(&device, config.into(), render, log_missed_deadlines)?
+            }
+            format => return Err(format!("Unsupported sample format: {format}").into()),
         };
 
         stream.play()?;
@@ -246,11 +211,27 @@ impl AudioBackend for AudioDriver {
     }
 }
 
-fn write_channels<T: Copy>(frame: &mut [T], left: T, right: T) {
+/// Largest `f32` below 1.0. cpal's f32 → I24/U24 conversions assume samples in
+/// `-1.0..1.0` and wrap +1.0 around to negative full scale, so the positive
+/// clamp stops just short of it. Other formats saturate either way.
+const MAX_BELOW_ONE: f32 = 1.0 - f32::EPSILON / 2.0;
+
+/// Writes one stereo frame in the device's sample format and channel layout.
+///
+/// Output is clamped to `-1.0..1.0` first. A mono device gets the average of both
+/// channels; devices with more than two channels get left on even and right
+/// on odd channels.
+#[inline]
+fn write_frame<T: cpal::Sample + cpal::FromSample<f32>>(frame: &mut [T], left: f32, right: f32) {
+    let (left, right) = (
+        left.clamp(-1.0, MAX_BELOW_ONE),
+        right.clamp(-1.0, MAX_BELOW_ONE),
+    );
     match frame.len() {
         0 => {}
-        1 => frame[0] = left,
+        1 => frame[0] = T::from_sample((left + right) * 0.5),
         _ => {
+            let (left, right) = (T::from_sample(left), T::from_sample(right));
             for (index, sample) in frame.iter_mut().enumerate() {
                 *sample = if index % 2 == 0 { left } else { right };
             }
@@ -258,60 +239,36 @@ fn write_channels<T: Copy>(frame: &mut [T], left: T, right: T) {
     }
 }
 
-fn write_frame_f32(frame: &mut [f32], left: f32, right: f32) {
-    let (left, right) = (left.clamp(-1.0, 1.0), right.clamp(-1.0, 1.0));
-    if frame.len() == 1 {
-        frame[0] = (left + right) * 0.5;
-        return;
-    }
-    write_channels(frame, left, right);
-}
-
-fn write_frame_i16(frame: &mut [i16], left: f32, right: f32) {
-    let (left, right) = (left.clamp(-1.0, 1.0), right.clamp(-1.0, 1.0));
-    if frame.len() == 1 {
-        frame[0] = (((left + right) * 0.5) * i16::MAX as f32) as i16;
-        return;
-    }
-    write_channels(
-        frame,
-        (left * i16::MAX as f32) as i16,
-        (right * i16::MAX as f32) as i16,
-    );
-}
-
-fn write_frame_u16(frame: &mut [u16], left: f32, right: f32) {
-    let (left, right) = (left.clamp(-1.0, 1.0), right.clamp(-1.0, 1.0));
-    if frame.len() == 1 {
-        frame[0] = ((((left + right) * 0.5) + 1.0) * 0.5 * u16::MAX as f32) as u16;
-        return;
-    }
-    write_channels(
-        frame,
-        ((left + 1.0) * 0.5 * u16::MAX as f32) as u16,
-        ((right + 1.0) * 0.5 * u16::MAX as f32) as u16,
-    );
-}
-
 impl AudioDriver {
     fn build_stream<T>(
+        &self,
         device: &cpal::Device,
-        config: &cpal::StreamConfig,
-        channels: usize,
-        sample_rate: u32,
-        diagnostics: Arc<AudioDiagnostics>,
+        config: cpal::StreamConfig,
+        mut render: BlockRenderFn,
         log_missed_deadlines: bool,
-        mut callback: impl FnMut(&mut [T]) + Send + 'static,
     ) -> Result<Stream, Box<dyn std::error::Error>>
     where
-        T: cpal::Sample + cpal::SizedSample,
+        T: cpal::SizedSample + cpal::FromSample<f32>,
     {
-        let error_diagnostics = diagnostics.clone();
+        let channels = config.channels as usize;
+        let sample_rate = config.sample_rate;
+        let diagnostics = self.diagnostics.clone();
+        let error_diagnostics = self.diagnostics.clone();
+        let mut left = [0.0f32; MAX_BLOCK];
+        let mut right = [0.0f32; MAX_BLOCK];
         let stream = device.build_output_stream(
             config,
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
                 let started = Instant::now();
-                callback(data);
+                diagnostics.record_callback_at(started);
+                render_block(
+                    data,
+                    channels,
+                    &mut left,
+                    &mut right,
+                    &mut *render,
+                    write_frame::<T>,
+                );
                 let callback_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
                 let buffer_period_ns = buffer_period_ns(data.len(), channels, sample_rate);
                 if diagnostics.record_callback(callback_ns, buffer_period_ns)
@@ -324,8 +281,11 @@ impl AudioDriver {
                     );
                 }
             },
-            move |err| {
-                error_diagnostics.record_xrun();
+            move |err: cpal::Error| {
+                match stream_error_kind(err.kind()) {
+                    None => error_diagnostics.record_xrun(),
+                    Some(kind) => error_diagnostics.record_stream_error(kind),
+                }
                 eprintln!("Stream error: {}", err);
             },
             None,
@@ -335,6 +295,18 @@ impl AudioDriver {
     }
 }
 
+/// Maps a cpal error to a diagnostics kind, or `None` for an xrun.
+fn stream_error_kind(kind: cpal::ErrorKind) -> Option<StreamErrorKind> {
+    Some(match kind {
+        cpal::ErrorKind::Xrun => return None,
+        cpal::ErrorKind::DeviceNotAvailable => StreamErrorKind::DeviceNotAvailable,
+        cpal::ErrorKind::DeviceChanged => StreamErrorKind::DeviceChanged,
+        cpal::ErrorKind::StreamInvalidated => StreamErrorKind::StreamInvalidated,
+        cpal::ErrorKind::RealtimeDenied => StreamErrorKind::RealtimeDenied,
+        _ => StreamErrorKind::Other,
+    })
+}
+
 #[inline]
 fn buffer_period_ns(sample_count: usize, channels: usize, sample_rate: u32) -> u64 {
     if channels == 0 || sample_rate == 0 {
@@ -342,4 +314,109 @@ fn buffer_period_ns(sample_count: usize, channels: usize, sample_rate: u32) -> u
     }
     let frames = sample_count / channels;
     ((frames as u128 * 1_000_000_000u128) / u128::from(sample_rate)) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_frame_folds_mono_after_clamping() {
+        let mut frame = [0.0f32; 1];
+        write_frame(&mut frame, 2.0, 0.0);
+        assert!((frame[0] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn write_frame_alternates_channels_beyond_stereo() {
+        let mut frame = [0.0f32; 4];
+        write_frame(&mut frame, 0.25, -0.5);
+        assert_eq!(frame, [0.25, -0.5, 0.25, -0.5]);
+    }
+
+    #[test]
+    fn write_frame_saturates_integer_formats_at_full_scale() {
+        let mut signed = [0i16; 2];
+        write_frame(&mut signed, 1.5, -1.5);
+        assert_eq!(signed, [i16::MAX, i16::MIN]);
+
+        let mut unsigned = [0u16; 2];
+        write_frame(&mut unsigned, 0.0, -1.0);
+        assert!(unsigned[0].abs_diff(32_768) <= 1);
+        assert_eq!(unsigned[1], 0);
+    }
+
+    #[test]
+    fn write_frame_keeps_24_bit_full_scale_in_range() {
+        const I24_MAX: i32 = (1 << 23) - 1;
+        const I24_MIN: i32 = -(1 << 23);
+        const U24_MAX: i32 = (1 << 24) - 1;
+
+        let mut signed = [<cpal::I24 as cpal::Sample>::EQUILIBRIUM; 2];
+        write_frame(&mut signed, 1.0, -1.0);
+        assert_eq!(signed[0].inner(), I24_MAX);
+        assert_eq!(signed[1].inner(), I24_MIN);
+
+        let mut unsigned = [<cpal::U24 as cpal::Sample>::EQUILIBRIUM; 2];
+        write_frame(&mut unsigned, 4.0, -4.0);
+        assert_eq!(unsigned[0].inner(), U24_MAX);
+        assert_eq!(unsigned[1].inner(), 0);
+    }
+
+    #[test]
+    fn render_block_ignores_a_trailing_partial_frame() {
+        let mut data = [9.0f32; 5];
+        let mut left = [0.0f32; MAX_BLOCK];
+        let mut right = [0.0f32; MAX_BLOCK];
+        let mut render = |l: &mut [f32], r: &mut [f32]| {
+            l.fill(0.25);
+            r.fill(-0.25);
+        };
+        render_block(
+            &mut data,
+            2,
+            &mut left,
+            &mut right,
+            &mut render,
+            write_frame::<f32>,
+        );
+        assert_eq!(data, [0.25, -0.25, 0.25, -0.25, 9.0]);
+    }
+
+    #[test]
+    fn only_xruns_skip_the_stream_error_count() {
+        assert_eq!(stream_error_kind(cpal::ErrorKind::Xrun), None);
+        assert_eq!(
+            stream_error_kind(cpal::ErrorKind::StreamInvalidated),
+            Some(StreamErrorKind::StreamInvalidated)
+        );
+        assert_eq!(
+            stream_error_kind(cpal::ErrorKind::BackendError),
+            Some(StreamErrorKind::Other)
+        );
+    }
+
+    #[test]
+    fn render_block_splits_device_buffers_into_max_block_chunks() {
+        let frames = MAX_BLOCK + 3;
+        let mut data = vec![0.0f32; frames * 2];
+        let mut left = [0.0f32; MAX_BLOCK];
+        let mut right = [0.0f32; MAX_BLOCK];
+        let mut calls = Vec::new();
+        let mut render = |l: &mut [f32], r: &mut [f32]| {
+            calls.push(l.len());
+            l.fill(0.5);
+            r.fill(-0.5);
+        };
+        render_block(
+            &mut data,
+            2,
+            &mut left,
+            &mut right,
+            &mut render,
+            write_frame::<f32>,
+        );
+        assert_eq!(calls, vec![MAX_BLOCK, 3]);
+        assert!(data.chunks(2).all(|frame| frame == [0.5, -0.5]));
+    }
 }

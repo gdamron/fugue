@@ -18,7 +18,7 @@ mod module;
 mod null;
 mod outputs;
 
-pub use diagnostics::{AudioDiagnostics, AudioDiagnosticsSnapshot};
+pub use diagnostics::{AudioDiagnostics, AudioDiagnosticsSnapshot, StreamErrorKind};
 #[cfg(not(target_arch = "wasm32"))]
 pub use driver::{default_sample_rate, AudioBackend, AudioDriver, BlockRenderFn};
 #[cfg(target_arch = "wasm32")]
