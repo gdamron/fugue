@@ -1,14 +1,30 @@
 //! Thread-safe controls for the MelodyGenerator module.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
+/// Maximum number of scale degrees a melody can choose between.
+///
+/// Bounds the audio thread's pre-allocated copy of the degree table.
+pub(crate) const MAX_DEGREES: usize = 128;
+
+/// Scale degrees and their selection weights, edited together under one lock.
+pub(crate) struct DegreeTable {
+    /// Scale degrees (semitone offsets) that can be selected for notes.
+    /// Negative values go below the root note.
+    pub(crate) degrees: Vec<i32>,
+    /// Probability weights for each allowed degree.
+    pub(crate) weights: Vec<f32>,
+}
+
 /// Thread-safe controls for the MelodyGenerator module.
 ///
-/// All fields are wrapped in `Arc<Mutex<_>>` for real-time adjustment
-/// from any thread while audio is playing.
+/// Scalar fields are atomics. The degree table (degrees + weights) lives
+/// behind a `Mutex` gated by an atomic version counter: the audio thread keeps
+/// its own pre-allocated copy and only `try_lock`s the table when the version
+/// has changed, so control edits never block the audio callback.
 ///
 /// Note: Due to the complex types (Vec), this module exposes typed methods
 /// rather than the uniform f32 get/set_control API for most parameters.
@@ -25,12 +41,12 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 #[derive(Clone)]
 pub struct MelodyControls {
     /// Root MIDI note number (0-127).
-    pub(crate) root_note: Arc<Mutex<u8>>,
-    /// Scale degrees (semitone offsets) that can be selected for notes.
-    /// Negative values go below the root note.
-    pub(crate) allowed_degrees: Arc<Mutex<Vec<i32>>>,
-    /// Probability weights for each allowed degree.
-    pub(crate) note_weights: Arc<Mutex<Vec<f32>>>,
+    pub(crate) root_note: Arc<AtomicU8>,
+    /// Allowed scale degrees and their weights.
+    pub(crate) table: Arc<Mutex<DegreeTable>>,
+    /// Bumped (while holding `table`) after every table edit; the audio
+    /// thread re-copies the table when it observes a change.
+    pub(crate) table_version: Arc<AtomicU64>,
     /// RNG seed value; only meaningful when `seed_version > 0`.
     pub(crate) seed_value: Arc<AtomicU64>,
     /// Bumped on every `set_seed`; `0` means "never seeded" (entropy RNG).
@@ -42,13 +58,18 @@ pub struct MelodyControls {
 impl MelodyControls {
     /// Creates new melody controls with the given allowed scale degrees.
     ///
-    /// All degrees start with equal probability weight.
-    pub fn new(root_note: u8, allowed_degrees: Vec<i32>) -> Self {
+    /// All degrees start with equal probability weight. At most
+    /// [`MAX_DEGREES`] degrees are kept.
+    pub fn new(root_note: u8, mut allowed_degrees: Vec<i32>) -> Self {
+        allowed_degrees.truncate(MAX_DEGREES);
         let weights = vec![1.0; allowed_degrees.len()];
         Self {
-            root_note: Arc::new(Mutex::new(root_note)),
-            allowed_degrees: Arc::new(Mutex::new(allowed_degrees)),
-            note_weights: Arc::new(Mutex::new(weights)),
+            root_note: Arc::new(AtomicU8::new(root_note)),
+            table: Arc::new(Mutex::new(DegreeTable {
+                degrees: allowed_degrees,
+                weights,
+            })),
+            table_version: Arc::new(AtomicU64::new(0)),
             seed_value: Arc::new(AtomicU64::new(0)),
             seed_version: Arc::new(AtomicU64::new(0)),
         }
@@ -77,45 +98,61 @@ impl MelodyControls {
 
     /// Gets the root MIDI note number.
     pub fn root_note(&self) -> u8 {
-        *self.root_note.lock().unwrap()
+        self.root_note.load(Ordering::Relaxed)
     }
 
     /// Sets the root MIDI note number (clamped to 0-127).
     pub fn set_root_note(&self, value: u8) {
-        *self.root_note.lock().unwrap() = value.min(127);
+        self.root_note.store(value.min(127), Ordering::Relaxed);
+    }
+
+    /// Monotonic degree-table change counter.
+    pub(crate) fn table_version(&self) -> u64 {
+        self.table_version.load(Ordering::Acquire)
+    }
+
+    /// Applies `edit` to the degree table and publishes the change to the
+    /// audio thread. The version is bumped while the lock is still held, so
+    /// a reader that observes the new version always copies the edited table.
+    fn edit_table<R>(&self, edit: impl FnOnce(&mut DegreeTable) -> R) -> R {
+        let mut table = self.table.lock().unwrap();
+        let result = edit(&mut table);
+        self.table_version.fetch_add(1, Ordering::Release);
+        result
     }
 
     /// Gets the allowed scale degrees.
     pub fn allowed_degrees(&self) -> Vec<i32> {
-        self.allowed_degrees.lock().unwrap().clone()
+        self.table.lock().unwrap().degrees.clone()
     }
 
     /// Sets which scale degrees can be used for note selection.
     ///
-    /// Also resizes the weights vector to match.
-    pub fn set_allowed_degrees(&self, degrees: Vec<i32>) {
-        let mut allowed = self.allowed_degrees.lock().unwrap();
-        *allowed = degrees.clone();
-
-        let mut weights = self.note_weights.lock().unwrap();
-        weights.resize(degrees.len(), 1.0);
+    /// Also resizes the weights vector to match. At most [`MAX_DEGREES`]
+    /// degrees are kept.
+    pub fn set_allowed_degrees(&self, mut degrees: Vec<i32>) {
+        degrees.truncate(MAX_DEGREES);
+        self.edit_table(|table| {
+            table.weights.resize(degrees.len(), 1.0);
+            table.degrees = degrees;
+        });
     }
 
     /// Gets the note weights.
     pub fn note_weights(&self) -> Vec<f32> {
-        self.note_weights.lock().unwrap().clone()
+        self.table.lock().unwrap().weights.clone()
     }
 
     /// Sets the probability weights for note selection.
     ///
     /// Higher weights make that degree more likely to be chosen.
     pub fn set_note_weights(&self, weights: Vec<f32>) {
-        *self.note_weights.lock().unwrap() = weights;
+        self.edit_table(|table| table.weights = weights);
     }
 
     /// Gets the number of allowed degrees.
     pub fn degree_count(&self) -> usize {
-        self.allowed_degrees.lock().unwrap().len()
+        self.table.lock().unwrap().degrees.len()
     }
 
     /// Sets the number of allowed degrees.
@@ -123,27 +160,27 @@ impl MelodyControls {
     /// If growing, new entries use sequential degree indices and weight 1.0.
     /// If shrinking, truncates both allowed_degrees and note_weights.
     pub fn set_degree_count(&self, count: usize) {
-        let count = count.clamp(1, 128);
-        let mut degrees = self.allowed_degrees.lock().unwrap();
-        let mut weights = self.note_weights.lock().unwrap();
-
-        let old_len = degrees.len();
-        if count > old_len {
-            // Append sequential degrees starting after the last existing degree
-            let next_degree = degrees.last().map(|&d| d + 1).unwrap_or(0);
-            for i in 0..(count - old_len) {
-                degrees.push(next_degree + i as i32);
+        let count = count.clamp(1, MAX_DEGREES);
+        self.edit_table(|table| {
+            let old_len = table.degrees.len();
+            if count > old_len {
+                // Append sequential degrees starting after the last existing degree
+                let next_degree = table.degrees.last().map(|&d| d + 1).unwrap_or(0);
+                for i in 0..(count - old_len) {
+                    table.degrees.push(next_degree + i as i32);
+                }
+                table.weights.resize(count, 1.0);
+            } else {
+                table.degrees.truncate(count);
+                table.weights.truncate(count);
             }
-            weights.resize(count, 1.0);
-        } else {
-            degrees.truncate(count);
-            weights.truncate(count);
-        }
+        });
     }
 
     /// Gets the scale degree at position `index`.
     pub fn degree(&self, index: usize) -> Result<i32, String> {
-        let degrees = self.allowed_degrees.lock().unwrap();
+        let table = self.table.lock().unwrap();
+        let degrees = &table.degrees;
         degrees.get(index).copied().ok_or_else(|| {
             format!(
                 "Degree index {} out of range (count: {})",
@@ -155,21 +192,24 @@ impl MelodyControls {
 
     /// Sets the scale degree at position `index`.
     pub fn set_degree(&self, index: usize, value: i32) -> Result<(), String> {
-        let mut degrees = self.allowed_degrees.lock().unwrap();
-        if index >= degrees.len() {
-            return Err(format!(
-                "Degree index {} out of range (count: {})",
-                index,
-                degrees.len()
-            ));
-        }
-        degrees[index] = value.clamp(-127, 127);
-        Ok(())
+        self.edit_table(|table| {
+            let degrees = &mut table.degrees;
+            if index >= degrees.len() {
+                return Err(format!(
+                    "Degree index {} out of range (count: {})",
+                    index,
+                    degrees.len()
+                ));
+            }
+            degrees[index] = value.clamp(-127, 127);
+            Ok(())
+        })
     }
 
     /// Gets the note weight at position `index`.
     pub fn note_weight(&self, index: usize) -> Result<f32, String> {
-        let weights = self.note_weights.lock().unwrap();
+        let table = self.table.lock().unwrap();
+        let weights = &table.weights;
         weights.get(index).copied().ok_or_else(|| {
             format!(
                 "Weight index {} out of range (count: {})",
@@ -181,16 +221,18 @@ impl MelodyControls {
 
     /// Sets the note weight at position `index`.
     pub fn set_note_weight(&self, index: usize, value: f32) -> Result<(), String> {
-        let mut weights = self.note_weights.lock().unwrap();
-        if index >= weights.len() {
-            return Err(format!(
-                "Weight index {} out of range (count: {})",
-                index,
-                weights.len()
-            ));
-        }
-        weights[index] = value.clamp(0.0, 10.0);
-        Ok(())
+        self.edit_table(|table| {
+            let weights = &mut table.weights;
+            if index >= weights.len() {
+                return Err(format!(
+                    "Weight index {} out of range (count: {})",
+                    index,
+                    weights.len()
+                ));
+            }
+            weights[index] = value.clamp(0.0, 10.0);
+            Ok(())
+        })
     }
 }
 
