@@ -1096,6 +1096,7 @@ dependencies = [
  "hound",
  "indexmap",
  "js-sys",
+ "percent-encoding",
  "rand 0.10.3",
  "roxmltree",
  "schemars",

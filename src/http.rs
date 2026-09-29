@@ -5,6 +5,9 @@
 //!   report a bare `http status: 404`, so the agent hands the response back
 //!   and [`check_status`] builds the message. The body is not read, so an
 //!   error returns as soon as the headers arrive.
+//! - URLs are percent-encoded where `ureq` 2's `url::Url` parsing would
+//!   have done it (spaces, quotes, braces, non-ASCII), so a sample path like
+//!   `https://host/kick drum.wav` still works; `ureq` 3 rejects it as-is.
 //! - Connecting times out after 30 s (`ureq` 3 has no connect timeout by
 //!   default).
 //! - [`read_text`] caps the decoded body at 10 MB and replaces invalid UTF-8,
@@ -13,6 +16,7 @@
 use std::io::Read;
 use std::time::Duration;
 
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use ureq::http::Response;
 use ureq::{Agent, Body};
 
@@ -22,6 +26,24 @@ pub(crate) const MAX_TEXT_BODY_BYTES: u64 = 10 * 1024 * 1024;
 
 /// `ureq` 2's default connect timeout.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Characters an HTTP URI can't carry literally. `%` is left alone so
+/// already-encoded URLs pass through unchanged; non-ASCII is always encoded.
+const URI_ESCAPE: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'<')
+    .add(b'>')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}')
+    .add(b'|')
+    .add(b'\\')
+    .add(b'^');
+
+fn normalize(url: &str) -> String {
+    utf8_percent_encode(url, URI_ESCAPE).to_string()
+}
 
 fn agent() -> Agent {
     Agent::config_builder()
@@ -34,7 +56,7 @@ fn agent() -> Agent {
 /// Issues a GET request; 4xx/5xx responses become `Err`.
 pub(crate) fn get(url: &str) -> Result<Response<Body>, String> {
     let response = agent()
-        .get(url)
+        .get(normalize(url))
         .call()
         .map_err(|err| format!("{url}: {err}"))?;
     check_status(url, response)
@@ -46,7 +68,7 @@ pub(crate) fn post(
     headers: &[(&str, &str)],
     body: &str,
 ) -> Result<Response<Body>, String> {
-    let mut request = agent().post(url);
+    let mut request = agent().post(normalize(url));
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
@@ -155,6 +177,18 @@ mod tests {
         let mut response = get(&url).unwrap();
         let err = read_text(response.body_mut()).unwrap_err();
         assert!(err.contains("exceeds"), "{err}");
+    }
+
+    #[test]
+    fn get_encodes_spaces_and_keeps_existing_escapes() {
+        assert_eq!(
+            normalize("https://host/kick drum%2B.wav?q=a b"),
+            "https://host/kick%20drum%2B.wav?q=a%20b"
+        );
+        assert_eq!(normalize("https://host/café"), "https://host/caf%C3%A9");
+        let url = serve_once("200 OK", "text/plain", b"ok".to_vec());
+        let mut response = get(&format!("{url} with space.wav")).unwrap();
+        assert_eq!(read_text(response.body_mut()).unwrap(), "ok");
     }
 
     #[test]
