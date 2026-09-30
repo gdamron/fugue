@@ -470,16 +470,11 @@ fn preopen(
 ) -> Result<(), Box<dyn Error>> {
     let path = Path::new(scope);
     let perms = if writable {
-        wasmtime_wasi::DirPerms::all()
+        wasmtime_wasi::FsPerms::ReadWrite
     } else {
-        wasmtime_wasi::DirPerms::READ
+        wasmtime_wasi::FsPerms::ReadOnly
     };
-    let file_perms = if writable {
-        wasmtime_wasi::FilePerms::all()
-    } else {
-        wasmtime_wasi::FilePerms::READ
-    };
-    builder.preopened_dir(path, scope, perms, file_perms)?;
+    builder.preopened_dir(path, scope, perms)?;
     Ok(())
 }
 
