@@ -25,7 +25,8 @@ zip = { version = "8", optional = true, default-features = false, features = [
 sha2 = "0.11"
 fs2 = "0.4"
 cpal = "0.18"
-ureq = { version = "2.10", default-features = true }
+ureq = "3.4"
+url = "2.5"
 boa_engine = "0.21.1"
 claxon = "0.4.3"
 flacenc = "0.5.1"

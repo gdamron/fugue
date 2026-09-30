@@ -6,6 +6,8 @@ mod example_catalog;
 pub mod factory;
 #[cfg(not(target_arch = "wasm32"))]
 mod hex;
+#[cfg(not(target_arch = "wasm32"))]
+mod http;
 #[cfg(feature = "ffi")]
 pub mod ffi;
 pub mod invention;

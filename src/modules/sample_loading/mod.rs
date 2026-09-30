@@ -307,10 +307,9 @@ fn open_source(source: &str) -> Result<(Box<dyn Read>, bool), String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         if source.starts_with("https://") {
-            let response = ureq::get(source)
-                .call()
+            let response = crate::http::get(source)
                 .map_err(|err| format!("Failed to download sample: {}", err))?;
-            return Ok((Box::new(response.into_reader()), true));
+            return Ok((Box::new(response.into_body().into_reader()), true));
         }
 
         if source.starts_with("http://") {
