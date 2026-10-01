@@ -1,11 +1,8 @@
 use super::*;
-use std::sync::mpsc;
 
 /// Creates a minimal SignalGraph for testing process order.
 /// Modules are stub oscillators — we only care about the topology.
 fn test_graph(module_ids: &[&str], connections: &[(&str, &str)]) -> SignalGraph {
-    let (_tx, rx) = mpsc::channel();
-
     let registry = crate::ModuleRegistry::default();
     let null_config = serde_json::Value::Null;
 
@@ -31,7 +28,6 @@ fn test_graph(module_ids: &[&str], connections: &[(&str, &str)]) -> SignalGraph 
         modules,
         Vec::new(),
         edges,
-        rx,
         super::MasterObservers::default(),
     );
     graph.recompile();

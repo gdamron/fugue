@@ -52,8 +52,7 @@ fn base_graph() -> SignalGraph {
     modules.insert("dac".to_string(), build("dac", serde_json::json!({})));
     let sinks = sinks_of(&modules);
     let edges = vec![edge("osc1", "dac", "audio"), edge("osc2", "dac", "audio")];
-    let (_tx, rx) = mpsc::channel();
-    let mut graph = SignalGraph::new(modules, sinks, edges, rx, MasterObservers::default());
+    let mut graph = SignalGraph::new(modules, sinks, edges, MasterObservers::default());
     graph.recompile();
     graph
 }

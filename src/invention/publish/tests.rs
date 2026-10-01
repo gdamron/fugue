@@ -8,7 +8,7 @@ use crate::{Invention, InventionBuilder};
 
 mod alloc;
 mod drops;
-mod probe;
+pub(crate) mod probe;
 
 use probe::{DropProbeFactory, DROP_PROBE};
 
@@ -40,14 +40,10 @@ impl Rig {
         let document = Invention::from_json(json).unwrap();
         let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
         let ports = Arc::new(Mutex::new(module_ports(&runtime.modules)));
-        // Until the live editing paths publish, a graph still takes a
-        // command receiver; a linked graph never receives on it.
-        let (_, commands) = std::sync::mpsc::channel();
         let mut graph = SignalGraph::new(
             runtime.modules,
             runtime.sinks,
             runtime.routing,
-            commands,
             MasterObservers::default(),
         );
         graph.recompile();
