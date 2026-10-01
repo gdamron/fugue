@@ -1,7 +1,14 @@
+use std::time::Duration;
+
 use super::*;
+use crate::alloc_counter::allocator_events;
 use crate::invention::graph::MasterObservers;
 use crate::invention::runtime::module_ports;
 use crate::{Invention, InventionBuilder};
+
+mod probe;
+
+use probe::{DropProbeFactory, DROP_PROBE};
 
 const SAMPLE_RATE: u32 = 48_000;
 
@@ -362,4 +369,31 @@ fn a_swap_keeps_compatible_connections_only_when_asked() {
         ),
         Err(GraphCommandError::UnknownModule(_))
     ));
+}
+
+#[test]
+fn a_started_reclaimer_frees_removed_modules_off_the_audio_thread() {
+    let probes = DropProbeFactory::default();
+    let mut rig = Rig::new(BASE);
+    rig.registry.register(probes.clone());
+    let probe = rig.build("probe", DROP_PROBE, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("probe", probe);
+            change.connect(edge("osc1", "audio", "probe", "audio"))
+        })
+        .unwrap();
+    rig.render(1);
+
+    // The test thread stands in for the audio thread: installing the
+    // removal frees nothing there, and no further change runs to free it.
+    rig.live.remove_module("probe").unwrap();
+    let ((), _, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!(frees, 0);
+    assert!(probes.wait_for_drops(1, Duration::ZERO).is_empty());
+
+    assert!(rig.live.start_reclaimer());
+    let drops = probes.wait_for_drops(1, Duration::from_secs(2));
+    assert_eq!(drops.len(), 1, "the removed probe was not freed");
+    assert_ne!(drops[0], std::thread::current().id());
 }

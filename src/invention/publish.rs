@@ -30,17 +30,20 @@ use crate::ModuleRegistry;
 
 mod change;
 mod publisher;
+mod reclaim;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use change::{GraphChange, PreparedChange};
 pub(crate) use publisher::Publisher;
+pub(crate) use reclaim::Reclaimer;
 
 /// A live graph's publisher together with the runtime mirrors it keeps in
 /// step. Cheap to clone; every clone publishes through the same publisher.
 #[derive(Clone)]
 pub(crate) struct LiveGraph {
     publisher: Arc<Mutex<Publisher>>,
+    reclaimer: Arc<Reclaimer>,
     state: Arc<Mutex<RuntimeState>>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
@@ -66,12 +69,28 @@ impl LiveGraph {
         control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
         module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
     ) -> Self {
+        let (publisher, retired) = Publisher::link(graph);
         Self {
-            publisher: Arc::new(Mutex::new(Publisher::link(graph))),
+            publisher: Arc::new(Mutex::new(publisher)),
+            reclaimer: Arc::new(Reclaimer::new(retired)),
             state,
             control_surfaces,
             module_ports,
         }
+    }
+
+    /// Starts freeing retired publications on a control thread every
+    /// [`reclaim::RECLAIM_INTERVAL`], so a removed module (a sink finalizing
+    /// its file, say) is dropped promptly rather than at the next change.
+    /// The thread ends once every clone of this graph is gone. Returns false
+    /// when no thread could start.
+    pub(crate) fn start_reclaimer(&self) -> bool {
+        Reclaimer::spawn(&self.reclaimer)
+    }
+
+    /// Frees retired publications now, on the calling thread.
+    pub(crate) fn reclaim(&self) -> usize {
+        self.reclaimer.reclaim()
     }
 
     /// The shared publisher, for observation in tests.
@@ -85,8 +104,8 @@ impl LiveGraph {
     /// other change publishes; [`Self::edit`] rules that out for a change
     /// small enough to prepare under the publisher's lock.
     pub(crate) fn begin(&self) -> GraphChange {
+        self.reclaim();
         let publisher = self.publisher.lock().unwrap();
-        publisher.drain_retired();
         self.change_on(&publisher)
     }
 
@@ -118,8 +137,8 @@ impl LiveGraph {
         &self,
         edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
     ) -> Result<Committed, GraphCommandError> {
+        self.reclaim();
         let publisher = self.publisher.lock().unwrap();
-        publisher.drain_retired();
         let mut change = self.change_on(&publisher);
         edit(&mut change)?;
         let prepared = change.prepare()?;
