@@ -260,7 +260,10 @@ impl SignalGraph {
                 self.topo_dirty = true;
             }
             GraphCommand::RemoveModule { module_id } => {
-                self.modules.swap_remove(&module_id);
+                // Keep the remaining modules in order: the delayed edge inside
+                // a feedback group follows module order, so a removal must
+                // not reorder the others.
+                self.modules.shift_remove(&module_id);
                 self.sinks.retain(|id| id != &module_id);
                 self.edges
                     .retain(|e| e.from_module != module_id && e.to_module != module_id);
