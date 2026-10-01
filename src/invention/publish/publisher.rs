@@ -14,10 +14,11 @@ use crate::invention::runtime::GraphCommandError;
 pub(crate) const INPUT_QUEUE_CAPACITY: usize = 256;
 
 /// Retired publications the audio thread may hand back before the control
-/// thread drains them. The audio thread takes at most one publication per
-/// block and the control thread drains before every prepare, so this is
-/// rarely more than one deep; beyond it the audio thread holds one more
-/// retirement and stops taking publications until there is room.
+/// thread frees them. The audio thread takes at most one publication per
+/// block and the reclaimer drains the channel on a short cadence and before
+/// every change, so this is rarely more than one deep; beyond it the audio
+/// thread holds one more retirement and stops taking publications until
+/// there is room.
 pub(crate) const RETIRE_CAPACITY: usize = 8;
 
 /// Owns the authoritative mirror of a live graph and is the only producer of
@@ -32,7 +33,6 @@ pub(crate) struct Publisher {
     block_size: usize,
     publications: Arc<Mailbox<Publication>>,
     inputs: SyncSender<InputWrite>,
-    retired: Receiver<Box<Publication>>,
     /// Publications the audio thread has installed (observed by tests).
     #[cfg_attr(not(test), allow(dead_code))]
     applied: Arc<AtomicU64>,
@@ -40,8 +40,9 @@ pub(crate) struct Publisher {
 
 impl Publisher {
     /// Links a graph that is about to go live to a new publisher, mirroring
-    /// its current modules and edges.
-    pub(crate) fn link(graph: &mut SignalGraph) -> Self {
+    /// its current modules and edges. Also returns the retire channel's
+    /// receiver, for a [`super::Reclaimer`] to free retired publications.
+    pub(crate) fn link(graph: &mut SignalGraph) -> (Self, Receiver<Box<Publication>>) {
         let publications = Arc::new(Mailbox::new());
         let (inputs, input_rx) = mpsc::sync_channel(INPUT_QUEUE_CAPACITY);
         let (retire_tx, retired) = mpsc::sync_channel(RETIRE_CAPACITY);
@@ -52,15 +53,15 @@ impl Publisher {
             retire_tx,
             applied.clone(),
         ));
-        Self {
+        let publisher = Self {
             mirror: TopologyMirror::of(&graph.modules, &graph.edges),
             generation: 0,
             block_size: graph.block_size,
             publications,
             inputs,
-            retired,
             applied,
-        }
+        };
+        (publisher, retired)
     }
 
     /// The topology as of the latest publication.
@@ -82,13 +83,6 @@ impl Publisher {
     /// Block size publications are compiled for.
     pub(crate) fn block_size(&self) -> usize {
         self.block_size
-    }
-
-    /// Frees publications the audio thread has retired.
-    pub(crate) fn drain_retired(&self) {
-        while let Ok(retired) = self.retired.try_recv() {
-            drop(retired);
-        }
     }
 
     /// Whether the audio side of the link still exists.
