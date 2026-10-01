@@ -420,3 +420,6 @@ fn build_publication(
         topology,
     })
 }
+
+#[cfg(test)]
+mod tests;
