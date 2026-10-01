@@ -30,6 +30,8 @@ use crate::ModuleRegistry;
 
 mod change;
 mod publisher;
+#[cfg(test)]
+mod tests;
 
 pub(crate) use change::{GraphChange, PreparedChange};
 pub(crate) use publisher::Publisher;
