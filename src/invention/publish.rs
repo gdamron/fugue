@@ -22,6 +22,8 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use std::sync::mpsc::{SyncSender, TrySendError};
+
 use super::graph::{InputWrite, RoutingConnection, SignalGraph};
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
@@ -44,6 +46,7 @@ pub(crate) use reclaim::Reclaimer;
 pub(crate) struct LiveGraph {
     publisher: Arc<Mutex<Publisher>>,
     reclaimer: Arc<Reclaimer>,
+    inputs: SyncSender<InputWrite>,
     state: Arc<Mutex<RuntimeState>>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
@@ -69,10 +72,11 @@ impl LiveGraph {
         control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
         module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
     ) -> Self {
-        let (publisher, retired) = Publisher::link(graph);
+        let (publisher, ends) = Publisher::link(graph);
         Self {
             publisher: Arc::new(Mutex::new(publisher)),
-            reclaimer: Arc::new(Reclaimer::new(retired)),
+            reclaimer: Arc::new(Reclaimer::new(ends.retired)),
+            inputs: ends.inputs,
             state,
             control_surfaces,
             module_ports,
@@ -213,8 +217,15 @@ impl LiveGraph {
     }
 
     /// Queues a direct write to a module's input port for the next block.
+    /// Fails with [`GraphCommandError::QueueFull`] when the audio thread
+    /// has not drained earlier writes, and with
+    /// [`GraphCommandError::AudioThreadStopped`] when it is gone. Never waits on
+    /// the publisher, so a write is not held up by a change being prepared.
     pub(crate) fn write_input(&self, write: InputWrite) -> Result<(), GraphCommandError> {
-        self.publisher.lock().unwrap().write_input(write)
+        self.inputs.try_send(write).map_err(|error| match error {
+            TrySendError::Full(_) => GraphCommandError::QueueFull,
+            TrySendError::Disconnected(_) => GraphCommandError::AudioThreadStopped,
+        })
     }
 
     /// Adds a module, replacing one with the same id in place.

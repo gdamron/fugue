@@ -397,3 +397,22 @@ fn a_started_reclaimer_frees_removed_modules_off_the_audio_thread() {
     assert_eq!(drops.len(), 1, "the removed probe was not freed");
     assert_ne!(drops[0], std::thread::current().id());
 }
+
+#[test]
+fn a_full_input_queue_refuses_writes_until_the_audio_thread_drains_it() {
+    let mut rig = Rig::new(BASE);
+    let write = || InputWrite {
+        module_id: "osc1".to_string(),
+        port: "fm".to_string(),
+        value: 0.0,
+    };
+    for _ in 0..publisher::INPUT_QUEUE_CAPACITY {
+        rig.live.write_input(write()).unwrap();
+    }
+    assert!(matches!(
+        rig.live.write_input(write()),
+        Err(GraphCommandError::QueueFull)
+    ));
+    rig.render(1);
+    rig.live.write_input(write()).unwrap();
+}

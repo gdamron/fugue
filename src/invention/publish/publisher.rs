@@ -2,15 +2,15 @@
 
 use indexmap::IndexMap;
 use std::sync::atomic::AtomicU64;
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::Arc;
 
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
 use crate::invention::graph::{AudioLink, InputWrite, Mailbox, Publication, SignalGraph};
 use crate::invention::runtime::GraphCommandError;
 
-/// Input writes that may wait for the audio thread before
-/// [`Publisher::write_input`] reports the stream stalled.
+/// Input writes that may wait for the audio thread before a write is
+/// refused with [`GraphCommandError::QueueFull`].
 pub(crate) const INPUT_QUEUE_CAPACITY: usize = 256;
 
 /// Retired publications the audio thread may hand back before the control
@@ -32,7 +32,6 @@ pub(crate) struct Publisher {
     generation: u64,
     block_size: usize,
     publications: Arc<Mailbox<Publication>>,
-    inputs: SyncSender<InputWrite>,
     /// Publications the audio thread has installed (observed by tests).
     #[cfg_attr(not(test), allow(dead_code))]
     applied: Arc<AtomicU64>,
@@ -40,9 +39,9 @@ pub(crate) struct Publisher {
 
 impl Publisher {
     /// Links a graph that is about to go live to a new publisher, mirroring
-    /// its current modules and edges. Also returns the retire channel's
-    /// receiver, for a [`super::Reclaimer`] to free retired publications.
-    pub(crate) fn link(graph: &mut SignalGraph) -> (Self, Receiver<Box<Publication>>) {
+    /// its current modules and edges. Also returns the control side's ends
+    /// of the link's channels, which need no publisher lock.
+    pub(crate) fn link(graph: &mut SignalGraph) -> (Self, LinkEnds) {
         let publications = Arc::new(Mailbox::new());
         let (inputs, input_rx) = mpsc::sync_channel(INPUT_QUEUE_CAPACITY);
         let (retire_tx, retired) = mpsc::sync_channel(RETIRE_CAPACITY);
@@ -58,10 +57,9 @@ impl Publisher {
             generation: 0,
             block_size: graph.block_size,
             publications,
-            inputs,
             applied,
         };
-        (publisher, retired)
+        (publisher, LinkEnds { inputs, retired })
     }
 
     /// The topology as of the latest publication.
@@ -130,16 +128,16 @@ impl Publisher {
         let previous = std::mem::replace(&mut self.mirror, mirror);
         Ok(Published { previous, built })
     }
+}
 
-    /// Queues a direct input write for the next block. Fails when the audio
-    /// thread is gone or has stopped draining writes.
-    pub(crate) fn write_input(&self, write: InputWrite) -> Result<(), GraphCommandError> {
-        self.inputs.try_send(write).map_err(|error| match error {
-            TrySendError::Full(_) | TrySendError::Disconnected(_) => {
-                GraphCommandError::AudioThreadStopped
-            }
-        })
-    }
+/// The control side's ends of a link's channels. Use only `try_send` on
+/// `inputs` and `try_recv` on `retired`: a control thread blocked on either
+/// would make the audio thread's end take the channel's waker lock.
+pub(crate) struct LinkEnds {
+    /// Queues direct input writes for the next block.
+    pub(crate) inputs: SyncSender<InputWrite>,
+    /// Retired publications, to free off the audio thread.
+    pub(crate) retired: Receiver<Box<Publication>>,
 }
 
 /// What a publication replaced, for committing the runtime's other mirrors.
