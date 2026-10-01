@@ -6,6 +6,7 @@ use crate::invention::graph::MasterObservers;
 use crate::invention::runtime::module_ports;
 use crate::{Invention, InventionBuilder};
 
+mod alloc;
 mod probe;
 
 use probe::{DropProbeFactory, DROP_PROBE};
