@@ -75,8 +75,10 @@ impl From<GraphCommandError> for RpcError {
             GraphCommandError::UnknownModule(_) => RpcErrorCode::UnknownModule,
             GraphCommandError::InvalidPort(_) => RpcErrorCode::InvalidPort,
             GraphCommandError::ControlError(_) => RpcErrorCode::ControlError,
-            // Nothing was applied; the message says to prepare again.
-            GraphCommandError::TopologyMoved => RpcErrorCode::Internal,
+            // Nothing was applied; the messages say why.
+            GraphCommandError::QueueFull | GraphCommandError::TopologyMoved => {
+                RpcErrorCode::Internal
+            }
         };
         Self::new(code, error.to_string())
     }
