@@ -82,18 +82,18 @@
 //! entries merge with any explicit `schedule`. Patch the same clock gate that
 //! drives the sequencers into this module's `gate` input.
 
-use std::sync::Arc;
-
-use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::traits::ControlMeta;
 use crate::{ControlValue, Module};
 
 pub use self::controls::ControlSchedulerControls;
+pub use self::factory::ControlSchedulerFactory;
 pub use self::schedule::{ScheduleEntry, ScheduleValue};
 
 pub(crate) use self::controls::SurfaceDirectory;
+pub(crate) use self::factory::attach_from_handle;
 
 mod controls;
+mod factory;
 mod inputs;
 mod outputs;
 mod schedule;
@@ -102,74 +102,6 @@ use schedule::ResolvedEntry;
 
 /// Module type id, shared with the runtime attachment points.
 pub const CONTROL_SCHEDULER_TYPE_ID: &str = "control_scheduler";
-
-/// Factory for constructing ControlScheduler modules from configuration.
-pub struct ControlSchedulerFactory;
-
-impl ModuleFactory for ControlSchedulerFactory {
-    fn type_id(&self) -> &'static str {
-        CONTROL_SCHEDULER_TYPE_ID
-    }
-
-    fn build(
-        &self,
-        sample_rate: u32,
-        config: &serde_json::Value,
-    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let mut spec =
-            schedule::parse_schedule(config.get("schedule").unwrap_or(&serde_json::Value::Null))?;
-        // A score tempo map (spliced in via `$asset`) compiles into schedule
-        // entries that write a clock's tempo at each change's step boundary.
-        if let Some(tempo_map) = config.get("tempo_map").filter(|value| !value.is_null()) {
-            let module = config
-                .get("tempo_target")
-                .and_then(|value| value.as_str())
-                .unwrap_or("clock");
-            let control = config
-                .get("tempo_control")
-                .and_then(|value| value.as_str())
-                .unwrap_or("bpm");
-            let bpm_scale = config
-                .get("bpm_scale")
-                .and_then(|value| value.as_f64())
-                .unwrap_or(1.0) as f32;
-            spec.extend(schedule::compile_tempo_map(
-                tempo_map, module, control, bpm_scale,
-            )?);
-        }
-        let controls = ControlSchedulerControls::new(spec);
-        let module = ControlScheduler::new(sample_rate, controls.clone());
-
-        Ok(ModuleBuildResult {
-            module: GraphModule::Module(Box::new(module)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn std::any::Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
-            sink: None,
-        })
-    }
-}
-
-/// Attaches a just-built scheduler to the runtime's control-surface
-/// directory via its type-erased `controls` handle. Shared by every path
-/// that can introduce a scheduler (builder, live add, swap).
-pub(crate) fn attach_from_handle(
-    module_id: &str,
-    handle: Option<&Arc<dyn std::any::Any + Send + Sync>>,
-    directory: &SurfaceDirectory,
-) -> Result<(), String> {
-    let controls = handle
-        .and_then(|handle| handle.downcast_ref::<ControlSchedulerControls>())
-        .ok_or_else(|| {
-            format!(
-                "control_scheduler '{}' is missing its controls handle",
-                module_id
-            )
-        })?;
-    controls.attach(module_id, directory)
-}
 
 /// A ramp in flight: linear interpolation of one numeric control across step
 /// boundaries. Holds an index into the adopted schedule, never owned data, so
