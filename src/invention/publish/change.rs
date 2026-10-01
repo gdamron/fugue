@@ -264,6 +264,15 @@ impl GraphChange {
     /// complete next topology. Fails, with nothing visible changed, when a
     /// schedule cannot resolve.
     pub(crate) fn prepare(mut self) -> Result<PreparedChange, GraphCommandError> {
+        if self.edits == 0 {
+            // Nothing to attach, compile, or publish.
+            return Ok(PreparedChange {
+                base_generation: self.base_generation,
+                mirror: self.mirror,
+                built: self.built,
+                publication: None,
+            });
+        }
         for (id, module) in &self.built {
             if module.info.module_type != CONTROL_SCHEDULER_TYPE_ID {
                 continue;
@@ -296,10 +305,9 @@ impl GraphChange {
         );
         Ok(PreparedChange {
             base_generation: self.base_generation,
-            edits: self.edits,
             mirror: self.mirror,
             built: self.built,
-            publication,
+            publication: Some(publication),
         })
     }
 }
@@ -317,16 +325,16 @@ pub(crate) struct PreparedChange {
     /// The publisher generation the change was prepared against; a newer
     /// one makes the change stale, and the publisher refuses it.
     pub(crate) base_generation: u64,
-    edits: usize,
     pub(crate) mirror: TopologyMirror,
     pub(crate) built: IndexMap<String, BuiltModule>,
-    pub(crate) publication: Box<Publication>,
+    /// The compiled next topology; `None` when the change edits nothing.
+    pub(crate) publication: Option<Box<Publication>>,
 }
 
 impl PreparedChange {
     /// Whether the change edits nothing.
     pub(crate) fn is_empty(&self) -> bool {
-        self.edits == 0
+        self.publication.is_none()
     }
 }
 
