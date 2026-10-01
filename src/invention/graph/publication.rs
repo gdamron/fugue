@@ -225,3 +225,6 @@ impl SignalGraph {
         self.reset_inputs();
     }
 }
+
+#[cfg(test)]
+mod tests;
