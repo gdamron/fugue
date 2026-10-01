@@ -223,6 +223,17 @@ pub trait ControlSurface: Send + Sync {
     fn get_control(&self, key: &str) -> Result<ControlValue, String>;
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String>;
 
+    /// Ids of modules whose controls this module writes while processing,
+    /// mirroring [`Module::control_targets`] for the module behind this
+    /// surface. A live graph compiles its process order on the control
+    /// thread, where only the surface is reachable, so a module that declares
+    /// control targets must report the same targets here.
+    ///
+    /// Control-thread only; implementations may lock and allocate.
+    fn control_targets(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Coerces `value` to `key`'s declared [`ControlKind`] via
     /// [`ControlValue::coerced_to`]. Unknown keys pass through untouched so
     /// [`ControlSurface::set_control`] still owns the "unknown control" error.
