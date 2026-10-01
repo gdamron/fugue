@@ -1,7 +1,8 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::invention::format::{Connection, Invention, ModuleSpec};
+use crate::invention::authored_document;
+use crate::invention::format::{Connection, Invention};
 use crate::modules::AudioDiagnosticsSnapshot;
 use crate::ControlValue;
 
@@ -75,64 +76,24 @@ impl RuntimeState {
         module_type: &str,
         config: &serde_json::Value,
     ) {
-        let Some(document) = self.document.as_mut() else {
-            return;
-        };
-        match document.modules.iter_mut().find(|spec| spec.id == id) {
-            Some(spec) => {
-                spec.module_type = module_type.to_string();
-                spec.config = config.clone();
-            }
-            None => document.modules.push(ModuleSpec {
-                id: id.to_string(),
-                module_type: module_type.to_string(),
-                config: config.clone(),
-            }),
+        if let Some(document) = self.document.as_mut() {
+            authored_document::upsert_module(document, id, module_type, config);
         }
     }
 
     /// Removes a module from the retained document.
     pub(crate) fn document_remove_module(&mut self, id: &str) {
         if let Some(document) = self.document.as_mut() {
-            document.modules.retain(|spec| spec.id != id);
+            authored_document::remove_module(document, id);
         }
     }
 
     /// Writes a control change into the retained document module's config so
     /// a saved document reproduces the value on a cold rebuild.
     pub(crate) fn document_write_control(&mut self, id: &str, key: &str, value: &ControlValue) {
-        let Some(document) = self.document.as_mut() else {
-            return;
-        };
-        let Some(spec) = document.modules.iter_mut().find(|spec| spec.id == id) else {
-            return;
-        };
-        let value = match value {
-            // Integral values stay JSON integers (a step count written as
-            // 16.0 would spuriously differ from the authored 16 on every
-            // reload diff); fractional values widen through the shortest
-            // decimal form of the f32 (its Display output) so 0.7f32 lands
-            // in the document as 0.7, not 0.699999988079071.
-            ControlValue::Number(number) if number.fract() == 0.0 && number.abs() < 2e15 => {
-                serde_json::json!(*number as i64)
-            }
-            ControlValue::Number(number) => number
-                .to_string()
-                .parse::<f64>()
-                .ok()
-                .and_then(serde_json::Number::from_f64)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null),
-            ControlValue::Bool(flag) => serde_json::json!(flag),
-            ControlValue::String(text) => serde_json::json!(text),
-        };
-        if !spec.config.is_object() {
-            spec.config = serde_json::Value::Object(serde_json::Map::new());
+        if let Some(document) = self.document.as_mut() {
+            authored_document::write_control(document, id, key, value);
         }
-        spec.config
-            .as_object_mut()
-            .expect("config was just made an object")
-            .insert(key.to_string(), value);
     }
 
     /// Assembles the retained declarative document, mirroring the live

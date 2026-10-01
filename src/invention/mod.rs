@@ -13,6 +13,7 @@
 //! - [`handles`] - Runtime control handles
 
 pub(crate) mod audio_assets;
+pub(crate) mod authored_document;
 pub mod builder;
 pub mod development;
 pub mod format;
