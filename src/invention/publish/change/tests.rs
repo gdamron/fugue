@@ -53,13 +53,10 @@ impl Harness {
     fn of(document: &str) -> Self {
         let document = Invention::from_json(document).unwrap();
         let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
-        // A linked graph never receives on its command channel.
-        let (_, commands) = mpsc::channel();
         let mut graph = SignalGraph::new(
             runtime.modules,
             runtime.sinks,
             runtime.routing,
-            commands,
             MasterObservers::default(),
         );
         graph.recompile();

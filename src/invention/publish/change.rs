@@ -126,7 +126,9 @@ pub(crate) fn ports_of(instance: &ModuleInstance) -> ModulePorts {
 /// A module built for a change: its instance (until prepared), what the
 /// mirrors record for it, and what it hands back to the caller.
 pub(crate) struct BuiltModule {
-    instance: Option<ModuleInstance>,
+    /// Taken when the change is prepared (or by offline render's direct
+    /// edits).
+    pub(crate) instance: Option<ModuleInstance>,
     pub(crate) info: RuntimeModuleInfo,
     pub(crate) module: MirrorModule,
     pub(crate) surface: Option<ControlSurfaceInstance>,

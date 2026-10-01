@@ -6,11 +6,11 @@ use crate::registry::ModuleRegistry;
 use crate::scripting::ScriptManager;
 use crate::{ControlSurface, GraphModule};
 use indexmap::IndexMap;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use super::graph::{GraphCommand, RoutingConnection, SignalGraph};
+use super::graph::{RoutingConnection, SignalGraph};
 use super::orchestration::{ModulePorts, RuntimeController, RuntimeSnapshot};
+use super::publish::LiveGraph;
 use super::state::{RuntimeState, RuntimeStatus};
 
 /// Type alias for module instances stored in the runtime.
@@ -76,22 +76,28 @@ impl InventionRuntime {
         self,
         mut backend: B,
     ) -> Result<RunningInvention, Box<dyn std::error::Error>> {
-        let (command_tx, command_rx) = mpsc::channel();
         let module_ports = Arc::new(Mutex::new(module_ports(&self.modules)));
 
         // Master observers shared with the graph: the audio thread feeds them,
         // and the daemon samples the clone held on `RunningInvention`.
         let master = super::graph::MasterObservers::live();
 
-        let mut graph = SignalGraph::new(
-            self.modules,
-            self.sinks,
-            self.routing,
-            command_rx,
-            master.clone(),
-        );
+        let mut graph = SignalGraph::new(self.modules, self.sinks, self.routing, master.clone());
+        // Compile the first topology here, so the audio thread's first block
+        // does not allocate.
+        graph.recompile();
 
         let control_surfaces = self.control_surfaces;
+        // From here on the publisher is the only way the graph changes.
+        let live = LiveGraph::link(
+            &mut graph,
+            self.state.clone(),
+            control_surfaces.clone(),
+            module_ports.clone(),
+        );
+        // Removed modules (a sink finalizing its file, say) are freed on a
+        // control thread within a few blocks, not at the next edit.
+        live.start_reclaimer();
 
         // The audio callback owns the graph, so processing does not lock it.
         // Each callback fills its buffer in `block_size`-frame blocks.
@@ -113,7 +119,7 @@ impl InventionRuntime {
         let running = RunningInvention {
             backend: Box::new(backend),
             control_surfaces,
-            command_tx,
+            live,
             registry: self.registry,
             base_registry: self.base_registry,
             development_definitions: self.development_definitions,
@@ -176,7 +182,8 @@ pub(crate) fn end_reached_in(
 pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
-    command_tx: mpsc::Sender<GraphCommand>,
+    /// The single path by which the audio graph changes.
+    live: LiveGraph,
     registry: ModuleRegistry,
     pub(crate) base_registry: ModuleRegistry,
     pub(crate) development_definitions: crate::invention::reload::DevelopmentDefinitions,
@@ -276,7 +283,7 @@ impl RunningInvention {
             registry: self.registry.clone(),
             sample_rate: self.sample_rate,
             graph: None,
-            command_tx: Some(self.command_tx.clone()),
+            live: Some(self.live.clone()),
             module_ports: self.module_ports.clone(),
         }
     }
