@@ -2,7 +2,7 @@
 
 use super::{
     ControlWriteIntent, DescribeModuleQuery, InspectionQuery, ModuleTypeQuery, MutationTicket,
-    RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, RPC_SCHEMA_VERSION,
+    RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, StructuralEdit, RPC_SCHEMA_VERSION,
 };
 use crate::{ControlValue, Invention};
 use serde::{Deserialize, Serialize};
@@ -237,6 +237,14 @@ pub enum RpcCommand {
         /// integrity before reloading and refuses on a mismatch.
         #[serde(default = "default_frozen")]
         frozen: bool,
+    },
+    /// Apply an ordered batch of structural edits atomically: every edit
+    /// lands, in one revision, or none does. Must carry a
+    /// [`MutationTicket`]; see [`StructuralEdit`] for the ops and
+    /// `docs/apply-edits.md` for the full contract. Whole-document
+    /// [`RpcCommand::ReloadInvention`] remains the default structural path.
+    ApplyEdits {
+        edits: Vec<StructuralEdit>,
     },
     /// Inspect bounded authored selections with revision and source context.
     InspectInvention {

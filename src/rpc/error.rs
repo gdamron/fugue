@@ -1,6 +1,6 @@
 //! Structured RPC errors.
 
-use super::RevisionConflict;
+use super::{EditFailure, RevisionConflict};
 use crate::GraphCommandError;
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,11 @@ pub struct RpcError {
     /// structured body a client needs to re-read and rebase.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conflict: Option<RevisionConflict>,
+    /// Present only on [`RpcErrorCode::InvalidEdit`]: which edit of an
+    /// `ApplyEdits` batch was refused, and why. Boxed to keep `RpcError`
+    /// small on the `Ok` path of every fallible RPC call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<Box<EditFailure>>,
 }
 
 impl RpcError {
@@ -21,6 +26,7 @@ impl RpcError {
             code,
             message: message.into(),
             conflict: None,
+            edit: None,
         }
     }
 
@@ -35,6 +41,21 @@ impl RpcError {
             code: RpcErrorCode::RevisionConflict,
             message: conflict.describe(),
             conflict: Some(conflict),
+            edit: None,
+        }
+    }
+
+    /// Builds the refusal for one edit of an `ApplyEdits` batch. The caller
+    /// must have changed nothing: the whole batch is refused.
+    pub fn invalid_edit(failure: EditFailure) -> Self {
+        Self {
+            code: RpcErrorCode::InvalidEdit,
+            message: format!(
+                "edit {} ({}) refused: {}; nothing was applied",
+                failure.index, failure.op, failure.message
+            ),
+            conflict: None,
+            edit: Some(Box::new(failure)),
         }
     }
 }
@@ -56,6 +77,10 @@ pub enum RpcErrorCode {
     /// recovery ledger remembers. Nothing ran; the original may or may not
     /// have applied, so re-read state before editing again.
     MutationExpired,
+    /// One edit of an `ApplyEdits` batch was refused, so the whole batch was.
+    /// Nothing changed; the error carries an [`EditFailure`] naming the edit
+    /// and the reason.
+    InvalidEdit,
     AudioThreadStopped,
     UnknownModuleType,
     ModuleBuildFailed,

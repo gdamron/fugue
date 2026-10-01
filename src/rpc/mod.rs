@@ -10,6 +10,7 @@ pub use inspection::{
     InspectionSelection, MAX_INSPECTION_BYTES, MAX_INSPECTION_ENTRIES, MAX_INSPECTION_VALUE_BYTES,
 };
 mod discovery;
+mod edits;
 mod error;
 mod event;
 mod identity;
@@ -27,6 +28,10 @@ pub use discovery::{
     check_discovery_size, DescribeModuleQuery, MetadataSource, ModuleDescription, ModuleTypeDetail,
     ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList, ModuleTypeQuery, RegistryScope, TypeDetail,
     MAX_DISCOVERY_RESPONSE_BYTES, MAX_DISCOVERY_TYPES, MODULE_DISCOVERY_SCHEMA_VERSION,
+};
+pub use edits::{
+    check_edit_batch, ApplyEditsReport, EditFailure, EditFailureReason, EditOp, StructuralEdit,
+    MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
 };
 pub use error::{RpcError, RpcErrorCode};
 pub use event::{

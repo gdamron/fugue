@@ -2,6 +2,7 @@ use super::*;
 use crate::{Invention, ModuleSpec};
 
 mod discovery;
+mod edits;
 mod error;
 mod event;
 mod package;
