@@ -16,6 +16,10 @@ pub(crate) mod audio_assets;
 pub(crate) mod authored_document;
 pub mod builder;
 pub mod development;
+// Only tests call the candidate step until the runtime's atomic apply path
+// is built on it; remove this allowance then.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) mod edits;
 pub mod format;
 pub mod graph;
 pub mod handles;
