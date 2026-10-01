@@ -363,6 +363,13 @@ pub trait Module: Send {
         Vec::new()
     }
 
+    /// Called once on the control thread after a newly built instance is
+    /// attached and before it is published to the audio thread. Do here any
+    /// one-time work the first [`Module::process`] would otherwise do on the
+    /// audio thread, such as adopting shared state that needs a lock or an
+    /// allocation. May lock and allocate. The default does nothing.
+    fn prepare_for_publication(&mut self) {}
+
     /// Legacy module-local control metadata surface.
     fn controls(&self) -> Vec<ControlMeta> {
         vec![]

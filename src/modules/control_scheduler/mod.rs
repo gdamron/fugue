@@ -393,6 +393,13 @@ impl Module for ControlScheduler {
         self.ctrl.target_module_ids()
     }
 
+    /// Adopts the schedule resolved at attachment (locking and allocating
+    /// here, off the audio thread) and reserves its ramps, so the first block
+    /// after publication finds the version already current.
+    fn prepare_for_publication(&mut self) {
+        self.adopt_schedule_if_changed();
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
         use crate::ControlSurface;
         self.ctrl.controls()

@@ -259,8 +259,10 @@ impl GraphChange {
     }
 
     /// Attaches new schedulers against the directory as the change will
-    /// leave it, then compiles the complete next topology. Fails, with
-    /// nothing visible changed, when a schedule cannot resolve.
+    /// leave it, prepares each new instance for publication (see
+    /// [`crate::Module::prepare_for_publication`]), then compiles the
+    /// complete next topology. Fails, with nothing visible changed, when a
+    /// schedule cannot resolve.
     pub(crate) fn prepare(mut self) -> Result<PreparedChange, GraphCommandError> {
         for (id, module) in &self.built {
             if module.info.module_type != CONTROL_SCHEDULER_TYPE_ID {
@@ -273,6 +275,13 @@ impl GraphChange {
                 .map(|(_, handle)| handle);
             attach_from_handle_resolving(id, handle, &self.directory, &self.surfaces)
                 .map_err(GraphCommandError::ModuleBuildFailed)?;
+        }
+        // Attached, so each new instance can do its one-time setup here
+        // rather than in its first block on the audio thread.
+        for module in self.built.values_mut() {
+            if let Some(instance) = module.instance.as_mut() {
+                instance.module_mut().prepare_for_publication();
+            }
         }
         let mut instances: IndexMap<String, ModuleInstance> = self
             .built
