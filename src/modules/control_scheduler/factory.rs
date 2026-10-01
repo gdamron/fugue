@@ -74,3 +74,24 @@ pub(crate) fn attach_from_handle(
         })?;
     controls.attach(module_id, directory)
 }
+
+/// Like [`attach_from_handle`], but resolves the schedule against `surfaces`
+/// (the directory as a pending graph change will leave it), so a scheduler
+/// may target a module added in the same change. Nothing outside the new
+/// scheduler changes until that change commits.
+pub(crate) fn attach_from_handle_resolving(
+    module_id: &str,
+    handle: Option<&Arc<dyn std::any::Any + Send + Sync>>,
+    directory: &SurfaceDirectory,
+    surfaces: &schedule::SurfaceMap,
+) -> Result<(), String> {
+    let controls = handle
+        .and_then(|handle| handle.downcast_ref::<ControlSchedulerControls>())
+        .ok_or_else(|| {
+            format!(
+                "control_scheduler '{}' is missing its controls handle",
+                module_id
+            )
+        })?;
+    controls.attach_resolving(module_id, directory, surfaces)
+}

@@ -54,7 +54,9 @@ mod process;
 mod publication;
 mod scc;
 
+pub(crate) use compile::{compile_topology, TopologyFacts};
 pub(crate) use master::MasterObservers;
+pub(crate) use publication::{vacant, Publication};
 
 /// A command that can be sent to the audio thread for graph mutation.
 pub(crate) enum GraphCommand {
