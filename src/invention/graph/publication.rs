@@ -7,9 +7,18 @@
 //! their phase and state), the derived structures are swapped in, and the
 //! boxed publication, now holding the old map and old derived structures
 //! (including removed and replaced instances), goes back to the control
-//! thread on a bounded retire channel to be freed there. Nothing on this
-//! path allocates, frees, or locks, and no block ever plays part of a
+//! thread on a bounded retire channel to be freed there. Installing never
+//! allocates, frees, or locks, and no block ever plays part of a
 //! publication.
+//!
+//! Queued input writes are the one exception: applying one drops its two id
+//! strings on the audio thread, so a block frees at most twice the input
+//! queue's capacity.
+//!
+//! Both channels stay lock-free on the audio side only while the control
+//! side uses `try_send` and `try_recv` exclusively. A control thread parked
+//! in a blocking `send` or `recv` makes the audio thread's `try_*` call take
+//! the channel's internal waker lock to wake it.
 
 use indexmap::IndexMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -132,7 +141,9 @@ pub(crate) struct AudioLink {
 
 impl AudioLink {
     /// Links a graph to its publisher. `inputs` must be a bounded
-    /// (`sync_channel`) receiver: receiving from it never frees.
+    /// (`sync_channel`) receiver: receiving from it never frees. The control
+    /// side must only `try_send` on `inputs` and `try_recv` on `retire`'s
+    /// receiver (see the module docs).
     pub(crate) fn new(
         publications: Arc<Mailbox<Publication>>,
         inputs: Receiver<InputWrite>,
