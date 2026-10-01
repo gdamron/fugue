@@ -44,23 +44,16 @@ use crate::{GraphModule, MAX_BLOCK};
 use super::runtime::ModuleInstance;
 
 mod compile;
-// Nothing links a live graph to a publisher yet: the live editing paths
-// still send `GraphCommand`s, so these are reached only by tests for now.
-#[cfg_attr(not(test), allow(dead_code))]
 mod mailbox;
 mod master;
 mod process;
-#[cfg_attr(not(test), allow(dead_code))]
 mod publication;
 mod scc;
 
 pub(crate) use compile::{compile_topology, TopologyFacts};
-#[cfg(test)]
 pub(crate) use mailbox::Mailbox;
 pub(crate) use master::MasterObservers;
-#[cfg(test)]
-pub(crate) use publication::{AudioLink, InputWrite};
-pub(crate) use publication::{vacant, Publication};
+pub(crate) use publication::{vacant, AudioLink, InputWrite, Publication};
 
 /// A command that can be sent to the audio thread for graph mutation.
 pub(crate) enum GraphCommand {
@@ -151,7 +144,7 @@ pub(crate) struct SignalGraph {
     pub(crate) command_rx: mpsc::Receiver<GraphCommand>,
     /// The graph's link to a publisher of prepared topologies; `None` until
     /// a publisher links it. A linked graph changes only by publication.
-    pub(crate) link: Option<publication::AudioLink>,
+    pub(crate) link: Option<AudioLink>,
     /// Pre-computed topological processing order as module indices. Used for
     /// intra-SCC member ordering and back-edge classification.
     pub(crate) process_order: Vec<usize>,
