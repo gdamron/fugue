@@ -183,8 +183,8 @@ pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     /// The single path by which the audio graph changes.
-    live: LiveGraph,
-    registry: ModuleRegistry,
+    pub(crate) live: LiveGraph,
+    pub(crate) registry: ModuleRegistry,
     pub(crate) base_registry: ModuleRegistry,
     pub(crate) development_definitions: crate::invention::reload::DevelopmentDefinitions,
     pub(crate) sample_rate: u32,

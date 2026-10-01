@@ -1,0 +1,210 @@
+use std::sync::{Arc, Mutex};
+
+use crate::invention::builder::InventionBuilder;
+use crate::invention::runtime::RunningInvention;
+use crate::modules::dac::BlockRenderFn;
+use crate::modules::AudioBackend;
+use crate::{ControlValue, Invention};
+
+const SAMPLE_RATE: u32 = 48_000;
+
+const BASE: &str = r#"{
+    "version": "1.0.0",
+    "modules": [
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
+        { "id": "spare", "type": "oscillator", "config": { "frequency": 3.0 } },
+        { "id": "dac", "type": "dac" }
+    ],
+    "connections": [
+        { "from": "osc1", "from_port": "audio", "to": "dac", "to_port": "audio" },
+        { "from": "osc2", "from_port": "audio", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+/// BASE with osc1's frequency changed (a control update), osc2 and spare
+/// removed, osc3 added, osc1 disconnected from the dac, and osc3 wired to
+/// the dac and into osc1's FM input.
+const EDITED: &str = r#"{
+    "version": "1.0.0",
+    "modules": [
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 220.0 } },
+        { "id": "osc3", "type": "oscillator", "config": { "waveform": "square", "frequency": 330.0 } },
+        { "id": "dac", "type": "dac" }
+    ],
+    "connections": [
+        { "from": "osc3", "from_port": "audio", "to": "dac", "to_port": "audio" },
+        { "from": "osc1", "from_port": "audio", "to": "osc3", "to_port": "fm" }
+    ]
+}"#;
+
+/// A backend whose blocks the test renders by hand, standing in for the
+/// audio thread so publication timing is deterministic.
+#[derive(Clone, Default)]
+struct Pump(Arc<Mutex<Option<BlockRenderFn>>>);
+
+impl Pump {
+    fn render(&self, blocks: usize) -> Vec<f32> {
+        let mut render = self.0.lock().unwrap();
+        let render = render.as_mut().expect("backend started");
+        let mut out = Vec::new();
+        let mut left = [0.0f32; 64];
+        let mut right = [0.0f32; 64];
+        for _ in 0..blocks {
+            render(&mut left, &mut right);
+            out.extend_from_slice(&left);
+        }
+        out
+    }
+}
+
+struct ManualBackend(Pump);
+
+impl AudioBackend for ManualBackend {
+    fn sample_rate(&self) -> u32 {
+        SAMPLE_RATE
+    }
+
+    fn start(&mut self, render: BlockRenderFn) -> Result<(), Box<dyn std::error::Error>> {
+        *self.0 .0.lock().unwrap() = Some(render);
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        self.0 .0.lock().unwrap().take();
+    }
+}
+
+fn doc(json: &str) -> Invention {
+    Invention::from_json(json).unwrap()
+}
+
+fn start(json: &str) -> (RunningInvention, Pump) {
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(doc(json)).unwrap();
+    let pump = Pump::default();
+    let running = runtime
+        .start_with_backend(ManualBackend(pump.clone()))
+        .unwrap();
+    (running, pump)
+}
+
+/// Publications made, and publications the audio thread has installed.
+fn publications(running: &RunningInvention) -> (u64, u64) {
+    let publisher = running.live.publisher().lock().unwrap();
+    (publisher.generation(), publisher.applied())
+}
+
+#[test]
+fn a_multi_mutation_reload_reaches_the_audio_thread_as_one_publication() {
+    let (mut running, pump) = start(BASE);
+    pump.render(2);
+    let (generation, applied) = publications(&running);
+
+    let report = running.reload(doc(EDITED)).expect("reload applies");
+    assert_eq!(report.added, ["osc3"]);
+    assert_eq!(report.removed, ["osc2", "spare"]);
+    assert!(report.swapped.is_empty());
+    assert_eq!(report.controls_updated, ["osc1.frequency"]);
+    assert_eq!(report.connections_added, 2);
+    assert_eq!(report.connections_removed, 1);
+
+    // One publication queued for the whole reload, and nothing installed
+    // until the audio thread's next block.
+    assert_eq!(publications(&running), (generation + 1, applied));
+    pump.render(1);
+    assert_eq!(publications(&running), (generation + 1, applied + 1));
+    pump.render(4);
+    assert_eq!(publications(&running), (generation + 1, applied + 1));
+
+    // The runtime's mirrors and document all reflect the new document.
+    let state = running.state.lock().unwrap();
+    let ids: Vec<&str> = state.modules.keys().map(String::as_str).collect();
+    assert_eq!(ids, ["osc1", "dac", "osc3"]);
+    assert_eq!(state.connections.len(), 2);
+    drop(state);
+    assert_eq!(running.document(), Some(doc(EDITED)));
+    assert_eq!(
+        running.get_control("osc1", "frequency").unwrap(),
+        ControlValue::Number(220.0)
+    );
+}
+
+#[test]
+fn an_untouched_module_keeps_its_phase_and_state_across_a_reload() {
+    let (mut edited, edited_pump) = start(BASE);
+    let (control, control_pump) = start(BASE);
+    // Diverge osc2 at runtime in both, so a rebuild would be audible.
+    for running in [&edited, &control] {
+        running
+            .set_control("osc2", "frequency", ControlValue::Number(123.0))
+            .unwrap();
+    }
+    assert_eq!(edited_pump.render(7), control_pump.render(7));
+
+    // Remove the unheard module and add another; osc1, osc2 and the dac
+    // are untouched.
+    let next = BASE.replace(
+        r#"{ "id": "spare", "type": "oscillator", "config": { "frequency": 3.0 } }"#,
+        r#"{ "id": "lfo", "type": "lfo", "config": { "frequency": 2.0 } }"#,
+    );
+    let report = edited.reload(doc(&next)).expect("reload applies");
+    assert_eq!((report.added.len(), report.removed.len()), (1, 1));
+
+    // Sample for sample the same as a runtime that never reloaded: the
+    // survivors kept their phase and runtime state through the swap.
+    assert_eq!(edited_pump.render(20), control_pump.render(20));
+}
+
+#[test]
+fn a_failed_preparation_leaves_the_running_invention_unchanged() {
+    let (mut running, pump) = start(BASE);
+    // Kept alive: dropping a runtime stops its backend.
+    let (_twin, twin_pump) = start(BASE);
+    assert_eq!(pump.render(3), twin_pump.render(3));
+
+    let observe = |running: &RunningInvention| {
+        let state = running.state.lock().unwrap();
+        let surfaces: Vec<(String, Vec<String>)> = running
+            .list_all_controls()
+            .into_iter()
+            .map(|(id, controls)| (id, controls.into_iter().map(|meta| meta.key).collect()))
+            .collect();
+        (
+            state.modules.clone(),
+            state.connections.clone(),
+            state.document.clone(),
+            surfaces,
+            running.get_control("osc1", "frequency").unwrap(),
+            publications(running),
+        )
+    };
+    let before = observe(&running);
+
+    // A plan for EDITED, then made to fail at preparation: once on a module
+    // build and once on a connection to a port that does not exist.
+    let corruptions: [fn(&mut super::ReloadPlan); 2] = [
+        |plan| {
+            plan.added[0].module_type = "lfo".into();
+            plan.added[0].config = serde_json::json!({ "waveform": "bogus" });
+        },
+        |plan| plan.added_connections[0].to_port = "no_such_port".into(),
+    ];
+    for corrupt in corruptions {
+        let validated = running.validate_document(doc(EDITED)).unwrap();
+        let mut plan = running.plan_document(&validated).unwrap();
+        assert!(!plan.control_updates.is_empty() && !plan.removed.is_empty());
+        corrupt(&mut plan);
+        let adopt = Some((validated.registry, validated.definitions));
+        let prepared = running.prepare_plan(plan, Some(validated.document), adopt);
+        assert!(prepared.is_err());
+        assert_eq!(observe(&running), before);
+    }
+
+    // Nothing reached the audio thread: it still plays the untouched graph.
+    assert_eq!(pump.render(10), twin_pump.render(10));
+    assert_eq!(observe(&running), before);
+
+    // And the runtime still reloads normally afterwards.
+    running.reload(doc(EDITED)).expect("reload applies");
+    assert_eq!(running.document(), Some(doc(EDITED)));
+}

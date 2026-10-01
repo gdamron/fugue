@@ -265,8 +265,6 @@ impl GraphChange {
     /// [`crate::Module::prepare_for_publication`]), then compiles the
     /// complete next topology. Fails, with nothing visible changed, when a
     /// schedule cannot resolve.
-    // Only tests prepare outside the lock until reload does.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn prepare(mut self) -> Result<PreparedChange, GraphCommandError> {
         self.attach()?;
         Ok(self.compile())
