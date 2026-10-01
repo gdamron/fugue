@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+mod editing;
 #[cfg(feature = "spectrogram")]
 mod spectrum;
 
