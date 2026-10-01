@@ -90,7 +90,7 @@ pub use self::factory::ControlSchedulerFactory;
 pub use self::schedule::{ScheduleEntry, ScheduleValue};
 
 pub(crate) use self::controls::SurfaceDirectory;
-pub(crate) use self::factory::attach_from_handle;
+pub(crate) use self::factory::{attach_from_handle, attach_from_handle_resolving};
 
 mod controls;
 mod factory;
