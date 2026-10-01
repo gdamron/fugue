@@ -169,24 +169,23 @@ fn a_multi_edit_change_reaches_the_audio_thread_as_one_publication() {
 #[test]
 fn untouched_modules_keep_their_phase_across_a_publication() {
     let mut edited = Rig::new(BASE);
-    let mut control = Rig::new(BASE);
-    assert_eq!(edited.render(5), control.render(5));
+    let mut untouched = Rig::new(BASE);
+    assert_eq!(edited.render(5), untouched.render(5));
 
-    // Rewire around osc1 without touching it or its route to the dac.
-    let mut change = edited.live.begin();
-    change.remove("osc2");
-    change.upsert(
-        "lfo",
-        edited.build("lfo", "oscillator", serde_json::json!({ "frequency": 2.0 })),
-    );
-    edited.live.commit(change.prepare().unwrap()).unwrap();
+    // Add an unconnected module: every audible module survives the swap.
+    let lfo = edited.build("lfo", "oscillator", serde_json::json!({ "frequency": 2.0 }));
+    edited
+        .live
+        .edit(|change| {
+            change.upsert("lfo", lfo);
+            Ok(())
+        })
+        .unwrap();
 
-    let mut change = control.live.begin();
-    change.remove("osc2");
-    control.live.commit(change.prepare().unwrap()).unwrap();
-
-    // Same output sample for sample: osc1 kept its phase in both.
-    assert_eq!(edited.render(20), control.render(20));
+    // Same output sample for sample as a rig that never published: no
+    // survivor was reset by the install.
+    assert_eq!(edited.render(20), untouched.render(20));
+    assert_eq!(edited.generation_and_applied(), (1, 1));
 }
 
 #[test]
