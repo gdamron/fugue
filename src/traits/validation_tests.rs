@@ -98,3 +98,84 @@ fn a_schedule_validates_against_the_directory_the_write_lands_in() {
         .validate_control("step", &ControlValue::Number(1.0), &candidate)
         .is_err());
 }
+
+/// A development's exposed `schedule` names a module inside the
+/// development; the outer document has no such module.
+fn development_with_inner_scheduler() -> crate::Invention {
+    use crate::{DevelopmentControl, DevelopmentSpec, Invention, ModuleSpec};
+    let module = |id: &str, module_type: &str| ModuleSpec {
+        id: id.to_string(),
+        module_type: module_type.to_string(),
+        config: serde_json::json!({}),
+    };
+    let blank = |modules| Invention {
+        version: "1.0.0".to_string(),
+        title: None,
+        description: None,
+        developments: vec![],
+        assets: Default::default(),
+        modules,
+        connections: vec![],
+        inputs: vec![],
+        outputs: vec![],
+        controls: vec![],
+        source_path: None,
+    };
+    let mut pattern = blank(vec![
+        module("sched", "control_scheduler"),
+        module("o", "oscillator"),
+    ]);
+    pattern.controls.push(DevelopmentControl {
+        key: "schedule".to_string(),
+        module: "sched".to_string(),
+        control: "schedule".to_string(),
+    });
+    let mut root = blank(vec![module("lead", "pattern")]);
+    root.developments.push(DevelopmentSpec {
+        reference: None,
+        name: "pattern".to_string(),
+        path: None,
+        definition: Some(Box::new(pattern)),
+    });
+    root
+}
+
+#[test]
+fn a_development_validates_inner_writes_against_its_own_directory() {
+    let (runtime, _) = crate::InventionBuilder::new(48_000)
+        .build(development_with_inner_scheduler())
+        .unwrap();
+    let surface = runtime
+        .control_surfaces
+        .lock()
+        .unwrap()
+        .get("lead")
+        .cloned()
+        .unwrap();
+    let schedule = |module: &str| {
+        ControlValue::String(format!(
+            r#"[{{ "at": 0, "module": "{module}", "control": "frequency", "value": 220.0 }}]"#
+        ))
+    };
+
+    // The outer directory plays no part: `o` resolves inside the
+    // development, and `lead` (an outer module) does not.
+    let mut outer = ControlSurfaceMap::new();
+    outer.insert("lead".to_string(), surface.clone());
+    assert!(surface
+        .validate_control("schedule", &schedule("o"), &outer)
+        .is_ok());
+    assert!(surface
+        .validate_control("schedule", &schedule("lead"), &outer)
+        .is_err());
+
+    // Current behaviour, a known gap: the development drops its internal
+    // runtime's directory once built, so the write that validation accepts
+    // is still refused by the setter.
+    let set = surface.set_control("schedule", schedule("o"));
+    assert!(
+        set.as_ref()
+            .is_err_and(|err| err.contains("runtime is gone")),
+        "{set:?}"
+    );
+}

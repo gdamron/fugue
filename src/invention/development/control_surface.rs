@@ -103,11 +103,13 @@ impl ControlSurface for DevelopmentControlSurface {
     }
 
     /// Validates the write against every internal control `key` aliases.
+    /// Inner surfaces resolve against the development's own directory, as
+    /// their setters do, never against the outer candidate's.
     fn validate_control(
         &self,
         key: &str,
         value: &ControlValue,
-        surfaces: &crate::traits::ControlSurfaceMap,
+        _surfaces: &crate::traits::ControlSurfaceMap,
     ) -> Result<(), String> {
         let mut found = false;
         for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
@@ -115,7 +117,7 @@ impl ControlSurface for DevelopmentControlSurface {
                 .surfaces
                 .get(&control.module_id)
                 .ok_or_else(|| format!("Unknown control module: {}", control.module_id))?;
-            surface.validate_control(&control.key, value, surfaces)?;
+            surface.validate_control(&control.key, value, &self.surfaces)?;
             found = true;
         }
         if found {
