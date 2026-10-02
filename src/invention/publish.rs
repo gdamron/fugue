@@ -12,8 +12,12 @@
 //!    freeing, or locking (see `graph::publication`). The old structures come
 //!    back to the control thread to be freed.
 //! 3. **Commit** (control thread): the runtime's mirrors (modules,
-//!    connections, ports, control surfaces, document) update together. After
-//!    the publication is queued nothing can fail.
+//!    connections, ports, control surfaces, document) update together; this
+//!    cannot fail. Control writes made alongside a change (a reload's
+//!    config-as-control updates) are validated in step 1, but a write can
+//!    still fail when made if only making it reveals the problem (a sample
+//!    that does not load). The caller reports such a write; the published
+//!    topology stands.
 //!
 //! Offline render owns its graph outright and keeps applying edits directly.
 

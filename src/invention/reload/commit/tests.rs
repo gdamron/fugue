@@ -181,14 +181,16 @@ fn a_failed_preparation_leaves_the_running_invention_unchanged() {
     };
     let before = observe(&running);
 
-    // A plan for EDITED, then made to fail at preparation: once on a module
-    // build and once on a connection to a port that does not exist.
-    let corruptions: [fn(&mut super::ReloadPlan); 2] = [
+    // A plan for EDITED, then made to fail at preparation: on a module
+    // build, on a connection to a port that does not exist, and on a control
+    // value the control refuses.
+    let corruptions: [fn(&mut super::ReloadPlan); 3] = [
         |plan| {
             plan.added[0].module_type = "lfo".into();
             plan.added[0].config = serde_json::json!({ "waveform": "bogus" });
         },
         |plan| plan.added_connections[0].to_port = "no_such_port".into(),
+        |plan| plan.control_updates[0].2 = ControlValue::String("loud".into()),
     ];
     for corrupt in corruptions {
         let validated = running.validate_document(doc(EDITED)).unwrap();
@@ -255,4 +257,90 @@ fn an_edit_landing_while_a_reload_is_planned_or_prepared_refuses_it() {
         running.reload(doc(EDITED)).expect("reload applies");
         assert_eq!(running.document(), Some(doc(EDITED)));
     }
+}
+
+/// A module whose one control validates but refuses every write, standing
+/// in for a write only making it can reveal as bad (a sample that does not
+/// load).
+struct Flaky;
+
+struct FlakyControls(f32);
+
+impl crate::ControlSurface for FlakyControls {
+    fn controls(&self) -> Vec<crate::ControlMeta> {
+        vec![crate::ControlMeta::number("level", "Level")]
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        match key {
+            "level" => Ok(ControlValue::Number(self.0)),
+            _ => Err(format!("Unknown control: {key}")),
+        }
+    }
+
+    fn set_control(&self, _key: &str, _value: ControlValue) -> Result<(), String> {
+        Err("refused when written".to_string())
+    }
+}
+
+impl crate::ModuleFactory for Flaky {
+    fn type_id(&self) -> &'static str {
+        "flaky"
+    }
+
+    fn build(
+        &self,
+        _sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<crate::ModuleBuildResult, Box<dyn std::error::Error>> {
+        let level = config.get("level").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        // Any port-less module will do; only the surface matters here.
+        let registry = crate::ModuleRegistry::default();
+        let module = registry
+            .build("code", 48_000, &serde_json::json!({}))?
+            .module;
+        Ok(crate::ModuleBuildResult {
+            module,
+            handles: Vec::new(),
+            control_surface: Some(std::sync::Arc::new(FlakyControls(level as f32))),
+            sink: None,
+        })
+    }
+}
+
+#[test]
+fn a_control_write_that_fails_when_made_is_reported_and_not_retained() {
+    let base = BASE.replace(
+        r#"{ "id": "dac", "type": "dac" }"#,
+        r#"{ "id": "dac", "type": "dac" },
+        { "id": "flaky", "type": "flaky", "config": { "level": 0.25 } }"#,
+    );
+    let mut registry = crate::ModuleRegistry::default();
+    registry.register(Flaky);
+    let (runtime, _) = InventionBuilder::with_registry(SAMPLE_RATE, registry)
+        .build(doc(&base))
+        .unwrap();
+    let pump = Pump::default();
+    let mut running = runtime
+        .start_with_backend(ManualBackend(pump.clone()))
+        .unwrap();
+
+    let edited = base
+        .replace(r#""level": 0.25"#, r#""level": 0.75"#)
+        .replace(r#""frequency": 440.0"#, r#""frequency": 220.0"#);
+    let report = running.reload(doc(&edited)).expect("reload applies");
+    assert_eq!(report.controls_updated, ["osc1.frequency"]);
+    assert_eq!(report.controls_failed.len(), 1);
+    let failure = &report.controls_failed[0];
+    assert_eq!(
+        (failure.module_id.as_str(), failure.key.as_str()),
+        ("flaky", "level")
+    );
+    assert_eq!(failure.error, "refused when written");
+
+    // The document records what the module plays, not what was asked.
+    let document = running.document().unwrap();
+    let flaky = document.modules.iter().find(|m| m.id == "flaky").unwrap();
+    assert_eq!(flaky.config["level"], serde_json::json!(0.25));
+    pump.render(1);
 }

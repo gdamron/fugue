@@ -300,6 +300,7 @@ impl GraphChange {
             return PreparedChange {
                 base_generation: self.base_generation,
                 mirror: self.mirror,
+                surfaces: self.surfaces,
                 built: self.built,
                 publication: None,
             };
@@ -325,6 +326,7 @@ impl GraphChange {
         PreparedChange {
             base_generation: self.base_generation,
             mirror: self.mirror,
+            surfaces: self.surfaces,
             built: self.built,
             publication: Some(publication),
         }
@@ -345,6 +347,9 @@ pub(crate) struct PreparedChange {
     /// one makes the change stale, and the publisher refuses it.
     pub(crate) base_generation: u64,
     pub(crate) mirror: TopologyMirror,
+    /// The control-surface directory as the change will leave it, for
+    /// validating control writes that land with it.
+    pub(crate) surfaces: SurfaceMap,
     pub(crate) built: IndexMap<String, BuiltModule>,
     /// The compiled next topology; `None` when the change edits nothing.
     pub(crate) publication: Option<Box<Publication>>,

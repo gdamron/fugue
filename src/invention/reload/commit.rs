@@ -6,7 +6,7 @@
 //! runtime's mirrors, control values, registry, and document. Reload uses
 //! both; other whole-graph edits can reuse them.
 
-use super::{DevelopmentDefinitions, ReloadPlan, ReloadReport};
+use super::{ControlFailure, DevelopmentDefinitions, ReloadPlan, ReloadReport};
 use crate::invention::publish::{edge, GraphChange, PreparedChange};
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
 use crate::{ControlValue, Invention, ModuleRegistry};
@@ -19,6 +19,8 @@ pub(crate) struct PreparedCommit {
     /// Registry and development definitions to adopt on commit, when the
     /// change was built against new ones.
     adopt: Option<(ModuleRegistry, DevelopmentDefinitions)>,
+    /// Validated control writes on surviving modules, values coerced to
+    /// their controls' kinds.
     control_updates: Vec<(String, String, ControlValue)>,
     refreshed_configs: Vec<(String, serde_json::Value)>,
     report: ReloadReport,
@@ -28,7 +30,9 @@ impl RunningInvention {
     /// Prepares `plan` without changing anything visible: builds added and
     /// swapped modules (against `adopt`'s registry when given, otherwise the
     /// current one), attaches schedulers against the directory as the plan
-    /// will leave it, and compiles the complete next topology.
+    /// will leave it, compiles the complete next topology, and validates
+    /// every control update against that directory (see
+    /// [`crate::ControlSurface::validate_control`]).
     ///
     /// `base_generation` is [`crate::invention::publish::LiveGraph::generation`]
     /// read before `plan` was made. When the graph has changed since, the
@@ -88,16 +92,17 @@ impl RunningInvention {
             change.connect(edge(&conn.from, &conn.from_port, &conn.to, &conn.to_port))?;
         }
         let change = change.prepare()?;
+        let control_updates = validate_control_updates(&change, plan.control_updates)?;
 
         let report = ReloadReport {
             added: plan.added.iter().map(|spec| spec.id.clone()).collect(),
             removed: plan.removed,
             swapped: plan.swapped.iter().map(|spec| spec.id.clone()).collect(),
-            controls_updated: plan
-                .control_updates
+            controls_updated: control_updates
                 .iter()
                 .map(|(module_id, key, _)| format!("{module_id}.{key}"))
                 .collect(),
+            controls_failed: Vec::new(),
             connections_added: plan.added_connections.len(),
             connections_removed: plan.removed_connections.len(),
             unchanged: plan.unchanged.len(),
@@ -106,7 +111,7 @@ impl RunningInvention {
             change,
             document,
             adopt,
-            control_updates: plan.control_updates,
+            control_updates,
             refreshed_configs: plan.refreshed_configs,
             report,
         })
@@ -117,11 +122,14 @@ impl RunningInvention {
     /// updates on surviving modules, retains the document, and starts or
     /// stops scripts and agents.
     ///
-    /// Control updates are written right after the publication is queued, so
-    /// a value may be heard up to one block before the new topology. Fails,
-    /// with nothing changed, when another change published since the plan
-    /// was prepared ([`GraphCommandError::TopologyMoved`]) or the audio
-    /// thread is gone.
+    /// Fails, with nothing changed, only when another change published since
+    /// the plan was prepared ([`GraphCommandError::TopologyMoved`]) or the
+    /// audio thread is gone. Control updates are written right after the
+    /// publication is queued, so a value may be heard up to one block before
+    /// the new topology. A validated update that still fails when written
+    /// keeps the module's previous value, is moved from the report's
+    /// `controls_updated` to its `controls_failed`, and that previous value
+    /// is what the retained document records.
     pub(crate) fn commit_prepared(
         &mut self,
         prepared: PreparedCommit,
@@ -131,7 +139,9 @@ impl RunningInvention {
             self.adopt_definitions(registry, definitions);
         }
 
+        let mut report = prepared.report;
         let snapshot = self.snapshot();
+        let mut kept = Vec::new();
         for (module_id, key, value) in prepared.control_updates {
             // Quiet: carrying authored values into the rebuilt graph is
             // reconstruction, not a live agent-initiated change. The reload's
@@ -139,10 +149,21 @@ impl RunningInvention {
             // `ControlChanged` per carried value would be redundant and would
             // misattribute the reload as a conducting gesture.
             if let Err(error) = snapshot.set_control_recorded(&module_id, &key, value) {
-                // The topology is already published; a value the module
-                // rejects keeps its previous setting rather than failing a
-                // change that has landed.
-                eprintln!("Warning: reload could not set {module_id}.{key}: {error}");
+                // The topology is already published; the module keeps its
+                // previous value rather than failing a change that landed.
+                let label = format!("{module_id}.{key}");
+                report.controls_updated.retain(|updated| *updated != label);
+                if let Ok(actual) = self.get_control(&module_id, &key) {
+                    kept.push((module_id.clone(), key.clone(), actual));
+                }
+                report.controls_failed.push(ControlFailure {
+                    module_id,
+                    key,
+                    error: match error {
+                        GraphCommandError::ControlError(message) => message,
+                        other => other.to_string(),
+                    },
+                });
             }
         }
         {
@@ -157,11 +178,39 @@ impl RunningInvention {
             if let Some(document) = prepared.document {
                 state.document = Some(document);
             }
+            for (module_id, key, actual) in &kept {
+                state.document_write_control(module_id, key, actual);
+            }
         }
 
         self.follow_up(committed);
-        Ok(prepared.report)
+        Ok(report)
     }
+}
+
+/// Coerces each control update to its control's kind and validates it
+/// against the directory `change` leaves, failing on the first refusal.
+fn validate_control_updates(
+    change: &PreparedChange,
+    updates: Vec<(String, String, ControlValue)>,
+) -> Result<Vec<(String, String, ControlValue)>, GraphCommandError> {
+    updates
+        .into_iter()
+        .map(|(module_id, key, value)| {
+            let surface = change.surfaces.get(&module_id).ok_or_else(|| {
+                GraphCommandError::ControlError(format!(
+                    "{module_id}.{key}: module has no controls"
+                ))
+            })?;
+            let value = surface.coerce_value(&key, value);
+            surface
+                .validate_control(&key, &value, &change.surfaces)
+                .map_err(|error| {
+                    GraphCommandError::ControlError(format!("{module_id}.{key}: {error}"))
+                })?;
+            Ok((module_id, key, value))
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -275,10 +275,24 @@ pub struct ReloadReport {
     pub swapped: Vec<String>,
     /// Config deltas applied live as `module.key` control updates.
     pub controls_updated: Vec<String>,
+    /// Config-as-control updates that passed validation but failed when
+    /// written (a sample that did not load, say). The module keeps its
+    /// previous value, and the retained document records that value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controls_failed: Vec<ControlFailure>,
     pub connections_added: usize,
     pub connections_removed: usize,
     /// Modules untouched by the diff; they keep their phase and state.
     pub unchanged: usize,
+}
+
+/// A control write a reload could not make.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct ControlFailure {
+    pub module_id: String,
+    pub key: String,
+    pub error: String,
 }
 
 /// Why a reload did not apply. Either way the running invention is
@@ -335,8 +349,10 @@ impl RunningInvention {
     /// block ever plays part of it. Modules whose development definition
     /// changed (directly or through a nested development) are rebuilt;
     /// everything else keeps its state. A config change expressible as
-    /// controls is written to the surviving module right after publication,
-    /// so it may be heard up to one block before the new topology.
+    /// controls is validated with the rest and written to the surviving
+    /// module right after publication, so it may be heard up to one block
+    /// before the new topology; one that still fails when written is listed
+    /// in [`ReloadReport::controls_failed`].
     ///
     /// When another edit (a script's, say) changes the graph while the
     /// reload is planned or prepared, the reload is planned and prepared
