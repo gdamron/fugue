@@ -6,6 +6,10 @@ disconnect ports, set authored control values) either commits as a whole, in
 one revision, or is refused and changes nothing. No audio block ever plays a
 half-applied batch.
 
+The batch is applied to the daemon's retained authored document (the document
+a save writes), and the change to the running graph is planned from that
+document.
+
 Whole-document `ReloadInvention` remains the default structural path. Use it
 when you hold the whole document. Use `ApplyEdits` for a targeted change to a
 large invention, where sending the whole document back costs more than the
@@ -53,8 +57,10 @@ starting state and is written into its config, exactly as a standalone
 `SetControl` with the default `author` intent. There is no `intent` field. Live
 performance gestures stay on `SetControl`/`SetControls` with `intent: perform`.
 
-Unknown fields and unknown ops are refused when the request is parsed, so a
-misspelled field fails loudly instead of being ignored.
+Unknown fields inside an edit, and unknown ops, are refused when the request
+is parsed, so a misspelled edit field fails loudly instead of being ignored.
+Fields the envelope or the command itself does not know are ignored, as for
+every other command.
 
 Edits address the invention's top-level modules. They do not reach inside a
 development's definition, and they do not change the document's developments,
@@ -96,7 +102,7 @@ A committed batch answers with `kind: "edits_applied"`:
   "added": ["tremolo"],
   "removed": [],
   "rebuilt": [],
-  "controls_written": ["lead.am_amount"],
+  "controls_written": [{ "module_id": "lead", "key": "am_amount" }],
   "connections_added": 1,
   "connections_removed": 0,
   "untouched": 41
@@ -106,15 +112,38 @@ A committed batch answers with `kind: "edits_applied"`:
 | Field | Meaning |
 | --- | --- |
 | `edit_count` | Edits in the batch; all were applied. |
-| `added`, `removed` | Module ids added to or removed from the running graph. |
-| `rebuilt` | Module ids removed and added again with a different type or config; their internal state restarts. |
-| `controls_written` | `module.key` for each distinct control the `set_control` edits wrote, in first-written order. |
+| `added`, `removed` | Module ids added to or removed from the running graph. A module added and removed again in the same batch appears in neither. |
+| `rebuilt` | Module ids that existed before the batch and were removed and added again in it. Each gets a fresh instance, even with an identical type and config, so its internal state restarts. |
+| `controls_written` | `{ module_id, key }` for each distinct control the `set_control` edits wrote, once, in first-written order. Only modules that exist after the commit are listed: a write to a module that a later edit removed or replaced goes with that module. |
+| `controls_failed` | Present only when a write failed at commit; see below. |
 | `connections_added`, `connections_removed` | Connection counts. |
-| `untouched` | Modules the batch did not touch. They keep their phase and state. |
+| `untouched` | Surviving modules that were not rebuilt. They keep their instance, phase and state. A module whose only change is a `set_control` counts here: its value changes, its instance does not. |
 
 The report's size depends on the batch, never on the invention: each list
 holds at most one entry per edit. It is not a snapshot; read one if you need
-the new state.
+the new state. A field added by a later daemon reads as empty from an older
+one.
+
+### A control that fails at commit
+
+Every control value is checked against the module's own rules before anything
+is published, so a value the module would refuse is refused with its edit's
+index (see below). Rarely, a write that passed that check still fails when the
+commit makes it: a sample file that does not load, say. The batch is still
+committed: the revision advances and every other edit stands. The failure is
+listed in `controls_failed`, the module keeps the value it had, and the
+retained document records that value, so a save and the running module agree.
+A failed control is not listed in `controls_written` and emits no
+`control_changed`.
+
+```json
+"controls_failed": [
+  { "edit_index": 4, "module_id": "keys", "key": "sample", "error": "file not found: keys/c4.wav" }
+]
+```
+
+`edit_index` is the last `set_control` edit in the batch that wrote that
+control.
 
 The envelope's `revision` is the revision the batch committed at. Use it as
 the next `expected_revision` and the next ticket's `issued_at`.
@@ -144,8 +173,9 @@ carries an `edit` detail naming the **first** failing edit:
 }
 ```
 
-`index` is zero-based. Edits after it were not checked; fix this one and
-resend the batch with a **new** ticket (it is a different command).
+`index` is zero-based. Edits after it were not checked. Fix this one and
+resend the batch with a **new** ticket (see
+[Retrying after a lost reply](#retrying-after-a-lost-reply)).
 
 | `reason` | Raised by | Meaning |
 | --- | --- | --- |
@@ -158,17 +188,27 @@ resend the batch with a **new** ticket (it is a different command).
 | `connection_exists` | `connect` | The connection already exists. |
 | `connection_not_found` | `disconnect` | No such connection exists. |
 | `unknown_control` | `set_control` | The module exposes no control with that key. |
-| `invalid_control_value` | `set_control` | The value cannot be coerced to the control's kind. |
+| `invalid_control_value` | `set_control` | The value cannot be coerced to the control's kind, is not a finite number, or the module refuses it. |
 
 Messages that name a port or control list what is available, so an agent can
 correct the edit without another read.
 
 `set_control` values are coerced to the control's declared kind first, as a
-standalone write is: `"0.5"` becomes `0.5` for a number control and `"true"`
-becomes `true` for a boolean one. A value that still has the wrong kind is
-`invalid_control_value`. Numeric ranges and option lists are applied by the
-module itself, which may clamp a value or accept an alias, as it does for a
-standalone write.
+standalone write is: `"0.5"` becomes `0.5` for a number control, `"true"`
+becomes `true` for a boolean one, and `3` becomes `"3"` for a string one. A
+value that still has the wrong kind, or a number that is not finite (NaN, an
+infinity, or a value too large for a 32-bit float such as `1e39`), is
+`invalid_control_value`.
+
+The value is then checked against the module's own rules, before anything is
+published, exactly as the module's setter would check it. A value the module
+would refuse is `invalid_control_value` at that edit's index: a read-only
+control (a sequencer's `current_cell`, say), text that does not parse as the
+JSON a control expects (such as `sequences_json`), or an option the control
+does not offer. Within those rules a module may still clamp a number into its
+range or accept an alias for an option, as it does for a standalone write.
+
+Messages echo at most about 64 bytes of a refused value.
 
 ### The batch as a whole
 
@@ -190,13 +230,29 @@ request with the **same** ticket. The daemon never runs a ticketed batch twice:
 - If the batch committed, the answer is `kind: "mutation_committed"` with
   `mutation_id` and `committed_at`, the revision it produced. The original
   report is not repeated; read state if you need it.
-- If the batch was refused, the answer is the same refusal.
+- If the batch was refused, the answer is the same refusal, whatever the
+  cause: `invalid_edit`, `module_build_failed`, `audio_thread_stopped` or
+  any other refusal recorded against the ticket. Resending the same ticket
+  never retries the batch.
 - `mutation_expired` or `revision_conflict` with reason `session_replaced`
   means the outcome is unknown. Re-read the invention (`GetInvention` or
   `InspectInvention`) and decide whether your change is present.
 
+So once you have fixed the cause of a refusal, even one that was not your
+batch's fault (an invention that was not running, say), send the batch as a
+new command with a **new** ticket. Reuse a ticket only to resend after a lost
+reply.
+
 A refused batch is recorded without advancing the revision, so any number of
 refusals never expire tickets minted at the same revision.
+
+### An older daemon
+
+A daemon built before `apply_edits` existed cannot parse the request and
+answers with a generic request error, never `invalid_edit`. The wire schema
+version does not tell the two apart, since the command was added within
+schema version 1. Check the daemon's `build` fingerprint from hello
+(`DaemonIdentity`) before relying on `apply_edits`.
 
 ## What a commit does, in order
 
@@ -205,14 +261,17 @@ refusals never expire tickets minted at the same revision.
 2. Control values written to modules that survive the batch are applied right
    after the new graph is queued. A value may therefore be heard up to one
    audio block before the new graph. Values for added or rebuilt modules are
-   part of their config and arrive with them.
+   part of their config and arrive with them. A control written more than
+   once ends at its last value.
 3. The revision advances once, however many edits the batch held.
 4. The session is saved. A failed save is logged and does not undo the
    commit.
 5. Events, in this order:
-   - one `control_changed { module_id, key, value }` per `set_control` edit,
-     with the same payload and applied (coerced) value as a standalone
-     authored write;
+   - one `control_changed { module_id, key, value }` per control the
+     `set_control` edits wrote, for modules that exist after the commit
+     (survivors and added modules alike), carrying the control's final
+     value with the same payload as a standalone authored write. Writes to a
+     module that a later edit removed or replaced emit nothing;
    - one `topology_changed`;
    - one `snapshot`.
 
