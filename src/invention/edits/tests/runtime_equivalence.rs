@@ -145,3 +145,22 @@ fn registry_facts_read_ports_and_control_kinds() {
         .iter()
         .any(|port| port == "audio"));
 }
+
+#[test]
+fn a_module_without_a_control_surface_has_no_controls_to_set() {
+    let document = base();
+    let mut facts = RegistryFacts::for_document(&document);
+    assert!(facts.module("dac").unwrap().controls.is_empty());
+    let failure = apply_to_candidate(
+        &document,
+        &[set("dac", "volume", ControlValue::Number(0.5))],
+        &mut facts,
+    )
+    .unwrap_err();
+    assert_eq!(failure.reason, EditFailureReason::UnknownControl);
+    assert!(
+        failure.message.contains("available: none"),
+        "{}",
+        failure.message
+    );
+}

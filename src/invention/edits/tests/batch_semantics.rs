@@ -2,6 +2,7 @@
 //! more than once.
 
 use super::*;
+use crate::rpc::MAX_EDITS_PER_BATCH;
 
 /// `(edit_index, "module.key", value)` for each write.
 fn writes<'c>(
@@ -228,4 +229,33 @@ fn refusals_echo_a_bounded_part_of_the_value() {
     // A short value is shown whole.
     let failure = refused(vec![set("osc1", "frequency", ControlValue::Bool(true))]);
     assert!(failure.message.ends_with("got true"), "{}", failure.message);
+}
+
+#[test]
+fn a_number_sent_to_a_string_control_becomes_its_text() {
+    // Coerced as a standalone write coerces it. Whether the module offers
+    // that option is the module's own check, made at commit.
+    let candidate = apply(vec![set("osc1", "type", ControlValue::Number(3.0))]).unwrap();
+    assert_eq!(
+        writes(&candidate.control_writes),
+        [(0, "osc1.type".into(), ControlValue::String("3".into()))]
+    );
+    assert_eq!(
+        config_of(&candidate.document, "osc1"),
+        &json!({ "frequency": 440, "type": "3" })
+    );
+}
+
+#[test]
+fn a_refusal_at_the_batch_limit_names_index_255() {
+    let mut edits: Vec<StructuralEdit> = (0..MAX_EDITS_PER_BATCH - 1)
+        .map(|step| set("osc1", "frequency", ControlValue::Number(step as f32)))
+        .collect();
+    edits.push(connect("osc1", "audio", "osc2", "nowhere"));
+    assert_eq!(edits.len(), MAX_EDITS_PER_BATCH);
+    let failure = refused(edits);
+    assert_eq!(
+        (failure.index, failure.op, failure.reason),
+        (255, EditOp::Connect, EditFailureReason::UnknownPort)
+    );
 }
