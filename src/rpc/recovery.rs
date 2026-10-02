@@ -439,6 +439,11 @@ fn truncate(message: &mut String) {
     truncate_on_char_boundary(message, MAX_RECORDED_MESSAGE_BYTES);
 }
 
+/// The most of a module's own error message a reply carries, in bytes: the
+/// reason a module type refused a config, or a control write failed when a
+/// commit made it. Bounded because a module may echo what it refused.
+pub(crate) const MODULE_ERROR_BYTES: usize = 256;
+
 /// Cuts `message` to at most `max_bytes`, on a UTF-8 character boundary.
 pub(crate) fn truncate_on_char_boundary(message: &mut String, max_bytes: usize) {
     if message.len() <= max_bytes {

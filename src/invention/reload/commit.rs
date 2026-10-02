@@ -6,12 +6,10 @@
 //! runtime's mirrors, control values, registry, and document. Reload uses
 //! both; other whole-graph edits can reuse them.
 
-use super::{
-    ControlFailure, DevelopmentDefinitions, ReloadPlan, ReloadReport, MAX_CONTROL_ERROR_BYTES,
-};
-use crate::invention::publish::{edge, GraphChange, PreparedChange};
+use super::{ControlFailure, DevelopmentDefinitions, ReloadPlan, ReloadReport};
+use crate::invention::publish::{edge, BuiltModule, GraphChange, PreparedChange};
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
-use crate::rpc::truncate_on_char_boundary;
+use crate::rpc::{truncate_on_char_boundary, MODULE_ERROR_BYTES};
 use crate::{ControlValue, Invention, ModuleRegistry};
 
 /// A plan prepared off the audio thread, ready to commit.
@@ -74,27 +72,7 @@ impl RunningInvention {
             .map(build)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut change = self.live.begin();
-        if change.base_generation != base_generation {
-            return Err(GraphCommandError::TopologyMoved);
-        }
-        for conn in &plan.removed_connections {
-            change.disconnect(edge(&conn.from, &conn.from_port, &conn.to, &conn.to_port));
-        }
-        // A swap keeps the module's connections whose ports it still has.
-        for (spec, module) in plan.swapped.iter().zip(swapped) {
-            change.upsert(&spec.id, module);
-        }
-        for module_id in &plan.removed {
-            change.remove(module_id);
-        }
-        for (spec, module) in plan.added.iter().zip(added) {
-            change.upsert(&spec.id, module);
-        }
-        for conn in &plan.added_connections {
-            change.connect(edge(&conn.from, &conn.from_port, &conn.to, &conn.to_port))?;
-        }
-        let change = change.prepare()?;
+        let change = self.stage_plan(base_generation, &plan, swapped, added)?;
         let control_updates = validate_control_updates(&change, plan.control_updates)?;
 
         let report = ReloadReport {
@@ -118,6 +96,45 @@ impl RunningInvention {
             refreshed_configs: plan.refreshed_configs,
             report,
         })
+    }
+
+    /// Applies `plan`'s structural changes to a change begun against the
+    /// current topology and prepares it (see [`GraphChange::prepare`]).
+    /// `swapped` and `added` are the modules built for `plan.swapped` and
+    /// `plan.added`, in the same order. Control updates are the caller's.
+    ///
+    /// Fails with [`GraphCommandError::TopologyMoved`] when the graph has
+    /// changed since `base_generation`, and with the preparation's error when
+    /// a connection or schedule does not resolve; either way nothing visible
+    /// changed.
+    pub(crate) fn stage_plan(
+        &self,
+        base_generation: u64,
+        plan: &ReloadPlan,
+        swapped: Vec<BuiltModule>,
+        added: Vec<BuiltModule>,
+    ) -> Result<PreparedChange, GraphCommandError> {
+        let mut change = self.live.begin();
+        if change.base_generation != base_generation {
+            return Err(GraphCommandError::TopologyMoved);
+        }
+        for conn in &plan.removed_connections {
+            change.disconnect(edge(&conn.from, &conn.from_port, &conn.to, &conn.to_port));
+        }
+        // A swap keeps the module's connections whose ports it still has.
+        for (spec, module) in plan.swapped.iter().zip(swapped) {
+            change.upsert(&spec.id, module);
+        }
+        for module_id in &plan.removed {
+            change.remove(module_id);
+        }
+        for (spec, module) in plan.added.iter().zip(added) {
+            change.upsert(&spec.id, module);
+        }
+        for conn in &plan.added_connections {
+            change.connect(edge(&conn.from, &conn.from_port, &conn.to, &conn.to_port))?;
+        }
+        change.prepare()
     }
 
     /// Publishes a prepared plan as one topology change, then commits the
@@ -183,7 +200,7 @@ impl RunningInvention {
                     GraphCommandError::ControlError(message) => message,
                     other => other.to_string(),
                 };
-                truncate_on_char_boundary(&mut error, MAX_CONTROL_ERROR_BYTES);
+                truncate_on_char_boundary(&mut error, MODULE_ERROR_BYTES);
                 report.controls_failed.push(ControlFailure {
                     module_id,
                     key,
