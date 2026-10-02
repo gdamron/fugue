@@ -198,6 +198,22 @@ fn non_finite_numbers_are_refused() {
     assert_eq!(failure.reason, EditFailureReason::InvalidControlValue);
     assert!(failure.message.contains("finite"), "{}", failure.message);
 
+    // A value of the wrong kind is refused for its kind, finite or not.
+    let edit: StructuralEdit = serde_json::from_value(json!({
+        "op": "set_control", "module_id": "lfo", "key": "retrigger", "value": 1e39
+    }))
+    .unwrap();
+    let failure = refused(vec![add("lfo", "lfo", json!(null)), edit]);
+    assert_eq!(
+        (failure.index, failure.reason),
+        (1, EditFailureReason::InvalidControlValue)
+    );
+    assert!(
+        failure.message.contains("expects a boolean"),
+        "{}",
+        failure.message
+    );
+
     // The largest finite f32 is a number like any other.
     let candidate = apply(vec![set(
         "osc1",
