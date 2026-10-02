@@ -197,6 +197,33 @@ fn control_targets_reports_unique_modules() {
         ]"#,
     );
     assert_eq!(module.control_targets(), vec!["mixer", "cells"]);
+    // A live graph orders modules from the surface, so it must agree.
+    assert_eq!(
+        module.controls().control_targets(),
+        module.control_targets()
+    );
+}
+
+#[test]
+fn attach_resolving_resolves_against_a_pending_directory() {
+    let spec = parse_schedule_json(
+        r#"[{ "at": 0, "module": "mixer", "control": "level.0", "value": 0.5 }]"#,
+    )
+    .unwrap();
+    let ctrl = ControlSchedulerControls::new(spec);
+    let directory: SurfaceDirectory = Arc::new(Mutex::new(IndexMap::new()));
+    assert!(ctrl.attach("sched", &directory).is_err());
+
+    // The mixer exists only in the directory a pending change will leave.
+    let mut pending: SurfaceMap = IndexMap::new();
+    pending.insert(
+        "mixer".to_string(),
+        Arc::new(MixerControls::new(2)) as Arc<dyn ControlSurface + Send + Sync>,
+    );
+    ctrl.attach_resolving("sched", &directory, &pending)
+        .unwrap();
+    assert_eq!(ctrl.control_targets(), vec!["mixer"]);
+    assert!(directory.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -262,4 +289,25 @@ fn schedule_control_round_trips_as_json() {
     assert_eq!(reparsed.len(), 1);
     assert_eq!(reparsed[0].at, 4);
     assert_eq!(reparsed[0].ramp, Some(2));
+}
+
+#[test]
+fn a_prepared_scheduler_processes_its_first_block_without_allocating() {
+    let schedule = r#"[
+        { "at": 0, "module": "mixer", "control": "level.0", "value": 0.5 },
+        { "at": 1, "module": "mixer", "control": "level.1", "value": 0.0, "ramp": 2 }
+    ]"#;
+    // Unprepared, the first block adopts the schedule on the audio thread.
+    let (mut module, _mixer, _dir) = setup(schedule);
+    let (_, allocs, _) = crate::alloc_counter::allocator_events(|| module.process(64));
+    assert!(allocs > 0);
+
+    let (mut module, mixer, _dir) = setup(schedule);
+    module.prepare_for_publication();
+    let ((), allocs, frees) = crate::alloc_counter::allocator_events(|| {
+        pulse(&mut module, 15);
+        pulse(&mut module, 15);
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(mixer.level(0), 0.5);
 }

@@ -1,13 +1,15 @@
 //! Glitch-free reload: diff a new invention document against the running
-//! graph and apply the difference as runtime mutations.
+//! graph and apply the difference as one atomic graph change.
 //!
-//! The entry point is [`RunningInvention::reload`]. It validates the whole
-//! new document first (a throwaway build against a pristine registry), so an
-//! invalid document leaves the running invention untouched and playback
-//! continues on the last good version. Only after validation does it apply
-//! the difference as add/remove/swap/connect/disconnect/set_control
-//! mutations: modules unchanged by the diff keep their phase and state, and
-//! the audio stream stays alive throughout.
+//! The entry point is [`RunningInvention::reload`], in four steps:
+//! validate (a throwaway build of the whole document against a pristine
+//! registry), plan (diff it against the running topology), prepare (build
+//! and compile the next topology off the audio thread), and commit (publish
+//! it as one change, then update the runtime's mirrors). An invalid document
+//! or a failed preparation leaves the running invention untouched and
+//! playback continues on the last good version. Modules unchanged by the
+//! diff keep their phase and state, and the audio stream stays alive
+//! throughout.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -273,22 +275,42 @@ pub struct ReloadReport {
     pub swapped: Vec<String>,
     /// Config deltas applied live as `module.key` control updates.
     pub controls_updated: Vec<String>,
+    /// Config-as-control updates that passed validation but failed when
+    /// written (a sample that did not load, say). The module keeps its
+    /// previous value, and the retained document records that value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controls_failed: Vec<ControlFailure>,
     pub connections_added: usize,
     pub connections_removed: usize,
     /// Modules untouched by the diff; they keep their phase and state.
     pub unchanged: usize,
 }
 
-/// Why a reload did not apply.
+/// The longest [`ControlFailure::error`] a reload reports, in bytes.
+pub(crate) const MAX_CONTROL_ERROR_BYTES: usize = 256;
+
+/// A control write a reload could not make.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct ControlFailure {
+    pub module_id: String,
+    pub key: String,
+    /// The module's reason, cut to at most 256 bytes on a UTF-8 character
+    /// boundary.
+    pub error: String,
+}
+
+/// Why a reload did not apply. Either way the running invention is
+/// untouched and playback continues on the last good version.
 #[derive(Debug)]
 pub enum ReloadError {
-    /// The new document failed validation or could not be built. The running
-    /// invention was not touched; playback continues on the last good
-    /// version.
+    /// The new document failed validation or could not be built.
     Invalid(String),
-    /// The diff failed while being applied and the graph may be partially
-    /// updated; the caller should fall back to a clean rebuild of the new
-    /// document.
+    /// The validated document's difference could not be prepared (a module
+    /// failed to build or a schedule failed to resolve against the new
+    /// graph) or could not be delivered because the audio thread is gone.
+    /// Preparation precedes any change, and delivery is all-or-nothing, so
+    /// nothing was applied.
     Apply(GraphCommandError),
 }
 
@@ -303,6 +325,23 @@ impl std::fmt::Display for ReloadError {
 
 impl std::error::Error for ReloadError {}
 
+/// How many times [`RunningInvention::reload`] plans and prepares a document
+/// when other edits keep changing the graph underneath it.
+const RELOAD_ATTEMPTS: usize = 3;
+
+/// A new document that passed a full validation build, with what the
+/// running invention adopts if the reload commits.
+pub(crate) struct ValidatedDocument {
+    /// The document as authored (assets unresolved), to retain.
+    pub(crate) document: Invention,
+    /// The document with assets resolved, to diff.
+    pub(crate) resolved: Invention,
+    /// The registry with the document's development factories registered.
+    pub(crate) registry: ModuleRegistry,
+    /// The document's development definitions as loaded.
+    pub(crate) definitions: DevelopmentDefinitions,
+}
+
 impl RunningInvention {
     /// Reloads a new invention document into the running graph without
     /// restarting the audio stream.
@@ -310,118 +349,93 @@ impl RunningInvention {
     /// The document is validated with a full throwaway build first, so any
     /// parse, port, config, or development error returns
     /// [`ReloadError::Invalid`] with the running invention untouched. The
-    /// validated document is then diffed against the current topology and
-    /// applied as runtime mutations. Modules whose development definition
+    /// validated document is then diffed against the current topology,
+    /// prepared off the audio thread, and published as one change: no audio
+    /// block ever plays part of it. Modules whose development definition
     /// changed (directly or through a nested development) are rebuilt;
-    /// everything else keeps its state.
+    /// everything else keeps its state. A config change expressible as
+    /// controls is validated with the rest and written to the surviving
+    /// module right after publication, so it may be heard up to one block
+    /// before the new topology; one that still fails when written is listed
+    /// in [`ReloadReport::controls_failed`].
     ///
-    /// On [`ReloadError::Apply`] the graph may be partially updated and the
-    /// caller should fall back to a clean rebuild of the same document.
+    /// When another edit (a script's, say) changes the graph while the
+    /// reload is planned or prepared, the reload is planned and prepared
+    /// again from the same validated document, up to three times in all.
+    /// Any error leaves the running invention untouched.
     pub fn reload(&mut self, invention: Invention) -> Result<ReloadReport, ReloadError> {
-        // Kept as authored (assets unresolved) to become the retained
-        // document once the diff applies.
+        let validated = self.validate_document(invention)?;
+        let mut attempt = 1;
+        loop {
+            // Read before planning: the plan reads state that commits under
+            // the publisher, so a change landing after this read is caught
+            // when the prepared change publishes, at worst spuriously.
+            let base = self.live.generation();
+            let plan = self.plan_document(&validated)?;
+            let adopt = (validated.registry.clone(), validated.definitions.clone());
+            let result = self
+                .prepare_plan(base, plan, Some(validated.document.clone()), Some(adopt))
+                .and_then(|prepared| self.commit_prepared(prepared));
+            match result {
+                Err(GraphCommandError::TopologyMoved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
+                result => return result.map_err(ReloadError::Apply),
+            }
+        }
+    }
+
+    /// Validates a new document with a full throwaway build against the
+    /// pristine base registry, so a development removed from the document is
+    /// an error exactly as on a cold load. Changes nothing.
+    pub(crate) fn validate_document(
+        &self,
+        invention: Invention,
+    ) -> Result<ValidatedDocument, ReloadError> {
         let document = invention.clone();
         let resolved = resolve_invention_assets(invention)
             .map_err(|error| ReloadError::Invalid(error.to_string()))?;
-        let new_definitions = DevelopmentDefinitions::resolve(&resolved)
+        let definitions = DevelopmentDefinitions::resolve(&resolved)
             .map_err(|error| ReloadError::Invalid(error.to_string()))?;
 
-        // Validate the whole document before touching the running graph. The
-        // build starts from the pristine base registry so a development
-        // removed from the document is an error, exactly as on a cold load.
         // The built runtime is discarded; its registry carries the freshly
         // registered development factories the diff needs.
         let builder = InventionBuilder::with_registry(self.sample_rate, self.base_registry.clone());
         let (validated, _) = builder
             .build(resolved.clone())
             .map_err(|error| ReloadError::Invalid(error.to_string()))?;
-        let new_registry: ModuleRegistry = validated.registry.clone();
+        let registry: ModuleRegistry = validated.registry.clone();
         drop(validated);
 
-        let changed_types =
-            changed_development_types(&self.development_definitions, &new_definitions);
+        Ok(ValidatedDocument {
+            document,
+            resolved,
+            registry,
+            definitions,
+        })
+    }
 
+    /// Diffs a validated document against the current topology.
+    pub(crate) fn plan_document(
+        &self,
+        validated: &ValidatedDocument,
+    ) -> Result<ReloadPlan, ReloadError> {
+        let changed_types =
+            changed_development_types(&self.development_definitions, &validated.definitions);
         let (current_modules, current_connections) = {
             let state = self.state.lock().unwrap();
             (state.modules.clone(), state.connections.clone())
         };
-        let plan = plan_reload(
+        plan_reload(
             &current_modules,
             &current_connections,
-            &resolved,
+            &validated.resolved,
             &changed_types,
             |module_id, key| self.get_control(module_id, key).is_ok(),
         )
-        .map_err(ReloadError::Invalid)?;
-
-        // Adopt the new registry and definitions so swapped and added
-        // modules build against the new development factories.
-        self.adopt_definitions(new_registry, new_definitions);
-
-        let report = self.apply_reload_plan(plan)?;
-        // The new document is now what the graph was built from. Applied
-        // after the plan so plan mutations cannot leave stale specs in it;
-        // on an apply error the caller rebuilds cleanly, which retains the
-        // document through the normal build path.
-        self.state.lock().unwrap().document = Some(document);
-        Ok(report)
-    }
-
-    fn apply_reload_plan(&self, plan: ReloadPlan) -> Result<ReloadReport, ReloadError> {
-        for conn in &plan.removed_connections {
-            self.disconnect(&conn.from, &conn.from_port, &conn.to, &conn.to_port)
-                .map_err(ReloadError::Apply)?;
-        }
-        for spec in &plan.swapped {
-            self.swap_module(spec.id.clone(), &spec.module_type, &spec.config, true)
-                .map_err(ReloadError::Apply)?;
-        }
-        for module_id in &plan.removed {
-            self.remove_module(module_id.clone())
-                .map_err(ReloadError::Apply)?;
-        }
-        for spec in &plan.added {
-            self.add_module(spec.id.clone(), &spec.module_type, &spec.config)
-                .map_err(ReloadError::Apply)?;
-        }
-        for conn in &plan.added_connections {
-            self.connect(&conn.from, &conn.from_port, &conn.to, &conn.to_port)
-                .map_err(ReloadError::Apply)?;
-        }
-        for (module_id, key, value) in &plan.control_updates {
-            // Quiet: carrying authored values into the rebuilt graph is
-            // reconstruction, not a live agent-initiated change. The reload's
-            // snapshot already conveys the new state, so emitting a
-            // `ControlChanged` per carried value would be redundant and would
-            // misattribute the reload as a conducting gesture (FUG-239 #7).
-            self.snapshot()
-                .set_control_recorded(module_id, key, value.clone())
-                .map_err(ReloadError::Apply)?;
-        }
-        if !plan.refreshed_configs.is_empty() {
-            let mut state = self.state.lock().unwrap();
-            for (module_id, config) in plan.refreshed_configs {
-                if let Some(info) = state.modules.get_mut(&module_id) {
-                    info.config = config;
-                }
-            }
-        }
-
-        Ok(ReloadReport {
-            added: plan.added.iter().map(|spec| spec.id.clone()).collect(),
-            removed: plan.removed,
-            swapped: plan.swapped.iter().map(|spec| spec.id.clone()).collect(),
-            controls_updated: plan
-                .control_updates
-                .iter()
-                .map(|(module_id, key, _)| format!("{module_id}.{key}"))
-                .collect(),
-            connections_added: plan.added_connections.len(),
-            connections_removed: plan.removed_connections.len(),
-            unchanged: plan.unchanged.len(),
-        })
+        .map_err(ReloadError::Invalid)
     }
 }
+
+pub(crate) mod commit;
 
 #[cfg(test)]
 mod tests;

@@ -1,7 +1,6 @@
 //! Offline invention renderer for host-driven playback.
 
 use indexmap::IndexMap;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use crate::agents::AgentManager;
@@ -93,7 +92,7 @@ impl RenderEngine {
             registry: self.registry.clone(),
             sample_rate: self.sample_rate,
             graph: Some(self.graph.as_ref()?.clone()),
-            command_tx: None,
+            live: None,
             module_ports: self.module_ports.clone(),
         })
     }
@@ -309,8 +308,6 @@ impl RenderEngine {
     fn install_runtime(&mut self, runtime: super::runtime::InventionRuntime) {
         self.scripts.stop_all();
         self.agents.stop_all();
-        let (_, command_rx) = mpsc::channel();
-
         runtime.state.lock().unwrap().running = true;
 
         *self.module_ports.lock().unwrap() = module_ports(&runtime.modules);
@@ -318,7 +315,6 @@ impl RenderEngine {
             runtime.modules,
             runtime.sinks,
             runtime.routing,
-            command_rx,
             // Offline render has no sampler: a meter nobody drains, and no
             // spectrum ring.
             super::graph::MasterObservers::default(),

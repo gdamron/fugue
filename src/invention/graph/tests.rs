@@ -1,11 +1,8 @@
 use super::*;
-use std::sync::mpsc;
 
 /// Creates a minimal SignalGraph for testing process order.
 /// Modules are stub oscillators — we only care about the topology.
 fn test_graph(module_ids: &[&str], connections: &[(&str, &str)]) -> SignalGraph {
-    let (_tx, rx) = mpsc::channel();
-
     let registry = crate::ModuleRegistry::default();
     let null_config = serde_json::Value::Null;
 
@@ -31,7 +28,6 @@ fn test_graph(module_ids: &[&str], connections: &[(&str, &str)]) -> SignalGraph 
         modules,
         Vec::new(),
         edges,
-        rx,
         super::MasterObservers::default(),
     );
     graph.recompile();
@@ -146,4 +142,36 @@ fn test_three_node_cycle_is_single_feedback_group() {
     assert_eq!(graph.process_groups.len(), 1);
     assert!(graph.process_groups[0].feedback);
     assert_eq!(graph.process_groups[0].members.len(), 3);
+}
+
+/// A live graph compiles its process order on the control thread from the
+/// modules' control surfaces; offline render compiles it from the modules.
+/// Every built-in type must report the same control targets both ways.
+#[test]
+fn every_module_type_reports_its_control_targets_on_its_surface() {
+    let registry = crate::ModuleRegistry::default();
+    let mut checked = Vec::new();
+    for type_id in registry.types() {
+        if registry.is_sink(type_id) {
+            // Building a sink may open a file or stream; sinks expose no
+            // control surface.
+            continue;
+        }
+        let Ok(result) = registry.build(type_id, 48_000, &serde_json::json!({})) else {
+            continue;
+        };
+        let from_module = result.module.module().control_targets();
+        let from_surface = result
+            .control_surface
+            .map(|surface| surface.control_targets())
+            .unwrap_or_default();
+        assert_eq!(from_module, from_surface, "control targets of '{type_id}'");
+        checked.push(type_id.to_string());
+    }
+    for expected in ["control_scheduler", "oscillator", "clock", "mixer", "code"] {
+        assert!(
+            checked.iter().any(|t| t == expected),
+            "'{expected}' was not checked (checked: {checked:?})"
+        );
+    }
 }

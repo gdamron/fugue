@@ -6,6 +6,12 @@
 //! - [`ControlMeta`] - Metadata describing a module control for UI/REPL discovery
 use serde::{Deserialize, Serialize};
 
+mod control_meta;
+mod control_validation;
+
+pub use control_validation::ControlSurfaceMap;
+pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
+
 /// Maximum number of frames the engine processes in a single block.
 ///
 /// Modules size their per-port buffers to this length; the signal graph never
@@ -151,77 +157,45 @@ pub struct ControlMeta {
     pub kind: ControlKind,
 }
 
-impl ControlMeta {
-    /// Legacy alias for creating a numeric control metadata entry.
-    pub fn new(key: impl Into<String>, description: impl Into<String>) -> Self {
-        Self::number(key, description)
-    }
-
-    /// Creates a numeric control metadata entry.
-    pub fn number(key: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            key: key.into(),
-            description: description.into(),
-            default: ControlValue::Number(0.0),
-            kind: ControlKind::Number { min: 0.0, max: 1.0 },
-        }
-    }
-
-    /// Sets the range (min, max) for this control.
-    pub fn with_range(mut self, min: f32, max: f32) -> Self {
-        self.kind = ControlKind::Number { min, max };
-        self
-    }
-
-    /// Sets the default value for this control.
-    pub fn with_default(mut self, default: impl Into<ControlValue>) -> Self {
-        self.default = default.into();
-        self
-    }
-
-    /// Creates a boolean control metadata entry.
-    pub fn boolean(key: impl Into<String>, description: impl Into<String>, default: bool) -> Self {
-        Self {
-            key: key.into(),
-            description: description.into(),
-            default: ControlValue::Bool(default),
-            kind: ControlKind::Bool,
-        }
-    }
-
-    /// Creates a string control metadata entry.
-    pub fn string(key: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            key: key.into(),
-            description: description.into(),
-            default: ControlValue::String(String::new()),
-            kind: ControlKind::String { options: None },
-        }
-    }
-
-    /// Sets the allowed values for a string control.
-    pub fn with_options(mut self, options: Vec<String>) -> Self {
-        let default_option = options.first().cloned().unwrap_or_else(String::new);
-        self.kind = ControlKind::String {
-            options: Some(options),
-        };
-        if !matches!(self.default, ControlValue::String(_)) {
-            self.default = ControlValue::String(default_option);
-        }
-        self
-    }
-
-    /// Legacy alias for enumerated controls.
-    pub fn with_variants(self, variants: Vec<String>) -> Self {
-        self.with_options(variants)
-    }
-}
-
 /// Shared runtime control surface for a module.
 pub trait ControlSurface: Send + Sync {
     fn controls(&self) -> Vec<ControlMeta>;
     fn get_control(&self, key: &str) -> Result<ControlValue, String>;
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String>;
+
+    /// Ids of modules whose controls this module writes while processing,
+    /// mirroring [`Module::control_targets`] for the module behind this
+    /// surface. A live graph compiles its process order on the control
+    /// thread, where only the surface is reachable, so a module that declares
+    /// control targets must report the same targets here.
+    ///
+    /// Control-thread only; implementations may lock and allocate.
+    fn control_targets(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Checks, changing nothing, that [`Self::set_control`] would accept
+    /// `value` (already coerced, see [`Self::coerce_value`]) for `key`, so a
+    /// batch of writes can be refused before any of them lands. `surfaces`
+    /// is the directory as it will be when the write lands, for values that
+    /// name other modules.
+    ///
+    /// Refuses what the setter refuses before it changes anything: unknown
+    /// and read-only keys, values of the wrong kind, numbers that are not
+    /// finite, and strings the setter cannot parse (unknown options,
+    /// malformed JSON). Only what a write alone can discover, such as a
+    /// sample failing to load, may still fail when set. The default checks
+    /// the kind `key` declares in [`Self::controls`]; surfaces with
+    /// read-only or parsed controls override it.
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        let _ = surfaces;
+        check_listed_control(&self.controls(), key, value)
+    }
 
     /// Coerces `value` to `key`'s declared [`ControlKind`] via
     /// [`ControlValue::coerced_to`]. Unknown keys pass through untouched so
@@ -342,8 +316,8 @@ pub trait Module: Send {
 
     /// Sets a named input port to a constant value across its whole buffer.
     ///
-    /// Convenience for the control thread (the `SetModuleInput` command) and
-    /// tests — not the per-block routing path. Modules that arbitrate between a
+    /// Convenience for queued input writes (applied at the start of a block)
+    /// and tests — not the per-block routing path. Modules that arbitrate between a
     /// connected signal and a control default should also mark the port
     /// connected here. Returns an error if the port name is not recognized.
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String>;
@@ -388,6 +362,13 @@ pub trait Module: Send {
     fn control_targets(&self) -> Vec<String> {
         Vec::new()
     }
+
+    /// Called once on the control thread after a newly built instance is
+    /// attached and before it is published to the audio thread. Do here any
+    /// one-time work the first [`Module::process`] would otherwise do on the
+    /// audio thread, such as adopting shared state that needs a lock or an
+    /// allocation. May lock and allocate. The default does nothing.
+    fn prepare_for_publication(&mut self) {}
 
     /// Legacy module-local control metadata surface.
     fn controls(&self) -> Vec<ControlMeta> {
@@ -478,3 +459,5 @@ pub fn validate_port(port: &str, valid_ports: &[&str], port_type: &str) -> Resul
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod validation_tests;
