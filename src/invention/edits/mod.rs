@@ -93,15 +93,26 @@ pub(crate) trait EditFacts {
     ) -> Result<ModuleFacts, String>;
 }
 
+/// One `set_control` edit's authored write, tagged with the edit that made
+/// it so a refusal at commit time can name that edit.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CandidateWrite {
+    /// The `set_control` edit's position in the batch.
+    pub(crate) edit_index: usize,
+    /// The write, carrying the value as coerced to the control's kind.
+    pub(crate) write: ControlWrite,
+}
+
 /// A batch applied to a copy of the authored document.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EditedCandidate {
     /// The authored document with every edit applied, in order.
     pub(crate) document: Invention,
-    /// One authored write per `set_control` edit, in batch order, carrying
-    /// the value as coerced to the control's kind: the value to apply and
-    /// announce when the batch commits.
-    pub(crate) control_writes: Vec<ControlWrite>,
+    /// One authored write per `set_control` edit, in batch order. The commit
+    /// checks each against the module's own rules before publishing, and
+    /// refuses a write the module would refuse as `invalid_control_value`
+    /// at its `edit_index`.
+    pub(crate) control_writes: Vec<CandidateWrite>,
     /// Every module id an edit names, as a module or as a connection
     /// endpoint. A commit must not touch a module outside this set.
     pub(crate) named_modules: BTreeSet<String>,
@@ -122,7 +133,7 @@ pub(crate) fn apply_to_candidate(
     for (index, edit) in edits.iter().enumerate() {
         edit.check_names(index)?;
         candidate
-            .apply(edit)
+            .apply(index, edit)
             .map_err(|refusal| EditFailure::new(index, edit.op(), refusal.0, refusal.1))?;
     }
     Ok(candidate.finish())

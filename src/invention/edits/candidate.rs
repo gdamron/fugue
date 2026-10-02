@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::{EditFacts, EditedCandidate, ModuleFacts};
+use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::authored_document;
 use crate::invention::format::{Connection, Invention};
 use crate::rpc::{ControlWrite, EditFailureReason, StructuralEdit};
@@ -21,7 +21,7 @@ pub(super) struct Candidate<'f, F> {
     facts: &'f mut F,
     /// Facts for modules this batch added, which the runtime does not know.
     added: HashMap<String, ModuleFacts>,
-    control_writes: Vec<ControlWrite>,
+    control_writes: Vec<CandidateWrite>,
     named_modules: BTreeSet<String>,
 }
 
@@ -44,7 +44,8 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         }
     }
 
-    pub(super) fn apply(&mut self, edit: &StructuralEdit) -> Applied {
+    /// Applies `edit`, the batch's edit at `index`.
+    pub(super) fn apply(&mut self, index: usize, edit: &StructuralEdit) -> Applied {
         match edit {
             StructuralEdit::AddModule {
                 id,
@@ -68,7 +69,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 module_id,
                 key,
                 value,
-            } => self.set_control(module_id, key, value),
+            } => self.set_control(index, module_id, key, value),
         }
     }
 
@@ -176,7 +177,13 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         Ok(())
     }
 
-    fn set_control(&mut self, module_id: &str, key: &str, value: &ControlValue) -> Applied {
+    fn set_control(
+        &mut self,
+        index: usize,
+        module_id: &str,
+        key: &str,
+        value: &ControlValue,
+    ) -> Applied {
         self.named_modules.insert(module_id.to_string());
         let facts = self.module_facts(module_id)?;
         let Some(kind) = facts.controls.get(key) else {
@@ -201,8 +208,10 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             ));
         }
         authored_document::write_control(&mut self.document, module_id, key, &applied);
-        self.control_writes
-            .push(ControlWrite::new(module_id, key, applied));
+        self.control_writes.push(CandidateWrite {
+            edit_index: index,
+            write: ControlWrite::new(module_id, key, applied),
+        });
         Ok(())
     }
 
