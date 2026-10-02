@@ -229,6 +229,21 @@ fn a_change_prepared_before_another_publication_is_refused() {
 }
 
 #[test]
+fn an_empty_change_prepared_before_another_publication_is_refused() {
+    let rig = Rig::new(BASE);
+    let stale = rig.live.begin().prepare().unwrap();
+    assert!(stale.is_empty());
+    rig.live.remove_module("osc2").unwrap();
+
+    // The caller planned against a topology that has moved: an empty plan
+    // is no more current than any other.
+    assert!(matches!(
+        rig.live.commit(stale),
+        Err(GraphCommandError::TopologyMoved)
+    ));
+}
+
+#[test]
 fn concurrent_writers_all_land() {
     let mut rig = Rig::new(BASE);
     let writers: Vec<_> = (0..4)

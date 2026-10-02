@@ -124,12 +124,10 @@ impl LiveGraph {
 
     /// Publishes a prepared change and commits the runtime mirrors together.
     /// Fails with nothing changed when another change published since
-    /// [`Self::begin`] ([`GraphCommandError::TopologyMoved`]) or the audio
-    /// thread is gone. An empty change publishes nothing.
+    /// [`Self::begin`] ([`GraphCommandError::TopologyMoved`]), an empty
+    /// change included, or the audio thread is gone. An empty change that
+    /// is still current publishes nothing.
     pub(crate) fn commit(&self, prepared: PreparedChange) -> Result<Committed, GraphCommandError> {
-        if prepared.is_empty() {
-            return Ok(Committed::default());
-        }
         self.commit_locked(self.publisher.lock().unwrap(), prepared)
     }
 
@@ -146,17 +144,23 @@ impl LiveGraph {
         let mut change = self.change_on(&publisher);
         edit(&mut change)?;
         let prepared = change.prepare()?;
-        if prepared.is_empty() {
-            return Ok(Committed::default());
-        }
         self.commit_locked(publisher, prepared)
     }
 
+    /// Publishes `prepared` and commits the mirrors under `publisher`. A
+    /// stale change is refused before the empty-change shortcut, so a caller
+    /// never commits work planned against a topology that has moved.
     fn commit_locked(
         &self,
         mut publisher: MutexGuard<'_, Publisher>,
         prepared: PreparedChange,
     ) -> Result<Committed, GraphCommandError> {
+        if prepared.base_generation != publisher.generation() {
+            return Err(GraphCommandError::TopologyMoved);
+        }
+        if prepared.is_empty() {
+            return Ok(Committed::default());
+        }
         let published = publisher.publish(prepared)?;
         let mirror = publisher.mirror();
         let removed: Vec<&String> = published
