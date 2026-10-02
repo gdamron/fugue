@@ -116,9 +116,12 @@ fn the_candidate_matches_the_equivalent_runtime_commands() {
     let lfo = candidate
         .control_writes
         .iter()
-        .find(|write| write.module_id == "lfo")
+        .find(|candidate| candidate.write.module_id == "lfo")
         .unwrap();
-    assert_eq!(running.get_control("lfo", "frequency").unwrap(), lfo.value);
+    assert_eq!(
+        running.get_control("lfo", "frequency").unwrap(),
+        lfo.write.value
+    );
 }
 
 #[test]
