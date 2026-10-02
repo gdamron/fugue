@@ -29,6 +29,7 @@ pub use discovery::{
     ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList, ModuleTypeQuery, RegistryScope, TypeDetail,
     MAX_DISCOVERY_RESPONSE_BYTES, MAX_DISCOVERY_TYPES, MODULE_DISCOVERY_SCHEMA_VERSION,
 };
+pub(crate) use edits::non_finite_refusal;
 pub use edits::{
     check_edit_batch, ApplyEditsReport, ControlWriteFailure, EditFailure, EditFailureReason,
     EditOp, StructuralEdit, WrittenControl, MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
