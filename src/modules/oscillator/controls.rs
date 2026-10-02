@@ -1,6 +1,7 @@
 //! Thread-safe controls for the Oscillator.
 
 use crate::atomic::AtomicF32;
+use crate::traits::{check_listed_control, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::OscillatorType;
@@ -127,5 +128,17 @@ impl ControlSurface for OscillatorControls {
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        _surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        match key {
+            "type" => OscillatorType::parse(value.as_string()?).map(drop),
+            _ => check_listed_control(&self.controls(), key, value),
+        }
     }
 }

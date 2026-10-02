@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::atomic::AtomicF32;
+use crate::traits::{check_listed_control, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::grace::{DEFAULT_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS, MIN_GRACE_DURATION_MS};
@@ -127,16 +128,7 @@ impl StepSequencerControls {
 
     /// Sets the playback mode from its control string.
     pub fn set_mode(&self, mode: &str) -> Result<(), String> {
-        match mode {
-            "loop" => self.set_one_shot(false),
-            "one_shot" => self.set_one_shot(true),
-            other => {
-                return Err(format!(
-                    "Unknown mode '{}' (expected loop | one_shot)",
-                    other
-                ))
-            }
-        }
+        self.set_one_shot(mode_is_one_shot(mode)?);
         Ok(())
     }
 
@@ -171,16 +163,7 @@ impl StepSequencerControls {
 
     /// Sets the grace placement from its control string.
     pub fn set_grace_placement(&self, placement: &str) -> Result<(), String> {
-        match placement {
-            "before" => self.set_grace_on_beat(false),
-            "on_beat" => self.set_grace_on_beat(true),
-            other => {
-                return Err(format!(
-                    "Unknown grace_placement '{}' (expected before | on_beat)",
-                    other
-                ))
-            }
-        }
+        self.set_grace_on_beat(grace_is_on_beat(placement)?);
         Ok(())
     }
 
@@ -218,13 +201,41 @@ impl StepSequencerControls {
     /// The accepted format is the same step array accepted by the module
     /// config, for example `[{"note":0,"gate":0.5},{"note":null}]`.
     pub fn set_pattern_json(&self, value: &str) -> Result<(), String> {
-        let pattern: Vec<Step> = serde_json::from_str(value).map_err(|err| err.to_string())?;
-        if pattern.len() > 64 {
-            return Err("pattern_json may not contain more than 64 steps".to_string());
-        }
-        self.set_pattern(pattern);
+        self.set_pattern(parse_pattern_json(value)?);
         Ok(())
     }
+}
+
+/// Parses a `mode` value: true for `one_shot`, false for `loop`.
+fn mode_is_one_shot(mode: &str) -> Result<bool, String> {
+    match mode {
+        "loop" => Ok(false),
+        "one_shot" => Ok(true),
+        other => Err(format!(
+            "Unknown mode '{}' (expected loop | one_shot)",
+            other
+        )),
+    }
+}
+
+/// Parses a `grace_placement` value: true for `on_beat`, false for `before`.
+fn grace_is_on_beat(placement: &str) -> Result<bool, String> {
+    match placement {
+        "before" => Ok(false),
+        "on_beat" => Ok(true),
+        other => Err(format!(
+            "Unknown grace_placement '{}' (expected before | on_beat)",
+            other
+        )),
+    }
+}
+
+fn parse_pattern_json(value: &str) -> Result<Vec<Step>, String> {
+    let pattern: Vec<Step> = serde_json::from_str(value).map_err(|err| err.to_string())?;
+    if pattern.len() > 64 {
+        return Err("pattern_json may not contain more than 64 steps".to_string());
+    }
+    Ok(pattern)
 }
 
 impl Default for StepSequencerControls {
@@ -292,5 +303,20 @@ impl ControlSurface for StepSequencerControls {
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        _surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        match key {
+            "pattern_json" => parse_pattern_json(value.as_string()?).map(drop),
+            "mode" => mode_is_one_shot(value.as_string()?).map(drop),
+            "grace_placement" => grace_is_on_beat(value.as_string()?).map(drop),
+            "ended" => crate::traits::read_only(key),
+            _ => check_listed_control(&self.controls(), key, value),
+        }
     }
 }

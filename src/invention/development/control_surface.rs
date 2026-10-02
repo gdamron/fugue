@@ -101,4 +101,27 @@ impl ControlSurface for DevelopmentControlSurface {
             Err(format!("Unknown control: {}", key))
         }
     }
+
+    /// Validates the write against every internal control `key` aliases.
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        surfaces: &crate::traits::ControlSurfaceMap,
+    ) -> Result<(), String> {
+        let mut found = false;
+        for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
+            let surface = self
+                .surfaces
+                .get(&control.module_id)
+                .ok_or_else(|| format!("Unknown control module: {}", control.module_id))?;
+            surface.validate_control(&control.key, value, surfaces)?;
+            found = true;
+        }
+        if found {
+            Ok(())
+        } else {
+            Err(format!("Unknown control: {}", key))
+        }
+    }
 }

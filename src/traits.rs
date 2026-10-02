@@ -7,6 +7,10 @@
 use serde::{Deserialize, Serialize};
 
 mod control_meta;
+mod control_validation;
+
+pub use control_validation::ControlSurfaceMap;
+pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
 
 /// Maximum number of frames the engine processes in a single block.
 ///
@@ -168,6 +172,29 @@ pub trait ControlSurface: Send + Sync {
     /// Control-thread only; implementations may lock and allocate.
     fn control_targets(&self) -> Vec<String> {
         Vec::new()
+    }
+
+    /// Checks, changing nothing, that [`Self::set_control`] would accept
+    /// `value` (already coerced, see [`Self::coerce_value`]) for `key`, so a
+    /// batch of writes can be refused before any of them lands. `surfaces`
+    /// is the directory as it will be when the write lands, for values that
+    /// name other modules.
+    ///
+    /// Refuses what the setter refuses before it changes anything: unknown
+    /// and read-only keys, values of the wrong kind, numbers that are not
+    /// finite, and strings the setter cannot parse (unknown options,
+    /// malformed JSON). Only what a write alone can discover, such as a
+    /// sample failing to load, may still fail when set. The default checks
+    /// the kind `key` declares in [`Self::controls`]; surfaces with
+    /// read-only or parsed controls override it.
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        let _ = surfaces;
+        check_listed_control(&self.controls(), key, value)
     }
 
     /// Coerces `value` to `key`'s declared [`ControlKind`] via
@@ -425,3 +452,5 @@ pub fn validate_port(port: &str, valid_ports: &[&str], port_type: &str) -> Resul
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod validation_tests;

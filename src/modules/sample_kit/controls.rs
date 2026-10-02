@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::atomic::AtomicF32;
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
+use crate::traits::{check_finite, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 /// The key a slot answers to: an integer (a trigger's value / MIDI note
@@ -138,25 +139,28 @@ impl SampleKitControls {
     /// Requests a trigger of the slot matching `value`: a number (or numeric
     /// string) matches an integer key, any other string matches a named key.
     pub fn trigger(&self, value: &ControlValue) -> Result<(), String> {
-        let index = match value {
-            ControlValue::Number(number) => {
-                if !number.is_finite() {
-                    return Err(format!("Invalid slot key {}", number));
-                }
-                self.find_numeric(number.round() as i32)?
-            }
-            ControlValue::String(text) => match text.trim().parse::<i32>() {
-                Ok(key) => self.find_numeric(key)?,
-                Err(_) => self.find_named(text.trim())?,
-            },
-            ControlValue::Bool(_) => {
-                return Err("Expected a slot key or name, not a boolean".to_string())
-            }
-        };
+        let index = self.slot_for(value)?;
         self.inner.slots[index]
             .trigger_count
             .fetch_add(1, Ordering::Release);
         Ok(())
+    }
+
+    /// The slot a trigger value names.
+    fn slot_for(&self, value: &ControlValue) -> Result<usize, String> {
+        match value {
+            ControlValue::Number(number) => {
+                if !number.is_finite() {
+                    return Err(format!("Invalid slot key {}", number));
+                }
+                self.find_numeric(number.round() as i32)
+            }
+            ControlValue::String(text) => match text.trim().parse::<i32>() {
+                Ok(key) => self.find_numeric(key),
+                Err(_) => self.find_named(text.trim()),
+            },
+            ControlValue::Bool(_) => Err("Expected a slot key or name, not a boolean".to_string()),
+        }
     }
 
     /// Audio thread: the current swap counter, checked once per block.
@@ -271,6 +275,32 @@ impl ControlSurface for SampleKitControls {
         }
         if let Some(index) = indexed_key(key, "gain.") {
             return self.set_gain(index, value.as_number()?);
+        }
+        Err(format!("Unknown control: {}", key))
+    }
+
+    /// Checks the slot and the value's shape; whether a new asset loads is
+    /// only known by loading it, on set.
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        _surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        if key == "trigger" {
+            return self.slot_for(value).map(drop);
+        }
+        if let Some(index) = indexed_key(key, "key.") {
+            self.slot(index)?;
+            return Err("Slot keys are fixed at build time; edit the invention config".to_string());
+        }
+        if let Some(index) = indexed_key(key, "asset.") {
+            self.slot(index)?;
+            return value.as_string().map(drop);
+        }
+        if let Some(index) = indexed_key(key, "gain.") {
+            self.slot(index)?;
+            return check_finite(key, value.as_number()?);
         }
         Err(format!("Unknown control: {}", key))
     }
