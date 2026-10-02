@@ -114,7 +114,7 @@ A committed batch answers with `kind: "edits_applied"`:
 | `edit_count` | Edits in the batch; all were applied. |
 | `added`, `removed` | Module ids added to or removed from the running graph. A module added and removed again in the same batch appears in neither. |
 | `rebuilt` | Module ids that existed before the batch and were removed and added again in it. Each gets a fresh instance, even with an identical type and config, so its internal state restarts. |
-| `controls_written` | `{ module_id, key }` for each distinct control the `set_control` edits wrote, once, in first-written order. Only modules that exist after the commit are listed: a write to a module that a later edit removed or replaced goes with that module. |
+| `controls_written` | `{ module_id, key }` for each distinct control the `set_control` edits wrote, once, in first-written order. Only modules that exist after the commit are listed (survivors, added and rebuilt modules): a write to a module that a later edit removed or replaced goes with that module. |
 | `controls_failed` | Present only when a write failed at commit; see below. |
 | `connections_added`, `connections_removed` | Connection counts. |
 | `untouched` | Surviving modules that were not rebuilt. They keep their instance, phase and state. A module whose only change is a `set_control` counts here: its value changes, its instance does not. |
@@ -143,7 +143,7 @@ A failed control is not listed in `controls_written` and emits no
 ```
 
 `edit_index` is the last `set_control` edit in the batch that wrote that
-control.
+control. `error` is the module's reason, cut to about 256 bytes.
 
 The envelope's `revision` is the revision the batch committed at. Use it as
 the next `expected_revision` and the next ticket's `issued_at`.
@@ -208,7 +208,8 @@ JSON a control expects (such as `sequences_json`), or an option the control
 does not offer. Within those rules a module may still clamp a number into its
 range or accept an alias for an option, as it does for a standalone write.
 
-Messages echo at most about 64 bytes of a refused value.
+Messages echo at most about 64 bytes of a refused control value; a module's
+config error is cut to about 256 bytes.
 
 ### The batch as a whole
 
@@ -269,7 +270,7 @@ schema version 1. Check the daemon's `build` fingerprint from hello
 5. Events, in this order:
    - one `control_changed { module_id, key, value }` per control the
      `set_control` edits wrote, for modules that exist after the commit
-     (survivors and added modules alike), carrying the control's final
+     (survivors, added and rebuilt modules), carrying the control's final
      value with the same payload as a standalone authored write. Writes to a
      module that a later edit removed or replaced emit nothing;
    - one `topology_changed`;
