@@ -63,10 +63,13 @@ fn type_facts(module_type: &str) -> Option<ModuleFacts> {
 }
 
 /// Runtime facts derived from the base document's types; a config holding
-/// `"broken": true` stands in for a config the type refuses.
+/// `"broken": true` stands in for a config the type refuses. It keeps the
+/// config of each module it describes, as a runtime keeping built instances
+/// would.
 struct FakeFacts {
     running: HashMap<String, ModuleFacts>,
     described: Vec<String>,
+    kept: HashMap<String, serde_json::Value>,
 }
 
 impl FakeFacts {
@@ -78,6 +81,7 @@ impl FakeFacts {
                 .map(|spec| (spec.id.clone(), type_facts(&spec.module_type).unwrap()))
                 .collect(),
             described: Vec::new(),
+            kept: HashMap::new(),
         }
     }
 }
@@ -101,7 +105,12 @@ impl EditFacts for FakeFacts {
         if config.get("broken").is_some() {
             return Err("broken config".to_string());
         }
+        self.kept.insert(id.to_string(), config.clone());
         Ok(type_facts(module_type).unwrap())
+    }
+
+    fn forget(&mut self, id: &str) {
+        self.kept.remove(id);
     }
 }
 

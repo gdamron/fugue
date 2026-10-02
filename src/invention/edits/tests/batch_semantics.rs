@@ -111,3 +111,59 @@ fn only_an_original_id_that_ends_the_batch_present_is_replaced() {
     .unwrap();
     assert!(candidate.replaced.is_empty());
 }
+
+#[test]
+fn a_module_added_and_removed_in_one_batch_leaves_nothing_kept() {
+    let document = base();
+    let mut facts = FakeFacts::for_document(&document);
+    let candidate = apply_to_candidate(
+        &document,
+        &[add("lfo", "lfo", json!({ "frequency": 1 })), remove("lfo")],
+        &mut facts,
+    )
+    .unwrap();
+    assert_eq!(candidate.document, document);
+    assert_eq!(facts.described, ["lfo"]);
+    assert!(facts.kept.is_empty());
+}
+
+#[test]
+fn the_latest_describe_for_an_id_wins() {
+    let document = base();
+    let mut facts = FakeFacts::for_document(&document);
+    let candidate = apply_to_candidate(
+        &document,
+        &[
+            add("mod", "oscillator", json!({ "frequency": 1 })),
+            remove("mod"),
+            add("mod", "lfo", json!({ "frequency": 2 })),
+            // The lfo's port, not the oscillator's: the overlay holds the
+            // latest facts.
+            connect("mod", "out", "osc1", "fm"),
+        ],
+        &mut facts,
+    )
+    .unwrap();
+    assert_eq!(facts.described, ["mod", "mod"]);
+    assert_eq!(
+        facts.kept,
+        HashMap::from([("mod".to_string(), json!({ "frequency": 2 }))])
+    );
+    assert!(candidate.replaced.is_empty());
+
+    let failure = apply_to_candidate(
+        &document,
+        &[
+            add("mod", "oscillator", json!(null)),
+            remove("mod"),
+            add("mod", "lfo", json!(null)),
+            connect("mod", "audio", "dac", "audio"),
+        ],
+        &mut FakeFacts::for_document(&document),
+    )
+    .unwrap_err();
+    assert_eq!(
+        (failure.index, failure.reason),
+        (3, EditFailureReason::UnknownPort)
+    );
+}
