@@ -14,7 +14,10 @@
 //! ([`authored_document`]), so a candidate saves identically to the document
 //! the equivalent single commands would leave behind.
 //!
-//! See `docs/apply-edits.md` for the contract a client sees.
+//! `RunningInvention::apply_edits` (in `apply`) runs the whole batch on a
+//! running invention: the candidate, then validation, planning, preparation
+//! and one publication. See `docs/apply-edits.md` for the contract a client
+//! sees.
 //!
 //! [`authored_document`]: super::authored_document
 
