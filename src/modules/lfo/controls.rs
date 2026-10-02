@@ -2,6 +2,7 @@
 
 use crate::atomic::AtomicF32;
 use crate::modules::OscillatorType;
+use crate::traits::{check_listed_control, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 /// Thread-safe controls for the LFO.
@@ -86,5 +87,17 @@ impl ControlSurface for LfoControls {
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        _surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        match key {
+            "waveform" => OscillatorType::parse(value.as_string()?).map(drop),
+            _ => check_listed_control(&self.controls(), key, value),
+        }
     }
 }

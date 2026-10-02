@@ -208,4 +208,31 @@ impl ControlSurface for ControlSchedulerControls {
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
+
+    /// Parses a new schedule and resolves it against `surfaces`, the
+    /// directory the write will land in, as the setter resolves it against
+    /// the runtime's.
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        surfaces: &SurfaceMap,
+    ) -> Result<(), String> {
+        match key {
+            "schedule" => {
+                let spec = parse_schedule_json(value.as_string()?)?;
+                let own_id = {
+                    let state = self.shared.state.lock().unwrap();
+                    let attachment = state
+                        .attachment
+                        .as_ref()
+                        .ok_or("control_scheduler is not attached to a runtime")?;
+                    attachment.own_id.clone()
+                };
+                resolve_schedule(&spec, &own_id, surfaces).map(drop)
+            }
+            "step" => crate::traits::read_only(key),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
 }

@@ -1,6 +1,7 @@
 //! Thread-safe controls for the Filter.
 
 use crate::atomic::AtomicF32;
+use crate::traits::{check_listed_control, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::FilterType;
@@ -157,5 +158,17 @@ impl ControlSurface for FilterControls {
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        _surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        match key {
+            "type" => Self::parse_filter_type(value.as_string()?).map(drop),
+            _ => check_listed_control(&self.controls(), key, value),
+        }
     }
 }
