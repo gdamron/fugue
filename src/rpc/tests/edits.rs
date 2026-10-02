@@ -142,6 +142,20 @@ fn edits_applied_response_is_compact_and_flat() {
 }
 
 #[test]
+fn a_report_missing_fields_reads_them_as_defaults() {
+    let report: ApplyEditsReport =
+        serde_json::from_value(json!({ "edit_count": 1, "added": ["lfo"] })).unwrap();
+    assert_eq!(
+        report,
+        ApplyEditsReport {
+            edit_count: 1,
+            added: vec!["lfo".into()],
+            ..ApplyEditsReport::default()
+        }
+    );
+}
+
+#[test]
 fn a_control_that_failed_at_commit_is_reported_with_its_edit() {
     let report = ApplyEditsReport {
         edit_count: 2,

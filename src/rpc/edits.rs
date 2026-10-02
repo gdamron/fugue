@@ -262,8 +262,10 @@ impl EditFailure {
 /// edit.
 ///
 /// The response envelope's `revision` is the revision the batch committed at.
+/// A field a newer daemon adds reads as its default from an older one.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(default)]
 pub struct ApplyEditsReport {
     /// How many edits the batch carried; all of them were applied.
     pub edit_count: usize,
