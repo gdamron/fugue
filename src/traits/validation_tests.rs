@@ -171,7 +171,9 @@ fn a_development_validates_inner_writes_against_its_own_directory() {
 
     // Current behaviour, a known gap: the development drops its internal
     // runtime's directory once built, so the write that validation accepts
-    // is still refused by the setter.
+    // is still refused by the setter. This assertion pins that gap so it is
+    // noticed: once the development keeps its internal control directory
+    // after build, the setter accepts the write and this flips to `is_ok`.
     let set = surface.set_control("schedule", schedule("o"));
     assert!(
         set.as_ref()

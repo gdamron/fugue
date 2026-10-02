@@ -173,7 +173,11 @@ impl LiveGraph {
             drop(change);
             return Err(error);
         }
-        self.commit_locked(publisher, change.compile(), |_| {})
+        let discarded = change.take_discarded();
+        let result = self.commit_locked(publisher, change.compile(), |_| {});
+        // Modules the edit displaced drop off the lock too.
+        drop(discarded);
+        result
     }
 
     /// Publishes `prepared` and commits the mirrors under `publisher`. A
@@ -306,17 +310,27 @@ impl LiveGraph {
         config: &serde_json::Value,
         preserve_connections: bool,
     ) -> Result<Committed, GraphCommandError> {
-        let built = GraphChange::build(registry, sample_rate, id, module_type, config)?;
-        self.edit(|change| {
+        // Held out here so a refused swap drops the module after `edit`
+        // releases the publisher, not inside the closure.
+        let mut built = Some(GraphChange::build(
+            registry,
+            sample_rate,
+            id,
+            module_type,
+            config,
+        )?);
+        let result = self.edit(|change| {
             if !change.contains(id) {
                 return Err(GraphCommandError::UnknownModule(id.to_string()));
             }
             if !preserve_connections {
                 change.disconnect_module(id);
             }
-            change.upsert(id, built);
+            change.upsert(id, built.take().expect("upserted once"));
             Ok(())
-        })
+        });
+        drop(built);
+        result
     }
 
     /// Removes a module and its connections; a missing module is a no-op.
