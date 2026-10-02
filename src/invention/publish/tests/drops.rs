@@ -80,3 +80,45 @@ fn a_superseded_publication_drops_off_the_publisher_lock() {
     rig.render(1);
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
 }
+
+#[test]
+fn a_swap_onto_a_missing_module_drops_off_the_publisher_lock() {
+    let (rig, probes) = watched_rig();
+    assert!(matches!(
+        rig.live.swap_module(
+            &rig.registry,
+            SAMPLE_RATE,
+            "missing",
+            DROP_PROBE,
+            &serde_json::json!({}),
+            true,
+        ),
+        Err(GraphCommandError::UnknownModule(_))
+    ));
+    assert_eq!(probes.dropped_under_lock(), [false]);
+}
+
+#[test]
+fn a_module_an_edit_displaces_drops_off_the_publisher_lock() {
+    let (rig, probes) = watched_rig();
+    let replaced = rig.build("probe", DROP_PROBE, serde_json::json!({}));
+    let kept = rig.build("probe", DROP_PROBE, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("probe", replaced);
+            change.upsert("probe", kept);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(probes.dropped_under_lock(), [false]);
+
+    let removed = rig.build("probe2", DROP_PROBE, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("probe2", removed);
+            change.remove("probe2");
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(probes.dropped_under_lock(), [false, false]);
+}
