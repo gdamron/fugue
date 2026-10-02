@@ -83,14 +83,30 @@ pub(crate) trait EditFacts {
 
     /// Facts for a module `add_module` would build as `id` from this type
     /// and config, or the reason the type refuses the config. Only called
-    /// for types [`Self::has_type`] accepts. An implementation may keep what
-    /// it built for `id`, to reuse it when the batch commits.
+    /// for types [`Self::has_type`] accepts.
+    ///
+    /// An implementation may keep what it built for `id`, to reuse it when
+    /// the batch commits. If it does:
+    ///
+    /// - The latest `describe` for an id supersedes any earlier one in the
+    ///   batch, and [`Self::forget`] drops it when a later edit removes the
+    ///   module. The candidate's own facts for added modules behave the same
+    ///   way.
+    /// - It was built from the config as sent. A later `set_control` in the
+    ///   batch changes the candidate's config, so the commit builds every
+    ///   added or replaced module from its final candidate config, and
+    ///   reuses a kept instance only when that config is unchanged since it
+    ///   was built.
     fn describe(
         &mut self,
         id: &str,
         module_type: &str,
         config: &serde_json::Value,
     ) -> Result<ModuleFacts, String>;
+
+    /// Called when `remove_module` removes `id` after an earlier
+    /// [`Self::describe`] in this batch built it: drop anything kept for it.
+    fn forget(&mut self, _id: &str) {}
 }
 
 /// One `set_control` edit's authored write, tagged with the edit that made

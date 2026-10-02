@@ -131,7 +131,9 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         self.document
             .connections
             .retain(|conn| conn.from != id && conn.to != id);
-        self.added.remove(id);
+        if self.added.remove(id).is_some() {
+            self.facts.forget(id);
+        }
         // A write aimed at the instance being removed goes with it.
         self.control_writes
             .retain(|candidate| candidate.write.module_id != id);
