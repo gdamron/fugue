@@ -47,7 +47,11 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let document = Invention::from_json(BASE).unwrap();
+        Self::of(BASE)
+    }
+
+    fn of(document: &str) -> Self {
+        let document = Invention::from_json(document).unwrap();
         let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
         // A linked graph never receives on its command channel.
         let (_, commands) = mpsc::channel();
@@ -289,6 +293,41 @@ fn a_scheduler_publishes_cleanly_with_a_target_added_alongside() {
     );
     harness.publish(change);
     harness.assert_clean_install("replace a surviving scheduler's target");
+}
+
+/// BASE plus a registered development whose scheduler targets a module
+/// inside it.
+const WITH_PATTERN: &str = r#"{
+    "version": "1.0.0",
+    "developments": [{ "name": "pattern", "definition": {
+        "version": "1.0.0",
+        "modules": [
+            { "id": "sched", "type": "control_scheduler", "config": { "schedule": [
+                { "at": 0, "module": "o", "control": "frequency", "value": 330.0 },
+                { "at": 1, "module": "o", "control": "frequency", "value": 660.0, "ramp": 4 }
+            ] } },
+            { "id": "o", "type": "oscillator" }
+        ],
+        "connections": [],
+        "outputs": [{ "name": "audio", "from": "o", "from_port": "audio" }]
+    } }],
+    "modules": [{ "id": "dac", "type": "dac" }],
+    "connections": []
+}"#;
+
+#[test]
+fn a_development_with_a_scheduler_inside_publishes_cleanly() {
+    let mut harness = Harness::of(WITH_PATTERN);
+    let mut change = harness.begin();
+    change.upsert(
+        "pattern",
+        harness.build("pattern", "pattern", serde_json::json!({})),
+    );
+    change
+        .connect(edge("pattern", "audio", "dac", "audio"))
+        .unwrap();
+    harness.publish(change);
+    harness.assert_clean_install("add a development holding a scheduler");
 }
 
 #[test]
