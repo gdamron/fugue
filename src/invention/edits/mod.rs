@@ -119,6 +119,11 @@ pub(crate) struct EditedCandidate {
     /// Every module id an edit names, as a module or as a connection
     /// endpoint. A commit must not touch a module outside this set.
     pub(crate) named_modules: BTreeSet<String>,
+    /// Ids that existed before the batch, were removed by it and added
+    /// again. Each gets a fresh instance, reported as rebuilt, even when its
+    /// type and config came back identical, which a diff of the documents
+    /// cannot see.
+    pub(crate) replaced: BTreeSet<String>,
 }
 
 impl EditedCandidate {
