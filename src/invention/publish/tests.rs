@@ -7,6 +7,7 @@ use crate::invention::runtime::module_ports;
 use crate::{Invention, InventionBuilder};
 
 mod alloc;
+mod drops;
 mod probe;
 
 use probe::{DropProbeFactory, DROP_PROBE};

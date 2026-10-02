@@ -273,7 +273,7 @@ fn an_untaken_publication_folds_into_the_next() {
         ],
         vec![edge("osc3", "dac", "audio"), edge("osc4", "dac", "audio")],
     );
-    next.absorb(ends.publications.take().unwrap());
+    drop(next.absorb(ends.publications.take().unwrap()));
     assert_eq!(next.survivor_count(), 3);
     drop(ends.publications.put(next));
 

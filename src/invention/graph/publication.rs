@@ -55,24 +55,27 @@ impl Publication {
 
     /// Folds an earlier publication the audio thread never took into this
     /// one. Its prepared instances are the newest version of their modules,
-    /// so each fills this publication's survivor placeholder of the same id;
-    /// prepared instances this publication no longer needs are dropped here,
-    /// on the control thread.
-    pub(crate) fn absorb(&mut self, earlier: Box<Publication>) {
+    /// so each fills this publication's survivor placeholder of the same id,
+    /// trading places with it. Returns what is left of the earlier
+    /// publication, including prepared instances this one no longer needs,
+    /// for the caller to drop once it has released the publisher.
+    #[must_use = "the superseded publication should be dropped off the publisher lock"]
+    pub(crate) fn absorb(&mut self, mut earlier: Box<Publication>) -> Box<Publication> {
         let Publication {
             modules, survivor, ..
-        } = *earlier;
-        for ((id, instance), was_survivor) in modules.into_iter().zip(survivor) {
+        } = &mut *earlier;
+        for ((id, instance), &was_survivor) in modules.iter_mut().zip(survivor.iter()) {
             if was_survivor {
                 continue;
             }
-            if let Some((idx, _, slot)) = self.modules.get_full_mut(&id) {
+            if let Some((idx, _, slot)) = self.modules.get_full_mut(id.as_str()) {
                 if self.survivor[idx] {
-                    *slot = instance;
+                    std::mem::swap(slot, instance);
                     self.survivor[idx] = false;
                 }
             }
         }
+        earlier
     }
 }
 
