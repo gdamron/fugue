@@ -8,7 +8,7 @@ half-applied batch.
 
 The batch is applied to the daemon's retained authored document (the document
 a save writes), and the change to the running graph is planned from that
-document.
+document (see [How a batch is planned](#how-a-batch-is-planned)).
 
 Whole-document `ReloadInvention` remains the default structural path. Use it
 when you hold the whole document. Use `ApplyEdits` for a targeted change to a
@@ -116,7 +116,7 @@ A committed batch answers with `kind: "edits_applied"`:
 | `rebuilt` | Module ids that existed before the batch and were removed and added again in it. Each gets a fresh instance, even with an identical type and config, so its internal state restarts. |
 | `controls_written` | `{ module_id, key }` for each distinct control the `set_control` edits wrote, once, in first-written order. Only modules that exist after the commit are listed (survivors, added and rebuilt modules): a write to a module that a later edit removed or replaced goes with that module. |
 | `controls_failed` | Present only when a write failed at commit; see below. |
-| `connections_added`, `connections_removed` | Connection counts. |
+| `connections_added`, `connections_removed` | Connection counts. Connections that go with a removed module are not counted. |
 | `untouched` | Surviving modules that were not rebuilt. They keep their instance, phase and state. A module whose only change is a `set_control` counts here: its value changes, its instance does not. |
 
 The report's size depends on the batch, never on the invention: each list
@@ -143,7 +143,8 @@ A failed control is not listed in `controls_written` and emits no
 ```
 
 `edit_index` is the last `set_control` edit in the batch that wrote that
-control. `error` is the module's reason, cut to about 256 bytes.
+control. `error` is the module's reason, cut to at most 256 bytes on a
+character boundary.
 
 The envelope's `revision` is the revision the batch committed at. Use it as
 the next `expected_revision` and the next ticket's `issued_at`.
@@ -208,15 +209,18 @@ that names no edit. When a JSON client sends a number too large for a 32-bit
 float, the daemon refuses it at its edit's index as `invalid_control_value`.
 
 The value is then checked against the module's own rules, before anything is
-published, exactly as the module's setter would check it. A value the module
+published, exactly as the module's setter would check it. Every write is
+checked, so a value the module refuses fails the batch even when a later edit
+overwrites it. A value the module
 would refuse is `invalid_control_value` at that edit's index: a read-only
 control (a sequencer's `current_cell`, say), text that does not parse as the
 JSON a control expects (such as `sequences_json`), or an option the control
 does not offer. Within those rules a module may still clamp a number into its
 range or accept an alias for an option, as it does for a standalone write.
 
-Messages echo at most about 64 bytes of a refused control value; a module's
-config error is cut to about 256 bytes.
+Messages echo at most about 64 bytes of a refused control value. A module's
+own reason (a refused config, a refused control value, an edited invention
+that does not build) is cut to about 256 bytes.
 
 ### The batch as a whole
 
@@ -225,10 +229,12 @@ These refusals carry no `edit` detail:
 | Code | When |
 | --- | --- |
 | `invalid_request` | The batch is empty or holds more than 256 edits; the ticket is missing or malformed. |
-| `module_build_failed` | Every edit applied, but the edited invention does not build, or its new graph could not be prepared. No single edit is to blame (for example, removing the last output sink). |
+| `module_build_failed` | Every edit applied, but the edited invention does not build, or its new graph could not be prepared. No single edit is to blame (for example, removing a module a `control_scheduler` still targets). |
 | `revision_conflict` | `expected_revision` did not match, or the ticket was issued by another daemon session. |
 | `mutation_expired` | A retried ticket is older than the daemon's recovery ledger remembers. |
-| `audio_thread_stopped` | Nothing is running. Load an invention first. |
+| `audio_thread_stopped` | Nothing is running, or the audio thread stopped. Load an invention first. |
+| `unsupported` | The running invention keeps no authored document to edit. |
+| `internal` | The invention changed underneath the batch (a script's edit, say). Either the change would undo a module no edit names, or the graph kept changing through every attempt (see [How a batch is planned](#how-a-batch-is-planned)). The message names the module. Read the invention again and resend. |
 
 ## Retrying after a lost reply
 
@@ -262,6 +268,29 @@ version does not tell the two apart, since the command was added within
 schema version 1. Check the daemon's `build` fingerprint from hello
 (`DaemonIdentity`) before relying on `apply_edits`.
 
+## How a batch is planned
+
+The change to the running graph is the difference between the retained
+authored document and the candidate, both as authored. Only what the batch
+changed is planned: a standalone authored `SetControl` made earlier is already
+in the retained document, so it is not seen as part of the batch.
+
+A whole-document reload plans differently: it compares the new document with
+the configs the running modules were built from, which an authored
+`SetControl` does not update. Reload keeps that rule because changing it would
+change what reloading an older file sounds like.
+
+The plan may change only modules the batch names (as a module or as a
+connection endpoint), and may rebuild only modules the batch removes and adds
+again. A plan that reaches further means the invention changed underneath the
+batch, for example a script added or removed a module after the batch was
+checked. The batch is refused as `internal` rather than undoing that change.
+
+When another change publishes while the batch is planned or prepared, the
+batch is planned and prepared again from the same edited document, up to
+three times in all, as a reload is. If the graph is still moving after the
+third attempt, the batch is refused as `internal` and nothing was applied.
+
 ## What a commit does, in order
 
 1. The new graph is swapped in within one audio block. Modules the batch did
@@ -271,17 +300,17 @@ schema version 1. Check the daemon's `build` fingerprint from hello
    audio block before the new graph. Values for added or rebuilt modules are
    part of their config and arrive with them. A control written more than
    once ends at its last value.
-3. The revision advances once, however many edits the batch held.
-4. The session is saved. A failed save is logged and does not undo the
+3. One `control_changed { module_id, key, value }` is emitted per control
+   the `set_control` edits wrote, for modules that exist after the commit
+   (survivors, added and rebuilt modules). Each carries the control's final
+   value, with the same payload as a standalone authored write. Writes to a
+   module that a later edit removed or replaced emit nothing. As for a
+   standalone write, these are emitted as the change is made, before the
+   revision advances.
+4. The revision advances once, however many edits the batch held.
+5. The session is saved. A failed save is logged and does not undo the
    commit.
-5. Events, in this order:
-   - one `control_changed { module_id, key, value }` per control the
-     `set_control` edits wrote, for modules that exist after the commit
-     (survivors, added and rebuilt modules), carrying the control's final
-     value with the same payload as a standalone authored write. Writes to a
-     module that a later edit removed or replaced emit nothing;
-   - one `topology_changed`;
-   - one `snapshot`.
+6. One `topology_changed`, then one `snapshot`.
 
 A refused batch emits no events.
 
