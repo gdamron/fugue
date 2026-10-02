@@ -286,12 +286,17 @@ pub struct ReloadReport {
     pub unchanged: usize,
 }
 
+/// The longest [`ControlFailure::error`] a reload reports, in bytes.
+pub(crate) const MAX_CONTROL_ERROR_BYTES: usize = 256;
+
 /// A control write a reload could not make.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct ControlFailure {
     pub module_id: String,
     pub key: String,
+    /// The module's reason, cut to at most 256 bytes on a UTF-8 character
+    /// boundary.
     pub error: String,
 }
 

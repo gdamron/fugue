@@ -267,7 +267,7 @@ fn an_edit_landing_while_a_reload_is_planned_or_prepared_refuses_it() {
 /// load).
 struct Flaky;
 
-struct FlakyControls(f32);
+struct FlakyControls(f32, String);
 
 impl crate::ControlSurface for FlakyControls {
     fn controls(&self) -> Vec<crate::ControlMeta> {
@@ -282,7 +282,7 @@ impl crate::ControlSurface for FlakyControls {
     }
 
     fn set_control(&self, _key: &str, _value: ControlValue) -> Result<(), String> {
-        Err("refused when written".to_string())
+        Err(self.1.clone())
     }
 }
 
@@ -297,6 +297,7 @@ impl crate::ModuleFactory for Flaky {
         config: &serde_json::Value,
     ) -> Result<crate::ModuleBuildResult, Box<dyn std::error::Error>> {
         let level = config.get("level").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let error = config.get("error").and_then(|v| v.as_str());
         // Any port-less module will do; only the surface matters here.
         let registry = crate::ModuleRegistry::default();
         let module = registry
@@ -305,18 +306,21 @@ impl crate::ModuleFactory for Flaky {
         Ok(crate::ModuleBuildResult {
             module,
             handles: Vec::new(),
-            control_surface: Some(std::sync::Arc::new(FlakyControls(level as f32))),
+            control_surface: Some(std::sync::Arc::new(FlakyControls(
+                level as f32,
+                error.unwrap_or("refused when written").to_string(),
+            ))),
             sink: None,
         })
     }
 }
 
-#[test]
-fn a_control_write_that_fails_when_made_is_reported_and_not_retained() {
+/// Starts BASE plus a `flaky` module with `config`; returns the document
+/// too.
+fn start_with_flaky(config: serde_json::Value) -> (RunningInvention, Pump, String) {
     let base = BASE.replace(
         r#"{ "id": "dac", "type": "dac" }"#,
-        r#"{ "id": "dac", "type": "dac" },
-        { "id": "flaky", "type": "flaky", "config": { "level": 0.25 } }"#,
+        &format!(r#"{{ "id": "dac", "type": "dac" }}, {{ "id": "flaky", "type": "flaky", "config": {config} }}"#),
     );
     let mut registry = crate::ModuleRegistry::default();
     registry.register(Flaky);
@@ -324,12 +328,17 @@ fn a_control_write_that_fails_when_made_is_reported_and_not_retained() {
         .build(doc(&base))
         .unwrap();
     let pump = Pump::default();
-    let mut running = runtime
+    let running = runtime
         .start_with_backend(ManualBackend(pump.clone()))
         .unwrap();
+    (running, pump, base)
+}
 
+#[test]
+fn a_control_write_that_fails_when_made_is_reported_and_not_retained() {
+    let (mut running, pump, base) = start_with_flaky(serde_json::json!({ "level": 0.25 }));
     let edited = base
-        .replace(r#""level": 0.25"#, r#""level": 0.75"#)
+        .replace(r#""level":0.25"#, r#""level":0.75"#)
         .replace(r#""frequency": 440.0"#, r#""frequency": 220.0"#);
     let report = running.reload(doc(&edited)).expect("reload applies");
     assert_eq!(report.controls_updated, ["osc1.frequency"]);
@@ -346,4 +355,17 @@ fn a_control_write_that_fails_when_made_is_reported_and_not_retained() {
     let flaky = document.modules.iter().find(|m| m.id == "flaky").unwrap();
     assert_eq!(flaky.config["level"], serde_json::json!(0.25));
     pump.render(1);
+}
+
+#[test]
+fn a_reported_control_error_is_cut_short_on_a_character_boundary() {
+    let long = "é".repeat(super::super::MAX_CONTROL_ERROR_BYTES);
+    let config = serde_json::json!({ "level": 0.25, "error": long });
+    let (mut running, _pump, base) = start_with_flaky(config);
+    let edited = base.replace(r#""level":0.25"#, r#""level":0.75"#);
+    let report = running.reload(doc(&edited)).expect("reload applies");
+
+    let error = &report.controls_failed[0].error;
+    assert_eq!(error.len(), super::super::MAX_CONTROL_ERROR_BYTES);
+    assert!(long.starts_with(error.as_str()));
 }

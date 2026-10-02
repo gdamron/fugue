@@ -6,9 +6,12 @@
 //! runtime's mirrors, control values, registry, and document. Reload uses
 //! both; other whole-graph edits can reuse them.
 
-use super::{ControlFailure, DevelopmentDefinitions, ReloadPlan, ReloadReport};
+use super::{
+    ControlFailure, DevelopmentDefinitions, ReloadPlan, ReloadReport, MAX_CONTROL_ERROR_BYTES,
+};
 use crate::invention::publish::{edge, GraphChange, PreparedChange};
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
+use crate::rpc::truncate_on_char_boundary;
 use crate::{ControlValue, Invention, ModuleRegistry};
 
 /// A plan prepared off the audio thread, ready to commit.
@@ -176,13 +179,15 @@ impl RunningInvention {
                 if let Ok(actual) = self.get_control(&module_id, &key) {
                     kept.push((module_id.clone(), key.clone(), actual));
                 }
+                let mut error = match error {
+                    GraphCommandError::ControlError(message) => message,
+                    other => other.to_string(),
+                };
+                truncate_on_char_boundary(&mut error, MAX_CONTROL_ERROR_BYTES);
                 report.controls_failed.push(ControlFailure {
                     module_id,
                     key,
-                    error: match error {
-                        GraphCommandError::ControlError(message) => message,
-                        other => other.to_string(),
-                    },
+                    error,
                 });
             }
         }
