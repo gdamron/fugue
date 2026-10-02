@@ -115,6 +115,7 @@ fn edits_applied_response_is_compact_and_flat() {
         removed: vec![],
         rebuilt: vec![],
         controls_written: vec![WrittenControl::new("osc", "frequency")],
+        controls_failed: vec![],
         connections_added: 1,
         connections_removed: 0,
         untouched: 2,
@@ -132,9 +133,35 @@ fn edits_applied_response_is_compact_and_flat() {
         json!([{ "module_id": "osc", "key": "frequency" }])
     );
     assert_eq!(json["untouched"], 2);
+    // Nothing failed, so the field is absent.
+    assert!(json.get("controls_failed").is_none());
     assert_eq!(
         serde_json::from_value::<RpcResponse>(json).unwrap(),
         response
+    );
+}
+
+#[test]
+fn a_control_that_failed_at_commit_is_reported_with_its_edit() {
+    let report = ApplyEditsReport {
+        edit_count: 2,
+        controls_failed: vec![ControlWriteFailure {
+            edit_index: 1,
+            module_id: "sampler".into(),
+            key: "sample".into(),
+            error: "file not found".into(),
+        }],
+        ..ApplyEditsReport::default()
+    };
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(
+        json["controls_failed"],
+        json!([{ "edit_index": 1, "module_id": "sampler", "key": "sample",
+                 "error": "file not found" }])
+    );
+    assert_eq!(
+        serde_json::from_value::<ApplyEditsReport>(json).unwrap(),
+        report
     );
 }
 

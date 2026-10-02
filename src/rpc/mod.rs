@@ -30,8 +30,8 @@ pub use discovery::{
     MAX_DISCOVERY_RESPONSE_BYTES, MAX_DISCOVERY_TYPES, MODULE_DISCOVERY_SCHEMA_VERSION,
 };
 pub use edits::{
-    check_edit_batch, ApplyEditsReport, EditFailure, EditFailureReason, EditOp, StructuralEdit,
-    WrittenControl, MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
+    check_edit_batch, ApplyEditsReport, ControlWriteFailure, EditFailure, EditFailureReason,
+    EditOp, StructuralEdit, WrittenControl, MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
 };
 pub use error::{RpcError, RpcErrorCode};
 pub use event::{

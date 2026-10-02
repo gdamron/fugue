@@ -280,6 +280,12 @@ pub struct ApplyEditsReport {
     /// commit are listed: a write to a module a later edit removed or
     /// replaced is dropped with that module.
     pub controls_written: Vec<WrittenControl>,
+    /// Control writes that passed validation but still failed when the
+    /// commit wrote them (a sample that did not load, say). The batch is
+    /// committed all the same: the module keeps the value it had, and the
+    /// retained document records that value. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controls_failed: Vec<ControlWriteFailure>,
     pub connections_added: usize,
     pub connections_removed: usize,
     /// Modules the batch left untouched; they keep their phase and state.
@@ -293,6 +299,20 @@ pub struct ApplyEditsReport {
 pub struct WrittenControl {
     pub module_id: String,
     pub key: String,
+}
+
+/// A control write a committed batch could not make; see
+/// [`ApplyEditsReport::controls_failed`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct ControlWriteFailure {
+    /// The `set_control` edit whose value failed: the last edit in the batch
+    /// that wrote this control.
+    pub edit_index: usize,
+    pub module_id: String,
+    pub key: String,
+    /// The module's reason.
+    pub error: String,
 }
 
 impl WrittenControl {
