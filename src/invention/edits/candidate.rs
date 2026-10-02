@@ -11,6 +11,14 @@ use crate::{ControlKind, ControlValue};
 /// How many names a refusal lists when it shows what is available.
 const LISTED_NAMES: usize = 24;
 
+/// The most of a refused value a refusal echoes, in bytes.
+const ECHOED_VALUE_BYTES: usize = 64;
+
+/// The most of a module type's own config error a refusal carries, in
+/// bytes. Larger than an echoed value because it is prose, but bounded,
+/// since a module may echo the config it refused.
+const MODULE_ERROR_BYTES: usize = 256;
+
 /// Why an edit cannot apply; the caller adds its index and op.
 pub(super) struct Refusal(pub(super) EditFailureReason, pub(super) String);
 
@@ -110,7 +118,10 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             .map_err(|error| {
                 Refusal(
                     EditFailureReason::InvalidConfig,
-                    format!("module type '{module_type}' refused the config: {error}"),
+                    format!(
+                        "module type '{module_type}' refused the config: {}",
+                        bounded(&error, MODULE_ERROR_BYTES)
+                    ),
                 )
             })?;
         authored_document::upsert_module(&mut self.document, id, module_type, config);
@@ -228,15 +239,19 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             // would be written into the document as `null`.
             return Err(Refusal(
                 EditFailureReason::InvalidControlValue,
-                format!("control '{module_id}.{key}' expects a finite number, got {value:?}"),
+                format!(
+                    "control '{module_id}.{key}' expects a finite number, got {}",
+                    echo(value)
+                ),
             ));
         }
         if !fits_kind(&applied, kind) {
             return Err(Refusal(
                 EditFailureReason::InvalidControlValue,
                 format!(
-                    "control '{module_id}.{key}' expects {}, got {value:?}",
-                    kind_name(kind)
+                    "control '{module_id}.{key}' expects {}, got {}",
+                    kind_name(kind),
+                    echo(value)
                 ),
             ));
         }
@@ -313,6 +328,29 @@ fn kind_name(kind: &ControlKind) -> &'static str {
         ControlKind::Bool => "a boolean",
         ControlKind::String { .. } => "a string",
     }
+}
+
+/// A refused value as a message shows it, cut to about
+/// [`ECHOED_VALUE_BYTES`].
+fn echo(value: &ControlValue) -> String {
+    match value {
+        ControlValue::Number(number) => number.to_string(),
+        ControlValue::Bool(flag) => flag.to_string(),
+        ControlValue::String(text) => format!("{:?}", bounded(text, ECHOED_VALUE_BYTES)),
+    }
+}
+
+/// `text` cut at a character boundary to at most `max` bytes, marked with
+/// `…` when cut.
+fn bounded(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
 }
 
 fn listing(names: &[String]) -> String {

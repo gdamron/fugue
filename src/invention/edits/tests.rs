@@ -103,7 +103,7 @@ impl EditFacts for FakeFacts {
     ) -> Result<ModuleFacts, String> {
         self.described.push(id.to_string());
         if config.get("broken").is_some() {
-            return Err("broken config".to_string());
+            return Err(format!("broken config {config}"));
         }
         self.kept.insert(id.to_string(), config.clone());
         Ok(type_facts(module_type).unwrap())

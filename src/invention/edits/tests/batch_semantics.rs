@@ -206,3 +206,26 @@ fn non_finite_numbers_are_refused() {
     .unwrap();
     assert_eq!(candidate.control_writes.len(), 1);
 }
+
+#[test]
+fn refusals_echo_a_bounded_part_of_the_value() {
+    let huge = "é".repeat(100_000);
+    let failure = refused(vec![set(
+        "osc1",
+        "frequency",
+        ControlValue::String(huge.clone()),
+    )]);
+    assert_eq!(failure.reason, EditFailureReason::InvalidControlValue);
+    assert!(failure.message.len() < 200, "{}", failure.message);
+    assert!(failure.message.contains("éé…"), "{}", failure.message);
+
+    // A module that echoes the config it refused is cut too.
+    let failure = refused(vec![add("bad", "lfo", json!({ "broken": huge }))]);
+    assert_eq!(failure.reason, EditFailureReason::InvalidConfig);
+    assert!(failure.message.len() < 400, "{}", failure.message);
+    assert!(failure.message.ends_with('…'));
+
+    // A short value is shown whole.
+    let failure = refused(vec![set("osc1", "frequency", ControlValue::Bool(true))]);
+    assert!(failure.message.ends_with("got true"), "{}", failure.message);
+}
