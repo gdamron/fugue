@@ -37,7 +37,7 @@ mod reclaim;
 mod tests;
 
 pub(crate) use change::{GraphChange, PreparedChange};
-pub(crate) use publisher::Publisher;
+pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 
 /// A live graph's publisher together with the runtime mirrors it keeps in
@@ -142,26 +142,43 @@ impl LiveGraph {
         self.reclaim();
         let publisher = self.publisher.lock().unwrap();
         let mut change = self.change_on(&publisher);
-        edit(&mut change)?;
-        let prepared = change.prepare()?;
-        self.commit_locked(publisher, prepared)
+        if let Err(error) = edit(&mut change).and_then(|()| change.attach()) {
+            // The change's instances drop off the lock.
+            drop(publisher);
+            drop(change);
+            return Err(error);
+        }
+        self.commit_locked(publisher, change.compile())
     }
 
     /// Publishes `prepared` and commits the mirrors under `publisher`. A
     /// stale change is refused before the empty-change shortcut, so a caller
     /// never commits work planned against a topology that has moved.
+    /// Whatever the change or the publication leaves to free is dropped
+    /// after the guard is released.
     fn commit_locked(
         &self,
         mut publisher: MutexGuard<'_, Publisher>,
         prepared: PreparedChange,
     ) -> Result<Committed, GraphCommandError> {
         if prepared.base_generation != publisher.generation() {
+            drop(publisher);
+            drop(prepared);
             return Err(GraphCommandError::TopologyMoved);
         }
         if prepared.is_empty() {
+            drop(publisher);
             return Ok(Committed::default());
         }
-        let published = publisher.publish(prepared)?;
+        let mut published = match publisher.publish(prepared) {
+            Ok(published) => published,
+            Err(Refused { error, change }) => {
+                drop(publisher);
+                drop(change);
+                return Err(error);
+            }
+        };
+        let superseded = published.superseded.take();
         let mirror = publisher.mirror();
         let removed: Vec<&String> = published
             .previous
@@ -217,6 +234,8 @@ impl LiveGraph {
             }
             committed.started.push(module.info);
         }
+        drop(publisher);
+        drop(superseded);
         Ok(committed)
     }
 

@@ -263,15 +263,19 @@ impl GraphChange {
     /// [`crate::Module::prepare_for_publication`]), then compiles the
     /// complete next topology. Fails, with nothing visible changed, when a
     /// schedule cannot resolve.
+    // Only tests prepare outside the lock until reload does.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn prepare(mut self) -> Result<PreparedChange, GraphCommandError> {
+        self.attach()?;
+        Ok(self.compile())
+    }
+
+    /// The fallible part of [`Self::prepare`]: attaches new schedulers.
+    /// On failure the change, and every instance it built, is still the
+    /// caller's to drop where it chooses.
+    pub(crate) fn attach(&mut self) -> Result<(), GraphCommandError> {
         if self.edits == 0 {
-            // Nothing to attach, compile, or publish.
-            return Ok(PreparedChange {
-                base_generation: self.base_generation,
-                mirror: self.mirror,
-                built: self.built,
-                publication: None,
-            });
+            return Ok(());
         }
         for (id, module) in &self.built {
             if module.info.module_type != CONTROL_SCHEDULER_TYPE_ID {
@@ -284,6 +288,21 @@ impl GraphChange {
                 .map(|(_, handle)| handle);
             attach_from_handle_resolving(id, handle, &self.directory, &self.surfaces)
                 .map_err(GraphCommandError::ModuleBuildFailed)?;
+        }
+        Ok(())
+    }
+
+    /// The rest of [`Self::prepare`], once [`Self::attach`] has succeeded:
+    /// prepares each new instance and compiles the next topology.
+    pub(crate) fn compile(mut self) -> PreparedChange {
+        if self.edits == 0 {
+            // Nothing to compile or publish.
+            return PreparedChange {
+                base_generation: self.base_generation,
+                mirror: self.mirror,
+                built: self.built,
+                publication: None,
+            };
         }
         // Attached, so each new instance can do its one-time setup here
         // rather than in its first block on the audio thread.
@@ -303,12 +322,12 @@ impl GraphChange {
             &mut instances,
             self.block_size,
         );
-        Ok(PreparedChange {
+        PreparedChange {
             base_generation: self.base_generation,
             mirror: self.mirror,
             built: self.built,
             publication: Some(publication),
-        })
+        }
     }
 }
 
