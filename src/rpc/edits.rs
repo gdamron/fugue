@@ -177,10 +177,16 @@ impl StructuralEdit {
     }
 }
 
-/// Refuses a batch whose size is outside `1..=MAX_EDITS_PER_BATCH`.
+/// Refuses a batch whose size is outside `1..=MAX_EDITS_PER_BATCH`, then a
+/// `set_control` whose value is a non-finite number.
 ///
-/// A batch-level refusal: [`RpcErrorCode::InvalidRequest`] with no `edit`
-/// detail, since no single edit is at fault.
+/// A size refusal is batch-level: [`RpcErrorCode::InvalidRequest`] with no
+/// `edit` detail, since no single edit is at fault. A non-finite number (NaN,
+/// an infinity, or a value too large for an `f32`) is refused at its edit's
+/// index as [`EditFailureReason::InvalidControlValue`], the refusal the daemon
+/// gives when a JSON client sends one. JSON has no such numbers, so a client
+/// that sends one without this check gets a `null` on the wire and a parse
+/// error with no edit index.
 pub fn check_edit_batch(edits: &[StructuralEdit]) -> Result<(), RpcError> {
     if edits.is_empty() {
         return Err(RpcError::new(
@@ -198,7 +204,41 @@ pub fn check_edit_batch(edits: &[StructuralEdit]) -> Result<(), RpcError> {
             ),
         ));
     }
+    for (index, edit) in edits.iter().enumerate() {
+        if let StructuralEdit::SetControl {
+            module_id,
+            key,
+            value,
+        } = edit
+        {
+            if let Some(message) = non_finite_refusal(module_id, key, value) {
+                return Err(RpcError::invalid_edit(EditFailure::new(
+                    index,
+                    EditOp::SetControl,
+                    EditFailureReason::InvalidControlValue,
+                    message,
+                )));
+            }
+        }
+    }
     Ok(())
+}
+
+/// Why `value` cannot be written to `module_id.key`, if it is a number a
+/// document cannot hold: NaN or an infinity, which is also what a number too
+/// large for an `f32` becomes. JSON has no such numbers; a document would
+/// hold `null`.
+pub(crate) fn non_finite_refusal(
+    module_id: &str,
+    key: &str,
+    value: &ControlValue,
+) -> Option<String> {
+    match value {
+        ControlValue::Number(number) if !number.is_finite() => Some(format!(
+            "control '{module_id}.{key}' expects a finite number, got {number}"
+        )),
+        _ => None,
+    }
 }
 
 /// Why one edit in a batch was refused. Machine-readable, so an adapter can

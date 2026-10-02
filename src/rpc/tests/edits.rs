@@ -3,6 +3,7 @@ use crate::ControlValue;
 use serde_json::json;
 
 mod documented;
+mod non_finite;
 
 fn add(id: &str) -> StructuralEdit {
     StructuralEdit::AddModule {
