@@ -1,5 +1,6 @@
 /// Error type for graph command operations.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum GraphCommandError {
     /// The audio thread has stopped, so commands can no longer be delivered.
     AudioThreadStopped,
@@ -13,6 +14,13 @@ pub enum GraphCommandError {
     InvalidPort(String),
     /// A module control operation failed (invalid key, etc.).
     ControlError(String),
+    /// The audio thread has not drained the queued input writes, so the
+    /// write was not queued.
+    QueueFull,
+    /// Another change was published after this one was prepared, so it was
+    /// refused with nothing changed. Prepare it again against the current
+    /// topology.
+    TopologyMoved,
 }
 
 impl std::fmt::Display for GraphCommandError {
@@ -35,6 +43,15 @@ impl std::fmt::Display for GraphCommandError {
             }
             GraphCommandError::ControlError(msg) => {
                 write!(f, "control error: {}", msg)
+            }
+            GraphCommandError::QueueFull => {
+                write!(f, "input write queue is full; write not delivered")
+            }
+            GraphCommandError::TopologyMoved => {
+                write!(
+                    f,
+                    "the graph changed while this change was prepared; nothing was applied"
+                )
             }
         }
     }

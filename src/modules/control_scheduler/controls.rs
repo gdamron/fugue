@@ -77,11 +77,22 @@ impl ControlSchedulerControls {
     /// schedule. Returns an error (leaving the schedule unresolved) when any
     /// entry targets a missing module or control.
     pub(crate) fn attach(&self, own_id: &str, directory: &SurfaceDirectory) -> Result<(), String> {
+        let surfaces = directory.lock().unwrap();
+        self.attach_resolving(own_id, directory, &surfaces)
+    }
+
+    /// Attaches like [`Self::attach`], but resolves the schedule against
+    /// `surfaces` (the directory as it will be once a pending graph change
+    /// commits) rather than the directory's current contents. Later schedule
+    /// edits re-resolve through `directory`.
+    pub(crate) fn attach_resolving(
+        &self,
+        own_id: &str,
+        directory: &SurfaceDirectory,
+        surfaces: &SurfaceMap,
+    ) -> Result<(), String> {
         let spec = self.shared.state.lock().unwrap().spec.clone();
-        let resolved = {
-            let surfaces = directory.lock().unwrap();
-            resolve_schedule(&spec, own_id, &surfaces)?
-        };
+        let resolved = resolve_schedule(&spec, own_id, surfaces)?;
         let mut state = self.shared.state.lock().unwrap();
         state.attachment = Some(Attachment {
             own_id: own_id.to_string(),
@@ -186,10 +197,41 @@ impl ControlSurface for ControlSchedulerControls {
         }
     }
 
+    fn control_targets(&self) -> Vec<String> {
+        self.target_module_ids()
+    }
+
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
             "schedule" => self.set_schedule_json(value.as_string()?),
             "step" => Err("Control 'step' is read-only".to_string()),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    /// Parses a new schedule and resolves it against `surfaces`, the
+    /// directory the write will land in, as the setter resolves it against
+    /// the runtime's.
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        surfaces: &SurfaceMap,
+    ) -> Result<(), String> {
+        match key {
+            "schedule" => {
+                let spec = parse_schedule_json(value.as_string()?)?;
+                let own_id = {
+                    let state = self.shared.state.lock().unwrap();
+                    let attachment = state
+                        .attachment
+                        .as_ref()
+                        .ok_or("control_scheduler is not attached to a runtime")?;
+                    attachment.own_id.clone()
+                };
+                resolve_schedule(&spec, &own_id, surfaces).map(drop)
+            }
+            "step" => crate::traits::read_only(key),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }

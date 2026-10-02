@@ -24,6 +24,7 @@ pub mod format;
 pub mod graph;
 pub mod handles;
 pub mod orchestration;
+pub(crate) mod publish;
 pub mod reload;
 pub mod render;
 pub mod rpc_snapshot;

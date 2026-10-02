@@ -360,6 +360,14 @@ impl Module for DevelopmentModule {
         true
     }
 
+    /// Prepares every inner module, so a scheduler inside a development
+    /// adopts its schedule here rather than on its first audio block.
+    fn prepare_for_publication(&mut self) {
+        for module in &mut self.graph.modules {
+            module.module_mut().prepare_for_publication();
+        }
+    }
+
     fn inputs(&self) -> &[&str] {
         &self.input_ports
     }

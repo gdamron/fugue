@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize,
 use std::sync::{Arc, Mutex};
 
 use crate::atomic::AtomicF32;
+use crate::traits::{check_listed_control, read_only, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::{
@@ -183,16 +184,7 @@ impl CellSequencerControls {
 
     /// Sets the playback mode from its control string.
     pub fn set_mode(&self, mode: &str) -> Result<(), String> {
-        match mode {
-            "loop" => self.set_one_shot(false),
-            "one_shot" => self.set_one_shot(true),
-            other => {
-                return Err(format!(
-                    "Unknown mode '{}' (expected loop | one_shot)",
-                    other
-                ))
-            }
-        }
+        self.set_one_shot(mode_is_one_shot(mode)?);
         Ok(())
     }
 
@@ -238,16 +230,7 @@ impl CellSequencerControls {
 
     /// Sets the grace placement from its control string.
     pub fn set_grace_placement(&self, placement: &str) -> Result<(), String> {
-        match placement {
-            "before" => self.set_grace_on_beat(false),
-            "on_beat" => self.set_grace_on_beat(true),
-            other => {
-                return Err(format!(
-                    "Unknown grace_placement '{}' (expected before | on_beat)",
-                    other
-                ))
-            }
-        }
+        self.set_grace_on_beat(grace_is_on_beat(placement)?);
         Ok(())
     }
 
@@ -430,12 +413,49 @@ impl ControlSurface for CellSequencerControls {
                     self.request_advance();
                 }
             }
-            "loop_count" | "current_cell" | "total_cells" | "ended" => {
-                return Err(format!("Control '{}' is read-only", key));
-            }
+            "loop_count" | "current_cell" | "total_cells" | "ended" => return read_only(key),
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        _surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        match key {
+            "sequences_json" => parse_sequence_bank_json(value.as_string()?).map(drop),
+            "mode" => mode_is_one_shot(value.as_string()?).map(drop),
+            "grace_placement" => grace_is_on_beat(value.as_string()?).map(drop),
+            "loop_count" | "current_cell" | "total_cells" | "ended" => read_only(key),
+            _ => check_listed_control(&self.controls(), key, value),
+        }
+    }
+}
+
+/// Parses a `mode` value: true for `one_shot`, false for `loop`.
+fn mode_is_one_shot(mode: &str) -> Result<bool, String> {
+    match mode {
+        "loop" => Ok(false),
+        "one_shot" => Ok(true),
+        other => Err(format!(
+            "Unknown mode '{}' (expected loop | one_shot)",
+            other
+        )),
+    }
+}
+
+/// Parses a `grace_placement` value: true for `on_beat`, false for `before`.
+fn grace_is_on_beat(placement: &str) -> Result<bool, String> {
+    match placement {
+        "before" => Ok(false),
+        "on_beat" => Ok(true),
+        other => Err(format!(
+            "Unknown grace_placement '{}' (expected before | on_beat)",
+            other
+        )),
     }
 }
 

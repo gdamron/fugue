@@ -1,4 +1,6 @@
 pub mod agents;
+#[cfg(test)]
+mod alloc_counter;
 mod atomic;
 pub mod dsp;
 #[cfg(test)]
