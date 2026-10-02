@@ -144,6 +144,10 @@ pub(crate) struct GraphChange {
     /// Edits that changed the working topology.
     edits: usize,
     built: IndexMap<String, BuiltModule>,
+    /// Modules an upsert replaced or a remove took out. They are kept, not
+    /// dropped in place, so a change edited under the publisher lock can
+    /// drop them after releasing it.
+    discarded: Vec<BuiltModule>,
     block_size: usize,
 }
 
@@ -162,6 +166,7 @@ impl GraphChange {
             directory,
             edits: 0,
             built: IndexMap::new(),
+            discarded: Vec::new(),
             block_size,
         }
     }
@@ -215,14 +220,24 @@ impl GraphChange {
                 self.surfaces.shift_remove(id);
             }
         }
-        self.built.insert(id.to_string(), module);
+        if let Some(replaced) = self.built.insert(id.to_string(), module) {
+            self.discarded.push(replaced);
+        }
         self.edits += 1;
+    }
+
+    /// Takes the modules this change's upserts and removes displaced, for
+    /// the caller to drop where it chooses.
+    pub(crate) fn take_discarded(&mut self) -> Vec<BuiltModule> {
+        std::mem::take(&mut self.discarded)
     }
 
     /// Removes module `id` and its connections; a missing id is a no-op.
     pub(crate) fn remove(&mut self, id: &str) {
         if self.contains(id) {
-            self.built.shift_remove(id);
+            if let Some(removed) = self.built.shift_remove(id) {
+                self.discarded.push(removed);
+            }
             self.mirror.remove(id);
             self.surfaces.shift_remove(id);
             self.edits += 1;
