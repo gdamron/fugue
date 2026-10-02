@@ -2,6 +2,8 @@ use super::*;
 use crate::ControlValue;
 use serde_json::json;
 
+mod documented;
+
 fn add(id: &str) -> StructuralEdit {
     StructuralEdit::AddModule {
         id: id.to_string(),
