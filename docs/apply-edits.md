@@ -200,6 +200,13 @@ value that still has the wrong kind, or a number that is not finite (NaN, an
 infinity, or a value too large for a 32-bit float such as `1e39`), is
 `invalid_control_value`.
 
+JSON has no NaN or infinity. A Rust client that calls `check_edit_batch`
+before sending refuses a non-finite number there, with the same
+`invalid_control_value` detail at the edit's index; without that check the
+number goes out as `null` and the daemon can only answer with a parse error
+that names no edit. When a JSON client sends a number too large for a 32-bit
+float, the daemon refuses it at its edit's index as `invalid_control_value`.
+
 The value is then checked against the module's own rules, before anything is
 published, exactly as the module's setter would check it. A value the module
 would refuse is `invalid_control_value` at that edit's index: a read-only
