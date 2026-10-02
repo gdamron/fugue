@@ -181,7 +181,7 @@ pub(crate) fn end_reached_in(
 /// A running invention with audio output.
 pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
-    control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
+    pub(crate) control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     /// The single path by which the audio graph changes.
     pub(crate) live: LiveGraph,
     pub(crate) registry: ModuleRegistry,
@@ -189,7 +189,7 @@ pub struct RunningInvention {
     pub(crate) development_definitions: crate::invention::reload::DevelopmentDefinitions,
     pub(crate) sample_rate: u32,
     pub(crate) state: Arc<Mutex<RuntimeState>>,
-    module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
+    pub(crate) module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
     scripts: ScriptManager,
     agents: AgentManager,
     /// Shared, late-bindable sink for runtime events. Empty until a host calls

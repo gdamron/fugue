@@ -18,6 +18,7 @@
 //!
 //! [`authored_document`]: super::authored_document
 
+mod apply;
 mod candidate;
 #[cfg(test)]
 mod tests;

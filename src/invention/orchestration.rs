@@ -273,7 +273,7 @@ impl RuntimeSnapshot {
     }
 
     /// Announces a recorded control change to the installed event sink, if any.
-    fn emit_control_changed(&self, module_id: &str, key: &str, value: ControlValue) {
+    pub(crate) fn emit_control_changed(&self, module_id: &str, key: &str, value: ControlValue) {
         // Clone the sink out under the lock, then release it before emitting so
         // a sink implementation can never re-enter this slot while we hold it.
         let sink = self.event_sink.lock().unwrap().clone();
