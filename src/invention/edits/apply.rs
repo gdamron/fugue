@@ -24,6 +24,8 @@
 mod commit;
 mod facts;
 mod plan;
+#[cfg(test)]
+mod tests;
 
 use std::collections::HashMap;
 
