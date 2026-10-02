@@ -228,7 +228,10 @@ pub enum EditFailureReason {
     ConnectionNotFound,
     /// `set_control` names a key the module does not expose as a control.
     UnknownControl,
-    /// `set_control`'s value cannot be coerced to the control's declared kind.
+    /// `set_control`'s value is refused: it cannot be coerced to the
+    /// control's declared kind, it is not a finite number, or the module
+    /// refuses it as its own setter would (a read-only control, unparsable
+    /// JSON, an option the control does not offer).
     InvalidControlValue,
 }
 
