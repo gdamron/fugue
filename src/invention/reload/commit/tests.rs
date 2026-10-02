@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use crate::invention::builder::InventionBuilder;
-use crate::invention::runtime::RunningInvention;
+use crate::invention::orchestration::OrchestrationRuntime;
+use crate::invention::runtime::{GraphCommandError, RunningInvention};
 use crate::modules::dac::BlockRenderFn;
 use crate::modules::AudioBackend;
 use crate::{ControlValue, Invention};
@@ -191,11 +192,12 @@ fn a_failed_preparation_leaves_the_running_invention_unchanged() {
     ];
     for corrupt in corruptions {
         let validated = running.validate_document(doc(EDITED)).unwrap();
+        let base = running.live.generation();
         let mut plan = running.plan_document(&validated).unwrap();
         assert!(!plan.control_updates.is_empty() && !plan.removed.is_empty());
         corrupt(&mut plan);
         let adopt = Some((validated.registry, validated.definitions));
-        let prepared = running.prepare_plan(plan, Some(validated.document), adopt);
+        let prepared = running.prepare_plan(base, plan, Some(validated.document), adopt);
         assert!(prepared.is_err());
         assert_eq!(observe(&running), before);
     }
@@ -207,4 +209,50 @@ fn a_failed_preparation_leaves_the_running_invention_unchanged() {
     // And the runtime still reloads normally afterwards.
     running.reload(doc(EDITED)).expect("reload applies");
     assert_eq!(running.document(), Some(doc(EDITED)));
+}
+
+/// Plans and prepares EDITED against `running`, with an edit landing after
+/// `edit_after` steps (0: after planning, 1: after preparing); returns what
+/// committing gives.
+fn reload_with_interleaved_edit(
+    running: &mut RunningInvention,
+    edit_after: usize,
+) -> Result<super::ReloadReport, GraphCommandError> {
+    let validated = running.validate_document(doc(EDITED)).unwrap();
+    let base = running.live.generation();
+    let plan = running.plan_document(&validated).unwrap();
+    let adopt = Some((validated.registry, validated.definitions));
+    let edit = |running: &RunningInvention| running.remove_module("spare").unwrap();
+    if edit_after == 0 {
+        edit(running);
+    }
+    let prepared = running.prepare_plan(base, plan, Some(validated.document), adopt)?;
+    if edit_after == 1 {
+        edit(running);
+    }
+    running.commit_prepared(prepared)
+}
+
+#[test]
+fn an_edit_landing_while_a_reload_is_planned_or_prepared_refuses_it() {
+    for edit_after in [0, 1] {
+        let (mut running, pump) = start(BASE);
+        let (twin, twin_pump) = start(BASE);
+        twin.remove_module("spare").unwrap();
+        let result = reload_with_interleaved_edit(&mut running, edit_after);
+        assert!(
+            matches!(result, Err(GraphCommandError::TopologyMoved)),
+            "edit after step {edit_after}: {result:?}"
+        );
+
+        // Only the interleaved edit landed: the graph, mirrors and document
+        // match a twin that made the same edit alone.
+        assert_eq!(pump.render(10), twin_pump.render(10));
+        assert_eq!(running.document(), twin.document());
+        assert_eq!(running.list_modules(), twin.list_modules());
+
+        // Planned again from the same document, the reload applies.
+        running.reload(doc(EDITED)).expect("reload applies");
+        assert_eq!(running.document(), Some(doc(EDITED)));
+    }
 }

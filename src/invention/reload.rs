@@ -306,6 +306,10 @@ impl std::fmt::Display for ReloadError {
 
 impl std::error::Error for ReloadError {}
 
+/// How many times [`RunningInvention::reload`] plans and prepares a document
+/// when other edits keep changing the graph underneath it.
+const RELOAD_ATTEMPTS: usize = 3;
+
 /// A new document that passed a full validation build, with what the
 /// running invention adopts if the reload commits.
 pub(crate) struct ValidatedDocument {
@@ -334,20 +338,28 @@ impl RunningInvention {
     /// controls is written to the surviving module right after publication,
     /// so it may be heard up to one block before the new topology.
     ///
+    /// When another edit (a script's, say) changes the graph while the
+    /// reload is planned or prepared, the reload is planned and prepared
+    /// again from the same validated document, up to three times in all.
     /// Any error leaves the running invention untouched.
     pub fn reload(&mut self, invention: Invention) -> Result<ReloadReport, ReloadError> {
         let validated = self.validate_document(invention)?;
-        let plan = self.plan_document(&validated)?;
-        let ValidatedDocument {
-            document,
-            registry,
-            definitions,
-            ..
-        } = validated;
-        let prepared = self
-            .prepare_plan(plan, Some(document), Some((registry, definitions)))
-            .map_err(ReloadError::Apply)?;
-        self.commit_prepared(prepared).map_err(ReloadError::Apply)
+        let mut attempt = 1;
+        loop {
+            // Read before planning: the plan reads state that commits under
+            // the publisher, so a change landing after this read is caught
+            // when the prepared change publishes, at worst spuriously.
+            let base = self.live.generation();
+            let plan = self.plan_document(&validated)?;
+            let adopt = (validated.registry.clone(), validated.definitions.clone());
+            let result = self
+                .prepare_plan(base, plan, Some(validated.document.clone()), Some(adopt))
+                .and_then(|prepared| self.commit_prepared(prepared));
+            match result {
+                Err(GraphCommandError::TopologyMoved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
+                result => return result.map_err(ReloadError::Apply),
+            }
+        }
     }
 
     /// Validates a new document with a full throwaway build against the

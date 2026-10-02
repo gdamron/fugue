@@ -97,6 +97,12 @@ impl LiveGraph {
         self.reclaimer.reclaim()
     }
 
+    /// Publications made so far. A change prepared from state read before
+    /// this generation moved is refused when it publishes.
+    pub(crate) fn generation(&self) -> u64 {
+        self.publisher.lock().unwrap().generation()
+    }
+
     /// The shared publisher, for observation in tests.
     #[cfg(test)]
     pub(crate) fn publisher(&self) -> &Arc<Mutex<Publisher>> {
@@ -107,8 +113,6 @@ impl LiveGraph {
     /// whatever the audio thread has retired. The change is stale once any
     /// other change publishes; [`Self::edit`] rules that out for a change
     /// small enough to prepare under the publisher's lock.
-    // Only tests prepare outside the lock until reload does.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn begin(&self) -> GraphChange {
         self.reclaim();
         let publisher = self.publisher.lock().unwrap();
@@ -129,8 +133,6 @@ impl LiveGraph {
     /// [`Self::begin`] ([`GraphCommandError::TopologyMoved`]), an empty
     /// change included, or the audio thread is gone. An empty change that
     /// is still current publishes nothing.
-    // Only tests prepare outside the lock until reload does.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn commit(&self, prepared: PreparedChange) -> Result<Committed, GraphCommandError> {
         self.commit_locked(self.publisher.lock().unwrap(), prepared)
     }

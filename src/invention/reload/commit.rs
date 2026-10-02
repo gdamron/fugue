@@ -30,9 +30,16 @@ impl RunningInvention {
     /// current one), attaches schedulers against the directory as the plan
     /// will leave it, and compiles the complete next topology.
     ///
+    /// `base_generation` is [`crate::invention::publish::LiveGraph::generation`]
+    /// read before `plan` was made. When the graph has changed since, the
+    /// plan is stale and preparation fails with
+    /// [`GraphCommandError::TopologyMoved`]; a change after preparation is
+    /// refused the same way on commit. Plan again from the same document.
+    ///
     /// `document`, when given, becomes the retained document on commit.
     pub(crate) fn prepare_plan(
         &self,
+        base_generation: u64,
         plan: ReloadPlan,
         document: Option<Invention>,
         adopt: Option<(ModuleRegistry, DevelopmentDefinitions)>,
@@ -61,6 +68,9 @@ impl RunningInvention {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut change = self.live.begin();
+        if change.base_generation != base_generation {
+            return Err(GraphCommandError::TopologyMoved);
+        }
         for conn in &plan.removed_connections {
             change.disconnect(edge(&conn.from, &conn.from_port, &conn.to, &conn.to_port));
         }
@@ -108,8 +118,10 @@ impl RunningInvention {
     /// stops scripts and agents.
     ///
     /// Control updates are written right after the publication is queued, so
-    /// a value may be heard up to one block before the new topology. Fails
-    /// only when the audio thread is gone, with nothing changed.
+    /// a value may be heard up to one block before the new topology. Fails,
+    /// with nothing changed, when another change published since the plan
+    /// was prepared ([`GraphCommandError::TopologyMoved`]) or the audio
+    /// thread is gone.
     pub(crate) fn commit_prepared(
         &mut self,
         prepared: PreparedCommit,
