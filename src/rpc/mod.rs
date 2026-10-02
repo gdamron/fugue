@@ -31,7 +31,7 @@ pub use discovery::{
 };
 pub use edits::{
     check_edit_batch, ApplyEditsReport, EditFailure, EditFailureReason, EditOp, StructuralEdit,
-    MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
+    WrittenControl, MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
 };
 pub use error::{RpcError, RpcErrorCode};
 pub use event::{

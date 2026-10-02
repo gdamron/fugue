@@ -114,7 +114,7 @@ fn edits_applied_response_is_compact_and_flat() {
         added: vec!["lfo".into()],
         removed: vec![],
         rebuilt: vec![],
-        controls_written: vec!["osc.frequency".into()],
+        controls_written: vec![WrittenControl::new("osc", "frequency")],
         connections_added: 1,
         connections_removed: 0,
         untouched: 2,
@@ -127,7 +127,10 @@ fn edits_applied_response_is_compact_and_flat() {
     assert_eq!(json["revision"]["revision"], 5);
     assert_eq!(json["edit_count"], 3);
     assert_eq!(json["added"], json!(["lfo"]));
-    assert_eq!(json["controls_written"], json!(["osc.frequency"]));
+    assert_eq!(
+        json["controls_written"],
+        json!([{ "module_id": "osc", "key": "frequency" }])
+    );
     assert_eq!(json["untouched"], 2);
     assert_eq!(
         serde_json::from_value::<RpcResponse>(json).unwrap(),

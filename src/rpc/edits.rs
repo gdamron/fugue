@@ -275,11 +275,31 @@ pub struct ApplyEditsReport {
     /// again in it. Each gets a fresh instance, even when its type and config
     /// are identical, so its state restarts.
     pub rebuilt: Vec<String>,
-    /// `module.key` for each distinct control the batch's `set_control` edits
-    /// wrote, in first-written order.
-    pub controls_written: Vec<String>,
+    /// Each distinct control the batch's `set_control` edits wrote, once, in
+    /// first-written order. Only controls of modules that exist after the
+    /// commit are listed: a write to a module a later edit removed or
+    /// replaced is dropped with that module.
+    pub controls_written: Vec<WrittenControl>,
     pub connections_added: usize,
     pub connections_removed: usize,
     /// Modules the batch left untouched; they keep their phase and state.
     pub untouched: usize,
+}
+
+/// One control a committed batch wrote, named structurally because a module
+/// id may itself contain a `.`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct WrittenControl {
+    pub module_id: String,
+    pub key: String,
+}
+
+impl WrittenControl {
+    pub fn new(module_id: impl Into<String>, key: impl Into<String>) -> Self {
+        Self {
+            module_id: module_id.into(),
+            key: key.into(),
+        }
+    }
 }
