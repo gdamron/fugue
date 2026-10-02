@@ -133,11 +133,25 @@ impl StructuralEdit {
     /// [`MAX_EDIT_NAME_BYTES`] long. `index` is the edit's position in its
     /// batch, reported in the refusal.
     pub fn check_names(&self, index: usize) -> Result<(), EditFailure> {
-        let names: Vec<(&str, &str)> = match self {
+        let check = |field: &str, name: &str| {
+            if name.is_empty() || name.len() > MAX_EDIT_NAME_BYTES {
+                return Err(EditFailure::new(
+                    index,
+                    self.op(),
+                    EditFailureReason::InvalidName,
+                    format!("`{field}` must be 1 to {MAX_EDIT_NAME_BYTES} bytes"),
+                ));
+            }
+            Ok(())
+        };
+        match self {
             Self::AddModule {
                 id, module_type, ..
-            } => vec![("id", id), ("module_type", module_type)],
-            Self::RemoveModule { id } => vec![("id", id)],
+            } => {
+                check("id", id)?;
+                check("module_type", module_type)
+            }
+            Self::RemoveModule { id } => check("id", id),
             Self::Connect {
                 from,
                 from_port,
@@ -149,25 +163,17 @@ impl StructuralEdit {
                 from_port,
                 to,
                 to_port,
-            } => vec![
-                ("from", from),
-                ("from_port", from_port),
-                ("to", to),
-                ("to_port", to_port),
-            ],
-            Self::SetControl { module_id, key, .. } => vec![("module_id", module_id), ("key", key)],
-        };
-        for (field, name) in names {
-            if name.is_empty() || name.len() > MAX_EDIT_NAME_BYTES {
-                return Err(EditFailure::new(
-                    index,
-                    self.op(),
-                    EditFailureReason::InvalidName,
-                    format!("`{field}` must be 1 to {MAX_EDIT_NAME_BYTES} bytes"),
-                ));
+            } => {
+                check("from", from)?;
+                check("from_port", from_port)?;
+                check("to", to)?;
+                check("to_port", to_port)
+            }
+            Self::SetControl { module_id, key, .. } => {
+                check("module_id", module_id)?;
+                check("key", key)
             }
         }
-        Ok(())
     }
 }
 
