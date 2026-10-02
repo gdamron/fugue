@@ -111,13 +111,13 @@ fn the_candidate_matches_the_equivalent_runtime_commands() {
     running.connect("osc2", "out", "lfo", "rate").unwrap();
 
     assert_eq!(candidate.document, retained(&running));
-    // The applied value matches what the runtime applied to the surviving
-    // module (the other writes went to modules removed later in the batch).
-    let lfo = candidate
-        .control_writes
-        .iter()
-        .find(|candidate| candidate.write.module_id == "lfo")
-        .unwrap();
+    // Only the write to the surviving module remains: the osc2 writes were
+    // aimed at an instance removed later in the batch. Its value matches
+    // what the runtime applied.
+    let [lfo] = candidate.control_writes.as_slice() else {
+        panic!("expected one write, got {:?}", candidate.control_writes);
+    };
+    assert_eq!((lfo.edit_index, lfo.write.module_id.as_str()), (4, "lfo"));
     assert_eq!(
         running.get_control("lfo", "frequency").unwrap(),
         lfo.write.value

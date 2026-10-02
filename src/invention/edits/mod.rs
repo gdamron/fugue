@@ -108,14 +108,37 @@ pub(crate) struct CandidateWrite {
 pub(crate) struct EditedCandidate {
     /// The authored document with every edit applied, in order.
     pub(crate) document: Invention,
-    /// One authored write per `set_control` edit, in batch order. The commit
-    /// checks each against the module's own rules before publishing, and
-    /// refuses a write the module would refuse as `invalid_control_value`
-    /// at its `edit_index`.
+    /// One authored write per `set_control` edit, in batch order, for
+    /// modules that exist after the batch. A later `remove_module` drops the
+    /// writes made to the module before it, so a write never outlives the
+    /// instance it was aimed at; a module added again starts from its new
+    /// config. The commit checks each write against the module's own rules
+    /// before publishing, and refuses a write the module would refuse as
+    /// `invalid_control_value` at its `edit_index`.
     pub(crate) control_writes: Vec<CandidateWrite>,
     /// Every module id an edit names, as a module or as a connection
     /// endpoint. A commit must not touch a module outside this set.
     pub(crate) named_modules: BTreeSet<String>,
+}
+
+impl EditedCandidate {
+    /// The controls the batch wrote, one per (module, key), each carrying
+    /// the last write's value and edit index, in first-written order. This
+    /// is what a commit applies, announces (one `ControlChanged` each) and
+    /// lists in `ApplyEditsReport::controls_written`.
+    pub(crate) fn final_writes(&self) -> Vec<&CandidateWrite> {
+        let mut finals: Vec<&CandidateWrite> = Vec::new();
+        for candidate in &self.control_writes {
+            let write = &candidate.write;
+            match finals.iter_mut().find(|earlier| {
+                earlier.write.module_id == write.module_id && earlier.write.key == write.key
+            }) {
+                Some(earlier) => *earlier = candidate,
+                None => finals.push(candidate),
+            }
+        }
+        finals
+    }
 }
 
 /// Applies `edits` in order to a copy of `document`, the retained authored

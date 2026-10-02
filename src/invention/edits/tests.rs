@@ -6,6 +6,7 @@ use super::*;
 use crate::rpc::{EditFailureReason, EditOp};
 use crate::ControlValue;
 
+mod batch_semantics;
 mod runtime_equivalence;
 
 const BASE: &str = r#"{
