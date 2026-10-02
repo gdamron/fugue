@@ -6,9 +6,11 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 
 use crate::invention::edits::{EditFacts, ModuleFacts};
+use crate::invention::format::Invention;
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::publish::{BuiltModule, GraphChange};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError, RunningInvention};
+use crate::traits::ControlSurfaceMap;
 use crate::ModuleRegistry;
 
 /// A module `describe` built for an `add_module`, kept so the commit can
@@ -58,6 +60,24 @@ impl<'r> LiveFacts<'r> {
             surfaces: running.control_surfaces.lock().unwrap().clone(),
             kept: KeptModules::default(),
         }
+    }
+
+    /// The control-surface directory as `candidate` leaves it, as far as
+    /// the batch's checks can tell: the running modules it keeps, and the
+    /// modules `describe` built for the ones it adds or replaces. A module
+    /// a later edit rebuilds from a changed config is in it as described.
+    pub(super) fn directory_after(&self, candidate: &Invention) -> ControlSurfaceMap {
+        candidate
+            .modules
+            .iter()
+            .filter_map(|spec| {
+                let surface = match self.kept.0.get(&spec.id) {
+                    Some(kept) => kept.module.surface.clone(),
+                    None => self.surfaces.get(&spec.id).cloned(),
+                };
+                Some((spec.id.clone(), surface?))
+            })
+            .collect()
     }
 
     /// The modules `describe` built and kept, for the commit to reuse.
