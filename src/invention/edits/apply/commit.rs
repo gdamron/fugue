@@ -3,15 +3,14 @@
 
 use std::collections::HashSet;
 
-use super::{Batch, Refused};
-use crate::invention::edits::EditedCandidate;
+use super::{check_writes, Batch, Refused};
 use crate::invention::format::ModuleSpec;
 use crate::invention::publish::{BuiltModule, GraphChange, PreparedChange};
 use crate::invention::reload::ReloadPlan;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
 use crate::rpc::{
-    truncate_on_char_boundary, ApplyEditsReport, ControlWriteFailure, EditFailure,
-    EditFailureReason, EditOp, RpcError, WrittenControl, MODULE_ERROR_BYTES,
+    truncate_on_char_boundary, ApplyEditsReport, ControlWriteFailure, WrittenControl,
+    MODULE_ERROR_BYTES,
 };
 
 /// A batch's change, prepared and checked, ready to publish.
@@ -58,7 +57,7 @@ impl RunningInvention {
             .map(&mut build)
             .collect::<Result<Vec<_>, _>>()?;
         let change = self.stage_plan(base_generation, &plan, swapped, added)?;
-        check_writes(&change, &batch.candidate)?;
+        check_writes(&change.surfaces, &batch.candidate)?;
         Ok(PreparedEdits { change, plan })
     }
 
@@ -77,9 +76,12 @@ impl RunningInvention {
     ) -> Result<ApplyEditsReport, Refused> {
         let PreparedEdits { change, plan } = prepared;
         let document = &batch.candidate.document;
-        let committed = self
-            .live
-            .commit_with(change, |state| state.document = Some(document.clone()))?;
+        let mut previous = None;
+        let committed = self.live.commit_with(change, |state| {
+            previous = state.document.replace(document.clone());
+        })?;
+        // The old document drops here, off the publisher's lock.
+        drop(previous);
 
         // Added and rebuilt modules were built from configs that hold their
         // values; only survivors are written, right after the publication
@@ -141,37 +143,6 @@ impl RunningInvention {
         }
         Ok(report)
     }
-}
-
-/// Checks every write the batch makes against the directory `change` leaves,
-/// survivors and new modules alike, refusing the first the module's setter
-/// would refuse at its edit's index. Every write is checked, not only each
-/// control's last one, so an edit the module refuses fails the batch even
-/// when a later edit overwrites it.
-fn check_writes(change: &PreparedChange, candidate: &EditedCandidate) -> Result<(), RpcError> {
-    for candidate in &candidate.control_writes {
-        let write = &candidate.write;
-        let refuse = |mut reason: String| {
-            truncate_on_char_boundary(&mut reason, MODULE_ERROR_BYTES);
-            RpcError::invalid_edit(EditFailure::new(
-                candidate.edit_index,
-                EditOp::SetControl,
-                EditFailureReason::InvalidControlValue,
-                format!(
-                    "module '{}' refused the value for control '{}': {reason}",
-                    write.module_id, write.key
-                ),
-            ))
-        };
-        let surface = change
-            .surfaces
-            .get(&write.module_id)
-            .ok_or_else(|| refuse("the module has no controls".to_string()))?;
-        surface
-            .validate_control(&write.key, &write.value, &change.surfaces)
-            .map_err(refuse)?;
-    }
-    Ok(())
 }
 
 /// The report's structural part, from the plan.
