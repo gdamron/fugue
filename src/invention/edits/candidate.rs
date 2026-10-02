@@ -234,23 +234,24 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         };
         // The same coercion a standalone authored write applies.
         let applied = value.clone().coerced_to(kind);
-        if matches!(applied, ControlValue::Number(number) if !number.is_finite()) {
-            // NaN and infinities (including a number too large for an f32)
-            // would be written into the document as `null`.
-            return Err(Refusal(
-                EditFailureReason::InvalidControlValue,
-                format!(
-                    "control '{module_id}.{key}' expects a finite number, got {}",
-                    echo(value)
-                ),
-            ));
-        }
         if !fits_kind(&applied, kind) {
             return Err(Refusal(
                 EditFailureReason::InvalidControlValue,
                 format!(
                     "control '{module_id}.{key}' expects {}, got {}",
                     kind_name(kind),
+                    echo(value)
+                ),
+            ));
+        }
+        // Only a number control can hold a number once the value fits its
+        // kind. NaN and infinities (including a number too large for an f32)
+        // would be written into the document as `null`.
+        if matches!(applied, ControlValue::Number(number) if !number.is_finite()) {
+            return Err(Refusal(
+                EditFailureReason::InvalidControlValue,
+                format!(
+                    "control '{module_id}.{key}' expects a finite number, got {}",
                     echo(value)
                 ),
             ));
@@ -312,7 +313,9 @@ fn same_connection(
 }
 
 /// Whether a coerced value has the shape its control declares. Ranges and
-/// option lists are left to the module, which may clamp or accept aliases.
+/// option lists are left to the module, which may clamp or accept aliases;
+/// at commit, `validate_control` refuses whatever the module's setter would
+/// refuse.
 fn fits_kind(value: &ControlValue, kind: &ControlKind) -> bool {
     matches!(
         (value, kind),
