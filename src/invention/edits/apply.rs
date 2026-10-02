@@ -33,9 +33,10 @@ use crate::invention::format::Invention;
 use crate::invention::reload::RELOAD_ATTEMPTS;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
 use crate::rpc::{
-    check_edit_batch, truncate_on_char_boundary, ApplyEditsReport, RpcError, RpcErrorCode,
-    StructuralEdit, MODULE_ERROR_BYTES,
+    check_edit_batch, truncate_on_char_boundary, ApplyEditsReport, EditFailure, EditFailureReason,
+    EditOp, RpcError, RpcErrorCode, StructuralEdit, MODULE_ERROR_BYTES,
 };
+use crate::traits::ControlSurfaceMap;
 use facts::{KeptModules, LiveFacts};
 
 /// A batch that passed its checks and validation, ready to plan.
@@ -100,6 +101,36 @@ fn build_failed(what: &str, mut reason: String) -> RpcError {
     )
 }
 
+/// Checks every write the batch makes against `surfaces`, the directory as
+/// the batch leaves it, survivors and new modules alike, refusing the first
+/// the module's setter would refuse at its edit's index. Every write is
+/// checked, not only each control's last one, so an edit the module refuses
+/// fails the batch even when a later edit overwrites it.
+fn check_writes(surfaces: &ControlSurfaceMap, candidate: &EditedCandidate) -> Result<(), RpcError> {
+    for candidate in &candidate.control_writes {
+        let write = &candidate.write;
+        let refuse = |mut reason: String| {
+            truncate_on_char_boundary(&mut reason, MODULE_ERROR_BYTES);
+            RpcError::invalid_edit(EditFailure::new(
+                candidate.edit_index,
+                EditOp::SetControl,
+                EditFailureReason::InvalidControlValue,
+                format!(
+                    "module '{}' refused the value for control '{}': {reason}",
+                    write.module_id, write.key
+                ),
+            ))
+        };
+        let surface = surfaces
+            .get(&write.module_id)
+            .ok_or_else(|| refuse("the module has no controls".to_string()))?;
+        surface
+            .validate_control(&write.key, &write.value, surfaces)
+            .map_err(refuse)?;
+    }
+    Ok(())
+}
+
 impl RunningInvention {
     /// Applies a batch of structural edits as one change: every edit lands
     /// in one publication and one retained document, or none does.
@@ -147,6 +178,12 @@ impl RunningInvention {
         let mut facts = LiveFacts::new(self);
         let candidate =
             apply_to_candidate(&document, edits, &mut facts).map_err(RpcError::invalid_edit)?;
+        // Checked first against the directory as the batch will leave it, so
+        // a value the module refuses is refused at its edit even where
+        // building the edited invention would fail on it (an option written
+        // into a config the module type parses). Checked again against the
+        // prepared directory before publishing.
+        check_writes(&facts.directory_after(&candidate.document), &candidate)?;
         let kept = facts.into_kept();
         let resolved = self.validate_candidate(&candidate.document)?;
         let mut batch = Batch {
