@@ -158,6 +158,27 @@ fn a_report_missing_fields_reads_them_as_defaults() {
 }
 
 #[test]
+fn a_report_entry_missing_fields_reads_them_as_defaults() {
+    let report: ApplyEditsReport = serde_json::from_value(json!({
+        "controls_written": [{ "module_id": "osc" }],
+        "controls_failed": [{ "edit_index": 2, "key": "sample" }],
+    }))
+    .unwrap();
+    assert_eq!(
+        report.controls_written,
+        vec![WrittenControl::new("osc", "")]
+    );
+    assert_eq!(
+        report.controls_failed,
+        vec![ControlWriteFailure {
+            edit_index: 2,
+            key: "sample".into(),
+            ..ControlWriteFailure::default()
+        }]
+    );
+}
+
+#[test]
 fn a_control_that_failed_at_commit_is_reported_with_its_edit() {
     let report = ApplyEditsReport {
         edit_count: 2,

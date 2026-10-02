@@ -300,6 +300,8 @@ pub struct ApplyEditsReport {
     pub connections_added: usize,
     pub connections_removed: usize,
     /// Modules the batch left untouched; they keep their phase and state.
+    /// A control-only change counts as untouched: the value changes, the
+    /// instance does not.
     pub untouched: usize,
 }
 
@@ -307,6 +309,7 @@ pub struct ApplyEditsReport {
 /// id may itself contain a `.`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(default)]
 pub struct WrittenControl {
     pub module_id: String,
     pub key: String,
@@ -316,6 +319,7 @@ pub struct WrittenControl {
 /// [`ApplyEditsReport::controls_failed`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(default)]
 pub struct ControlWriteFailure {
     /// The `set_control` edit whose value failed: the last edit in the batch
     /// that wrote this control.
