@@ -271,8 +271,9 @@ pub struct ApplyEditsReport {
     pub added: Vec<String>,
     /// Module ids removed from the running graph.
     pub removed: Vec<String>,
-    /// Module ids whose instance was rebuilt (removed and added again in the
-    /// same batch with a different type or config); their state restarts.
+    /// Module ids that existed before the batch and were removed and added
+    /// again in it. Each gets a fresh instance, even when its type and config
+    /// are identical, so its state restarts.
     pub rebuilt: Vec<String>,
     /// `module.key` for each distinct control the batch's `set_control` edits
     /// wrote, in first-written order.
