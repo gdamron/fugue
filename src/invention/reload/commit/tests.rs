@@ -359,13 +359,17 @@ fn a_control_write_that_fails_when_made_is_reported_and_not_retained() {
 
 #[test]
 fn a_reported_control_error_is_cut_short_on_a_character_boundary() {
-    let long = "é".repeat(super::super::MAX_CONTROL_ERROR_BYTES);
+    // One ASCII byte shifts every two-byte "é" so the cap lands mid-character
+    // and the cut has to back off by one.
+    let long = format!("a{}", "é".repeat(super::super::MAX_CONTROL_ERROR_BYTES));
     let config = serde_json::json!({ "level": 0.25, "error": long });
     let (mut running, _pump, base) = start_with_flaky(config);
     let edited = base.replace(r#""level":0.25"#, r#""level":0.75"#);
     let report = running.reload(doc(&edited)).expect("reload applies");
 
     let error = &report.controls_failed[0].error;
-    assert_eq!(error.len(), super::super::MAX_CONTROL_ERROR_BYTES);
+    assert!(!long.is_char_boundary(super::super::MAX_CONTROL_ERROR_BYTES));
+    assert_eq!(error.len(), super::super::MAX_CONTROL_ERROR_BYTES - 1);
+    assert!(long.is_char_boundary(error.len()));
     assert!(long.starts_with(error.as_str()));
 }
