@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashMap};
 use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::authored_document;
 use crate::invention::format::{Connection, Invention};
-use crate::rpc::{ControlWrite, EditFailureReason, StructuralEdit};
+use crate::rpc::{non_finite_refusal, ControlWrite, EditFailureReason, StructuralEdit};
 use crate::{ControlKind, ControlValue};
 
 /// How many names a refusal lists when it shows what is available.
@@ -245,16 +245,10 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             ));
         }
         // Only a number control can hold a number once the value fits its
-        // kind. NaN and infinities (including a number too large for an f32)
-        // would be written into the document as `null`.
-        if matches!(applied, ControlValue::Number(number) if !number.is_finite()) {
-            return Err(Refusal(
-                EditFailureReason::InvalidControlValue,
-                format!(
-                    "control '{module_id}.{key}' expects a finite number, got {}",
-                    echo(value)
-                ),
-            ));
+        // kind. A NaN or infinity (a wire number too large for an f32, or
+        // text such as "inf") is refused as `check_edit_batch` refuses it.
+        if let Some(message) = non_finite_refusal(module_id, key, &applied) {
+            return Err(Refusal(EditFailureReason::InvalidControlValue, message));
         }
         authored_document::write_control(&mut self.document, module_id, key, &applied);
         self.control_writes.push(CandidateWrite {
