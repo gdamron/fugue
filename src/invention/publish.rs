@@ -137,8 +137,23 @@ impl LiveGraph {
     /// [`Self::begin`] ([`GraphCommandError::TopologyMoved`]), an empty
     /// change included, or the audio thread is gone. An empty change that
     /// is still current publishes nothing.
+    // Live callers retain state with the change through `commit_with`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn commit(&self, prepared: PreparedChange) -> Result<Committed, GraphCommandError> {
-        self.commit_locked(self.publisher.lock().unwrap(), prepared)
+        self.commit_with(prepared, |_| {})
+    }
+
+    /// [`Self::commit`], then `retain` on the runtime state in the same step,
+    /// before the publisher is released: whatever `retain` records (a
+    /// reload's document, say) lands with the change it describes, and no
+    /// other edit can commit in between. `retain` runs only when the change
+    /// commits, an empty change included.
+    pub(crate) fn commit_with(
+        &self,
+        prepared: PreparedChange,
+        retain: impl FnOnce(&mut RuntimeState),
+    ) -> Result<Committed, GraphCommandError> {
+        self.commit_locked(self.publisher.lock().unwrap(), prepared, retain)
     }
 
     /// Prepares and publishes one change while holding the publisher, so no
@@ -158,7 +173,7 @@ impl LiveGraph {
             drop(change);
             return Err(error);
         }
-        self.commit_locked(publisher, change.compile())
+        self.commit_locked(publisher, change.compile(), |_| {})
     }
 
     /// Publishes `prepared` and commits the mirrors under `publisher`. A
@@ -170,6 +185,7 @@ impl LiveGraph {
         &self,
         mut publisher: MutexGuard<'_, Publisher>,
         prepared: PreparedChange,
+        retain: impl FnOnce(&mut RuntimeState),
     ) -> Result<Committed, GraphCommandError> {
         if prepared.base_generation != publisher.generation() {
             drop(publisher);
@@ -177,6 +193,7 @@ impl LiveGraph {
             return Err(GraphCommandError::TopologyMoved);
         }
         if prepared.is_empty() {
+            retain(&mut self.state.lock().unwrap());
             drop(publisher);
             return Ok(Committed::default());
         }
@@ -229,6 +246,7 @@ impl LiveGraph {
                 state.document_upsert_module(id, &module.info.module_type, &module.info.config);
             }
             state.connections = mirror.edges.iter().map(connection_info).collect();
+            retain(&mut state);
         }
 
         let mut committed = Committed {

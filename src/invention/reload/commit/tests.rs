@@ -7,6 +7,8 @@ use crate::modules::dac::BlockRenderFn;
 use crate::modules::AudioBackend;
 use crate::{ControlValue, Invention};
 
+mod races;
+
 const SAMPLE_RATE: u32 = 48_000;
 
 const BASE: &str = r#"{
@@ -213,14 +215,15 @@ fn a_failed_preparation_leaves_the_running_invention_unchanged() {
     assert_eq!(running.document(), Some(doc(EDITED)));
 }
 
-/// Plans and prepares EDITED against `running`, with an edit landing after
-/// `edit_after` steps (0: after planning, 1: after preparing); returns what
-/// committing gives.
+/// Plans and prepares `document` against `running`, with an edit removing
+/// `spare` landing after `edit_after` steps (0: after planning, 1: after
+/// preparing); returns what committing gives.
 fn reload_with_interleaved_edit(
     running: &mut RunningInvention,
+    document: &str,
     edit_after: usize,
 ) -> Result<super::ReloadReport, GraphCommandError> {
-    let validated = running.validate_document(doc(EDITED)).unwrap();
+    let validated = running.validate_document(doc(document)).unwrap();
     let base = running.live.generation();
     let plan = running.plan_document(&validated).unwrap();
     let adopt = Some((validated.registry, validated.definitions));
@@ -241,7 +244,7 @@ fn an_edit_landing_while_a_reload_is_planned_or_prepared_refuses_it() {
         let (mut running, pump) = start(BASE);
         let (twin, twin_pump) = start(BASE);
         twin.remove_module("spare").unwrap();
-        let result = reload_with_interleaved_edit(&mut running, edit_after);
+        let result = reload_with_interleaved_edit(&mut running, EDITED, edit_after);
         assert!(
             matches!(result, Err(GraphCommandError::TopologyMoved)),
             "edit after step {edit_after}: {result:?}"

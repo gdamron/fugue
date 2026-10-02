@@ -123,32 +123,52 @@ impl RunningInvention {
     /// stops scripts and agents.
     ///
     /// Fails, with nothing changed, only when another change published since
-    /// the plan was prepared ([`GraphCommandError::TopologyMoved`]) or the
-    /// audio thread is gone. Control updates are written right after the
-    /// publication is queued, so a value may be heard up to one block before
-    /// the new topology. A validated update that still fails when written
-    /// keeps the module's previous value, is moved from the report's
-    /// `controls_updated` to its `controls_failed`, and that previous value
-    /// is what the retained document records.
+    /// the plan was prepared ([`GraphCommandError::TopologyMoved`]), even one
+    /// whose topology is unchanged, or the audio thread is gone. The
+    /// document and refreshed configs are retained in the same step as the
+    /// publication, so no other edit can land between them. Control updates
+    /// are written right after the publication is queued, so a value may be
+    /// heard up to one block before the new topology. A validated update
+    /// that still fails when written keeps the module's previous value, is
+    /// moved from the report's `controls_updated` to its `controls_failed`,
+    /// and that previous value is written back to the retained document.
     pub(crate) fn commit_prepared(
         &mut self,
         prepared: PreparedCommit,
     ) -> Result<ReloadReport, GraphCommandError> {
-        let committed = self.live.commit(prepared.change)?;
-        if let Some((registry, definitions)) = prepared.adopt {
+        let PreparedCommit {
+            change,
+            document,
+            adopt,
+            control_updates,
+            refreshed_configs,
+            mut report,
+        } = prepared;
+        let committed = self.live.commit_with(change, |state| {
+            for (module_id, config) in refreshed_configs {
+                if let Some(info) = state.modules.get_mut(&module_id) {
+                    info.config = config;
+                }
+            }
+            if let Some(document) = document {
+                state.document = Some(document);
+            }
+        })?;
+        if let Some((registry, definitions)) = adopt {
             self.adopt_definitions(registry, definitions);
         }
 
-        let mut report = prepared.report;
         let snapshot = self.snapshot();
         let mut kept = Vec::new();
-        for (module_id, key, value) in prepared.control_updates {
+        for (module_id, key, value) in control_updates {
             // Quiet: carrying authored values into the rebuilt graph is
             // reconstruction, not a live agent-initiated change. The reload's
             // snapshot already conveys the new state, so emitting a
             // `ControlChanged` per carried value would be redundant and would
-            // misattribute the reload as a conducting gesture.
-            if let Err(error) = snapshot.set_control_recorded(&module_id, &key, value) {
+            // misattribute the reload as a conducting gesture. Unrecorded:
+            // the retained document already holds the authored value, and
+            // the value is already coerced.
+            if let Err(error) = snapshot.set_control_transient(&module_id, &key, value) {
                 // The topology is already published; the module keeps its
                 // previous value rather than failing a change that landed.
                 let label = format!("{module_id}.{key}");
@@ -166,18 +186,10 @@ impl RunningInvention {
                 });
             }
         }
-        {
+        if !kept.is_empty() {
+            // Per key, so an edit landing since the commit keeps its own
+            // changes to the document.
             let mut state = self.state.lock().unwrap();
-            for (module_id, config) in prepared.refreshed_configs {
-                if let Some(info) = state.modules.get_mut(&module_id) {
-                    info.config = config;
-                }
-            }
-            // Retained after the control writes so they cannot leave stale
-            // values in the document the graph now reflects.
-            if let Some(document) = prepared.document {
-                state.document = Some(document);
-            }
             for (module_id, key, actual) in &kept {
                 state.document_write_control(module_id, key, actual);
             }
