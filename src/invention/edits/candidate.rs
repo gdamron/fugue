@@ -23,24 +23,41 @@ pub(super) struct Candidate<'f, F> {
     added: HashMap<String, ModuleFacts>,
     control_writes: Vec<CandidateWrite>,
     named_modules: BTreeSet<String>,
+    /// Ids in the document the batch started from.
+    original: BTreeSet<String>,
+    /// Ids from `original` that an edit removed.
+    removed_originals: BTreeSet<String>,
 }
 
 impl<'f, F: EditFacts> Candidate<'f, F> {
     pub(super) fn new(document: Invention, facts: &'f mut F) -> Self {
+        let original = document
+            .modules
+            .iter()
+            .map(|spec| spec.id.clone())
+            .collect();
         Self {
             document,
             facts,
             added: HashMap::new(),
             control_writes: Vec::new(),
             named_modules: BTreeSet::new(),
+            original,
+            removed_originals: BTreeSet::new(),
         }
     }
 
     pub(super) fn finish(self) -> EditedCandidate {
+        let replaced = self
+            .removed_originals
+            .into_iter()
+            .filter(|id| self.document.modules.iter().any(|spec| &spec.id == id))
+            .collect();
         EditedCandidate {
             document: self.document,
             control_writes: self.control_writes,
             named_modules: self.named_modules,
+            replaced,
         }
     }
 
@@ -107,6 +124,9 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             return Err(unknown_module(id));
         }
         authored_document::remove_module(&mut self.document, id);
+        if self.original.contains(id) {
+            self.removed_originals.insert(id.to_string());
+        }
         // As the runtime does, a removed module takes its connections with it.
         self.document
             .connections

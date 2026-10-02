@@ -74,3 +74,40 @@ fn final_writes_hold_one_entry_per_control_with_the_last_value() {
         ]
     );
 }
+
+#[test]
+fn removing_and_adding_an_original_id_replaces_it_even_unchanged() {
+    // Same type, same config: still a fresh instance.
+    let candidate = apply(vec![
+        remove("osc1"),
+        add("osc1", "oscillator", json!({ "frequency": 440 })),
+        connect("osc1", "audio", "dac", "audio"),
+    ])
+    .unwrap();
+    assert_eq!(
+        config_of(&candidate.document, "osc1"),
+        config_of(&base(), "osc1")
+    );
+    assert_eq!(candidate.replaced, BTreeSet::from(["osc1".to_string()]));
+}
+
+#[test]
+fn only_an_original_id_that_ends_the_batch_present_is_replaced() {
+    // Removed, added again, removed again: a removal, not a replacement.
+    let candidate = apply(vec![
+        remove("osc1"),
+        add("osc1", "lfo", json!(null)),
+        remove("osc1"),
+    ])
+    .unwrap();
+    assert!(candidate.replaced.is_empty());
+
+    // An id the batch itself added is an addition however often it cycles.
+    let candidate = apply(vec![
+        add("lfo", "lfo", json!(null)),
+        remove("lfo"),
+        add("lfo", "lfo", json!(null)),
+    ])
+    .unwrap();
+    assert!(candidate.replaced.is_empty());
+}
