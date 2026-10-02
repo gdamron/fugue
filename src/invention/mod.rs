@@ -23,6 +23,8 @@ pub(crate) mod edits;
 pub mod format;
 pub mod graph;
 pub mod handles;
+#[cfg(test)]
+pub(crate) mod manual_backend;
 pub mod orchestration;
 pub(crate) mod publish;
 pub mod reload;

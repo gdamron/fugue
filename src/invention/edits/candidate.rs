@@ -5,7 +5,10 @@ use std::collections::{BTreeSet, HashMap};
 use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::authored_document;
 use crate::invention::format::{Connection, Invention};
-use crate::rpc::{non_finite_refusal, ControlWrite, EditFailureReason, StructuralEdit};
+use crate::rpc::{
+    non_finite_refusal, truncate_on_char_boundary, ControlWrite, EditFailureReason, StructuralEdit,
+    MODULE_ERROR_BYTES,
+};
 use crate::{ControlKind, ControlValue};
 
 /// How many names a refusal lists when it shows what is available.
@@ -13,11 +16,6 @@ const LISTED_NAMES: usize = 24;
 
 /// The most of a refused value a refusal echoes, in bytes.
 const ECHOED_VALUE_BYTES: usize = 64;
-
-/// The most of a module type's own config error a refusal carries, in
-/// bytes. Larger than an echoed value because it is prose, but bounded,
-/// since a module may echo the config it refused.
-const MODULE_ERROR_BYTES: usize = 256;
 
 /// Why an edit cannot apply; the caller adds its index and op.
 pub(super) struct Refusal(pub(super) EditFailureReason, pub(super) String);
@@ -340,14 +338,12 @@ fn echo(value: &ControlValue) -> String {
 /// `text` cut at a character boundary to at most `max` bytes, marked with
 /// `…` when cut.
 fn bounded(text: &str, max: usize) -> String {
-    if text.len() <= max {
-        return text.to_string();
+    let mut cut = text.to_string();
+    truncate_on_char_boundary(&mut cut, max);
+    if cut.len() < text.len() {
+        cut.push('…');
     }
-    let mut end = max;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
+    cut
 }
 
 fn listing(names: &[String]) -> String {

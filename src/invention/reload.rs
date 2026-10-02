@@ -286,9 +286,6 @@ pub struct ReloadReport {
     pub unchanged: usize,
 }
 
-/// The longest [`ControlFailure::error`] a reload reports, in bytes.
-pub(crate) const MAX_CONTROL_ERROR_BYTES: usize = 256;
-
 /// A control write a reload could not make.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
@@ -325,9 +322,10 @@ impl std::fmt::Display for ReloadError {
 
 impl std::error::Error for ReloadError {}
 
-/// How many times [`RunningInvention::reload`] plans and prepares a document
-/// when other edits keep changing the graph underneath it.
-const RELOAD_ATTEMPTS: usize = 3;
+/// How many times [`RunningInvention::reload`] (and an `ApplyEdits` batch)
+/// plans and prepares its document when other edits keep changing the graph
+/// underneath it.
+pub(crate) const RELOAD_ATTEMPTS: usize = 3;
 
 /// A new document that passed a full validation build, with what the
 /// running invention adopts if the reload commits.
