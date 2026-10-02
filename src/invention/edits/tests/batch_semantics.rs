@@ -167,3 +167,42 @@ fn the_latest_describe_for_an_id_wins() {
         (3, EditFailureReason::UnknownPort)
     );
 }
+
+#[test]
+fn non_finite_numbers_are_refused() {
+    for value in [
+        ControlValue::Number(f32::NAN),
+        ControlValue::Number(f32::INFINITY),
+        ControlValue::Number(f32::NEG_INFINITY),
+        ControlValue::String("nan".into()),
+        ControlValue::String("inf".into()),
+        ControlValue::String("-infinity".into()),
+        ControlValue::String("1e39".into()),
+    ] {
+        let failure = refused(vec![set("osc1", "frequency", value.clone())]);
+        assert_eq!(
+            failure.reason,
+            EditFailureReason::InvalidControlValue,
+            "{value:?}"
+        );
+        assert!(failure.message.contains("finite"), "{}", failure.message);
+    }
+
+    // A wire number too large for an f32 arrives as infinity.
+    let edit: StructuralEdit = serde_json::from_value(json!({
+        "op": "set_control", "module_id": "osc1", "key": "frequency", "value": 1e39
+    }))
+    .unwrap();
+    let failure = refused(vec![edit]);
+    assert_eq!(failure.reason, EditFailureReason::InvalidControlValue);
+    assert!(failure.message.contains("finite"), "{}", failure.message);
+
+    // The largest finite f32 is a number like any other.
+    let candidate = apply(vec![set(
+        "osc1",
+        "frequency",
+        ControlValue::Number(f32::MAX),
+    )])
+    .unwrap();
+    assert_eq!(candidate.control_writes.len(), 1);
+}

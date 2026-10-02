@@ -223,6 +223,14 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         };
         // The same coercion a standalone authored write applies.
         let applied = value.clone().coerced_to(kind);
+        if matches!(applied, ControlValue::Number(number) if !number.is_finite()) {
+            // NaN and infinities (including a number too large for an f32)
+            // would be written into the document as `null`.
+            return Err(Refusal(
+                EditFailureReason::InvalidControlValue,
+                format!("control '{module_id}.{key}' expects a finite number, got {value:?}"),
+            ));
+        }
         if !fits_kind(&applied, kind) {
             return Err(Refusal(
                 EditFailureReason::InvalidControlValue,
