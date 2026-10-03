@@ -3,9 +3,13 @@
 //! This module holds the cross-platform module plumbing. The actual capture
 //! backend is platform-specific and lives in [`native`] (background writer
 //! thread + filesystem, WAV/FLAC) or [`wasm`] (synchronous in-memory WAV).
-//! Both expose the same small interface on their shared state — `push`,
-//! `is_stopping`, `stop`, `finish`, `frames_written`, `frames_dropped` — so the
-//! code here never branches on the target.
+//! Both expose the same small interface on their shared state — `activate`,
+//! `push`, `is_stopping`, `stop`, `finish`, `frames_written`,
+//! `frames_dropped` — so the code here never branches on the target.
+//!
+//! The native backend creates its file only once the sink first processes
+//! audio, so a sink built and dropped without playing (a document or edit
+//! being checked) never touches the file.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -92,6 +96,9 @@ pub struct AudioFileSink {
     monitor: bool,
     /// Zero block returned by `sink_block` when monitoring is disabled.
     silence: [f32; MAX_BLOCK],
+    /// Whether this sink has told its backend it is recording, which it
+    /// does once, on the first block it processes.
+    activated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -120,6 +127,7 @@ impl AudioFileSink {
             soft_clip,
             monitor,
             silence: [0.0; MAX_BLOCK],
+            activated: false,
         };
         let handle = AudioFileSinkHandle { shared };
         (sink, handle)
@@ -163,6 +171,13 @@ impl Module for AudioFileSink {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        if !self.activated {
+            // The destination is opened only once audio reaches the sink, so
+            // one built and dropped unplayed (a check, or an edit refused
+            // after it was prepared) never touches it.
+            self.activated = true;
+            self.shared.activate();
+        }
         let stopping = self.shared.is_stopping();
         for i in 0..frames {
             let (mut left, mut right) = (self.inputs.audio_left(i), self.inputs.audio_right(i));
@@ -219,6 +234,12 @@ impl AudioFileSinkHandle {
     pub fn finish(&self) -> AudioFileSinkStats {
         self.shared.finish();
         self.stats()
+    }
+
+    /// Why the recording failed, if it did: its file could not be created
+    /// when audio first reached the sink, or could not be written.
+    pub fn error(&self) -> Option<String> {
+        self.shared.error()
     }
 
     pub fn stats(&self) -> AudioFileSinkStats {

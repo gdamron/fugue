@@ -8,7 +8,11 @@ impl RenderEngine {
         module_id: &str,
     ) -> Result<crate::AudioFileSinkStats, Box<dyn std::error::Error>> {
         let handle = self.audio_file_sink_handle(module_id)?;
-        Ok(handle.finish())
+        let stats = handle.finish();
+        match handle.error() {
+            Some(error) => Err(error.into()),
+            None => Ok(stats),
+        }
     }
 
     pub fn audio_file_sink_wav_bytes(

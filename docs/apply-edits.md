@@ -285,9 +285,9 @@ ones included. A development file changed or deleted on disk since then does
 not affect a batch; reload the invention to pick up the change.
 
 The modules a batch adds or rebuilds are built for real only once the batch is
-planned, just before it is published. A recorder added by a batch that is
-then refused (the graph kept changing through every attempt, say) may leave
-its new, empty file behind.
+planned, just before it is published. A recorder creates its file only once
+audio reaches it, so one added by a batch that is then refused (the graph kept
+changing through every attempt, say) leaves no file behind.
 
 ## How a batch is planned
 

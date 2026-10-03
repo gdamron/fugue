@@ -24,8 +24,8 @@ impl RunningInvention {
     /// Plans the batch against the graph as it is now, builds its added and
     /// rebuilt modules from their final configs, prepares the next topology,
     /// and checks every control write against the directory the change will
-    /// leave. Changes nothing in the running invention; the modules are built
-    /// for real, so a recorder the batch adds opens its file here.
+    /// leave. Changes nothing in the running invention: the modules are built
+    /// for real, but a recorder opens its file only once it plays.
     ///
     /// `base_generation` is read before planning; a change published since
     /// is [`Refused::Moved`].

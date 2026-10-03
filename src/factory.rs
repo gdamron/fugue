@@ -111,6 +111,45 @@ pub trait ModuleFactory: Send + Sync + 'static {
     }
 }
 
+/// Applies the entries of `config` whose keys `selects` picks to `surface`
+/// through its setter, as the module's initial values.
+///
+/// A module's config must accept each of its controls' keys with the
+/// control's value: an authored control write records the value into the
+/// config under the control's key (see `authored_document::write_control`),
+/// and the document must rebuild to the sound that was written. A factory
+/// calls this for the control keys its config does not otherwise read,
+/// right after making its controls and before making the module, so the
+/// module starts from these values; a control key wins over the config key
+/// it overlaps, since it records a later write. Unindexed keys (a count) are
+/// applied before indexed ones (`degree.3`) so a count sizes what follows.
+pub(crate) fn apply_control_keys(
+    surface: &dyn crate::ControlSurface,
+    config: &serde_json::Value,
+    selects: impl Fn(&str) -> bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(entries) = config.as_object() else {
+        return Ok(());
+    };
+    let mut keys: Vec<&String> = entries.keys().filter(|key| selects(key)).collect();
+    keys.sort_by_key(|key| key.contains('.'));
+    for key in keys {
+        let value = match &entries[key.as_str()] {
+            serde_json::Value::Number(number) => {
+                crate::ControlValue::Number(number.as_f64().unwrap_or(0.0) as f32)
+            }
+            serde_json::Value::Bool(flag) => crate::ControlValue::Bool(*flag),
+            serde_json::Value::String(text) => crate::ControlValue::String(text.clone()),
+            _ => return Err(format!("config '{key}' must be a number, boolean or text").into()),
+        };
+        let value = surface.coerce_value(key, value);
+        surface
+            .set_control(key, value)
+            .map_err(|error| format!("config '{key}': {error}"))?;
+    }
+    Ok(())
+}
+
 /// Owned module storage used by the signal graph.
 pub enum GraphModule {
     Module(Box<dyn Module + Send>),
