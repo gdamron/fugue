@@ -1,12 +1,11 @@
 //! Preparing a planned batch off the audio thread, then committing it as one
 //! publication with its control writes and events.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::{check_writes, refused_write, Batch, Refused};
 use crate::invention::edits::EditedCandidate;
 use crate::invention::format::ModuleSpec;
-use crate::invention::orchestration::Resized;
 use crate::invention::publish::{BuiltModule, GraphChange, PreparedChange};
 use crate::invention::reload::ReloadPlan;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
@@ -98,16 +97,6 @@ impl RunningInvention {
         let mut report = report_for(&plan, batch.edit_count);
         let mut announced = Vec::new();
         let mut actual = Vec::new();
-        // What each written survivor lists before its writes, so the document
-        // follows a write that resizes it (a melody's degree count).
-        let listed: HashMap<&str, HashSet<String>> = batch
-            .candidate
-            .final_writes()
-            .iter()
-            .map(|candidate| candidate.write.module_id.as_str())
-            .filter(|id| !built.contains(id))
-            .map(|id| (id, snapshot.listed_controls(id)))
-            .collect();
         for candidate in batch.candidate.final_writes() {
             let write = &candidate.write;
             let written = if built.contains(write.module_id.as_str()) {
@@ -138,20 +127,12 @@ impl RunningInvention {
                 .push(WrittenControl::new(&write.module_id, &write.key));
             announced.push(write);
         }
-        let resized: Vec<(&str, Resized)> = listed
-            .iter()
-            .map(|(id, listed)| (*id, snapshot.resized_controls(id, listed)))
-            .filter(|(_, resized)| !resized.is_empty())
-            .collect();
-        if !actual.is_empty() || !resized.is_empty() {
+        if !actual.is_empty() {
             // Per key, so an edit landing since the commit keeps its own
             // changes to the document.
             let mut state = self.state.lock().unwrap();
             for (write, value) in &actual {
                 state.document_write_control(&write.module_id, &write.key, value);
-            }
-            for (id, resized) in &resized {
-                resized.record(&mut state, id);
             }
         }
 

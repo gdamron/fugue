@@ -254,52 +254,12 @@ impl RuntimeSnapshot {
         // (see FUG-240). set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
         let value = self.coerced(module_id, key, value);
-        let listed = self.listed_controls(module_id);
         self.set_control_transient(module_id, key, value.clone())?;
-        let resized = self.resized_controls(module_id, &listed);
-        let mut state = self.state.lock().unwrap();
-        state.document_write_control(module_id, key, &value);
-        resized.record(&mut state, module_id);
-        Ok(value)
-    }
-
-    /// The keys of the controls `module_id` lists now.
-    pub(crate) fn listed_controls(&self, module_id: &str) -> std::collections::HashSet<String> {
-        let surface = self
-            .control_surfaces
+        self.state
             .lock()
             .unwrap()
-            .get(module_id)
-            .cloned();
-        surface
-            .map(|surface| {
-                surface
-                    .controls()
-                    .into_iter()
-                    .map(|meta| meta.key)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// How a write resized `module_id` from the controls it `listed` before:
-    /// a melody's `degree_count` drops degrees, or adds them with values the
-    /// module chose. The retained document must follow, or a cold rebuild
-    /// restores dropped values and rebuilds added ones differently.
-    pub(crate) fn resized_controls(
-        &self,
-        module_id: &str,
-        listed: &std::collections::HashSet<String>,
-    ) -> Resized {
-        let now = self.listed_controls(module_id);
-        let mut dropped: Vec<String> = listed.difference(&now).cloned().collect();
-        dropped.sort();
-        let mut added: Vec<(String, ControlValue)> = now
-            .difference(listed)
-            .filter_map(|key| Some((key.clone(), self.get_control(module_id, key).ok()?)))
-            .collect();
-        added.sort_by(|a, b| a.0.cmp(&b.0));
-        Resized { dropped, added }
+            .document_write_control(module_id, key, &value);
+        Ok(value)
     }
 
     /// Coerces a value to the control's declared kind, leaving it untouched
@@ -555,27 +515,5 @@ impl RuntimeController {
                     && conn.to_port == to_port)
             });
         Ok(())
-    }
-}
-
-/// The controls a write dropped from and added to a module (see
-/// [`RuntimeSnapshot::resized_controls`]).
-#[derive(Debug, Default)]
-pub(crate) struct Resized {
-    dropped: Vec<String>,
-    added: Vec<(String, ControlValue)>,
-}
-
-impl Resized {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.dropped.is_empty() && self.added.is_empty()
-    }
-
-    /// Records the resize in the retained document module's config.
-    pub(crate) fn record(&self, state: &mut RuntimeState, module_id: &str) {
-        state.document_forget_controls(module_id, &self.dropped);
-        for (key, value) in &self.added {
-            state.document_write_control(module_id, key, value);
-        }
     }
 }
