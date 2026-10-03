@@ -22,6 +22,10 @@
 //! | no record, but the ticket predates the ledger | `MutationExpired`, nothing runs          |
 //! | no record, and the ticket is within the ledger | the command runs and is recorded        |
 //!
+//! A ticket is optional for most authoring commands. An all-or-nothing
+//! command (`ApplyEdits`) requires one: [`RpcRequest::check_ticket`] refuses
+//! it without a ticket, before anything runs.
+//!
 //! A committed original is answered with a compact
 //! [`RpcResponsePayload::MutationCommitted`] naming the revision it produced,
 //! never with the original (possibly large) payload. A rejected original is
@@ -36,7 +40,8 @@
 //! The daemon advances the revision for every admitted command that may have
 //! changed state, whatever its outcome (a batch that fails part-way keeps its
 //! earlier writes). A command recorded without advancing the revision is taken
-//! to have changed nothing.
+//! to have changed nothing; a refused all-or-nothing command is recorded that
+//! way (see [`RpcCommand::advances_revision_after`]).
 //!
 //! Evicting the outcome of a command that advanced the revision moves the
 //! ledger's horizon to the revision at which that command ran. A ticket issued
@@ -96,7 +101,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     ConflictReason, RevisionConflict, RevisionTracker, RpcCommand, RpcError, RpcErrorCode,
-    RpcRequestPayload, RpcResponsePayload, RuntimeRevision,
+    RpcRequest, RpcRequestPayload, RpcResponsePayload, RuntimeRevision,
 };
 
 /// How many ticketed outcomes a daemon session remembers.
@@ -175,6 +180,36 @@ impl RpcCommand {
             // Performance writes (see the module docs), installs, and shutdown,
             // which could stop a replacement daemon.
             _ => ReplayPolicy::Never,
+        }
+    }
+}
+
+impl RpcCommand {
+    /// Whether this command must carry a [`MutationTicket`]. An
+    /// all-or-nothing command does, so a lost reply can always be resolved
+    /// by replaying it rather than left as an unknown outcome.
+    pub fn requires_ticket(&self) -> bool {
+        self.is_all_or_nothing()
+    }
+}
+
+impl RpcRequest {
+    /// Refuses a command that requires a [`MutationTicket`] and arrived
+    /// without one, as [`RpcErrorCode::InvalidRequest`]. The daemon calls it
+    /// before the ledger and the revision precondition, so nothing runs and
+    /// nothing is recorded.
+    pub fn check_ticket(&self) -> Result<(), RpcError> {
+        match &self.payload {
+            RpcRequestPayload::Command(command)
+                if command.requires_ticket() && self.mutation.is_none() =>
+            {
+                Err(RpcError::new(
+                    RpcErrorCode::InvalidRequest,
+                    "this command requires a mutation ticket; attach one minted from the \
+                     latest revision you have seen and reuse it on every retry",
+                ))
+            }
+            _ => Ok(()),
         }
     }
 }
@@ -394,6 +429,9 @@ fn fingerprint(command: &RpcCommand) -> u64 {
 fn bounded_error(error: &RpcError) -> RpcError {
     let mut error = error.clone();
     truncate(&mut error.message);
+    if let Some(edit) = error.edit.as_mut() {
+        truncate(&mut edit.message);
+    }
     error
 }
 

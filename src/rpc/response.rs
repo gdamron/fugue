@@ -1,8 +1,8 @@
 //! Server response envelopes and their payloads.
 
 use super::{
-    AuthoredSnapshot, DaemonIdentity, EventPage, InspectionPage, MeterReading, ModuleDescription,
-    ModuleTypeList, PackageList, RpcError, RuntimeFullSnapshot, RuntimeRevision,
+    ApplyEditsReport, AuthoredSnapshot, DaemonIdentity, EventPage, InspectionPage, MeterReading,
+    ModuleDescription, ModuleTypeList, PackageList, RpcError, RuntimeFullSnapshot, RuntimeRevision,
     RPC_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
@@ -92,6 +92,11 @@ pub enum RpcResponsePayload {
         description: ModuleDescription,
     },
     Reload(ReloadOutcome),
+    /// A committed [`RpcCommand::ApplyEdits`] batch. The envelope's
+    /// `revision` is the revision it committed at.
+    ///
+    /// [`RpcCommand::ApplyEdits`]: super::RpcCommand::ApplyEdits
+    EditsApplied(ApplyEditsReport),
     Saved(SaveReport),
     /// A bounded view of authored state, including its session and revision.
     InventionInspection {

@@ -23,11 +23,21 @@
 //! edit permanently stale. [`RpcCommand::advances_revision`] is the single
 //! definition of that rule.
 //!
+//! # When it advances
+//!
+//! Most authoring commands advance the revision whenever they are attempted,
+//! because a batch that fails part-way keeps the writes it made first. An
+//! all-or-nothing command (`ApplyEdits`) either commits every change or
+//! changes nothing, so it advances only when it commits.
+//! [`RpcCommand::advances_revision_after`] is the single rule a host applies
+//! once a command has run.
+//!
 //! Deliberately absent: any automatic merge. A rejected client is handed the
 //! current revision and re-reads; reconciling is the client's business.
 //!
 //! [`identity`]: super::identity
 //! [`RpcCommand::advances_revision`]: super::RpcCommand::advances_revision
+//! [`RpcCommand::advances_revision_after`]: super::RpcCommand::advances_revision_after
 
 use serde::{Deserialize, Serialize};
 
@@ -222,6 +232,7 @@ impl RpcCommand {
             | Self::Connect { .. }
             | Self::Disconnect { .. }
             | Self::SwapModule { .. }
+            | Self::ApplyEdits { .. }
             | Self::LoadExample { .. } => true,
             Self::SetControl { intent, .. } => intent.is_authoring(),
             Self::SetControls { writes } => writes.iter().any(|write| write.intent.is_authoring()),
@@ -238,6 +249,26 @@ impl RpcCommand {
             | Self::DescribeModule(_)
             | Self::Shutdown => false,
         }
+    }
+
+    /// Whether this command either commits every change it carries or
+    /// changes nothing at all. Such a command's refusal leaves the document
+    /// exactly as it was.
+    pub fn is_all_or_nothing(&self) -> bool {
+        matches!(self, Self::ApplyEdits { .. })
+    }
+
+    /// Whether the daemon advances its revision once this command has run.
+    /// `committed` is whether the command succeeded.
+    ///
+    /// The single rule a host calls after dispatch, in place of calling
+    /// [`Self::advances_revision`] directly. An authoring command advances on
+    /// any attempt, since a batch that fails part-way keeps its earlier
+    /// writes; an [all-or-nothing](Self::is_all_or_nothing) command advances
+    /// only when it commits, because a refusal changed nothing. Commands
+    /// that never author never advance.
+    pub fn advances_revision_after(&self, committed: bool) -> bool {
+        self.advances_revision() && (committed || !self.is_all_or_nothing())
     }
 }
 
