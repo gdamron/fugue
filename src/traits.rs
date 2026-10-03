@@ -6,6 +6,12 @@
 //! - [`ControlMeta`] - Metadata describing a module control for UI/REPL discovery
 use serde::{Deserialize, Serialize};
 
+mod control_meta;
+mod control_validation;
+
+pub use control_validation::ControlSurfaceMap;
+pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
+
 /// Maximum number of frames the engine processes in a single block.
 ///
 /// Modules size their per-port buffers to this length; the signal graph never
@@ -151,72 +157,6 @@ pub struct ControlMeta {
     pub kind: ControlKind,
 }
 
-impl ControlMeta {
-    /// Legacy alias for creating a numeric control metadata entry.
-    pub fn new(key: impl Into<String>, description: impl Into<String>) -> Self {
-        Self::number(key, description)
-    }
-
-    /// Creates a numeric control metadata entry.
-    pub fn number(key: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            key: key.into(),
-            description: description.into(),
-            default: ControlValue::Number(0.0),
-            kind: ControlKind::Number { min: 0.0, max: 1.0 },
-        }
-    }
-
-    /// Sets the range (min, max) for this control.
-    pub fn with_range(mut self, min: f32, max: f32) -> Self {
-        self.kind = ControlKind::Number { min, max };
-        self
-    }
-
-    /// Sets the default value for this control.
-    pub fn with_default(mut self, default: impl Into<ControlValue>) -> Self {
-        self.default = default.into();
-        self
-    }
-
-    /// Creates a boolean control metadata entry.
-    pub fn boolean(key: impl Into<String>, description: impl Into<String>, default: bool) -> Self {
-        Self {
-            key: key.into(),
-            description: description.into(),
-            default: ControlValue::Bool(default),
-            kind: ControlKind::Bool,
-        }
-    }
-
-    /// Creates a string control metadata entry.
-    pub fn string(key: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            key: key.into(),
-            description: description.into(),
-            default: ControlValue::String(String::new()),
-            kind: ControlKind::String { options: None },
-        }
-    }
-
-    /// Sets the allowed values for a string control.
-    pub fn with_options(mut self, options: Vec<String>) -> Self {
-        let default_option = options.first().cloned().unwrap_or_else(String::new);
-        self.kind = ControlKind::String {
-            options: Some(options),
-        };
-        if !matches!(self.default, ControlValue::String(_)) {
-            self.default = ControlValue::String(default_option);
-        }
-        self
-    }
-
-    /// Legacy alias for enumerated controls.
-    pub fn with_variants(self, variants: Vec<String>) -> Self {
-        self.with_options(variants)
-    }
-}
-
 /// Shared runtime control surface for a module.
 pub trait ControlSurface: Send + Sync {
     fn controls(&self) -> Vec<ControlMeta>;
@@ -232,6 +172,29 @@ pub trait ControlSurface: Send + Sync {
     /// Control-thread only; implementations may lock and allocate.
     fn control_targets(&self) -> Vec<String> {
         Vec::new()
+    }
+
+    /// Checks, changing nothing, that [`Self::set_control`] would accept
+    /// `value` (already coerced, see [`Self::coerce_value`]) for `key`, so a
+    /// batch of writes can be refused before any of them lands. `surfaces`
+    /// is the directory as it will be when the write lands, for values that
+    /// name other modules.
+    ///
+    /// Refuses what the setter refuses before it changes anything: unknown
+    /// and read-only keys, values of the wrong kind, numbers that are not
+    /// finite, and strings the setter cannot parse (unknown options,
+    /// malformed JSON). Only what a write alone can discover, such as a
+    /// sample failing to load, may still fail when set. The default checks
+    /// the kind `key` declares in [`Self::controls`]; surfaces with
+    /// read-only or parsed controls override it.
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        let _ = surfaces;
+        check_listed_control(&self.controls(), key, value)
     }
 
     /// Coerces `value` to `key`'s declared [`ControlKind`] via
@@ -489,3 +452,5 @@ pub fn validate_port(port: &str, valid_ports: &[&str], port_type: &str) -> Resul
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod validation_tests;

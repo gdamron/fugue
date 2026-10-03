@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::atomic::AtomicF32;
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
+use crate::traits::{check_finite, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 /// Upper bound on control-thread note events staged per block. Both the
@@ -162,9 +163,7 @@ impl SampleInstrumentControls {
     }
 
     pub fn set_release(&self, release: f32) -> Result<(), String> {
-        if !release.is_finite() || release <= 0.0 {
-            return Err("'release' must be a positive number of seconds".to_string());
-        }
+        check_release(release)?;
         self.inner.release.store(release.clamp(1e-3, 30.0));
         Ok(())
     }
@@ -327,7 +326,10 @@ impl ControlSurface for SampleInstrumentControls {
             )
             .with_range(0.001, 30.0)
             .with_default(self.release()),
-            ControlMeta::number("note_on", "Start a note by MIDI note number (full velocity)"),
+            ControlMeta::number(
+                "note_on",
+                "Start a note by MIDI note number (full velocity)",
+            ),
             ControlMeta::number("note_off", "Release a held note by MIDI note number"),
         ];
         for (index, zone) in self.inner.zones.iter().enumerate() {
@@ -399,6 +401,44 @@ impl ControlSurface for SampleInstrumentControls {
         }
         Err(format!("Unknown control: {}", key))
     }
+
+    /// Checks the zone and the value's shape; whether a new asset loads is
+    /// only known by loading it, and a full note queue only by queueing.
+    fn validate_control(
+        &self,
+        key: &str,
+        value: &ControlValue,
+        _surfaces: &ControlSurfaceMap,
+    ) -> Result<(), String> {
+        match key {
+            "release" => return check_release(value.as_number()?),
+            "note_on" | "note_off" => return parse_note(value).map(drop),
+            _ => {}
+        }
+        if let Some(index) = indexed_key(key, "root.") {
+            self.zone(index)?;
+            return Err(
+                "Zone roots and ranges are fixed at build time; edit the invention config"
+                    .to_string(),
+            );
+        }
+        if let Some(index) = indexed_key(key, "asset.") {
+            self.zone(index)?;
+            return value.as_string().map(drop);
+        }
+        if let Some(index) = indexed_key(key, "gain.") {
+            self.zone(index)?;
+            return check_finite(key, value.as_number()?);
+        }
+        Err(format!("Unknown control: {}", key))
+    }
+}
+
+fn check_release(release: f32) -> Result<(), String> {
+    if !release.is_finite() || release <= 0.0 {
+        return Err("'release' must be a positive number of seconds".to_string());
+    }
+    Ok(())
 }
 
 /// Parses hierarchical control keys like `gain.3` into the zone index.
