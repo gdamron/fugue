@@ -16,6 +16,18 @@ fn text(value: &str) -> ControlValue {
     ControlValue::String(value.to_string())
 }
 
+/// Waits, up to two seconds, for a recorder's writer thread to create
+/// `path`: it opens the file once the recorder first processes audio.
+fn appears(path: &std::path::Path) -> bool {
+    for _ in 0..200 {
+        if path.exists() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    false
+}
+
 fn start_doc(document: Invention) -> (RunningInvention, Pump) {
     let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
     start_manual(runtime)
@@ -44,6 +56,7 @@ fn checking_a_batch_never_builds_a_recording_sink_over_its_file() {
     let path = dir.path().join("take.wav");
     let (mut running, pump) = start_doc(recording(&path));
     pump.render(4);
+    assert!(appears(&path));
     // The recorder keeps writing through its open file. Were the batch's
     // check to build the document's recorder again, it would create the
     // file anew (truncating it, had it still been there).
@@ -82,7 +95,7 @@ fn a_refused_batch_never_opens_the_file_of_a_recorder_it_adds() {
         .apply_edits(&[add("rec", "audio_file_sink", json!({ "path": path }))])
         .expect("the batch commits");
     pump.render(1);
-    assert!(path.exists());
+    assert!(appears(&path));
 }
 
 #[test]

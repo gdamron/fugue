@@ -123,6 +123,9 @@ impl WasmAudioFileSinkShared {
     }
 
     #[inline]
+    /// The in-memory recording has no destination to open.
+    pub(super) fn activate(&self) {}
+
     pub(super) fn is_stopping(&self) -> bool {
         self.stopping.load(Ordering::Acquire)
     }
