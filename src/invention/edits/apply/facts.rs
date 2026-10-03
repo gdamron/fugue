@@ -5,41 +5,13 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 
+use crate::invention::builder::resolve_invention_assets;
 use crate::invention::edits::{EditFacts, ModuleFacts};
-use crate::invention::format::Invention;
+use crate::invention::format::{Invention, ModuleSpec};
 use crate::invention::orchestration::ModulePorts;
-use crate::invention::publish::{BuiltModule, GraphChange};
-use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError, RunningInvention};
+use crate::invention::runtime::{ControlSurfaceInstance, RunningInvention};
 use crate::traits::ControlSurfaceMap;
 use crate::ModuleRegistry;
-
-/// A module `describe` built for an `add_module`, kept so the commit can
-/// reuse it rather than build the same module twice.
-pub(super) struct Kept {
-    /// The config the module was built from.
-    config: serde_json::Value,
-    module: BuiltModule,
-}
-
-/// Modules built while the batch was checked, by id.
-#[derive(Default)]
-pub(super) struct KeptModules(HashMap<String, Kept>);
-
-impl KeptModules {
-    /// Takes the module kept for `id` when it was built as `module_type`
-    /// from `config`. One built otherwise is dropped: a later `set_control`
-    /// changed what the module must be built from.
-    pub(super) fn take(
-        &mut self,
-        id: &str,
-        module_type: &str,
-        config: &serde_json::Value,
-    ) -> Option<BuiltModule> {
-        let kept = self.0.remove(id)?;
-        (kept.module.info.module_type == module_type && kept.config == *config)
-            .then_some(kept.module)
-    }
-}
 
 /// The running invention's facts, read once when the batch starts, so every
 /// edit is checked against the same view of the graph.
@@ -48,17 +20,29 @@ pub(super) struct LiveFacts<'r> {
     sample_rate: u32,
     ports: IndexMap<String, ModulePorts>,
     surfaces: IndexMap<String, ControlSurfaceInstance>,
-    kept: KeptModules,
+    /// The retained document with no modules: its assets and source path,
+    /// which an added module's config is resolved against.
+    assets: Invention,
+    /// The control surface of each module `describe` built for the batch,
+    /// by id; the latest build for an id replaces an earlier one.
+    described: HashMap<String, Option<ControlSurfaceInstance>>,
 }
 
 impl<'r> LiveFacts<'r> {
-    pub(super) fn new(running: &'r RunningInvention) -> Self {
+    pub(super) fn new(running: &'r RunningInvention, document: &Invention) -> Self {
+        let assets = Invention {
+            modules: Vec::new(),
+            connections: Vec::new(),
+            developments: Vec::new(),
+            ..document.clone()
+        };
         Self {
             registry: &running.registry,
             sample_rate: running.sample_rate,
             ports: running.module_ports.lock().unwrap().clone(),
             surfaces: running.control_surfaces.lock().unwrap().clone(),
-            kept: KeptModules::default(),
+            assets,
+            described: HashMap::new(),
         }
     }
 
@@ -71,8 +55,8 @@ impl<'r> LiveFacts<'r> {
             .modules
             .iter()
             .filter_map(|spec| {
-                let surface = match self.kept.0.get(&spec.id) {
-                    Some(kept) => kept.module.surface.clone(),
+                let surface = match self.described.get(&spec.id) {
+                    Some(surface) => surface.clone(),
                     None => self.surfaces.get(&spec.id).cloned(),
                 };
                 Some((spec.id.clone(), surface?))
@@ -80,9 +64,28 @@ impl<'r> LiveFacts<'r> {
             .collect()
     }
 
-    /// The modules `describe` built and kept, for the commit to reuse.
-    pub(super) fn into_kept(self) -> KeptModules {
-        self.kept
+    /// `config` with its `$asset` and audio asset references resolved as the
+    /// document's own modules are: against the retained document's assets,
+    /// relative to its source path.
+    fn resolve(
+        &self,
+        id: &str,
+        module_type: &str,
+        config: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let mut probe = self.assets.clone();
+        probe.modules.push(ModuleSpec {
+            id: id.to_string(),
+            module_type: module_type.to_string(),
+            config: config.clone(),
+        });
+        let resolved = resolve_invention_assets(probe).map_err(|error| error.to_string())?;
+        Ok(resolved
+            .modules
+            .into_iter()
+            .next()
+            .map(|spec| spec.config)
+            .unwrap_or_default())
     }
 }
 
@@ -110,43 +113,32 @@ impl EditFacts for LiveFacts<'_> {
         self.registry.has_type(module_type)
     }
 
-    /// Builds the module for real with the registry the commit builds with,
-    /// and keeps it: the latest build for an id replaces an earlier one.
+    /// Builds a throwaway instance of the module, from its config with its
+    /// assets resolved, in validation mode: nothing it builds activates an
+    /// output (a recording's file, say), so checking a batch never disturbs
+    /// what is playing. Its surface is kept for [`Self::directory_after`];
+    /// the commit builds the module again for real.
     fn describe(
         &mut self,
         id: &str,
         module_type: &str,
         config: &serde_json::Value,
     ) -> Result<ModuleFacts, String> {
-        let module = GraphChange::build(self.registry, self.sample_rate, id, module_type, config)
-            .map_err(|error| match error {
-            GraphCommandError::ModuleBuildFailed(reason) => reason,
-            other => other.to_string(),
-        })?;
-        let facts = ModuleFacts {
-            inputs: module.module.ports.inputs.clone(),
-            outputs: module.module.ports.outputs.clone(),
-            controls: module
-                .surface
-                .as_ref()
-                .map(|surface| {
-                    surface
-                        .controls()
-                        .into_iter()
-                        .map(|meta| (meta.key, meta.kind))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        };
-        let kept = Kept {
-            config: config.clone(),
-            module,
-        };
-        self.kept.0.insert(id.to_string(), kept);
+        let config = self.resolve(id, module_type, config)?;
+        let built = self
+            .registry
+            .for_validation()
+            .build(module_type, self.sample_rate, &config)
+            .map_err(|error| error.to_string())?;
+        let facts = ModuleFacts::from_instance(
+            &built.module,
+            built.control_surface.as_deref().map(|surface| surface as _),
+        );
+        self.described.insert(id.to_string(), built.control_surface);
         Ok(facts)
     }
 
     fn forget(&mut self, id: &str) {
-        self.kept.0.remove(id);
+        self.described.remove(id);
     }
 }
