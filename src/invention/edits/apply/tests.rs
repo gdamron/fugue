@@ -8,10 +8,16 @@ use serde_json::json;
 use crate::invention::builder::InventionBuilder;
 use crate::invention::manual_backend::{start_manual, Pump, SAMPLE_RATE};
 use crate::invention::runtime::RunningInvention;
+use crate::invention::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
 use crate::rpc::{StructuralEdit, WrittenControl};
 use crate::{ControlValue, Invention, ModuleRegistry};
 
+mod commit;
 mod real_modules;
+mod refusals;
+mod scripted;
+
+use scripted::{Scripted, SCRIPTED};
 
 const BASE: &str = r#"{
     "version": "1.0.0",
@@ -29,6 +35,14 @@ const BASE: &str = r#"{
 
 fn doc(json: &str) -> Invention {
     Invention::from_json(json).unwrap()
+}
+
+/// BASE with `module` (a module's JSON) added after the dac.
+fn base_with(module: &str) -> String {
+    BASE.replace(
+        r#"{ "id": "dac", "type": "dac" }"#,
+        &format!(r#"{{ "id": "dac", "type": "dac" }}, {module}"#),
+    )
 }
 
 fn start_with(registry: ModuleRegistry, json: &str) -> (RunningInvention, Pump) {
@@ -99,6 +113,10 @@ impl Events {
         events
     }
 
+    fn count(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+
     fn control_changes(&self) -> Vec<(String, String, ControlValue)> {
         self.0
             .lock()
@@ -118,6 +136,41 @@ impl Events {
 
 fn change(module_id: &str, key: &str, value: f32) -> (String, String, ControlValue) {
     (module_id.into(), key.into(), number(value))
+}
+
+/// Everything a refused batch must leave as it was.
+#[derive(Debug, PartialEq)]
+struct Observed {
+    modules: indexmap::IndexMap<String, RuntimeModuleInfo>,
+    connections: Vec<RuntimeConnectionInfo>,
+    document: Option<Invention>,
+    surfaces: Vec<String>,
+    ports: Vec<String>,
+    generation: u64,
+}
+
+fn observe(running: &RunningInvention) -> Observed {
+    let state = running.state.lock().unwrap();
+    Observed {
+        modules: state.modules.clone(),
+        connections: state.connections.clone(),
+        document: state.document.clone(),
+        surfaces: running
+            .control_surfaces
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect(),
+        ports: running
+            .module_ports
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect(),
+        generation: running.live.generation(),
+    }
 }
 
 /// Publications made, and publications the audio thread has installed.
@@ -223,6 +276,51 @@ fn a_twenty_edit_batch_commits_as_one_publication_and_untouched_modules_keep_the
 }
 
 #[test]
+fn control_only_edits_write_each_survivor_once_and_announce_the_final_values() {
+    let scripted = Scripted::default();
+    let base = base_with(r#"{ "id": "counter", "type": "scripted", "config": { "level": 0.1 } }"#);
+    let (mut running, pump) = start_with(scripted.registry(), &base);
+    let events = Events::listen(&running);
+    let generation = running.live.generation();
+
+    let report = running
+        .apply_edits(&[
+            set("counter", "level", number(0.25)),
+            set("osc1", "frequency", number(220.0)),
+            set("counter", "level", number(0.5)),
+        ])
+        .expect("the batch commits");
+
+    // Only the last value reaches the module, and only once: the plan's
+    // own config-as-control updates are not applied besides.
+    assert_eq!(scripted.writes(), [("level".to_string(), number(0.5))]);
+    assert_eq!(
+        running.get_control("osc1", "frequency").unwrap(),
+        number(220.0)
+    );
+    assert_eq!(
+        events.control_changes(),
+        [
+            change("counter", "level", 0.5),
+            change("osc1", "frequency", 220.0)
+        ]
+    );
+    assert_eq!(
+        report.controls_written,
+        written(&[("counter", "level"), ("osc1", "frequency")])
+    );
+    assert_eq!(report.untouched, 5);
+    assert!(report.added.is_empty() && report.rebuilt.is_empty());
+
+    // Nothing structural changed, so nothing was published; the document
+    // holds the values as authored.
+    assert_eq!(running.live.generation(), generation);
+    assert_eq!(config_of(&running, "counter")["level"], json!(0.5));
+    assert_eq!(config_of(&running, "osc1")["frequency"], json!(220));
+    pump.render(1);
+}
+
+#[test]
 fn writes_to_a_module_a_later_edit_removes_or_replaces_are_dropped_with_it() {
     let (mut running, pump) = start(BASE);
     let events = Events::listen(&running);
@@ -288,6 +386,34 @@ fn removing_and_adding_a_module_again_rebuilds_it_even_when_identical() {
 
     // A fresh instance restarts its phase, so the mix now differs.
     assert_ne!(edited_pump.render(4), control_pump.render(4));
+}
+
+#[test]
+fn an_added_module_is_built_for_real_once_and_written_through_its_setter() {
+    let scripted = Scripted::default();
+    let (mut running, pump) = start_with(scripted.registry(), BASE);
+
+    // Checked by `describe` and by the validation build, both thrown away,
+    // then built once for real by the commit.
+    running
+        .apply_edits(&[add("a", SCRIPTED, json!({ "level": 0.1 }))])
+        .expect("the batch commits");
+    assert_eq!(scripted.builds(), 3);
+    assert!(scripted.writes().is_empty());
+
+    // One check, a validation build of both modules, and the commit's
+    // build. The write goes through the module's setter, as it would for a
+    // module whose control key is not its config key.
+    running
+        .apply_edits(&[
+            add("b", SCRIPTED, json!({ "level": 0.1 })),
+            set("b", "level", number(0.5)),
+        ])
+        .expect("the batch commits");
+    assert_eq!(scripted.builds(), 7);
+    assert_eq!(running.get_control("b", "level").unwrap(), number(0.5));
+    assert_eq!(scripted.writes(), [("level".to_string(), number(0.5))]);
+    pump.render(1);
 }
 
 #[test]
