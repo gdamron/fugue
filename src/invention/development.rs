@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use super::builder::InventionBuilder;
-use super::reload::DevelopmentDefinitions;
+use super::reload::LoadedDevelopments;
 
 mod compiled_graph;
 mod control_surface;
@@ -27,9 +27,9 @@ pub(crate) struct DevelopmentFactory {
     pub(crate) definition: Invention,
     pub(crate) registry: ModuleRegistry,
     pub(crate) registered: Arc<Mutex<HashSet<String>>>,
-    /// The development definitions loaded with the outermost document:
-    /// nested developments build from these, never from disk again.
-    pub(crate) loaded: Arc<DevelopmentDefinitions>,
+    /// The developments `definition` declares, as loaded with the outermost
+    /// document: nested developments build from these, never from disk again.
+    pub(crate) loaded: Arc<LoadedDevelopments>,
 }
 
 impl ModuleFactory for DevelopmentFactory {
