@@ -106,14 +106,17 @@ impl ControlSchedulerControls {
 
     /// Replaces the schedule from JSON text, re-resolving against the
     /// attached directory. On error the current schedule is left unchanged.
+    ///
+    /// A scheduler not yet attached (one an edit batch is building) keeps
+    /// the parsed schedule, and resolves it when it is attached.
     pub fn set_schedule_json(&self, json: &str) -> Result<(), String> {
         let spec = parse_schedule_json(json)?;
         let (own_id, directory) = {
-            let state = self.shared.state.lock().unwrap();
-            let attachment = state
-                .attachment
-                .as_ref()
-                .ok_or("control_scheduler is not attached to a runtime")?;
+            let mut state = self.shared.state.lock().unwrap();
+            let Some(attachment) = state.attachment.as_ref() else {
+                state.spec = spec;
+                return Ok(());
+            };
             (attachment.own_id.clone(), attachment.directory.clone())
         };
         let directory = directory
@@ -221,15 +224,18 @@ impl ControlSurface for ControlSchedulerControls {
         match key {
             "schedule" => {
                 let spec = parse_schedule_json(value.as_string()?)?;
+                // A scheduler an edit batch is still adding is checked before
+                // it is attached, so it does not know its own id yet. Its
+                // targets are still checked against `surfaces`; that it does
+                // not target itself is checked again once it is attached.
                 let own_id = {
                     let state = self.shared.state.lock().unwrap();
-                    let attachment = state
+                    state
                         .attachment
                         .as_ref()
-                        .ok_or("control_scheduler is not attached to a runtime")?;
-                    attachment.own_id.clone()
+                        .map(|attachment| attachment.own_id.clone())
                 };
-                resolve_schedule(&spec, &own_id, surfaces).map(drop)
+                resolve_schedule(&spec, own_id.as_deref().unwrap_or(""), surfaces).map(drop)
             }
             "step" => crate::traits::read_only(key),
             _ => Err(format!("Unknown control: {}", key)),

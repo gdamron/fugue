@@ -268,6 +268,27 @@ version does not tell the two apart, since the command was added within
 schema version 1. Check the daemon's `build` fingerprint from hello
 (`DaemonIdentity`) before relying on `apply_edits`.
 
+## What checking a batch touches
+
+Checking a batch builds each module it adds, and then the whole edited
+invention, as throwaway instances that activate no output: no recorder opens
+its file and no stream starts. A recorder that is already running is never
+built again over the file it is writing. A `wasm_module` still runs its
+constructor, as it does on load.
+
+An added module's `$asset` and audio asset references resolve against the
+invention's assets, relative to its file, exactly as on load. The document
+keeps the reference as written.
+
+Developments are built from the definitions loaded with the invention, nested
+ones included. A development file changed or deleted on disk since then does
+not affect a batch; reload the invention to pick up the change.
+
+The modules a batch adds or rebuilds are built for real only once the batch is
+planned, just before it is published. A recorder added by a batch that is
+then refused (the graph kept changing through every attempt, say) may leave
+its new, empty file behind.
+
 ## How a batch is planned
 
 The change to the running graph is the difference between the retained
@@ -297,9 +318,11 @@ third attempt, the batch is refused as `internal` and nothing was applied.
    not touch keep running without interruption and keep their phase.
 2. Control values written to modules that survive the batch are applied right
    after the new graph is queued. A value may therefore be heard up to one
-   audio block before the new graph. Values for added or rebuilt modules are
-   part of their config and arrive with them. A control written more than
-   once ends at its last value.
+   audio block before the new graph. Added and rebuilt modules are built from
+   their final configs and take the batch's values through their setters
+   before the new graph is prepared, so they arrive with them: a control's key
+   need not be the config key the module is built from (an oscillator's `type`
+   control, say). A control written more than once ends at its last value.
 3. One `control_changed { module_id, key, value }` is emitted per control
    the `set_control` edits wrote, for modules that exist after the commit
    (survivors, added and rebuilt modules). Each carries the control's final

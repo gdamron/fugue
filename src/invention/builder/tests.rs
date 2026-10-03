@@ -707,3 +707,126 @@ fn multiple_instances_of_nested_developments_build() {
     assert!(runtime.modules.contains_key("a"));
     assert!(runtime.modules.contains_key("b"));
 }
+
+/// A nested development is built from the definition loaded with the
+/// document, not read from disk again each time its parent builds: a live
+/// edit, or a check of one, must not depend on files changed since load.
+#[test]
+fn nested_developments_build_from_the_definitions_loaded_with_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let inner_path = dir.path().join("inner.json");
+    let inner = serde_json::json!({
+        "version": "1.0.0",
+        "modules": [{"id": "osc", "type": "oscillator", "config": {"frequency": 440.0}}],
+        "connections": [],
+        "outputs": [{"name": "audio", "from": "osc", "from_port": "audio"}]
+    });
+    std::fs::write(&inner_path, inner.to_string()).unwrap();
+    let root: Invention = serde_json::from_value(serde_json::json!({
+        "version": "1.0.0",
+        "developments": [{
+            "name": "outer_voice",
+            "definition": {
+                "version": "1.0.0",
+                "developments": [{"name": "inner_voice", "path": inner_path}],
+                "modules": [{"id": "voice", "type": "inner_voice"}],
+                "connections": [],
+                "outputs": [{"name": "audio", "from": "voice", "from_port": "audio"}]
+            }
+        }],
+        "modules": [{"id": "a", "type": "outer_voice"}],
+        "connections": []
+    }))
+    .unwrap();
+    let (runtime, _) = InventionBuilder::new(44_100).build(root).unwrap();
+
+    std::fs::remove_file(&inner_path).unwrap();
+    for registry in [runtime.registry.clone(), runtime.registry.for_validation()] {
+        let built = registry.build("outer_voice", 44_100, &serde_json::Value::Null);
+        assert!(built.is_ok(), "{:?}", built.err().map(|e| e.to_string()));
+    }
+}
+
+/// Two sibling developments may each declare a different nested development
+/// under the same alias; each builds from its own declaration.
+#[test]
+fn sibling_developments_build_their_own_nested_declarations() {
+    let voice = |output: &str, frequency: f64| {
+        serde_json::json!({
+            "name": "voice",
+            "definition": {
+                "version": "1.0.0",
+                "modules": [{ "id": "osc", "type": "oscillator", "config": { "frequency": frequency } }],
+                "connections": [],
+                "outputs": [{ "name": output, "from": "osc", "from_port": "audio" }]
+            }
+        })
+    };
+    let wrapper = |output: &str, frequency: f64| {
+        serde_json::json!({
+            "version": "1.0.0",
+            "developments": [voice(output, frequency)],
+            "modules": [{ "id": "v", "type": "voice" }],
+            "connections": [],
+            "outputs": [{ "name": "audio", "from": "v", "from_port": output }]
+        })
+    };
+    let root: Invention = serde_json::from_value(serde_json::json!({
+        "version": "1.0.0",
+        "developments": [
+            { "name": "low", "definition": wrapper("low_out", 110.0) },
+            { "name": "high", "definition": wrapper("high_out", 880.0) }
+        ],
+        "modules": [{ "id": "a", "type": "low" }, { "id": "b", "type": "high" }],
+        "connections": []
+    }))
+    .unwrap();
+    let (runtime, _) = InventionBuilder::new(44_100).build(root).unwrap();
+    for (id, registry) in [
+        ("low", runtime.registry.clone()),
+        ("high", runtime.registry.clone()),
+    ] {
+        let built = registry.build(id, 44_100, &serde_json::Value::Null);
+        assert!(
+            built.is_ok(),
+            "{id}: {:?}",
+            built.err().map(|e| e.to_string())
+        );
+    }
+}
+
+/// A development whose alias an enclosing scope already registered keeps
+/// the inherited factory, so its own declaration is never read: a missing
+/// file there does not fail the load.
+#[test]
+fn a_shadowed_nested_declaration_is_never_read() {
+    let root: Invention = serde_json::from_value(serde_json::json!({
+        "version": "1.0.0",
+        "developments": [
+            {
+                "name": "tone",
+                "definition": {
+                    "version": "1.0.0",
+                    "modules": [{ "id": "osc", "type": "oscillator" }],
+                    "connections": [],
+                    "outputs": [{ "name": "audio", "from": "osc", "from_port": "audio" }]
+                }
+            },
+            {
+                "name": "wrapper",
+                "definition": {
+                    "version": "1.0.0",
+                    "developments": [{ "name": "tone", "path": "/no/such/tone.json" }],
+                    "modules": [{ "id": "t", "type": "tone" }],
+                    "connections": [],
+                    "outputs": [{ "name": "audio", "from": "t", "from_port": "audio" }]
+                }
+            }
+        ],
+        "modules": [{ "id": "w", "type": "wrapper" }],
+        "connections": []
+    }))
+    .unwrap();
+    let built = InventionBuilder::new(44_100).build(root);
+    assert!(built.is_ok(), "{:?}", built.err().map(|e| e.to_string()));
+}

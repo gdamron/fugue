@@ -71,6 +71,22 @@ pub trait ModuleFactory: Send + Sync + 'static {
         self.build(sample_rate, config)
     }
 
+    /// Constructs a throwaway instance on the control thread that checks
+    /// `config` builds, then is dropped without processing audio. Like
+    /// inspection, it must not write files, open streams, or activate
+    /// outputs, so checking a document never disturbs the one playing (a
+    /// recording at the same path, say). Unlike inspection, it may run what
+    /// a live build runs otherwise. The default is
+    /// [`Self::build_for_inspection`]; a factory whose inspection refuses
+    /// what a live build accepts overrides it.
+    fn build_for_validation(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        self.build_for_inspection(sample_rate, config)
+    }
+
     /// Returns true if this factory produces sink modules.
     ///
     /// Sink modules are final destinations in the signal chain (e.g., audio output,

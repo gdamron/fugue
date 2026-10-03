@@ -519,6 +519,7 @@ mod tests {
             definition,
             registry: registry.clone(),
             registered: Arc::new(Mutex::new(Default::default())),
+            loaded: Default::default(),
         };
         registry.register_boxed("recorder_development", Arc::new(factory));
         let result = registry

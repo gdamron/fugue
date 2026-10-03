@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use super::builder::InventionBuilder;
+use super::reload::LoadedDevelopments;
 
 mod compiled_graph;
 mod control_surface;
@@ -26,6 +27,9 @@ pub(crate) struct DevelopmentFactory {
     pub(crate) definition: Invention,
     pub(crate) registry: ModuleRegistry,
     pub(crate) registered: Arc<Mutex<HashSet<String>>>,
+    /// The developments `definition` declares, as loaded with the outermost
+    /// document: nested developments build from these, never from disk again.
+    pub(crate) loaded: Arc<LoadedDevelopments>,
 }
 
 impl ModuleFactory for DevelopmentFactory {
@@ -43,6 +47,22 @@ impl ModuleFactory for DevelopmentFactory {
             definition: self.definition.clone(),
             registry: self.registry.for_inspection(),
             registered: Arc::new(Mutex::new(self.registered.lock().unwrap().clone())),
+            loaded: self.loaded.clone(),
+        }
+        .build(sample_rate, config)
+    }
+
+    fn build_for_validation(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        Self {
+            name: self.name.clone(),
+            definition: self.definition.clone(),
+            registry: self.registry.for_validation(),
+            registered: Arc::new(Mutex::new(self.registered.lock().unwrap().clone())),
+            loaded: self.loaded.clone(),
         }
         .build(sample_rate, config)
     }
@@ -56,6 +76,7 @@ impl ModuleFactory for DevelopmentFactory {
             sample_rate,
             self.registry.clone(),
             self.registered.clone(),
+            self.loaded.clone(),
         );
         let (runtime, _handles) = builder.build(self.definition.clone())?;
         let (module, control_surface) =

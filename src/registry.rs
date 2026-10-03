@@ -35,7 +35,18 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ModuleRegistry {
     factories: HashMap<String, Arc<dyn ModuleFactory>>,
-    inspection_only: bool,
+    mode: BuildMode,
+}
+
+/// Which of a factory's build methods [`ModuleRegistry::build`] calls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BuildMode {
+    /// [`ModuleFactory::build`]: an instance that may run.
+    Live,
+    /// [`ModuleFactory::build_for_inspection`].
+    Inspection,
+    /// [`ModuleFactory::build_for_validation`].
+    Validation,
 }
 
 impl ModuleRegistry {
@@ -43,7 +54,7 @@ impl ModuleRegistry {
     pub fn new() -> Self {
         Self {
             factories: HashMap::new(),
-            inspection_only: false,
+            mode: BuildMode::Live,
         }
     }
 
@@ -83,10 +94,10 @@ impl ModuleRegistry {
             .factories
             .get(type_id)
             .ok_or_else(|| format!("Unknown module type: {}", type_id))?;
-        if self.inspection_only {
-            factory.build_for_inspection(sample_rate, config)
-        } else {
-            factory.build(sample_rate, config)
+        match self.mode {
+            BuildMode::Live => factory.build(sample_rate, config),
+            BuildMode::Inspection => factory.build_for_inspection(sample_rate, config),
+            BuildMode::Validation => factory.build_for_validation(sample_rate, config),
         }
     }
 
@@ -94,7 +105,18 @@ impl ModuleRegistry {
     /// development builds. It must never be used to start an audio runtime.
     pub(crate) fn for_inspection(&self) -> Self {
         let mut registry = self.clone();
-        registry.inspection_only = true;
+        registry.mode = BuildMode::Inspection;
+        registry
+    }
+
+    /// Internal registry view for throwaway builds that check a document
+    /// builds (an edit batch's candidate, say) and are then dropped: every
+    /// build goes through [`ModuleFactory::build_for_validation`], so no
+    /// output is activated. Preserved through nested development builds. It
+    /// must never be used to start an audio runtime.
+    pub(crate) fn for_validation(&self) -> Self {
+        let mut registry = self.clone();
+        registry.mode = BuildMode::Validation;
         registry
     }
 
@@ -138,8 +160,7 @@ impl Default for ModuleRegistry {
             CodeFactory, ControlSchedulerFactory, DacFactory, DivisiFactory, FilterFactory,
             LfoFactory, MelodyFactory, MixerFactory, OscillatorFactory, ReverbFactory,
             SampleInstrumentFactory, SampleKitFactory, SamplePlayerFactory, SampleSlicerFactory,
-            StepSequencerFactory,
-            VcaFactory,
+            StepSequencerFactory, VcaFactory,
         };
 
         let mut reg = Self::new();

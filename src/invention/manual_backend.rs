@@ -31,6 +31,16 @@ impl Pump {
         out
     }
 
+    /// Renders one block and keeps nothing, so a test can count what the
+    /// block alone allocates.
+    pub(crate) fn block(&self) {
+        let mut render = self.0.lock().unwrap();
+        let render = render.as_mut().expect("backend started");
+        let mut left = [0.0f32; 64];
+        let mut right = [0.0f32; 64];
+        render(&mut left, &mut right);
+    }
+
     /// A backend rendering through this pump.
     pub(crate) fn backend(&self) -> ManualBackend {
         ManualBackend(self.clone())
