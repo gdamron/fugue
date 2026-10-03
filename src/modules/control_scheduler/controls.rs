@@ -106,14 +106,17 @@ impl ControlSchedulerControls {
 
     /// Replaces the schedule from JSON text, re-resolving against the
     /// attached directory. On error the current schedule is left unchanged.
+    ///
+    /// A scheduler not yet attached (one an edit batch is building) keeps
+    /// the parsed schedule, and resolves it when it is attached.
     pub fn set_schedule_json(&self, json: &str) -> Result<(), String> {
         let spec = parse_schedule_json(json)?;
         let (own_id, directory) = {
-            let state = self.shared.state.lock().unwrap();
-            let attachment = state
-                .attachment
-                .as_ref()
-                .ok_or("control_scheduler is not attached to a runtime")?;
+            let mut state = self.shared.state.lock().unwrap();
+            let Some(attachment) = state.attachment.as_ref() else {
+                state.spec = spec;
+                return Ok(());
+            };
             (attachment.own_id.clone(), attachment.directory.clone())
         };
         let directory = directory
