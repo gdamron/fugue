@@ -13,6 +13,7 @@ use crate::rpc::{StructuralEdit, WrittenControl};
 use crate::{ControlValue, Invention, ModuleRegistry};
 
 mod commit;
+mod real_modules;
 mod refusals;
 mod scripted;
 
@@ -388,29 +389,30 @@ fn removing_and_adding_a_module_again_rebuilds_it_even_when_identical() {
 }
 
 #[test]
-fn an_added_module_is_reused_from_its_check_only_when_its_config_is_unchanged() {
+fn an_added_module_is_built_for_real_once_and_written_through_its_setter() {
     let scripted = Scripted::default();
     let (mut running, pump) = start_with(scripted.registry(), BASE);
 
-    // Built once to check the edit and once by the validation build; the
-    // commit reuses the first.
+    // Checked by `describe` and by the validation build, both thrown away,
+    // then built once for real by the commit.
     running
         .apply_edits(&[add("a", SCRIPTED, json!({ "level": 0.1 }))])
         .expect("the batch commits");
-    assert_eq!(scripted.builds(), 2);
+    assert_eq!(scripted.builds(), 3);
+    assert!(scripted.writes().is_empty());
 
-    // A later write changes the config, so the commit builds it again: one
-    // check, a validation build of both modules, and the commit's build.
+    // One check, a validation build of both modules, and the commit's
+    // build. The write goes through the module's setter, as it would for a
+    // module whose control key is not its config key.
     running
         .apply_edits(&[
             add("b", SCRIPTED, json!({ "level": 0.1 })),
             set("b", "level", number(0.5)),
         ])
         .expect("the batch commits");
-    assert_eq!(scripted.builds(), 6);
+    assert_eq!(scripted.builds(), 7);
     assert_eq!(running.get_control("b", "level").unwrap(), number(0.5));
-    // Built with its value, never written.
-    assert!(scripted.writes().is_empty());
+    assert_eq!(scripted.writes(), [("level".to_string(), number(0.5))]);
     pump.render(1);
 }
 

@@ -221,15 +221,18 @@ impl ControlSurface for ControlSchedulerControls {
         match key {
             "schedule" => {
                 let spec = parse_schedule_json(value.as_string()?)?;
+                // A scheduler an edit batch is still adding is checked before
+                // it is attached, so it does not know its own id yet. Its
+                // targets are still checked against `surfaces`; that it does
+                // not target itself is checked again once it is attached.
                 let own_id = {
                     let state = self.shared.state.lock().unwrap();
-                    let attachment = state
+                    state
                         .attachment
                         .as_ref()
-                        .ok_or("control_scheduler is not attached to a runtime")?;
-                    attachment.own_id.clone()
+                        .map(|attachment| attachment.own_id.clone())
                 };
-                resolve_schedule(&spec, &own_id, surfaces).map(drop)
+                resolve_schedule(&spec, own_id.as_deref().unwrap_or(""), surfaces).map(drop)
             }
             "step" => crate::traits::read_only(key),
             _ => Err(format!("Unknown control: {}", key)),

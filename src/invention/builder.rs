@@ -2,6 +2,7 @@
 
 use crate::invention::format::Invention;
 use crate::invention::handles::InventionHandles;
+use crate::invention::reload::DevelopmentDefinitions;
 use crate::invention::runtime::{
     validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
     ModuleInstance,
@@ -34,6 +35,9 @@ pub struct InventionBuilder {
     sample_rate: u32,
     registry: ModuleRegistry,
     registered: Arc<Mutex<HashSet<String>>>,
+    /// The development definitions loaded with the outermost document, for
+    /// a nested build; `None` for a document's own build, which loads them.
+    loaded: Option<Arc<DevelopmentDefinitions>>,
 }
 
 impl InventionBuilder {
@@ -43,6 +47,7 @@ impl InventionBuilder {
             sample_rate,
             registry: ModuleRegistry::default(),
             registered: Arc::new(Mutex::new(HashSet::new())),
+            loaded: None,
         }
     }
 
@@ -52,20 +57,25 @@ impl InventionBuilder {
             sample_rate,
             registry,
             registered: Arc::new(Mutex::new(HashSet::new())),
+            loaded: None,
         }
     }
 
     /// Creates a new invention builder sharing the given registered-developments set.
-    /// Used internally by `DevelopmentFactory` so nested builds share the same guard.
+    /// Used internally by `DevelopmentFactory` so nested builds share the same guard,
+    /// and build nested developments from the definitions `loaded` with the
+    /// outermost document rather than reading them from disk again.
     pub(crate) fn with_registry_and_registered(
         sample_rate: u32,
         registry: ModuleRegistry,
         registered: Arc<Mutex<HashSet<String>>>,
+        loaded: Arc<DevelopmentDefinitions>,
     ) -> Self {
         Self {
             sample_rate,
             registry,
             registered,
+            loaded: Some(loaded),
         }
     }
 
@@ -99,9 +109,15 @@ impl InventionBuilder {
         // references or losing developments, title, and the exposed sections.
         let document = invention.clone();
         let invention = resolve_invention_assets(invention)?;
-        let development_definitions =
-            crate::invention::reload::DevelopmentDefinitions::resolve(&invention)?;
-        self.register_developments(&invention)?;
+        let development_definitions = match &self.loaded {
+            Some(loaded) => DevelopmentDefinitions::resolve_from(&invention, loaded)?,
+            None => DevelopmentDefinitions::resolve(&invention)?,
+        };
+        let loaded = match &self.loaded {
+            Some(loaded) => loaded.clone(),
+            None => Arc::new(development_definitions.clone()),
+        };
+        self.register_developments(&invention, &loaded)?;
         self.validate_invention(&invention)?;
 
         // Build all module instances (including sinks)
@@ -129,8 +145,15 @@ impl InventionBuilder {
                 .map_err(|err| format!("control_scheduler '{}': {}", spec.id, err))?;
         }
 
-        // Warn if no sink modules (invention will run but produce silence)
-        if sinks.is_empty() && invention.outputs.is_empty() {
+        // Warn if no sink modules (invention will run but produce silence).
+        // Asked of the registry too: a validation build makes inert
+        // stand-ins for sinks that write files or streams.
+        let has_sink = !sinks.is_empty()
+            || invention
+                .modules
+                .iter()
+                .any(|spec| self.registry.is_sink(&spec.module_type));
+        if !has_sink && invention.outputs.is_empty() {
             eprintln!(
                 "Warning: Invention '{}' has no sink modules or outputs. Audio output will be silent.",
                 invention.title.as_deref().unwrap_or("untitled")
@@ -289,9 +312,14 @@ impl InventionBuilder {
         Ok(routing)
     }
 
+    /// Registers a factory for each of the document's developments. A
+    /// nested build takes each definition from `loaded`; a document's own
+    /// build reads them as declared. Each factory carries `loaded` so its
+    /// own nested developments never read the disk again.
     fn register_developments(
         &mut self,
         invention: &Invention,
+        loaded: &Arc<DevelopmentDefinitions>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut aliases = std::collections::HashSet::new();
         let primitives = ModuleRegistry::default();
@@ -319,12 +347,20 @@ impl InventionBuilder {
                 registered.insert(development.name.clone());
             }
 
-            let definition = load_development_definition(invention, development)?;
+            let snapshot = self
+                .loaded
+                .as_ref()
+                .and_then(|loaded| loaded.get(&development.name));
+            let definition = match snapshot {
+                Some(definition) => definition.clone(),
+                None => load_development_definition(invention, development)?,
+            };
             let factory = DevelopmentFactory {
                 name: development.name.clone(),
                 definition,
                 registry: self.registry.clone(),
                 registered: self.registered.clone(),
+                loaded: loaded.clone(),
             };
             self.registry.register_boxed(
                 development.name.clone(),
