@@ -83,14 +83,40 @@ pub(crate) trait EditFacts {
 
     /// Facts for a module `add_module` would build as `id` from this type
     /// and config, or the reason the type refuses the config. Only called
-    /// for types [`Self::has_type`] accepts. An implementation may keep what
-    /// it built for `id`, to reuse it when the batch commits.
+    /// for types [`Self::has_type`] accepts.
+    ///
+    /// An implementation may keep what it built for `id`, to reuse it when
+    /// the batch commits. If it does:
+    ///
+    /// - The latest `describe` for an id supersedes any earlier one in the
+    ///   batch, and [`Self::forget`] drops it when a later edit removes the
+    ///   module. The candidate's own facts for added modules behave the same
+    ///   way.
+    /// - It was built from the config as sent. A later `set_control` in the
+    ///   batch changes the candidate's config, so the commit builds every
+    ///   added or replaced module from its final candidate config, and
+    ///   reuses a kept instance only when that config is unchanged since it
+    ///   was built.
     fn describe(
         &mut self,
         id: &str,
         module_type: &str,
         config: &serde_json::Value,
     ) -> Result<ModuleFacts, String>;
+
+    /// Called when `remove_module` removes `id` after an earlier
+    /// [`Self::describe`] in this batch built it: drop anything kept for it.
+    fn forget(&mut self, _id: &str) {}
+}
+
+/// One `set_control` edit's authored write, tagged with the edit that made
+/// it so a refusal at commit time can name that edit.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CandidateWrite {
+    /// The `set_control` edit's position in the batch.
+    pub(crate) edit_index: usize,
+    /// The write, carrying the value as coerced to the control's kind.
+    pub(crate) write: ControlWrite,
 }
 
 /// A batch applied to a copy of the authored document.
@@ -98,13 +124,42 @@ pub(crate) trait EditFacts {
 pub(crate) struct EditedCandidate {
     /// The authored document with every edit applied, in order.
     pub(crate) document: Invention,
-    /// One authored write per `set_control` edit, in batch order, carrying
-    /// the value as coerced to the control's kind: the value to apply and
-    /// announce when the batch commits.
-    pub(crate) control_writes: Vec<ControlWrite>,
+    /// One authored write per `set_control` edit, in batch order, for
+    /// modules that exist after the batch. A later `remove_module` drops the
+    /// writes made to the module before it, so a write never outlives the
+    /// instance it was aimed at; a module added again starts from its new
+    /// config. The commit checks each write against the module's own rules
+    /// before publishing, and refuses a write the module would refuse as
+    /// `invalid_control_value` at its `edit_index`.
+    pub(crate) control_writes: Vec<CandidateWrite>,
     /// Every module id an edit names, as a module or as a connection
     /// endpoint. A commit must not touch a module outside this set.
     pub(crate) named_modules: BTreeSet<String>,
+    /// Ids that existed before the batch, were removed by it and added
+    /// again. Each gets a fresh instance, reported as rebuilt, even when its
+    /// type and config came back identical, which a diff of the documents
+    /// cannot see.
+    pub(crate) replaced: BTreeSet<String>,
+}
+
+impl EditedCandidate {
+    /// The controls the batch wrote, one per (module, key), each carrying
+    /// the last write's value and edit index, in first-written order. This
+    /// is what a commit applies, announces (one `ControlChanged` each) and
+    /// lists in `ApplyEditsReport::controls_written`.
+    pub(crate) fn final_writes(&self) -> Vec<&CandidateWrite> {
+        let mut finals: Vec<&CandidateWrite> = Vec::new();
+        for candidate in &self.control_writes {
+            let write = &candidate.write;
+            match finals.iter_mut().find(|earlier| {
+                earlier.write.module_id == write.module_id && earlier.write.key == write.key
+            }) {
+                Some(earlier) => *earlier = candidate,
+                None => finals.push(candidate),
+            }
+        }
+        finals
+    }
 }
 
 /// Applies `edits` in order to a copy of `document`, the retained authored
@@ -122,7 +177,7 @@ pub(crate) fn apply_to_candidate(
     for (index, edit) in edits.iter().enumerate() {
         edit.check_names(index)?;
         candidate
-            .apply(edit)
+            .apply(index, edit)
             .map_err(|refusal| EditFailure::new(index, edit.op(), refusal.0, refusal.1))?;
     }
     Ok(candidate.finish())

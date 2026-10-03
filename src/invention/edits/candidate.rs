@@ -2,14 +2,22 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::{EditFacts, EditedCandidate, ModuleFacts};
+use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::authored_document;
 use crate::invention::format::{Connection, Invention};
-use crate::rpc::{ControlWrite, EditFailureReason, StructuralEdit};
+use crate::rpc::{non_finite_refusal, ControlWrite, EditFailureReason, StructuralEdit};
 use crate::{ControlKind, ControlValue};
 
 /// How many names a refusal lists when it shows what is available.
 const LISTED_NAMES: usize = 24;
+
+/// The most of a refused value a refusal echoes, in bytes.
+const ECHOED_VALUE_BYTES: usize = 64;
+
+/// The most of a module type's own config error a refusal carries, in
+/// bytes. Larger than an echoed value because it is prose, but bounded,
+/// since a module may echo the config it refused.
+const MODULE_ERROR_BYTES: usize = 256;
 
 /// Why an edit cannot apply; the caller adds its index and op.
 pub(super) struct Refusal(pub(super) EditFailureReason, pub(super) String);
@@ -21,30 +29,48 @@ pub(super) struct Candidate<'f, F> {
     facts: &'f mut F,
     /// Facts for modules this batch added, which the runtime does not know.
     added: HashMap<String, ModuleFacts>,
-    control_writes: Vec<ControlWrite>,
+    control_writes: Vec<CandidateWrite>,
     named_modules: BTreeSet<String>,
+    /// Ids in the document the batch started from.
+    original: BTreeSet<String>,
+    /// Ids from `original` that an edit removed.
+    removed_originals: BTreeSet<String>,
 }
 
 impl<'f, F: EditFacts> Candidate<'f, F> {
     pub(super) fn new(document: Invention, facts: &'f mut F) -> Self {
+        let original = document
+            .modules
+            .iter()
+            .map(|spec| spec.id.clone())
+            .collect();
         Self {
             document,
             facts,
             added: HashMap::new(),
             control_writes: Vec::new(),
             named_modules: BTreeSet::new(),
+            original,
+            removed_originals: BTreeSet::new(),
         }
     }
 
     pub(super) fn finish(self) -> EditedCandidate {
+        let replaced = self
+            .removed_originals
+            .into_iter()
+            .filter(|id| self.document.modules.iter().any(|spec| &spec.id == id))
+            .collect();
         EditedCandidate {
             document: self.document,
             control_writes: self.control_writes,
             named_modules: self.named_modules,
+            replaced,
         }
     }
 
-    pub(super) fn apply(&mut self, edit: &StructuralEdit) -> Applied {
+    /// Applies `edit`, the batch's edit at `index`.
+    pub(super) fn apply(&mut self, index: usize, edit: &StructuralEdit) -> Applied {
         match edit {
             StructuralEdit::AddModule {
                 id,
@@ -68,7 +94,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 module_id,
                 key,
                 value,
-            } => self.set_control(module_id, key, value),
+            } => self.set_control(index, module_id, key, value),
         }
     }
 
@@ -92,7 +118,10 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             .map_err(|error| {
                 Refusal(
                     EditFailureReason::InvalidConfig,
-                    format!("module type '{module_type}' refused the config: {error}"),
+                    format!(
+                        "module type '{module_type}' refused the config: {}",
+                        bounded(&error, MODULE_ERROR_BYTES)
+                    ),
                 )
             })?;
         authored_document::upsert_module(&mut self.document, id, module_type, config);
@@ -106,11 +135,19 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             return Err(unknown_module(id));
         }
         authored_document::remove_module(&mut self.document, id);
+        if self.original.contains(id) {
+            self.removed_originals.insert(id.to_string());
+        }
         // As the runtime does, a removed module takes its connections with it.
         self.document
             .connections
             .retain(|conn| conn.from != id && conn.to != id);
-        self.added.remove(id);
+        if self.added.remove(id).is_some() {
+            self.facts.forget(id);
+        }
+        // A write aimed at the instance being removed goes with it.
+        self.control_writes
+            .retain(|candidate| candidate.write.module_id != id);
         Ok(())
     }
 
@@ -176,7 +213,13 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         Ok(())
     }
 
-    fn set_control(&mut self, module_id: &str, key: &str, value: &ControlValue) -> Applied {
+    fn set_control(
+        &mut self,
+        index: usize,
+        module_id: &str,
+        key: &str,
+        value: &ControlValue,
+    ) -> Applied {
         self.named_modules.insert(module_id.to_string());
         let facts = self.module_facts(module_id)?;
         let Some(kind) = facts.controls.get(key) else {
@@ -195,14 +238,23 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             return Err(Refusal(
                 EditFailureReason::InvalidControlValue,
                 format!(
-                    "control '{module_id}.{key}' expects {}, got {value:?}",
-                    kind_name(kind)
+                    "control '{module_id}.{key}' expects {}, got {}",
+                    kind_name(kind),
+                    echo(value)
                 ),
             ));
         }
+        // Only a number control can hold a number once the value fits its
+        // kind. A NaN or infinity (a wire number too large for an f32, or
+        // text such as "inf") is refused as `check_edit_batch` refuses it.
+        if let Some(message) = non_finite_refusal(module_id, key, &applied) {
+            return Err(Refusal(EditFailureReason::InvalidControlValue, message));
+        }
         authored_document::write_control(&mut self.document, module_id, key, &applied);
-        self.control_writes
-            .push(ControlWrite::new(module_id, key, applied));
+        self.control_writes.push(CandidateWrite {
+            edit_index: index,
+            write: ControlWrite::new(module_id, key, applied),
+        });
         Ok(())
     }
 
@@ -255,7 +307,9 @@ fn same_connection(
 }
 
 /// Whether a coerced value has the shape its control declares. Ranges and
-/// option lists are left to the module, which may clamp or accept aliases.
+/// option lists are left to the module, which may clamp or accept aliases;
+/// at commit, `validate_control` refuses whatever the module's setter would
+/// refuse.
 fn fits_kind(value: &ControlValue, kind: &ControlKind) -> bool {
     matches!(
         (value, kind),
@@ -271,6 +325,29 @@ fn kind_name(kind: &ControlKind) -> &'static str {
         ControlKind::Bool => "a boolean",
         ControlKind::String { .. } => "a string",
     }
+}
+
+/// A refused value as a message shows it, cut to about
+/// [`ECHOED_VALUE_BYTES`].
+fn echo(value: &ControlValue) -> String {
+    match value {
+        ControlValue::Number(number) => number.to_string(),
+        ControlValue::Bool(flag) => flag.to_string(),
+        ControlValue::String(text) => format!("{:?}", bounded(text, ECHOED_VALUE_BYTES)),
+    }
+}
+
+/// `text` cut at a character boundary to at most `max` bytes, marked with
+/// `…` when cut.
+fn bounded(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
 }
 
 fn listing(names: &[String]) -> String {

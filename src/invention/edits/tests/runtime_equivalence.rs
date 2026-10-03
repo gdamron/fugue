@@ -111,14 +111,17 @@ fn the_candidate_matches_the_equivalent_runtime_commands() {
     running.connect("osc2", "out", "lfo", "rate").unwrap();
 
     assert_eq!(candidate.document, retained(&running));
-    // The applied value matches what the runtime applied to the surviving
-    // module (the other writes went to modules removed later in the batch).
-    let lfo = candidate
-        .control_writes
-        .iter()
-        .find(|write| write.module_id == "lfo")
-        .unwrap();
-    assert_eq!(running.get_control("lfo", "frequency").unwrap(), lfo.value);
+    // Only the write to the surviving module remains: the osc2 writes were
+    // aimed at an instance removed later in the batch. Its value matches
+    // what the runtime applied.
+    let [lfo] = candidate.control_writes.as_slice() else {
+        panic!("expected one write, got {:?}", candidate.control_writes);
+    };
+    assert_eq!((lfo.edit_index, lfo.write.module_id.as_str()), (4, "lfo"));
+    assert_eq!(
+        running.get_control("lfo", "frequency").unwrap(),
+        lfo.write.value
+    );
 }
 
 #[test]
@@ -141,4 +144,23 @@ fn registry_facts_read_ports_and_control_kinds() {
         .inputs
         .iter()
         .any(|port| port == "audio"));
+}
+
+#[test]
+fn a_module_without_a_control_surface_has_no_controls_to_set() {
+    let document = base();
+    let mut facts = RegistryFacts::for_document(&document);
+    assert!(facts.module("dac").unwrap().controls.is_empty());
+    let failure = apply_to_candidate(
+        &document,
+        &[set("dac", "volume", ControlValue::Number(0.5))],
+        &mut facts,
+    )
+    .unwrap_err();
+    assert_eq!(failure.reason, EditFailureReason::UnknownControl);
+    assert!(
+        failure.message.contains("available: none"),
+        "{}",
+        failure.message
+    );
 }

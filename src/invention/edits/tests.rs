@@ -6,6 +6,7 @@ use super::*;
 use crate::rpc::{EditFailureReason, EditOp};
 use crate::ControlValue;
 
+mod batch_semantics;
 mod runtime_equivalence;
 
 const BASE: &str = r#"{
@@ -62,10 +63,13 @@ fn type_facts(module_type: &str) -> Option<ModuleFacts> {
 }
 
 /// Runtime facts derived from the base document's types; a config holding
-/// `"broken": true` stands in for a config the type refuses.
+/// `"broken": true` stands in for a config the type refuses. It keeps the
+/// config of each module it describes, as a runtime keeping built instances
+/// would.
 struct FakeFacts {
     running: HashMap<String, ModuleFacts>,
     described: Vec<String>,
+    kept: HashMap<String, serde_json::Value>,
 }
 
 impl FakeFacts {
@@ -77,6 +81,7 @@ impl FakeFacts {
                 .map(|spec| (spec.id.clone(), type_facts(&spec.module_type).unwrap()))
                 .collect(),
             described: Vec::new(),
+            kept: HashMap::new(),
         }
     }
 }
@@ -98,9 +103,14 @@ impl EditFacts for FakeFacts {
     ) -> Result<ModuleFacts, String> {
         self.described.push(id.to_string());
         if config.get("broken").is_some() {
-            return Err("broken config".to_string());
+            return Err(format!("broken config {config}"));
         }
+        self.kept.insert(id.to_string(), config.clone());
         Ok(type_facts(module_type).unwrap())
+    }
+
+    fn forget(&mut self, id: &str) {
+        self.kept.remove(id);
     }
 }
 
@@ -354,11 +364,12 @@ fn control_values_are_coerced_to_the_declared_kind() {
         config_of(&candidate.document, "lfo"),
         &json!({ "retrigger": true })
     );
-    let applied: Vec<(String, ControlValue)> = candidate
+    let applied: Vec<(usize, String, ControlValue)> = candidate
         .control_writes
         .iter()
-        .map(|write| {
+        .map(|CandidateWrite { edit_index, write }| {
             (
+                *edit_index,
                 format!("{}.{}", write.module_id, write.key),
                 write.value.clone(),
             )
@@ -367,16 +378,16 @@ fn control_values_are_coerced_to_the_declared_kind() {
     assert_eq!(
         applied,
         [
-            ("osc1.frequency".into(), ControlValue::Number(330.0)),
-            ("osc2.frequency".into(), ControlValue::Number(0.7)),
-            ("osc2.type".into(), ControlValue::String("square".into())),
-            ("lfo.retrigger".into(), ControlValue::Bool(true)),
+            (0, "osc1.frequency".into(), ControlValue::Number(330.0)),
+            (1, "osc2.frequency".into(), ControlValue::Number(0.7)),
+            (2, "osc2.type".into(), ControlValue::String("square".into())),
+            (4, "lfo.retrigger".into(), ControlValue::Bool(true)),
         ]
     );
     assert!(candidate
         .control_writes
         .iter()
-        .all(|write| write.intent.is_authoring()));
+        .all(|candidate| candidate.write.intent.is_authoring()));
 
     let failure = refused(vec![set(
         "osc1",
