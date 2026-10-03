@@ -37,6 +37,20 @@ pub(crate) fn remove_module(document: &mut Invention, id: &str) {
     document.modules.retain(|spec| spec.id != id);
 }
 
+/// Removes `keys` from a module's config: controls the module no longer
+/// lists (a melody's `degree.6` once its count shrank to three), so a cold
+/// rebuild does not restore a value the live module dropped.
+pub(crate) fn forget_controls(document: &mut Invention, id: &str, keys: &[String]) {
+    let Some(spec) = document.modules.iter_mut().find(|spec| spec.id == id) else {
+        return;
+    };
+    if let Some(config) = spec.config.as_object_mut() {
+        for key in keys {
+            config.remove(key);
+        }
+    }
+}
+
 /// Writes a control value into a module's config so the document reproduces
 /// it on a cold rebuild. Does nothing when no module has that id.
 pub(crate) fn write_control(document: &mut Invention, id: &str, key: &str, value: &ControlValue) {

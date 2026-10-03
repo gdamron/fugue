@@ -96,6 +96,14 @@ impl RuntimeState {
         }
     }
 
+    /// Drops controls a module no longer lists from the retained document
+    /// module's config (see [`authored_document::forget_controls`]).
+    pub(crate) fn document_forget_controls(&mut self, id: &str, keys: &[String]) {
+        if let Some(document) = self.document.as_mut() {
+            authored_document::forget_controls(document, id, keys);
+        }
+    }
+
     /// Assembles the retained declarative document, mirroring the live
     /// graph's connections. Returns `None` when no document was retained.
     pub fn document(&self) -> Option<Invention> {
