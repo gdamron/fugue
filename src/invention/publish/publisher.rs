@@ -96,15 +96,26 @@ impl Publisher {
     /// current one. A publication the audio thread has not taken yet is
     /// folded into this one, so a stalled stream holds at most one. Either
     /// error returns before the mailbox is touched, with nothing published.
-    pub(crate) fn publish(
-        &mut self,
-        prepared: PreparedChange,
-    ) -> Result<Published, GraphCommandError> {
+    ///
+    /// Nothing the change built is dropped here: a refused change comes back
+    /// in [`Refused`], and a superseded publication in
+    /// [`Published::superseded`], so the caller can drop them (a sink
+    /// finalizing a file, say) after releasing the publisher.
+    // A refusal is rare and on the control thread; handing the change back
+    // whole is the point, so it is not boxed.
+    #[allow(clippy::result_large_err)]
+    pub(crate) fn publish(&mut self, prepared: PreparedChange) -> Result<Published, Refused> {
         if prepared.base_generation != self.generation {
-            return Err(GraphCommandError::TopologyMoved);
+            return Err(Refused {
+                error: GraphCommandError::TopologyMoved,
+                change: prepared,
+            });
         }
         if !self.audio_alive() {
-            return Err(GraphCommandError::AudioThreadStopped);
+            return Err(Refused {
+                error: GraphCommandError::AudioThreadStopped,
+                change: prepared,
+            });
         }
         let PreparedChange {
             mirror,
@@ -117,16 +128,35 @@ impl Publisher {
             return Ok(Published {
                 previous: self.mirror.clone(),
                 built,
+                superseded: None,
             });
         };
-        if let Some(pending) = self.publications.take() {
-            publication.absorb(pending);
-        }
+        let superseded = self
+            .publications
+            .take()
+            .map(|pending| publication.absorb(pending));
         // Only this publisher puts, under its lock, so the slot is empty.
         drop(self.publications.put(publication));
         self.generation += 1;
         let previous = std::mem::replace(&mut self.mirror, mirror);
-        Ok(Published { previous, built })
+        Ok(Published {
+            previous,
+            built,
+            superseded,
+        })
+    }
+}
+
+/// A change the publisher refused, with nothing published, handed back so
+/// the caller drops it after releasing the publisher.
+pub(crate) struct Refused {
+    pub(crate) error: GraphCommandError,
+    pub(crate) change: PreparedChange,
+}
+
+impl std::fmt::Debug for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Refused").field(&self.error).finish()
     }
 }
 
@@ -146,4 +176,7 @@ pub(crate) struct Published {
     pub(crate) previous: TopologyMirror,
     /// The modules the change built (instances moved to the audio thread).
     pub(crate) built: IndexMap<String, BuiltModule>,
+    /// A publication the audio thread never took, folded into this one;
+    /// what remains of it is the caller's to drop off the publisher lock.
+    pub(crate) superseded: Option<Box<Publication>>,
 }

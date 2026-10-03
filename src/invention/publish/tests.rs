@@ -7,6 +7,7 @@ use crate::invention::runtime::module_ports;
 use crate::{Invention, InventionBuilder};
 
 mod alloc;
+mod drops;
 mod probe;
 
 use probe::{DropProbeFactory, DROP_PROBE};
@@ -226,6 +227,21 @@ fn a_change_prepared_before_another_publication_is_refused() {
         publisher.mirror().modules.keys().cloned().collect()
     };
     assert_eq!(mirror, ["osc1", "osc2", "dac", "osc4"]);
+}
+
+#[test]
+fn an_empty_change_prepared_before_another_publication_is_refused() {
+    let rig = Rig::new(BASE);
+    let stale = rig.live.begin().prepare().unwrap();
+    assert!(stale.is_empty());
+    rig.live.remove_module("osc2").unwrap();
+
+    // The caller planned against a topology that has moved: an empty plan
+    // is no more current than any other.
+    assert!(matches!(
+        rig.live.commit(stale),
+        Err(GraphCommandError::TopologyMoved)
+    ));
 }
 
 #[test]

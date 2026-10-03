@@ -1,9 +1,11 @@
-//! A sink that records which thread drops it.
+//! A sink that records which thread drops it, and whether the publisher
+//! was locked at the time.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
+use crate::invention::publish::Publisher;
 use crate::{GraphModule, Module, ModuleBuildResult, ModuleFactory, SinkModule, MAX_BLOCK};
 
 /// The probe's module type id.
@@ -13,9 +15,23 @@ pub(crate) const DROP_PROBE: &str = "drop_probe";
 #[derive(Clone, Default)]
 pub(crate) struct DropProbeFactory {
     drops: Arc<Mutex<Vec<ThreadId>>>,
+    watched: Arc<OnceLock<Arc<Mutex<Publisher>>>>,
+    under_lock: Arc<Mutex<Vec<bool>>>,
 }
 
 impl DropProbeFactory {
+    /// Makes every probe record, when dropped, whether `publisher` was
+    /// locked.
+    pub(crate) fn watch(&self, publisher: Arc<Mutex<Publisher>>) {
+        assert!(self.watched.set(publisher).is_ok(), "already watching");
+    }
+
+    /// For each watched probe dropped so far, whether the publisher was
+    /// locked when it dropped.
+    pub(crate) fn dropped_under_lock(&self) -> Vec<bool> {
+        self.under_lock.lock().unwrap().clone()
+    }
+
     /// Waits up to `timeout` for `count` probes to drop, returning the
     /// threads they dropped on so far.
     pub(crate) fn wait_for_drops(&self, count: usize, timeout: Duration) -> Vec<ThreadId> {
@@ -43,6 +59,8 @@ impl ModuleFactory for DropProbeFactory {
         Ok(ModuleBuildResult {
             module: GraphModule::Sink(Box::new(DropProbe {
                 drops: self.drops.clone(),
+                watched: self.watched.clone(),
+                under_lock: self.under_lock.clone(),
                 input: [0.0; MAX_BLOCK],
                 silence: [0.0; MAX_BLOCK],
             })),
@@ -59,6 +77,8 @@ impl ModuleFactory for DropProbeFactory {
 
 struct DropProbe {
     drops: Arc<Mutex<Vec<ThreadId>>>,
+    watched: Arc<OnceLock<Arc<Mutex<Publisher>>>>,
+    under_lock: Arc<Mutex<Vec<bool>>>,
     input: [f32; MAX_BLOCK],
     silence: [f32; MAX_BLOCK],
 }
@@ -66,6 +86,11 @@ struct DropProbe {
 impl Drop for DropProbe {
     fn drop(&mut self) {
         self.drops.lock().unwrap().push(std::thread::current().id());
+        if let Some(publisher) = self.watched.get() {
+            // `try_lock` fails while any thread, this one included, holds it.
+            let locked = publisher.try_lock().is_err();
+            self.under_lock.lock().unwrap().push(locked);
+        }
     }
 }
 

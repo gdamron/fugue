@@ -37,7 +37,7 @@ mod reclaim;
 mod tests;
 
 pub(crate) use change::{GraphChange, PreparedChange};
-pub(crate) use publisher::Publisher;
+pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 
 /// A live graph's publisher together with the runtime mirrors it keeps in
@@ -124,12 +124,10 @@ impl LiveGraph {
 
     /// Publishes a prepared change and commits the runtime mirrors together.
     /// Fails with nothing changed when another change published since
-    /// [`Self::begin`] ([`GraphCommandError::TopologyMoved`]) or the audio
-    /// thread is gone. An empty change publishes nothing.
+    /// [`Self::begin`] ([`GraphCommandError::TopologyMoved`]), an empty
+    /// change included, or the audio thread is gone. An empty change that
+    /// is still current publishes nothing.
     pub(crate) fn commit(&self, prepared: PreparedChange) -> Result<Committed, GraphCommandError> {
-        if prepared.is_empty() {
-            return Ok(Committed::default());
-        }
         self.commit_locked(self.publisher.lock().unwrap(), prepared)
     }
 
@@ -144,20 +142,47 @@ impl LiveGraph {
         self.reclaim();
         let publisher = self.publisher.lock().unwrap();
         let mut change = self.change_on(&publisher);
-        edit(&mut change)?;
-        let prepared = change.prepare()?;
-        if prepared.is_empty() {
-            return Ok(Committed::default());
+        if let Err(error) = edit(&mut change).and_then(|()| change.attach()) {
+            // The change's instances drop off the lock.
+            drop(publisher);
+            drop(change);
+            return Err(error);
         }
-        self.commit_locked(publisher, prepared)
+        let discarded = change.take_discarded();
+        let result = self.commit_locked(publisher, change.compile());
+        // Modules the edit displaced drop off the lock too.
+        drop(discarded);
+        result
     }
 
+    /// Publishes `prepared` and commits the mirrors under `publisher`. A
+    /// stale change is refused before the empty-change shortcut, so a caller
+    /// never commits work planned against a topology that has moved.
+    /// Whatever the change or the publication leaves to free is dropped
+    /// after the guard is released.
     fn commit_locked(
         &self,
         mut publisher: MutexGuard<'_, Publisher>,
         prepared: PreparedChange,
     ) -> Result<Committed, GraphCommandError> {
-        let published = publisher.publish(prepared)?;
+        if prepared.base_generation != publisher.generation() {
+            drop(publisher);
+            drop(prepared);
+            return Err(GraphCommandError::TopologyMoved);
+        }
+        if prepared.is_empty() {
+            drop(publisher);
+            return Ok(Committed::default());
+        }
+        let mut published = match publisher.publish(prepared) {
+            Ok(published) => published,
+            Err(Refused { error, change }) => {
+                drop(publisher);
+                drop(change);
+                return Err(error);
+            }
+        };
+        let superseded = published.superseded.take();
         let mirror = publisher.mirror();
         let removed: Vec<&String> = published
             .previous
@@ -213,6 +238,8 @@ impl LiveGraph {
             }
             committed.started.push(module.info);
         }
+        drop(publisher);
+        drop(superseded);
         Ok(committed)
     }
 
@@ -255,17 +282,27 @@ impl LiveGraph {
         config: &serde_json::Value,
         preserve_connections: bool,
     ) -> Result<Committed, GraphCommandError> {
-        let built = GraphChange::build(registry, sample_rate, id, module_type, config)?;
-        self.edit(|change| {
+        // Held out here so a refused swap drops the module after `edit`
+        // releases the publisher, not inside the closure.
+        let mut built = Some(GraphChange::build(
+            registry,
+            sample_rate,
+            id,
+            module_type,
+            config,
+        )?);
+        let result = self.edit(|change| {
             if !change.contains(id) {
                 return Err(GraphCommandError::UnknownModule(id.to_string()));
             }
             if !preserve_connections {
                 change.disconnect_module(id);
             }
-            change.upsert(id, built);
+            change.upsert(id, built.take().expect("upserted once"));
             Ok(())
-        })
+        });
+        drop(built);
+        result
     }
 
     /// Removes a module and its connections; a missing module is a no-op.
