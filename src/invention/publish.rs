@@ -12,8 +12,12 @@
 //!    freeing, or locking (see `graph::publication`). The old structures come
 //!    back to the control thread to be freed.
 //! 3. **Commit** (control thread): the runtime's mirrors (modules,
-//!    connections, ports, control surfaces, document) update together. After
-//!    the publication is queued nothing can fail.
+//!    connections, ports, control surfaces, document) update together; this
+//!    cannot fail. Control writes made alongside a change (a reload's
+//!    config-as-control updates) are validated in step 1, but a write can
+//!    still fail when made if only making it reveals the problem (a sample
+//!    that does not load). The caller reports such a write; the published
+//!    topology stands.
 //!
 //! Offline render owns its graph outright and keeps applying edits directly.
 
@@ -97,6 +101,12 @@ impl LiveGraph {
         self.reclaimer.reclaim()
     }
 
+    /// Publications made so far. A change prepared from state read before
+    /// this generation moved is refused when it publishes.
+    pub(crate) fn generation(&self) -> u64 {
+        self.publisher.lock().unwrap().generation()
+    }
+
     /// The shared publisher, for observation in tests.
     #[cfg(test)]
     pub(crate) fn publisher(&self) -> &Arc<Mutex<Publisher>> {
@@ -107,8 +117,6 @@ impl LiveGraph {
     /// whatever the audio thread has retired. The change is stale once any
     /// other change publishes; [`Self::edit`] rules that out for a change
     /// small enough to prepare under the publisher's lock.
-    // Only tests prepare outside the lock until reload does.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn begin(&self) -> GraphChange {
         self.reclaim();
         let publisher = self.publisher.lock().unwrap();
@@ -129,10 +137,23 @@ impl LiveGraph {
     /// [`Self::begin`] ([`GraphCommandError::TopologyMoved`]), an empty
     /// change included, or the audio thread is gone. An empty change that
     /// is still current publishes nothing.
-    // Only tests prepare outside the lock until reload does.
+    // Live callers retain state with the change through `commit_with`.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn commit(&self, prepared: PreparedChange) -> Result<Committed, GraphCommandError> {
-        self.commit_locked(self.publisher.lock().unwrap(), prepared)
+        self.commit_with(prepared, |_| {})
+    }
+
+    /// [`Self::commit`], then `retain` on the runtime state in the same step,
+    /// before the publisher is released: whatever `retain` records (a
+    /// reload's document, say) lands with the change it describes, and no
+    /// other edit can commit in between. `retain` runs only when the change
+    /// commits, an empty change included.
+    pub(crate) fn commit_with(
+        &self,
+        prepared: PreparedChange,
+        retain: impl FnOnce(&mut RuntimeState),
+    ) -> Result<Committed, GraphCommandError> {
+        self.commit_locked(self.publisher.lock().unwrap(), prepared, retain)
     }
 
     /// Prepares and publishes one change while holding the publisher, so no
@@ -153,7 +174,7 @@ impl LiveGraph {
             return Err(error);
         }
         let discarded = change.take_discarded();
-        let result = self.commit_locked(publisher, change.compile());
+        let result = self.commit_locked(publisher, change.compile(), |_| {});
         // Modules the edit displaced drop off the lock too.
         drop(discarded);
         result
@@ -168,6 +189,7 @@ impl LiveGraph {
         &self,
         mut publisher: MutexGuard<'_, Publisher>,
         prepared: PreparedChange,
+        retain: impl FnOnce(&mut RuntimeState),
     ) -> Result<Committed, GraphCommandError> {
         if prepared.base_generation != publisher.generation() {
             drop(publisher);
@@ -175,6 +197,7 @@ impl LiveGraph {
             return Err(GraphCommandError::TopologyMoved);
         }
         if prepared.is_empty() {
+            retain(&mut self.state.lock().unwrap());
             drop(publisher);
             return Ok(Committed::default());
         }
@@ -227,6 +250,7 @@ impl LiveGraph {
                 state.document_upsert_module(id, &module.info.module_type, &module.info.config);
             }
             state.connections = mirror.edges.iter().map(connection_info).collect();
+            retain(&mut state);
         }
 
         let mut committed = Committed {

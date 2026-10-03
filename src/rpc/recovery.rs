@@ -398,10 +398,15 @@ fn bounded_error(error: &RpcError) -> RpcError {
 }
 
 fn truncate(message: &mut String) {
-    if message.len() <= MAX_RECORDED_MESSAGE_BYTES {
+    truncate_on_char_boundary(message, MAX_RECORDED_MESSAGE_BYTES);
+}
+
+/// Cuts `message` to at most `max_bytes`, on a UTF-8 character boundary.
+pub(crate) fn truncate_on_char_boundary(message: &mut String, max_bytes: usize) {
+    if message.len() <= max_bytes {
         return;
     }
-    let mut end = MAX_RECORDED_MESSAGE_BYTES;
+    let mut end = max_bytes;
     while !message.is_char_boundary(end) {
         end -= 1;
     }

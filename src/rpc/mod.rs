@@ -35,6 +35,7 @@ pub use event::{
 };
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
 pub use package::{PackageInfo, PackageList, PackageSource};
+pub(crate) use recovery::truncate_on_char_boundary;
 pub use recovery::{
     Admission, MutationLedger, MutationTicket, PendingMutation, ReplayPolicy,
     MAX_MUTATION_ID_BYTES, MAX_RECORDED_MESSAGE_BYTES, MUTATION_LEDGER_CAPACITY,

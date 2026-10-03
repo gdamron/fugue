@@ -280,8 +280,6 @@ impl GraphChange {
     /// [`crate::Module::prepare_for_publication`]), then compiles the
     /// complete next topology. Fails, with nothing visible changed, when a
     /// schedule cannot resolve.
-    // Only tests prepare outside the lock until reload does.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn prepare(mut self) -> Result<PreparedChange, GraphCommandError> {
         self.attach()?;
         Ok(self.compile())
@@ -317,6 +315,7 @@ impl GraphChange {
             return PreparedChange {
                 base_generation: self.base_generation,
                 mirror: self.mirror,
+                surfaces: self.surfaces,
                 built: self.built,
                 publication: None,
             };
@@ -342,6 +341,7 @@ impl GraphChange {
         PreparedChange {
             base_generation: self.base_generation,
             mirror: self.mirror,
+            surfaces: self.surfaces,
             built: self.built,
             publication: Some(publication),
         }
@@ -362,6 +362,9 @@ pub(crate) struct PreparedChange {
     /// one makes the change stale, and the publisher refuses it.
     pub(crate) base_generation: u64,
     pub(crate) mirror: TopologyMirror,
+    /// The control-surface directory as the change will leave it, for
+    /// validating control writes that land with it.
+    pub(crate) surfaces: SurfaceMap,
     pub(crate) built: IndexMap<String, BuiltModule>,
     /// The compiled next topology; `None` when the change edits nothing.
     pub(crate) publication: Option<Box<Publication>>,
