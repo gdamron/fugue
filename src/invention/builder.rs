@@ -2,7 +2,7 @@
 
 use crate::invention::format::Invention;
 use crate::invention::handles::InventionHandles;
-use crate::invention::reload::DevelopmentDefinitions;
+use crate::invention::reload::LoadedDevelopments;
 use crate::invention::runtime::{
     validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
     ModuleInstance,
@@ -35,9 +35,9 @@ pub struct InventionBuilder {
     sample_rate: u32,
     registry: ModuleRegistry,
     registered: Arc<Mutex<HashSet<String>>>,
-    /// The development definitions loaded with the outermost document, for
+    /// The developments the document being built declares, as loaded, for
     /// a nested build; `None` for a document's own build, which loads them.
-    loaded: Option<Arc<DevelopmentDefinitions>>,
+    loaded: Option<Arc<LoadedDevelopments>>,
 }
 
 impl InventionBuilder {
@@ -63,13 +63,13 @@ impl InventionBuilder {
 
     /// Creates a new invention builder sharing the given registered-developments set.
     /// Used internally by `DevelopmentFactory` so nested builds share the same guard,
-    /// and build nested developments from the definitions `loaded` with the
-    /// outermost document rather than reading them from disk again.
+    /// and build the developments the definition declares from `loaded`, as
+    /// loaded with the outermost document, rather than reading them again.
     pub(crate) fn with_registry_and_registered(
         sample_rate: u32,
         registry: ModuleRegistry,
         registered: Arc<Mutex<HashSet<String>>>,
-        loaded: Arc<DevelopmentDefinitions>,
+        loaded: Arc<LoadedDevelopments>,
     ) -> Self {
         Self {
             sample_rate,
@@ -109,14 +109,11 @@ impl InventionBuilder {
         // references or losing developments, title, and the exposed sections.
         let document = invention.clone();
         let invention = resolve_invention_assets(invention)?;
-        let development_definitions = match &self.loaded {
-            Some(loaded) => DevelopmentDefinitions::resolve_from(&invention, loaded)?,
-            None => DevelopmentDefinitions::resolve(&invention)?,
-        };
         let loaded = match &self.loaded {
             Some(loaded) => loaded.clone(),
-            None => Arc::new(development_definitions.clone()),
+            None => Arc::new(LoadedDevelopments::load(&invention)?),
         };
+        let development_definitions = loaded.definitions();
         self.register_developments(&invention, &loaded)?;
         self.validate_invention(&invention)?;
 
@@ -312,14 +309,13 @@ impl InventionBuilder {
         Ok(routing)
     }
 
-    /// Registers a factory for each of the document's developments. A
-    /// nested build takes each definition from `loaded`; a document's own
-    /// build reads them as declared. Each factory carries `loaded` so its
-    /// own nested developments never read the disk again.
+    /// Registers a factory for each of the document's developments, from
+    /// its declaration in `loaded`. Each factory carries the developments its
+    /// own definition declares, so building it never reads the disk again.
     fn register_developments(
         &mut self,
         invention: &Invention,
-        loaded: &Arc<DevelopmentDefinitions>,
+        loaded: &LoadedDevelopments,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut aliases = std::collections::HashSet::new();
         let primitives = ModuleRegistry::default();
@@ -347,20 +343,20 @@ impl InventionBuilder {
                 registered.insert(development.name.clone());
             }
 
-            let snapshot = self
-                .loaded
-                .as_ref()
-                .and_then(|loaded| loaded.get(&development.name));
-            let definition = match snapshot {
-                Some(definition) => definition.clone(),
-                None => load_development_definition(invention, development)?,
+            let (definition, scope) = match loaded.get(&development.name) {
+                Some(loaded) => (loaded.definition.clone(), loaded.scope.clone()),
+                None => {
+                    let definition = load_development_definition(invention, development)?;
+                    let scope = Arc::new(LoadedDevelopments::load(&definition)?);
+                    (definition, scope)
+                }
             };
             let factory = DevelopmentFactory {
                 name: development.name.clone(),
                 definition,
                 registry: self.registry.clone(),
                 registered: self.registered.clone(),
-                loaded: loaded.clone(),
+                loaded: scope,
             };
             self.registry.register_boxed(
                 development.name.clone(),

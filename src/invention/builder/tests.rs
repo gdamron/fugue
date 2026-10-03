@@ -746,3 +746,51 @@ fn nested_developments_build_from_the_definitions_loaded_with_the_document() {
         assert!(built.is_ok(), "{:?}", built.err().map(|e| e.to_string()));
     }
 }
+
+/// Two sibling developments may each declare a different nested development
+/// under the same alias; each builds from its own declaration.
+#[test]
+fn sibling_developments_build_their_own_nested_declarations() {
+    let voice = |output: &str, frequency: f64| {
+        serde_json::json!({
+            "name": "voice",
+            "definition": {
+                "version": "1.0.0",
+                "modules": [{ "id": "osc", "type": "oscillator", "config": { "frequency": frequency } }],
+                "connections": [],
+                "outputs": [{ "name": output, "from": "osc", "from_port": "audio" }]
+            }
+        })
+    };
+    let wrapper = |output: &str, frequency: f64| {
+        serde_json::json!({
+            "version": "1.0.0",
+            "developments": [voice(output, frequency)],
+            "modules": [{ "id": "v", "type": "voice" }],
+            "connections": [],
+            "outputs": [{ "name": "audio", "from": "v", "from_port": output }]
+        })
+    };
+    let root: Invention = serde_json::from_value(serde_json::json!({
+        "version": "1.0.0",
+        "developments": [
+            { "name": "low", "definition": wrapper("low_out", 110.0) },
+            { "name": "high", "definition": wrapper("high_out", 880.0) }
+        ],
+        "modules": [{ "id": "a", "type": "low" }, { "id": "b", "type": "high" }],
+        "connections": []
+    }))
+    .unwrap();
+    let (runtime, _) = InventionBuilder::new(44_100).build(root).unwrap();
+    for (id, registry) in [
+        ("low", runtime.registry.clone()),
+        ("high", runtime.registry.clone()),
+    ] {
+        let built = registry.build(id, 44_100, &serde_json::Value::Null);
+        assert!(
+            built.is_ok(),
+            "{id}: {:?}",
+            built.err().map(|e| e.to_string())
+        );
+    }
+}
