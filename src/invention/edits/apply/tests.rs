@@ -11,6 +11,8 @@ use crate::invention::runtime::RunningInvention;
 use crate::rpc::{StructuralEdit, WrittenControl};
 use crate::{ControlValue, Invention, ModuleRegistry};
 
+mod real_modules;
+
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
