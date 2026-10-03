@@ -79,6 +79,27 @@ impl InventionBuilder {
         }
     }
 
+    /// Builds from the developments already loaded for the document (its own
+    /// declarations, recursively) rather than loading them again.
+    pub(crate) fn with_loaded(mut self, loaded: Arc<LoadedDevelopments>) -> Self {
+        self.loaded = Some(loaded);
+        self
+    }
+
+    /// The registry with `invention`'s developments registered exactly as
+    /// [`Self::build`] registers them, building no module.
+    pub(crate) fn register_developments_only(
+        mut self,
+        invention: &Invention,
+    ) -> Result<ModuleRegistry, Box<dyn std::error::Error>> {
+        let loaded = match &self.loaded {
+            Some(loaded) => loaded.clone(),
+            None => Arc::new(LoadedDevelopments::load(invention)?),
+        };
+        self.register_developments(invention, &loaded)?;
+        Ok(self.registry)
+    }
+
     /// Builds and prepares an invention for execution.
     ///
     /// Returns both the runtime (for starting audio) and handles (for runtime control).

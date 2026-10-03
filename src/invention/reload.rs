@@ -461,7 +461,10 @@ impl RunningInvention {
 
     /// Validates a new document with a full throwaway build against the
     /// pristine base registry, so a development removed from the document is
-    /// an error exactly as on a cold load. Changes nothing.
+    /// an error exactly as on a cold load. The build is in validation mode,
+    /// so nothing it builds activates an output: a recorder that is already
+    /// running is not built again over the file it is writing. Changes
+    /// nothing.
     pub(crate) fn validate_document(
         &self,
         invention: Invention,
@@ -469,17 +472,22 @@ impl RunningInvention {
         let document = invention.clone();
         let resolved = resolve_invention_assets(invention)
             .map_err(|error| ReloadError::Invalid(error.to_string()))?;
-        let definitions = DevelopmentDefinitions::resolve(&resolved)
-            .map_err(|error| ReloadError::Invalid(error.to_string()))?;
+        let invalid = |error: Box<dyn std::error::Error>| ReloadError::Invalid(error.to_string());
+        let loaded = Arc::new(LoadedDevelopments::load(&resolved).map_err(invalid)?);
+        let definitions = loaded.definitions();
 
-        // The built runtime is discarded; its registry carries the freshly
-        // registered development factories the diff needs.
-        let builder = InventionBuilder::with_registry(self.sample_rate, self.base_registry.clone());
-        let (validated, _) = builder
+        // The built runtime is discarded.
+        InventionBuilder::with_registry(self.sample_rate, self.base_registry.for_validation())
+            .with_loaded(loaded.clone())
             .build(resolved.clone())
-            .map_err(|error| ReloadError::Invalid(error.to_string()))?;
-        let registry: ModuleRegistry = validated.registry.clone();
-        drop(validated);
+            .map_err(invalid)?;
+        // What the reload adopts: the document's development factories,
+        // registered live from the same loaded definitions.
+        let registry: ModuleRegistry =
+            InventionBuilder::with_registry(self.sample_rate, self.base_registry.clone())
+                .with_loaded(loaded)
+                .register_developments_only(&resolved)
+                .map_err(invalid)?;
 
         Ok(ValidatedDocument {
             document,
