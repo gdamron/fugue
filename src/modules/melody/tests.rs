@@ -241,3 +241,19 @@ fn test_factory_seed_config() {
         .collect();
     assert_eq!(a, b, "config seed flows through the factory");
 }
+
+#[test]
+fn a_degree_recorded_past_a_later_shrunk_count_is_ignored_on_rebuild() {
+    // `degree.6` was written while the scale had seven degrees, then the
+    // count shrank to three; the config still holds the stale index.
+    let config = serde_json::json!({ "degree_count": 3, "degree.6": 11, "note_weight.6": 2.0 });
+    let built = crate::ModuleRegistry::default()
+        .build("melody", 48_000, &config)
+        .expect("the stale index is not the module's any more");
+    let surface = built.control_surface.unwrap();
+    assert_eq!(
+        surface.get_control("degree_count").unwrap(),
+        crate::ControlValue::Number(3.0)
+    );
+    assert!(surface.get_control("degree.6").is_err());
+}

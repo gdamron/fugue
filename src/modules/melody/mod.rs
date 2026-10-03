@@ -58,8 +58,16 @@ impl ModuleFactory for MelodyFactory {
             controls.set_note_weights(weights);
         }
 
+        crate::factory::apply_control_keys(&controls, config, |key| key == "degree_count")?;
+        // A write recorded before the count shrank can leave an index past
+        // it in the config; the module no longer has that degree.
+        let count = controls.degree_count();
         crate::factory::apply_control_keys(&controls, config, |key| {
-            key == "degree_count" || key.starts_with("degree.") || key.starts_with("note_weight.")
+            ["degree.", "note_weight."].iter().any(|prefix| {
+                key.strip_prefix(prefix)
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .is_some_and(|index| index < count)
+            })
         })?;
 
         let melody = MelodyGenerator::new(controls.clone());
