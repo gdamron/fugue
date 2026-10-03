@@ -13,7 +13,7 @@
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::{ControlValue, Invention, ModuleRegistry};
@@ -23,41 +23,27 @@ use super::format::ModuleSpec;
 use super::runtime::{GraphCommandError, RunningInvention};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
 
-/// Development definitions as loaded for a document, keyed by registered
-/// type name and flattened across nesting (first registration wins, matching
-/// builder semantics). Path-based definitions are captured at load time so a
-/// later reload can detect that the file changed on disk.
+/// Development definitions as loaded for a document, by declaration scope
+/// (see [`LoadedDevelopments`]). Path-based definitions are captured at load
+/// time so a later reload can detect that a file changed on disk, nested ones
+/// included.
 #[derive(Debug, Clone, Default)]
 pub struct DevelopmentDefinitions {
-    definitions: BTreeMap<String, Invention>,
+    loaded: Arc<LoadedDevelopments>,
 }
 
 impl DevelopmentDefinitions {
     /// Recursively loads every development definition reachable from a
     /// document, including path-based definitions nested inside other
-    /// definitions. A name already collected is skipped, which both matches
-    /// the builder's first-registration-wins semantics and guards against
-    /// definition cycles.
+    /// definitions, each within the scope that declares it.
     pub fn resolve(document: &Invention) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut definitions = BTreeMap::new();
-        collect_definitions(document, &mut definitions)?;
-        Ok(Self { definitions })
+        Ok(Self::of(Arc::new(LoadedDevelopments::load(document)?)))
     }
-}
 
-fn collect_definitions(
-    document: &Invention,
-    definitions: &mut BTreeMap<String, Invention>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for spec in &document.developments {
-        if definitions.contains_key(&spec.name) {
-            continue;
-        }
-        let definition = load_development_definition(document, spec)?;
-        definitions.insert(spec.name.clone(), definition.clone());
-        collect_definitions(&definition, definitions)?;
+    /// The definitions `loaded`, kept for a later reload to compare against.
+    pub(crate) fn of(loaded: Arc<LoadedDevelopments>) -> Self {
+        Self { loaded }
     }
-    Ok(())
 }
 
 /// The developments one document declares, each loaded with the ones its
@@ -65,11 +51,14 @@ fn collect_definitions(
 /// load (a nested one, or one an edit adds) builds from the declaration in
 /// scope where it is used, as loaded, never from disk again. Two siblings
 /// may each declare a different nested development under the same alias.
-#[derive(Debug, Clone, Default)]
+///
+/// A declaration whose alias an enclosing scope already registered is not
+/// loaded: the builder keeps the inherited factory and never reads it.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct LoadedDevelopments(IndexMap<String, LoadedDevelopment>);
 
 /// One loaded development declaration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LoadedDevelopment {
     pub(crate) definition: Invention,
     /// The developments `definition` declares.
@@ -79,27 +68,35 @@ pub(crate) struct LoadedDevelopment {
 impl LoadedDevelopments {
     /// Loads every development `document` declares, recursively.
     pub(crate) fn load(document: &Invention) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::load_within(document, &mut Vec::new())
+        Self::load_within(document, &HashSet::new(), &mut Vec::new())
     }
 
+    /// Loads `document`'s declarations, skipping those whose alias is in
+    /// `inherited`: the registry a nested build starts from already has
+    /// them, and the builder keeps those (see `register_developments`).
     fn load_within(
         document: &Invention,
+        inherited: &HashSet<String>,
         ancestry: &mut Vec<String>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut scope = IndexMap::new();
         for spec in &document.developments {
-            if scope.contains_key(&spec.name) {
+            if inherited.contains(&spec.name) || scope.contains_key(&spec.name) {
                 continue;
             }
             let definition = load_development_definition(document, spec)?;
             // A development declared again inside its own definition is a
-            // cycle: its scope is left empty there, as `collect_definitions`
-            // stops at a name it has already collected.
+            // cycle: its scope is left empty there.
             let nested = if ancestry.contains(&spec.name) {
                 Self::default()
             } else {
+                // A development's factory starts from the registry as it was
+                // when the development was registered: what this document
+                // inherits, and the developments it declares before this one.
+                let mut visible = inherited.clone();
+                visible.extend(scope.keys().cloned());
                 ancestry.push(spec.name.clone());
-                let nested = Self::load_within(&definition, ancestry);
+                let nested = Self::load_within(&definition, &visible, ancestry);
                 ancestry.pop();
                 nested?
             };
@@ -116,54 +113,31 @@ impl LoadedDevelopments {
     pub(crate) fn get(&self, name: &str) -> Option<&LoadedDevelopment> {
         self.0.get(name)
     }
-
-    /// Every definition reachable from this scope, collected as
-    /// [`DevelopmentDefinitions::resolve`] collects them from disk: depth
-    /// first, the first declaration of a name winning.
-    pub(crate) fn definitions(&self) -> DevelopmentDefinitions {
-        let mut definitions = BTreeMap::new();
-        self.collect(&mut definitions);
-        DevelopmentDefinitions { definitions }
-    }
-
-    fn collect(&self, definitions: &mut BTreeMap<String, Invention>) {
-        for (name, loaded) in &self.0 {
-            if definitions.contains_key(name) {
-                continue;
-            }
-            definitions.insert(name.clone(), loaded.definition.clone());
-            loaded.scope.collect(definitions);
-        }
-    }
 }
 
-/// Returns the development type names whose definitions changed between the
-/// previously loaded document and the new one, transitively: a development
-/// whose definition instantiates a changed type is itself changed. A name
-/// with no known previous definition counts as changed, so an unknown
-/// history degrades to conservatively rebuilding every development instance.
+/// Returns the top-level development type names whose definitions changed
+/// between the previously loaded document and the new one: a development
+/// changes when its definition or any development it declares (in its own
+/// scope, recursively) changed, or, transitively, when it instantiates a
+/// changed top-level development it inherits. A name with no known previous
+/// definition counts as changed, so an unknown history degrades to
+/// conservatively rebuilding every development instance.
 pub(crate) fn changed_development_types(
     previous: &DevelopmentDefinitions,
     new: &DevelopmentDefinitions,
 ) -> HashSet<String> {
     let mut changed: HashSet<String> = new
-        .definitions
+        .loaded
+        .0
         .iter()
-        .filter(|(name, definition)| previous.definitions.get(*name) != Some(definition))
+        .filter(|(name, loaded)| previous.loaded.get(name) != Some(*loaded))
         .map(|(name, _)| name.clone())
         .collect();
 
     loop {
         let mut grew = false;
-        for (name, definition) in &new.definitions {
-            if changed.contains(name) {
-                continue;
-            }
-            if definition
-                .modules
-                .iter()
-                .any(|module| changed.contains(&module.module_type))
-            {
+        for (name, loaded) in &new.loaded.0 {
+            if !changed.contains(name) && uses_any(loaded, &changed) {
                 changed.insert(name.clone());
                 grew = true;
             }
@@ -172,6 +146,26 @@ pub(crate) fn changed_development_types(
             return changed;
         }
     }
+}
+
+/// Whether `loaded`, or any development it declares, instantiates one of
+/// `names` as inherited from an enclosing scope rather than declared locally.
+fn uses_any(loaded: &LoadedDevelopment, names: &HashSet<String>) -> bool {
+    let visible: HashSet<String> = names
+        .iter()
+        .filter(|name| loaded.scope.get(name).is_none())
+        .cloned()
+        .collect();
+    loaded
+        .definition
+        .modules
+        .iter()
+        .any(|module| visible.contains(&module.module_type))
+        || loaded
+            .scope
+            .0
+            .values()
+            .any(|nested| uses_any(nested, &visible))
 }
 
 /// The runtime mutations that turn the current graph into the new document.
@@ -474,7 +468,7 @@ impl RunningInvention {
             .map_err(|error| ReloadError::Invalid(error.to_string()))?;
         let invalid = |error: Box<dyn std::error::Error>| ReloadError::Invalid(error.to_string());
         let loaded = Arc::new(LoadedDevelopments::load(&resolved).map_err(invalid)?);
-        let definitions = loaded.definitions();
+        let definitions = DevelopmentDefinitions::of(loaded.clone());
 
         // The built runtime is discarded.
         InventionBuilder::with_registry(self.sample_rate, self.base_registry.for_validation())

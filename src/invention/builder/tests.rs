@@ -794,3 +794,39 @@ fn sibling_developments_build_their_own_nested_declarations() {
         );
     }
 }
+
+/// A development whose alias an enclosing scope already registered keeps
+/// the inherited factory, so its own declaration is never read: a missing
+/// file there does not fail the load.
+#[test]
+fn a_shadowed_nested_declaration_is_never_read() {
+    let root: Invention = serde_json::from_value(serde_json::json!({
+        "version": "1.0.0",
+        "developments": [
+            {
+                "name": "tone",
+                "definition": {
+                    "version": "1.0.0",
+                    "modules": [{ "id": "osc", "type": "oscillator" }],
+                    "connections": [],
+                    "outputs": [{ "name": "audio", "from": "osc", "from_port": "audio" }]
+                }
+            },
+            {
+                "name": "wrapper",
+                "definition": {
+                    "version": "1.0.0",
+                    "developments": [{ "name": "tone", "path": "/no/such/tone.json" }],
+                    "modules": [{ "id": "t", "type": "tone" }],
+                    "connections": [],
+                    "outputs": [{ "name": "audio", "from": "t", "from_port": "audio" }]
+                }
+            }
+        ],
+        "modules": [{ "id": "w", "type": "wrapper" }],
+        "connections": []
+    }))
+    .unwrap();
+    let built = InventionBuilder::new(44_100).build(root);
+    assert!(built.is_ok(), "{:?}", built.err().map(|e| e.to_string()));
+}

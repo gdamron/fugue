@@ -2,7 +2,7 @@
 
 use crate::invention::format::Invention;
 use crate::invention::handles::InventionHandles;
-use crate::invention::reload::LoadedDevelopments;
+use crate::invention::reload::{DevelopmentDefinitions, LoadedDevelopments};
 use crate::invention::runtime::{
     validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
     ModuleInstance,
@@ -134,7 +134,7 @@ impl InventionBuilder {
             Some(loaded) => loaded.clone(),
             None => Arc::new(LoadedDevelopments::load(&invention)?),
         };
-        let development_definitions = loaded.definitions();
+        let development_definitions = DevelopmentDefinitions::of(loaded.clone());
         self.register_developments(&invention, &loaded)?;
         self.validate_invention(&invention)?;
 
