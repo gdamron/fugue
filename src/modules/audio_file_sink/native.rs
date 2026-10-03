@@ -245,7 +245,11 @@ impl NativeAudioFileSinkShared {
         self.error.lock().unwrap().clone()
     }
 
+    /// Records why the recording failed and stops it. The message also goes
+    /// to stderr: hosts without the handle (a native render, an FFI caller)
+    /// have no other way to learn of it.
     fn fail(&self, error: String) {
+        eprintln!("audio_file_sink: {error}");
         self.error.lock().unwrap().get_or_insert(error);
         self.stopping.store(true, Ordering::Release);
     }
