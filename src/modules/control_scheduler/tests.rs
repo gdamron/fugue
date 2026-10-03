@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
 
-use super::schedule::{parse_schedule_json, SurfaceMap};
+use super::schedule::{parse_schedule, parse_schedule_json, SurfaceMap};
 use super::*;
 use crate::modules::cell_sequencer::CellSequencerControls;
 use crate::modules::mixer::MixerControls;
@@ -277,6 +277,24 @@ fn parsing_rejects_bad_entries() {
     let err =
         parse_schedule_json(r#"[{ "at": 0, "module": "m", "control": "c", "value": "loud" }]"#)
             .unwrap_err();
+    assert!(err.contains("invalid schedule"), "{}", err);
+}
+
+#[test]
+fn a_config_schedule_given_as_json_text_parses_like_the_array() {
+    // The `schedule` control takes JSON text, and an authored control write
+    // records that text in the config, so the config must build from it.
+    let array = serde_json::json!([
+        { "at": 4, "module": "mixer", "control": "level.0", "value": 0.5, "ramp": 2 }
+    ]);
+    let text = serde_json::Value::String(array.to_string());
+    assert_eq!(
+        parse_schedule(&text).unwrap(),
+        parse_schedule(&array).unwrap()
+    );
+    assert!(parse_schedule(&serde_json::json!("[]")).unwrap().is_empty());
+
+    let err = parse_schedule(&serde_json::json!("not json")).unwrap_err();
     assert!(err.contains("invalid schedule"), "{}", err);
 }
 

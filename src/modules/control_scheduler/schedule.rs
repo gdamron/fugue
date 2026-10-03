@@ -61,10 +61,16 @@ pub struct ScheduleEntry {
     pub ramp: Option<u64>,
 }
 
-/// Parses and validates a schedule from its JSON value form.
+/// Parses and validates a schedule from its JSON value form: an array of
+/// entries, or the same array as JSON text. The text form is what the
+/// `schedule` control takes, so a document whose control write was recorded
+/// into the config builds with the schedule written.
 pub(crate) fn parse_schedule(value: &serde_json::Value) -> Result<Vec<ScheduleEntry>, String> {
     if value.is_null() {
         return Ok(Vec::new());
+    }
+    if let Some(json) = value.as_str() {
+        return parse_schedule_json(json);
     }
     let entries: Vec<ScheduleEntry> = serde_json::from_value(value.clone())
         .map_err(|err| format!("invalid schedule: {}", err))?;
