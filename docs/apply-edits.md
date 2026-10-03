@@ -316,14 +316,13 @@ third attempt, the batch is refused as `internal` and nothing was applied.
 
 1. The new graph is swapped in within one audio block. Modules the batch did
    not touch keep running without interruption and keep their phase.
-2. Control values the batch writes are applied through each module's setter
-   right after the new graph is queued, for added and rebuilt modules as for
-   survivors. An added or rebuilt module is built from its config, and a
-   control's key need not be the config key the module is built from (an
-   oscillator's `type` control, say). A value may therefore be heard up to one
-   audio block before the new graph, or, for an added or rebuilt module, up to
-   one block after it. A control written more than once ends at its last
-   value.
+2. Control values written to modules that survive the batch are applied right
+   after the new graph is queued. A value may therefore be heard up to one
+   audio block before the new graph. Added and rebuilt modules are built from
+   their final configs and take the batch's values through their setters
+   before the new graph is prepared, so they arrive with them: a control's key
+   need not be the config key the module is built from (an oscillator's `type`
+   control, say). A control written more than once ends at its last value.
 3. One `control_changed { module_id, key, value }` is emitted per control
    the `set_control` edits wrote, for modules that exist after the commit
    (survivors, added and rebuilt modules). Each carries the control's final

@@ -14,9 +14,11 @@
 //! 4. A plan from the retained document to the candidate (see
 //!    [`plan::plan_edits`]), refused if it reaches past the batch.
 //! 5. Preparation: added and rebuilt modules built from their final
-//!    configs, the next topology compiled, every control write checked.
+//!    configs and given the batch's writes, the next topology compiled,
+//!    every control write checked.
 //! 6. Commit: one publication, the candidate retained with it, then the
-//!    batch's control writes and one `ControlChanged` per control.
+//!    control writes on survivors and one `ControlChanged` per control.
+//!    Added and rebuilt modules took theirs in step 5, when built.
 //!
 //! When another change publishes during steps 4 to 6 (a script's edit, say),
 //! the batch is planned and prepared again from the same candidate, as a
@@ -30,7 +32,7 @@ mod tests;
 
 use std::collections::HashMap;
 
-use super::{apply_to_candidate, EditedCandidate};
+use super::{apply_to_candidate, CandidateWrite, EditedCandidate};
 use crate::invention::builder::InventionBuilder;
 use crate::invention::format::Invention;
 use crate::invention::reload::RELOAD_ATTEMPTS;
@@ -110,18 +112,7 @@ fn build_failed(what: &str, mut reason: String) -> RpcError {
 fn check_writes(surfaces: &ControlSurfaceMap, candidate: &EditedCandidate) -> Result<(), RpcError> {
     for candidate in &candidate.control_writes {
         let write = &candidate.write;
-        let refuse = |mut reason: String| {
-            truncate_on_char_boundary(&mut reason, MODULE_ERROR_BYTES);
-            RpcError::invalid_edit(EditFailure::new(
-                candidate.edit_index,
-                EditOp::SetControl,
-                EditFailureReason::InvalidControlValue,
-                format!(
-                    "module '{}' refused the value for control '{}': {reason}",
-                    write.module_id, write.key
-                ),
-            ))
-        };
+        let refuse = |reason: String| refused_write(candidate, reason);
         let surface = surfaces
             .get(&write.module_id)
             .ok_or_else(|| refuse("the module has no controls".to_string()))?;
@@ -130,6 +121,22 @@ fn check_writes(surfaces: &ControlSurfaceMap, candidate: &EditedCandidate) -> Re
             .map_err(refuse)?;
     }
     Ok(())
+}
+
+/// The `invalid_edit` refusal for a control write the module refused, at
+/// its edit's index.
+fn refused_write(candidate: &CandidateWrite, mut reason: String) -> RpcError {
+    let write = &candidate.write;
+    truncate_on_char_boundary(&mut reason, MODULE_ERROR_BYTES);
+    RpcError::invalid_edit(EditFailure::new(
+        candidate.edit_index,
+        EditOp::SetControl,
+        EditFailureReason::InvalidControlValue,
+        format!(
+            "module '{}' refused the value for control '{}': {reason}",
+            write.module_id, write.key
+        ),
+    ))
 }
 
 impl RunningInvention {
@@ -142,9 +149,9 @@ impl RunningInvention {
     /// to surviving modules are applied right after the publication is
     /// queued, so one may be heard up to one block before the new topology.
     /// Added and rebuilt modules are built from their final configs, and the
-    /// batch's writes to them are made through their setters the same way,
-    /// since a control's key need not be the config key its module is built
-    /// from. After the commit,
+    /// batch's writes to them are made through their setters as soon as they
+    /// are built, before they are prepared: a control's key need not be the
+    /// config key its module is built from. After the commit,
     /// one `ControlChanged` per control the batch wrote is announced to the
     /// event sink. The caller announces the new topology after that.
     ///
