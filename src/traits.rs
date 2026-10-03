@@ -316,8 +316,8 @@ pub trait Module: Send {
 
     /// Sets a named input port to a constant value across its whole buffer.
     ///
-    /// Convenience for the control thread (the `SetModuleInput` command) and
-    /// tests — not the per-block routing path. Modules that arbitrate between a
+    /// Convenience for queued input writes (applied at the start of a block)
+    /// and tests — not the per-block routing path. Modules that arbitrate between a
     /// connected signal and a control default should also mark the port
     /// connected here. Returns an error if the port name is not recognized.
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String>;

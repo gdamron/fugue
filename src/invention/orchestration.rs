@@ -1,5 +1,5 @@
-use crate::factory::ModuleBuildResult;
 use crate::invention::graph::{GraphCommand, SignalGraph};
+use crate::invention::publish::{edge, BuiltModule, GraphChange, LiveGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
 use crate::{
@@ -9,7 +9,6 @@ use crate::{
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
@@ -95,15 +94,16 @@ pub struct RuntimeSnapshot {
 
 /// Cloneable mutation handle used by orchestration hosts and external APIs.
 ///
-/// Live runtimes route mutations through the audio-thread command queue, while
-/// render runtimes apply the same commands directly to the in-memory graph.
+/// Live runtimes publish structural changes through the runtime's single
+/// publisher (see [`crate::invention::publish`]), while render runtimes apply
+/// the same edits directly to the in-memory graph.
 #[derive(Clone)]
 pub struct RuntimeController {
     pub(crate) snapshot: RuntimeSnapshot,
     pub(crate) registry: ModuleRegistry,
     pub(crate) sample_rate: u32,
     pub(crate) graph: Option<Arc<Mutex<SignalGraph>>>,
-    pub(crate) command_tx: Option<mpsc::Sender<GraphCommand>>,
+    pub(crate) live: Option<LiveGraph>,
     pub(crate) module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
 }
 
@@ -318,19 +318,14 @@ impl RuntimeSnapshot {
 }
 
 impl RuntimeController {
-    fn send_or_apply(&self, cmd: GraphCommand) -> Result<(), GraphCommandError> {
-        if let Some(command_tx) = &self.command_tx {
-            command_tx
-                .send(cmd)
-                .map_err(|_| GraphCommandError::AudioThreadStopped)
-        } else {
-            let graph = self
-                .graph
-                .as_ref()
-                .ok_or(GraphCommandError::AudioThreadStopped)?;
-            graph.lock().unwrap().apply_command(cmd);
-            Ok(())
-        }
+    /// Applies an edit directly to an offline render's graph.
+    fn apply(&self, cmd: GraphCommand) -> Result<(), GraphCommandError> {
+        let graph = self
+            .graph
+            .as_ref()
+            .ok_or(GraphCommandError::AudioThreadStopped)?;
+        graph.lock().unwrap().apply_command(cmd);
+        Ok(())
     }
 
     /// Builds and inserts a module into the current graph.
@@ -343,36 +338,30 @@ impl RuntimeController {
         module_type: &str,
         config: &serde_json::Value,
     ) -> Result<HashMap<String, Arc<dyn Any + Send + Sync>>, GraphCommandError> {
-        if !self.registry.has_type(module_type) {
-            return Err(GraphCommandError::UnknownModuleType(
-                module_type.to_string(),
-            ));
+        if let Some(live) = &self.live {
+            return live
+                .add_module(
+                    &self.registry,
+                    self.sample_rate,
+                    module_id,
+                    module_type,
+                    config,
+                )
+                .map(|committed| committed.handles);
         }
-
-        let ModuleBuildResult {
+        let BuiltModule {
+            instance,
+            info,
             module,
+            surface,
             handles,
-            control_surface,
-            sink: _,
-        } = self
-            .registry
-            .build(module_type, self.sample_rate, config)
-            .map_err(|e| GraphCommandError::ModuleBuildFailed(e.to_string()))?;
-
-        let ports = ModulePorts {
-            inputs: module
-                .module()
-                .inputs()
-                .iter()
-                .map(|port| (*port).to_string())
-                .collect(),
-            outputs: module
-                .module()
-                .outputs()
-                .iter()
-                .map(|port| (*port).to_string())
-                .collect(),
-        };
+        } = GraphChange::build(
+            &self.registry,
+            self.sample_rate,
+            module_id,
+            module_type,
+            config,
+        )?;
 
         // Attach schedulers before touching the graph, so a schedule that
         // fails to resolve leaves the running invention unchanged.
@@ -389,7 +378,7 @@ impl RuntimeController {
             .map_err(GraphCommandError::ModuleBuildFailed)?;
         }
 
-        if let Some(control_surface) = control_surface {
+        if let Some(control_surface) = surface {
             self.snapshot
                 .control_surfaces
                 .lock()
@@ -397,26 +386,21 @@ impl RuntimeController {
                 .insert(module_id.to_string(), control_surface);
         }
 
-        self.send_or_apply(GraphCommand::AddModule {
-            module_id: module_id.to_string(),
-            module,
-        })?;
+        if let Some(module) = instance {
+            self.apply(GraphCommand::AddModule {
+                module_id: module_id.to_string(),
+                module,
+            })?;
+        }
 
         self.module_ports
             .lock()
             .unwrap()
-            .insert(module_id.to_string(), ports);
+            .insert(module_id.to_string(), module.ports);
 
         {
             let mut state = self.snapshot.state.lock().unwrap();
-            state.modules.insert(
-                module_id.to_string(),
-                RuntimeModuleInfo {
-                    id: module_id.to_string(),
-                    module_type: module_type.to_string(),
-                    config: config.clone(),
-                },
-            );
+            state.modules.insert(module_id.to_string(), info);
             state.document_upsert_module(module_id, module_type, config);
         }
 
@@ -428,12 +412,15 @@ impl RuntimeController {
 
     /// Removes a module and any connections that reference it.
     pub fn remove_module(&self, module_id: &str) -> Result<(), GraphCommandError> {
+        if let Some(live) = &self.live {
+            return live.remove_module(module_id).map(drop);
+        }
         self.snapshot
             .control_surfaces
             .lock()
             .unwrap()
             .shift_remove(module_id);
-        self.send_or_apply(GraphCommand::RemoveModule {
+        self.apply(GraphCommand::RemoveModule {
             module_id: module_id.to_string(),
         })?;
         self.module_ports.lock().unwrap().shift_remove(module_id);
@@ -454,6 +441,9 @@ impl RuntimeController {
         to_module: &str,
         to_port: &str,
     ) -> Result<(), GraphCommandError> {
+        if let Some(live) = &self.live {
+            return live.connect(edge(from_module, from_port, to_module, to_port));
+        }
         let ports = self.module_ports.lock().unwrap();
         let source = ports
             .get(from_module)
@@ -475,7 +465,7 @@ impl RuntimeController {
         }
         drop(ports);
 
-        self.send_or_apply(GraphCommand::AddConnection {
+        self.apply(GraphCommand::AddConnection {
             from_module: from_module.to_string(),
             from_port: from_port.to_string(),
             to_module: to_module.to_string(),
@@ -504,7 +494,10 @@ impl RuntimeController {
         to_module: &str,
         to_port: &str,
     ) -> Result<(), GraphCommandError> {
-        self.send_or_apply(GraphCommand::RemoveConnection {
+        if let Some(live) = &self.live {
+            return live.disconnect(edge(from_module, from_port, to_module, to_port));
+        }
+        self.apply(GraphCommand::RemoveConnection {
             from_module: from_module.to_string(),
             from_port: from_port.to_string(),
             to_module: to_module.to_string(),

@@ -37,7 +37,6 @@
 //!   tie-breaking (when multiple valid orders exist) is deterministic across runs
 
 use indexmap::IndexMap;
-use std::sync::mpsc;
 
 use crate::{GraphModule, MAX_BLOCK};
 
@@ -55,14 +54,9 @@ pub(crate) use mailbox::Mailbox;
 pub(crate) use master::MasterObservers;
 pub(crate) use publication::{vacant, AudioLink, InputWrite, Publication};
 
-/// A command that can be sent to the audio thread for graph mutation.
+/// An incremental mutation applied directly to a graph no audio thread owns
+/// (offline render). A live graph changes only by publication.
 pub(crate) enum GraphCommand {
-    /// Set a module's input port to a specific value.
-    SetModuleInput {
-        module_id: String,
-        port: String,
-        value: f32,
-    },
     /// Add a new module to the graph (overwrites if duplicate ID).
     AddModule {
         module_id: String,
@@ -140,10 +134,7 @@ pub(crate) struct SignalGraph {
     pub(crate) edges: Vec<RoutingConnection>,
     /// Current sample number.
     pub(crate) current_sample: u64,
-    /// Receiver for commands from the main thread.
-    pub(crate) command_rx: mpsc::Receiver<GraphCommand>,
-    /// The graph's link to a publisher of prepared topologies; `None` until
-    /// a publisher links it. A linked graph changes only by publication.
+    /// The live graph's link to its publisher; `None` for offline render.
     pub(crate) link: Option<AudioLink>,
     /// Pre-computed topological processing order as module indices. Used for
     /// intra-SCC member ordering and back-edge classification.
@@ -188,7 +179,6 @@ impl SignalGraph {
         modules: IndexMap<String, ModuleInstance>,
         sinks: Vec<String>,
         edges: Vec<RoutingConnection>,
-        command_rx: mpsc::Receiver<GraphCommand>,
         master: MasterObservers,
     ) -> Self {
         Self {
@@ -196,7 +186,6 @@ impl SignalGraph {
             sinks,
             edges,
             current_sample: 0,
-            command_rx,
             link: None,
             process_order: Vec::new(),
             compiled_routes: Vec::new(),
@@ -214,7 +203,6 @@ impl SignalGraph {
     }
 
     pub(crate) fn ensure_process_order(&mut self) {
-        self.drain_commands();
         self.drain_link();
         if self.topo_dirty {
             self.recompile();
@@ -231,25 +219,9 @@ impl SignalGraph {
         }
     }
 
-    /// Drains all pending commands from the main thread and applies them.
-    fn drain_commands(&mut self) {
-        while let Ok(cmd) = self.command_rx.try_recv() {
-            self.apply_command(cmd);
-        }
-    }
-
-    /// Applies a single command to the graph.
+    /// Applies a single command to a graph no audio thread owns. Allocates.
     pub(crate) fn apply_command(&mut self, cmd: GraphCommand) {
         match cmd {
-            GraphCommand::SetModuleInput {
-                module_id,
-                port,
-                value,
-            } => {
-                if let Some(module) = self.modules.get_mut(&module_id) {
-                    let _ = module.module_mut().set_input(&port, value);
-                }
-            }
             GraphCommand::AddModule { module_id, module } => {
                 let is_sink = matches!(module, GraphModule::Sink(_));
                 self.modules.insert(module_id.clone(), module);
@@ -259,9 +231,9 @@ impl SignalGraph {
                 self.topo_dirty = true;
             }
             GraphCommand::RemoveModule { module_id } => {
-                // Keep the remaining modules in order: the delayed edge inside
-                // a feedback group follows module order, so a removal must
-                // not reorder the others.
+                // Keep the remaining modules in order, as a publication
+                // does: the delayed edge inside a feedback group follows
+                // module order.
                 self.modules.shift_remove(&module_id);
                 self.sinks.retain(|id| id != &module_id);
                 self.edges
