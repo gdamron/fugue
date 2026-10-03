@@ -38,23 +38,43 @@ impl DevelopmentDefinitions {
     /// the builder's first-registration-wins semantics and guards against
     /// definition cycles.
     pub fn resolve(document: &Invention) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::resolve_from(document, &Self::default())
+    }
+
+    /// Resolves like [`Self::resolve`], taking each definition `loaded`
+    /// already holds by name rather than reading it again: a development
+    /// built after load (a nested one, say) builds from the definitions
+    /// loaded with its document, whatever has changed on disk since.
+    pub(crate) fn resolve_from(
+        document: &Invention,
+        loaded: &Self,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut definitions = BTreeMap::new();
-        collect_definitions(document, &mut definitions)?;
+        collect_definitions(document, loaded, &mut definitions)?;
         Ok(Self { definitions })
+    }
+
+    /// The definition loaded for the development type `name`.
+    pub(crate) fn get(&self, name: &str) -> Option<&Invention> {
+        self.definitions.get(name)
     }
 }
 
 fn collect_definitions(
     document: &Invention,
+    loaded: &DevelopmentDefinitions,
     definitions: &mut BTreeMap<String, Invention>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for spec in &document.developments {
         if definitions.contains_key(&spec.name) {
             continue;
         }
-        let definition = load_development_definition(document, spec)?;
+        let definition = match loaded.get(&spec.name) {
+            Some(definition) => definition.clone(),
+            None => load_development_definition(document, spec)?,
+        };
         definitions.insert(spec.name.clone(), definition.clone());
-        collect_definitions(&definition, definitions)?;
+        collect_definitions(&definition, loaded, definitions)?;
     }
     Ok(())
 }
