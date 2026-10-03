@@ -58,6 +58,10 @@ impl ModuleFactory for MelodyFactory {
             controls.set_note_weights(weights);
         }
 
+        crate::factory::apply_control_keys(&controls, config, |key| {
+            key == "degree_count" || key.starts_with("degree.") || key.starts_with("note_weight.")
+        })?;
+
         let melody = MelodyGenerator::new(controls.clone());
 
         Ok(ModuleBuildResult {
