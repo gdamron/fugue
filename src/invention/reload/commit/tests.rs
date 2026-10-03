@@ -1,15 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use crate::invention::builder::InventionBuilder;
+use crate::invention::manual_backend::{start_manual, Pump, SAMPLE_RATE};
 use crate::invention::orchestration::OrchestrationRuntime;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
-use crate::modules::dac::BlockRenderFn;
-use crate::modules::AudioBackend;
 use crate::{ControlValue, Invention};
 
 mod races;
-
-const SAMPLE_RATE: u32 = 48_000;
 
 const BASE: &str = r#"{
     "version": "1.0.0",
@@ -41,54 +38,13 @@ const EDITED: &str = r#"{
     ]
 }"#;
 
-/// A backend whose blocks the test renders by hand, standing in for the
-/// audio thread so publication timing is deterministic.
-#[derive(Clone, Default)]
-struct Pump(Arc<Mutex<Option<BlockRenderFn>>>);
-
-impl Pump {
-    fn render(&self, blocks: usize) -> Vec<f32> {
-        let mut render = self.0.lock().unwrap();
-        let render = render.as_mut().expect("backend started");
-        let mut out = Vec::new();
-        let mut left = [0.0f32; 64];
-        let mut right = [0.0f32; 64];
-        for _ in 0..blocks {
-            render(&mut left, &mut right);
-            out.extend_from_slice(&left);
-        }
-        out
-    }
-}
-
-struct ManualBackend(Pump);
-
-impl AudioBackend for ManualBackend {
-    fn sample_rate(&self) -> u32 {
-        SAMPLE_RATE
-    }
-
-    fn start(&mut self, render: BlockRenderFn) -> Result<(), Box<dyn std::error::Error>> {
-        *self.0 .0.lock().unwrap() = Some(render);
-        Ok(())
-    }
-
-    fn stop(&mut self) {
-        self.0 .0.lock().unwrap().take();
-    }
-}
-
 fn doc(json: &str) -> Invention {
     Invention::from_json(json).unwrap()
 }
 
 fn start(json: &str) -> (RunningInvention, Pump) {
     let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(doc(json)).unwrap();
-    let pump = Pump::default();
-    let running = runtime
-        .start_with_backend(ManualBackend(pump.clone()))
-        .unwrap();
-    (running, pump)
+    start_manual(runtime)
 }
 
 /// Publications made, and publications the audio thread has installed.
@@ -327,10 +283,7 @@ fn start_with_flaky(config: serde_json::Value) -> (RunningInvention, Pump, Strin
     let (runtime, _) = InventionBuilder::with_registry(SAMPLE_RATE, registry)
         .build(doc(&base))
         .unwrap();
-    let pump = Pump::default();
-    let running = runtime
-        .start_with_backend(ManualBackend(pump.clone()))
-        .unwrap();
+    let (running, pump) = start_manual(runtime);
     (running, pump, base)
 }
 
@@ -361,15 +314,15 @@ fn a_control_write_that_fails_when_made_is_reported_and_not_retained() {
 fn a_reported_control_error_is_cut_short_on_a_character_boundary() {
     // One ASCII byte shifts every two-byte "é" so the cap lands mid-character
     // and the cut has to back off by one.
-    let long = format!("a{}", "é".repeat(super::super::MAX_CONTROL_ERROR_BYTES));
+    let long = format!("a{}", "é".repeat(crate::rpc::MODULE_ERROR_BYTES));
     let config = serde_json::json!({ "level": 0.25, "error": long });
     let (mut running, _pump, base) = start_with_flaky(config);
     let edited = base.replace(r#""level":0.25"#, r#""level":0.75"#);
     let report = running.reload(doc(&edited)).expect("reload applies");
 
     let error = &report.controls_failed[0].error;
-    assert!(!long.is_char_boundary(super::super::MAX_CONTROL_ERROR_BYTES));
-    assert_eq!(error.len(), super::super::MAX_CONTROL_ERROR_BYTES - 1);
+    assert!(!long.is_char_boundary(crate::rpc::MODULE_ERROR_BYTES));
+    assert_eq!(error.len(), crate::rpc::MODULE_ERROR_BYTES - 1);
     assert!(long.is_char_boundary(error.len()));
     assert!(long.starts_with(error.as_str()));
 }
