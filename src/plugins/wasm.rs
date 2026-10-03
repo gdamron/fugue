@@ -27,6 +27,16 @@ impl ModuleFactory for WasmModuleFactory {
         Err("wasm_module inspection requires a running instance; construction may execute guest code".into())
     }
 
+    /// A throwaway check may run the guest's constructor, as a live build
+    /// does; a wasm module activates no output when built.
+    fn build_for_validation(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn Error>> {
+        self.build(sample_rate, config)
+    }
+
     fn type_id(&self) -> &'static str {
         "wasm_module"
     }
