@@ -236,6 +236,12 @@ impl AudioFileSinkHandle {
         self.stats()
     }
 
+    /// Why the recording failed, if it did: its file could not be created
+    /// when audio first reached the sink, or could not be written.
+    pub fn error(&self) -> Option<String> {
+        self.shared.error()
+    }
+
     pub fn stats(&self) -> AudioFileSinkStats {
         AudioFileSinkStats {
             frames_written: self.shared.frames_written(),

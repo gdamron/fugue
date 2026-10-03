@@ -126,6 +126,11 @@ impl WasmAudioFileSinkShared {
     /// The in-memory recording has no destination to open.
     pub(super) fn activate(&self) {}
 
+    /// An in-memory recording cannot fail.
+    pub(super) fn error(&self) -> Option<String> {
+        None
+    }
+
     pub(super) fn is_stopping(&self) -> bool {
         self.stopping.load(Ordering::Acquire)
     }
