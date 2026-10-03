@@ -90,7 +90,7 @@ pub use self::factory::ControlSchedulerFactory;
 pub use self::schedule::{ScheduleEntry, ScheduleValue};
 
 pub(crate) use self::controls::SurfaceDirectory;
-pub(crate) use self::factory::attach_from_handle;
+pub(crate) use self::factory::{attach_from_handle, attach_from_handle_resolving};
 
 mod controls;
 mod factory;
@@ -391,6 +391,13 @@ impl Module for ControlScheduler {
 
     fn control_targets(&self) -> Vec<String> {
         self.ctrl.target_module_ids()
+    }
+
+    /// Adopts the schedule resolved at attachment (locking and allocating
+    /// here, off the audio thread) and reserves its ramps, so the first block
+    /// after publication finds the version already current.
+    fn prepare_for_publication(&mut self) {
+        self.adopt_schedule_if_changed();
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

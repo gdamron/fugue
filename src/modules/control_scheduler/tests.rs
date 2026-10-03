@@ -290,3 +290,24 @@ fn schedule_control_round_trips_as_json() {
     assert_eq!(reparsed[0].at, 4);
     assert_eq!(reparsed[0].ramp, Some(2));
 }
+
+#[test]
+fn a_prepared_scheduler_processes_its_first_block_without_allocating() {
+    let schedule = r#"[
+        { "at": 0, "module": "mixer", "control": "level.0", "value": 0.5 },
+        { "at": 1, "module": "mixer", "control": "level.1", "value": 0.0, "ramp": 2 }
+    ]"#;
+    // Unprepared, the first block adopts the schedule on the audio thread.
+    let (mut module, _mixer, _dir) = setup(schedule);
+    let (_, allocs, _) = crate::alloc_counter::allocator_events(|| module.process(64));
+    assert!(allocs > 0);
+
+    let (mut module, mixer, _dir) = setup(schedule);
+    module.prepare_for_publication();
+    let ((), allocs, frees) = crate::alloc_counter::allocator_events(|| {
+        pulse(&mut module, 15);
+        pulse(&mut module, 15);
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(mixer.level(0), 0.5);
+}

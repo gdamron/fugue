@@ -19,6 +19,10 @@ pub mod format;
 pub mod graph;
 pub mod handles;
 pub mod orchestration;
+// Nothing live publishes yet: the live editing paths still send graph
+// commands, so the publisher is reached only by tests for now.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) mod publish;
 pub mod reload;
 pub mod render;
 pub mod rpc_snapshot;
