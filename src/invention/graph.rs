@@ -44,8 +44,14 @@ use crate::{GraphModule, MAX_BLOCK};
 use super::runtime::ModuleInstance;
 
 mod compile;
+// Nothing links a live graph to a publisher yet: the live editing paths
+// still send `GraphCommand`s, so these are reached only by tests for now.
+#[cfg_attr(not(test), allow(dead_code))]
+mod mailbox;
 mod master;
 mod process;
+#[cfg_attr(not(test), allow(dead_code))]
+mod publication;
 mod scc;
 
 pub(crate) use master::MasterObservers;
@@ -137,6 +143,9 @@ pub(crate) struct SignalGraph {
     pub(crate) current_sample: u64,
     /// Receiver for commands from the main thread.
     pub(crate) command_rx: mpsc::Receiver<GraphCommand>,
+    /// The graph's link to a publisher of prepared topologies; `None` until
+    /// a publisher links it. A linked graph changes only by publication.
+    pub(crate) link: Option<publication::AudioLink>,
     /// Pre-computed topological processing order as module indices. Used for
     /// intra-SCC member ordering and back-edge classification.
     pub(crate) process_order: Vec<usize>,
@@ -174,7 +183,8 @@ pub(crate) struct SignalGraph {
 
 impl SignalGraph {
     /// Creates a graph over `modules` and `edges` with empty derived state.
-    /// The topology is compiled on the first processed block.
+    /// The topology is compiled on the first processed block unless
+    /// [`Self::recompile`] runs first.
     pub(crate) fn new(
         modules: IndexMap<String, ModuleInstance>,
         sinks: Vec<String>,
@@ -188,6 +198,7 @@ impl SignalGraph {
             edges,
             current_sample: 0,
             command_rx,
+            link: None,
             process_order: Vec::new(),
             compiled_routes: Vec::new(),
             connected_in_ports: Vec::new(),
@@ -205,9 +216,9 @@ impl SignalGraph {
 
     pub(crate) fn ensure_process_order(&mut self) {
         self.drain_commands();
+        self.drain_link();
         if self.topo_dirty {
             self.recompile();
-            self.topo_dirty = false;
         }
     }
 
@@ -249,7 +260,10 @@ impl SignalGraph {
                 self.topo_dirty = true;
             }
             GraphCommand::RemoveModule { module_id } => {
-                self.modules.swap_remove(&module_id);
+                // Keep the remaining modules in order: the delayed edge inside
+                // a feedback group follows module order, so a removal must
+                // not reorder the others.
+                self.modules.shift_remove(&module_id);
                 self.sinks.retain(|id| id != &module_id);
                 self.edges
                     .retain(|e| e.from_module != module_id && e.to_module != module_id);
