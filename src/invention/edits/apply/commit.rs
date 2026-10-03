@@ -1,13 +1,16 @@
 //! Preparing a planned batch off the audio thread, then committing it as one
 //! publication with its control writes and events.
 
-use super::{check_writes, Batch, Refused};
+use std::collections::HashSet;
+
+use super::{check_writes, refused_write, Batch, Refused};
+use crate::invention::edits::EditedCandidate;
 use crate::invention::format::ModuleSpec;
 use crate::invention::publish::{BuiltModule, GraphChange, PreparedChange};
 use crate::invention::reload::ReloadPlan;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
 use crate::rpc::{
-    truncate_on_char_boundary, ApplyEditsReport, ControlWriteFailure, WrittenControl,
+    truncate_on_char_boundary, ApplyEditsReport, ControlWriteFailure, RpcError, WrittenControl,
     MODULE_ERROR_BYTES,
 };
 
@@ -32,15 +35,17 @@ impl RunningInvention {
         batch: &Batch,
     ) -> Result<PreparedEdits, Refused> {
         let plan = super::plan::plan_edits(&self.state.lock().unwrap(), &batch.candidate)?;
-        let build = |spec: &ModuleSpec| -> Result<BuiltModule, GraphCommandError> {
+        let build = |spec: &ModuleSpec| -> Result<BuiltModule, Refused> {
             let config = batch.resolved.get(&spec.id).unwrap_or(&spec.config);
-            GraphChange::build(
+            let module = GraphChange::build(
                 &self.registry,
                 self.sample_rate,
                 &spec.id,
                 &spec.module_type,
                 config,
-            )
+            )?;
+            write_built(&module, &spec.id, &batch.candidate)?;
+            Ok(module)
         };
         let swapped = plan
             .swapped
@@ -79,19 +84,27 @@ impl RunningInvention {
         // The old document drops here, off the publisher's lock.
         drop(previous);
 
-        // Every final write goes through the module's setter, added and
-        // rebuilt modules included, right after the publication is queued:
-        // a module is built from its config, and a control's key need not be
-        // the config key it is built from (an oscillator's `type`, say).
+        // Added and rebuilt modules took the batch's writes when they were
+        // built (see `write_built`); only survivors are written, right after
+        // the publication is queued.
+        let built: HashSet<&str> = plan
+            .added
+            .iter()
+            .chain(&plan.swapped)
+            .map(|spec| spec.id.as_str())
+            .collect();
         let snapshot = self.snapshot();
         let mut report = report_for(&plan, batch.edit_count);
         let mut announced = Vec::new();
         let mut actual = Vec::new();
         for candidate in batch.candidate.final_writes() {
             let write = &candidate.write;
-            // Unrecorded: the retained document already holds the value.
-            let written =
-                snapshot.set_control_transient(&write.module_id, &write.key, write.value.clone());
+            let written = if built.contains(write.module_id.as_str()) {
+                Ok(())
+            } else {
+                // Unrecorded: the retained document already holds the value.
+                snapshot.set_control_transient(&write.module_id, &write.key, write.value.clone())
+            };
             if let Err(error) = written {
                 if let Ok(value) = self.get_control(&write.module_id, &write.key) {
                     actual.push((write, value));
@@ -129,6 +142,34 @@ impl RunningInvention {
         }
         Ok(report)
     }
+}
+
+/// Makes the batch's final writes to a module it adds or rebuilds on the
+/// instance just built, before it is attached and prepared for publication,
+/// so the prepared module already holds every value and the audio thread
+/// adopts nothing new after the swap. A control's key need not be the config
+/// key its module is built from (an oscillator's `type`, say), so the config
+/// alone may not carry the value. A write the module refuses refuses the
+/// batch at its edit, with nothing published.
+fn write_built(
+    module: &BuiltModule,
+    id: &str,
+    candidate: &EditedCandidate,
+) -> Result<(), RpcError> {
+    for candidate in candidate.final_writes() {
+        let write = &candidate.write;
+        if write.module_id != id {
+            continue;
+        }
+        let surface = module
+            .surface
+            .as_ref()
+            .ok_or_else(|| refused_write(candidate, "the module has no controls".to_string()))?;
+        surface
+            .set_control(&write.key, write.value.clone())
+            .map_err(|reason| refused_write(candidate, reason))?;
+    }
+    Ok(())
 }
 
 /// The report's structural part, from the plan.

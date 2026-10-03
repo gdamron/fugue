@@ -5,6 +5,7 @@
 use serde_json::json;
 
 use super::{add, doc, number, remove, set, start, BASE};
+use crate::alloc_counter::allocator_events;
 use crate::invention::builder::InventionBuilder;
 use crate::invention::manual_backend::{start_manual, Pump, SAMPLE_RATE};
 use crate::invention::runtime::RunningInvention;
@@ -146,6 +147,29 @@ fn a_scheduler_added_in_a_batch_takes_a_schedule_written_in_it() {
         ])
         .expect_err("the target does not exist");
     assert_eq!(error.code, RpcErrorCode::InvalidEdit);
+}
+
+#[test]
+fn a_scheduler_added_with_its_schedule_starts_without_allocating() {
+    // The schedule is the scheduler's when it is prepared, so the audio
+    // thread has nothing new to adopt after the swap.
+    let (mut running, pump) = start(BASE);
+    pump.render(2);
+    running
+        .apply_edits(&[
+            add("auto", "control_scheduler", json!({})),
+            set("auto", "schedule", text(TARGETS_OSC1)),
+        ])
+        .expect("the batch commits");
+    for block in 0..2 {
+        let ((), allocs, frees) = allocator_events(|| pump.block());
+        assert_eq!((allocs, frees), (0, 0), "block {block}");
+    }
+    let schedule = running.get_control("auto", "schedule").unwrap();
+    assert!(
+        schedule.as_string().unwrap().contains("osc1"),
+        "{schedule:?}"
+    );
 }
 
 #[test]
