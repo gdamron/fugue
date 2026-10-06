@@ -840,6 +840,7 @@ mod tests {
     #[cfg(unix)]
     mod unix_fake_ffmpeg {
         use super::*;
+        use crate::streaming::test_support::wait_until;
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use std::path::PathBuf;
@@ -996,10 +997,9 @@ PY
                 backend.push_audio(0.1, 0.1);
             }
 
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while backend.stats().restarts == 0 && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(25));
-            }
+            // finish() before the first session ends would stop the worker
+            // without counting a restart, so wait for the restart itself.
+            wait_until(|| backend.stats().restarts > 0);
 
             backend.finish();
             let stats = backend.stats();

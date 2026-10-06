@@ -592,6 +592,7 @@ fn reap_decoder(shared: &VideoPlaybackShared) -> Option<ExitStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::streaming::test_support::wait_until;
 
     fn config(path: PathBuf) -> VideoPlaybackConfig {
         VideoPlaybackConfig {
@@ -638,14 +639,13 @@ mod tests {
         });
         let fallback = BlackVideoFallback::start(2, 2, 100, target).unwrap();
 
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while frames.load(Ordering::Acquire) < 3 && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(5));
-        }
-        let before_takeover = frames.load(Ordering::Acquire);
-        assert!(before_takeover >= 3);
+        assert!(wait_until(|| frames.load(Ordering::Acquire) >= 3));
 
         fallback.external_video_started();
+        // Read after the takeover so frames emitted while this thread was
+        // descheduled are not miscounted; at most one frame already past the
+        // worker's takeover check can still land.
+        let before_takeover = frames.load(Ordering::Acquire);
         thread::sleep(Duration::from_millis(50));
         fallback.finish();
         assert!(frames.load(Ordering::Acquire) <= before_takeover + 1);
@@ -704,10 +704,7 @@ mod tests {
         config.fps = 5;
         config.loop_enabled = false;
         let playback = VideoPlayback::start(config, target).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while playback.stats().frames_emitted < 3 && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
+        wait_until(|| playback.stats().frames_emitted >= 3);
         playback.finish();
 
         assert!(frames.load(Ordering::Acquire) >= 3);
@@ -721,11 +718,19 @@ mod tests {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         fn fixture(frame_count: usize) -> (PathBuf, PathBuf) {
+            // The wall clock is only microsecond-resolution on macOS, so tests
+            // starting in parallel could share a directory and run each
+            // other's fake decoder. The counter keeps each fixture distinct.
+            static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
+            let fixture_id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let dir = std::env::temp_dir().join(format!("fugue-video-playback-{nanos}"));
+            let dir = std::env::temp_dir().join(format!(
+                "fugue-video-playback-{}-{nanos}-{fixture_id}",
+                std::process::id()
+            ));
             fs::create_dir_all(&dir).unwrap();
             let ffmpeg = dir.join("ffmpeg");
             let video = dir.join("loop.mp4");
@@ -773,10 +778,7 @@ PY
             });
             let playback = VideoPlayback::start(fake_config(ffmpeg, video), target).unwrap();
 
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while playback.stats().frames_emitted < 3 && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
+            wait_until(|| playback.stats().frames_emitted >= 3);
             playback.finish();
 
             let received = received.lock().unwrap();
@@ -804,24 +806,22 @@ PY
             assert_eq!(frames.load(Ordering::Acquire), 0);
 
             playback.play();
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while frames.load(Ordering::Acquire) < 2 && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
+            // Each loop spawns a fresh decoder, so two frames prove a loop.
+            assert!(wait_until(|| frames.load(Ordering::Acquire) >= 2));
             assert!(playback.stats().loops > 0);
 
             playback.pause();
-            thread::sleep(Duration::from_millis(75));
+            // A frame already past its delivery wait when pause() landed may
+            // still be emitted, however late the worker is scheduled; any
+            // further frame means pause was ignored.
+            let at_pause = frames.load(Ordering::Acquire);
+            thread::sleep(Duration::from_millis(175));
             let paused_at = frames.load(Ordering::Acquire);
-            thread::sleep(Duration::from_millis(100));
-            assert_eq!(frames.load(Ordering::Acquire), paused_at);
+            assert!(paused_at <= at_pause + 1, "{paused_at} > {at_pause} + 1");
 
             playback.set_loop_enabled(false);
             playback.restart();
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while frames.load(Ordering::Acquire) == paused_at && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
+            wait_until(|| frames.load(Ordering::Acquire) > paused_at);
             playback.finish();
             assert!(frames.load(Ordering::Acquire) > paused_at);
         }
