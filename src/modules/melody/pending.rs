@@ -69,6 +69,15 @@
 //! Reads that find the table busy answer from the mailbox (the pending value
 //! for that slot, if its generation is current) or else from a lock-free
 //! mirror of the effective table, refreshed under the lock after every edit.
+//! The mirror covers every position, hidden ones included, with what each
+//! would play if the count grew over it.
+//!
+//! # Direct writes
+//!
+//! A write made under the lock supersedes its own slot: it empties that
+//! slot (the count slot, for a count) before writing. A value pending there
+//! is older than or concurrent with the write, so dropping it is correct,
+//! and a depositor that flags it later leaves the drain nothing stale.
 //!
 //! # Known gaps
 //!
@@ -199,59 +208,95 @@ impl Pending {
 
     /// Deposits a degree for a position validated under `generation`.
     pub(super) fn deposit_degree(&self, generation: u32, index: usize, value: i32) {
-        let slot = &self.degrees[index];
-        self.deposit(slot, &self.degrees_gen, generation, value as u32);
+        if self.stage_degree(generation, index, value) {
+            self.mark();
+        }
     }
 
     /// Deposits a weight for a position validated under `generation`.
     pub(super) fn deposit_weight(&self, generation: u32, index: usize, value: f32) {
-        let slot = &self.weights[index];
-        self.deposit(slot, &self.weights_gen, generation, value.to_bits());
+        if self.stage_weight(generation, index, value) {
+            self.mark();
+        }
     }
 
-    /// Stores a deposit in `slot` and flags it, unless the slot holds one
-    /// tagged with a newer, current generation of its field (see
-    /// "Generations"); then ours is dropped, unflagged.
+    /// Stores a degree deposit without flagging it (see [`Self::stage`]).
+    pub(super) fn stage_degree(&self, generation: u32, index: usize, value: i32) -> bool {
+        let slot = &self.degrees[index];
+        Self::stage(slot, &self.degrees_gen, generation, value as u32)
+    }
+
+    /// Stores a weight deposit without flagging it (see [`Self::stage`]).
+    pub(super) fn stage_weight(&self, generation: u32, index: usize, value: f32) -> bool {
+        let slot = &self.weights[index];
+        Self::stage(slot, &self.weights_gen, generation, value.to_bits())
+    }
+
+    /// Stores a deposit in `slot`, unless the slot holds one tagged with a
+    /// newer, current generation of its field (see "Generations"); then ours
+    /// is dropped. Returns whether it was stored, and so must be flagged.
     ///
     /// The CAS loop is lock-free, not wait-free: each retry means another
     /// writer changed this slot, so some thread always makes progress, none
     /// ever blocks, and retries are bounded in practice by the writers
     /// racing on this one position. That suits the audio thread; a give-up
     /// path could instead drop a current write.
-    fn deposit(&self, slot: &AtomicU64, field_gen: &AtomicU32, generation: u32, bits: u32) {
+    fn stage(slot: &AtomicU64, field_gen: &AtomicU32, generation: u32, bits: u32) -> bool {
         let packed = pack(generation, bits);
         let mut current = slot.load(Ordering::Acquire);
         loop {
             let held = (current >> 32) as u32;
             if current != EMPTY && held != generation && held == field_gen.load(Ordering::Acquire) {
-                return;
+                return false;
             }
             match slot.compare_exchange_weak(current, packed, Ordering::AcqRel, Ordering::Acquire) {
-                Ok(_) => break,
+                Ok(_) => return true,
                 Err(actual) => current = actual,
             }
         }
-        self.mark();
     }
 
     /// Deposits a count (1 to [`MAX_DEGREES`]).
     pub(super) fn deposit_count(&self, count: usize) {
-        self.count.store(count, Ordering::Release);
+        self.stage_count(count);
         self.mark();
+    }
+
+    /// Stores a count deposit without flagging it.
+    pub(super) fn stage_count(&self, count: usize) {
+        self.count.store(count, Ordering::Release);
+    }
+
+    /// Empties the degree slot at `index`, under the lock, for a direct
+    /// write that supersedes it (see "Direct writes").
+    pub(super) fn supersede_degree(&self, index: usize) {
+        self.degrees[index].swap(EMPTY, Ordering::AcqRel);
+    }
+
+    /// Empties the weight slot at `index`, as [`Self::supersede_degree`].
+    pub(super) fn supersede_weight(&self, index: usize) {
+        self.weights[index].swap(EMPTY, Ordering::AcqRel);
+    }
+
+    /// Empties the count slot, as [`Self::supersede_degree`].
+    pub(super) fn supersede_count(&self) {
+        self.count.swap(NO_COUNT, Ordering::AcqRel);
     }
 
     /// Flags a deposit, after its slot is stored. An RMW, not a store, so
     /// it continues earlier depositors' release sequences (see the module
     /// docs).
-    fn mark(&self) {
+    pub(super) fn mark(&self) {
         self.any.swap(true, Ordering::AcqRel);
     }
 
-    /// Refreshes the mirror of every active position and the count. Call
-    /// under the lock after any edit that recomputes the table.
+    /// Refreshes the mirror of every position, hidden ones included, and
+    /// the count. Call under the lock after any edit that recomputes the
+    /// table.
     pub(super) fn publish(&self, table: &DegreeTable) {
-        for (i, (&degree, &weight)) in table.degrees.iter().zip(&table.weights).enumerate() {
-            self.shown_degrees[i].store(degree, Ordering::Release);
+        for i in 0..MAX_DEGREES {
+            self.shown_degrees[i].store(table.degree_at(i), Ordering::Release);
+            let weight = table.weight_at(i);
             self.shown_weights[i].store(weight.to_bits(), Ordering::Release);
         }
         self.shown_count.store(table.count(), Ordering::Release);
@@ -316,9 +361,8 @@ impl Pending {
             let packed = self.degrees[i].load(Ordering::Acquire);
             if packed != EMPTY {
                 if let Some(bits) = live(packed, degrees_gen) {
-                    if table.write_degree(i, bits as i32) {
-                        self.publish_degree(i, bits as i32);
-                    }
+                    table.write_degree(i, bits as i32);
+                    self.publish_degree(i, bits as i32);
                     changed = true;
                 }
                 clear(&self.degrees[i], packed);
@@ -327,9 +371,8 @@ impl Pending {
             if packed != EMPTY {
                 if let Some(bits) = live(packed, weights_gen) {
                     let weight = f32::from_bits(bits);
-                    if table.write_weight(i, weight) {
-                        self.publish_weight(i, weight);
-                    }
+                    table.write_weight(i, weight);
+                    self.publish_weight(i, weight);
                     changed = true;
                 }
                 clear(&self.weights[i], packed);

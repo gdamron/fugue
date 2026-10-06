@@ -63,14 +63,14 @@ impl DegreeTable {
         table
     }
 
-    /// The degree position `i` plays.
-    fn degree_at(&self, i: usize) -> i32 {
+    /// The degree position `i` plays, or would if the count grew over it.
+    pub(super) fn degree_at(&self, i: usize) -> i32 {
         let n = self.scale.len();
         self.written_degrees[i].unwrap_or(if n == 0 { 0 } else { self.scale[i % n] })
     }
 
-    /// The weight position `i` takes.
-    fn weight_at(&self, i: usize) -> f32 {
+    /// The weight position `i` takes, or would if the count grew over it.
+    pub(super) fn weight_at(&self, i: usize) -> f32 {
         let n = self.scale.len();
         self.written_weights[i]
             .or_else(|| self.scale_weights.get(i).copied())
@@ -130,24 +130,20 @@ impl DegreeTable {
 
     /// Writes the degree at position `index` (already clamped, below
     /// [`MAX_DEGREES`]). An active position plays it now; a hidden one keeps
-    /// it for when the count grows. Returns whether the position is active.
-    pub(super) fn write_degree(&mut self, index: usize, value: i32) -> bool {
+    /// it for when the count grows.
+    pub(super) fn write_degree(&mut self, index: usize, value: i32) {
         self.written_degrees[index] = Some(value);
-        let active = index < self.count;
-        if active {
+        if index < self.count {
             self.degrees[index] = value;
         }
-        active
     }
 
     /// Writes the weight at position `index`, as [`Self::write_degree`] does.
-    pub(super) fn write_weight(&mut self, index: usize, value: f32) -> bool {
+    pub(super) fn write_weight(&mut self, index: usize, value: f32) {
         self.written_weights[index] = Some(value);
-        let active = index < self.count;
-        if active {
+        if index < self.count {
             self.weights[index] = value;
         }
-        active
     }
 }
 

@@ -25,6 +25,7 @@ impl MelodyControls {
         match self.try_lock_table() {
             // A ramp writes the count every sample; only a change is an edit.
             Some(mut table) => {
+                self.pending.supersede_count();
                 if table.set_count(count) {
                     self.pending.publish(&table);
                     self.table_version.fetch_add(1, Ordering::Release);
@@ -66,6 +67,7 @@ impl MelodyControls {
         if index >= table.count() {
             return Err(out_of_range("Degree", index, table.count()));
         }
+        self.pending.supersede_degree(index);
         table.write_degree(index, value);
         self.pending.publish_degree(index, value);
         self.table_version.fetch_add(1, Ordering::Release);
@@ -99,6 +101,7 @@ impl MelodyControls {
         if index >= table.count() {
             return Err(out_of_range("Weight", index, table.count()));
         }
+        self.pending.supersede_weight(index);
         table.write_weight(index, value);
         self.pending.publish_weight(index, value);
         self.table_version.fetch_add(1, Ordering::Release);
