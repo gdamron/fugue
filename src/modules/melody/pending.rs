@@ -59,6 +59,11 @@
 //! count; one validated against the old count carries the old generation
 //! and is dropped whatever it was validated against.
 //!
+//! A deposit never overwrites one tagged with a newer, current generation:
+//! that write came after the replacement that overtook ours, so ours is
+//! ordered before both and dropped. Any other deposit in the slot (none, the
+//! same generation, or a stale one) is overwritten, so the last write wins.
+//!
 //! # Reads while contended
 //!
 //! Reads that find the table busy answer from the mailbox (the pending value
@@ -194,13 +199,38 @@ impl Pending {
 
     /// Deposits a degree for a position validated under `generation`.
     pub(super) fn deposit_degree(&self, generation: u32, index: usize, value: i32) {
-        self.degrees[index].store(pack(generation, value as u32), Ordering::Release);
-        self.mark();
+        let slot = &self.degrees[index];
+        self.deposit(slot, &self.degrees_gen, generation, value as u32);
     }
 
     /// Deposits a weight for a position validated under `generation`.
     pub(super) fn deposit_weight(&self, generation: u32, index: usize, value: f32) {
-        self.weights[index].store(pack(generation, value.to_bits()), Ordering::Release);
+        let slot = &self.weights[index];
+        self.deposit(slot, &self.weights_gen, generation, value.to_bits());
+    }
+
+    /// Stores a deposit in `slot` and flags it, unless the slot holds one
+    /// tagged with a newer, current generation of its field (see
+    /// "Generations"); then ours is dropped, unflagged.
+    ///
+    /// The CAS loop is lock-free, not wait-free: each retry means another
+    /// writer changed this slot, so some thread always makes progress, none
+    /// ever blocks, and retries are bounded in practice by the writers
+    /// racing on this one position. That suits the audio thread; a give-up
+    /// path could instead drop a current write.
+    fn deposit(&self, slot: &AtomicU64, field_gen: &AtomicU32, generation: u32, bits: u32) {
+        let packed = pack(generation, bits);
+        let mut current = slot.load(Ordering::Acquire);
+        loop {
+            let held = (current >> 32) as u32;
+            if current != EMPTY && held != generation && held == field_gen.load(Ordering::Acquire) {
+                return;
+            }
+            match slot.compare_exchange_weak(current, packed, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
         self.mark();
     }
 

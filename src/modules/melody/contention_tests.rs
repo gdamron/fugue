@@ -246,6 +246,48 @@ fn a_write_validated_before_a_replacement_and_deposited_after_is_dropped() {
 }
 
 #[test]
+fn a_stale_deposit_never_overwrites_a_current_one() {
+    let ctrl = octave();
+    // Two setters validate before replacements, then pause.
+    let degrees_gen = ctrl.pending.degrees_gen();
+    let weights_gen = ctrl.pending.weights_gen();
+    ctrl.pending.check_index("Degree", 1).unwrap();
+    let mut guard = ctrl.lock_table();
+    ctrl.replace_degrees_in(&mut guard, vec![0, 4, 7, 11]);
+    ctrl.replace_weights_in(&mut guard, vec![1.0]);
+    // Later setters defer current writes...
+    ctrl.set_degree(1, 9).unwrap();
+    ctrl.set_note_weight(1, 9.0).unwrap();
+    // ...and then the paused ones resume.
+    ctrl.pending.deposit_degree(degrees_gen, 1, 2);
+    ctrl.pending.deposit_weight(weights_gen, 1, 2.0);
+    assert_eq!(ctrl.degree(1).unwrap(), 9);
+    assert_eq!(ctrl.note_weight(1).unwrap(), 9.0);
+    drop(guard);
+
+    assert_eq!(table_degrees(&ctrl), [0, 9, 7, 11]);
+    assert_eq!(table_weights(&ctrl), [1.0, 9.0, 1.0, 1.0]);
+}
+
+#[test]
+fn a_current_deposit_overwrites_a_stale_one() {
+    let ctrl = octave();
+    let degrees_gen = ctrl.pending.degrees_gen();
+    let weights_gen = ctrl.pending.weights_gen();
+    let mut guard = ctrl.lock_table();
+    ctrl.replace_degrees_in(&mut guard, vec![0, 4, 7, 11]);
+    ctrl.replace_weights_in(&mut guard, vec![1.0]);
+    ctrl.pending.deposit_degree(degrees_gen, 1, 2);
+    ctrl.pending.deposit_weight(weights_gen, 1, 2.0);
+    ctrl.set_degree(1, 9).unwrap();
+    ctrl.set_note_weight(1, 9.0).unwrap();
+    drop(guard);
+
+    assert_eq!(table_degrees(&ctrl), [0, 9, 7, 11]);
+    assert_eq!(table_weights(&ctrl), [1.0, 9.0, 1.0, 1.0]);
+}
+
+#[test]
 fn a_replacement_erases_a_degree_deferred_before_it_and_a_count_growth_after() {
     let ctrl = octave();
     let mut guard = ctrl.lock_table();
