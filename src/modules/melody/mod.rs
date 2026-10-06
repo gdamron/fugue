@@ -346,4 +346,6 @@ impl Module for MelodyGenerator {
 }
 
 #[cfg(test)]
+mod contention_tests;
+#[cfg(test)]
 mod tests;

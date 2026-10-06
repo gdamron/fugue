@@ -345,6 +345,25 @@ fn single_position_and_count_writes_do_not_allocate() {
         }
     });
     assert_eq!((allocs, frees), (0, 0));
+
+    // With the table busy, the same writes (and reads) are deferred to the
+    // mailbox; the next lock holder drains them.
+    let held = controls.table.lock().unwrap();
+    let ((), allocs, frees) = crate::alloc_counter::allocator_events(|| {
+        for step in 0..64 {
+            controls.set_note_weight(0, step as f32 / 64.0).unwrap();
+            controls.set_degree(1, step % 12).unwrap();
+            controls.set_degree_count(3 + step as usize % 9);
+            controls.note_weight(0).unwrap();
+            controls.degree_count();
+        }
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    drop(held);
+    let (count, allocs, frees) = crate::alloc_counter::allocator_events(|| controls.degree_count());
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(count, 3 + 63 % 9);
+    assert_eq!(controls.note_weight(0).unwrap(), 63.0 / 64.0);
 }
 
 #[test]
