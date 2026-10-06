@@ -139,24 +139,25 @@ fn a_deferred_shrink_keeps_an_earlier_deferred_write_hidden() {
 }
 
 #[test]
-fn a_deposit_during_a_count_changing_whole_table_edit_is_kept_hidden() {
-    // A known corner, pinned here, not a contract (see "Known gaps" in the
-    // pending module docs): the deposit is validated against the count from
-    // before the edit and drained after it as a hidden written value.
+fn a_deposit_a_count_changing_whole_table_edit_puts_out_of_range_is_dropped() {
+    // Validated against the count from before the edit, the write is out of
+    // range after it. Serially it would have been erased (before the edit)
+    // or refused (after it), so the drain drops it rather than hiding it.
     let ctrl = MelodyControls::new(60, vec![0, 2, 4, 5, 7, 9, 11, 12]);
+    // Holding the guard and shrinking from the holder's side stands in for
+    // `edit_table`, as a count-changing edit like `set_allowed_degrees`.
     let mut guard = ctrl.lock_table();
-    // A scheduled write lands while a whole-table edit holds the lock...
     ctrl.set_degree(5, 3).unwrap();
-    // ...and the edit then shrinks the count and publishes, as a
-    // count-changing edit such as `set_allowed_degrees` does.
+    ctrl.set_note_weight(6, 4.0).unwrap();
     guard.set_count(3);
     ctrl.pending.publish(&guard);
     drop(guard);
 
     assert!(!ctrl.has_pending());
     assert_eq!(table_degrees(&ctrl), [0, 2, 4]);
-    ctrl.set_degree_count(6);
-    assert_eq!(ctrl.allowed_degrees(), [0, 2, 4, 5, 7, 3]);
+    ctrl.set_degree_count(7);
+    assert_eq!(ctrl.allowed_degrees(), [0, 2, 4, 5, 7, 9, 11]);
+    assert_eq!(ctrl.note_weights(), [1.0; 7]);
 }
 
 #[test]

@@ -54,14 +54,14 @@
 //! - A position revealed by a count growth that is still pending reads its
 //!   mirror while the table is busy, which may be stale (it holds whatever
 //!   the position last played, or 0) until the growth is drained.
-//! - A deposit made while a count-changing whole-table edit holds the lock
-//!   is validated against the count from before that edit, and is drained
-//!   after it as a hidden written value. For example: with count 8, while
-//!   `set_allowed_degrees(vec![0, 4, 7])` holds the lock, a scheduled
-//!   `set_degree(5, 3)` is accepted and kept hidden at position 5; a later
-//!   `set_degree_count(6)` plays it, and a saved document records it.
-//!   Uncontended, the write would have been forgotten by the edit (before
-//!   it) or refused as out of range (after it).
+//! - A drained position write that lands past the count is kept hidden
+//!   (shown again when the count grows) only when the same drain applied a
+//!   deferred count: that is "write, then the deferred shrink". Otherwise
+//!   the count changed by a whole-table edit or a direct count write, which
+//!   would have refused the write, and it is dropped. The one case that
+//!   keeps a value no serial order would: a count deposit and a position
+//!   deposit past the new count both land while a whole-table edit replaces
+//!   the table, and the position is kept hidden.
 
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
@@ -209,9 +209,12 @@ impl Pending {
     }
 
     /// Applies every deposit to `table`: the count first, then positions.
-    /// A position past the count by then keeps its value hidden, as if it
-    /// was written before the count shrank. Call under the lock. Returns
-    /// whether anything was applied. Never allocates.
+    /// A position past the count by then is kept hidden (shown again when
+    /// the count grows) if this drain applied a deferred count, as if
+    /// written before that shrink; otherwise it is dropped, as the count
+    /// came from an edit that would have refused it (see "Known gaps").
+    /// Call under the lock. Returns whether anything was applied. Never
+    /// allocates.
     ///
     /// The flag is cleared before slots are read, so a deposit racing the
     /// drain sets it again and is drained later (see the module docs).
@@ -229,6 +232,7 @@ impl Pending {
         }
         let mut changed = false;
         let count = self.count.load(Ordering::Acquire);
+        let keep_hidden = count != NO_COUNT;
         if count != NO_COUNT {
             if table.set_count(count) {
                 self.publish(table);
@@ -238,13 +242,17 @@ impl Pending {
                 self.count
                     .compare_exchange(count, NO_COUNT, Ordering::AcqRel, Ordering::Relaxed);
         }
+        let active = table.count();
         for i in 0..MAX_DEGREES {
+            let lands = i < active || keep_hidden;
             let degree = self.degrees[i].load(Ordering::Acquire);
             if degree != NO_DEGREE {
-                if table.write_degree(i, degree) {
-                    self.publish_degree(i, degree);
+                if lands {
+                    if table.write_degree(i, degree) {
+                        self.publish_degree(i, degree);
+                    }
+                    changed = true;
                 }
-                changed = true;
                 let _ = self.degrees[i].compare_exchange(
                     degree,
                     NO_DEGREE,
@@ -255,10 +263,12 @@ impl Pending {
             let bits = self.weights[i].load(Ordering::Acquire);
             if bits != NO_WEIGHT {
                 let weight = f32::from_bits(bits);
-                if table.write_weight(i, weight) {
-                    self.publish_weight(i, weight);
+                if lands {
+                    if table.write_weight(i, weight) {
+                        self.publish_weight(i, weight);
+                    }
+                    changed = true;
                 }
-                changed = true;
                 let _ = self.weights[i].compare_exchange(
                     bits,
                     NO_WEIGHT,
