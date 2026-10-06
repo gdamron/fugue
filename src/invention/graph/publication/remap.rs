@@ -20,16 +20,17 @@ use crate::invention::runtime::ModuleInstance;
 /// per-sample order unchanged: which edge of a loop is delayed follows module
 /// order and the edges into the loop, so an edit that moves the loop's entry
 /// point changes which edge reads the carry.) It is general on purpose: any
-/// state the audio thread keeps by module index (resolving queued input
-/// writes to indices, re-binding surviving schedulers) can follow survivors
-/// through it rather than by id.
+/// state the audio thread keeps by module index (queued input writes,
+/// re-binding surviving schedulers) can follow survivors through it rather
+/// than by id.
 ///
 /// It maps one way only, old to new, and lives in the publication, so it
 /// describes the step at install and nothing else. Anything resolved against
-/// the publisher's mirror before that publication installs (an input write
-/// queued while the audio thread still runs the old graph, say) refers to
-/// the new order early; such a consumer must also know which order it was
-/// resolved against.
+/// the publisher's mirror refers to that generation's order, so a consumer
+/// must know which generation it was resolved against: queued input writes
+/// carry it, and a write resolved against a generation folded into the
+/// installing publication maps through that publication's
+/// [`super::Absorbed`] remaps instead.
 ///
 /// Old indices are relative to what is actually running at install, not to
 /// what the publication was prepared against: the publisher maps a
@@ -42,7 +43,7 @@ use crate::invention::runtime::ModuleInstance;
 ///
 /// A remap that does not cover the running graph (a default, unmapped one,
 /// say) carries nothing; install checks its length before using it.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SurvivorRemap {
     /// New index by old index.
     new_of_old: Vec<Option<usize>>,
@@ -83,6 +84,19 @@ impl SurvivorRemap {
             .iter()
             .enumerate()
             .filter_map(|(old, new)| new.map(|new| (old, new)))
+    }
+
+    /// This remap followed by `next`, which maps from this one's new
+    /// order: every module this one maps that `next` maps too. Unlike
+    /// [`Self::compose_after`] it applies no survivor filter. Control thread
+    /// only: allocates.
+    pub(crate) fn then(&self, next: &SurvivorRemap) -> SurvivorRemap {
+        let new_of_old = self
+            .new_of_old
+            .iter()
+            .map(|mid| mid.and_then(|mid| next.get(mid)))
+            .collect();
+        Self { new_of_old }
     }
 
     /// Composes this remap, made against the graph `earlier` would have

@@ -93,6 +93,7 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         topology,
         remap: SurvivorRemap::default(),
         generation: 0,
+        absorbed: Vec::new(),
     })
 }
 

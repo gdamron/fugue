@@ -56,6 +56,24 @@ pub(crate) struct Publication {
     /// The publisher generation this publication creates. Set by the
     /// publisher as it publishes; a folded publication keeps the newer one.
     pub(crate) generation: u64,
+    /// For each generation folded into this one, a remap from that
+    /// generation's order into `modules` (see [`Self::absorb`]).
+    pub(crate) absorbed: Vec<Absorbed>,
+}
+
+/// A generation folded into a newer publication before the audio thread
+/// took it, kept so input writes resolved against it still find their
+/// instance when the newer one installs. Built and freed on the control
+/// thread; the audio thread only reads it.
+pub(crate) struct Absorbed {
+    pub(crate) generation: u64,
+    /// Module ids in that generation's order, for the same defensive id
+    /// check survivors get.
+    pub(crate) ids: Vec<String>,
+    /// From that generation's order to the folding publication's. Unlike
+    /// the survivor remap it maps modules a folded publication built too:
+    /// those are the instances its writes were resolved against.
+    pub(crate) remap: SurvivorRemap,
 }
 
 impl Publication {
@@ -79,8 +97,22 @@ impl Publication {
     /// earlier one built: they start from zero. Returns what is left of the
     /// earlier publication, including prepared instances this one no longer
     /// needs, for the caller to drop once it has released the publisher.
+    ///
+    /// Before composing, this remap still maps from the earlier
+    /// publication's order, so it is kept (with any the earlier one carried,
+    /// composed through it) for writes resolved against the earlier
+    /// generation. Control thread only: allocates.
     #[must_use = "the superseded publication should be dropped off the publisher lock"]
     pub(crate) fn absorb(&mut self, mut earlier: Box<Publication>) -> Box<Publication> {
+        for mut folded in earlier.absorbed.drain(..) {
+            folded.remap = folded.remap.then(&self.remap);
+            self.absorbed.push(folded);
+        }
+        self.absorbed.push(Absorbed {
+            generation: earlier.generation,
+            ids: earlier.modules.keys().cloned().collect(),
+            remap: self.remap.clone(),
+        });
         let Publication {
             modules, survivor, ..
         } = &mut *earlier;
@@ -146,7 +178,7 @@ pub(crate) fn vacant() -> ModuleInstance {
 /// Longest input port name a queued write can target. Applying a write
 /// copies the port's name into a stack buffer of this size (see
 /// [`SignalGraph::apply_input`]); the control side refuses longer names.
-pub(crate) const MAX_INPUT_PORT_NAME: usize = 64;
+pub(crate) const MAX_INPUT_PORT_NAME: usize = 128;
 
 /// A direct write to a module's input port, delivered at the next block.
 ///
@@ -181,8 +213,9 @@ enum Disposition {
 /// applied to the right instance:
 ///
 /// - tagged with the installed generation: applied at its index;
-/// - tagged with the generation installed just before this block's install:
-///   mapped through that publication's [`SurvivorRemap`], and dropped when
+/// - tagged with the generation installed just before this block's install,
+///   or one folded into the publication it installs: mapped into the new
+///   order (through the survivor remap or [`Absorbed`]), and dropped when
 ///   its module was removed or rebuilt (its target went away);
 /// - tagged with a newer generation: its publication is published but not
 ///   yet installed (a retirement is held, say), so it waits in a fixed,
@@ -190,10 +223,9 @@ enum Disposition {
 ///   ring is full the channel is left undrained, so the control side sees
 ///   [`crate::invention::runtime::GraphCommandError::QueueFull`] rather than
 ///   a write being lost;
-/// - anything older: dropped. Only a generation folded into a newer
-///   publication before the audio thread took it ([`Publication::absorb`])
-///   ends up here, since a folded publication has no remap from it; that
-///   takes two or more publications landing between two blocks.
+/// - anything else: dropped. The publisher's generations are consecutive
+///   and every one is installed or folded, so this is only a defensive
+///   fallback.
 pub(crate) struct AudioLink {
     publications: Arc<Mailbox<Publication>>,
     inputs: Receiver<InputWrite>,
@@ -263,8 +295,12 @@ impl AudioLink {
 impl SignalGraph {
     /// Installs a pending publication and applies queued input writes (see
     /// [`AudioLink`] for which instance each write reaches). Writes are
-    /// applied after the install, so they survive its input reset, and
-    /// before the retired publication goes back, so its remap is in hand.
+    /// applied after the install, so they survive its input reset (though
+    /// not the full reset when an install falls back to recompiling, which
+    /// `ensure_process_order` runs afterwards), and before the retired
+    /// publication goes back, so its remaps are in hand. Takes at most the
+    /// ring's capacity from the channel per block, so a sender keeping pace
+    /// cannot hold the block here.
     /// Allocation-, free-, and lock-free; runs at the start of a block.
     pub(super) fn drain_link(&mut self) {
         let Some(mut link) = self.link.take() else {
@@ -294,7 +330,11 @@ impl SignalGraph {
             });
         // A full ring leaves the rest in the channel: every write behind a
         // held one is at least as new, so it would be held too.
-        while link.pending.len() < link.pending.capacity() {
+        let limit = link.pending.capacity();
+        for _ in 0..limit {
+            if link.pending.len() == limit {
+                break;
+            }
             let Ok(write) = link.inputs.try_recv() else {
                 break;
             };
@@ -330,18 +370,28 @@ impl SignalGraph {
         let Some((previous, retired)) = retired else {
             return Disposition::Drop;
         };
-        if write.generation != previous {
-            return Disposition::Drop;
-        }
-        // The same defensive id check as `carry_survivors`.
-        let Some(new) = retired.remap.get(write.module_idx) else {
-            return Disposition::Drop;
+        let old = write.module_idx;
+        let target = if write.generation == previous {
+            // The retired map is the previous generation's order.
+            let old_id = retired.modules.get_index(old).map(|(id, _)| id);
+            retired.remap.get(old).map(|new| (old_id, new))
+        } else {
+            retired
+                .absorbed
+                .iter()
+                .find(|folded| folded.generation == write.generation)
+                .and_then(|folded| folded.remap.get(old).map(|new| (folded.ids.get(old), new)))
         };
-        match (
-            retired.modules.get_index(write.module_idx),
-            self.modules.get_index(new),
-        ) {
-            (Some((old_id, _)), Some((new_id, _))) if old_id == new_id => Disposition::Apply(new),
+        // The same defensive id check as `carry_survivors`.
+        match target {
+            Some((Some(old_id), new))
+                if self
+                    .modules
+                    .get_index(new)
+                    .is_some_and(|(id, _)| id == old_id) =>
+            {
+                Disposition::Apply(new)
+            }
             _ => Disposition::Drop,
         }
     }

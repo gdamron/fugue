@@ -459,6 +459,7 @@ fn build_publication(
         topology,
         remap: SurvivorRemap::default(),
         generation: 0,
+        absorbed: Vec::new(),
     })
 }
 

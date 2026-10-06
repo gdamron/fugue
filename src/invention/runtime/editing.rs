@@ -12,16 +12,18 @@ impl RunningInvention {
     /// The write is queued to the audio thread and applied at the start of
     /// the next block. An unknown module or input port is reported at once,
     /// with [`GraphCommandError::UnknownModule`] or
-    /// [`GraphCommandError::InvalidPort`]. Fails with
-    /// [`GraphCommandError::QueueFull`] when the audio thread has not drained
-    /// earlier writes, and [`GraphCommandError::AudioThreadStopped`] when it
-    /// is gone.
+    /// [`GraphCommandError::InvalidPort`]; so is a port name longer than 128
+    /// bytes. Fails with [`GraphCommandError::QueueFull`] when the audio
+    /// thread has not drained earlier writes, and
+    /// [`GraphCommandError::AudioThreadStopped`] when it is gone.
+    ///
+    /// The module and port are resolved against the graph as of the latest
+    /// structural edit, so this may wait briefly while another thread's edit
+    /// is being prepared or committed.
     ///
     /// A write racing a structural edit reaches the same module instance it
-    /// was resolved against; it is dropped if that instance is removed or
-    /// replaced before the write is applied, and also when two or more edits
-    /// publish before the audio thread's next block (the write's view of the
-    /// graph was folded away).
+    /// was resolved against; it is dropped only if that instance is removed
+    /// or replaced before the write is applied.
     pub fn set_module_input(
         &self,
         module_id: impl Into<String>,

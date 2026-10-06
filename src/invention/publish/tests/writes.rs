@@ -205,36 +205,105 @@ fn a_write_to_a_removed_or_rebuilt_module_is_dropped() {
     assert_eq!(probes.take(), [got("p1", 2, "a", 3.0)]);
 }
 
+/// Publishes one change under the publisher, as a script's edit would.
+fn edit(rig: &Rig, apply: impl FnOnce(&mut GraphChange)) {
+    rig.live
+        .edit(|change| {
+            apply(change);
+            Ok(())
+        })
+        .unwrap();
+}
+
 #[test]
-fn a_write_for_a_folded_publication_is_dropped() {
+fn a_write_for_a_folded_publication_reaches_its_instance() {
     let (mut rig, probes) = rig_with_probes(&["p1"]);
     // Against the running graph (generation 1).
     rig.live.write_input("p1", "a", 1.0).unwrap();
     // Generation 2 adds p2; these resolve against it.
     let p2 = probe(&rig, "p2");
-    rig.live
-        .edit(|change| {
-            change.upsert("p2", p2);
-            Ok(())
-        })
-        .unwrap();
+    edit(&rig, |change| change.upsert("p2", p2));
     rig.live.write_input("p2", "a", 2.0).unwrap();
     rig.live.write_input("p1", "a", 3.0).unwrap();
-    // Generation 3 removes osc1 and absorbs the untaken generation 2, so
-    // nothing maps generation 2's order onto the graph that installs.
-    rig.live.remove_module("osc1").unwrap();
+    // Generation 3 removes osc1 and absorbs the untaken generation 2.
+    edit(&rig, |change| change.remove("osc1"));
     rig.live.write_input("p2", "a", 4.0).unwrap();
     rig.render(1);
 
-    // The running graph's write follows p1 through the folded remap;
-    // generation 2's writes are dropped, not applied at stale indices
-    // (p1's old index 3 is p2's now).
+    // Every write follows its module into the installed order, not its
+    // stale index (p1's index 3 in generation 2 is p2's now).
     assert_eq!(rig.module_ids(), ["osc2", "dac", "p1", "p2"]);
     assert_mirror_matches(&rig);
     assert_eq!(
         probes.take(),
-        [got("p1", 0, "a", 1.0), got("p2", 1, "a", 4.0)]
+        [
+            got("p1", 0, "a", 1.0),
+            got("p2", 1, "a", 2.0),
+            got("p1", 0, "a", 3.0),
+            got("p2", 1, "a", 4.0),
+        ]
     );
+}
+
+#[test]
+fn writes_follow_their_modules_through_two_folds() {
+    let (mut rig, probes) = rig_with_probes(&["p1"]);
+    rig.live.write_input("p1", "a", 1.0).unwrap();
+    let p2 = probe(&rig, "p2");
+    edit(&rig, |change| change.upsert("p2", p2));
+    rig.live.write_input("p2", "a", 2.0).unwrap();
+    // Generation 3 folds 2 in; generation 4 folds 3 (carrying 2) in.
+    let p3 = probe(&rig, "p3");
+    edit(&rig, |change| change.upsert("p3", p3));
+    rig.live.write_input("p3", "b", 3.0).unwrap();
+    rig.live.write_input("p2", "b", 4.0).unwrap();
+    edit(&rig, |change| change.remove("osc1"));
+    rig.live.write_input("p2", "a", 5.0).unwrap();
+    rig.render(1);
+
+    assert_eq!(rig.module_ids(), ["osc2", "dac", "p1", "p2", "p3"]);
+    assert_eq!(
+        probes.take(),
+        [
+            got("p1", 0, "a", 1.0),
+            got("p2", 1, "a", 2.0),
+            got("p3", 2, "b", 3.0),
+            got("p2", 1, "b", 4.0),
+            got("p2", 1, "a", 5.0),
+        ]
+    );
+}
+
+#[test]
+fn a_folded_write_to_a_module_rebuilt_by_the_fold_is_dropped() {
+    let (mut rig, probes) = rig_with_probes(&["p1"]);
+    let p2 = probe(&rig, "p2");
+    edit(&rig, |change| change.upsert("p2", p2));
+    rig.live.write_input("p2", "a", 1.0).unwrap();
+    // Generation 3 replaces the p2 generation 2 built, before either runs.
+    let rebuilt = probe(&rig, "p2");
+    edit(&rig, |change| change.upsert("p2", rebuilt));
+    rig.render(1);
+
+    assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "p1", "p2"]);
+    assert_eq!(probes.take(), []);
+}
+
+#[test]
+fn writes_for_the_running_and_a_pending_generation_go_their_own_ways() {
+    let (mut rig, probes) = rig_with_probes(&["p1"]);
+    rig.hold_a_retirement();
+    rig.live.write_input("p1", "a", 1.0).unwrap();
+    let p2 = probe(&rig, "p2");
+    rig.publish_unreclaimed(|change| change.upsert("p2", p2));
+    rig.live.write_input("p2", "a", 2.0).unwrap();
+
+    // The running graph's write applies now; the pending one waits.
+    rig.render(1);
+    assert_eq!(probes.take(), [got("p1", 0, "a", 1.0)]);
+    rig.live.reclaim();
+    rig.render(1);
+    assert_eq!(probes.take(), [got("p2", 1, "a", 2.0)]);
 }
 
 #[test]

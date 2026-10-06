@@ -1,7 +1,8 @@
 //! Allocation-counted publishing: folded publications, a full retire
-//! channel, and input writes beside, across, and waiting for a publication. Each counts the install
-//! (`ensure_process_order`) and the blocks after it. The shapes a single
-//! change can take are counted where changes are prepared.
+//! channel, and input writes beside, across, and waiting for a publication.
+//! Each counts the install (`ensure_process_order`) and the blocks after it.
+//! The shapes a single change can take are counted where changes are
+//! prepared.
 
 use super::*;
 use crate::invention::publish::publisher::RETIRE_CAPACITY;
@@ -118,6 +119,22 @@ fn a_write_remapped_across_an_install_is_clean() {
     assert!(!rig.graph.topo_dirty);
     assert_eq!(rig.module_ids(), ["osc2", "dac"]);
     assert_eq!(input_value(&mut rig, "osc2", "frequency"), 0.5);
+}
+
+#[test]
+fn a_write_for_a_folded_publication_is_clean() {
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    upsert(&rig, "osc3", "oscillator", serde_json::json!({}));
+    rig.live.write_input("osc3", "frequency", 0.5).unwrap();
+    // Folds the untaken publication that added osc3 into this one.
+    rig.live.remove_module("osc1").unwrap();
+
+    let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0));
+    assert!(!rig.graph.topo_dirty);
+    assert_eq!(rig.module_ids(), ["osc2", "dac", "osc3"]);
+    assert_eq!(input_value(&mut rig, "osc3", "frequency"), 0.5);
 }
 
 #[test]

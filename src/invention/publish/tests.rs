@@ -85,11 +85,12 @@ impl Rig {
         publisher.publish(change.prepare().unwrap()).unwrap();
     }
 
-    /// Installs one more publication than the retire channel holds, never
-    /// reclaiming: the audio side then holds a retirement and takes no
-    /// publication until [`LiveGraph::reclaim`] makes room. Needs `osc1`
-    /// and `osc2`.
+    /// Empties the retire channel, then installs one more publication than
+    /// it holds, never reclaiming: the audio side then holds a retirement
+    /// and takes no publication until [`LiveGraph::reclaim`] makes room.
+    /// Every publication made so far is installed. Needs `osc1` and `osc2`.
     fn hold_a_retirement(&mut self) {
+        self.live.reclaim();
         let fm = edge("osc1", "audio", "osc2", "fm");
         for n in 0..=publisher::RETIRE_CAPACITY {
             self.publish_unreclaimed(|change| {
