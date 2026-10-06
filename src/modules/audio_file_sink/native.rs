@@ -105,37 +105,91 @@ impl AudioFileSink {
             return Err("audio_file_sink buffer_frames must be greater than zero".into());
         }
 
-        let file = File::create(&path)
-            .map_err(|err| format!("Failed to create '{}': {}", path.display(), err))?;
-        let writer = match format {
-            OutputFormat::Wav => FileWriter::Wav(WavWriter::new(
-                BufWriter::new(file),
-                WavSpec {
-                    channels: 2,
-                    sample_rate,
-                    bits_per_sample: 32,
-                    sample_format: SampleFormat::Float,
-                },
-            )?),
-            OutputFormat::Flac => FileWriter::Flac {
-                file: BufWriter::new(file),
-                sample_rate,
-                samples: Vec::new(),
-            },
+        let destination = Destination {
+            path,
+            format,
+            sample_rate,
         };
+        destination.check()?;
 
         let shared = Arc::new(NativeAudioFileSinkShared {
             ring: AudioFrameRing::new(buffer_frames),
+            activated: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
+            error: Mutex::new(None),
             frames_written: AtomicUsize::new(0),
             join_handle: Mutex::new(None),
         });
 
         let worker_shared = shared.clone();
-        let join_handle = thread::spawn(move || write_worker(worker_shared, writer));
+        let join_handle = thread::spawn(move || write_worker(worker_shared, destination));
         *shared.join_handle.lock().unwrap() = Some(join_handle);
 
         Ok(Self::from_shared(shared, soft_clip, monitor))
+    }
+}
+
+/// Where a sink records. The writer thread creates (or truncates) the file
+/// only once the sink first processes audio, so a sink built and dropped
+/// without playing (a document or edit being checked, or a change refused
+/// after it was prepared) never touches the file, nor one already recording
+/// at the same path.
+struct Destination {
+    path: PathBuf,
+    format: OutputFormat,
+    sample_rate: u32,
+}
+
+impl Destination {
+    /// Refuses a destination that cannot be created, without creating or
+    /// truncating it: a missing folder, a path that is a folder, or an
+    /// existing file that cannot be opened for writing. A failure only
+    /// creating the file shows later, through [`AudioFileSinkHandle::error`].
+    ///
+    /// [`AudioFileSinkHandle::error`]: super::AudioFileSinkHandle::error
+    fn check(&self) -> Result<(), String> {
+        let refuse = |reason: &str| format!("Failed to create '{}': {reason}", self.path.display());
+        let folder = match self.path.parent() {
+            Some(folder) if !folder.as_os_str().is_empty() => folder,
+            _ => std::path::Path::new("."),
+        };
+        if !folder.is_dir() {
+            return Err(refuse("its folder does not exist"));
+        }
+        if self.path.is_dir() {
+            return Err(refuse("it is a folder"));
+        }
+        if self.path.exists() {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&self.path)
+                .map_err(|err| refuse(&err.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn open(&self) -> Result<FileWriter, String> {
+        let file = File::create(&self.path)
+            .map_err(|err| format!("Failed to create '{}': {}", self.path.display(), err))?;
+        Ok(match self.format {
+            OutputFormat::Wav => FileWriter::Wav(
+                WavWriter::new(
+                    BufWriter::new(file),
+                    WavSpec {
+                        channels: 2,
+                        sample_rate: self.sample_rate,
+                        bits_per_sample: 32,
+                        sample_format: SampleFormat::Float,
+                    },
+                )
+                .map_err(|err| format!("Failed to start '{}': {}", self.path.display(), err))?,
+            ),
+            OutputFormat::Flac => FileWriter::Flac {
+                file: BufWriter::new(file),
+                sample_rate: self.sample_rate,
+                samples: Vec::new(),
+            },
+        })
     }
 }
 
@@ -143,7 +197,11 @@ impl AudioFileSink {
 /// the host handle.
 pub(super) struct NativeAudioFileSinkShared {
     ring: AudioFrameRing,
+    /// Set by the audio thread on the sink's first block.
+    activated: AtomicBool,
     stopping: AtomicBool,
+    /// Why the recording failed, if it did. Writer and control threads only.
+    error: Mutex<Option<String>>,
     frames_written: AtomicUsize,
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -152,6 +210,12 @@ impl NativeAudioFileSinkShared {
     #[inline]
     pub(super) fn push(&self, left: f32, right: f32) {
         self.ring.push(left, right);
+    }
+
+    /// Marks the sink as recording, so the writer thread opens its file.
+    #[inline]
+    pub(super) fn activate(&self) {
+        self.activated.store(true, Ordering::Release);
     }
 
     #[inline]
@@ -174,6 +238,20 @@ impl NativeAudioFileSinkShared {
 
     pub(super) fn frames_written(&self) -> usize {
         self.frames_written.load(Ordering::Acquire)
+    }
+
+    /// Why the recording failed, if it did.
+    pub(super) fn error(&self) -> Option<String> {
+        self.error.lock().unwrap().clone()
+    }
+
+    /// Records why the recording failed and stops it. The message also goes
+    /// to stderr: hosts without the handle (a native render, an FFI caller)
+    /// have no other way to learn of it.
+    fn fail(&self, error: String) {
+        eprintln!("audio_file_sink: {error}");
+        self.error.lock().unwrap().get_or_insert(error);
+        self.stopping.store(true, Ordering::Release);
     }
 
     pub(super) fn frames_dropped(&self) -> usize {
@@ -305,10 +383,6 @@ impl AudioFrameRing {
         Some(frame)
     }
 
-    fn is_empty(&self) -> bool {
-        self.read_index.load(Ordering::Acquire) == self.write_index.load(Ordering::Acquire)
-    }
-
     #[inline]
     fn advance(&self, index: usize) -> usize {
         let next = index + 1;
@@ -320,28 +394,50 @@ impl AudioFrameRing {
     }
 }
 
-fn write_worker(shared: Arc<NativeAudioFileSinkShared>, mut writer: FileWriter) {
+fn write_worker(shared: Arc<NativeAudioFileSinkShared>, destination: Destination) {
+    let mut writer = None;
     loop {
-        let mut wrote = false;
-        while let Some((left, right)) = shared.ring.pop() {
-            if writer.write_frame(left, right).is_err() {
-                shared.stopping.store(true, Ordering::Release);
-                break;
+        // Read before this pass, so a pass that sees the stop also sees the
+        // activation and every frame the sink pushed before stopping (it
+        // activates, pushes, then stops).
+        let stopping = shared.stopping.load(Ordering::Acquire);
+
+        if writer.is_none() && shared.activated.load(Ordering::Acquire) {
+            match destination.open() {
+                Ok(opened) => writer = Some(opened),
+                Err(error) => {
+                    shared.fail(format!("{error}; nothing was recorded"));
+                    break;
+                }
             }
-            shared.frames_written.fetch_add(1, Ordering::Relaxed);
-            wrote = true;
         }
 
-        if shared.stopping.load(Ordering::Acquire) && shared.ring.is_empty() {
+        let mut wrote = false;
+        if let Some(writer) = writer.as_mut() {
+            while let Some((left, right)) = shared.ring.pop() {
+                if writer.write_frame(left, right).is_err() {
+                    shared.fail(format!("Failed to write '{}'", destination.path.display()));
+                    break;
+                }
+                shared.frames_written.fetch_add(1, Ordering::Relaxed);
+                wrote = true;
+            }
+        }
+
+        // A sink that never played has no file to finish.
+        if stopping {
             break;
         }
-
         if !wrote {
             thread::sleep(Duration::from_millis(1));
         }
     }
 
-    let _ = writer.finalize();
+    if let Some(writer) = writer {
+        if let Err(error) = writer.finalize() {
+            shared.fail(error);
+        }
+    }
 }
 
 #[inline]
@@ -377,6 +473,94 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("fugue-{}-{}.flac", name, nanos))
+    }
+
+    #[test]
+    fn a_sink_dropped_without_playing_never_creates_its_file() {
+        let path = temp_wav_path("unplayed");
+        let (sink, handle) =
+            AudioFileSink::new(path.clone(), OutputFormat::Wav, 48_000, true, false, 64).unwrap();
+        drop(sink);
+        handle.finish();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_sink_creates_its_file_once_it_plays() {
+        let path = temp_wav_path("played");
+        let (mut sink, handle) =
+            AudioFileSink::new(path.clone(), OutputFormat::Wav, 48_000, true, false, 64).unwrap();
+        sink.process(8);
+        drop(sink);
+        let stats = handle.finish();
+        assert!(path.exists());
+        assert_eq!(stats.frames_written, 8);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_sink_stopped_right_after_playing_records_every_frame() {
+        // A smoke test: the writer must not take the stop for "drained"
+        // before it has seen the activation and the frames pushed ahead of
+        // the stop. The window is too narrow to hit reliably; the ordering
+        // in `write_worker` is what closes it.
+        for attempt in 0..50 {
+            let path = temp_wav_path("stopped");
+            let (mut sink, handle) =
+                AudioFileSink::new(path.clone(), OutputFormat::Wav, 48_000, true, false, 64)
+                    .unwrap();
+            sink.process(8);
+            drop(sink);
+            let stats = handle.finish();
+            assert_eq!(stats.frames_written, 8, "attempt {attempt}");
+            assert!(path.exists(), "attempt {attempt}");
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cannot_be_created_is_reported_through_the_handle() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("take.wav");
+        let (mut sink, handle) =
+            AudioFileSink::new(path.clone(), OutputFormat::Wav, 48_000, true, false, 64).unwrap();
+        // The folder stops taking new files after the sink was built.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        sink.process(8);
+        drop(sink);
+        handle.finish();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let error = handle.error().expect("the file could not be created");
+        assert!(error.contains("nothing was recorded"), "{error}");
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_file_that_cannot_be_written_is_refused_when_built() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("take.wav");
+        std::fs::write(&path, b"kept").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let built = AudioFileSink::new(path.clone(), OutputFormat::Wav, 48_000, true, false, 64);
+        assert!(built.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"kept");
+    }
+
+    #[test]
+    fn a_destination_in_a_missing_folder_is_refused_when_built() {
+        let path = std::env::temp_dir()
+            .join("fugue-no-such-folder")
+            .join("take.wav");
+        let error = AudioFileSink::new(path.clone(), OutputFormat::Wav, 48_000, true, false, 64)
+            .err()
+            .expect("the folder does not exist")
+            .to_string();
+        assert!(error.contains("folder does not exist"), "{error}");
+        assert!(!path.exists());
     }
 
     fn read_wav(path: &PathBuf) -> (hound::WavSpec, Vec<f32>) {

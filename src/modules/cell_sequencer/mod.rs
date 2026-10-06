@@ -956,7 +956,15 @@ impl ModuleFactory for CellSequencerFactory {
             .get("wait_for_cycle_end")
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
-        let sequences = parse_sequence_bank(config.get("sequences"))?;
+        // `sequences_json` is the bank control's key, which an authored write
+        // records; it wins over `sequences`.
+        let sequences = match config
+            .get("sequences_json")
+            .and_then(|value| value.as_str())
+        {
+            Some(json) => parse::parse_sequence_bank_json(json)?,
+            None => parse_sequence_bank(config.get("sequences"))?,
+        };
 
         let controls = CellSequencerControls::new_with_values(
             base_note,

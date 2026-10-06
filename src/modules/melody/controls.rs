@@ -11,12 +11,91 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 pub(crate) const MAX_DEGREES: usize = 128;
 
 /// Scale degrees and their selection weights, edited together under one lock.
+///
+/// What the melody plays (`degrees`, `weights`) is computed from four
+/// sources: the base `scale` and `scale_weights`, the active `count`, and the
+/// values written to single positions. So the same sources always give the
+/// same table, whatever order they were set in, and a document that records
+/// them rebuilds exactly what was playing.
+///
+/// - Shrinking the count hides the positions past it; growing it again shows
+///   them as they were, written values included.
+/// - Growing past the scale repeats it: position `i` plays `scale[i % n]`
+///   with weight `scale_weights[i % n]`, unless a weight is given for `i`.
+///   An empty scale grows with degree 0.
+///
+/// Every buffer is allocated at construction with room for [`MAX_DEGREES`]
+/// positions, so a count or single-position write never allocates: a
+/// `control_scheduler` ramp may make one per audio sample.
 pub(crate) struct DegreeTable {
-    /// Scale degrees (semitone offsets) that can be selected for notes.
-    /// Negative values go below the root note.
+    /// Scale degrees (semitone offsets) that can be selected for notes, one
+    /// per active position. Negative values go below the root note.
     pub(crate) degrees: Vec<i32>,
-    /// Probability weights for each allowed degree.
+    /// Probability weight for each active position.
     pub(crate) weights: Vec<f32>,
+    /// The base scale, as configured or set whole.
+    scale: Vec<i32>,
+    /// The base weights, as configured or set whole; may be shorter or longer
+    /// than `scale`.
+    scale_weights: Vec<f32>,
+    /// Number of active positions.
+    count: usize,
+    /// Degrees written to single positions, kept while hidden.
+    written_degrees: Box<[Option<i32>; MAX_DEGREES]>,
+    /// Weights written to single positions, kept while hidden.
+    written_weights: Box<[Option<f32>; MAX_DEGREES]>,
+}
+
+impl DegreeTable {
+    fn new(mut scale: Vec<i32>) -> Self {
+        scale.truncate(MAX_DEGREES);
+        let mut table = Self {
+            degrees: Vec::with_capacity(MAX_DEGREES),
+            weights: Vec::with_capacity(MAX_DEGREES),
+            count: scale.len(),
+            scale,
+            scale_weights: Vec::new(),
+            written_degrees: Box::new([None; MAX_DEGREES]),
+            written_weights: Box::new([None; MAX_DEGREES]),
+        };
+        table.recompute();
+        table
+    }
+
+    /// The degree position `i` plays.
+    fn degree_at(&self, i: usize) -> i32 {
+        let n = self.scale.len();
+        self.written_degrees[i].unwrap_or(if n == 0 { 0 } else { self.scale[i % n] })
+    }
+
+    /// The weight position `i` takes.
+    fn weight_at(&self, i: usize) -> f32 {
+        let n = self.scale.len();
+        self.written_weights[i]
+            .or_else(|| self.scale_weights.get(i).copied())
+            .or_else(|| {
+                (n > 0)
+                    .then(|| self.scale_weights.get(i % n).copied())
+                    .flatten()
+            })
+            .unwrap_or(1.0)
+    }
+
+    /// Recomputes the active degrees and weights from the sources, within
+    /// the buffers' capacity.
+    fn recompute(&mut self) {
+        self.degrees.clear();
+        self.weights.clear();
+        for i in 0..self.count {
+            let (degree, weight) = (self.degree_at(i), self.weight_at(i));
+            self.degrees.push(degree);
+            self.weights.push(weight);
+        }
+    }
+
+    fn out_of_range(&self, what: &str, index: usize) -> String {
+        format!("{what} index {index} out of range (count: {})", self.count)
+    }
 }
 
 /// Thread-safe controls for the MelodyGenerator module.
@@ -62,13 +141,9 @@ impl MelodyControls {
     /// [`MAX_DEGREES`] degrees are kept.
     pub fn new(root_note: u8, mut allowed_degrees: Vec<i32>) -> Self {
         allowed_degrees.truncate(MAX_DEGREES);
-        let weights = vec![1.0; allowed_degrees.len()];
         Self {
             root_note: Arc::new(AtomicU8::new(root_note)),
-            table: Arc::new(Mutex::new(DegreeTable {
-                degrees: allowed_degrees,
-                weights,
-            })),
+            table: Arc::new(Mutex::new(DegreeTable::new(allowed_degrees))),
             table_version: Arc::new(AtomicU64::new(0)),
             seed_value: Arc::new(AtomicU64::new(0)),
             seed_version: Arc::new(AtomicU64::new(0)),
@@ -121,118 +196,133 @@ impl MelodyControls {
         result
     }
 
-    /// Gets the allowed scale degrees.
+    /// Gets the active scale degrees.
     pub fn allowed_degrees(&self) -> Vec<i32> {
         self.table.lock().unwrap().degrees.clone()
     }
 
-    /// Sets which scale degrees can be used for note selection.
+    /// Sets the base scale: which degrees can be used for note selection.
     ///
-    /// Also resizes the weights vector to match. At most [`MAX_DEGREES`]
-    /// degrees are kept.
+    /// The count becomes its length, and degrees written to single positions
+    /// are forgotten; weights are kept. At most [`MAX_DEGREES`] degrees are
+    /// kept.
     pub fn set_allowed_degrees(&self, mut degrees: Vec<i32>) {
         degrees.truncate(MAX_DEGREES);
         self.edit_table(|table| {
-            table.weights.resize(degrees.len(), 1.0);
-            table.degrees = degrees;
+            table.count = degrees.len();
+            table.scale = degrees;
+            table.written_degrees.fill(None);
+            table.recompute();
         });
     }
 
-    /// Gets the note weights.
+    /// Gets the active note weights.
     pub fn note_weights(&self) -> Vec<f32> {
         self.table.lock().unwrap().weights.clone()
     }
 
-    /// Sets the probability weights for note selection.
+    /// Sets the base probability weights for note selection, forgetting
+    /// weights written to single positions.
     ///
-    /// Higher weights make that degree more likely to be chosen.
+    /// Higher weights make that degree more likely to be chosen. A position
+    /// without a weight of its own takes the weight of the scale position it
+    /// repeats, or 1.0.
     pub fn set_note_weights(&self, weights: Vec<f32>) {
-        self.edit_table(|table| table.weights = weights);
+        self.edit_table(|table| {
+            table.scale_weights = weights;
+            table.written_weights.fill(None);
+            table.recompute();
+        });
     }
 
-    /// Gets the number of allowed degrees.
+    /// Gets the number of active degrees.
     pub fn degree_count(&self) -> usize {
         self.table.lock().unwrap().degrees.len()
     }
 
-    /// Sets the number of allowed degrees.
+    /// Sets the number of active degrees (1 to [`MAX_DEGREES`]).
     ///
-    /// If growing, new entries use sequential degree indices and weight 1.0.
-    /// If shrinking, truncates both allowed_degrees and note_weights.
+    /// Shrinking hides the positions past the count; growing shows them again
+    /// as they were. Positions past the base scale repeat it from the start.
     pub fn set_degree_count(&self, count: usize) {
         let count = count.clamp(1, MAX_DEGREES);
-        self.edit_table(|table| {
-            let old_len = table.degrees.len();
-            if count > old_len {
-                // Append sequential degrees starting after the last existing degree
-                let next_degree = table.degrees.last().map(|&d| d + 1).unwrap_or(0);
-                for i in 0..(count - old_len) {
-                    table.degrees.push(next_degree + i as i32);
-                }
-                table.weights.resize(count, 1.0);
-            } else {
-                table.degrees.truncate(count);
-                table.weights.truncate(count);
-            }
-        });
+        // A ramp writes the count every sample; only a change is an edit.
+        let mut table = self.table.lock().unwrap();
+        if table.count == count {
+            return;
+        }
+        table.count = count;
+        table.recompute();
+        self.table_version.fetch_add(1, Ordering::Release);
     }
 
-    /// Gets the scale degree at position `index`.
+    /// Gets the scale degree at active position `index`.
     pub fn degree(&self, index: usize) -> Result<i32, String> {
         let table = self.table.lock().unwrap();
-        let degrees = &table.degrees;
-        degrees.get(index).copied().ok_or_else(|| {
-            format!(
-                "Degree index {} out of range (count: {})",
-                index,
-                degrees.len()
-            )
-        })
+        table
+            .degrees
+            .get(index)
+            .copied()
+            .ok_or_else(|| table.out_of_range("Degree", index))
     }
 
-    /// Sets the scale degree at position `index`.
+    /// Sets the scale degree at active position `index` (clamped to ±127).
     pub fn set_degree(&self, index: usize, value: i32) -> Result<(), String> {
         self.edit_table(|table| {
-            let degrees = &mut table.degrees;
-            if index >= degrees.len() {
-                return Err(format!(
-                    "Degree index {} out of range (count: {})",
-                    index,
-                    degrees.len()
-                ));
+            if index >= table.degrees.len() {
+                return Err(table.out_of_range("Degree", index));
             }
-            degrees[index] = value.clamp(-127, 127);
+            let value = value.clamp(-127, 127);
+            table.written_degrees[index] = Some(value);
+            table.degrees[index] = value;
             Ok(())
         })
     }
 
-    /// Gets the note weight at position `index`.
+    /// Gets the note weight at active position `index`.
     pub fn note_weight(&self, index: usize) -> Result<f32, String> {
         let table = self.table.lock().unwrap();
-        let weights = &table.weights;
-        weights.get(index).copied().ok_or_else(|| {
-            format!(
-                "Weight index {} out of range (count: {})",
-                index,
-                weights.len()
-            )
+        table
+            .weights
+            .get(index)
+            .copied()
+            .ok_or_else(|| table.out_of_range("Weight", index))
+    }
+
+    /// Sets the note weight at active position `index` (clamped to 0-10).
+    pub fn set_note_weight(&self, index: usize, value: f32) -> Result<(), String> {
+        self.edit_table(|table| {
+            if index >= table.weights.len() {
+                return Err(table.out_of_range("Weight", index));
+            }
+            let value = value.clamp(0.0, 10.0);
+            table.written_weights[index] = Some(value);
+            table.weights[index] = value;
+            Ok(())
         })
     }
 
-    /// Sets the note weight at position `index`.
-    pub fn set_note_weight(&self, index: usize, value: f32) -> Result<(), String> {
+    /// Restores a degree and a weight written to single positions, as a
+    /// document records them, whether or not the position is active now: a
+    /// hidden one shows again when the count grows. For building only.
+    pub(crate) fn restore_written(
+        &self,
+        degrees: impl IntoIterator<Item = (usize, i32)>,
+        weights: impl IntoIterator<Item = (usize, f32)>,
+    ) {
         self.edit_table(|table| {
-            let weights = &mut table.weights;
-            if index >= weights.len() {
-                return Err(format!(
-                    "Weight index {} out of range (count: {})",
-                    index,
-                    weights.len()
-                ));
+            for (index, value) in degrees {
+                if index < MAX_DEGREES {
+                    table.written_degrees[index] = Some(value.clamp(-127, 127));
+                }
             }
-            weights[index] = value.clamp(0.0, 10.0);
-            Ok(())
-        })
+            for (index, value) in weights {
+                if index < MAX_DEGREES {
+                    table.written_weights[index] = Some(value.clamp(0.0, 10.0));
+                }
+            }
+            table.recompute();
+        });
     }
 }
 

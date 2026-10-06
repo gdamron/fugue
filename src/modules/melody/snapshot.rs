@@ -15,7 +15,7 @@ pub(super) struct DegreeSnapshot {
     degree_count: usize,
     weights: [f32; MAX_DEGREES],
     weight_count: usize,
-    /// Sum of every configured weight (including any past `degree_count`).
+    /// Sum of the weights of the degrees in play.
     total_weight: f32,
     version: u64,
 }
@@ -97,9 +97,13 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
 
-    /// The pre-snapshot selection algorithm, kept as a reference.
+    /// The pre-snapshot selection algorithm, kept as a reference. Only the
+    /// weights of the degrees in play count: a weight past the scale belongs
+    /// to a position the count has not grown to.
     fn reference_choose(degrees: &[i32], weights: &[f32], unit: f32) -> i32 {
-        let total_weight: f32 = weights.iter().sum();
+        let total_weight: f32 = (0..degrees.len())
+            .map(|i| weights.get(i).copied().unwrap_or(1.0))
+            .sum();
         let mut random_value = unit * total_weight;
         for (i, &degree) in degrees.iter().enumerate() {
             let weight = weights.get(i).unwrap_or(&1.0);
@@ -194,7 +198,7 @@ mod tests {
 
         ctrl.set_degree_count(4);
         assert!(snapshot.sync(&ctrl));
-        assert_eq!(snapshot.degrees[..snapshot.degree_count], [7, 9, 10, 11]);
+        assert_eq!(snapshot.degrees[..snapshot.degree_count], [7, 9, 7, 9]);
     }
 
     #[test]

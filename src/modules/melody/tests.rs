@@ -53,11 +53,11 @@ fn test_melody_degree_count_grow() {
     melody.set_control("degree_count", 9.0).unwrap();
     assert_eq!(melody.get_control("degree_count").unwrap(), 9.0);
 
-    // New degrees should be sequential after last existing degree (10)
-    assert_eq!(melody.get_control("degree.7").unwrap(), 11.0);
-    assert_eq!(melody.get_control("degree.8").unwrap(), 12.0);
+    // Past the scale [0, 2, 3, 5, 7, 9, 10], degrees repeat it from the start.
+    assert_eq!(melody.get_control("degree.7").unwrap(), 0.0);
+    assert_eq!(melody.get_control("degree.8").unwrap(), 2.0);
 
-    // New weights default to 1.0
+    // With no weights of their own, they repeat the scale's (1.0 here).
     assert_eq!(melody.get_control("note_weight.7").unwrap(), 1.0);
     assert_eq!(melody.get_control("note_weight.8").unwrap(), 1.0);
 
@@ -77,6 +77,58 @@ fn test_melody_degree_count_shrink() {
     // Accessing beyond the new count should error
     assert!(melody.get_control("degree.3").is_err());
     assert!(melody.get_control("note_weight.3").is_err());
+}
+
+#[test]
+fn shrinking_hides_degrees_and_growing_shows_them_as_they_were() {
+    let mut melody = make_melody();
+    melody.set_control("degree.6", 11.0).unwrap();
+    melody.set_control("note_weight.5", 4.0).unwrap();
+
+    melody.set_control("degree_count", 3.0).unwrap();
+    assert!(melody.get_control("degree.6").is_err());
+    melody.set_control("degree_count", 7.0).unwrap();
+
+    let degrees: Vec<f32> = (0..7)
+        .map(|i| melody.get_control(&format!("degree.{i}")).unwrap())
+        .collect();
+    assert_eq!(degrees, [0.0, 2.0, 3.0, 5.0, 7.0, 9.0, 11.0]);
+    assert_eq!(melody.get_control("note_weight.5").unwrap(), 4.0);
+}
+
+#[test]
+fn growing_past_the_scale_repeats_its_degrees_and_weights() {
+    let controls = MelodyControls::new(60, vec![0, 4, 7]);
+    controls.set_note_weights(vec![3.0, 1.0, 2.0]);
+    controls.set_degree_count(8);
+    assert_eq!(controls.allowed_degrees(), [0, 4, 7, 0, 4, 7, 0, 4]);
+    assert_eq!(
+        controls.note_weights(),
+        [3.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0]
+    );
+
+    // A weight configured past the scale is that position's own.
+    controls.set_note_weights(vec![3.0, 1.0, 2.0, 9.0]);
+    assert_eq!(controls.note_weights()[3..5], [9.0, 1.0]);
+}
+
+#[test]
+fn the_table_is_the_same_whatever_order_its_sources_are_set_in() {
+    // What a saved document records (the count and single-position writes)
+    // rebuilds the table the live writes made, in any order.
+    let live = MelodyControls::new(60, vec![0, 2, 4, 5, 7, 9, 11]);
+    live.set_degree(6, 1).unwrap();
+    live.set_degree_count(3);
+    live.set_degree(1, 3).unwrap();
+    live.set_degree_count(10);
+    live.set_note_weight(8, 5.0).unwrap();
+    live.set_degree_count(9);
+
+    let rebuilt = MelodyControls::new(60, vec![0, 2, 4, 5, 7, 9, 11]);
+    rebuilt.set_degree_count(9);
+    rebuilt.restore_written([(1, 3), (6, 1)], [(8, 5.0)]);
+    assert_eq!(rebuilt.allowed_degrees(), live.allowed_degrees());
+    assert_eq!(rebuilt.note_weights(), live.note_weights());
 }
 
 #[test]
@@ -240,4 +292,114 @@ fn test_factory_seed_config() {
         })
         .collect();
     assert_eq!(a, b, "config seed flows through the factory");
+}
+
+#[test]
+fn a_degree_recorded_past_a_later_shrunk_count_is_hidden_on_rebuild() {
+    // `degree.6` was written while the scale had seven degrees, then the
+    // count shrank to three; the config still holds the stale index.
+    let config = serde_json::json!({ "degree_count": 3, "degree.6": 11, "note_weight.6": 2.0 });
+    let built = crate::ModuleRegistry::default()
+        .build("melody", 48_000, &config)
+        .expect("the index is hidden, not an error");
+    let surface = built.control_surface.unwrap();
+    assert_eq!(
+        surface.get_control("degree_count").unwrap(),
+        crate::ControlValue::Number(3.0)
+    );
+    assert!(surface.get_control("degree.6").is_err());
+
+    // Growing shows it again, as it was written.
+    surface
+        .set_control("degree_count", crate::ControlValue::Number(7.0))
+        .unwrap();
+    assert_eq!(
+        surface.get_control("degree.6").unwrap(),
+        crate::ControlValue::Number(11.0)
+    );
+}
+
+#[test]
+fn an_empty_scale_grows_with_degree_zero() {
+    let controls = MelodyControls::new(60, vec![]);
+    assert_eq!(controls.degree_count(), 0);
+    controls.set_degree_count(3);
+    assert_eq!(controls.allowed_degrees(), [0, 0, 0]);
+    controls.set_degree(1, 7).unwrap();
+    assert_eq!(controls.allowed_degrees(), [0, 7, 0]);
+}
+
+#[test]
+fn single_position_and_count_writes_do_not_allocate() {
+    // A control_scheduler ramp may write a degree or weight every sample,
+    // from the audio thread.
+    let controls = MelodyControls::new(60, vec![0, 2, 4, 5, 7]);
+    controls.set_note_weights(vec![1.0, 2.0]);
+    controls.set_degree_count(controls::MAX_DEGREES);
+    controls.set_degree_count(5);
+    let ((), allocs, frees) = crate::alloc_counter::allocator_events(|| {
+        for step in 0..64 {
+            controls.set_note_weight(0, step as f32 / 64.0).unwrap();
+            controls.set_degree(1, step % 12).unwrap();
+            controls.set_degree_count(3 + step as usize % 9);
+        }
+    });
+    assert_eq!((allocs, frees), (0, 0));
+}
+
+#[test]
+fn indexed_config_values_are_taken_as_the_setters_take_them() {
+    let registry = crate::ModuleRegistry::default();
+    let built = registry
+        .build(
+            "melody",
+            48_000,
+            &serde_json::json!({ "degree.0": "7", "note_weight.1": "0" }),
+        )
+        .unwrap();
+    let surface = built.control_surface.unwrap();
+    assert_eq!(
+        surface.get_control("degree.0").unwrap(),
+        crate::ControlValue::Number(7.0)
+    );
+    assert_eq!(
+        surface.get_control("note_weight.1").unwrap(),
+        crate::ControlValue::Number(0.0)
+    );
+
+    let near = registry
+        .build(
+            "melody",
+            48_000,
+            &serde_json::json!({ "degree.0": 1.99999999 }),
+        )
+        .unwrap();
+    assert_eq!(
+        near.control_surface
+            .unwrap()
+            .get_control("degree.0")
+            .unwrap(),
+        crate::ControlValue::Number(2.0)
+    );
+
+    for config in [
+        serde_json::json!({ "degree.0": "high" }),
+        serde_json::json!({ "note_weight.1": true }),
+        serde_json::json!({ "degree.x": 3 }),
+    ] {
+        assert!(
+            registry.build("melody", 48_000, &config).is_err(),
+            "{config}"
+        );
+    }
+}
+
+#[test]
+fn an_unchanged_count_is_not_an_edit() {
+    let controls = MelodyControls::new(60, vec![0, 2, 4, 5, 7]);
+    let version = controls.table_version();
+    controls.set_degree_count(5);
+    assert_eq!(controls.table_version(), version);
+    controls.set_degree_count(4);
+    assert_ne!(controls.table_version(), version);
 }

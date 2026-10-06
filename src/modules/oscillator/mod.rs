@@ -63,6 +63,7 @@ impl ModuleFactory for OscillatorFactory {
             .unwrap_or(0.0) as f32;
 
         let controls = OscillatorControls::new(frequency, osc_type, fm_amount, am_amount);
+        crate::factory::apply_control_keys(&controls, config, |key| key == "type")?;
         let osc = Oscillator::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {

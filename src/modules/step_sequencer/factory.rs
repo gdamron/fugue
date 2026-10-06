@@ -67,7 +67,12 @@ impl ModuleFactory for StepSequencerFactory {
             .map(|v| v as f32)
             .unwrap_or(DEFAULT_GATE_LENGTH);
 
-        let pattern = parse_pattern(config.get("pattern"))?;
+        // `pattern_json` is the pattern control's key, which an authored
+        // write records; it wins over `pattern`.
+        let pattern = match config.get("pattern_json").and_then(|value| value.as_str()) {
+            Some(json) => parse_pattern(Some(&serde_json::from_str(json)?))?,
+            None => parse_pattern(config.get("pattern"))?,
+        };
 
         let controls = StepSequencerControls::new_with_values(base_note, steps, gate_length);
         if let Some(mode) = config.get("mode").and_then(|v| v.as_str()) {

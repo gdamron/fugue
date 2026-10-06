@@ -412,6 +412,7 @@ impl ModuleFactory for FilterFactory {
             .unwrap_or(5000.0) as f32;
 
         let controls = FilterControls::new(cutoff, resonance, filter_type, cv_amount);
+        crate::factory::apply_control_keys(&controls, config, |key| key == "type")?;
         let filter = Filter::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {

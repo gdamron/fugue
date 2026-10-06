@@ -458,6 +458,8 @@ pub fn validate_port(port: &str, valid_ports: &[&str], port_type: &str) -> Resul
 }
 
 #[cfg(test)]
+mod config_fidelity_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod validation_tests;
