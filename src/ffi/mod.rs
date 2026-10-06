@@ -69,6 +69,12 @@ pub extern "C" fn fugue_engine_new(sample_rate: u32) -> *mut FugueEngine {
     Box::into_raw(Box::new(FugueEngine::new(sample_rate)))
 }
 
+/// Frees an engine handle. A null handle is ignored.
+///
+/// # Safety
+///
+/// `engine` must be null or a handle from [`fugue_engine_new`] that has not
+/// already been freed. The handle must not be used after this call.
 #[no_mangle]
 pub unsafe extern "C" fn fugue_engine_free(engine: *mut FugueEngine) {
     if !engine.is_null() {
@@ -76,6 +82,14 @@ pub unsafe extern "C" fn fugue_engine_free(engine: *mut FugueEngine) {
     }
 }
 
+/// Loads an invention from UTF-8 JSON. Returns 1 on success, 0 on error.
+///
+/// # Safety
+///
+/// `engine` must be null or a live handle from [`fugue_engine_new`] that has
+/// not been passed to [`fugue_engine_free`], and must not be used from another
+/// thread during the call. `json` must point to `json_len` readable bytes (it may be null
+/// only when `json_len` is 0).
 #[no_mangle]
 pub unsafe extern "C" fn fugue_engine_load_json(
     engine: *mut FugueEngine,
@@ -103,6 +117,13 @@ pub unsafe extern "C" fn fugue_engine_load_json(
     }
 }
 
+/// Resets the loaded invention. Returns 1 on success, 0 on error.
+///
+/// # Safety
+///
+/// `engine` must be null or a live handle from [`fugue_engine_new`] that has
+/// not been passed to [`fugue_engine_free`], and must not be used from another
+/// thread during the call.
 #[no_mangle]
 pub unsafe extern "C" fn fugue_engine_reset(engine: *mut FugueEngine) -> i32 {
     let Ok(engine) = engine_mut(engine) else {
@@ -121,6 +142,15 @@ pub unsafe extern "C" fn fugue_engine_reset(engine: *mut FugueEngine) -> i32 {
     }
 }
 
+/// Renders up to `frame_count` interleaved stereo frames into `output` and
+/// returns the number of frames written.
+///
+/// # Safety
+///
+/// `engine` must be null or a live handle from [`fugue_engine_new`] that has
+/// not been passed to [`fugue_engine_free`], and must not be used from another
+/// thread during the call. Unless `frame_count` is 0, `output` must be null or point to at
+/// least `frame_count * 2` writable `f32` values.
 #[no_mangle]
 pub unsafe extern "C" fn fugue_engine_render_interleaved(
     engine: *mut FugueEngine,
@@ -161,6 +191,14 @@ pub unsafe extern "C" fn fugue_engine_render_interleaved(
     }
 }
 
+/// Sets a numeric control. Returns 1 on success, 0 on error.
+///
+/// # Safety
+///
+/// `engine` must be null or a live handle from [`fugue_engine_new`] that has
+/// not been passed to [`fugue_engine_free`], and must not be used from another
+/// thread during the call. `module_id` and `key` must each be null or a valid
+/// NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn fugue_engine_set_control_number(
     engine: *mut FugueEngine,
@@ -171,6 +209,14 @@ pub unsafe extern "C" fn fugue_engine_set_control_number(
     set_control(engine, module_id, key, ControlValue::Number(value))
 }
 
+/// Sets a boolean control. Returns 1 on success, 0 on error.
+///
+/// # Safety
+///
+/// `engine` must be null or a live handle from [`fugue_engine_new`] that has
+/// not been passed to [`fugue_engine_free`], and must not be used from another
+/// thread during the call. `module_id` and `key` must each be null or a valid
+/// NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn fugue_engine_set_control_bool(
     engine: *mut FugueEngine,
@@ -181,6 +227,14 @@ pub unsafe extern "C" fn fugue_engine_set_control_bool(
     set_control(engine, module_id, key, ControlValue::Bool(value))
 }
 
+/// Sets a string control. Returns 1 on success, 0 on error.
+///
+/// # Safety
+///
+/// `engine` must be null or a live handle from [`fugue_engine_new`] that has
+/// not been passed to [`fugue_engine_free`], and must not be used from another
+/// thread during the call. `module_id`, `key` and `value` must each be null or a valid
+/// NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn fugue_engine_set_control_string(
     engine: *mut FugueEngine,
@@ -241,6 +295,15 @@ unsafe fn set_control(
     }
 }
 
+/// Returns the last error as a NUL-terminated string, or null when there is
+/// none. The string stays valid until the next call that takes this engine
+/// mutably, or until the engine is freed.
+///
+/// # Safety
+///
+/// `engine` must be null or a live handle from [`fugue_engine_new`] that has
+/// not been passed to [`fugue_engine_free`], and must not be used from another
+/// thread during the call.
 #[no_mangle]
 pub unsafe extern "C" fn fugue_engine_last_error(engine: *const FugueEngine) -> *const c_char {
     match engine_ref(engine) {
@@ -249,6 +312,13 @@ pub unsafe extern "C" fn fugue_engine_last_error(engine: *const FugueEngine) -> 
     }
 }
 
+/// Clears the last error.
+///
+/// # Safety
+///
+/// `engine` must be null or a live handle from [`fugue_engine_new`] that has
+/// not been passed to [`fugue_engine_free`], and must not be used from another
+/// thread during the call.
 #[no_mangle]
 pub unsafe extern "C" fn fugue_engine_clear_error(engine: *mut FugueEngine) {
     if let Ok(engine) = engine_mut(engine) {

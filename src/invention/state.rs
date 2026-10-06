@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::invention::authored_document;
 use crate::invention::format::{Connection, Invention};
+use crate::invention::reload::scalar_control_value;
 use crate::modules::AudioDiagnosticsSnapshot;
 use crate::ControlValue;
 
@@ -14,7 +15,9 @@ pub struct RuntimeModuleInfo {
     pub id: String,
     /// Registered module type used to build this instance.
     pub module_type: String,
-    /// Original config payload used to construct the module.
+    /// The config the module was built from (assets resolved), plus later
+    /// authored control writes to keys it contains and reload control
+    /// updates.
     pub config: serde_json::Value,
 }
 
@@ -94,6 +97,64 @@ impl RuntimeState {
         if let Some(document) = self.document.as_mut() {
             authored_document::write_control(document, id, key, value);
         }
+    }
+
+    /// Records an authored control write: in the retained document, and in
+    /// the module's stored config when that config already has the key (see
+    /// [`Self::write_stored_control`]).
+    ///
+    /// Reload plans by diffing the new resolved document against the stored
+    /// configs, so a stored config that missed an authored write would make
+    /// reloading the original file see no change and keep the written value.
+    /// A perform-intent write is never recorded, here or in the document.
+    pub(crate) fn record_authored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
+        self.document_write_control(id, key, value);
+        self.write_stored_control(id, key, value);
+    }
+
+    /// Writes an authored control value into a module's stored config only,
+    /// for a caller that records the retained document by other means.
+    ///
+    /// Only a key the stored config already contains is written. A control
+    /// key can be absent from it (a default the file omits, an alias such as
+    /// an oscillator's `type` for its `waveform`, an indexed key such as a
+    /// mixer's `level.2` from its `levels` array), and adding one would make
+    /// reloading the original file see that key removed, which reload can
+    /// only express by rebuilding the module, resetting its phase. Leaving
+    /// the key set alone means this can never introduce a rebuild; such a
+    /// write stays unrecorded here and survives that reload, as it always
+    /// has.
+    ///
+    /// Only a scalar (a number, bool or string) is overwritten, as only a
+    /// scalar delta can reload restore through a control. A stored null,
+    /// array or object (an oscillator's `"frequency": null`, a scheduler's
+    /// array `schedule`) is left alone, as for an absent key: replacing it
+    /// with the written scalar would make reloading the original see a
+    /// non-scalar delta, which reload can only express by rebuilding.
+    ///
+    /// A number is compared in the control's f32 domain: a write the stored
+    /// number already holds as an f32 is left as stored, so neither a write
+    /// of 440 over an authored `440.0` nor 261.63 over `261.6300048828125`
+    /// makes the next reload see a difference in the JSON alone. Does
+    /// nothing when no module has `id`.
+    pub(crate) fn write_stored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
+        let Some(stored) = self
+            .modules
+            .get_mut(id)
+            .and_then(|info| info.config.as_object_mut())
+            .and_then(|config| config.get_mut(key))
+        else {
+            return;
+        };
+        if scalar_control_value(stored).is_none() {
+            return;
+        }
+        if let (ControlValue::Number(number), Some(previous)) = (value, stored.as_f64()) {
+            if previous as f32 == *number {
+                return;
+            }
+        }
+        *stored = authored_document::control_json(value);
     }
 
     /// Assembles the retained declarative document, mirroring the live

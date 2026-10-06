@@ -14,8 +14,10 @@ pub type ControlOverride = (String, String, ControlValue);
 impl RuntimeFullSnapshot {
     /// Reconstructs a declarative [`Invention`] describing the snapshot's topology.
     ///
-    /// Modules are rebuilt from their stored `module_type` and original `config`
-    /// payload, and connections are mapped back to the file-format
+    /// Modules are rebuilt from their stored `module_type` and `config`: the
+    /// config each was built from (assets resolved), plus later authored
+    /// control writes to keys it contains and reload control updates.
+    /// Connections are mapped back to the file-format
     /// [`Connection`] shape (empty port strings become `None`). The result is a
     /// cold-buildable graph: it does **not** carry current control values, which
     /// are returned separately by [`RuntimeFullSnapshot::control_overrides`] so

@@ -182,7 +182,7 @@ impl ContentCatalog {
         let interface = resolved
             .document
             .is_development()
-            .then(|| ContentInterface {
+            .then_some(ContentInterface {
                 inputs: resolved.document.inputs,
                 outputs: resolved.document.outputs,
                 controls: resolved.document.controls,

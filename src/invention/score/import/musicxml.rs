@@ -283,7 +283,7 @@ fn build_pedal_lane(
     // Step index of the open pedal-down span, if any.
     let mut down_at: Option<usize> = None;
 
-    let mut close_span = |steps: &mut Vec<Step>, from: usize, to: usize| {
+    let close_span = |steps: &mut Vec<Step>, from: usize, to: usize| {
         for step in steps.iter_mut().take(to).skip(from + 1) {
             *step = Step::held();
         }
