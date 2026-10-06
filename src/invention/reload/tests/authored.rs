@@ -290,3 +290,85 @@ fn reloading_the_saved_document_after_a_write_to_a_key_the_stored_config_lacks_r
         assert_eq!(running.get_control("osc1", key).unwrap(), value, "{key}");
     }
 }
+
+#[test]
+fn an_authored_write_over_a_stored_null_survives_reloading_the_original() {
+    // Reload restores only a scalar through a control. Replacing a stored
+    // null with the written number would make reloading the original see a
+    // null delta, which only a rebuild can express.
+    let original = BASE.replace(r#""frequency": 440.0"#, r#""frequency": null"#);
+    let mut running = start(&original);
+    running
+        .set_control("osc1", "frequency", number(330.0))
+        .unwrap();
+    assert_eq!(stored_config(&running, "osc1")["frequency"], json!(null));
+
+    let report = running.reload(doc(&original)).expect("diff applies");
+
+    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert_nothing_rebuilt(&report);
+    assert_eq!(
+        running.get_control("osc1", "frequency").unwrap(),
+        number(330.0)
+    );
+}
+
+#[test]
+fn an_authored_write_over_an_array_schedule_survives_reloading_the_original() {
+    // The scheduler's config holds its schedule as an array, its control as
+    // a string. Storing the string would make reloading the original see a
+    // non-scalar delta, rebuilding the scheduler and resetting its step.
+    let original = BASE.replace(
+        r#"{ "id": "dac", "type": "dac" }"#,
+        r#"{ "id": "dac", "type": "dac" },
+        { "id": "auto", "type": "control_scheduler", "config": { "schedule": [] } }"#,
+    );
+    let mut running = start(&original);
+    let schedule = r#"[{ "at": 0, "module": "osc2", "control": "frequency", "value": 220.0 }]"#;
+    running
+        .set_control("auto", "schedule", ControlValue::String(schedule.into()))
+        .unwrap();
+    assert_eq!(stored_config(&running, "auto")["schedule"], json!([]));
+
+    let report = running.reload(doc(&original)).expect("diff applies");
+
+    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert!(report.added.is_empty(), "{report:?}");
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(report.swapped.is_empty(), "{report:?}");
+    assert_eq!(report.unchanged, 4, "{report:?}");
+}
+
+#[test]
+fn an_authored_write_the_stored_number_holds_as_an_f32_leaves_it_alone() {
+    // 261.63f32 widens to 261.6300048828125, so the write changes nothing
+    // the module plays. Storing its shorter decimal form would make
+    // reloading the original write it back over a later performed change.
+    let original = BASE.replace("440.0", "261.6300048828125");
+    let mut running = start(&original);
+    running
+        .set_control("osc1", "frequency", number(261.63))
+        .unwrap();
+    assert_eq!(
+        stored_config(&running, "osc1")["frequency"],
+        json!(261.6300048828125)
+    );
+    running
+        .snapshot()
+        .set_control_with_intent(
+            "osc1",
+            "frequency",
+            number(300.0),
+            ControlWriteIntent::Perform,
+        )
+        .unwrap();
+
+    let report = running.reload(doc(&original)).expect("diff applies");
+
+    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert_nothing_rebuilt(&report);
+    assert_eq!(
+        running.get_control("osc1", "frequency").unwrap(),
+        number(300.0)
+    );
+}

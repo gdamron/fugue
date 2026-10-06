@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::invention::authored_document;
 use crate::invention::format::{Connection, Invention};
+use crate::invention::reload::scalar_control_value;
 use crate::modules::AudioDiagnosticsSnapshot;
 use crate::ControlValue;
 
@@ -124,9 +125,18 @@ impl RuntimeState {
     /// write stays unrecorded here and survives that reload, as it always
     /// has.
     ///
-    /// A number equal to the stored one is left as stored, so a write of
-    /// 440 over an authored `440.0` does not make the next reload see a
-    /// difference in the JSON alone. Does nothing when no module has `id`.
+    /// Only a scalar (a number, bool or string) is overwritten, as only a
+    /// scalar delta can reload restore through a control. A stored null,
+    /// array or object (an oscillator's `"frequency": null`, a scheduler's
+    /// array `schedule`) is left alone, as for an absent key: replacing it
+    /// with the written scalar would make reloading the original see a
+    /// non-scalar delta, which reload can only express by rebuilding.
+    ///
+    /// A number is compared in the control's f32 domain: a write the stored
+    /// number already holds as an f32 is left as stored, so neither a write
+    /// of 440 over an authored `440.0` nor 261.63 over `261.6300048828125`
+    /// makes the next reload see a difference in the JSON alone. Does
+    /// nothing when no module has `id`.
     pub(crate) fn write_stored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
         let Some(stored) = self
             .modules
@@ -136,14 +146,15 @@ impl RuntimeState {
         else {
             return;
         };
-        let value = authored_document::control_json(value);
-        let same_number = matches!(
-            (stored.as_f64(), value.as_f64()),
-            (Some(stored), Some(new)) if stored == new
-        );
-        if !same_number {
-            *stored = value;
+        if scalar_control_value(stored).is_none() {
+            return;
         }
+        if let (ControlValue::Number(number), Some(previous)) = (value, stored.as_f64()) {
+            if previous as f32 == *number {
+                return;
+            }
+        }
+        *stored = authored_document::control_json(value);
     }
 
     /// Assembles the retained declarative document, mirroring the live
