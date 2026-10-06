@@ -96,6 +96,27 @@ impl RuntimeState {
         }
     }
 
+    /// Records an authored control write: in the retained document, and in
+    /// the module's stored config, with the same conversion.
+    ///
+    /// Reload plans by diffing the new resolved document against the stored
+    /// configs, so a stored config that missed an authored write would make
+    /// reloading the original file see no change and keep the written value.
+    /// A perform-intent write is never recorded, here or in the document.
+    pub(crate) fn record_authored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
+        self.document_write_control(id, key, value);
+        self.write_stored_control(id, key, value);
+    }
+
+    /// Writes a control value into a module's stored config only, for a
+    /// caller that records the retained document by other means. Does
+    /// nothing when no module has that id.
+    pub(crate) fn write_stored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
+        if let Some(info) = self.modules.get_mut(id) {
+            authored_document::write_config_control(&mut info.config, key, value);
+        }
+    }
+
     /// Assembles the retained declarative document, mirroring the live
     /// graph's connections. Returns `None` when no document was retained.
     pub fn document(&self) -> Option<Invention> {

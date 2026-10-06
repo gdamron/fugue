@@ -92,10 +92,18 @@ fn a_multi_mutation_reload_reaches_the_audio_thread_as_one_publication() {
 fn an_untouched_module_keeps_its_phase_and_state_across_a_reload() {
     let (mut edited, edited_pump) = start(BASE);
     let (control, control_pump) = start(BASE);
-    // Diverge osc2 at runtime in both, so a rebuild would be audible.
+    // Diverge osc2 at runtime in both with a live (performed) tweak, so a
+    // rebuild would be audible. An authored write would be reverted by the
+    // reload instead.
     for running in [&edited, &control] {
         running
-            .set_control("osc2", "frequency", ControlValue::Number(123.0))
+            .snapshot()
+            .set_control_with_intent(
+                "osc2",
+                "frequency",
+                ControlValue::Number(123.0),
+                crate::ControlWriteIntent::Perform,
+            )
             .unwrap();
     }
     assert_eq!(edited_pump.render(7), control_pump.render(7));
@@ -307,6 +315,16 @@ fn a_control_write_that_fails_when_made_is_reported_and_not_retained() {
     let document = running.document().unwrap();
     let flaky = document.modules.iter().find(|m| m.id == "flaky").unwrap();
     assert_eq!(flaky.config["level"], serde_json::json!(0.25));
+    // So does the stored config, so reloading the same document tries the
+    // write again rather than seeing no change.
+    let stored = running.state.lock().unwrap().modules["flaky"]
+        .config
+        .clone();
+    assert_eq!(stored["level"], serde_json::json!(0.25));
+    let report = running.reload(doc(&edited)).expect("reload applies");
+    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert_eq!(report.controls_failed.len(), 1, "{report:?}");
+    assert!(report.swapped.is_empty(), "{report:?}");
     pump.render(1);
 }
 

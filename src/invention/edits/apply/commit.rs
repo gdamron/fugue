@@ -77,7 +77,7 @@ impl RunningInvention {
     /// Fails, with nothing changed, only when another change published
     /// since the batch was prepared, or the audio thread is gone. A write
     /// that still fails when made is reported, and the module's actual value
-    /// is written back to the retained document.
+    /// is written back to the retained document and its stored config.
     pub(super) fn commit_edits(
         &self,
         prepared: PreparedEdits,
@@ -85,22 +85,33 @@ impl RunningInvention {
     ) -> Result<ApplyEditsReport, Refused> {
         let PreparedEdits { change, plan } = prepared;
         let document = &batch.candidate.document;
-        let mut previous = None;
-        let committed = self.live.commit_with(change, |state| {
-            previous = state.document.replace(document.clone());
-        })?;
-        // The old document drops here, off the publisher's lock.
-        drop(previous);
-
         // Added and rebuilt modules took the batch's writes when they were
-        // built (see `write_built`); only survivors are written, right after
-        // the publication is queued.
+        // built (see `write_built`), and their stored configs are the configs
+        // they were built from, which hold them. Only survivors are written,
+        // right after the publication is queued.
         let built: HashSet<&str> = plan
             .added
             .iter()
             .chain(&plan.swapped)
             .map(|spec| spec.id.as_str())
             .collect();
+        let mut previous = None;
+        let committed = self.live.commit_with(change, |state| {
+            previous = state.document.replace(document.clone());
+            // A survivor's stored config takes the batch's writes with the
+            // document, as an authored `set_control` does, so a later reload
+            // diffs against what the module plays. In batch order, so each
+            // control ends at its last write.
+            for candidate in &batch.candidate.control_writes {
+                let write = &candidate.write;
+                if !built.contains(write.module_id.as_str()) {
+                    state.write_stored_control(&write.module_id, &write.key, &write.value);
+                }
+            }
+        })?;
+        // The old document drops here, off the publisher's lock.
+        drop(previous);
+
         let snapshot = self.snapshot();
         let mut report = report_for(&plan, batch.edit_count);
         // Every write, in batch order, so each lands on the module as the
@@ -158,7 +169,7 @@ impl RunningInvention {
             // changes to the document.
             let mut state = self.state.lock().unwrap();
             for (write, value) in &actual {
-                state.document_write_control(&write.module_id, &write.key, value);
+                state.record_authored_control(&write.module_id, &write.key, value);
             }
         }
 

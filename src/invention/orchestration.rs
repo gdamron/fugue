@@ -269,7 +269,7 @@ impl RuntimeSnapshot {
         self.state
             .lock()
             .unwrap()
-            .document_write_control(module_id, key, &value);
+            .record_authored_control(module_id, key, &value);
         Ok(value)
     }
 

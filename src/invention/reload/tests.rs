@@ -29,9 +29,16 @@ const BASE: &str = r#"{
 #[test]
 fn config_delta_lands_as_control_update_and_survivors_keep_runtime_state() {
     let mut running = start(BASE);
-    // Diverge osc2 from its config at runtime, as a live tweak would.
+    // Diverge osc2 from its config at runtime with a live (performed)
+    // tweak. An authored write would be reverted by the reload instead.
     running
-        .set_control("osc2", "frequency", ControlValue::Number(111.0))
+        .snapshot()
+        .set_control_with_intent(
+            "osc2",
+            "frequency",
+            ControlValue::Number(111.0),
+            crate::ControlWriteIntent::Perform,
+        )
         .unwrap();
 
     // Same document, except osc1's frequency config changed.
@@ -170,7 +177,13 @@ const DEV_BASE: &str = r#"{
 fn changed_development_definition_swaps_only_its_instances() {
     let mut running = start(DEV_BASE);
     running
-        .set_control("solo", "frequency", ControlValue::Number(123.0))
+        .snapshot()
+        .set_control_with_intent(
+            "solo",
+            "frequency",
+            ControlValue::Number(123.0),
+            crate::ControlWriteIntent::Perform,
+        )
         .unwrap();
 
     // Only the development's internal definition changes.

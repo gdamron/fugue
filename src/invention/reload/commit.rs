@@ -151,7 +151,8 @@ impl RunningInvention {
     /// heard up to one block before the new topology. A validated update
     /// that still fails when written keeps the module's previous value, is
     /// moved from the report's `controls_updated` to its `controls_failed`,
-    /// and that previous value is written back to the retained document.
+    /// and that previous value is written back to the retained document and
+    /// the module's stored config, so the next reload tries it again.
     pub(crate) fn commit_prepared(
         &mut self,
         prepared: PreparedCommit,
@@ -213,7 +214,7 @@ impl RunningInvention {
             // changes to the document.
             let mut state = self.state.lock().unwrap();
             for (module_id, key, actual) in &kept {
-                state.document_write_control(module_id, key, actual);
+                state.record_authored_control(module_id, key, actual);
             }
         }
 
