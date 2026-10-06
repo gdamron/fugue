@@ -843,7 +843,7 @@ mod tests {
         use crate::streaming::test_support::wait_until;
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
-        use std::path::PathBuf;
+        use std::path::{Path, PathBuf};
         use std::time::{SystemTime, UNIX_EPOCH};
 
         fn temp_dir(name: &str) -> PathBuf {
@@ -913,7 +913,7 @@ PY
             path
         }
 
-        fn config_with_fake(path: &PathBuf, url: &str) -> FfmpegStreamConfig {
+        fn config_with_fake(path: &Path, url: &str) -> FfmpegStreamConfig {
             FfmpegStreamConfig {
                 ffmpeg_path: path.to_string_lossy().into_owned(),
                 url: url.to_string(),

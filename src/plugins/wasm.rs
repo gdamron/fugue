@@ -89,13 +89,18 @@ pub fn load_component_module(
     Ok(GraphModule::Module(Box::new(module)))
 }
 
+/// Guest export `set-input-block(index, values)`.
+type SetInputBlockFunc = TypedFunc<(u32, &'static [f32]), (Result<(), String>,)>;
+/// Guest export `process-output-block(frames)`, returning `(active, samples)`.
+type ProcessOutputBlockFunc = TypedFunc<(u32,), (Result<(bool, Vec<f32>), String>,)>;
+
 /// A Fugue `Module` backed by a Wasmtime component instance.
 pub struct WasmModule {
     store: Store<HostState>,
     instance: Instance,
-    set_input_block: TypedFunc<(u32, &'static [f32]), (Result<(), String>,)>,
+    set_input_block: SetInputBlockFunc,
     process: TypedFunc<(u32,), (bool,)>,
-    process_output_block: Option<TypedFunc<(u32,), (Result<(bool, Vec<f32>), String>,)>>,
+    process_output_block: Option<ProcessOutputBlockFunc>,
     output_block: TypedFunc<(u32,), (Result<Vec<f32>, String>,)>,
     set_input: TypedFunc<(String, f32), (Result<(), String>,)>,
     set_input_connected: Option<TypedFunc<(u32, bool), ()>>,
