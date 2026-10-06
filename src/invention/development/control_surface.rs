@@ -1,4 +1,5 @@
 use super::*;
+use crate::modules::control_scheduler::SurfaceDirectory;
 
 pub(super) struct AliasedControl {
     pub(super) meta: ControlMeta,
@@ -6,16 +7,38 @@ pub(super) struct AliasedControl {
     pub(super) key: String,
 }
 
+/// The control surface a development exposes to its outer document.
+///
+/// The development's internal runtime is consumed when the development is
+/// built, but its control-surface directory is kept here for the
+/// development's lifetime: an inner `control_scheduler` holds only a weak
+/// reference to it, and resolves every new `schedule` through it.
+///
+/// `surfaces` is a copy of that directory's contents, used for every lookup,
+/// so reads and writes never lock the directory (an outer scheduler may
+/// write an exposed control from the audio thread). The copy cannot drift:
+/// the internal runtime that could add or remove inner modules is gone, and
+/// nothing here mutates the directory, so its contents are fixed from build
+/// on. Validation and the inner setters therefore resolve against the same
+/// directory.
 pub(super) struct DevelopmentControlSurface {
     pub(super) controls: Vec<AliasedControl>,
     pub(super) surfaces: IndexMap<String, ControlSurfaceInstance>,
+    /// Keeps the internal directory alive for inner schedulers. Locked only
+    /// once, at build; held after that only for its ownership, so never
+    /// touched on the audio thread.
+    #[allow(dead_code)]
+    pub(super) directory: SurfaceDirectory,
 }
 
 impl DevelopmentControlSurface {
+    /// Builds the surface over `directory`, the development's internal
+    /// runtime directory, retaining it (see the type docs).
     pub(super) fn new(
         definition: &Invention,
-        surfaces: &IndexMap<String, ControlSurfaceInstance>,
+        directory: SurfaceDirectory,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let surfaces = directory.lock().unwrap().clone();
         let mut controls = Vec::with_capacity(definition.controls.len());
 
         for control in &definition.controls {
@@ -47,7 +70,8 @@ impl DevelopmentControlSurface {
 
         Ok(Self {
             controls,
-            surfaces: surfaces.clone(),
+            surfaces,
+            directory,
         })
     }
 

@@ -180,16 +180,18 @@ fn a_development_validates_inner_writes_against_its_own_directory() {
         .validate_control("schedule", &schedule("lead"), &outer)
         .is_err());
 
-    // Current behaviour, a known gap: the development drops its internal
-    // runtime's directory once built, so the write that validation accepts
-    // is still refused by the setter. This assertion pins that gap so it is
-    // noticed: once the development keeps its internal control directory
-    // after build, the setter accepts the write and this flips to `is_ok`.
-    let set = surface.set_control("schedule", schedule("o"));
+    // The setter resolves against the same directory, which the development
+    // keeps after build: it takes what validation accepts and refuses what
+    // validation refuses.
+    surface
+        .set_control("schedule", schedule("o"))
+        .expect("the inner scheduler resolves `o`");
+    assert!(surface.set_control("schedule", schedule("lead")).is_err());
+    // The refused write left the accepted one in place.
+    let kept = surface.get_control("schedule").unwrap();
     assert!(
-        set.as_ref()
-            .is_err_and(|err| err.contains("runtime is gone")),
-        "{set:?}"
+        kept.as_string().unwrap().contains(r#""module":"o""#),
+        "{kept:?}"
     );
 }
 
