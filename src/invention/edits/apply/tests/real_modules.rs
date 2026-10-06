@@ -274,3 +274,83 @@ fn a_batch_checks_nested_developments_as_loaded_not_as_on_disk() {
         .apply_edits(&[add("pad2", "outer_voice", serde_json::Value::Null)])
         .expect("the batch commits");
 }
+
+/// BASE with a melody of `scale`.
+fn with_melody(scale: serde_json::Value) -> Invention {
+    let mut document = doc(BASE);
+    document.modules.push(crate::ModuleSpec {
+        id: "tune".into(),
+        module_type: "melody".into(),
+        config: json!({ "scale_degrees": scale }),
+    });
+    document
+}
+
+#[test]
+fn a_write_to_a_control_an_earlier_edit_removed_is_refused_at_its_index() {
+    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    let before = running.document().unwrap();
+    let error = running
+        .apply_edits(&[
+            set("tune", "degree_count", number(3.0)),
+            set("tune", "degree.6", number(12.0)),
+        ])
+        .expect_err("degree 6 is gone once the count is 3");
+    assert_eq!(error.code, RpcErrorCode::InvalidEdit);
+    assert_eq!(error.edit.as_ref().unwrap().index, 1);
+    // Nothing changed: not the count, not the document.
+    assert_eq!(
+        running.get_control("tune", "degree_count").unwrap(),
+        number(7.0)
+    );
+    assert_eq!(running.document().unwrap(), before);
+}
+
+#[test]
+fn a_write_to_a_control_an_earlier_edit_added_commits() {
+    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2])));
+    let report = running
+        .apply_edits(&[
+            set("tune", "degree_count", number(7.0)),
+            set("tune", "degree.6", number(12.0)),
+        ])
+        .expect("degree 6 exists once the count is 7");
+    assert!(report.controls_failed.is_empty(), "{report:?}");
+    assert_eq!(
+        running.get_control("tune", "degree.6").unwrap(),
+        number(12.0)
+    );
+}
+
+#[test]
+fn writes_land_in_batch_order() {
+    // Valid in order: the degree is written while it exists, then hidden or
+    // removed by the count. Applying the final values in another order would
+    // fail the degree's write.
+    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    let report = running
+        .apply_edits(&[
+            set("tune", "degree_count", number(9.0)),
+            set("tune", "degree.8", number(12.0)),
+            set("tune", "degree_count", number(3.0)),
+        ])
+        .expect("each write is valid where it stands");
+    assert!(report.controls_failed.is_empty(), "{report:?}");
+    assert_eq!(
+        running.get_control("tune", "degree_count").unwrap(),
+        number(3.0)
+    );
+
+    // A module the batch adds takes its writes in order too.
+    running
+        .apply_edits(&[
+            add("second", "melody", json!({ "scale_degrees": [0, 1, 2] })),
+            set("second", "degree_count", number(7.0)),
+            set("second", "degree.6", number(12.0)),
+        ])
+        .expect("the batch commits");
+    assert_eq!(
+        running.get_control("second", "degree.6").unwrap(),
+        number(12.0)
+    );
+}

@@ -218,6 +218,16 @@ JSON a control expects (such as `sequences_json`), or an option the control
 does not offer. Within those rules a module may still clamp a number into its
 range or accept an alias for an option, as it does for a standalone write.
 
+Writes are checked in batch order, each on the module as the edits before it
+leave it, so one write can depend on another. After `degree_count = 7` on a
+three-degree melody, `degree.6` exists and can be written; after
+`degree_count = 3`, writing `degree.6` is refused at its index, and nothing
+is applied. A module that survives the batch is checked as authored, that is,
+as its retained document builds it, not as live gestures have since left it.
+If a gesture changed it in the meantime (a performed `degree_count`, say), a
+write that passed the check can still fail when made, and is reported in
+`controls_failed`.
+
 Messages echo at most about 64 bytes of a refused control value. A module's
 own reason (a refused config, a refused control value, an edited invention
 that does not build) is cut to about 256 bytes.
@@ -322,7 +332,8 @@ third attempt, the batch is refused as `internal` and nothing was applied.
    their final configs and take the batch's values through their setters
    before the new graph is prepared, so they arrive with them: a control's key
    need not be the config key the module is built from (an oscillator's `type`
-   control, say). A control written more than once ends at its last value.
+   control, say). Writes are made in batch order, as they were checked, so a
+   control written more than once ends at its last value.
 3. One `control_changed { module_id, key, value }` is emitted per control
    the `set_control` edits wrote, for modules that exist after the commit
    (survivors, added and rebuilt modules). Each carries the control's final

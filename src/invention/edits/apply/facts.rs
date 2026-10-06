@@ -1,7 +1,7 @@
 //! What a batch is checked against on a running invention: its modules'
 //! ports and controls, and its current registry.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use indexmap::IndexMap;
 
@@ -11,7 +11,7 @@ use crate::invention::format::{Invention, ModuleSpec};
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::runtime::{ControlSurfaceInstance, RunningInvention};
 use crate::traits::ControlSurfaceMap;
-use crate::ModuleRegistry;
+use crate::{ControlKind, ControlValue, ModuleRegistry};
 
 /// The running invention's facts, read once when the batch starts, so every
 /// edit is checked against the same view of the graph.
@@ -24,8 +24,17 @@ pub(super) struct LiveFacts<'r> {
     /// which an added module's config is resolved against.
     assets: Invention,
     /// The control surface of each module `describe` built for the batch,
-    /// by id; the latest build for an id replaces an earlier one.
+    /// by id; the latest build for an id replaces an earlier one. The
+    /// batch's writes to an added module are made on it, in order.
     described: HashMap<String, Option<ControlSurfaceInstance>>,
+    /// Each running module's type and config as authored, for building the
+    /// throwaway copy a batch writes to.
+    authored: HashMap<String, (String, serde_json::Value)>,
+    /// A throwaway copy of each running module the batch writes, built in
+    /// validation mode from its authored config, with the batch's writes so
+    /// far made on it in order. The running module is never written before
+    /// the commit.
+    provisional: HashMap<String, ControlSurfaceInstance>,
 }
 
 impl<'r> LiveFacts<'r> {
@@ -36,6 +45,14 @@ impl<'r> LiveFacts<'r> {
             developments: Vec::new(),
             ..document.clone()
         };
+        let authored = document
+            .modules
+            .iter()
+            .map(|spec| {
+                let typed = (spec.module_type.clone(), spec.config.clone());
+                (spec.id.clone(), typed)
+            })
+            .collect();
         Self {
             registry: &running.registry,
             sample_rate: running.sample_rate,
@@ -43,7 +60,44 @@ impl<'r> LiveFacts<'r> {
             surfaces: running.control_surfaces.lock().unwrap().clone(),
             assets,
             described: HashMap::new(),
+            authored,
+            provisional: HashMap::new(),
         }
+    }
+
+    /// The throwaway copies of the running modules the batch wrote, with
+    /// every write made: what the later checks see for those modules.
+    pub(super) fn into_provisional(self) -> ControlSurfaceMap {
+        self.provisional.into_iter().collect()
+    }
+
+    /// The surface a write to `id` lands on at this point in the batch: the
+    /// described instance of a module the batch added, or the throwaway copy
+    /// of a running one, built on first use.
+    fn writable(&mut self, id: &str) -> Result<ControlSurfaceInstance, String> {
+        if let Some(surface) = self.described.get(id) {
+            return surface
+                .clone()
+                .ok_or_else(|| "the module has no controls".to_string());
+        }
+        if let Some(surface) = self.provisional.get(id) {
+            return Ok(surface.clone());
+        }
+        let (module_type, config) = self
+            .authored
+            .get(id)
+            .cloned()
+            .ok_or_else(|| "the module is not in the authored document".to_string())?;
+        let config = self.resolve(id, &module_type, &config)?;
+        let surface = self
+            .registry
+            .for_validation()
+            .build(&module_type, self.sample_rate, &config)
+            .map_err(|error| error.to_string())?
+            .control_surface
+            .ok_or_else(|| "the module has no controls".to_string())?;
+        self.provisional.insert(id.to_string(), surface.clone());
+        Ok(surface)
     }
 
     /// The control-surface directory as `candidate` leaves it, as far as
@@ -57,7 +111,11 @@ impl<'r> LiveFacts<'r> {
             .filter_map(|spec| {
                 let surface = match self.described.get(&spec.id) {
                     Some(surface) => surface.clone(),
-                    None => self.surfaces.get(&spec.id).cloned(),
+                    None => self
+                        .provisional
+                        .get(&spec.id)
+                        .or_else(|| self.surfaces.get(&spec.id))
+                        .cloned(),
                 };
                 Some((spec.id.clone(), surface?))
             })
@@ -96,8 +154,9 @@ impl EditFacts for LiveFacts<'_> {
             inputs: ports.inputs.clone(),
             outputs: ports.outputs.clone(),
             controls: self
-                .surfaces
+                .provisional
                 .get(id)
+                .or_else(|| self.surfaces.get(id))
                 .map(|surface| {
                     surface
                         .controls()
@@ -140,5 +199,22 @@ impl EditFacts for LiveFacts<'_> {
 
     fn forget(&mut self, id: &str) {
         self.described.remove(id);
+        self.provisional.remove(id);
+    }
+
+    fn write_control(
+        &mut self,
+        id: &str,
+        key: &str,
+        value: &ControlValue,
+    ) -> Result<Option<BTreeMap<String, ControlKind>>, String> {
+        let surface = self.writable(id)?;
+        surface.set_control(key, value.clone())?;
+        let controls = surface
+            .controls()
+            .into_iter()
+            .map(|meta| (meta.key, meta.kind))
+            .collect();
+        Ok(Some(controls))
     }
 }

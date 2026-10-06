@@ -52,6 +52,9 @@ pub(super) struct Batch {
     /// validation build read it: what added and rebuilt modules are built
     /// from.
     resolved: HashMap<String, serde_json::Value>,
+    /// A throwaway copy of each running module the batch writes, with its
+    /// writes made in order: what the prepared check sees for survivors.
+    provisional: ControlSurfaceMap,
 }
 
 /// Why one attempt at a batch did not commit.
@@ -104,18 +107,25 @@ fn build_failed(what: &str, mut reason: String) -> RpcError {
     )
 }
 
-/// Checks every write the batch makes against `surfaces`, the directory as
-/// the batch leaves it, survivors and new modules alike, refusing the first
-/// the module's setter would refuse at its edit's index. Every write is
-/// checked, not only each control's last one, so an edit the module refuses
-/// fails the batch even when a later edit overwrites it.
+/// Checks each control's final value against `surfaces`, the directory as
+/// the batch leaves it, refusing the first the module would refuse at its
+/// edit's index. Every write was already made in order on the module as the
+/// batch had it (see [`EditFacts::write_control`]); this pass adds what only
+/// the whole directory can tell, such as whether a schedule's targets
+/// resolve. A control the module no longer lists at the end (a degree a
+/// later edit's count hid) is skipped: it was checked where it was written.
+///
+/// [`EditFacts::write_control`]: super::EditFacts::write_control
 fn check_writes(surfaces: &ControlSurfaceMap, candidate: &EditedCandidate) -> Result<(), RpcError> {
-    for candidate in &candidate.control_writes {
+    for candidate in candidate.final_writes() {
         let write = &candidate.write;
         let refuse = |reason: String| refused_write(candidate, reason);
         let surface = surfaces
             .get(&write.module_id)
             .ok_or_else(|| refuse("the module has no controls".to_string()))?;
+        if !surface.controls().iter().any(|meta| meta.key == write.key) {
+            continue;
+        }
         surface
             .validate_control(&write.key, &write.value, surfaces)
             .map_err(refuse)?;
@@ -195,11 +205,13 @@ impl RunningInvention {
         // into a config the module type parses). Checked again against the
         // prepared directory before publishing.
         check_writes(&facts.directory_after(&candidate.document), &candidate)?;
+        let provisional = facts.into_provisional();
         let resolved = self.validate_candidate(&candidate.document)?;
         let batch = Batch {
             edit_count: edits.len(),
             candidate,
             resolved,
+            provisional,
         };
 
         let mut attempt = 1;

@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::invention::format::Invention;
 use crate::rpc::{ControlWrite, EditFailure, StructuralEdit};
-use crate::{ControlKind, ControlSurface, GraphModule};
+use crate::{ControlKind, ControlSurface, ControlValue, GraphModule};
 
 /// What a batch needs to know about one module: its ports and its controls.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -111,6 +111,21 @@ pub(crate) trait EditFacts {
     /// Called when `remove_module` removes `id` after an earlier
     /// [`Self::describe`] in this batch built it: drop anything kept for it.
     fn forget(&mut self, _id: &str) {}
+
+    /// Makes a `set_control` write, already coerced to its control's kind,
+    /// on the module as the batch has it at this point, so the edits after
+    /// it see what it changed: a count that adds or removes controls, say.
+    /// Returns the controls the module lists afterwards, or `None` when the
+    /// implementation keeps no control state; the reason the module's setter
+    /// refuses the value otherwise. Nothing running changes.
+    fn write_control(
+        &mut self,
+        _id: &str,
+        _key: &str,
+        _value: &ControlValue,
+    ) -> Result<Option<BTreeMap<String, ControlKind>>, String> {
+        Ok(None)
+    }
 }
 
 /// One `set_control` edit's authored write, tagged with the edit that made

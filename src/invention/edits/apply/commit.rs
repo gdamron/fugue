@@ -58,7 +58,15 @@ impl RunningInvention {
             .map(build)
             .collect::<Result<Vec<_>, _>>()?;
         let change = self.stage_plan(base_generation, &plan, swapped, added)?;
-        check_writes(&change.surfaces, &batch.candidate)?;
+        // Survivors are written only at the commit; their throwaway copies
+        // already hold the batch's writes.
+        let mut directory = change.surfaces.clone();
+        for (id, surface) in &batch.provisional {
+            if directory.contains_key(id) && !plan_builds(&plan, id) {
+                directory.insert(id.clone(), surface.clone());
+            }
+        }
+        check_writes(&directory, &batch.candidate)?;
         Ok(PreparedEdits { change, plan })
     }
 
@@ -95,31 +103,42 @@ impl RunningInvention {
             .collect();
         let snapshot = self.snapshot();
         let mut report = report_for(&plan, batch.edit_count);
-        let mut announced = Vec::new();
         let mut actual = Vec::new();
+        // Every write, in batch order, so each lands on the module as the
+        // writes before it left it, as they were checked.
+        let mut failed: HashSet<(&str, &str)> = HashSet::new();
+        for candidate in &batch.candidate.control_writes {
+            let write = &candidate.write;
+            if built.contains(write.module_id.as_str()) {
+                continue;
+            }
+            // Unrecorded: the retained document already holds the value.
+            let written =
+                snapshot.set_control_transient(&write.module_id, &write.key, write.value.clone());
+            let Err(error) = written else {
+                continue;
+            };
+            if let Ok(value) = self.get_control(&write.module_id, &write.key) {
+                actual.push((write, value));
+            }
+            let mut error = match error {
+                GraphCommandError::ControlError(message) => message,
+                other => other.to_string(),
+            };
+            truncate_on_char_boundary(&mut error, MODULE_ERROR_BYTES);
+            report.controls_failed.push(ControlWriteFailure {
+                edit_index: candidate.edit_index,
+                module_id: write.module_id.clone(),
+                key: write.key.clone(),
+                error,
+            });
+            failed.insert((write.module_id.as_str(), write.key.as_str()));
+        }
+        // One report entry and one event per control, with its final value.
+        let mut announced = Vec::new();
         for candidate in batch.candidate.final_writes() {
             let write = &candidate.write;
-            let written = if built.contains(write.module_id.as_str()) {
-                Ok(())
-            } else {
-                // Unrecorded: the retained document already holds the value.
-                snapshot.set_control_transient(&write.module_id, &write.key, write.value.clone())
-            };
-            if let Err(error) = written {
-                if let Ok(value) = self.get_control(&write.module_id, &write.key) {
-                    actual.push((write, value));
-                }
-                let mut error = match error {
-                    GraphCommandError::ControlError(message) => message,
-                    other => other.to_string(),
-                };
-                truncate_on_char_boundary(&mut error, MODULE_ERROR_BYTES);
-                report.controls_failed.push(ControlWriteFailure {
-                    edit_index: candidate.edit_index,
-                    module_id: write.module_id.clone(),
-                    key: write.key.clone(),
-                    error,
-                });
+            if failed.contains(&(write.module_id.as_str(), write.key.as_str())) {
                 continue;
             }
             report
@@ -156,7 +175,8 @@ fn write_built(
     id: &str,
     candidate: &EditedCandidate,
 ) -> Result<(), RpcError> {
-    for candidate in candidate.final_writes() {
+    // Every write, in batch order, as they were checked.
+    for candidate in &candidate.control_writes {
         let write = &candidate.write;
         if write.module_id != id {
             continue;
@@ -170,6 +190,14 @@ fn write_built(
             .map_err(|reason| refused_write(candidate, reason))?;
     }
     Ok(())
+}
+
+/// Whether `plan` builds `id` afresh (added or rebuilt).
+fn plan_builds(plan: &ReloadPlan, id: &str) -> bool {
+    plan.added
+        .iter()
+        .chain(&plan.swapped)
+        .any(|spec| spec.id == id)
 }
 
 /// The report's structural part, from the plan.
