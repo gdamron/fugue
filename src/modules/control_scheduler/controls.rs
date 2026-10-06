@@ -48,6 +48,10 @@ struct ScheduleState {
     /// Runtime attachment: the scheduler's module id and the directory used
     /// to resolve schedule updates.
     attachment: Option<Attachment>,
+    /// The module id of a throwaway copy that is never attached (an edit
+    /// batch checks its writes on one), so it can still refuse a schedule
+    /// that targets itself.
+    unattached_id: Option<String>,
 }
 
 struct Attachment {
@@ -67,6 +71,7 @@ impl ControlSchedulerControls {
                     spec,
                     resolved: Vec::new(),
                     attachment: None,
+                    unattached_id: None,
                 }),
             }),
         }
@@ -102,6 +107,12 @@ impl ControlSchedulerControls {
         drop(state);
         self.shared.version.fetch_add(1, Ordering::Release);
         Ok(())
+    }
+
+    /// Names a throwaway copy that is never attached, for checks that need
+    /// its own id (a schedule may not target its own scheduler).
+    pub(crate) fn name_unattached(&self, own_id: &str) {
+        self.shared.state.lock().unwrap().unattached_id = Some(own_id.to_string());
     }
 
     /// Replaces the schedule from JSON text, re-resolving against the
@@ -234,6 +245,7 @@ impl ControlSurface for ControlSchedulerControls {
                         .attachment
                         .as_ref()
                         .map(|attachment| attachment.own_id.clone())
+                        .or_else(|| state.unattached_id.clone())
                 };
                 resolve_schedule(&spec, own_id.as_deref().unwrap_or(""), surfaces).map(drop)
             }

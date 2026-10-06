@@ -10,6 +10,7 @@ use crate::invention::edits::{EditFacts, ModuleFacts};
 use crate::invention::format::{Invention, ModuleSpec};
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::runtime::{ControlSurfaceInstance, RunningInvention};
+use crate::modules::control_scheduler::name_unattached_from_handles;
 use crate::traits::ControlSurfaceMap;
 use crate::{ControlKind, ControlValue, ModuleRegistry};
 
@@ -89,11 +90,13 @@ impl<'r> LiveFacts<'r> {
             .cloned()
             .ok_or_else(|| "the module is not in the authored document".to_string())?;
         let config = self.resolve(id, &module_type, &config)?;
-        let surface = self
+        let built = self
             .registry
             .for_validation()
             .build(&module_type, self.sample_rate, &config)
-            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+        name_unattached_from_handles(id, &built.handles);
+        let surface = built
             .control_surface
             .ok_or_else(|| "the module has no controls".to_string())?;
         restore_authored(surface.as_ref(), &config);
@@ -210,6 +213,7 @@ impl EditFacts for LiveFacts<'_> {
             .for_validation()
             .build(module_type, self.sample_rate, &config)
             .map_err(|error| error.to_string())?;
+        name_unattached_from_handles(id, &built.handles);
         let facts = ModuleFacts::from_instance(
             &built.module,
             built.control_surface.as_deref().map(|surface| surface as _),
@@ -241,12 +245,17 @@ impl EditFacts for LiveFacts<'_> {
         modules: &[&str],
     ) -> Result<Option<BTreeMap<String, ControlKind>>, String> {
         let surface = self.writable(id)?;
-        // What only the directory can tell (a schedule's targets), checked
-        // at this write, not just for the control's final value.
+        // The module's own rules, and what only the directory can tell (a
+        // schedule's targets), checked at this write, not just for the
+        // control's final value.
         let mut directory = self.directory_now(modules);
         directory.insert(id.to_string(), surface.clone());
         surface.validate_control(key, value, &directory)?;
-        surface.set_control(key, value.clone())?;
+        // Then made on the copy, so the edits after it see what it changed.
+        // A setter can still fail where the rules pass, on what is left to
+        // the write itself (a sample that does not load): that is reported
+        // when the write is made at commit, and the copy keeps its state.
+        let _ = surface.set_control(key, value.clone());
         let controls = surface
             .controls()
             .into_iter()

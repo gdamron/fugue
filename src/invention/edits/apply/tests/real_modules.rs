@@ -429,3 +429,56 @@ fn a_control_is_settled_by_its_last_write() {
         .unwrap();
     assert_eq!(tune.config["degree.6"], json!(13));
 }
+
+#[test]
+fn a_sample_that_does_not_load_is_reported_when_written_and_the_batch_commits() {
+    // What is left to the write itself, not to the module's rules, fails
+    // when the write is made, as for a standalone write.
+    let dir = tempfile::tempdir().unwrap();
+    let sample = dir.path().join("kick.wav");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: SAMPLE_RATE,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&sample, spec).unwrap();
+    for _ in 0..64 {
+        writer.write_sample(0i16).unwrap();
+    }
+    writer.finalize().unwrap();
+    let mut document = doc(BASE);
+    document.modules.push(crate::ModuleSpec {
+        id: "kit".into(),
+        module_type: "sample_kit".into(),
+        config: json!({ "samples": [{ "key": "kick", "asset": sample }] }),
+    });
+    let (mut running, _pump) = start_doc(document);
+    let report = running
+        .apply_edits(&[
+            set("osc1", "frequency", number(220.0)),
+            set("kit", "asset.0", text("/no/such/sample.wav")),
+        ])
+        .expect("the batch commits");
+    assert_eq!(report.controls_failed.len(), 1, "{report:?}");
+    assert_eq!(report.controls_failed[0].edit_index, 1);
+    assert_eq!(
+        running.get_control("osc1", "frequency").unwrap(),
+        number(220.0)
+    );
+}
+
+#[test]
+fn a_schedule_targeting_its_own_scheduler_is_refused_though_overwritten() {
+    let own = r#"[{ "at": 0, "module": "auto", "control": "step", "value": 1.0 }]"#;
+    let (mut running, _pump) = start(BASE);
+    let error = running
+        .apply_edits(&[
+            add("auto", "control_scheduler", json!({})),
+            set("auto", "schedule", text(own)),
+            set("auto", "schedule", text("[]")),
+        ])
+        .expect_err("a scheduler cannot target itself");
+    assert_eq!(error.code, RpcErrorCode::InvalidEdit);
+    assert_eq!(error.edit.as_ref().unwrap().index, 1);
+}

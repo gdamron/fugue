@@ -75,6 +75,21 @@ pub(crate) fn attach_from_handle(
     controls.attach(module_id, directory)
 }
 
+/// Names a throwaway scheduler copy that is never attached, via its
+/// type-erased `controls` handle (see
+/// [`ControlSchedulerControls::name_unattached`]). Does nothing for a module
+/// that is not a scheduler.
+pub(crate) fn name_unattached_from_handles(
+    module_id: &str,
+    handles: &[(String, Arc<dyn std::any::Any + Send + Sync>)],
+) {
+    for (_, handle) in handles {
+        if let Some(controls) = handle.downcast_ref::<ControlSchedulerControls>() {
+            controls.name_unattached(module_id);
+        }
+    }
+}
+
 /// Like [`attach_from_handle`], but resolves the schedule against `surfaces`
 /// (the directory as a pending graph change will leave it), so a scheduler
 /// may target a module added in the same change. Nothing outside the new
