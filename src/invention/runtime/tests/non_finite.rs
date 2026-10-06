@@ -4,6 +4,7 @@
 use super::*;
 use crate::rpc::{RpcError, RpcErrorCode};
 use crate::{ControlWrite, ControlWriteIntent};
+use std::time::Instant;
 
 const OSC_AND_DAC: &str = r#"{
     "version": "1.0.0",
@@ -153,8 +154,11 @@ fn a_conducting_script_cannot_write_a_non_finite_number() {
     }"#;
     let running = start(invention);
 
+    // Poll against a generous deadline: the script runs on its own tick
+    // thread, which a loaded machine may start late.
+    let deadline = Instant::now() + Duration::from_secs(10);
     let mut report = String::new();
-    for _ in 0..100 {
+    while Instant::now() < deadline {
         if let ControlValue::String(text) = running.get_control("code1", "last_error").unwrap() {
             if !text.is_empty() {
                 report = text;
@@ -166,6 +170,7 @@ fn a_conducting_script_cannot_write_a_non_finite_number() {
     let frequency = running.get_control("osc", "frequency").unwrap();
     running.stop();
 
+    assert!(!report.is_empty(), "script never reported its outcomes");
     let outcomes: Vec<&str> = report.split('|').collect();
     assert_eq!(outcomes.len(), 7, "{report}");
     for outcome in &outcomes {

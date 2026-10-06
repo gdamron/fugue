@@ -375,3 +375,29 @@ fn end_reached_observes_the_ended_control() {
     let err = endless.end_reached(None).unwrap_err();
     assert!(err.contains("never stop"), "{}", err);
 }
+
+#[test]
+fn render_engine_set_control_refuses_non_finite_numbers() {
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_json(SIMPLE_INVENTION).unwrap();
+
+    for value in [
+        ControlValue::Number(f32::NAN),
+        ControlValue::String("1e39".to_string()),
+    ] {
+        let error = engine
+            .set_control("osc", "frequency", value.clone())
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("control 'osc.frequency' expects a finite number"),
+            "{value:?}: {error}"
+        );
+        assert_eq!(
+            engine.get_control("osc", "frequency").unwrap(),
+            ControlValue::Number(440.0),
+            "{value:?} left the module unchanged"
+        );
+    }
+}
