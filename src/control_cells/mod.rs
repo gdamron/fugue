@@ -39,4 +39,6 @@ pub(crate) use seq::{CellIndex, CellRange, SeqCells, SeqEdit, SeqSnapshot};
 pub(crate) use value::CellValue;
 
 #[cfg(test)]
+mod loom_tests;
+#[cfg(test)]
 mod tests;

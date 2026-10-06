@@ -60,6 +60,8 @@ score-import = ["dep:roxmltree", "dep:zip"]
 spectrogram = ["dep:base64"]
 
 [dev-dependencies]
+# Exhaustive interleaving models of the control cells (src/control_cells).
+loom = "0.7"
 tempfile = "3.27.0"
 wit-component = "0.258.0"
 wit-bindgen = "0.61.0"
