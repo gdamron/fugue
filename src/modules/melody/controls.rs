@@ -169,10 +169,10 @@ pub struct MelodyControls {
     /// Root MIDI note number (0-127).
     pub(crate) root_note: Arc<AtomicU8>,
     /// Allowed scale degrees and their weights.
-    pub(crate) table: Arc<Mutex<DegreeTable>>,
+    pub(super) table: Arc<Mutex<DegreeTable>>,
     /// Bumped (while holding `table`) after every table edit; the audio
     /// thread re-copies the table when it observes a change.
-    pub(crate) table_version: Arc<AtomicU64>,
+    pub(super) table_version: Arc<AtomicU64>,
     /// Writes deferred while the table was busy, and a mirror of the table
     /// for reads that find it busy.
     pub(super) pending: Arc<Pending>,
@@ -234,7 +234,7 @@ impl MelodyControls {
     }
 
     /// Monotonic degree-table change counter.
-    pub(crate) fn table_version(&self) -> u64 {
+    pub(super) fn table_version(&self) -> u64 {
         self.table_version.load(Ordering::Acquire)
     }
 
