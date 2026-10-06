@@ -268,8 +268,8 @@ impl RenderEngine {
                 .ok_or_else(|| format!("unknown module: {}", module_id))?
         };
         // Coerce to the control's declared kind so a stringified write lands,
-        // and refuse a number that is not finite, matching the live runtime's
-        // behavior (see FUG-240).
+        // matching the live runtime's behavior (see FUG-240). Then refuse a
+        // number that is not finite, as the live runtime does.
         let value = control_surface.coerce_value(key, value);
         if let Some(message) = crate::rpc::non_finite_refusal(module_id, key, &value) {
             return Err(message.into());

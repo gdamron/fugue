@@ -202,13 +202,15 @@ impl RuntimeSnapshot {
     /// a scheduler running at musical rate cannot make every peer's structural
     /// edit stale (FUG-266).
     ///
-    /// Every write is coerced to the control's declared kind first, and a
-    /// number that is not finite after coercion (NaN, an infinity, or a value
-    /// too large for an `f32`, including the strings `"NaN"`, `"inf"` and
-    /// `"1e39"`) is refused as [`GraphCommandError::ControlError`] before it
-    /// reaches the module or the document: neither changes and no event is
-    /// emitted. A document cannot hold such a number (JSON would record
-    /// `null`), and DSP code fed one goes silent or blasts noise.
+    /// Every write is coerced to the control's declared kind first. A write
+    /// whose value is a number that is not finite after coercion (NaN, an
+    /// infinity, or a value too large for an `f32`; for a number control this
+    /// includes the strings `"NaN"`, `"inf"` and `"1e39"`) is refused as
+    /// [`GraphCommandError::ControlError`] before it reaches the module or the
+    /// document: neither changes and no event is emitted. A string control
+    /// coerces such a number to text (`"NaN"`) and accepts it. A document
+    /// cannot hold a non-finite number (JSON would record `null`), and DSP
+    /// code fed one goes silent or blasts noise.
     ///
     /// Internal reconstruction that must stay silent (a reload carrying values
     /// into the rebuilt graph) uses [`Self::set_control_recorded`] instead.
