@@ -250,7 +250,8 @@ impl RenderEngine {
         super::runtime::end_reached_in(&surfaces, source)
     }
 
-    /// Sets a runtime control on a module.
+    /// Sets a runtime control on a module, coercing it to the control's
+    /// declared kind and refusing a number that is not finite.
     pub fn set_control(
         &self,
         module_id: &str,
@@ -267,8 +268,12 @@ impl RenderEngine {
                 .ok_or_else(|| format!("unknown module: {}", module_id))?
         };
         // Coerce to the control's declared kind so a stringified write lands,
-        // matching the live runtime's behavior (see FUG-240).
+        // and refuse a number that is not finite, matching the live runtime's
+        // behavior (see FUG-240).
         let value = control_surface.coerce_value(key, value);
+        if let Some(message) = crate::rpc::non_finite_refusal(module_id, key, &value) {
+            return Err(message.into());
+        }
         control_surface.set_control(key, value)?;
         Ok(())
     }

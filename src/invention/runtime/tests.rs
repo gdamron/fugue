@@ -9,6 +9,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 mod editing;
+mod non_finite;
 #[cfg(feature = "spectrogram")]
 mod spectrum;
 
