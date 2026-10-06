@@ -360,6 +360,29 @@ fn a_control_number_compares_by_value_and_any_other_exactly() {
     assert!(plan.swapped.is_empty(), "{plan:?}");
     assert_eq!(plan.control_updates.len(), 1, "{plan:?}");
 
+    // Distinct integers never compare equal, even past f64 precision, and
+    // a float equals only the integer it spells exactly.
+    let number = |n: u64| serde_json::json!(n);
+    assert!(!same_integer(
+        &number(9_007_199_254_740_993),
+        &number(9_007_199_254_740_992)
+    ));
+    assert!(!same_integer(
+        &number(9_007_199_254_740_993),
+        &serde_json::json!(9_007_199_254_740_992.0)
+    ));
+    assert!(!same_integer(
+        &serde_json::json!(440),
+        &serde_json::json!(440.5)
+    ));
+    assert!(same_integer(
+        &serde_json::json!(-3),
+        &serde_json::json!(-3.0)
+    ));
+    let plan =
+        plan_for(serde_json::json!({ "frequency": 440, "seed": 16_777_217.0, "channels": 2.0 }));
+    assert!(plan.control_updates.is_empty(), "{plan:?}");
+
     // A non-control key's spelling may matter to its constructor (a count
     // read as an integer), so it still rebuilds.
     let plan =

@@ -326,15 +326,35 @@ fn control_updates_for(
         }
         // A control's number is the same value whatever its JSON spelling
         // (an authored write records 440 where a file may say 440.0), so
-        // only the spelling changed and there is nothing to write. Exact,
-        // and only for controls: a constructor may read a non-control key's
-        // spelling (an integer count) or a control's full precision (a seed).
-        if value.as_f64().is_some() && old.and_then(serde_json::Value::as_f64) == value.as_f64() {
+        // only the spelling changed and there is nothing to write. Only for
+        // controls: a constructor may read a non-control key's spelling (an
+        // integer count).
+        if old.is_some_and(|old| same_integer(old, value)) {
             continue;
         }
         updates.push((key.clone(), control_value));
     }
     Some(updates)
+}
+
+/// Whether one value is a JSON integer and the other a float spelling the
+/// same integer exactly (`440` and `440.0`). Lossless: two distinct integers
+/// never compare equal, however large (a melody seed keeps all 64 bits).
+fn same_integer(previous: &serde_json::Value, new: &serde_json::Value) -> bool {
+    let integer = |value: &serde_json::Value| {
+        value
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| value.as_u64().map(i128::from))
+    };
+    let spells = |integer: i128, float: f64| float.fract() == 0.0 && float as i128 == integer;
+    match (integer(previous), integer(new)) {
+        (Some(integer), None) => new.as_f64().is_some_and(|float| spells(integer, float)),
+        (None, Some(integer)) => previous
+            .as_f64()
+            .is_some_and(|float| spells(integer, float)),
+        _ => false,
+    }
 }
 
 pub(crate) fn scalar_control_value(value: &serde_json::Value) -> Option<ControlValue> {
