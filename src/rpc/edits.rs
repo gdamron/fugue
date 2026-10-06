@@ -366,7 +366,8 @@ pub struct ControlWriteFailure {
     pub edit_index: usize,
     pub module_id: String,
     pub key: String,
-    /// The module's reason.
+    /// The module's reason, cut to at most 256 bytes on a UTF-8 character
+    /// boundary.
     pub error: String,
 }
 
