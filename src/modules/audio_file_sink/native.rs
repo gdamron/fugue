@@ -119,6 +119,8 @@ impl AudioFileSink {
             error: Mutex::new(None),
             frames_written: AtomicUsize::new(0),
             join_handle: Mutex::new(None),
+            #[cfg(test)]
+            after_activation_check: Mutex::new(None),
         });
 
         let worker_shared = shared.clone();
@@ -204,7 +206,15 @@ pub(super) struct NativeAudioFileSinkShared {
     error: Mutex<Option<String>>,
     frames_written: AtomicUsize,
     join_handle: Mutex<Option<JoinHandle<()>>>,
+    /// Test-only: run by the writer thread on every pass, between the
+    /// activation check and the drain, with whether its file is open. A test
+    /// parks the writer here to hold a pass open at an exact point.
+    #[cfg(test)]
+    after_activation_check: Mutex<Option<PassHook>>,
 }
+
+#[cfg(test)]
+type PassHook = Box<dyn FnMut(bool) + Send>;
 
 impl NativeAudioFileSinkShared {
     #[inline]
@@ -412,6 +422,11 @@ fn write_worker(shared: Arc<NativeAudioFileSinkShared>, destination: Destination
             }
         }
 
+        #[cfg(test)]
+        if let Some(hook) = shared.after_activation_check.lock().unwrap().as_mut() {
+            hook(writer.is_some());
+        }
+
         let mut wrote = false;
         if let Some(writer) = writer.as_mut() {
             while let Some((left, right)) = shared.ring.pop() {
@@ -499,11 +514,43 @@ mod tests {
     }
 
     #[test]
+    fn a_sink_that_plays_and_stops_mid_pass_records_every_frame() {
+        // The writer must not take the stop for "drained" when the sink
+        // activates, pushes and stops after the pass checked activation.
+        // The hook parks the writer in exactly that window.
+        use std::sync::mpsc;
+
+        let path = temp_wav_path("stopped-mid-pass");
+        let (mut sink, handle) =
+            AudioFileSink::new(path.clone(), OutputFormat::Wav, 48_000, true, false, 64).unwrap();
+        let (parked_tx, parked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let mut parked = false;
+        *handle.shared.after_activation_check.lock().unwrap() = Some(Box::new(move |opened| {
+            if !opened && !parked {
+                parked = true;
+                parked_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }
+        }));
+
+        parked_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the writer reaches a pass that has not seen the activation");
+        sink.process(8);
+        drop(sink);
+        release_tx.send(()).unwrap();
+
+        let stats = handle.finish();
+        assert_eq!(stats.frames_written, 8);
+        assert!(path.exists());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
     fn a_sink_stopped_right_after_playing_records_every_frame() {
-        // A smoke test: the writer must not take the stop for "drained"
-        // before it has seen the activation and the frames pushed ahead of
-        // the stop. The window is too narrow to hit reliably; the ordering
-        // in `write_worker` is what closes it.
+        // A free-running smoke test of the same window; the test above
+        // reaches it deterministically.
         for attempt in 0..50 {
             let path = temp_wav_path("stopped");
             let (mut sink, handle) =
