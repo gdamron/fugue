@@ -2,6 +2,8 @@ use super::*;
 use crate::invention::builder::InventionBuilder;
 use crate::modules::NullBackend;
 
+mod authored;
+
 fn doc(json: &str) -> Invention {
     Invention::from_json(json).unwrap()
 }
