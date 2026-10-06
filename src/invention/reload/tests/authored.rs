@@ -1,6 +1,6 @@
 //! Reloading after an authored control write: the runtime's stored configs
-//! follow every authored write, so reload diffs against what the modules
-//! play (FUG-289).
+//! follow every authored write to a key they contain, so reload diffs
+//! against what the modules play (FUG-289).
 
 use serde_json::json;
 
@@ -22,6 +22,11 @@ fn set(module_id: &str, key: &str, value: ControlValue) -> StructuralEdit {
 
 fn stored_config(running: &RunningInvention, id: &str) -> serde_json::Value {
     running.state.lock().unwrap().modules[id].config.clone()
+}
+
+/// The retained document, as a save would write it.
+fn saved(running: &RunningInvention) -> Invention {
+    running.document().unwrap()
 }
 
 /// Asserts the reload changed no module structurally: nothing added,
@@ -53,6 +58,23 @@ fn reloading_the_original_restores_an_authored_value_through_a_control_write() {
 }
 
 #[test]
+fn an_authored_write_of_the_files_number_leaves_the_stored_config_alone() {
+    // The file has 440.0; the write records 440. JSON compares the two as
+    // different numbers, so storing it would make reloading the original
+    // write the same value back.
+    let mut running = start(BASE);
+    running
+        .set_control("osc1", "frequency", number(440.0))
+        .unwrap();
+    assert_eq!(stored_config(&running, "osc1")["frequency"], json!(440.0));
+
+    let report = running.reload(doc(BASE)).expect("diff applies");
+
+    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert_nothing_rebuilt(&report);
+}
+
+#[test]
 fn reloading_the_document_saved_after_an_authored_write_changes_nothing() {
     let mut running = start(BASE);
     // Fractional, so the f32's shortest decimal form must match on both
@@ -60,7 +82,7 @@ fn reloading_the_document_saved_after_an_authored_write_changes_nothing() {
     running
         .set_control("osc1", "frequency", number(261.63))
         .unwrap();
-    let saved = running.document().unwrap();
+    let saved = saved(&running);
 
     let report = running.reload(saved).expect("diff applies");
 
@@ -155,7 +177,7 @@ fn reloading_the_document_saved_after_an_apply_edits_batch_changes_nothing() {
         .expect("the batch commits");
     assert_eq!(report.rebuilt, ["osc2"]);
     assert_eq!(report.added, ["osc3"]);
-    let saved = running.document().unwrap();
+    let saved = saved(&running);
 
     let report = running.reload(saved).expect("diff applies");
 
@@ -172,29 +194,64 @@ fn reloading_the_document_saved_after_an_apply_edits_batch_changes_nothing() {
     }
 }
 
-#[test]
-fn an_authored_write_to_a_key_the_file_omits_is_restored_by_a_rebuild() {
-    // A known limit, pinned here rather than a goal: the authored write adds
-    // `frequency` to a config that left it to the module's default. The
-    // original file then lacks a key the stored config has, which reload
-    // can only express by rebuilding the module (its phase restarts). A
-    // control write back to the default would need a new kind of plan.
-    let original = BASE.replace(
+/// BASE with osc1's `frequency` left to the oscillator's default.
+fn base_without_osc1_frequency() -> String {
+    BASE.replace(
         r#""config": { "waveform": "sine", "frequency": 440.0 }"#,
         r#""config": { "waveform": "sine" }"#,
-    );
-    let mut running = start(&original);
-    let default = running.get_control("osc1", "frequency").unwrap();
-    assert_ne!(default, number(330.0));
-    running
-        .set_control("osc1", "frequency", number(330.0))
-        .unwrap();
+    )
+}
 
-    let report = running.reload(doc(&original)).expect("diff applies");
+#[test]
+fn an_authored_write_to_a_key_the_stored_config_lacks_survives_reloading_the_original() {
+    // A known limit, pinned here rather than a goal. A control key the
+    // stored config does not contain (a default the file omits, or an alias
+    // such as `type` for `waveform`) is not recorded there: adding it would
+    // make reloading the original see a removed key, which only a rebuild
+    // (a phase reset) can express. So, as before FUG-289, reloading the
+    // original leaves the authored value in place. Follow-up: restore such
+    // a key with a control write, to the value a fresh build from the file's
+    // config would have.
+    for (original, key, value) in [
+        (base_without_osc1_frequency(), "frequency", number(330.0)),
+        (
+            BASE.to_string(),
+            "type",
+            ControlValue::String("square".into()),
+        ),
+    ] {
+        let mut running = start(&original);
+        let stored = stored_config(&running, "osc1");
+        running.set_control("osc1", key, value.clone()).unwrap();
+        assert_eq!(stored_config(&running, "osc1"), stored, "{key}");
 
-    assert_eq!(report.swapped, ["osc1"]);
-    assert!(report.controls_updated.is_empty(), "{report:?}");
-    assert!(report.added.is_empty() && report.removed.is_empty());
-    assert_eq!(report.unchanged, 2);
-    assert_eq!(running.get_control("osc1", "frequency").unwrap(), default);
+        let report = running.reload(doc(&original)).expect("diff applies");
+
+        assert!(report.controls_updated.is_empty(), "{key}: {report:?}");
+        assert_nothing_rebuilt(&report);
+        assert_eq!(running.get_control("osc1", key).unwrap(), value, "{key}");
+    }
+}
+
+#[test]
+fn reloading_the_saved_document_after_a_write_to_a_key_the_stored_config_lacks_rebuilds_nothing() {
+    // The saved document has the key the stored config lacks: reload sees
+    // it added and writes it again as a control, redundantly.
+    for (original, key, value) in [
+        (base_without_osc1_frequency(), "frequency", number(330.0)),
+        (
+            BASE.to_string(),
+            "type",
+            ControlValue::String("square".into()),
+        ),
+    ] {
+        let mut running = start(&original);
+        running.set_control("osc1", key, value.clone()).unwrap();
+
+        let report = running.reload(saved(&running)).expect("diff applies");
+
+        assert_eq!(report.controls_updated, [format!("osc1.{key}")]);
+        assert_nothing_rebuilt(&report);
+        assert_eq!(running.get_control("osc1", key).unwrap(), value, "{key}");
+    }
 }

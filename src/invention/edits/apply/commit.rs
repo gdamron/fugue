@@ -98,10 +98,11 @@ impl RunningInvention {
         let mut previous = None;
         let committed = self.live.commit_with(change, |state| {
             previous = state.document.replace(document.clone());
-            // A survivor's stored config takes the batch's writes with the
-            // document, as an authored `set_control` does, so a later reload
-            // diffs against what the module plays. In batch order, so each
-            // control ends at its last write.
+            // A survivor's stored config takes the batch's writes to keys it
+            // already has with the document, as an authored `set_control`
+            // does (see `RuntimeState::write_stored_control`), so a later
+            // reload diffs against what the module plays. In batch order, so
+            // each control ends at its last write.
             for candidate in &batch.candidate.control_writes {
                 let write = &candidate.write;
                 if !built.contains(write.module_id.as_str()) {

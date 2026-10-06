@@ -47,17 +47,28 @@ pub(crate) fn write_control(document: &mut Invention, id: &str, key: &str, value
 
 /// Writes a control value into one config under the control's key, making
 /// the config an object first when it is not one.
-///
-/// The single conversion of a control value to config JSON: the retained
-/// document and the runtime's stored module configs both record an authored
-/// write through it, so a reload of a document saved after the write diffs
-/// equal to the stored config.
 pub(crate) fn write_config_control(
     config: &mut serde_json::Value,
     key: &str,
     value: &ControlValue,
 ) {
-    let value = match value {
+    if !config.is_object() {
+        *config = serde_json::Value::Object(serde_json::Map::new());
+    }
+    config
+        .as_object_mut()
+        .expect("config was just made an object")
+        .insert(key.to_string(), control_json(value));
+}
+
+/// A control value as config JSON.
+///
+/// The single conversion of a control value to config JSON: the retained
+/// document and the runtime's stored module configs both record an authored
+/// write through it, so a reload of a document saved after the write diffs
+/// equal to the stored config.
+pub(crate) fn control_json(value: &ControlValue) -> serde_json::Value {
+    match value {
         // Integral values stay JSON integers (a step count written as
         // 16.0 would spuriously differ from the authored 16 on every
         // reload diff); fractional values widen through the shortest
@@ -75,12 +86,5 @@ pub(crate) fn write_config_control(
             .unwrap_or(serde_json::Value::Null),
         ControlValue::Bool(flag) => serde_json::json!(flag),
         ControlValue::String(text) => serde_json::json!(text),
-    };
-    if !config.is_object() {
-        *config = serde_json::Value::Object(serde_json::Map::new());
     }
-    config
-        .as_object_mut()
-        .expect("config was just made an object")
-        .insert(key.to_string(), value);
 }

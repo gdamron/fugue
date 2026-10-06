@@ -14,7 +14,9 @@ pub struct RuntimeModuleInfo {
     pub id: String,
     /// Registered module type used to build this instance.
     pub module_type: String,
-    /// Original config payload used to construct the module.
+    /// The config the module was built from (assets resolved), plus later
+    /// authored control writes to keys it contains and reload control
+    /// updates.
     pub config: serde_json::Value,
 }
 
@@ -97,7 +99,8 @@ impl RuntimeState {
     }
 
     /// Records an authored control write: in the retained document, and in
-    /// the module's stored config, with the same conversion.
+    /// the module's stored config when that config already has the key (see
+    /// [`Self::write_stored_control`]).
     ///
     /// Reload plans by diffing the new resolved document against the stored
     /// configs, so a stored config that missed an authored write would make
@@ -108,12 +111,38 @@ impl RuntimeState {
         self.write_stored_control(id, key, value);
     }
 
-    /// Writes a control value into a module's stored config only, for a
-    /// caller that records the retained document by other means. Does
-    /// nothing when no module has that id.
+    /// Writes an authored control value into a module's stored config only,
+    /// for a caller that records the retained document by other means.
+    ///
+    /// Only a key the stored config already contains is written. A control
+    /// key can be absent from it (a default the file omits, an alias such as
+    /// an oscillator's `type` for its `waveform`, an indexed key such as a
+    /// mixer's `level.2` from its `levels` array), and adding one would make
+    /// reloading the original file see that key removed, which reload can
+    /// only express by rebuilding the module, resetting its phase. Leaving
+    /// the key set alone means this can never introduce a rebuild; such a
+    /// write stays unrecorded here and survives that reload, as it always
+    /// has.
+    ///
+    /// A number equal to the stored one is left as stored, so a write of
+    /// 440 over an authored `440.0` does not make the next reload see a
+    /// difference in the JSON alone. Does nothing when no module has `id`.
     pub(crate) fn write_stored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
-        if let Some(info) = self.modules.get_mut(id) {
-            authored_document::write_config_control(&mut info.config, key, value);
+        let Some(stored) = self
+            .modules
+            .get_mut(id)
+            .and_then(|info| info.config.as_object_mut())
+            .and_then(|config| config.get_mut(key))
+        else {
+            return;
+        };
+        let value = authored_document::control_json(value);
+        let same_number = matches!(
+            (stored.as_f64(), value.as_f64()),
+            (Some(stored), Some(new)) if stored == new
+        );
+        if !same_number {
+            *stored = value;
         }
     }
 
