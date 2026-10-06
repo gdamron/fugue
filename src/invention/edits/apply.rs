@@ -9,13 +9,16 @@
 //!    authored document, checked against the running modules' ports and
 //!    controls and the current registry.
 //! 3. A throwaway build of the whole candidate with the registry as loaded,
-//!    so development definitions are never read from disk again.
+//!    so development definitions are never read from disk again, in
+//!    validation mode, so it activates no output (a recording's file, say).
 //! 4. A plan from the retained document to the candidate (see
 //!    [`plan::plan_edits`]), refused if it reaches past the batch.
 //! 5. Preparation: added and rebuilt modules built from their final
-//!    configs, the next topology compiled, every control write checked.
+//!    configs and given the batch's writes, the next topology compiled,
+//!    every control write checked.
 //! 6. Commit: one publication, the candidate retained with it, then the
 //!    control writes on survivors and one `ControlChanged` per control.
+//!    Added and rebuilt modules took theirs in step 5, when built.
 //!
 //! When another change publishes during steps 4 to 6 (a script's edit, say),
 //! the batch is planned and prepared again from the same candidate, as a
@@ -29,7 +32,7 @@ mod tests;
 
 use std::collections::HashMap;
 
-use super::{apply_to_candidate, EditedCandidate};
+use super::{apply_to_candidate, CandidateWrite, EditedCandidate};
 use crate::invention::builder::InventionBuilder;
 use crate::invention::format::Invention;
 use crate::invention::reload::RELOAD_ATTEMPTS;
@@ -39,7 +42,7 @@ use crate::rpc::{
     EditOp, RpcError, RpcErrorCode, StructuralEdit, MODULE_ERROR_BYTES,
 };
 use crate::traits::ControlSurfaceMap;
-use facts::{KeptModules, LiveFacts};
+use facts::LiveFacts;
 
 /// A batch that passed its checks and validation, ready to plan.
 pub(super) struct Batch {
@@ -49,8 +52,9 @@ pub(super) struct Batch {
     /// validation build read it: what added and rebuilt modules are built
     /// from.
     resolved: HashMap<String, serde_json::Value>,
-    /// Modules built while the batch was checked, reused when unchanged.
-    kept: KeptModules,
+    /// A throwaway copy of each running module the batch writes, with its
+    /// writes made in order: what the prepared check sees for survivors.
+    provisional: ControlSurfaceMap,
 }
 
 /// Why one attempt at a batch did not commit.
@@ -103,34 +107,50 @@ fn build_failed(what: &str, mut reason: String) -> RpcError {
     )
 }
 
-/// Checks every write the batch makes against `surfaces`, the directory as
-/// the batch leaves it, survivors and new modules alike, refusing the first
-/// the module's setter would refuse at its edit's index. Every write is
-/// checked, not only each control's last one, so an edit the module refuses
-/// fails the batch even when a later edit overwrites it.
+/// Checks each control's final value against `surfaces`, the directory as
+/// the batch leaves it, refusing the first the module would refuse at its
+/// edit's index. Every write was already made in order on the module as the
+/// batch had it (see [`EditFacts::write_control`]); this pass adds what only
+/// the whole directory can tell, such as whether a schedule's targets
+/// resolve. A control the module no longer lists at the end (a degree a
+/// later edit's count hid) is skipped: it was checked where it was written.
+///
+/// [`EditFacts::write_control`]: super::EditFacts::write_control
 fn check_writes(surfaces: &ControlSurfaceMap, candidate: &EditedCandidate) -> Result<(), RpcError> {
-    for candidate in &candidate.control_writes {
+    for candidate in candidate.final_writes() {
         let write = &candidate.write;
-        let refuse = |mut reason: String| {
-            truncate_on_char_boundary(&mut reason, MODULE_ERROR_BYTES);
-            RpcError::invalid_edit(EditFailure::new(
-                candidate.edit_index,
-                EditOp::SetControl,
-                EditFailureReason::InvalidControlValue,
-                format!(
-                    "module '{}' refused the value for control '{}': {reason}",
-                    write.module_id, write.key
-                ),
-            ))
-        };
+        let refuse = |reason: String| refused_write(candidate, reason);
         let surface = surfaces
             .get(&write.module_id)
             .ok_or_else(|| refuse("the module has no controls".to_string()))?;
+        // A control the module no longer has at the end (a degree a later
+        // count hid, or a development's alias for one) was checked where it
+        // was written.
+        let listed = surface.controls().iter().any(|meta| meta.key == write.key);
+        if !listed || surface.get_control(&write.key).is_err() {
+            continue;
+        }
         surface
             .validate_control(&write.key, &write.value, surfaces)
             .map_err(refuse)?;
     }
     Ok(())
+}
+
+/// The `invalid_edit` refusal for a control write the module refused, at
+/// its edit's index.
+fn refused_write(candidate: &CandidateWrite, mut reason: String) -> RpcError {
+    let write = &candidate.write;
+    truncate_on_char_boundary(&mut reason, MODULE_ERROR_BYTES);
+    RpcError::invalid_edit(EditFailure::new(
+        candidate.edit_index,
+        EditOp::SetControl,
+        EditFailureReason::InvalidControlValue,
+        format!(
+            "module '{}' refused the value for control '{}': {reason}",
+            write.module_id, write.key
+        ),
+    ))
 }
 
 impl RunningInvention {
@@ -141,8 +161,11 @@ impl RunningInvention {
     /// validated as a whole before anything is published. Modules the batch
     /// does not touch keep their instance and phase. Control values written
     /// to surviving modules are applied right after the publication is
-    /// queued, so one may be heard up to one block before the new topology;
-    /// added and rebuilt modules are built with theirs. After the commit,
+    /// queued, so one may be heard up to one block before the new topology.
+    /// Added and rebuilt modules are built from their final configs, and the
+    /// batch's writes to them are made through their setters as soon as they
+    /// are built, before they are prepared: a control's key need not be the
+    /// config key its module is built from. After the commit,
     /// one `ControlChanged` per control the batch wrote is announced to the
     /// event sink. The caller announces the new topology after that.
     ///
@@ -177,7 +200,7 @@ impl RunningInvention {
                 "the running invention keeps no authored document to edit; nothing was applied",
             )
         })?;
-        let mut facts = LiveFacts::new(self);
+        let mut facts = LiveFacts::new(self, &document);
         let candidate =
             apply_to_candidate(&document, edits, &mut facts).map_err(RpcError::invalid_edit)?;
         // Checked first against the directory as the batch will leave it, so
@@ -186,13 +209,13 @@ impl RunningInvention {
         // into a config the module type parses). Checked again against the
         // prepared directory before publishing.
         check_writes(&facts.directory_after(&candidate.document), &candidate)?;
-        let kept = facts.into_kept();
+        let provisional = facts.into_provisional();
         let resolved = self.validate_candidate(&candidate.document)?;
-        let mut batch = Batch {
+        let batch = Batch {
             edit_count: edits.len(),
             candidate,
             resolved,
-            kept,
+            provisional,
         };
 
         let mut attempt = 1;
@@ -201,7 +224,7 @@ impl RunningInvention {
             // this read is caught when the prepared change publishes.
             let base = self.live.generation();
             let result = self
-                .prepare_edits(base, &mut batch)
+                .prepare_edits(base, &batch)
                 .and_then(|prepared| self.commit_edits(prepared, &batch));
             match result {
                 Ok(report) => return Ok(report),
@@ -216,14 +239,17 @@ impl RunningInvention {
     /// module's config with its assets resolved. Built with the registry as
     /// loaded, which already carries every development's factory, so the
     /// candidate's developments are not registered (or read from disk)
-    /// again. Changes nothing.
+    /// again, nested ones included. Built in validation mode, so no module
+    /// activates an output: a sink recording to a file is not built again
+    /// over the file it is writing. Changes nothing.
     fn validate_candidate(
         &self,
         candidate: &Invention,
     ) -> Result<HashMap<String, serde_json::Value>, RpcError> {
         let mut probe = candidate.clone();
         probe.developments.clear();
-        let builder = InventionBuilder::with_registry(self.sample_rate, self.registry.clone());
+        let builder =
+            InventionBuilder::with_registry(self.sample_rate, self.registry.for_validation());
         let (built, _) = builder
             .build(probe)
             .map_err(|error| build_failed("does not build", error.to_string()))?;

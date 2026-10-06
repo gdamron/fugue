@@ -36,6 +36,17 @@ fn validation_refuses_exactly_what_setters_refuse() {
         let Ok(built) = registry.build(type_id, 48_000, &serde_json::json!({})) else {
             continue;
         };
+        // A scheduler's setter needs the runtime it is attached to; every
+        // write a runtime makes reaches an attached one.
+        let directory = Arc::new(Mutex::new(ControlSurfaceMap::new()));
+        if type_id == crate::modules::control_scheduler::CONTROL_SCHEDULER_TYPE_ID {
+            crate::modules::control_scheduler::attach_from_handle(
+                "sched",
+                built.handles.first().map(|(_, handle)| handle),
+                &directory,
+            )
+            .unwrap();
+        }
         let Some(surface) = built.control_surface else {
             continue;
         };
@@ -180,4 +191,30 @@ fn a_development_validates_inner_writes_against_its_own_directory() {
             .is_err_and(|err| err.contains("runtime is gone")),
         "{set:?}"
     );
+}
+
+#[test]
+fn a_scheduler_not_yet_attached_validates_its_targets() {
+    // An edit batch checks a scheduler it adds before attaching it.
+    let registry = ModuleRegistry::default();
+    let built = registry
+        .build("control_scheduler", 48_000, &serde_json::json!({}))
+        .unwrap();
+    let surface = built.control_surface.unwrap();
+    let schedule = ControlValue::String(
+        r#"[{ "at": 0, "module": "osc", "control": "frequency", "value": 220.0 }]"#.to_string(),
+    );
+    let mut candidate = ControlSurfaceMap::new();
+    let osc = registry.build("oscillator", 48_000, &serde_json::json!({}));
+    candidate.insert("osc".to_string(), osc.unwrap().control_surface.unwrap());
+
+    assert!(surface
+        .validate_control("schedule", &schedule, &candidate)
+        .is_ok());
+    assert!(surface
+        .validate_control("schedule", &schedule, &ControlSurfaceMap::new())
+        .is_err());
+    assert!(surface
+        .validate_control("schedule", &ControlValue::String("{".into()), &candidate)
+        .is_err());
 }

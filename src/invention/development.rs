@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use super::builder::InventionBuilder;
+use super::reload::LoadedDevelopments;
 
 mod compiled_graph;
 mod control_surface;
@@ -26,6 +27,9 @@ pub(crate) struct DevelopmentFactory {
     pub(crate) definition: Invention,
     pub(crate) registry: ModuleRegistry,
     pub(crate) registered: Arc<Mutex<HashSet<String>>>,
+    /// The developments `definition` declares, as loaded with the outermost
+    /// document: nested developments build from these, never from disk again.
+    pub(crate) loaded: Arc<LoadedDevelopments>,
 }
 
 impl ModuleFactory for DevelopmentFactory {
@@ -43,6 +47,22 @@ impl ModuleFactory for DevelopmentFactory {
             definition: self.definition.clone(),
             registry: self.registry.for_inspection(),
             registered: Arc::new(Mutex::new(self.registered.lock().unwrap().clone())),
+            loaded: self.loaded.clone(),
+        }
+        .build(sample_rate, config)
+    }
+
+    fn build_for_validation(
+        &self,
+        sample_rate: u32,
+        config: &serde_json::Value,
+    ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        Self {
+            name: self.name.clone(),
+            definition: self.definition.clone(),
+            registry: self.registry.for_validation(),
+            registered: Arc::new(Mutex::new(self.registered.lock().unwrap().clone())),
+            loaded: self.loaded.clone(),
         }
         .build(sample_rate, config)
     }
@@ -56,6 +76,7 @@ impl ModuleFactory for DevelopmentFactory {
             sample_rate,
             self.registry.clone(),
             self.registered.clone(),
+            self.loaded.clone(),
         );
         let (runtime, _handles) = builder.build(self.definition.clone())?;
         let (module, control_surface) =
@@ -86,6 +107,7 @@ fn apply_development_config(
         serde_json::Value::Object(map) => map,
         _ => return Err(format!("Development '{}' config must be an object", name).into()),
     };
+    let mut pending = Vec::with_capacity(map.len());
     for (key, value) in map {
         let value = crate::invention::reload::scalar_control_value(value).ok_or_else(|| {
             format!(
@@ -93,11 +115,40 @@ fn apply_development_config(
                 name, key
             )
         })?;
-        surface
-            .set_control(key, value)
-            .map_err(|err| format!("Development '{}' config: {}", name, err))?;
+        pending.push((key, value));
     }
-    Ok(())
+    // Keys are applied in passes, a failed one again after the rest, since
+    // one control can size what another reaches (a count and a degree
+    // behind it). A key still failing whose control is listed but cannot be
+    // read is one a count hides now: it was written before the count shrank,
+    // and is left out. Any other failure fails the build.
+    loop {
+        let before = pending.len();
+        let mut failed = Vec::new();
+        for (key, value) in pending {
+            if let Err(error) = surface.set_control(key, value.clone()) {
+                failed.push((key, value, error));
+            }
+        }
+        if failed.is_empty() {
+            return Ok(());
+        }
+        if failed.len() == before {
+            let listed = surface.controls();
+            for (key, _, error) in failed {
+                let hidden =
+                    listed.iter().any(|meta| &meta.key == key) && surface.get_control(key).is_err();
+                if !hidden {
+                    return Err(format!("Development '{}' config: {}", name, error).into());
+                }
+            }
+            return Ok(());
+        }
+        pending = failed
+            .into_iter()
+            .map(|(key, value, _)| (key, value))
+            .collect();
+    }
 }
 
 pub(crate) struct DevelopmentModule {

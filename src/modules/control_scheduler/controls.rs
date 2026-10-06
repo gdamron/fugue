@@ -48,6 +48,10 @@ struct ScheduleState {
     /// Runtime attachment: the scheduler's module id and the directory used
     /// to resolve schedule updates.
     attachment: Option<Attachment>,
+    /// The module id of a throwaway copy that is never attached (an edit
+    /// batch checks its writes on one), so it can still refuse a schedule
+    /// that targets itself.
+    unattached_id: Option<String>,
 }
 
 struct Attachment {
@@ -67,6 +71,7 @@ impl ControlSchedulerControls {
                     spec,
                     resolved: Vec::new(),
                     attachment: None,
+                    unattached_id: None,
                 }),
             }),
         }
@@ -104,16 +109,25 @@ impl ControlSchedulerControls {
         Ok(())
     }
 
+    /// Names a throwaway copy that is never attached, for checks that need
+    /// its own id (a schedule may not target its own scheduler).
+    pub(crate) fn name_unattached(&self, own_id: &str) {
+        self.shared.state.lock().unwrap().unattached_id = Some(own_id.to_string());
+    }
+
     /// Replaces the schedule from JSON text, re-resolving against the
     /// attached directory. On error the current schedule is left unchanged.
+    ///
+    /// A scheduler not yet attached (one an edit batch is building) keeps
+    /// the parsed schedule, and resolves it when it is attached.
     pub fn set_schedule_json(&self, json: &str) -> Result<(), String> {
         let spec = parse_schedule_json(json)?;
         let (own_id, directory) = {
-            let state = self.shared.state.lock().unwrap();
-            let attachment = state
-                .attachment
-                .as_ref()
-                .ok_or("control_scheduler is not attached to a runtime")?;
+            let mut state = self.shared.state.lock().unwrap();
+            let Some(attachment) = state.attachment.as_ref() else {
+                state.spec = spec;
+                return Ok(());
+            };
             (attachment.own_id.clone(), attachment.directory.clone())
         };
         let directory = directory
@@ -221,15 +235,19 @@ impl ControlSurface for ControlSchedulerControls {
         match key {
             "schedule" => {
                 let spec = parse_schedule_json(value.as_string()?)?;
+                // A scheduler an edit batch is still adding is checked before
+                // it is attached, so it does not know its own id yet. Its
+                // targets are still checked against `surfaces`; that it does
+                // not target itself is checked again once it is attached.
                 let own_id = {
                     let state = self.shared.state.lock().unwrap();
-                    let attachment = state
+                    state
                         .attachment
                         .as_ref()
-                        .ok_or("control_scheduler is not attached to a runtime")?;
-                    attachment.own_id.clone()
+                        .map(|attachment| attachment.own_id.clone())
+                        .or_else(|| state.unattached_id.clone())
                 };
-                resolve_schedule(&spec, &own_id, surfaces).map(drop)
+                resolve_schedule(&spec, own_id.as_deref().unwrap_or(""), surfaces).map(drop)
             }
             "step" => crate::traits::read_only(key),
             _ => Err(format!("Unknown control: {}", key)),

@@ -1,6 +1,6 @@
 //! Applying one edit at a time to the candidate document.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
 use crate::invention::authored_document;
@@ -27,6 +27,9 @@ pub(super) struct Candidate<'f, F> {
     facts: &'f mut F,
     /// Facts for modules this batch added, which the runtime does not know.
     added: HashMap<String, ModuleFacts>,
+    /// The controls a running module lists after this batch's writes to it
+    /// so far, when a write changed them (a count that adds degrees, say).
+    controls_now: HashMap<String, BTreeMap<String, ControlKind>>,
     control_writes: Vec<CandidateWrite>,
     named_modules: BTreeSet<String>,
     /// Ids in the document the batch started from.
@@ -46,6 +49,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             document,
             facts,
             added: HashMap::new(),
+            controls_now: HashMap::new(),
             control_writes: Vec::new(),
             named_modules: BTreeSet::new(),
             original,
@@ -140,6 +144,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         self.document
             .connections
             .retain(|conn| conn.from != id && conn.to != id);
+        self.controls_now.remove(id);
         if self.added.remove(id).is_some() {
             self.facts.forget(id);
         }
@@ -219,6 +224,15 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         value: &ControlValue,
     ) -> Applied {
         self.named_modules.insert(module_id.to_string());
+        // A running module's writes are checked as authored, from its first.
+        if self.exists(module_id)
+            && !self.added.contains_key(module_id)
+            && !self.controls_now.contains_key(module_id)
+        {
+            if let Some(controls) = self.facts.authored_controls(module_id) {
+                self.controls_now.insert(module_id.to_string(), controls);
+            }
+        }
         let facts = self.module_facts(module_id)?;
         let Some(kind) = facts.controls.get(key) else {
             let keys: Vec<String> = facts.controls.keys().cloned().collect();
@@ -248,6 +262,35 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         if let Some(message) = non_finite_refusal(module_id, key, &applied) {
             return Err(Refusal(EditFailureReason::InvalidControlValue, message));
         }
+        // Made on the module as the batch has it so far, so a value its
+        // setter refuses at this point is refused here, and the edits after
+        // this one see the controls it adds or removes.
+        let modules: Vec<&str> = self
+            .document
+            .modules
+            .iter()
+            .map(|spec| spec.id.as_str())
+            .collect();
+        let controls = self
+            .facts
+            .write_control(module_id, key, &applied, &modules)
+            .map_err(|reason| {
+                Refusal(
+                    EditFailureReason::InvalidControlValue,
+                    format!(
+                        "module '{module_id}' refused the value for control '{key}': {}",
+                        bounded(&reason, MODULE_ERROR_BYTES)
+                    ),
+                )
+            })?;
+        if let Some(controls) = controls {
+            match self.added.get_mut(module_id) {
+                Some(facts) => facts.controls = controls,
+                None => {
+                    self.controls_now.insert(module_id.to_string(), controls);
+                }
+            }
+        }
         authored_document::write_control(&mut self.document, module_id, key, &applied);
         self.control_writes.push(CandidateWrite {
             edit_index: index,
@@ -273,12 +316,16 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         if let Some(facts) = self.added.get(id) {
             return Ok(facts.clone());
         }
-        self.facts.module(id).ok_or_else(|| {
+        let mut facts = self.facts.module(id).ok_or_else(|| {
             Refusal(
                 EditFailureReason::UnknownModule,
                 format!("module '{id}' is in the document but is not running"),
             )
-        })
+        })?;
+        if let Some(controls) = self.controls_now.get(id) {
+            facts.controls = controls.clone();
+        }
+        Ok(facts)
     }
 }
 

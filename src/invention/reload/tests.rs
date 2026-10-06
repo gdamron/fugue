@@ -8,7 +8,9 @@ fn doc(json: &str) -> Invention {
 
 fn start(json: &str) -> RunningInvention {
     let (runtime, _) = InventionBuilder::new(48_000).build(doc(json)).unwrap();
-    runtime.start_with_backend(NullBackend::new(48_000)).unwrap()
+    runtime
+        .start_with_backend(NullBackend::new(48_000))
+        .unwrap()
 }
 
 const BASE: &str = r#"{
@@ -372,4 +374,48 @@ fn connection_diff_skips_endpoints_of_removed_modules() {
     // remove_module cleans the connection up; no explicit disconnect planned.
     assert!(plan.removed_connections.is_empty());
     assert!(plan.added_connections.is_empty());
+}
+
+/// Two siblings each declare a nested `voice` from their own file; editing
+/// only the second file rebuilds only the second sibling's instance.
+#[test]
+fn reload_detects_a_change_to_either_siblings_nested_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let voice = |frequency: f64| {
+        serde_json::json!({
+            "version": "1.0.0",
+            "modules": [{ "id": "osc", "type": "oscillator", "config": { "frequency": frequency } }],
+            "connections": [],
+            "outputs": [{ "name": "audio", "from": "osc", "from_port": "audio" }]
+        })
+        .to_string()
+    };
+    let low_path = dir.path().join("low_voice.json");
+    let high_path = dir.path().join("high_voice.json");
+    std::fs::write(&low_path, voice(110.0)).unwrap();
+    std::fs::write(&high_path, voice(880.0)).unwrap();
+    let wrapper = |path: &std::path::Path| {
+        serde_json::json!({
+            "version": "1.0.0",
+            "developments": [{ "name": "voice", "path": path }],
+            "modules": [{ "id": "v", "type": "voice" }],
+            "connections": [],
+            "outputs": [{ "name": "audio", "from": "v", "from_port": "audio" }]
+        })
+    };
+    let root = serde_json::json!({
+        "version": "1.0.0",
+        "developments": [
+            { "name": "low", "definition": wrapper(&low_path) },
+            { "name": "high", "definition": wrapper(&high_path) }
+        ],
+        "modules": [{ "id": "a", "type": "low" }, { "id": "b", "type": "high" }],
+        "connections": []
+    })
+    .to_string();
+    let mut running = start(&root);
+
+    std::fs::write(&high_path, voice(990.0)).unwrap();
+    let report = running.reload(doc(&root)).expect("diff applies");
+    assert_eq!(report.swapped, vec!["b"]);
 }
