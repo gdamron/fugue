@@ -91,8 +91,12 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         sinks,
         edges,
         topology,
+        remap: SurvivorRemap::default(),
     })
 }
+
+/// The module order of [`base_graph`].
+const BASE_IDS: [&str; 3] = ["osc1", "osc2", "dac"];
 
 /// The control thread's ends of a graph's link.
 struct ControlEnds {
@@ -144,9 +148,10 @@ fn ids(graph: &SignalGraph) -> Vec<&str> {
     graph.modules.keys().map(String::as_str).collect()
 }
 
-/// Replaces osc1, removes osc2, adds osc3, and rewires.
+/// Replaces osc1, removes osc2, adds osc3, and rewires, mapped against the
+/// base graph.
 fn mixed_publication() -> Box<Publication> {
-    publication(
+    let mut next = publication(
         vec![
             ("osc1", Next::Prepared(osc(220.0))),
             ("dac", Next::Survivor("dac")),
@@ -157,7 +162,14 @@ fn mixed_publication() -> Box<Publication> {
             edge("osc3", "osc1", "fm"),
             edge("osc1", "dac", "audio"),
         ],
-    )
+    );
+    next.map_survivors(BASE_IDS);
+    next
+}
+
+/// The feedback carry stored for module `id`.
+fn carry(graph: &SignalGraph, id: &str) -> Vec<f32> {
+    graph.out_prev[graph.modules.get_index_of(id).unwrap()].clone()
 }
 
 #[test]
@@ -165,12 +177,19 @@ fn installing_a_publication_neither_allocates_nor_frees() {
     let mut graph = base_graph();
     let ends = link(&mut graph, 4);
     render(&mut graph, 2);
+    let dac_carry = carry(&graph, "dac");
+    assert!(dac_carry.iter().any(|v| *v != 0.0));
     drop(ends.publications.put(mixed_publication()));
 
     let ((), allocs, frees) = allocator_events(|| graph.ensure_process_order());
     assert_eq!((allocs, frees), (0, 0), "installing touched the allocator");
     assert!(!graph.topo_dirty, "installing fell back to recompiling");
     assert_eq!(ids(&graph), ["osc1", "dac", "osc3"]);
+    // The surviving dac's carry came across (at a new index); the rebuilt
+    // osc1 and the new osc3 start from zero.
+    assert_eq!(carry(&graph, "dac"), dac_carry);
+    assert!(carry(&graph, "osc1").iter().all(|v| *v == 0.0));
+    assert!(carry(&graph, "osc3").iter().all(|v| *v == 0.0));
     assert_eq!(ends.applied.load(Ordering::Relaxed), 1);
 
     // The next block runs the new topology without touching the allocator.
@@ -253,7 +272,7 @@ fn an_untaken_publication_folds_into_the_next() {
 
     // The first adds osc3; the second, prepared on top of it, keeps osc3 as
     // a survivor and adds osc4.
-    drop(ends.publications.put(publication(
+    let mut first = publication(
         vec![
             ("osc1", Next::Survivor("oscillator")),
             ("osc2", Next::Survivor("oscillator")),
@@ -261,7 +280,9 @@ fn an_untaken_publication_folds_into_the_next() {
             ("osc3", Next::Prepared(osc(330.0))),
         ],
         vec![edge("osc3", "dac", "audio")],
-    )));
+    );
+    first.map_survivors(BASE_IDS);
+    drop(ends.publications.put(first));
     let mut next = publication(
         vec![
             ("osc1", Next::Survivor("oscillator")),
@@ -272,8 +293,12 @@ fn an_untaken_publication_folds_into_the_next() {
         ],
         vec![edge("osc3", "dac", "audio"), edge("osc4", "dac", "audio")],
     );
+    next.map_survivors(["osc1", "osc2", "dac", "osc3"]);
     drop(next.absorb(ends.publications.take().unwrap()));
     assert_eq!(next.survivor_count(), 3);
+    // The folded remap maps from the graph still running, which has no osc3.
+    let remap: Vec<_> = next.remap.survivors().collect();
+    assert_eq!(remap, [(0, 0), (1, 1), (2, 2)]);
     drop(ends.publications.put(next));
 
     assert_eq!(counted_block(&mut graph), (0, 0));
@@ -323,4 +348,59 @@ fn queued_input_writes_reach_the_module() {
     let osc1 = graph.modules.get_mut("osc1").unwrap().module_mut();
     let port = osc1.input_port_index("frequency").unwrap();
     assert!(osc1.input_block_mut(port).iter().all(|v| *v == 0.25));
+}
+
+#[test]
+fn folding_composes_survivor_remaps_against_the_running_graph() {
+    // The first removes osc1 and rebuilds osc2; the second, prepared on top
+    // of it, keeps both osc2 and dac as survivors and adds osc1 back.
+    let mut first = publication(
+        vec![
+            ("osc2", Next::Prepared(osc(550.0))),
+            ("dac", Next::Survivor("dac")),
+        ],
+        vec![edge("osc2", "dac", "audio")],
+    );
+    first.map_survivors(BASE_IDS);
+    assert_eq!(first.remap.len(), 3);
+    assert_eq!(
+        (first.remap.get(0), first.remap.get(1), first.remap.get(2)),
+        (None, None, Some(1))
+    );
+
+    let mut next = publication(
+        vec![
+            ("dac", Next::Survivor("dac")),
+            ("osc2", Next::Survivor("oscillator")),
+            ("osc1", Next::Prepared(osc(440.0))),
+        ],
+        vec![edge("osc2", "dac", "audio"), edge("osc1", "dac", "audio")],
+    );
+    next.map_survivors(["osc2", "dac"]);
+    assert_eq!((next.remap.get(0), next.remap.get(1)), (Some(1), Some(0)));
+    drop(next.absorb(first));
+
+    // Only the running dac survives both: the running osc1 was removed, and
+    // osc2 is the instance the first publication built.
+    assert_eq!(next.remap.len(), 3);
+    let remap: Vec<_> = next.remap.survivors().collect();
+    assert_eq!(remap, [(2, 0)]);
+    assert_eq!(next.survivor_count(), 1);
+}
+
+#[test]
+fn an_unmapped_publication_carries_nothing() {
+    let mut graph = base_graph();
+    let ends = link(&mut graph, 4);
+    render(&mut graph, 2);
+    let mut unmapped = mixed_publication();
+    unmapped.remap = SurvivorRemap::default();
+    drop(ends.publications.put(unmapped));
+
+    // A remap that does not cover the running graph is not trusted: the
+    // install stays clean and every carry starts from zero.
+    let ((), allocs, frees) = allocator_events(|| graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0));
+    assert!(!graph.topo_dirty);
+    assert!(graph.out_prev.iter().flatten().all(|v| *v == 0.0));
 }

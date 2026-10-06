@@ -11,7 +11,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::invention::graph::{
-    compile_topology, vacant, Publication, RoutingConnection, TopologyFacts,
+    compile_topology, vacant, Publication, RoutingConnection, SurvivorRemap, TopologyFacts,
 };
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
@@ -457,6 +457,7 @@ fn build_publication(
         sinks,
         edges: mirror.edges.clone(),
         topology,
+        remap: SurvivorRemap::default(),
     })
 }
 
