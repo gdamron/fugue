@@ -369,6 +369,9 @@ impl ModuleFactory for MixerFactory {
             .unwrap_or_default();
 
         let controls = MixerControls::new_with_config(channels, &levels, &pans, master);
+        crate::factory::apply_control_keys(&controls, config, |key| {
+            key.starts_with("level.") || key.starts_with("pan.")
+        })?;
         let mixer = Mixer::new_with_controls(channels, controls.clone());
 
         Ok(ModuleBuildResult {

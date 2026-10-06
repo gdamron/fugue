@@ -58,6 +58,41 @@ impl ModuleFactory for MelodyFactory {
             controls.set_note_weights(weights);
         }
 
+        crate::factory::apply_control_keys(&controls, config, |key| key == "degree_count")?;
+        // Degrees and weights written to single positions, as a document
+        // records them; one past the count stays hidden until it grows. Taken
+        // as the setters take them: a number, or a number as text.
+        let written = |prefix: &str| -> Result<Vec<(usize, f64)>, String> {
+            let mut written = Vec::new();
+            for (key, value) in config.as_object().into_iter().flatten() {
+                let Some(index) = key.strip_prefix(prefix) else {
+                    continue;
+                };
+                let refuse = |reason: &str| format!("config '{key}': {reason}");
+                let index = index
+                    .parse::<usize>()
+                    .map_err(|_| refuse("invalid index"))?;
+                let value = match value {
+                    serde_json::Value::Number(number) => number.as_f64(),
+                    serde_json::Value::String(text) => text.trim().parse::<f64>().ok(),
+                    _ => None,
+                }
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| refuse("expected a number"))?;
+                written.push((index, value));
+            }
+            Ok(written)
+        };
+        controls.restore_written(
+            written("degree.")?
+                .into_iter()
+                // Through f32, as the setter takes a control value.
+                .map(|(index, value)| (index, value as f32 as i32)),
+            written("note_weight.")?
+                .into_iter()
+                .map(|(index, value)| (index, value as f32)),
+        );
+
         let melody = MelodyGenerator::new(controls.clone());
 
         Ok(ModuleBuildResult {

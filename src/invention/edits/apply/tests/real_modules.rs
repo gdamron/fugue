@@ -16,6 +16,18 @@ fn text(value: &str) -> ControlValue {
     ControlValue::String(value.to_string())
 }
 
+/// Waits, up to two seconds, for a recorder's writer thread to create
+/// `path`: it opens the file once the recorder first processes audio.
+fn appears(path: &std::path::Path) -> bool {
+    for _ in 0..200 {
+        if path.exists() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    false
+}
+
 fn start_doc(document: Invention) -> (RunningInvention, Pump) {
     let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
     start_manual(runtime)
@@ -44,6 +56,7 @@ fn checking_a_batch_never_builds_a_recording_sink_over_its_file() {
     let path = dir.path().join("take.wav");
     let (mut running, pump) = start_doc(recording(&path));
     pump.render(4);
+    assert!(appears(&path));
     // The recorder keeps writing through its open file. Were the batch's
     // check to build the document's recorder again, it would create the
     // file anew (truncating it, had it still been there).
@@ -82,7 +95,7 @@ fn a_refused_batch_never_opens_the_file_of_a_recorder_it_adds() {
         .apply_edits(&[add("rec", "audio_file_sink", json!({ "path": path }))])
         .expect("the batch commits");
     pump.render(1);
-    assert!(path.exists());
+    assert!(appears(&path));
 }
 
 #[test]
@@ -273,6 +286,70 @@ fn a_batch_checks_nested_developments_as_loaded_not_as_on_disk() {
     running
         .apply_edits(&[add("pad2", "outer_voice", serde_json::Value::Null)])
         .expect("the batch commits");
+}
+
+/// A melody's degrees and weights as a module rebuilt from its retained
+/// document config has them, against the live module.
+fn assert_document_rebuilds_the_live_melody(running: &RunningInvention) {
+    let document = running.document().unwrap();
+    let config = &document
+        .modules
+        .iter()
+        .find(|spec| spec.id == "tune")
+        .unwrap()
+        .config;
+    let rebuilt = crate::ModuleRegistry::default()
+        .build("melody", SAMPLE_RATE, config)
+        .unwrap()
+        .control_surface
+        .unwrap();
+    let count = rebuilt.get_control("degree_count").unwrap();
+    assert_eq!(
+        Some(count.clone()),
+        running.get_control("tune", "degree_count").ok()
+    );
+    let ControlValue::Number(count) = count else {
+        unreachable!()
+    };
+    for i in 0..count as usize {
+        for key in [format!("degree.{i}"), format!("note_weight.{i}")] {
+            assert_eq!(
+                rebuilt.get_control(&key).ok(),
+                running.get_control("tune", &key).ok(),
+                "{key} in {config}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_saved_melody_rebuilds_what_shrinking_and_growing_left_playing() {
+    let mut document = doc(BASE);
+    document.modules.push(crate::ModuleSpec {
+        id: "tune".into(),
+        module_type: "melody".into(),
+        config: json!({ "scale_degrees": [0, 2, 4, 5, 7, 9, 11], "note_weights": [4, 1, 2] }),
+    });
+    let (mut running, _pump) = start_doc(document);
+    running
+        .set_control("tune", "degree.6", number(1.0))
+        .unwrap();
+    running
+        .set_control("tune", "degree_count", number(3.0))
+        .unwrap();
+    running
+        .apply_edits(&[
+            set("tune", "degree.1", number(3.0)),
+            set("tune", "degree_count", number(10.0)),
+        ])
+        .expect("the batch commits");
+    running
+        .set_control("tune", "note_weight.8", number(5.0))
+        .unwrap();
+    running
+        .set_control("tune", "degree_count", number(9.0))
+        .unwrap();
+    assert_document_rebuilds_the_live_melody(&running);
 }
 
 /// BASE with a melody of `scale`.
@@ -571,4 +648,39 @@ fn an_added_module_recovers_from_an_overwritten_sample_failure() {
         running.get_control("kit", "asset.0").unwrap(),
         text(&snare.to_string_lossy())
     );
+}
+#[test]
+fn the_document_and_events_carry_what_a_write_left_after_later_writes() {
+    // A shrinking count hides a degree written before it and the regrowing
+    // count shows it as written, so the document and the event, which carry
+    // the written value, match what the module plays.
+    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    let events = super::Events::listen(&running);
+    running
+        .apply_edits(&[
+            set("tune", "degree.6", number(12.0)),
+            set("tune", "degree_count", number(3.0)),
+            set("tune", "degree_count", number(7.0)),
+        ])
+        .expect("the batch commits");
+    let live = running.get_control("tune", "degree.6").unwrap();
+    let document = running.document().unwrap();
+    let tune = document
+        .modules
+        .iter()
+        .find(|spec| spec.id == "tune")
+        .unwrap();
+    let ControlValue::Number(live_number) = live.clone() else {
+        unreachable!()
+    };
+    assert_eq!(
+        tune.config["degree.6"].as_f64(),
+        Some(f64::from(live_number))
+    );
+    let announced = events
+        .control_changes()
+        .into_iter()
+        .find(|(module, key, _)| module == "tune" && key == "degree.6")
+        .map(|(_, _, value)| value);
+    assert_eq!(announced, Some(live));
 }

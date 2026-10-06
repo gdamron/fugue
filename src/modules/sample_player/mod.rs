@@ -43,6 +43,9 @@ impl ModuleFactory for SamplePlayerFactory {
             loop_enabled,
             elastic,
         )?;
+        crate::factory::apply_control_keys(&controls, config, |key| {
+            key == "loop" || key == "pitch_ratio"
+        })?;
         let player = SamplePlayer::new_with_controls(controls.clone());
 
         Ok(ModuleBuildResult {
