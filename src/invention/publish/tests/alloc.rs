@@ -133,5 +133,8 @@ fn an_install_that_carries_feedback_state_stays_clean() {
     rig.live
         .connect(edge("aux", "audio", "osc2", "am"))
         .unwrap();
-    assert_clean_install(&mut rig, "folded install that carries");
+    let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0), "folded install that carries");
+    assert!(!rig.graph.topo_dirty);
+    assert_eq!(carries(&rig), before);
 }
