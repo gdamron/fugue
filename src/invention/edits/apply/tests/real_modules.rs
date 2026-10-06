@@ -430,23 +430,29 @@ fn a_control_is_settled_by_its_last_write() {
     assert_eq!(tune.config["degree.6"], json!(13));
 }
 
-#[test]
-fn a_sample_that_does_not_load_is_reported_when_written_and_the_batch_commits() {
-    // What is left to the write itself, not to the module's rules, fails
-    // when the write is made, as for a standalone write.
-    let dir = tempfile::tempdir().unwrap();
-    let sample = dir.path().join("kick.wav");
+/// Writes a short silent mono WAV named `name` in `dir`.
+fn silent_wav(dir: &tempfile::TempDir, name: &str) -> std::path::PathBuf {
+    let path = dir.path().join(name);
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: SAMPLE_RATE,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-    let mut writer = hound::WavWriter::create(&sample, spec).unwrap();
+    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
     for _ in 0..64 {
         writer.write_sample(0i16).unwrap();
     }
     writer.finalize().unwrap();
+    path
+}
+
+#[test]
+fn a_sample_that_does_not_load_is_reported_when_written_and_the_batch_commits() {
+    // What is left to the write itself, not to the module's rules, fails
+    // when the write is made, as for a standalone write.
+    let dir = tempfile::tempdir().unwrap();
+    let sample = silent_wav(&dir, "kick.wav");
     let mut document = doc(BASE);
     document.modules.push(crate::ModuleSpec {
         id: "kit".into(),
@@ -481,4 +487,31 @@ fn a_schedule_targeting_its_own_scheduler_is_refused_though_overwritten() {
         .expect_err("a scheduler cannot target itself");
     assert_eq!(error.code, RpcErrorCode::InvalidEdit);
     assert_eq!(error.edit.as_ref().unwrap().index, 1);
+}
+
+#[test]
+fn a_sample_can_be_replaced_when_the_one_it_loaded_no_longer_builds() {
+    // The running module's authored config no longer builds (as when the
+    // package its sample came from has been removed since it loaded); its
+    // write is checked on the running module instead.
+    let dir = tempfile::tempdir().unwrap();
+    let old = silent_wav(&dir, "old.wav");
+    let new = silent_wav(&dir, "new.wav");
+    let mut document = doc(BASE);
+    document.modules.push(crate::ModuleSpec {
+        id: "smp".into(),
+        module_type: "sample_player".into(),
+        config: json!({ "source": old }),
+    });
+    let (mut running, _pump) = start_doc(document);
+    running.state.lock().unwrap().document_write_control(
+        "smp",
+        "source",
+        &text(&dir.path().join("gone.wav").to_string_lossy()),
+    );
+
+    let report = running
+        .apply_edits(&[set("smp", "source", text(&new.to_string_lossy()))])
+        .expect("the new sample is valid");
+    assert!(report.controls_failed.is_empty(), "{report:?}");
 }

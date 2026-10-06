@@ -1,7 +1,7 @@
 //! What a batch is checked against on a running invention: its modules'
 //! ports and controls, and its current registry.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use indexmap::IndexMap;
 
@@ -36,6 +36,10 @@ pub(super) struct LiveFacts<'r> {
     /// far made on it in order. The running module is never written before
     /// the commit.
     provisional: HashMap<String, ControlSurfaceInstance>,
+    /// Running modules whose authored config no longer builds a copy (a
+    /// sample file deleted since it loaded): their writes are checked on
+    /// the running module instead.
+    unbuildable: HashSet<String>,
 }
 
 impl<'r> LiveFacts<'r> {
@@ -63,6 +67,7 @@ impl<'r> LiveFacts<'r> {
             described: HashMap::new(),
             authored,
             provisional: HashMap::new(),
+            unbuildable: HashSet::new(),
         }
     }
 
@@ -89,12 +94,24 @@ impl<'r> LiveFacts<'r> {
             .get(id)
             .cloned()
             .ok_or_else(|| "the module is not in the authored document".to_string())?;
-        let config = self.resolve(id, &module_type, &config)?;
-        let built = self
-            .registry
-            .for_validation()
-            .build(&module_type, self.sample_rate, &config)
-            .map_err(|error| error.to_string())?;
+        if self.unbuildable.contains(id) {
+            return Err("the module's authored config does not build".to_string());
+        }
+        let built = self.resolve(id, &module_type, &config).and_then(|config| {
+            self.registry
+                .for_validation()
+                .build(&module_type, self.sample_rate, &config)
+                .map_err(|error| error.to_string())
+        });
+        let built = match built {
+            Ok(built) => built,
+            Err(error) => {
+                if self.surfaces.contains_key(id) {
+                    self.unbuildable.insert(id.to_string());
+                }
+                return Err(error);
+            }
+        };
         name_unattached_from_handles(id, &built.handles);
         let surface = built
             .control_surface
@@ -244,7 +261,22 @@ impl EditFacts for LiveFacts<'_> {
         value: &ControlValue,
         modules: &[&str],
     ) -> Result<Option<BTreeMap<String, ControlKind>>, String> {
-        let surface = self.writable(id)?;
+        let surface = match self.writable(id) {
+            Ok(surface) => surface,
+            // A running module whose authored config no longer builds (a
+            // sample file deleted since it loaded) is checked as it runs,
+            // write by write, without tracking what each write changes.
+            Err(_) if self.unbuildable.contains(id) => {
+                let live = self
+                    .surfaces
+                    .get(id)
+                    .cloned()
+                    .ok_or("the module has no controls")?;
+                live.validate_control(key, value, &self.directory_now(modules))?;
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
         // The module's own rules, and what only the directory can tell (a
         // schedule's targets), checked at this write, not just for the
         // control's final value.
