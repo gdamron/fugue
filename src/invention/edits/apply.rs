@@ -123,7 +123,11 @@ fn check_writes(surfaces: &ControlSurfaceMap, candidate: &EditedCandidate) -> Re
         let surface = surfaces
             .get(&write.module_id)
             .ok_or_else(|| refuse("the module has no controls".to_string()))?;
-        if !surface.controls().iter().any(|meta| meta.key == write.key) {
+        // A control the module no longer has at the end (a degree a later
+        // count hid, or a development's alias for one) was checked where it
+        // was written.
+        let listed = surface.controls().iter().any(|meta| meta.key == write.key);
+        if !listed || surface.get_control(&write.key).is_err() {
             continue;
         }
         surface

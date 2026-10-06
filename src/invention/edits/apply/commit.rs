@@ -136,7 +136,17 @@ impl RunningInvention {
                 report
                     .controls_written
                     .push(WrittenControl::new(&write.module_id, &write.key));
-                announced.push(write);
+                // A later write can change an earlier one's effect (a count
+                // that hides then shows a degree, say): what the module holds
+                // now is what the document records and the event carries.
+                let value = match self.get_control(&write.module_id, &write.key) {
+                    Ok(value) if value != write.value => {
+                        actual.push((write, value.clone()));
+                        value
+                    }
+                    _ => write.value.clone(),
+                };
+                announced.push((write, value));
                 continue;
             };
             if let Ok(value) = self.get_control(&write.module_id, &write.key) {
@@ -160,8 +170,8 @@ impl RunningInvention {
         }
 
         self.follow_up(committed);
-        for write in announced {
-            snapshot.emit_control_changed(&write.module_id, &write.key, write.value.clone());
+        for (write, value) in announced {
+            snapshot.emit_control_changed(&write.module_id, &write.key, value);
         }
         Ok(report)
     }
@@ -179,7 +189,10 @@ fn write_built(
     id: &str,
     candidate: &EditedCandidate,
 ) -> Result<(), RpcError> {
-    // Every write, in batch order, as they were checked.
+    // Every write, in batch order, as they were checked. Each control is
+    // settled by its last write: a failure a later write made good (a sample
+    // replaced by one that loads) does not refuse the batch.
+    let mut last: HashMap<&str, Option<String>> = HashMap::new();
     for candidate in &candidate.control_writes {
         let write = &candidate.write;
         if write.module_id != id {
@@ -189,9 +202,16 @@ fn write_built(
             .surface
             .as_ref()
             .ok_or_else(|| refused_write(candidate, "the module has no controls".to_string()))?;
-        surface
-            .set_control(&write.key, write.value.clone())
-            .map_err(|reason| refused_write(candidate, reason))?;
+        let outcome = surface.set_control(&write.key, write.value.clone()).err();
+        last.insert(write.key.as_str(), outcome);
+    }
+    for candidate in candidate.final_writes() {
+        if candidate.write.module_id != id {
+            continue;
+        }
+        if let Some(Some(reason)) = last.get(candidate.write.key.as_str()) {
+            return Err(refused_write(candidate, reason.clone()));
+        }
     }
     Ok(())
 }

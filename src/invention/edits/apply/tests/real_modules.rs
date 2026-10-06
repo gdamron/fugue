@@ -515,3 +515,95 @@ fn a_sample_can_be_replaced_when_the_one_it_loaded_no_longer_builds() {
         .expect("the new sample is valid");
     assert!(report.controls_failed.is_empty(), "{report:?}");
 }
+
+#[test]
+fn the_document_and_events_carry_what_a_write_left_after_later_writes() {
+    // A later count can change an earlier degree write's effect; whatever
+    // the module holds at the end is what is recorded and announced.
+    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    let events = super::Events::listen(&running);
+    running
+        .apply_edits(&[
+            set("tune", "degree.6", number(12.0)),
+            set("tune", "degree_count", number(3.0)),
+            set("tune", "degree_count", number(7.0)),
+        ])
+        .expect("the batch commits");
+    let live = running.get_control("tune", "degree.6").unwrap();
+    let document = running.document().unwrap();
+    let tune = document
+        .modules
+        .iter()
+        .find(|spec| spec.id == "tune")
+        .unwrap();
+    let ControlValue::Number(live_number) = live.clone() else {
+        unreachable!()
+    };
+    assert_eq!(
+        tune.config["degree.6"].as_f64(),
+        Some(f64::from(live_number))
+    );
+    let announced = events
+        .control_changes()
+        .into_iter()
+        .find(|(module, key, _)| module == "tune" && key == "degree.6")
+        .map(|(_, _, value)| value);
+    assert_eq!(announced, Some(live));
+}
+
+#[test]
+fn a_development_alias_hidden_by_a_later_count_is_not_refused() {
+    // Writing a degree through a development's alias, then shrinking the
+    // count through another, is valid in order.
+    let document: Invention = serde_json::from_value(json!({
+        "version": "1.0.0",
+        "developments": [{
+            "name": "tuned",
+            "definition": {
+                "version": "1.0.0",
+                "modules": [{ "id": "m", "type": "melody", "config": { "scale_degrees": [0, 1, 2, 3, 4, 5, 6] } }],
+                "connections": [],
+                "outputs": [{ "name": "freq", "from": "m", "from_port": "frequency" }],
+                "controls": [
+                    { "key": "deg6", "module": "m", "control": "degree.6" },
+                    { "key": "count", "module": "m", "control": "degree_count" }
+                ]
+            }
+        }],
+        "modules": [{ "id": "t", "type": "tuned" }, { "id": "dac", "type": "dac" }],
+        "connections": []
+    }))
+    .unwrap();
+    let (mut running, _pump) = start_doc(document);
+    running
+        .apply_edits(&[
+            set("t", "deg6", number(12.0)),
+            set("t", "count", number(3.0)),
+        ])
+        .expect("each write is valid where it stands");
+    assert_eq!(running.get_control("t", "count").unwrap(), number(3.0));
+}
+
+#[test]
+fn an_added_module_recovers_from_an_overwritten_sample_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let kick = silent_wav(&dir, "kick.wav");
+    let snare = silent_wav(&dir, "snare.wav");
+    let (mut running, _pump) = start(BASE);
+    let report = running
+        .apply_edits(&[
+            add(
+                "kit",
+                "sample_kit",
+                json!({ "samples": [{ "key": "kick", "asset": kick }] }),
+            ),
+            set("kit", "asset.0", text("/no/such/sample.wav")),
+            set("kit", "asset.0", text(&snare.to_string_lossy())),
+        ])
+        .expect("the last write loads");
+    assert!(report.controls_failed.is_empty(), "{report:?}");
+    assert_eq!(
+        running.get_control("kit", "asset.0").unwrap(),
+        text(&snare.to_string_lossy())
+    );
+}
