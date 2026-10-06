@@ -290,8 +290,8 @@ fn is_empty_config(value: &serde_json::Value) -> bool {
 /// expressed as controls (a removed key, a non-scalar value, or a key the
 /// module does not expose as a control) and the module must be swapped.
 ///
-/// Numbers are compared by value, and a control's by its f32, so a delta in
-/// the JSON spelling alone (`440` against `440.0`) is no update at all.
+/// A control key's number is compared by value, so a delta in its JSON
+/// spelling alone (`440` against `440.0`) is no update at all.
 fn control_updates_for(
     previous: &serde_json::Value,
     new: &serde_json::Value,
@@ -317,37 +317,24 @@ fn control_updates_for(
     let mut updates = Vec::new();
     for (key, value) in new {
         let old = previous.get(key);
-        if old.is_some_and(|old| same_value(old, value)) {
+        if old == Some(value) {
             continue;
         }
         let control_value = scalar_control_value(value)?;
         if !has_control(key) {
             return None;
         }
-        // A control holds an f32, so a number it already holds is not a
-        // change: writing it again would be a no-op.
-        if let (Some(old), ControlValue::Number(number)) =
-            (old.and_then(|old| old.as_f64()), &control_value)
-        {
-            if old as f32 == *number {
-                continue;
-            }
+        // A control's number is the same value whatever its JSON spelling
+        // (an authored write records 440 where a file may say 440.0), so
+        // only the spelling changed and there is nothing to write. Exact,
+        // and only for controls: a constructor may read a non-control key's
+        // spelling (an integer count) or a control's full precision (a seed).
+        if value.as_f64().is_some() && old.and_then(serde_json::Value::as_f64) == value.as_f64() {
+            continue;
         }
         updates.push((key.clone(), control_value));
     }
     Some(updates)
-}
-
-/// Whether two config values are the same, treating JSON numbers by value:
-/// an integer `440` (as an authored write records it) and `440.0` (as a file
-/// may spell it) are equal. Exact, so two distinct numbers never compare
-/// equal, whatever key holds them.
-fn same_value(previous: &serde_json::Value, new: &serde_json::Value) -> bool {
-    previous == new
-        || matches!(
-            (previous.as_f64(), new.as_f64()),
-            (Some(previous), Some(new)) if previous == new
-        )
 }
 
 pub(crate) fn scalar_control_value(value: &serde_json::Value) -> Option<ControlValue> {
