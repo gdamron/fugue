@@ -10,6 +10,7 @@ mod alloc;
 mod carry;
 mod drops;
 pub(crate) mod probe;
+mod writes;
 
 use probe::{DropProbeFactory, DROP_PROBE};
 
