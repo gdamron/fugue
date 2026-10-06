@@ -3,7 +3,6 @@
 //! [`crate::invention::publish`]); direct input writes are queued.
 
 use super::{GraphCommandError, RunningInvention};
-use crate::invention::graph::InputWrite;
 use crate::invention::handles::InventionHandles;
 use crate::invention::publish::{edge, Committed};
 
@@ -11,20 +10,26 @@ impl RunningInvention {
     /// Sets a module's input port to a specific value.
     ///
     /// The write is queued to the audio thread and applied at the start of
-    /// the next block. This is fire-and-forget: if the module or port doesn't
-    /// exist, the write is silently ignored on the audio thread. Fails when
-    /// the audio thread is gone or has stopped draining writes.
+    /// the next block. An unknown module or input port is reported at once,
+    /// with [`GraphCommandError::UnknownModule`] or
+    /// [`GraphCommandError::InvalidPort`]. Fails with
+    /// [`GraphCommandError::QueueFull`] when the audio thread has not drained
+    /// earlier writes, and [`GraphCommandError::AudioThreadStopped`] when it
+    /// is gone.
+    ///
+    /// A write racing a structural edit reaches the same module instance it
+    /// was resolved against; it is dropped if that instance is removed or
+    /// replaced before the write is applied, and also when two or more edits
+    /// publish before the audio thread's next block (the write's view of the
+    /// graph was folded away).
     pub fn set_module_input(
         &self,
         module_id: impl Into<String>,
         port: impl Into<String>,
         value: f32,
     ) -> Result<(), GraphCommandError> {
-        self.live.write_input(InputWrite {
-            module_id: module_id.into(),
-            port: port.into(),
-            value,
-        })
+        self.live
+            .write_input(&module_id.into(), &port.into(), value)
     }
 
     /// Adds a new module to the running graph.

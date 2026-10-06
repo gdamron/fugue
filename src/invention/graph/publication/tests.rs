@@ -92,6 +92,7 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         edges,
         topology,
         remap: SurvivorRemap::default(),
+        generation: 0,
     })
 }
 
@@ -114,6 +115,7 @@ fn link(graph: &mut SignalGraph, retire_capacity: usize) -> ControlEnds {
     graph.link = Some(AudioLink::new(
         publications.clone(),
         input_rx,
+        16,
         retire,
         applied.clone(),
     ));
@@ -332,21 +334,30 @@ fn a_survivor_missing_from_the_running_graph_falls_back_to_recompiling() {
         .all(|r| r.from_module != ghost));
 }
 
+/// The oscillators' `frequency` input index.
+fn frequency_port(graph: &SignalGraph) -> usize {
+    graph.modules["osc1"]
+        .module()
+        .input_port_index("frequency")
+        .unwrap()
+}
+
 #[test]
 fn queued_input_writes_reach_the_module() {
     let mut graph = base_graph();
     let ends = link(&mut graph, 4);
     ends.inputs
         .try_send(InputWrite {
-            module_id: "osc1".to_string(),
-            port: "frequency".to_string(),
+            generation: 0,
+            module_idx: 0,
+            port_idx: frequency_port(&graph),
             value: 0.25,
         })
         .unwrap();
-    let ((), allocs, _) = allocator_events(|| graph.ensure_process_order());
-    assert_eq!(allocs, 0);
+    let ((), allocs, frees) = allocator_events(|| graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0));
+    let port = frequency_port(&graph);
     let osc1 = graph.modules.get_mut("osc1").unwrap().module_mut();
-    let port = osc1.input_port_index("frequency").unwrap();
     assert!(osc1.input_block_mut(port).iter().all(|v| *v == 0.25));
 }
 

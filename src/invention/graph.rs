@@ -52,7 +52,9 @@ mod scc;
 pub(crate) use compile::{compile_topology, TopologyFacts};
 pub(crate) use mailbox::Mailbox;
 pub(crate) use master::MasterObservers;
-pub(crate) use publication::{vacant, AudioLink, InputWrite, Publication, SurvivorRemap};
+pub(crate) use publication::{
+    vacant, AudioLink, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
+};
 
 /// An incremental mutation applied directly to a graph no audio thread owns
 /// (offline render). A live graph changes only by publication.

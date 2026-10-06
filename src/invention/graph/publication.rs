@@ -12,9 +12,9 @@
 //! allocates, frees, or locks, and no block ever plays part of a
 //! publication.
 //!
-//! Queued input writes are the one exception: applying one drops its two id
-//! strings on the audio thread, so a block frees at most twice the input
-//! queue's capacity.
+//! Queued input writes are plain `Copy` records resolved on the control
+//! thread to module and port indices (see [`InputWrite`]), so applying one
+//! never allocates, frees, or locks either.
 //!
 //! Both channels stay lock-free on the audio side only while the control
 //! side uses `try_send` and `try_recv` exclusively. A control thread parked
@@ -53,6 +53,9 @@ pub(crate) struct Publication {
     /// Where each running module lands in `modules`, if it survives. Set by
     /// the publisher as it publishes (see [`Self::map_survivors`]).
     pub(crate) remap: SurvivorRemap,
+    /// The publisher generation this publication creates. Set by the
+    /// publisher as it publishes; a folded publication keeps the newer one.
+    pub(crate) generation: u64,
 }
 
 impl Publication {
@@ -140,14 +143,57 @@ pub(crate) fn vacant() -> ModuleInstance {
     GraphModule::Module(Box::new(Vacant))
 }
 
+/// Longest input port name a queued write can target. Applying a write
+/// copies the port's name into a stack buffer of this size (see
+/// [`SignalGraph::apply_input`]); the control side refuses longer names.
+pub(crate) const MAX_INPUT_PORT_NAME: usize = 64;
+
 /// A direct write to a module's input port, delivered at the next block.
+///
+/// Resolved on the control thread, under the publisher lock, against the
+/// publisher's mirror as of `generation`: `module_idx` is the module's
+/// position in that mirror, which is the audio graph's module order once
+/// that generation is installed, and `port_idx` its position in the
+/// module's inputs. Plain data, so receiving and applying one never
+/// allocates or frees.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct InputWrite {
-    pub(crate) module_id: String,
-    pub(crate) port: String,
+    pub(crate) generation: u64,
+    pub(crate) module_idx: usize,
+    pub(crate) port_idx: usize,
     pub(crate) value: f32,
 }
 
+/// What the audio thread does with a queued write this block.
+enum Disposition {
+    /// Apply it at this module index of the running graph.
+    Apply(usize),
+    /// Keep it: it targets a publication not yet installed.
+    Hold,
+    /// Drop it: its target went away, or its order can no longer be mapped.
+    Drop,
+}
+
 /// The audio thread's end of a live graph's link to the control thread.
+///
+/// It tracks the generation of the installed publication, so each queued
+/// input write (tagged with the generation it was resolved against) is
+/// applied to the right instance:
+///
+/// - tagged with the installed generation: applied at its index;
+/// - tagged with the generation installed just before this block's install:
+///   mapped through that publication's [`SurvivorRemap`], and dropped when
+///   its module was removed or rebuilt (its target went away);
+/// - tagged with a newer generation: its publication is published but not
+///   yet installed (a retirement is held, say), so it waits in a fixed,
+///   preallocated ring and is applied right after that install. When the
+///   ring is full the channel is left undrained, so the control side sees
+///   [`crate::invention::runtime::GraphCommandError::QueueFull`] rather than
+///   a write being lost;
+/// - anything older: dropped. Only a generation folded into a newer
+///   publication before the audio thread took it ([`Publication::absorb`])
+///   ends up here, since a folded publication has no remap from it; that
+///   takes two or more publications landing between two blocks.
 pub(crate) struct AudioLink {
     publications: Arc<Mailbox<Publication>>,
     inputs: Receiver<InputWrite>,
@@ -158,16 +204,25 @@ pub(crate) struct AudioLink {
     held: Option<Box<Publication>>,
     /// Publications installed so far, for observation off the audio thread.
     applied: Arc<AtomicU64>,
+    /// The generation of the installed publication; the publisher starts
+    /// at 0 with the graph it linked.
+    installed: u64,
+    /// Writes for a publication not yet installed, oldest first. Allocated
+    /// once at link time and never pushed past its capacity.
+    pending: Vec<InputWrite>,
 }
 
 impl AudioLink {
     /// Links a graph to its publisher. `inputs` must be a bounded
-    /// (`sync_channel`) receiver: receiving from it never frees. The control
-    /// side must only `try_send` on `inputs` and `try_recv` on `retire`'s
-    /// receiver (see the module docs).
+    /// (`sync_channel`) receiver of `input_capacity`: receiving from it
+    /// never frees, and the ring for writes awaiting a publication is
+    /// allocated here at the same size. The control side must only
+    /// `try_send` on `inputs` and `try_recv` on `retire`'s receiver (see the
+    /// module docs).
     pub(crate) fn new(
         publications: Arc<Mailbox<Publication>>,
         inputs: Receiver<InputWrite>,
+        input_capacity: usize,
         retire: SyncSender<Box<Publication>>,
         applied: Arc<AtomicU64>,
     ) -> Self {
@@ -177,6 +232,8 @@ impl AudioLink {
             retire,
             held: None,
             applied,
+            installed: 0,
+            pending: Vec::with_capacity(input_capacity.max(1)),
         }
     }
 
@@ -204,27 +261,112 @@ impl AudioLink {
 }
 
 impl SignalGraph {
-    /// Installs a pending publication and applies queued input writes.
+    /// Installs a pending publication and applies queued input writes (see
+    /// [`AudioLink`] for which instance each write reaches). Writes are
+    /// applied after the install, so they survive its input reset, and
+    /// before the retired publication goes back, so its remap is in hand.
     /// Allocation-, free-, and lock-free; runs at the start of a block.
     pub(super) fn drain_link(&mut self) {
         let Some(mut link) = self.link.take() else {
             return;
         };
+        let previous = link.installed;
+        let mut taken: Option<Box<Publication>> = None;
         if link.flush_held() {
             if let Some(mut publication) = link.publications.take() {
                 self.install(&mut publication);
+                link.installed = publication.generation;
                 link.applied.fetch_add(1, Ordering::Relaxed);
-                link.retire(publication);
+                taken = Some(publication);
             }
         }
-        while let Ok(write) = link.inputs.try_recv() {
-            if let Some(module) = self.modules.get_mut(write.module_id.as_str()) {
-                let _ = module.module_mut().set_input(&write.port, write.value);
+        let retired = taken.as_deref().map(|retired| (previous, retired));
+        let installed = link.installed;
+        // Held writes came off the channel first, so they go first.
+        link.pending
+            .retain(|write| match self.dispose(write, installed, retired) {
+                Disposition::Apply(module_idx) => {
+                    self.apply_input(module_idx, write.port_idx, write.value);
+                    false
+                }
+                Disposition::Hold => true,
+                Disposition::Drop => false,
+            });
+        // A full ring leaves the rest in the channel: every write behind a
+        // held one is at least as new, so it would be held too.
+        while link.pending.len() < link.pending.capacity() {
+            let Ok(write) = link.inputs.try_recv() else {
+                break;
+            };
+            match self.dispose(&write, installed, retired) {
+                Disposition::Apply(module_idx) => {
+                    self.apply_input(module_idx, write.port_idx, write.value)
+                }
+                Disposition::Hold => link.pending.push(write),
+                Disposition::Drop => {}
             }
-            // The write's strings are freed here: a remaining audio-thread
-            // free, bounded by the input channel's capacity per block.
+        }
+        if let Some(publication) = taken {
+            link.retire(publication);
         }
         self.link = Some(link);
+    }
+
+    /// Decides where `write` goes, given the installed generation and, in a
+    /// block that installed, the generation installed before it with the
+    /// retired publication (whose remap maps from that generation's order).
+    fn dispose(
+        &self,
+        write: &InputWrite,
+        installed: u64,
+        retired: Option<(u64, &Publication)>,
+    ) -> Disposition {
+        if write.generation == installed {
+            return Disposition::Apply(write.module_idx);
+        }
+        if write.generation > installed {
+            return Disposition::Hold;
+        }
+        let Some((previous, retired)) = retired else {
+            return Disposition::Drop;
+        };
+        if write.generation != previous {
+            return Disposition::Drop;
+        }
+        // The same defensive id check as `carry_survivors`.
+        let Some(new) = retired.remap.get(write.module_idx) else {
+            return Disposition::Drop;
+        };
+        match (
+            retired.modules.get_index(write.module_idx),
+            self.modules.get_index(new),
+        ) {
+            (Some((old_id, _)), Some((new_id, _))) if old_id == new_id => Disposition::Apply(new),
+            _ => Disposition::Drop,
+        }
+    }
+
+    /// Sets input `port_idx` of the module at `module_idx` to `value`,
+    /// skipping indices out of range. The port's name is copied into a stack
+    /// buffer, since `Module::set_input` takes a name and the module cannot
+    /// stay borrowed for it. Allocation-free as long as the module's own
+    /// `set_input` is.
+    fn apply_input(&mut self, module_idx: usize, port_idx: usize, value: f32) {
+        let Some((_, instance)) = self.modules.get_index_mut(module_idx) else {
+            return;
+        };
+        let module = instance.module_mut();
+        let mut name = [0u8; MAX_INPUT_PORT_NAME];
+        let len = match module.inputs().get(port_idx) {
+            Some(port) if port.len() <= MAX_INPUT_PORT_NAME => {
+                name[..port.len()].copy_from_slice(port.as_bytes());
+                port.len()
+            }
+            _ => return,
+        };
+        if let Ok(port) = std::str::from_utf8(&name[..len]) {
+            let _ = module.set_input(port, value);
+        }
     }
 
     /// Swaps a prepared publication in. Afterwards `publication` holds the

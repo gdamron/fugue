@@ -45,11 +45,26 @@ fn test_set_module_input_succeeds() {
 }
 
 #[test]
-fn test_set_nonexistent_module_succeeds() {
-    // Commands are fire-and-forget; unknown modules are silently ignored on the audio thread.
+fn test_set_nonexistent_module_is_refused() {
+    // Writes are resolved before they are queued, so an unknown module is
+    // reported at once.
     let (running, _handles) = build_simple_invention();
     let result = running.set_module_input("nonexistent", "frequency", 100.0);
-    assert!(result.is_ok());
+    assert!(matches!(
+        result,
+        Err(fugue::GraphCommandError::UnknownModule(id)) if id == "nonexistent"
+    ));
+    running.stop();
+}
+
+#[test]
+fn test_set_nonexistent_port_is_refused() {
+    let (running, _handles) = build_simple_invention();
+    let result = running.set_module_input("osc", "nonexistent", 100.0);
+    assert!(matches!(
+        result,
+        Err(fugue::GraphCommandError::InvalidPort(_))
+    ));
     running.stop();
 }
 

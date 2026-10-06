@@ -67,6 +67,7 @@ impl Harness {
         graph.link = Some(AudioLink::new(
             publications.clone(),
             input_rx,
+            4,
             retire,
             applied,
         ));
