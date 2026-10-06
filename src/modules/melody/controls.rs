@@ -149,8 +149,8 @@ pub(super) fn out_of_range(what: &str, index: usize, count: usize) -> String {
 /// `degree_count`) never block either, since a `control_scheduler` reads and
 /// writes them from the audio thread: when the table is busy, a write is
 /// deferred to a lock-free mailbox that the next lock holder drains, and a
-/// read answers from it or from a lock-free mirror of the table (see
-/// [`super::pending`]). Whole-table edits lock as before.
+/// read answers from it or from a lock-free mirror of the table (see the
+/// `pending` module). Whole-table edits lock as before.
 ///
 /// Note: Due to the complex types (Vec), this module exposes typed methods
 /// rather than the uniform f32 get/set_control API for most parameters.

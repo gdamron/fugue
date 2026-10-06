@@ -362,7 +362,7 @@ fn single_position_and_count_writes_do_not_allocate() {
     drop(held);
     let (count, allocs, frees) = crate::alloc_counter::allocator_events(|| controls.degree_count());
     assert_eq!((allocs, frees), (0, 0));
-    assert_eq!(count, 3 + 63 % 9);
+    assert_eq!(count, 3, "the last step wrote 3 + 63 % 9");
     assert_eq!(controls.note_weight(0).unwrap(), 63.0 / 64.0);
 }
 
