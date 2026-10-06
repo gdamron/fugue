@@ -212,8 +212,11 @@ impl RuntimeSnapshot {
     /// cannot hold a non-finite number (JSON would record `null`), and DSP
     /// code fed one goes silent or blasts noise.
     ///
-    /// Internal reconstruction that must stay silent (a reload carrying values
-    /// into the rebuilt graph) uses [`Self::set_control_recorded`] instead.
+    /// Internal writes that must stay silent go around this: a reload or an
+    /// `ApplyEdits` commit writes surviving modules with
+    /// [`Self::set_control_transient`] (its retained document already holds
+    /// the values) and records a failed write's actual value with
+    /// `RuntimeState::record_authored_control`.
     pub fn set_control_with_intent(
         &self,
         module_id: &str,
@@ -250,10 +253,10 @@ impl RuntimeSnapshot {
     }
 
     /// Coerces, applies, and records a control write without emitting an event,
-    /// returning the applied (coerced) value. For internal callers that record
-    /// a change but must not surface it as a live, agent-visible
-    /// `ControlChanged` (e.g. a reload carrying authored values into a freshly
-    /// rebuilt graph, which is already conveyed by the reload's snapshot).
+    /// returning the applied (coerced) value: the authored half of
+    /// [`Self::set_control_with_intent`], which emits the event. Records into
+    /// the retained document and the module's stored config (see
+    /// `RuntimeState::record_authored_control`).
     pub(crate) fn set_control_recorded(
         &self,
         module_id: &str,
