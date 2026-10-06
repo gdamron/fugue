@@ -11,6 +11,7 @@ use crate::invention::publish::{edge, BuiltModule, GraphChange, PreparedChange};
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
 use crate::rpc::{truncate_on_char_boundary, MODULE_ERROR_BYTES};
 use crate::{ControlValue, Invention, ModuleRegistry};
+use std::sync::Arc;
 
 /// A plan prepared off the audio thread, ready to commit.
 pub(crate) struct PreparedCommit {
@@ -19,7 +20,7 @@ pub(crate) struct PreparedCommit {
     document: Option<Invention>,
     /// Registry and development definitions to adopt on commit, when the
     /// change was built against new ones.
-    adopt: Option<(ModuleRegistry, DevelopmentDefinitions)>,
+    adopt: Option<(Arc<ModuleRegistry>, DevelopmentDefinitions)>,
     /// Validated control writes on surviving modules, values coerced to
     /// their controls' kinds.
     control_updates: Vec<(String, String, ControlValue)>,
@@ -47,14 +48,17 @@ impl RunningInvention {
         base_generation: u64,
         plan: ReloadPlan,
         document: Option<Invention>,
-        adopt: Option<(ModuleRegistry, DevelopmentDefinitions)>,
+        adopt: Option<(Arc<ModuleRegistry>, DevelopmentDefinitions)>,
     ) -> Result<PreparedCommit, GraphCommandError> {
-        let registry = adopt
-            .as_ref()
-            .map_or(&self.registry, |(registry, _)| registry);
+        let registry = match &adopt {
+            Some((registry, _)) => registry.clone(),
+            // Only a reload adopts a registry, and reloads are serialized
+            // by `&mut self`, so this one stays current to the commit.
+            None => self.registry(),
+        };
         let build = |spec: &crate::invention::ModuleSpec| {
             GraphChange::build(
-                registry,
+                &registry,
                 self.sample_rate,
                 &spec.id,
                 &spec.module_type,
@@ -138,21 +142,23 @@ impl RunningInvention {
     }
 
     /// Publishes a prepared plan as one topology change, then commits the
-    /// runtime's mirrors, adopts any new registry, writes the plan's control
-    /// updates on surviving modules, retains the document, and starts or
-    /// stops scripts and agents.
+    /// runtime's mirrors, adopts any new registry and definitions, writes
+    /// the plan's control updates on surviving modules, retains the
+    /// document, and starts or stops scripts and agents.
     ///
     /// Fails, with nothing changed, only when another change published since
     /// the plan was prepared ([`GraphCommandError::TopologyMoved`]), even one
     /// whose topology is unchanged, or the audio thread is gone. The
-    /// document and refreshed configs are retained in the same step as the
-    /// publication, so no other edit can land between them. Control updates
-    /// are written right after the publication is queued, so a value may be
-    /// heard up to one block before the new topology. A validated update
-    /// that still fails when written keeps the module's previous value, is
-    /// moved from the report's `controls_updated` to its `controls_failed`,
-    /// and that previous value is written back to the retained document and
-    /// the module's stored config, so the next reload tries it again.
+    /// document, refreshed configs, and new registry are adopted in the same
+    /// step as the publication, so no other edit can land between them, and
+    /// an edit that built against the previous registry is built again.
+    /// Control updates are written right after the publication is queued, so
+    /// a value may be heard up to one block before the new topology. A
+    /// validated update that still fails when written keeps the module's
+    /// previous value, is moved from the report's `controls_updated` to its
+    /// `controls_failed`, and that previous value is written back to the
+    /// retained document and the module's stored config, so the next reload
+    /// tries it again.
     pub(crate) fn commit_prepared(
         &mut self,
         prepared: PreparedCommit,
@@ -165,7 +171,8 @@ impl RunningInvention {
             refreshed_configs,
             mut report,
         } = prepared;
-        let committed = self.live.commit_with(change, |state| {
+        let (registry, definitions) = adopt.unzip();
+        let committed = self.live.commit_adopting(change, registry, |state| {
             for (module_id, config) in refreshed_configs {
                 if let Some(info) = state.modules.get_mut(&module_id) {
                     info.config = config;
@@ -175,8 +182,11 @@ impl RunningInvention {
                 state.document = Some(document);
             }
         })?;
-        if let Some((registry, definitions)) = adopt {
-            self.adopt_definitions(registry, definitions);
+        // Definitions are read only by the next reload's plan, and reloads
+        // are serialized by `&mut self`, so they need not land under the
+        // publisher with the registry.
+        if let Some(definitions) = definitions {
+            self.adopt_definitions(definitions);
         }
 
         let snapshot = self.snapshot();

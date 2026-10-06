@@ -37,12 +37,19 @@ use crate::ModuleRegistry;
 mod change;
 mod publisher;
 mod reclaim;
+mod registry;
 #[cfg(test)]
 pub(crate) mod tests;
 
 pub(crate) use change::{BuiltModule, GraphChange, PreparedChange};
 pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
+use registry::LiveRegistry;
+
+/// How many times an edit that builds a module ([`LiveGraph::add_module`],
+/// [`LiveGraph::swap_module`]) builds it when commits keep adopting new
+/// registries underneath it.
+const BUILD_ATTEMPTS: usize = 3;
 
 /// A live graph's publisher together with the runtime mirrors it keeps in
 /// step. Cheap to clone; every clone publishes through the same publisher.
@@ -54,6 +61,7 @@ pub(crate) struct LiveGraph {
     state: Arc<Mutex<RuntimeState>>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
+    registry: LiveRegistry,
 }
 
 /// What a committed change did, for the caller's follow-up work.
@@ -69,12 +77,14 @@ pub(crate) struct Committed {
 
 impl LiveGraph {
     /// Links `graph`, which is about to move to the audio thread, to a new
-    /// publisher keeping the given runtime mirrors.
+    /// publisher keeping the given runtime mirrors, with edits building
+    /// modules against `registry` until a commit adopts another.
     pub(crate) fn link(
         graph: &mut SignalGraph,
         state: Arc<Mutex<RuntimeState>>,
         control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
         module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
+        registry: Arc<ModuleRegistry>,
     ) -> Self {
         let (publisher, ends) = Publisher::link(graph);
         Self {
@@ -84,7 +94,14 @@ impl LiveGraph {
             state,
             control_surfaces,
             module_ports,
+            registry: LiveRegistry::new(registry),
         }
+    }
+
+    /// The registry edits build modules against now: the latest one a
+    /// commit adopted (see [`Self::commit_adopting`]).
+    pub(crate) fn registry(&self) -> Arc<ModuleRegistry> {
+        self.registry.current()
     }
 
     /// Starts freeing retired publications on a control thread every
@@ -156,6 +173,30 @@ impl LiveGraph {
         self.commit_locked(self.publisher.lock().unwrap(), prepared, retain)
     }
 
+    /// [`Self::commit_with`], also adopting `registry`, when given, as the
+    /// registry later edits build against, in the same step. An edit that
+    /// built a module against the previous registry and has yet to commit is
+    /// refused and builds it again (see [`Self::add_module`]), so no edit
+    /// commits an instance of a superseded definition. Adopted only when the
+    /// change commits, an empty change included.
+    pub(crate) fn commit_adopting(
+        &self,
+        prepared: PreparedChange,
+        registry: Option<Arc<ModuleRegistry>>,
+        retain: impl FnOnce(&mut RuntimeState),
+    ) -> Result<Committed, GraphCommandError> {
+        let mut superseded = None;
+        let publisher = self.publisher.lock().unwrap();
+        // `retain` runs only when the change commits, under the publisher.
+        let result = self.commit_locked(publisher, prepared, |state| {
+            superseded = registry.map(|registry| self.registry.replace(registry));
+            retain(state);
+        });
+        // The previous registry drops off the publisher's lock.
+        drop(superseded);
+        result
+    }
+
     /// Prepares and publishes one change while holding the publisher, so no
     /// other change can publish in between and it never goes stale. `edit`
     /// applies the change's edits; build modules before calling, so builds
@@ -164,8 +205,23 @@ impl LiveGraph {
         &self,
         edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
     ) -> Result<Committed, GraphCommandError> {
+        self.edit_against(None, edit)
+    }
+
+    /// [`Self::edit`] for an edit adding modules built against `built_with`:
+    /// refused with [`GraphCommandError::TopologyMoved`], before `edit`
+    /// runs, when a commit has adopted another registry since.
+    fn edit_against(
+        &self,
+        built_with: Option<&Arc<ModuleRegistry>>,
+        edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
+    ) -> Result<Committed, GraphCommandError> {
         self.reclaim();
         let publisher = self.publisher.lock().unwrap();
+        if built_with.is_some_and(|registry| !self.registry.is_current(registry)) {
+            drop(publisher);
+            return Err(GraphCommandError::TopologyMoved);
+        }
         let mut change = self.change_on(&publisher);
         if let Err(error) = edit(&mut change).and_then(|()| change.attach()) {
             // The change's instances drop off the lock.
@@ -283,54 +339,82 @@ impl LiveGraph {
         })
     }
 
-    /// Adds a module, replacing one with the same id in place.
+    /// Adds a module, replacing one with the same id in place. Built
+    /// against the live graph's current registry (see [`Self::build_then`]).
     pub(crate) fn add_module(
         &self,
-        registry: &ModuleRegistry,
         sample_rate: u32,
         id: &str,
         module_type: &str,
         config: &serde_json::Value,
     ) -> Result<Committed, GraphCommandError> {
-        let built = GraphChange::build(registry, sample_rate, id, module_type, config)?;
-        self.edit(|change| {
-            change.upsert(id, built);
-            Ok(())
-        })
+        self.build_then(sample_rate, id, module_type, config, |_| Ok(()))
     }
 
     /// Replaces an existing module. Compatible connections survive when
     /// `preserve_connections` is true; otherwise all of its connections go.
     pub(crate) fn swap_module(
         &self,
-        registry: &ModuleRegistry,
         sample_rate: u32,
         id: &str,
         module_type: &str,
         config: &serde_json::Value,
         preserve_connections: bool,
     ) -> Result<Committed, GraphCommandError> {
-        // Held out here so a refused swap drops the module after `edit`
-        // releases the publisher, not inside the closure.
-        let mut built = Some(GraphChange::build(
-            registry,
-            sample_rate,
-            id,
-            module_type,
-            config,
-        )?);
-        let result = self.edit(|change| {
+        self.build_then(sample_rate, id, module_type, config, |change| {
             if !change.contains(id) {
                 return Err(GraphCommandError::UnknownModule(id.to_string()));
             }
             if !preserve_connections {
                 change.disconnect_module(id);
             }
-            change.upsert(id, built.take().expect("upserted once"));
             Ok(())
-        });
-        drop(built);
-        result
+        })
+    }
+
+    /// Builds module `id` against the current registry, off the publisher's
+    /// lock, then under the lock runs `edit` and upserts the module. When a
+    /// commit adopts another registry in between (a reload that changed a
+    /// development's definition, say), the module is dropped and built again
+    /// against the new one, up to [`BUILD_ATTEMPTS`] times in all, after
+    /// which the edit fails with [`GraphCommandError::TopologyMoved`].
+    fn build_then(
+        &self,
+        sample_rate: u32,
+        id: &str,
+        module_type: &str,
+        config: &serde_json::Value,
+        edit: impl Fn(&mut GraphChange) -> Result<(), GraphCommandError>,
+    ) -> Result<Committed, GraphCommandError> {
+        let mut attempt = 1;
+        loop {
+            let registry = self.registry.current();
+            let mut built =
+                match GraphChange::build(&registry, sample_rate, id, module_type, config) {
+                    Ok(built) => Some(built),
+                    // A registry adopted since may know the type, or build it.
+                    Err(_) if attempt < BUILD_ATTEMPTS && !self.registry.is_current(&registry) => {
+                        attempt += 1;
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
+            // `built` is held out here so a refused edit drops the module
+            // after `edit_against` releases the publisher, not inside the
+            // closure.
+            let result = self.edit_against(Some(&registry), |change| {
+                edit(change)?;
+                change.upsert(id, built.take().expect("upserted once"));
+                Ok(())
+            });
+            drop(built);
+            match result {
+                // Under the publisher, only a registry adopted since the
+                // build moves the topology.
+                Err(GraphCommandError::TopologyMoved) if attempt < BUILD_ATTEMPTS => attempt += 1,
+                result => return result,
+            }
+        }
     }
 
     /// Removes a module and its connections; a missing module is a no-op.

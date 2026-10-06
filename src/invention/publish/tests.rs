@@ -48,12 +48,28 @@ impl Rig {
             MasterObservers::default(),
         );
         graph.recompile();
-        let live = LiveGraph::link(&mut graph, runtime.state, runtime.control_surfaces, ports);
+        let live = LiveGraph::link(
+            &mut graph,
+            runtime.state,
+            runtime.control_surfaces,
+            ports,
+            Arc::new(runtime.registry.clone()),
+        );
         Self {
             graph,
             live,
             registry: runtime.registry,
         }
+    }
+
+    /// Makes the live graph's edits build against the rig's registry as it
+    /// is now, through an empty commit.
+    fn adopt_registry(&self) {
+        let empty = self.live.begin().prepare().unwrap();
+        let registry = Arc::new(self.registry.clone());
+        self.live
+            .commit_adopting(empty, Some(registry), |_| {})
+            .unwrap();
     }
 
     fn build(&self, id: &str, module_type: &str, config: serde_json::Value) -> change::BuiltModule {
@@ -203,13 +219,7 @@ fn a_change_prepared_before_another_publication_is_refused() {
 
     // Another writer publishes first.
     rig.live
-        .add_module(
-            &rig.registry,
-            SAMPLE_RATE,
-            "osc4",
-            "oscillator",
-            &serde_json::json!({}),
-        )
+        .add_module(SAMPLE_RATE, "osc4", "oscillator", &serde_json::json!({}))
         .unwrap();
     rig.render(1);
     let before = snapshot(&rig);
@@ -247,18 +257,11 @@ fn concurrent_writers_all_land() {
     let writers: Vec<_> = (0..4)
         .map(|writer| {
             let live = rig.live.clone();
-            let registry = rig.registry.clone();
             std::thread::spawn(move || {
                 for n in 0..5 {
                     let id = format!("w{writer}_{n}");
-                    live.add_module(
-                        &registry,
-                        SAMPLE_RATE,
-                        &id,
-                        "oscillator",
-                        &serde_json::json!({}),
-                    )
-                    .unwrap();
+                    live.add_module(SAMPLE_RATE, &id, "oscillator", &serde_json::json!({}))
+                        .unwrap();
                     live.connect(edge(&id, "audio", "dac", "audio")).unwrap();
                 }
             })
@@ -287,19 +290,14 @@ fn failed_preparation_leaves_everything_unchanged() {
     rig.render(1);
     let before = snapshot(&rig);
 
-    let unknown = rig.live.add_module(
-        &rig.registry,
-        SAMPLE_RATE,
-        "x",
-        "no_such_type",
-        &serde_json::json!({}),
-    );
+    let unknown = rig
+        .live
+        .add_module(SAMPLE_RATE, "x", "no_such_type", &serde_json::json!({}));
     assert!(matches!(
         unknown,
         Err(GraphCommandError::UnknownModuleType(_))
     ));
     let bad_config = rig.live.add_module(
-        &rig.registry,
         SAMPLE_RATE,
         "x",
         "lfo",
@@ -310,7 +308,6 @@ fn failed_preparation_leaves_everything_unchanged() {
         Err(GraphCommandError::ModuleBuildFailed(_))
     ));
     let unresolved = rig.live.add_module(
-        &rig.registry,
         SAMPLE_RATE,
         "sched",
         "control_scheduler",
@@ -354,7 +351,6 @@ fn a_swap_keeps_compatible_connections_only_when_asked() {
     let swap = |rig: &Rig, preserve| {
         rig.live
             .swap_module(
-                &rig.registry,
                 SAMPLE_RATE,
                 "osc1",
                 "oscillator",
@@ -373,7 +369,6 @@ fn a_swap_keeps_compatible_connections_only_when_asked() {
     assert_eq!(routes_into_dac(&rig), 1);
     assert!(matches!(
         rig.live.swap_module(
-            &rig.registry,
             SAMPLE_RATE,
             "missing",
             "oscillator",

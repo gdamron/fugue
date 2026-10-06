@@ -2,6 +2,7 @@
 //! ports and controls, and its current registry.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use indexmap::IndexMap;
 
@@ -16,8 +17,8 @@ use crate::{ControlKind, ControlValue, ModuleRegistry};
 
 /// The running invention's facts, read once when the batch starts, so every
 /// edit is checked against the same view of the graph.
-pub(super) struct LiveFacts<'r> {
-    registry: &'r ModuleRegistry,
+pub(super) struct LiveFacts {
+    registry: Arc<ModuleRegistry>,
     sample_rate: u32,
     ports: IndexMap<String, ModulePorts>,
     surfaces: IndexMap<String, ControlSurfaceInstance>,
@@ -42,8 +43,8 @@ pub(super) struct LiveFacts<'r> {
     unbuildable: HashSet<String>,
 }
 
-impl<'r> LiveFacts<'r> {
-    pub(super) fn new(running: &'r RunningInvention, document: &Invention) -> Self {
+impl LiveFacts {
+    pub(super) fn new(running: &RunningInvention, document: &Invention) -> Self {
         let assets = Invention {
             modules: Vec::new(),
             connections: Vec::new(),
@@ -59,7 +60,7 @@ impl<'r> LiveFacts<'r> {
             })
             .collect();
         Self {
-            registry: &running.registry,
+            registry: running.registry(),
             sample_rate: running.sample_rate,
             ports: running.module_ports.lock().unwrap().clone(),
             surfaces: running.control_surfaces.lock().unwrap().clone(),
@@ -188,7 +189,7 @@ impl<'r> LiveFacts<'r> {
     }
 }
 
-impl EditFacts for LiveFacts<'_> {
+impl EditFacts for LiveFacts {
     fn module(&self, id: &str) -> Option<ModuleFacts> {
         let ports = self.ports.get(id)?;
         Some(ModuleFacts {

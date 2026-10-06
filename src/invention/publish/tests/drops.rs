@@ -9,6 +9,7 @@ fn watched_rig() -> (Rig, DropProbeFactory) {
     let probes = DropProbeFactory::default();
     let mut rig = Rig::new(BASE);
     rig.registry.register(probes.clone());
+    rig.adopt_registry();
     probes.watch(rig.live.publisher().clone());
     (rig, probes)
 }
@@ -86,7 +87,6 @@ fn a_swap_onto_a_missing_module_drops_off_the_publisher_lock() {
     let (rig, probes) = watched_rig();
     assert!(matches!(
         rig.live.swap_module(
-            &rig.registry,
             SAMPLE_RATE,
             "missing",
             DROP_PROBE,

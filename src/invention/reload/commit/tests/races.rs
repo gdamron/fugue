@@ -102,14 +102,8 @@ fn an_edit_landing_right_after_a_reload_publishes_keeps_its_document_change() {
     // through the live graph, after the reload's publication.
     let live = running.live.clone();
     *hooked.0.lock().unwrap() = Some(Box::new(move || {
-        live.add_module(
-            &registry,
-            SAMPLE_RATE,
-            "late",
-            "oscillator",
-            &serde_json::json!({}),
-        )
-        .unwrap();
+        live.add_module(SAMPLE_RATE, "late", "oscillator", &serde_json::json!({}))
+            .unwrap();
     }));
     let edited = base
         .replace(

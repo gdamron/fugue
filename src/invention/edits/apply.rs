@@ -249,7 +249,7 @@ impl RunningInvention {
         let mut probe = candidate.clone();
         probe.developments.clear();
         let builder =
-            InventionBuilder::with_registry(self.sample_rate, self.registry.for_validation());
+            InventionBuilder::with_registry(self.sample_rate, self.registry().for_validation());
         let (built, _) = builder
             .build(probe)
             .map_err(|error| build_failed("does not build", error.to_string()))?;

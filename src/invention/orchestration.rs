@@ -368,14 +368,10 @@ impl RuntimeController {
         config: &serde_json::Value,
     ) -> Result<HashMap<String, Arc<dyn Any + Send + Sync>>, GraphCommandError> {
         if let Some(live) = &self.live {
+            // Built against the live graph's current registry, not this
+            // controller's (see `RunningInvention::controller`).
             return live
-                .add_module(
-                    &self.registry,
-                    self.sample_rate,
-                    module_id,
-                    module_type,
-                    config,
-                )
+                .add_module(self.sample_rate, module_id, module_type, config)
                 .map(|committed| committed.handles);
         }
         let BuiltModule {
