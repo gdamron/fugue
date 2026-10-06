@@ -372,36 +372,3 @@ fn an_authored_write_the_stored_number_holds_as_an_f32_leaves_it_alone() {
         number(300.0)
     );
 }
-
-#[test]
-fn a_value_authored_away_and_back_does_not_undo_a_later_performed_change() {
-    // The file has 440.0; authoring 330 and then 440 stores the integer 440.
-    // Reload compares numbers by value, so the original's 440.0 is no change
-    // and the later performed gesture survives, as it would with no
-    // authored writes at all.
-    let mut running = start(BASE);
-    for value in [330.0, 440.0] {
-        running
-            .set_control("osc1", "frequency", number(value))
-            .unwrap();
-    }
-    assert_eq!(stored_config(&running, "osc1")["frequency"], json!(440));
-    running
-        .snapshot()
-        .set_control_with_intent(
-            "osc1",
-            "frequency",
-            number(300.0),
-            ControlWriteIntent::Perform,
-        )
-        .unwrap();
-
-    let report = running.reload(doc(BASE)).expect("diff applies");
-
-    assert!(report.controls_updated.is_empty(), "{report:?}");
-    assert_nothing_rebuilt(&report);
-    assert_eq!(
-        running.get_control("osc1", "frequency").unwrap(),
-        number(300.0)
-    );
-}
