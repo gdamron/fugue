@@ -289,6 +289,9 @@ fn is_empty_config(value: &serde_json::Value) -> bool {
 /// Maps a config delta to control updates, or `None` when the delta cannot be
 /// expressed as controls (a removed key, a non-scalar value, or a key the
 /// module does not expose as a control) and the module must be swapped.
+///
+/// Numbers are compared by value, and a control's by its f32, so a delta in
+/// the JSON spelling alone (`440` against `440.0`) is no update at all.
 fn control_updates_for(
     previous: &serde_json::Value,
     new: &serde_json::Value,
@@ -313,16 +316,38 @@ fn control_updates_for(
 
     let mut updates = Vec::new();
     for (key, value) in new {
-        if previous.get(key) == Some(value) {
+        let old = previous.get(key);
+        if old.is_some_and(|old| same_value(old, value)) {
             continue;
         }
         let control_value = scalar_control_value(value)?;
         if !has_control(key) {
             return None;
         }
+        // A control holds an f32, so a number it already holds is not a
+        // change: writing it again would be a no-op.
+        if let (Some(old), ControlValue::Number(number)) =
+            (old.and_then(|old| old.as_f64()), &control_value)
+        {
+            if old as f32 == *number {
+                continue;
+            }
+        }
         updates.push((key.clone(), control_value));
     }
     Some(updates)
+}
+
+/// Whether two config values are the same, treating JSON numbers by value:
+/// an integer `440` (as an authored write records it) and `440.0` (as a file
+/// may spell it) are equal. Exact, so two distinct numbers never compare
+/// equal, whatever key holds them.
+fn same_value(previous: &serde_json::Value, new: &serde_json::Value) -> bool {
+    previous == new
+        || matches!(
+            (previous.as_f64(), new.as_f64()),
+            (Some(previous), Some(new)) if previous == new
+        )
 }
 
 pub(crate) fn scalar_control_value(value: &serde_json::Value) -> Option<ControlValue> {

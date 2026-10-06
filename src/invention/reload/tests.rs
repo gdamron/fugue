@@ -320,6 +320,48 @@ fn config_deltas_that_cannot_be_controls_force_a_swap() {
 }
 
 #[test]
+fn numbers_compare_by_value_and_controls_by_their_f32() {
+    let current: IndexMap<String, RuntimeModuleInfo> = [(
+        "osc".to_string(),
+        RuntimeModuleInfo {
+            id: "osc".to_string(),
+            module_type: "oscillator".to_string(),
+            config: serde_json::json!({ "frequency": 440, "seed": 16_777_216u64 }),
+        },
+    )]
+    .into_iter()
+    .collect();
+    let plan_for = |config: serde_json::Value| {
+        let new = Invention {
+            modules: vec![ModuleSpec {
+                id: "osc".to_string(),
+                module_type: "oscillator".to_string(),
+                config,
+            }],
+            ..doc(r#"{ "modules": [], "connections": [] }"#)
+        };
+        plan_reload(&current, &[], &new, &HashSet::new(), |_, key| {
+            key == "frequency"
+        })
+        .unwrap()
+    };
+
+    // 440.0 against the stored integer 440, and a frequency the control
+    // already holds as an f32: no update, nothing rebuilt.
+    for frequency in [serde_json::json!(440.0), serde_json::json!(440.00000001)] {
+        let plan = plan_for(serde_json::json!({ "frequency": frequency, "seed": 16_777_216u64 }));
+        assert!(plan.swapped.is_empty(), "{plan:?}");
+        assert!(plan.control_updates.is_empty(), "{plan:?}");
+        assert_eq!(plan.unchanged, ["osc"]);
+    }
+
+    // A non-control number compares exactly: 16777217 and 16777216 are the
+    // same f32 but different seeds.
+    let plan = plan_for(serde_json::json!({ "frequency": 440, "seed": 16_777_217u64 }));
+    assert_eq!(plan.swapped.len(), 1, "{plan:?}");
+}
+
+#[test]
 fn null_and_empty_configs_are_equivalent() {
     let current: IndexMap<String, RuntimeModuleInfo> = [(
         "dac".to_string(),
