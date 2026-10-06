@@ -192,7 +192,9 @@ fn concurrent_position_and_whole_table_edits_settle_on_each_threads_last_write()
     rx.recv_timeout(Duration::from_secs(20))
         .expect("the writers deadlocked");
 
-    // Nothing is stranded: every deposit was drained by some holder.
+    // Nothing is stranded: whatever the latency-only retries left pending,
+    // the next lock holder drains (as the melody's next block would).
+    drop(ctrl.lock_table());
     assert!(!ctrl.has_pending());
     let last = ROUNDS - 1;
     assert_eq!(

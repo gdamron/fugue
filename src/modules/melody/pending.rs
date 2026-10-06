@@ -15,26 +15,33 @@
 //! # Draining
 //!
 //! Every holder of the table lock goes through [`TableGuard`] or, like the
-//! guard's own post-release drain, repeats its re-check itself. The guard
-//! drains the mailbox when it acquires the lock (so a direct write lands
-//! after older deferred ones, and a whole-table edit overwrites them rather
-//! than being overwritten) and, after it releases the lock, re-checks the
-//! mailbox and drains it again with `try_lock` if a deposit arrived
-//! meanwhile. A depositor also retries `try_lock` once after depositing.
+//! guard's own post-release drain, drains the mailbox itself. The guard
+//! drains when it acquires the lock, so a direct write lands after older
+//! deferred ones, and a whole-table edit overwrites them rather than being
+//! overwritten.
 //!
-//! Invariant: a deposit made while any holder holds the lock is drained by
-//! that holder's post-release check, by a later holder (which drains on
-//! acquire), or by the melody's next block (`DegreeSnapshot::sync` drains
-//! whenever a deposit is pending), never stranded. The depositor sets the
-//! pending flag and then (after a `SeqCst` fence) tries the lock; the holder
-//! releases the lock and then (after a `SeqCst` fence) reads the flag. With
-//! both fences, either the depositor's retry finds the lock free or the
-//! holder sees the flag; if the holder's own `try_lock` then fails, whoever
-//! holds the lock now repeats the check on its release.
+//! Invariant: a deposit is never stranded. The argument rests on the memory
+//! model alone, not on how `Mutex` is built:
 //!
-//! The fence pairing relies on std's `Mutex` unlock and `try_lock` being
-//! atomic operations on the lock word, true of std on current platforms but
-//! not something the memory model promises for a `Mutex` in general.
+//! - (a) Publication. A depositor stores its slot and then flags the deposit
+//!   with an RMW, `any.swap(true, AcqRel)`. Every write to `any` is an RMW,
+//!   so each continues the release sequence of every earlier one. A
+//!   drainer's `any.swap(false, AcqRel)` that reads `true` therefore
+//!   synchronizes with every depositor whose RMW precedes it in `any`'s
+//!   modification order, and sees their slots. A deposit whose RMW comes
+//!   later leaves the flag set.
+//! - (b) Eventual drain. A set flag stays set until a drainer clears it,
+//!   under the lock, and that drainer applies the slot (by (a)).
+//!   `MelodyGenerator::process` runs `DegreeSnapshot::sync` every block,
+//!   which drains with `try_lock` whenever the flag is set. A scheduler
+//!   deposits on that same audio thread, so its deposits are visible to the
+//!   next sync in program order; a control thread's become visible in
+//!   finite time. Contention is transient, so a later block's `try_lock`
+//!   succeeds. Every lock holder also drains on acquire, and contended reads
+//!   consult the mailbox, so a pending write is never read past.
+//! - (c) The depositor's `try_lock` retry and the holder's post-release
+//!   re-check (at most `MAX_RELEASE_DRAINS` passes) only cut latency; the
+//!   argument above does not depend on them.
 //!
 //! # Reads while contended
 //!
@@ -57,7 +64,7 @@
 //!   it) or refused as out of range (after it).
 
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{fence, AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{MutexGuard, TryLockError};
 
 use super::controls::{out_of_range, DegreeTable, MelodyControls, MAX_DEGREES};
@@ -115,7 +122,7 @@ impl Pending {
 
     /// Whether a deposit may be waiting to be drained.
     pub(super) fn has_pending(&self) -> bool {
-        self.any.load(Ordering::SeqCst)
+        self.any.load(Ordering::Acquire)
     }
 
     /// The latest written count: a pending one, else the table's.
@@ -174,11 +181,11 @@ impl Pending {
         self.mark();
     }
 
-    /// Flags a deposit, after its slot is stored. The fence orders the flag
-    /// before the depositor's retry of the lock (see the module docs).
+    /// Flags a deposit, after its slot is stored. An RMW, not a store, so
+    /// it continues earlier depositors' release sequences (see the module
+    /// docs).
     fn mark(&self) {
-        self.any.store(true, Ordering::SeqCst);
-        fence(Ordering::SeqCst);
+        self.any.swap(true, Ordering::AcqRel);
     }
 
     /// Refreshes the mirror of every active position and the count. Call
@@ -207,12 +214,17 @@ impl Pending {
     /// whether anything was applied. Never allocates.
     ///
     /// The flag is cleared before slots are read, so a deposit racing the
-    /// drain sets it again and is caught by the holder's post-release check.
+    /// drain sets it again and is drained later (see the module docs).
     /// A slot is cleared only if it still holds the value applied, so a newer
     /// deposit to it survives; the mirror is refreshed before the slot is
     /// cleared, so a contended read never sees neither.
     fn drain(&self, table: &mut DegreeTable) -> bool {
-        if !self.any.load(Ordering::SeqCst) || !self.any.swap(false, Ordering::SeqCst) {
+        // Either exit is sound. A `false` load reads the value some clearing
+        // swap wrote (or the initial one): that drainer applied every deposit
+        // flagged before it, and any flagged after leaves the flag set for a
+        // later drain. A `false` swap means another holder cleared the flag
+        // and, since we hold the lock now, has finished applying.
+        if !self.any.load(Ordering::Acquire) || !self.any.swap(false, Ordering::AcqRel) {
             return false;
         }
         let mut changed = false;
@@ -336,7 +348,6 @@ impl MelodyControls {
     /// block, and any later holder drains it on acquire.
     fn drain_released(&self) {
         for _ in 0..MAX_RELEASE_DRAINS {
-            fence(Ordering::SeqCst);
             if !self.pending.has_pending() {
                 return;
             }
