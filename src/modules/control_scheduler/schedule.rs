@@ -151,8 +151,19 @@ pub(crate) fn parse_schedule_json(json: &str) -> Result<Vec<ScheduleEntry>, Stri
     Ok(entries)
 }
 
+/// Checks each entry's shape. A number must be finite: JSON cannot carry NaN,
+/// but a value too large for an `f32` (such as `1e39`) parses as infinity,
+/// and the audio thread writes entry values straight to module setters.
 fn validate_entries(entries: &[ScheduleEntry]) -> Result<(), String> {
     for entry in entries {
+        if let ScheduleValue::Number(number) = entry.value {
+            if !number.is_finite() {
+                return Err(format!(
+                    "schedule entry at step {}: control '{}.{}' expects a finite number, got {}",
+                    entry.at, entry.module, entry.control, number
+                ));
+            }
+        }
         if let Some(ramp) = entry.ramp {
             if ramp == 0 {
                 return Err(format!(
