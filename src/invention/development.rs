@@ -16,6 +16,8 @@ use super::reload::LoadedDevelopments;
 
 mod compiled_graph;
 mod control_surface;
+#[cfg(test)]
+mod tests;
 
 use compiled_graph::{
     unique_port_names, CompiledDevelopmentGraph, ExternalInputRoute, ExternalOutputRoute,
@@ -186,9 +188,11 @@ impl DevelopmentModule {
             validate_output_port(module, &output.from_port)?;
         }
 
+        // The surface keeps the internal directory alive once `runtime` is
+        // consumed below, so inner schedulers can still resolve schedules.
         let control_surface = Arc::new(DevelopmentControlSurface::new(
             definition,
-            &runtime.control_surfaces.lock().unwrap(),
+            runtime.control_surfaces.clone(),
         )?);
 
         let input_ports = unique_port_names(definition.inputs.iter().map(|entry| &entry.name));
