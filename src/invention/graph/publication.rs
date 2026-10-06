@@ -4,7 +4,8 @@
 //! (see `crate::invention::publish`) and puts it in a [`Mailbox`]. At the
 //! start of a block the audio thread takes it and installs it in one step:
 //! surviving instances move by key into the prepared module map (keeping
-//! their phase and state), the derived structures are swapped in, and the
+//! their phase and state), the derived structures are swapped in, each
+//! survivor's feedback carry is copied across (see [`SurvivorRemap`]), and the
 //! boxed publication, now holding the old map and old derived structures
 //! (including removed and replaced instances), goes back to the control
 //! thread on a bounded retire channel to be freed there. Installing never
@@ -31,6 +32,10 @@ use super::{RoutingConnection, SignalGraph};
 use crate::invention::runtime::ModuleInstance;
 use crate::{GraphModule, Module, MAX_BLOCK};
 
+mod remap;
+
+pub(crate) use remap::SurvivorRemap;
+
 /// A complete next topology, prepared off the audio thread.
 pub(crate) struct Publication {
     /// The next module map in final order. Prepared instances (new or
@@ -45,6 +50,9 @@ pub(crate) struct Publication {
     pub(crate) edges: Vec<RoutingConnection>,
     /// Derived structures, sized for the graph's block size.
     pub(crate) topology: CompiledTopology,
+    /// Where each running module lands in `modules`, if it survives. Set by
+    /// the publisher as it publishes (see [`Self::map_survivors`]).
+    pub(crate) remap: SurvivorRemap,
 }
 
 impl Publication {
@@ -53,12 +61,21 @@ impl Publication {
         self.survivor.iter().filter(|&&s| s).count()
     }
 
+    /// Maps the modules of the graph that will be running when this
+    /// publication installs (`running`, ids in module order) onto this
+    /// publication's survivors. Control thread only: allocates.
+    pub(crate) fn map_survivors<'a>(&mut self, running: impl IntoIterator<Item = &'a str>) {
+        self.remap = SurvivorRemap::map(running, &self.modules, &self.survivor);
+    }
+
     /// Folds an earlier publication the audio thread never took into this
     /// one. Its prepared instances are the newest version of their modules,
     /// so each fills this publication's survivor placeholder of the same id,
-    /// trading places with it. Returns what is left of the earlier
-    /// publication, including prepared instances this one no longer needs,
-    /// for the caller to drop once it has released the publisher.
+    /// trading places with it. The survivor remaps compose, so this one
+    /// maps from the graph still running, which never had the instances the
+    /// earlier one built: they start from zero. Returns what is left of the
+    /// earlier publication, including prepared instances this one no longer
+    /// needs, for the caller to drop once it has released the publisher.
     #[must_use = "the superseded publication should be dropped off the publisher lock"]
     pub(crate) fn absorb(&mut self, mut earlier: Box<Publication>) -> Box<Publication> {
         let Publication {
@@ -75,6 +92,7 @@ impl Publication {
                 }
             }
         }
+        self.remap.compose_after(&earlier.remap, &self.survivor);
         earlier
     }
 }
@@ -212,6 +230,10 @@ impl SignalGraph {
     /// Swaps a prepared publication in. Afterwards `publication` holds the
     /// previous module map (with removed and replaced instances, and vacant
     /// placeholders where survivors were) and the previous derived state.
+    /// Survivors keep their feedback carry; added and rebuilt modules start
+    /// from zero. A loop is sample-identical across the install as long as
+    /// the edit leaves its per-sample order (and so its delayed edge) as it
+    /// was.
     fn install(&mut self, publication: &mut Publication) {
         let mut moved = 0;
         for (id, instance) in self.modules.iter_mut() {
@@ -232,11 +254,45 @@ impl SignalGraph {
         // A survivor missing from the running map (which the publisher's
         // mirror rules out) or buffers sized for another block size fall back
         // to recompiling from the instances themselves, so the hot path never
-        // indexes a placeholder's missing ports.
+        // indexes a placeholder's missing ports. Recompiling resets every
+        // carry, so the fallback copies none.
         if moved != expected || self.block_capacity != self.block_size.clamp(1, MAX_BLOCK) {
             self.topo_dirty = true;
+        } else {
+            self.carry_survivors(publication);
         }
         self.reset_inputs();
+    }
+
+    /// Copies each survivor's previous-block outputs from the retired
+    /// topology into the installed one, by the publication's survivor remap.
+    /// Copies f32s between buffers both sides already own, so it never
+    /// allocates or frees. Defensive: a remap that does not cover the
+    /// retired map carries nothing, and an entry whose ids or output port
+    /// counts disagree is skipped (left at zero) rather than trusted.
+    fn carry_survivors(&mut self, retired: &Publication) {
+        if retired.remap.len() != retired.modules.len() {
+            return;
+        }
+        for (old, new) in retired.remap.survivors() {
+            let same_module = match (retired.modules.get_index(old), self.modules.get_index(new)) {
+                (Some((old_id, _)), Some((new_id, _))) => old_id == new_id,
+                _ => false,
+            };
+            if !same_module {
+                continue;
+            }
+            let (Some(src), Some(dst)) = (
+                retired.topology.out_prev.get(old),
+                self.out_prev.get_mut(new),
+            ) else {
+                continue;
+            };
+            // Each carry holds one value per output port.
+            if src.len() == dst.len() {
+                dst.copy_from_slice(src);
+            }
+        }
     }
 }
 

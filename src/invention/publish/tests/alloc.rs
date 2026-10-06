@@ -103,3 +103,38 @@ fn an_input_write_beside_a_publication_frees_only_its_strings() {
     assert!(!rig.graph.topo_dirty);
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "osc3"]);
 }
+
+#[test]
+fn an_install_that_carries_feedback_state_stays_clean() {
+    let mut rig = Rig::new(super::carry::LOOP);
+    rig.render(3);
+    let loop_ids = ["osc1", "osc2"];
+    let carries = |rig: &Rig| -> Vec<Vec<f32>> {
+        loop_ids
+            .iter()
+            .map(|id| rig.graph.out_prev[rig.graph.modules.get_index_of(*id).unwrap()].clone())
+            .collect()
+    };
+    let before = carries(&rig);
+    assert!(before.iter().flatten().any(|v| *v != 0.0));
+
+    // Removing the lfo shifts both loop modules, so each carry is copied
+    // to a new index during the counted install.
+    rig.live.remove_module("lfo").unwrap();
+    let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0), "install that carries");
+    assert!(!rig.graph.topo_dirty);
+    assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
+    assert_eq!(carries(&rig), before);
+
+    // Folded publications compose their remaps on the control thread; the
+    // install that carries through them is just as clean.
+    upsert(&rig, "aux", "oscillator", serde_json::json!({}));
+    rig.live
+        .connect(edge("aux", "audio", "osc2", "am"))
+        .unwrap();
+    let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0), "folded install that carries");
+    assert!(!rig.graph.topo_dirty);
+    assert_eq!(carries(&rig), before);
+}

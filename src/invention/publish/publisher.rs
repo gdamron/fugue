@@ -131,6 +131,10 @@ impl Publisher {
                 superseded: None,
             });
         };
+        // The mirror is the order the audio thread will be running when
+        // it installs this, unless an untaken publication is folded in,
+        // whose remap then composes in front of this one.
+        publication.map_survivors(self.mirror.modules.keys().map(String::as_str));
         let superseded = self
             .publications
             .take()
