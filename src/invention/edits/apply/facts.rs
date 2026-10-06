@@ -96,8 +96,29 @@ impl<'r> LiveFacts<'r> {
             .map_err(|error| error.to_string())?
             .control_surface
             .ok_or_else(|| "the module has no controls".to_string())?;
+        restore_authored(surface.as_ref(), &config);
         self.provisional.insert(id.to_string(), surface.clone());
         Ok(surface)
+    }
+
+    /// The directory as the batch has it at this point: each of `modules`
+    /// (the candidate's, at the edit being checked) as described, as its
+    /// throwaway copy, or as running.
+    fn directory_now(&self, modules: &[&str]) -> ControlSurfaceMap {
+        modules
+            .iter()
+            .filter_map(|id| {
+                let surface = match self.described.get(*id) {
+                    Some(surface) => surface.clone(),
+                    None => self
+                        .provisional
+                        .get(*id)
+                        .or_else(|| self.surfaces.get(*id))
+                        .cloned(),
+                };
+                Some((id.to_string(), surface?))
+            })
+            .collect()
     }
 
     /// The control-surface directory as `candidate` leaves it, as far as
@@ -202,13 +223,29 @@ impl EditFacts for LiveFacts<'_> {
         self.provisional.remove(id);
     }
 
+    fn authored_controls(&mut self, id: &str) -> Option<BTreeMap<String, ControlKind>> {
+        let surface = self.writable(id).ok()?;
+        let controls = surface
+            .controls()
+            .into_iter()
+            .map(|meta| (meta.key, meta.kind))
+            .collect();
+        Some(controls)
+    }
+
     fn write_control(
         &mut self,
         id: &str,
         key: &str,
         value: &ControlValue,
+        modules: &[&str],
     ) -> Result<Option<BTreeMap<String, ControlKind>>, String> {
         let surface = self.writable(id)?;
+        // What only the directory can tell (a schedule's targets), checked
+        // at this write, not just for the control's final value.
+        let mut directory = self.directory_now(modules);
+        directory.insert(id.to_string(), surface.clone());
+        surface.validate_control(key, value, &directory)?;
         surface.set_control(key, value.clone())?;
         let controls = surface
             .controls()
@@ -216,5 +253,37 @@ impl EditFacts for LiveFacts<'_> {
             .map(|meta| (meta.key, meta.kind))
             .collect();
         Ok(Some(controls))
+    }
+}
+
+/// Brings a throwaway copy built from `config` to the control values its
+/// authored writes recorded there: a factory that does not read one of its
+/// controls' keys from its config (a count that sizes other controls, say)
+/// would otherwise leave the copy short of what the running module has.
+/// Only values the build did not already give are set, unindexed keys (a
+/// count) before indexed ones; a value the copy refuses is left as built.
+fn restore_authored(surface: &dyn crate::ControlSurface, config: &serde_json::Value) {
+    let Some(entries) = config.as_object() else {
+        return;
+    };
+    let mut keys: Vec<&String> = entries.keys().collect();
+    keys.sort_by_key(|key| key.contains('.'));
+    for key in keys {
+        let value = match &entries[key.as_str()] {
+            serde_json::Value::Number(number) => {
+                ControlValue::Number(number.as_f64().unwrap_or(0.0) as f32)
+            }
+            serde_json::Value::Bool(flag) => ControlValue::Bool(*flag),
+            serde_json::Value::String(text) => ControlValue::String(text.clone()),
+            _ => continue,
+        };
+        if !surface.controls().iter().any(|meta| &meta.key == key) {
+            continue;
+        }
+        let value = surface.coerce_value(key, value);
+        if surface.get_control(key).ok().as_ref() == Some(&value) {
+            continue;
+        }
+        let _ = surface.set_control(key, value);
     }
 }

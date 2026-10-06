@@ -354,3 +354,78 @@ fn writes_land_in_batch_order() {
         number(12.0)
     );
 }
+
+#[test]
+fn a_batch_sees_controls_an_earlier_authored_write_added() {
+    // The melody's factory does not read a recorded `degree_count`; the
+    // copy a batch checks against still has the degrees the authored write
+    // added.
+    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2])));
+    running
+        .set_control("tune", "degree_count", number(7.0))
+        .unwrap();
+    running
+        .apply_edits(&[set("tune", "degree.6", number(12.0))])
+        .expect("degree 6 exists since the authored write");
+    assert_eq!(
+        running.get_control("tune", "degree.6").unwrap(),
+        number(12.0)
+    );
+}
+
+#[test]
+fn every_schedule_a_batch_writes_is_checked_against_the_graph() {
+    // An earlier schedule naming a module that does not exist is refused at
+    // its edit, though a later one overwrites it.
+    let ghost = r#"[{ "at": 0, "module": "ghost", "control": "x", "value": 1.0 }]"#;
+    let (mut running, _pump) = start(BASE);
+    let error = running
+        .apply_edits(&[
+            add("auto", "control_scheduler", json!({})),
+            set("auto", "schedule", text(ghost)),
+            set("auto", "schedule", text("[]")),
+        ])
+        .expect_err("the first schedule's target does not exist");
+    assert_eq!(error.code, RpcErrorCode::InvalidEdit);
+    assert_eq!(error.edit.as_ref().unwrap().index, 1);
+}
+
+#[test]
+fn a_control_is_settled_by_its_last_write() {
+    // A live gesture shrank the melody below its authored count, so the
+    // batch's first write to degree 6 fails when made; the count it then
+    // restores lets the last write land. The control is written, not failed.
+    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    running
+        .snapshot()
+        .set_control_with_intent(
+            "tune",
+            "degree_count",
+            number(3.0),
+            crate::ControlWriteIntent::Perform,
+        )
+        .unwrap();
+    let report = running
+        .apply_edits(&[
+            set("tune", "degree.6", number(12.0)),
+            set("tune", "degree_count", number(7.0)),
+            set("tune", "degree.6", number(13.0)),
+        ])
+        .expect("the batch commits");
+    assert!(report.controls_failed.is_empty(), "{report:?}");
+    assert!(report
+        .controls_written
+        .iter()
+        .any(|written| written.key == "degree.6"));
+    assert_eq!(
+        running.get_control("tune", "degree.6").unwrap(),
+        number(13.0)
+    );
+    let document = running.document().unwrap();
+    let tune = document
+        .modules
+        .iter()
+        .find(|spec| spec.id == "tune")
+        .unwrap();
+    assert_eq!(tune.config["degree.6"], json!(13));
+}

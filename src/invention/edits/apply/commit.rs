@@ -1,7 +1,7 @@
 //! Preparing a planned batch off the audio thread, then committing it as one
 //! publication with its control writes and events.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{check_writes, refused_write, Batch, Refused};
 use crate::invention::edits::EditedCandidate;
@@ -103,10 +103,11 @@ impl RunningInvention {
             .collect();
         let snapshot = self.snapshot();
         let mut report = report_for(&plan, batch.edit_count);
-        let mut actual = Vec::new();
         // Every write, in batch order, so each lands on the module as the
-        // writes before it left it, as they were checked.
-        let mut failed: HashSet<(&str, &str)> = HashSet::new();
+        // writes before it left it, as they were checked. Each control is
+        // then settled by its last write: an earlier failure a later write
+        // made good is not a failure.
+        let mut last: HashMap<(&str, &str), Option<String>> = HashMap::new();
         for candidate in &batch.candidate.control_writes {
             let write = &candidate.write;
             if built.contains(write.module_id.as_str()) {
@@ -115,16 +116,32 @@ impl RunningInvention {
             // Unrecorded: the retained document already holds the value.
             let written =
                 snapshot.set_control_transient(&write.module_id, &write.key, write.value.clone());
-            let Err(error) = written else {
+            let outcome = written.err().map(|error| match error {
+                GraphCommandError::ControlError(message) => message,
+                other => other.to_string(),
+            });
+            last.insert((write.module_id.as_str(), write.key.as_str()), outcome);
+        }
+        // One report entry per control, and one event per control written,
+        // with its final value.
+        let mut actual = Vec::new();
+        let mut announced = Vec::new();
+        for candidate in batch.candidate.final_writes() {
+            let write = &candidate.write;
+            let failure = last
+                .get(&(write.module_id.as_str(), write.key.as_str()))
+                .cloned()
+                .flatten();
+            let Some(mut error) = failure else {
+                report
+                    .controls_written
+                    .push(WrittenControl::new(&write.module_id, &write.key));
+                announced.push(write);
                 continue;
             };
             if let Ok(value) = self.get_control(&write.module_id, &write.key) {
                 actual.push((write, value));
             }
-            let mut error = match error {
-                GraphCommandError::ControlError(message) => message,
-                other => other.to_string(),
-            };
             truncate_on_char_boundary(&mut error, MODULE_ERROR_BYTES);
             report.controls_failed.push(ControlWriteFailure {
                 edit_index: candidate.edit_index,
@@ -132,19 +149,6 @@ impl RunningInvention {
                 key: write.key.clone(),
                 error,
             });
-            failed.insert((write.module_id.as_str(), write.key.as_str()));
-        }
-        // One report entry and one event per control, with its final value.
-        let mut announced = Vec::new();
-        for candidate in batch.candidate.final_writes() {
-            let write = &candidate.write;
-            if failed.contains(&(write.module_id.as_str(), write.key.as_str())) {
-                continue;
-            }
-            report
-                .controls_written
-                .push(WrittenControl::new(&write.module_id, &write.key));
-            announced.push(write);
         }
         if !actual.is_empty() {
             // Per key, so an edit landing since the commit keeps its own

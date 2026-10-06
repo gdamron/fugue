@@ -224,6 +224,15 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         value: &ControlValue,
     ) -> Applied {
         self.named_modules.insert(module_id.to_string());
+        // A running module's writes are checked as authored, from its first.
+        if self.exists(module_id)
+            && !self.added.contains_key(module_id)
+            && !self.controls_now.contains_key(module_id)
+        {
+            if let Some(controls) = self.facts.authored_controls(module_id) {
+                self.controls_now.insert(module_id.to_string(), controls);
+            }
+        }
         let facts = self.module_facts(module_id)?;
         let Some(kind) = facts.controls.get(key) else {
             let keys: Vec<String> = facts.controls.keys().cloned().collect();
@@ -256,9 +265,15 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         // Made on the module as the batch has it so far, so a value its
         // setter refuses at this point is refused here, and the edits after
         // this one see the controls it adds or removes.
+        let modules: Vec<&str> = self
+            .document
+            .modules
+            .iter()
+            .map(|spec| spec.id.as_str())
+            .collect();
         let controls = self
             .facts
-            .write_control(module_id, key, &applied)
+            .write_control(module_id, key, &applied, &modules)
             .map_err(|reason| {
                 Refusal(
                     EditFailureReason::InvalidControlValue,
