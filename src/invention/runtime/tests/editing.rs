@@ -2,8 +2,8 @@
 //! blocks in place of the audio thread.
 
 use super::*;
+use crate::invention::manual_backend::{start_manual, Pump};
 use crate::invention::publish::tests::probe::{DropProbeFactory, DROP_PROBE};
-use crate::modules::dac::BlockRenderFn;
 use crate::ModuleRegistry;
 
 const BASE: &str = r#"{
@@ -19,50 +19,12 @@ const BASE: &str = r#"{
     ]
 }"#;
 
-/// A backend whose blocks the test renders on demand.
-#[derive(Clone, Default)]
-struct ManualBackend {
-    render: Arc<Mutex<Option<BlockRenderFn>>>,
-}
-
-impl ManualBackend {
-    fn render(&self, blocks: usize) -> Vec<f32> {
-        let mut render = self.render.lock().unwrap();
-        let render = render.as_mut().expect("started");
-        let mut out = Vec::new();
-        let mut left = [0.0f32; 64];
-        let mut right = [0.0f32; 64];
-        for _ in 0..blocks {
-            render(&mut left, &mut right);
-            out.extend_from_slice(&left);
-        }
-        out
-    }
-}
-
-impl AudioBackend for ManualBackend {
-    fn sample_rate(&self) -> u32 {
-        48_000
-    }
-
-    fn start(&mut self, render: BlockRenderFn) -> Result<(), Box<dyn std::error::Error>> {
-        *self.render.lock().unwrap() = Some(render);
-        Ok(())
-    }
-
-    fn stop(&mut self) {
-        self.render.lock().unwrap().take();
-    }
-}
-
-fn start(registry: ModuleRegistry) -> (RunningInvention, ManualBackend) {
+fn start(registry: ModuleRegistry) -> (RunningInvention, Pump) {
     let invention = Invention::from_json(BASE).unwrap();
     let (runtime, _) = InventionBuilder::with_registry(48_000, registry)
         .build(invention)
         .unwrap();
-    let backend = ManualBackend::default();
-    let running = runtime.start_with_backend(backend.clone()).unwrap();
-    (running, backend)
+    start_manual(runtime)
 }
 
 #[test]

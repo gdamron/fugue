@@ -96,10 +96,7 @@ fn an_edit_landing_right_after_a_reload_publishes_keeps_its_document_change() {
     let (runtime, _) = InventionBuilder::with_registry(SAMPLE_RATE, registry.clone())
         .build(doc(&base))
         .unwrap();
-    let pump = Pump::default();
-    let mut running = runtime
-        .start_with_backend(ManualBackend(pump.clone()))
-        .unwrap();
+    let (mut running, pump) = start_manual(runtime);
 
     // The reload removes `spare`; writing its control update adds `late`
     // through the live graph, after the reload's publication.
