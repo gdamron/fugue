@@ -54,14 +54,15 @@
 //! - A position revealed by a count growth that is still pending reads its
 //!   mirror while the table is busy, which may be stale (it holds whatever
 //!   the position last played, or 0) until the growth is drained.
-//! - A drained position write that lands past the count is kept hidden
-//!   (shown again when the count grows) only when the same drain applied a
-//!   deferred count: that is "write, then the deferred shrink". Otherwise
-//!   the count changed by a whole-table edit or a direct count write, which
-//!   would have refused the write, and it is dropped. The one case that
-//!   keeps a value no serial order would: a count deposit and a position
-//!   deposit past the new count both land while a whole-table edit replaces
-//!   the table, and the position is kept hidden.
+//! - A deferred write still in the mailbox at a drain ran concurrently
+//!   with the edits made since the previous drain, and was valid when made.
+//!   If its position is active after the drain it applies after those
+//!   edits; if not, it is taken as made before them and kept hidden, unless
+//!   one of them replaced its field (the scale for a degree, the base
+//!   weights for a weight), which erased it, so it is dropped. One corner
+//!   remains: a position deposit followed by a count deposit that grows the
+//!   count back over it, both during a count-shrinking replacement of that
+//!   field, applies the position although no serial order would keep it.
 
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
@@ -209,19 +210,19 @@ impl Pending {
     }
 
     /// Applies every deposit to `table`: the count first, then positions.
-    /// A position past the count by then is kept hidden (shown again when
-    /// the count grows) if this drain applied a deferred count, as if
-    /// written before that shrink; otherwise it is dropped, as the count
-    /// came from an edit that would have refused it (see "Known gaps").
-    /// Call under the lock. Returns whether anything was applied. Never
-    /// allocates.
+    /// `replaced` says whether an edit since the last drain replaced the
+    /// scale and the base weights. A position active after the count is
+    /// applied takes its deposit; a hidden one keeps it for when the count
+    /// grows, unless its field was replaced, which erased it (see "Known
+    /// gaps"). Call under the lock. Returns whether anything was applied.
+    /// Never allocates.
     ///
     /// The flag is cleared before slots are read, so a deposit racing the
     /// drain sets it again and is drained later (see the module docs).
     /// A slot is cleared only if it still holds the value applied, so a newer
     /// deposit to it survives; the mirror is refreshed before the slot is
     /// cleared, so a contended read never sees neither.
-    fn drain(&self, table: &mut DegreeTable) -> bool {
+    fn drain(&self, table: &mut DegreeTable, replaced: (bool, bool)) -> bool {
         // Either exit is sound. A `false` load reads the value some clearing
         // swap wrote (or the initial one): that drainer applied every deposit
         // flagged before it, and any flagged after leaves the flag set for a
@@ -232,7 +233,6 @@ impl Pending {
         }
         let mut changed = false;
         let count = self.count.load(Ordering::Acquire);
-        let keep_hidden = count != NO_COUNT;
         if count != NO_COUNT {
             if table.set_count(count) {
                 self.publish(table);
@@ -243,11 +243,11 @@ impl Pending {
                     .compare_exchange(count, NO_COUNT, Ordering::AcqRel, Ordering::Relaxed);
         }
         let active = table.count();
+        let (degrees_replaced, weights_replaced) = replaced;
         for i in 0..MAX_DEGREES {
-            let lands = i < active || keep_hidden;
             let degree = self.degrees[i].load(Ordering::Acquire);
             if degree != NO_DEGREE {
-                if lands {
+                if i < active || !degrees_replaced {
                     if table.write_degree(i, degree) {
                         self.publish_degree(i, degree);
                     }
@@ -263,7 +263,7 @@ impl Pending {
             let bits = self.weights[i].load(Ordering::Acquire);
             if bits != NO_WEIGHT {
                 let weight = f32::from_bits(bits);
-                if lands {
+                if i < active || !weights_replaced {
                     if table.write_weight(i, weight) {
                         self.publish_weight(i, weight);
                     }
@@ -344,9 +344,12 @@ impl MelodyControls {
         self.pending.has_pending()
     }
 
-    /// Drains the mailbox into the locked table, publishing any change.
+    /// Drains the mailbox into the locked table, publishing any change. Every
+    /// holder's drain resets the table's replaced flags, pending or not, so
+    /// they cover only the edits since the last drain.
     fn drain_into(&self, table: &mut DegreeTable) {
-        if self.pending.drain(table) {
+        let replaced = table.take_replaced();
+        if self.pending.drain(table, replaced) {
             self.table_version.fetch_add(1, Ordering::Release);
         }
     }

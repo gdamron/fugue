@@ -138,26 +138,95 @@ fn a_deferred_shrink_keeps_an_earlier_deferred_write_hidden() {
     assert_eq!(ctrl.allowed_degrees(), [0, 2, 4, 11]);
 }
 
+// The tests below hold the guard and run an edit's body from the holder's
+// side, so a deposit lands deterministically while the edit holds the lock.
+// They call the same `DegreeTable` methods (`replace_degrees`,
+// `replace_weights`, `set_count`) and `publish` that `set_allowed_degrees`,
+// `set_note_weights` and `set_degree_count` run under it, flags included.
+
+/// An 8-degree melody, as a document might configure one.
+fn octave() -> MelodyControls {
+    MelodyControls::new(60, vec![0, 2, 4, 5, 7, 9, 11, 12])
+}
+
 #[test]
-fn a_deposit_a_count_changing_whole_table_edit_puts_out_of_range_is_dropped() {
-    // Validated against the count from before the edit, the write is out of
-    // range after it. Serially it would have been erased (before the edit)
-    // or refused (after it), so the drain drops it rather than hiding it.
-    let ctrl = MelodyControls::new(60, vec![0, 2, 4, 5, 7, 9, 11, 12]);
-    // Holding the guard and shrinking from the holder's side stands in for
-    // `edit_table`, as a count-changing edit like `set_allowed_degrees`.
+fn a_weight_deferred_during_a_scale_replacement_is_kept_hidden() {
+    let ctrl = octave();
     let mut guard = ctrl.lock_table();
-    ctrl.set_degree(5, 3).unwrap();
     ctrl.set_note_weight(6, 4.0).unwrap();
-    guard.set_count(3);
+    guard.replace_degrees(vec![0, 4, 7]);
     ctrl.pending.publish(&guard);
     drop(guard);
 
-    assert!(!ctrl.has_pending());
-    assert_eq!(table_degrees(&ctrl), [0, 2, 4]);
+    assert_eq!(table_weights(&ctrl), [1.0; 3]);
+    // Replacing the scale keeps written weights, so growing shows it.
     ctrl.set_degree_count(7);
-    assert_eq!(ctrl.allowed_degrees(), [0, 2, 4, 5, 7, 9, 11]);
-    assert_eq!(ctrl.note_weights(), [1.0; 7]);
+    assert_eq!(ctrl.note_weights()[6], 4.0);
+}
+
+#[test]
+fn writes_deferred_during_a_direct_count_shrink_are_kept_hidden() {
+    let ctrl = octave();
+    let mut guard = ctrl.lock_table();
+    ctrl.set_degree(5, 3).unwrap();
+    ctrl.set_note_weight(5, 4.0).unwrap();
+    guard.set_count(2);
+    ctrl.pending.publish(&guard);
+    drop(guard);
+
+    assert_eq!(table_degrees(&ctrl), [0, 2]);
+    ctrl.set_degree_count(6);
+    assert_eq!(ctrl.allowed_degrees(), [0, 2, 4, 5, 7, 3]);
+    assert_eq!(ctrl.note_weights()[5], 4.0);
+}
+
+#[test]
+fn a_scale_replacement_erases_a_degree_deferred_past_a_deferred_shrink() {
+    let ctrl = octave();
+    let mut guard = ctrl.lock_table();
+    ctrl.set_degree(5, 3).unwrap();
+    ctrl.set_degree_count(2);
+    guard.replace_degrees(vec![0, 4, 7]);
+    ctrl.pending.publish(&guard);
+    drop(guard);
+
+    assert_eq!(table_degrees(&ctrl), [0, 4]);
+    ctrl.set_degree_count(6);
+    assert_eq!(ctrl.allowed_degrees(), [0, 4, 7, 0, 4, 7]);
+}
+
+#[test]
+fn a_weight_replacement_erases_only_deferred_weights() {
+    let ctrl = octave();
+    let mut guard = ctrl.lock_table();
+    ctrl.set_degree(5, 3).unwrap();
+    ctrl.set_note_weight(5, 4.0).unwrap();
+    ctrl.set_degree_count(2);
+    guard.replace_weights(vec![2.0]);
+    ctrl.pending.publish(&guard);
+    drop(guard);
+
+    ctrl.set_degree_count(6);
+    assert_eq!(ctrl.allowed_degrees(), [0, 2, 4, 5, 7, 3]);
+    assert_eq!(ctrl.note_weights(), [2.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
+}
+
+#[test]
+fn an_earlier_replacement_does_not_erase_a_later_deferred_write() {
+    let ctrl = MelodyControls::new(60, vec![]);
+    // Replaced with no deposit pending: nothing drains on its release.
+    ctrl.set_allowed_degrees(vec![0, 2, 4, 5, 7, 9, 11, 12]);
+
+    // A later, separate direct count shrink; its holder's drain on acquire
+    // resets the flags first.
+    let mut guard = ctrl.lock_table();
+    ctrl.set_degree(5, 3).unwrap();
+    guard.set_count(2);
+    ctrl.pending.publish(&guard);
+    drop(guard);
+
+    ctrl.set_degree_count(6);
+    assert_eq!(ctrl.allowed_degrees(), [0, 2, 4, 5, 7, 3]);
 }
 
 #[test]
