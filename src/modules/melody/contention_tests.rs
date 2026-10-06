@@ -139,6 +139,27 @@ fn a_deferred_shrink_keeps_an_earlier_deferred_write_hidden() {
 }
 
 #[test]
+fn a_deposit_during_a_count_changing_whole_table_edit_is_kept_hidden() {
+    // A known corner, pinned here, not a contract (see "Known gaps" in the
+    // pending module docs): the deposit is validated against the count from
+    // before the edit and drained after it as a hidden written value.
+    let ctrl = MelodyControls::new(60, vec![0, 2, 4, 5, 7, 9, 11, 12]);
+    let mut guard = ctrl.lock_table();
+    // A scheduled write lands while a whole-table edit holds the lock...
+    ctrl.set_degree(5, 3).unwrap();
+    // ...and the edit then shrinks the count and publishes, as a
+    // count-changing edit such as `set_allowed_degrees` does.
+    guard.set_count(3);
+    ctrl.pending.publish(&guard);
+    drop(guard);
+
+    assert!(!ctrl.has_pending());
+    assert_eq!(table_degrees(&ctrl), [0, 2, 4]);
+    ctrl.set_degree_count(6);
+    assert_eq!(ctrl.allowed_degrees(), [0, 2, 4, 5, 7, 3]);
+}
+
+#[test]
 fn concurrent_position_and_whole_table_edits_settle_on_each_threads_last_write() {
     const ROUNDS: usize = 20_000;
     let ctrl = controls();

@@ -14,30 +14,47 @@
 //!
 //! # Draining
 //!
-//! Every holder of the table lock goes through [`TableGuard`], which drains
-//! the mailbox when it acquires the lock (so a direct write lands after older
-//! deferred ones, and a whole-table edit overwrites them rather than being
-//! overwritten) and, after it releases the lock, re-checks the mailbox and
-//! drains it again with `try_lock` if a deposit arrived meanwhile. A
-//! depositor also retries `try_lock` once after depositing.
+//! Every holder of the table lock goes through [`TableGuard`] or, like the
+//! guard's own post-release drain, repeats its re-check itself. The guard
+//! drains the mailbox when it acquires the lock (so a direct write lands
+//! after older deferred ones, and a whole-table edit overwrites them rather
+//! than being overwritten) and, after it releases the lock, re-checks the
+//! mailbox and drains it again with `try_lock` if a deposit arrived
+//! meanwhile. A depositor also retries `try_lock` once after depositing.
 //!
 //! Invariant: a deposit made while any holder holds the lock is drained by
-//! that holder's post-release check or by a later holder, never stranded.
-//! The depositor sets the pending flag and then (after a `SeqCst` fence)
-//! tries the lock; the holder releases the lock and then (after a `SeqCst`
-//! fence) reads the flag. With both fences, either the depositor's retry
-//! finds the lock free or the holder sees the flag; if the holder's own
-//! `try_lock` then fails, whoever holds the lock now repeats the check on
-//! its release.
+//! that holder's post-release check, by a later holder (which drains on
+//! acquire), or by the melody's next block (`DegreeSnapshot::sync` drains
+//! whenever a deposit is pending), never stranded. The depositor sets the
+//! pending flag and then (after a `SeqCst` fence) tries the lock; the holder
+//! releases the lock and then (after a `SeqCst` fence) reads the flag. With
+//! both fences, either the depositor's retry finds the lock free or the
+//! holder sees the flag; if the holder's own `try_lock` then fails, whoever
+//! holds the lock now repeats the check on its release.
+//!
+//! The fence pairing relies on std's `Mutex` unlock and `try_lock` being
+//! atomic operations on the lock word, true of std on current platforms but
+//! not something the memory model promises for a `Mutex` in general.
 //!
 //! # Reads while contended
 //!
 //! Reads that find the table busy answer from the mailbox (the pending value
 //! for that slot, if any) or else from a lock-free mirror of the effective
-//! table, refreshed under the lock after every edit. One known gap: a
-//! position revealed by a count growth that is still pending reads its
-//! mirror, which may be stale (it holds whatever the position last played,
-//! or 0) until the growth is drained.
+//! table, refreshed under the lock after every edit.
+//!
+//! # Known gaps
+//!
+//! - A position revealed by a count growth that is still pending reads its
+//!   mirror while the table is busy, which may be stale (it holds whatever
+//!   the position last played, or 0) until the growth is drained.
+//! - A deposit made while a count-changing whole-table edit holds the lock
+//!   is validated against the count from before that edit, and is drained
+//!   after it as a hidden written value. For example: with count 8, while
+//!   `set_allowed_degrees(vec![0, 4, 7])` holds the lock, a scheduled
+//!   `set_degree(5, 3)` is accepted and kept hidden at position 5; a later
+//!   `set_degree_count(6)` plays it, and a saved document records it.
+//!   Uncontended, the write would have been forgotten by the edit (before
+//!   it) or refused as out of range (after it).
 
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{fence, AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
@@ -51,6 +68,9 @@ const NO_DEGREE: i32 = i32::MIN;
 const NO_WEIGHT: u32 = u32::MAX;
 /// Empty count slot; written counts are at least 1.
 const NO_COUNT: usize = 0;
+/// Passes a post-release drain makes before leaving a deposit that keeps
+/// racing it to the next holder or the melody's next block.
+const MAX_RELEASE_DRAINS: usize = 4;
 
 fn weight_bits(value: f32) -> u32 {
     match value.to_bits() {
@@ -240,8 +260,10 @@ impl Pending {
 }
 
 /// The degree table, locked. Every path that locks the table goes through
-/// this guard: it drains the mailbox on acquire and, after releasing, drains
-/// deposits that arrived while it held the lock (see the module docs).
+/// this guard or, like `MelodyControls::drain_released`, repeats its
+/// re-check itself: it drains the mailbox on acquire and, after releasing,
+/// drains deposits that arrived while it held the lock (see the module
+/// docs).
 pub(super) struct TableGuard<'a> {
     ctrl: &'a MelodyControls,
     table: Option<MutexGuard<'a, DegreeTable>>,
@@ -308,9 +330,12 @@ impl MelodyControls {
     }
 
     /// After releasing the lock: drains deposits made while it was held,
-    /// for as long as the lock is free and deposits keep arriving.
+    /// while the lock is free and deposits keep arriving, for at most
+    /// `MAX_RELEASE_DRAINS` passes. Stopping with a deposit still pending
+    /// is safe: the melody's `DegreeSnapshot::sync` drains it on its next
+    /// block, and any later holder drains it on acquire.
     fn drain_released(&self) {
-        loop {
+        for _ in 0..MAX_RELEASE_DRAINS {
             fence(Ordering::SeqCst);
             if !self.pending.has_pending() {
                 return;
