@@ -840,7 +840,7 @@ mod tests {
     #[cfg(unix)]
     mod unix_fake_ffmpeg {
         use super::*;
-        use crate::streaming::test_support::wait_until;
+        use crate::test_support::wait_until;
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use std::path::{Path, PathBuf};

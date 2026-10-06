@@ -3,6 +3,7 @@ use crate::invention::builder::InventionBuilder;
 use crate::invention::format::Invention;
 use crate::invention::orchestration::OrchestrationRuntime;
 use crate::modules::AudioDiagnostics;
+use crate::test_support::wait_until;
 use crate::ControlValue;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -68,6 +69,18 @@ impl AudioBackend for TickBackend {
     }
 }
 
+/// Waits for the running graph to list `module_id`. Code module hooks run on
+/// a script thread, which a loaded machine can leave waiting well past any
+/// fixed sleep.
+fn wait_for_module(running: &RunningInvention, module_id: &str) -> bool {
+    wait_until(|| {
+        running
+            .list_modules()
+            .into_iter()
+            .any(|module| module.id == module_id)
+    })
+}
+
 #[test]
 fn running_invention_tracks_runtime_module_mutations() {
     let invention = Invention::from_json(
@@ -97,13 +110,13 @@ fn running_invention_tracks_runtime_module_mutations() {
         )
         .unwrap();
 
-    thread::sleep(Duration::from_millis(50));
-
-    let status = running.status();
-    assert!(status
+    // The audio worker and the code module's script thread both run on their
+    // own schedule; wait for each rather than sleeping a fixed time.
+    assert!(wait_until(|| running
+        .status()
         .diagnostics
         .as_ref()
-        .is_some_and(|diagnostics| diagnostics.callback_count > 0));
+        .is_some_and(|diagnostics| diagnostics.callback_count > 0)));
     assert!(running
         .full_snapshot()
         .status
@@ -111,10 +124,7 @@ fn running_invention_tracks_runtime_module_mutations() {
         .as_ref()
         .is_some_and(|diagnostics| diagnostics.callback_count > 0));
 
-    assert!(running
-        .list_modules()
-        .into_iter()
-        .any(|module| module.id == "osc_live"));
+    assert!(wait_for_module(&running, "osc_live"));
 
     running.remove_module("osc_live").unwrap();
     assert!(!running
@@ -151,12 +161,9 @@ fn running_invention_code_tick_updates_controls() {
         .start_with_backend(TickBackend::new(48_000))
         .unwrap();
 
-    thread::sleep(Duration::from_millis(120));
-
-    assert_eq!(
-        running.get_control("code1", "last_error").unwrap(),
-        ControlValue::String("tick-ran".to_string())
-    );
+    let ticked = ControlValue::String("tick-ran".to_string());
+    wait_until(|| running.get_control("code1", "last_error").unwrap() == ticked);
+    assert_eq!(running.get_control("code1", "last_error").unwrap(), ticked);
 
     running.stop();
 }
@@ -186,12 +193,7 @@ fn running_invention_supports_returned_lifecycle_object() {
         .start_with_backend(TickBackend::new(48_000))
         .unwrap();
 
-    thread::sleep(Duration::from_millis(50));
-
-    assert!(running
-        .list_modules()
-        .into_iter()
-        .any(|module| module.id == "osc_from_object_live"));
+    assert!(wait_for_module(&running, "osc_from_object_live"));
 
     running.stop();
 }
@@ -344,8 +346,13 @@ fn installed_sink_observes_code_module_console_output() {
     let sink = Arc::new(RecordingSink::default());
     running.set_event_sink(sink.clone());
 
-    // Let a few ticks run so the script's console.log fires with the sink in place.
-    thread::sleep(Duration::from_millis(120));
+    // Let ticks run until the script's console.log fires with the sink in place.
+    let logged = |activities: &[(String, String)]| {
+        activities.iter().any(|(module_id, activity)| {
+            module_id == "code1" && activity == "[log] conducting section B"
+        })
+    };
+    wait_until(|| logged(&sink.agent_activities()));
     running.stop();
 
     let activities = sink.agent_activities();
@@ -379,10 +386,15 @@ fn master_meter_reports_output_peaks() {
         .start_with_backend(TickBackend::new(48_000))
         .unwrap();
 
-    // Let the audio worker render enough blocks to fold in a peak.
-    thread::sleep(Duration::from_millis(60));
+    // Let the audio worker render enough blocks to fold in a peak. Reading
+    // the meter drains it, so keep the reading that satisfied the wait.
+    let mut peaks = (0.0, 0.0);
+    wait_until(|| {
+        peaks = running.master_meter();
+        peaks.0 > 0.0 && peaks.1 > 0.0
+    });
 
-    let (left, right) = running.master_meter();
+    let (left, right) = peaks;
     assert!(left > 0.0, "expected a non-zero left peak, got {left}");
     assert!(right > 0.0, "expected a non-zero right peak, got {right}");
     assert!(left <= 1.0 && right <= 1.0, "peaks stay within full-scale");
@@ -415,12 +427,7 @@ fn running_invention_keeps_legacy_globalthis_hooks_working() {
         .start_with_backend(TickBackend::new(48_000))
         .unwrap();
 
-    thread::sleep(Duration::from_millis(50));
-
-    assert!(running
-        .list_modules()
-        .into_iter()
-        .any(|module| module.id == "osc_from_legacy_live"));
+    assert!(wait_for_module(&running, "osc_from_legacy_live"));
 
     running.stop();
 }

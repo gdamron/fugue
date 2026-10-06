@@ -25,6 +25,8 @@ pub mod scripting;
 pub mod spectrum;
 pub(crate) mod streaming;
 pub mod traits;
+#[cfg(test)]
+mod test_support;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 

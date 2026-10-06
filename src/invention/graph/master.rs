@@ -61,19 +61,31 @@ mod tests {
     /// and with a spectrum reader attached. The budget is a hundredth of the
     /// block's real-time duration: hundreds of times what an optimised build
     /// spends, and still far below anything a listener could hear.
+    ///
+    /// Observing costs the same every block, so the cheapest of many short
+    /// batches is that cost. A batch is well under a scheduler slice, so on a
+    /// loaded machine some batches still run unpreempted, where one long
+    /// wall-clock average would charge the observers for time spent waiting
+    /// for a CPU.
     #[test]
     fn observing_a_block_costs_a_sliver_of_its_duration() {
         const FRAMES: usize = 128;
-        const BLOCKS: u32 = 20_000;
+        const BATCHES: u32 = 200;
+        const BLOCKS_PER_BATCH: u32 = 100;
         let budget = Duration::from_secs_f64(FRAMES as f64 / 48_000.0 / 100.0);
         let left: Vec<f32> = (0..FRAMES).map(|i| (i as f32 * 0.01).sin()).collect();
         let right: Vec<f32> = (0..FRAMES).map(|i| (i as f32 * 0.013).cos()).collect();
         let per_block = |observers: &MasterObservers| {
-            let start = Instant::now();
-            for _ in 0..BLOCKS {
-                observers.observe(black_box(&left), black_box(&right), FRAMES);
-            }
-            start.elapsed() / BLOCKS
+            (0..BATCHES)
+                .map(|_| {
+                    let start = Instant::now();
+                    for _ in 0..BLOCKS_PER_BATCH {
+                        observers.observe(black_box(&left), black_box(&right), FRAMES);
+                    }
+                    start.elapsed() / BLOCKS_PER_BATCH
+                })
+                .min()
+                .unwrap()
         };
 
         let observers = MasterObservers::live();

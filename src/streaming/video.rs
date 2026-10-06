@@ -592,7 +592,7 @@ fn reap_decoder(shared: &VideoPlaybackShared) -> Option<ExitStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::streaming::test_support::wait_until;
+    use crate::test_support::wait_until;
 
     fn config(path: PathBuf) -> VideoPlaybackConfig {
         VideoPlaybackConfig {

@@ -1,6 +1,6 @@
 use super::{CodeModuleRuntimeInfo, RenderEngine};
+use crate::test_support::wait_until;
 use crate::ControlValue;
-use std::time::Duration;
 
 const SIMPLE_INVENTION: &str = r#"{
     "version": "1.0.0",
@@ -15,6 +15,18 @@ const SIMPLE_INVENTION: &str = r#"{
         { "from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio" }
     ]
 }"#;
+
+/// Waits for the graph to list `module_id`. Boot hooks run on the code
+/// module's script thread, which a loaded machine can leave waiting well past
+/// any fixed sleep.
+fn wait_for_module(engine: &RenderEngine, module_id: &str) -> bool {
+    wait_until(|| {
+        engine
+            .list_modules()
+            .into_iter()
+            .any(|module| module.id == module_id)
+    })
+}
 
 #[test]
 fn render_engine_renders_interleaved_audio() {
@@ -112,11 +124,7 @@ fn render_engine_runs_code_module_init_hook() {
         )
         .unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
-    assert!(engine
-        .list_modules()
-        .into_iter()
-        .any(|module| module.id == "osc_from_code"));
+    assert!(wait_for_module(&engine, "osc_from_code"));
 }
 
 #[test]
@@ -180,11 +188,7 @@ fn render_engine_supports_returned_lifecycle_object() {
         )
         .unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
-    assert!(engine
-        .list_modules()
-        .into_iter()
-        .any(|module| module.id == "osc_from_object"));
+    assert!(wait_for_module(&engine, "osc_from_object"));
 }
 
 #[test]
@@ -210,11 +214,7 @@ fn render_engine_supports_custom_entrypoint_function() {
         )
         .unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
-    assert!(engine
-        .list_modules()
-        .into_iter()
-        .any(|module| module.id == "osc_from_boot"));
+    assert!(wait_for_module(&engine, "osc_from_boot"));
 }
 
 #[test]
@@ -239,11 +239,7 @@ fn render_engine_keeps_legacy_globalthis_hooks_working() {
         )
         .unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
-    assert!(engine
-        .list_modules()
-        .into_iter()
-        .any(|module| module.id == "osc_from_legacy"));
+    assert!(wait_for_module(&engine, "osc_from_legacy"));
 }
 
 /// Clock at 22_500 BPM = 128 samples per beat at 48 kHz; a 4-step one_shot
