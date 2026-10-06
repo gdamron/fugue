@@ -281,6 +281,33 @@ fn parsing_rejects_bad_entries() {
 }
 
 #[test]
+fn parsing_refuses_numbers_too_large_for_f32() {
+    // JSON has no NaN or infinity, but 1e39 overflows an f32 to infinity,
+    // which the audio thread would hand straight to the target's setter.
+    for value in ["1e39", "-1e39"] {
+        let json = format!(r#"[{{ "at": 2, "module": "m", "control": "c", "value": {value} }}]"#);
+        let err = parse_schedule_json(&json).unwrap_err();
+        assert!(
+            err.contains("control 'm.c' expects a finite number"),
+            "{}",
+            err
+        );
+        let array: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            parse_schedule(&array).is_err(),
+            "config form is refused too"
+        );
+    }
+
+    // Finite extremes still parse.
+    let json = format!(
+        r#"[{{ "at": 0, "module": "m", "control": "c", "value": {} }}]"#,
+        f32::MAX
+    );
+    assert!(parse_schedule_json(&json).is_ok());
+}
+
+#[test]
 fn a_config_schedule_given_as_json_text_parses_like_the_array() {
     // The `schedule` control takes JSON text, and an authored control write
     // records that text in the config, so the config must build from it.

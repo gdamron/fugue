@@ -2,6 +2,7 @@ use crate::invention::graph::{GraphCommand, SignalGraph};
 use crate::invention::publish::{edge, BuiltModule, GraphChange, LiveGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
+use crate::rpc::non_finite_refusal;
 use crate::{
     ControlMeta, ControlValue, ControlWrite, ControlWriteIntent, RpcEvent, RpcEventPayload,
     RpcEventSink,
@@ -55,8 +56,8 @@ pub trait OrchestrationRuntime {
     /// Applies a batch of control writes in order within one call, so a
     /// multi-control conducting gesture lands together rather than smeared
     /// across separate requests. Each write carries its own intent and goes
-    /// through [`Self::set_control_with_intent`] (same coercion). Fails on the
-    /// first bad write;
+    /// through [`Self::set_control_with_intent`] (same coercion, same refusal
+    /// of non-finite numbers). Fails on the first bad write;
     /// writes already applied before it stand, since control writes have no
     /// rollback — validate keys with `list_controls` first if that matters.
     fn set_controls(&self, writes: &[ControlWrite]) -> Result<(), GraphCommandError> {
@@ -201,6 +202,16 @@ impl RuntimeSnapshot {
     /// a scheduler running at musical rate cannot make every peer's structural
     /// edit stale (FUG-266).
     ///
+    /// Every write is coerced to the control's declared kind first. A write
+    /// whose value is a number that is not finite after coercion (NaN, an
+    /// infinity, or a value too large for an `f32`; for a number control this
+    /// includes the strings `"NaN"`, `"inf"` and `"1e39"`) is refused as
+    /// [`GraphCommandError::ControlError`] before it reaches the module or the
+    /// document: neither changes and no event is emitted. A string control
+    /// coerces such a number to text (`"NaN"`) and accepts it. A document
+    /// cannot hold a non-finite number (JSON would record `null`), and DSP
+    /// code fed one goes silent or blasts noise.
+    ///
     /// Internal reconstruction that must stay silent (a reload carrying values
     /// into the rebuilt graph) uses [`Self::set_control_recorded`] instead.
     pub fn set_control_with_intent(
@@ -233,7 +244,7 @@ impl RuntimeSnapshot {
         key: &str,
         value: ControlValue,
     ) -> Result<ControlValue, GraphCommandError> {
-        let value = self.coerced(module_id, key, value);
+        let value = self.coerced(module_id, key, value)?;
         self.set_control_transient(module_id, key, value.clone())?;
         Ok(value)
     }
@@ -253,7 +264,7 @@ impl RuntimeSnapshot {
         // so a stringified write lands and the retained document stays typed
         // (see FUG-240). set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
-        let value = self.coerced(module_id, key, value);
+        let value = self.coerced(module_id, key, value)?;
         self.set_control_transient(module_id, key, value.clone())?;
         self.state
             .lock()
@@ -264,11 +275,26 @@ impl RuntimeSnapshot {
 
     /// Coerces a value to the control's declared kind, leaving it untouched
     /// when the module is unknown (the write itself then reports the error).
-    fn coerced(&self, module_id: &str, key: &str, value: ControlValue) -> ControlValue {
-        let controls = self.control_surfaces.lock().unwrap();
-        match controls.get(module_id) {
-            Some(surface) => surface.coerce_value(key, value),
-            None => value,
+    ///
+    /// Refuses a number that is not finite once coerced, with the same message
+    /// the edit path gives, so no live write can hand one to a module setter
+    /// or record it in the document.
+    fn coerced(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+    ) -> Result<ControlValue, GraphCommandError> {
+        let value = {
+            let controls = self.control_surfaces.lock().unwrap();
+            match controls.get(module_id) {
+                Some(surface) => surface.coerce_value(key, value),
+                None => return Ok(value),
+            }
+        };
+        match non_finite_refusal(module_id, key, &value) {
+            Some(message) => Err(GraphCommandError::ControlError(message)),
+            None => Ok(value),
         }
     }
 
