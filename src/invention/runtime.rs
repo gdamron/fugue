@@ -287,10 +287,10 @@ impl RunningInvention {
     pub fn controller(&self) -> RuntimeController {
         RuntimeController {
             snapshot: self.snapshot(),
-            // Unused: a live controller builds through `live`, against the
-            // live graph's current registry, so one that outlives a reload
-            // builds what the reload adopted.
-            registry: ModuleRegistry::new(),
+            // A live controller builds through `live`, against the live
+            // graph's current registry, so one that outlives a reload builds
+            // what the reload adopted.
+            registry: None,
             sample_rate: self.sample_rate,
             graph: None,
             live: Some(self.live.clone()),

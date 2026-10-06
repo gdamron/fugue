@@ -101,7 +101,10 @@ pub struct RuntimeSnapshot {
 #[derive(Clone)]
 pub struct RuntimeController {
     pub(crate) snapshot: RuntimeSnapshot,
-    pub(crate) registry: ModuleRegistry,
+    /// The registry an offline render builds modules against: `Some` exactly
+    /// when `graph` is. A live controller has none of its own; it builds
+    /// through `live`, against the live graph's current registry.
+    pub(crate) registry: Option<ModuleRegistry>,
     pub(crate) sample_rate: u32,
     pub(crate) graph: Option<Arc<Mutex<SignalGraph>>>,
     pub(crate) live: Option<LiveGraph>,
@@ -381,7 +384,9 @@ impl RuntimeController {
             surface,
             handles,
         } = GraphChange::build(
-            &self.registry,
+            self.registry
+                .as_ref()
+                .expect("a render controller carries its registry"),
             self.sample_rate,
             module_id,
             module_type,
