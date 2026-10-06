@@ -431,9 +431,9 @@ fn an_added_module_is_built_for_real_once_and_written_through_its_setter() {
 
 #[test]
 fn an_earlier_authored_write_does_not_count_as_a_change_of_the_batch() {
-    // The standalone write updates the retained document, not the config
-    // the module was built from. A batch that does not name the module
-    // still commits, and leaves it untouched.
+    // The standalone write updates the retained document and the module's
+    // stored config. A batch that does not name the module still commits,
+    // and leaves it untouched.
     let (mut running, pump) = start(BASE);
     running
         .set_control("spare", "frequency", number(7.0))

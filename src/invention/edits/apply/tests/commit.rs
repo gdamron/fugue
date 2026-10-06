@@ -132,6 +132,13 @@ fn a_write_that_fails_when_made_is_reported_and_the_batch_still_commits() {
     assert_eq!(running.get_control("flaky", "level").unwrap(), number(0.25));
     assert_eq!(config_of(&running, "flaky")["level"], json!(0.25));
     assert_eq!(config_of(&running, "osc1")["frequency"], json!(220));
+    // The stored configs agree with the document, so a later reload diffs
+    // against what each module plays.
+    {
+        let state = running.state.lock().unwrap();
+        assert_eq!(state.modules["flaky"].config["level"], json!(0.25));
+        assert_eq!(state.modules["osc1"].config["frequency"], json!(220));
+    }
     assert_eq!(
         events.control_changes(),
         [change("osc1", "frequency", 220.0)]

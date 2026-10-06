@@ -3,13 +3,12 @@
 //!
 //! A batch is planned with the same diff reload uses ([`plan_reload`]), but
 //! from the retained authored document to the candidate, both as authored.
-//! Reload diffs against the configs the runtime built its modules from, and
-//! a standalone authored `set_control` updates the retained document but not
-//! those configs. Planned that way, a batch would see every earlier authored
-//! write as a change of its own, and the guard below would refuse it.
-//! Planning from the document sees only what the batch changed. Reload keeps
-//! its own inputs: changing them would change what reloading an older file
-//! sounds like.
+//! Reload diffs against the configs the runtime built its modules from,
+//! which have their assets resolved; the candidate does not. Planned that
+//! way, a batch would see every asset-backed module as a change of its own,
+//! and the guard below would refuse it. Planning from the document sees only
+//! what the batch changed. Reload keeps its own inputs: it diffs resolved
+//! against resolved, so it also sees an asset file that changed on disk.
 
 use std::collections::{HashMap, HashSet};
 
