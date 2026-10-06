@@ -136,17 +136,10 @@ impl RunningInvention {
                 report
                     .controls_written
                     .push(WrittenControl::new(&write.module_id, &write.key));
-                // A later write can change an earlier one's effect (a count
-                // that hides then shows a degree, say): what the module holds
-                // now is what the document records and the event carries.
-                let value = match self.get_control(&write.module_id, &write.key) {
-                    Ok(value) if value != write.value => {
-                        actual.push((write, value.clone()));
-                        value
-                    }
-                    _ => write.value.clone(),
-                };
-                announced.push((write, value));
+                // Recorded and announced as written, not read back: a read
+                // can return a command's idle state (a trigger reads empty)
+                // or a value another writer performed since.
+                announced.push((write, write.value.clone()));
                 continue;
             };
             if let Ok(value) = self.get_control(&write.module_id, &write.key) {

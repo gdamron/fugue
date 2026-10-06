@@ -517,41 +517,6 @@ fn a_sample_can_be_replaced_when_the_one_it_loaded_no_longer_builds() {
 }
 
 #[test]
-fn the_document_and_events_carry_what_a_write_left_after_later_writes() {
-    // A later count can change an earlier degree write's effect; whatever
-    // the module holds at the end is what is recorded and announced.
-    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
-    let events = super::Events::listen(&running);
-    running
-        .apply_edits(&[
-            set("tune", "degree.6", number(12.0)),
-            set("tune", "degree_count", number(3.0)),
-            set("tune", "degree_count", number(7.0)),
-        ])
-        .expect("the batch commits");
-    let live = running.get_control("tune", "degree.6").unwrap();
-    let document = running.document().unwrap();
-    let tune = document
-        .modules
-        .iter()
-        .find(|spec| spec.id == "tune")
-        .unwrap();
-    let ControlValue::Number(live_number) = live.clone() else {
-        unreachable!()
-    };
-    assert_eq!(
-        tune.config["degree.6"].as_f64(),
-        Some(f64::from(live_number))
-    );
-    let announced = events
-        .control_changes()
-        .into_iter()
-        .find(|(module, key, _)| module == "tune" && key == "degree.6")
-        .map(|(_, _, value)| value);
-    assert_eq!(announced, Some(live));
-}
-
-#[test]
 fn a_development_alias_hidden_by_a_later_count_is_not_refused() {
     // Writing a degree through a development's alias, then shrinking the
     // count through another, is valid in order.
