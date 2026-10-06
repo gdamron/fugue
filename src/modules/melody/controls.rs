@@ -45,12 +45,6 @@ pub(crate) struct DegreeTable {
     written_degrees: Box<[Option<i32>; MAX_DEGREES]>,
     /// Weights written to single positions, kept while hidden.
     written_weights: Box<[Option<f32>; MAX_DEGREES]>,
-    /// Whether an edit since the last drain replaced the scale (forgetting
-    /// written degrees) or the base weights (forgetting written weights).
-    /// A deferred write that the drain finds hidden is dropped if its field
-    /// was replaced (see the `pending` module).
-    degrees_replaced: bool,
-    weights_replaced: bool,
 }
 
 impl DegreeTable {
@@ -64,8 +58,6 @@ impl DegreeTable {
             scale_weights: Vec::new(),
             written_degrees: Box::new([None; MAX_DEGREES]),
             written_weights: Box::new([None; MAX_DEGREES]),
-            degrees_replaced: false,
-            weights_replaced: false,
         };
         table.recompute();
         table
@@ -109,7 +101,6 @@ impl DegreeTable {
         self.count = degrees.len();
         self.scale = degrees;
         self.written_degrees.fill(None);
-        self.degrees_replaced = true;
         self.recompute();
     }
 
@@ -118,17 +109,7 @@ impl DegreeTable {
     pub(super) fn replace_weights(&mut self, weights: Vec<f32>) {
         self.scale_weights = weights;
         self.written_weights.fill(None);
-        self.weights_replaced = true;
         self.recompute();
-    }
-
-    /// Whether the scale and the base weights were replaced since the last
-    /// call, which resets both. Called by every drain under the lock.
-    pub(super) fn take_replaced(&mut self) -> (bool, bool) {
-        let replaced = (self.degrees_replaced, self.weights_replaced);
-        self.degrees_replaced = false;
-        self.weights_replaced = false;
-        replaced
     }
 
     /// Number of active positions.
@@ -297,7 +278,17 @@ impl MelodyControls {
     /// are forgotten; weights are kept. At most [`MAX_DEGREES`] degrees are
     /// kept.
     pub fn set_allowed_degrees(&self, degrees: Vec<i32>) {
-        self.edit_table(|table| table.replace_degrees(degrees));
+        self.replace_degrees_in(&mut self.lock_table(), degrees);
+    }
+
+    /// Replaces the scale in the locked `table`, publishes it, then starts a
+    /// new scale generation, so deferred degrees validated before it are
+    /// dropped (see the `pending` module).
+    pub(super) fn replace_degrees_in(&self, table: &mut DegreeTable, degrees: Vec<i32>) {
+        table.replace_degrees(degrees);
+        self.pending.publish(table);
+        self.pending.bump(true);
+        self.table_version.fetch_add(1, Ordering::Release);
     }
 
     /// Gets the active note weights. Control thread only: it blocks.
@@ -312,7 +303,16 @@ impl MelodyControls {
     /// without a weight of its own takes the weight of the scale position it
     /// repeats, or 1.0.
     pub fn set_note_weights(&self, weights: Vec<f32>) {
-        self.edit_table(|table| table.replace_weights(weights));
+        self.replace_weights_in(&mut self.lock_table(), weights);
+    }
+
+    /// Replaces the base weights in the locked `table`, as
+    /// [`Self::replace_degrees_in`] replaces the scale.
+    pub(super) fn replace_weights_in(&self, table: &mut DegreeTable, weights: Vec<f32>) {
+        table.replace_weights(weights);
+        self.pending.publish(table);
+        self.pending.bump(false);
+        self.table_version.fetch_add(1, Ordering::Release);
     }
 
     /// Restores a degree and a weight written to single positions, as a

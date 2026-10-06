@@ -43,48 +43,59 @@
 //!   re-check (at most `MAX_RELEASE_DRAINS` passes) only cut latency; the
 //!   argument above does not depend on them.
 //!
+//! # Generations
+//!
+//! A deferred write carries the generation of its field (the scale for a
+//! degree, the base weights for a weight) that it was validated against.
+//! One that a replacement of its field overtook (`set_allowed_degrees`,
+//! `set_note_weights`) is ordered before that replacement, which erased it,
+//! and is dropped; otherwise it applies, kept hidden if its position is
+//! past the count by then (count changes keep written values).
+//!
+//! A replacement bumps its field's generation with Release only after it has
+//! published the new count and values to the mirror, and a depositor loads
+//! the generation with Acquire before it validates against the count. So a
+//! deposit tagged with the new generation was validated against the new
+//! count; one validated against the old count carries the old generation
+//! and is dropped whatever it was validated against.
+//!
 //! # Reads while contended
 //!
 //! Reads that find the table busy answer from the mailbox (the pending value
-//! for that slot, if any) or else from a lock-free mirror of the effective
-//! table, refreshed under the lock after every edit.
+//! for that slot, if its generation is current) or else from a lock-free
+//! mirror of the effective table, refreshed under the lock after every edit.
 //!
 //! # Known gaps
 //!
 //! - A position revealed by a count growth that is still pending reads its
 //!   mirror while the table is busy, which may be stale (it holds whatever
 //!   the position last played, or 0) until the growth is drained.
-//! - A deferred write still in the mailbox at a drain ran concurrently
-//!   with the edits made since the previous drain, and was valid when made.
-//!   If its position is active after the drain it applies after those
-//!   edits; if not, it is taken as made before them and kept hidden, unless
-//!   one of them replaced its field (the scale for a degree, the base
-//!   weights for a weight), which erased it, so it is dropped. One corner
-//!   remains: a position deposit followed by a count deposit that grows the
-//!   count back over it, both during a count-shrinking replacement of that
-//!   field, applies the position although no serial order would keep it.
+//! - Generations wrap after 2^32 - 1 replacements of one field; a deposit
+//!   left pending across exactly that many would be taken as current.
 
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{MutexGuard, TryLockError};
 
 use super::controls::{out_of_range, DegreeTable, MelodyControls, MAX_DEGREES};
 
-/// Empty degree slot; written degrees are clamped to ±127.
-const NO_DEGREE: i32 = i32::MIN;
-/// Empty weight slot (a NaN bit pattern no clamped weight is stored as).
-const NO_WEIGHT: u32 = u32::MAX;
+/// Empty position slot. Its generation half, `u32::MAX`, is never a live
+/// generation (see [`Pending::bump`]), so no deposit packs to it.
+const EMPTY: u64 = u64::MAX;
 /// Empty count slot; written counts are at least 1.
 const NO_COUNT: usize = 0;
 /// Passes a post-release drain makes before leaving a deposit that keeps
 /// racing it to the next holder or the melody's next block.
 const MAX_RELEASE_DRAINS: usize = 4;
 
-fn weight_bits(value: f32) -> u32 {
-    match value.to_bits() {
-        NO_WEIGHT => f32::NAN.to_bits(),
-        bits => bits,
-    }
+/// Packs a deposit: its field's generation, then the value's bits.
+fn pack(generation: u32, bits: u32) -> u64 {
+    (u64::from(generation) << 32) | u64::from(bits)
+}
+
+/// The value bits of a deposit packed with `generation`, if it was.
+fn live(packed: u64, generation: u32) -> Option<u32> {
+    ((packed >> 32) as u32 == generation).then_some(packed as u32)
 }
 
 /// Lock-free mailbox for writes that found the degree table busy, plus a
@@ -96,8 +107,13 @@ pub(super) struct Pending {
     /// Set after any slot is filled; cleared by a drain before it reads slots.
     any: AtomicBool,
     count: AtomicUsize,
-    degrees: [AtomicI32; MAX_DEGREES],
-    weights: [AtomicU32; MAX_DEGREES],
+    /// Deferred degrees (`i32` bits) and weights (`f32` bits), each packed
+    /// with the generation it was validated against, or [`EMPTY`].
+    degrees: [AtomicU64; MAX_DEGREES],
+    weights: [AtomicU64; MAX_DEGREES],
+    /// Bumped by each replacement of the scale, and of the base weights.
+    degrees_gen: AtomicU32,
+    weights_gen: AtomicU32,
     /// The table's active count, as of its last edit.
     shown_count: AtomicUsize,
     /// The degrees and weights (`f32` bits) the active positions play.
@@ -111,8 +127,10 @@ impl Pending {
         let pending = Self {
             any: AtomicBool::new(false),
             count: AtomicUsize::new(NO_COUNT),
-            degrees: std::array::from_fn(|_| AtomicI32::new(NO_DEGREE)),
-            weights: std::array::from_fn(|_| AtomicU32::new(NO_WEIGHT)),
+            degrees: std::array::from_fn(|_| AtomicU64::new(EMPTY)),
+            weights: std::array::from_fn(|_| AtomicU64::new(EMPTY)),
+            degrees_gen: AtomicU32::new(0),
+            weights_gen: AtomicU32::new(0),
             shown_count: AtomicUsize::new(0),
             shown_degrees: std::array::from_fn(|_| AtomicI32::new(0)),
             shown_weights: std::array::from_fn(|_| AtomicU32::new(1.0f32.to_bits())),
@@ -147,32 +165,42 @@ impl Pending {
     /// The degree at `index` without the lock: pending, else as shown.
     pub(super) fn degree(&self, index: usize) -> Result<i32, String> {
         self.check_index("Degree", index)?;
-        Ok(match self.degrees[index].load(Ordering::Acquire) {
-            NO_DEGREE => self.shown_degrees[index].load(Ordering::Acquire),
-            degree => degree,
+        let packed = self.degrees[index].load(Ordering::Acquire);
+        Ok(match live(packed, self.degrees_gen()) {
+            Some(bits) => bits as i32,
+            None => self.shown_degrees[index].load(Ordering::Acquire),
         })
     }
 
     /// The weight at `index` without the lock: pending, else as shown.
     pub(super) fn weight(&self, index: usize) -> Result<f32, String> {
         self.check_index("Weight", index)?;
-        Ok(f32::from_bits(
-            match self.weights[index].load(Ordering::Acquire) {
-                NO_WEIGHT => self.shown_weights[index].load(Ordering::Acquire),
-                bits => bits,
-            },
-        ))
+        let packed = self.weights[index].load(Ordering::Acquire);
+        Ok(f32::from_bits(match live(packed, self.weights_gen()) {
+            Some(bits) => bits,
+            None => self.shown_weights[index].load(Ordering::Acquire),
+        }))
     }
 
-    /// Deposits a degree for a position the caller has validated.
-    pub(super) fn deposit_degree(&self, index: usize, value: i32) {
-        self.degrees[index].store(value, Ordering::Release);
+    /// The scale's generation. Load it before validating a deferred degree.
+    pub(super) fn degrees_gen(&self) -> u32 {
+        self.degrees_gen.load(Ordering::Acquire)
+    }
+
+    /// The base weights' generation. Load it before validating a weight.
+    pub(super) fn weights_gen(&self) -> u32 {
+        self.weights_gen.load(Ordering::Acquire)
+    }
+
+    /// Deposits a degree for a position validated under `generation`.
+    pub(super) fn deposit_degree(&self, generation: u32, index: usize, value: i32) {
+        self.degrees[index].store(pack(generation, value as u32), Ordering::Release);
         self.mark();
     }
 
-    /// Deposits a weight for a position the caller has validated.
-    pub(super) fn deposit_weight(&self, index: usize, value: f32) {
-        self.weights[index].store(weight_bits(value), Ordering::Release);
+    /// Deposits a weight for a position validated under `generation`.
+    pub(super) fn deposit_weight(&self, generation: u32, index: usize, value: f32) {
+        self.weights[index].store(pack(generation, value.to_bits()), Ordering::Release);
         self.mark();
     }
 
@@ -199,6 +227,19 @@ impl Pending {
         self.shown_count.store(table.count(), Ordering::Release);
     }
 
+    /// Starts a new generation of the scale (`degrees`) or base weights.
+    /// Call under the lock (the only writer) after publishing the edit.
+    /// Skips `u32::MAX`, which marks an empty slot.
+    pub(super) fn bump(&self, degrees: bool) {
+        let generation = if degrees {
+            &self.degrees_gen
+        } else {
+            &self.weights_gen
+        };
+        let next = generation.load(Ordering::Relaxed).wrapping_add(1);
+        generation.store(if next == u32::MAX { 0 } else { next }, Ordering::Release);
+    }
+
     /// Mirrors a degree written to one position. Call under the lock.
     pub(super) fn publish_degree(&self, index: usize, value: i32) {
         self.shown_degrees[index].store(value, Ordering::Release);
@@ -210,19 +251,17 @@ impl Pending {
     }
 
     /// Applies every deposit to `table`: the count first, then positions.
-    /// `replaced` says whether an edit since the last drain replaced the
-    /// scale and the base weights. A position active after the count is
-    /// applied takes its deposit; a hidden one keeps it for when the count
-    /// grows, unless its field was replaced, which erased it (see "Known
-    /// gaps"). Call under the lock. Returns whether anything was applied.
-    /// Never allocates.
+    /// A position deposit whose generation is stale is dropped; a current
+    /// one applies, kept hidden if past the count (see "Generations"). Call
+    /// under the lock. Returns whether anything was applied. Never
+    /// allocates.
     ///
     /// The flag is cleared before slots are read, so a deposit racing the
     /// drain sets it again and is drained later (see the module docs).
-    /// A slot is cleared only if it still holds the value applied, so a newer
+    /// A slot is cleared only if it still holds the deposit read, so a newer
     /// deposit to it survives; the mirror is refreshed before the slot is
     /// cleared, so a contended read never sees neither.
-    fn drain(&self, table: &mut DegreeTable, replaced: (bool, bool)) -> bool {
+    fn drain(&self, table: &mut DegreeTable) -> bool {
         // Either exit is sound. A `false` load reads the value some clearing
         // swap wrote (or the initial one): that drainer applied every deposit
         // flagged before it, and any flagged after leaves the flag set for a
@@ -242,43 +281,37 @@ impl Pending {
                 self.count
                     .compare_exchange(count, NO_COUNT, Ordering::AcqRel, Ordering::Relaxed);
         }
-        let active = table.count();
-        let (degrees_replaced, weights_replaced) = replaced;
+        let (degrees_gen, weights_gen) = (self.degrees_gen(), self.weights_gen());
         for i in 0..MAX_DEGREES {
-            let degree = self.degrees[i].load(Ordering::Acquire);
-            if degree != NO_DEGREE {
-                if i < active || !degrees_replaced {
-                    if table.write_degree(i, degree) {
-                        self.publish_degree(i, degree);
+            let packed = self.degrees[i].load(Ordering::Acquire);
+            if packed != EMPTY {
+                if let Some(bits) = live(packed, degrees_gen) {
+                    if table.write_degree(i, bits as i32) {
+                        self.publish_degree(i, bits as i32);
                     }
                     changed = true;
                 }
-                let _ = self.degrees[i].compare_exchange(
-                    degree,
-                    NO_DEGREE,
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                );
+                clear(&self.degrees[i], packed);
             }
-            let bits = self.weights[i].load(Ordering::Acquire);
-            if bits != NO_WEIGHT {
-                let weight = f32::from_bits(bits);
-                if i < active || !weights_replaced {
+            let packed = self.weights[i].load(Ordering::Acquire);
+            if packed != EMPTY {
+                if let Some(bits) = live(packed, weights_gen) {
+                    let weight = f32::from_bits(bits);
                     if table.write_weight(i, weight) {
                         self.publish_weight(i, weight);
                     }
                     changed = true;
                 }
-                let _ = self.weights[i].compare_exchange(
-                    bits,
-                    NO_WEIGHT,
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                );
+                clear(&self.weights[i], packed);
             }
         }
         changed
     }
+}
+
+/// Empties `slot` if it still holds the deposit `packed`.
+fn clear(slot: &AtomicU64, packed: u64) {
+    let _ = slot.compare_exchange(packed, EMPTY, Ordering::AcqRel, Ordering::Relaxed);
 }
 
 /// The degree table, locked. Every path that locks the table goes through
@@ -344,12 +377,9 @@ impl MelodyControls {
         self.pending.has_pending()
     }
 
-    /// Drains the mailbox into the locked table, publishing any change. Every
-    /// holder's drain resets the table's replaced flags, pending or not, so
-    /// they cover only the edits since the last drain.
+    /// Drains the mailbox into the locked table, publishing any change.
     fn drain_into(&self, table: &mut DegreeTable) {
-        let replaced = table.take_replaced();
-        if self.pending.drain(table, replaced) {
+        if self.pending.drain(table) {
             self.table_version.fetch_add(1, Ordering::Release);
         }
     }
@@ -376,102 +406,5 @@ impl MelodyControls {
     /// After a deposit: lands it now if the lock has come free.
     pub(super) fn retry_drain(&self) {
         drop(self.try_lock_table());
-    }
-}
-
-/// Single-position and count controls: none of them ever blocks.
-impl MelodyControls {
-    /// Gets the number of active degrees. Never blocks.
-    pub fn degree_count(&self) -> usize {
-        match self.try_lock_table() {
-            Some(table) => table.count(),
-            None => self.pending.latest_count(),
-        }
-    }
-
-    /// Sets the number of active degrees (1 to [`MAX_DEGREES`]). Never
-    /// blocks: a write that finds the table busy is deferred.
-    ///
-    /// Shrinking hides the positions past the count; growing shows them again
-    /// as they were. Positions past the base scale repeat it from the start.
-    pub fn set_degree_count(&self, count: usize) {
-        let count = count.clamp(1, MAX_DEGREES);
-        match self.try_lock_table() {
-            // A ramp writes the count every sample; only a change is an edit.
-            Some(mut table) => {
-                if table.set_count(count) {
-                    self.pending.publish(&table);
-                    self.table_version.fetch_add(1, Ordering::Release);
-                }
-            }
-            None => {
-                if self.pending.latest_count() != count {
-                    self.pending.deposit_count(count);
-                    self.retry_drain();
-                }
-            }
-        }
-    }
-
-    /// Gets the scale degree at active position `index`. Never blocks.
-    pub fn degree(&self, index: usize) -> Result<i32, String> {
-        match self.try_lock_table() {
-            Some(table) => table
-                .degrees
-                .get(index)
-                .copied()
-                .ok_or_else(|| out_of_range("Degree", index, table.count())),
-            None => self.pending.degree(index),
-        }
-    }
-
-    /// Sets the scale degree at active position `index` (clamped to ±127).
-    /// Never blocks: a write that finds the table busy is deferred.
-    pub fn set_degree(&self, index: usize, value: i32) -> Result<(), String> {
-        let value = value.clamp(-127, 127);
-        let Some(mut table) = self.try_lock_table() else {
-            self.pending.check_index("Degree", index)?;
-            self.pending.deposit_degree(index, value);
-            self.retry_drain();
-            return Ok(());
-        };
-        if index >= table.count() {
-            return Err(out_of_range("Degree", index, table.count()));
-        }
-        table.write_degree(index, value);
-        self.pending.publish_degree(index, value);
-        self.table_version.fetch_add(1, Ordering::Release);
-        Ok(())
-    }
-
-    /// Gets the note weight at active position `index`. Never blocks.
-    pub fn note_weight(&self, index: usize) -> Result<f32, String> {
-        match self.try_lock_table() {
-            Some(table) => table
-                .weights
-                .get(index)
-                .copied()
-                .ok_or_else(|| out_of_range("Weight", index, table.count())),
-            None => self.pending.weight(index),
-        }
-    }
-
-    /// Sets the note weight at active position `index` (clamped to 0-10).
-    /// Never blocks: a write that finds the table busy is deferred.
-    pub fn set_note_weight(&self, index: usize, value: f32) -> Result<(), String> {
-        let value = value.clamp(0.0, 10.0);
-        let Some(mut table) = self.try_lock_table() else {
-            self.pending.check_index("Weight", index)?;
-            self.pending.deposit_weight(index, value);
-            self.retry_drain();
-            return Ok(());
-        };
-        if index >= table.count() {
-            return Err(out_of_range("Weight", index, table.count()));
-        }
-        table.write_weight(index, value);
-        self.pending.publish_weight(index, value);
-        self.table_version.fetch_add(1, Ordering::Release);
-        Ok(())
     }
 }

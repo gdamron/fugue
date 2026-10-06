@@ -16,6 +16,7 @@ mod controls;
 mod inputs;
 mod outputs;
 mod pending;
+mod positions;
 mod snapshot;
 
 /// Factory for constructing MelodyGenerator modules from configuration.
