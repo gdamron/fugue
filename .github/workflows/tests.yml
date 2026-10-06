@@ -1,26 +1,76 @@
 name: Tests
 
+# Pull requests run once per push to the PR; pushes to main run the full suite
+# and save the build caches every PR restores from. Other branch pushes do not
+# run CI on their own: open a PR (or dispatch manually) to test them.
 on:
   push:
+    branches:
+      - main
   pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# A new push to a PR supersedes its in-flight run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_HTTP_MULTIPLEXING: false
+  CARGO_NET_RETRY: 10
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
+    steps:
+      # A file counts as code unless every pattern says otherwise, so new
+      # directories are tested by default. Only list paths no build or test
+      # reads.
+      - name: Filter Changed Paths
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!LICENSE'
+              - '!.gitignore'
+              - '!opencode.json'
+              - '!.claude/**'
+              - '!docs/**'
+              - '!skills/**'
+              - '!scripts/**'
+              - '!install.sh'
+              - '!install.ps1'
+              - '!.github/workflows/release.yml'
+
   test:
     name: Run Unit Tests (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
-    env:
-      CARGO_HTTP_MULTIPLEXING: false
-      CARGO_NET_RETRY: 10
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
+        include:
+          - os: ubuntu-latest
+            features: ""
+          # Spectrogram analysis is off by default and its tap is concurrent
+          # code, so test it on every OS. The feature is purely additive, so
+          # this run also covers every default-feature test; Linux covers it
+          # under --all-features below.
+          - os: windows-latest
+            features: --features spectrogram
 
     steps:
       - name: Check Out Repository
@@ -37,21 +87,17 @@ jobs:
 
       - name: Cache Cargo Artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Tests
-        run: cargo test --lib --tests
-
-      # Spectrogram analysis is off by default, so the run above compiles
-      # none of it. Its tap is concurrent code: test it on every OS.
-      - name: Run Spectrogram Tests
-        run: cargo test --features spectrogram --lib --tests
+        run: cargo test ${{ matrix.features }} --lib --tests
 
   feature-tests:
     name: Run Feature-Gated Tests (Linux)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    env:
-      CARGO_HTTP_MULTIPLEXING: false
-      CARGO_NET_RETRY: 10
 
     steps:
       - name: Check Out Repository
@@ -69,9 +115,27 @@ jobs:
 
       - name: Cache Cargo Artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Feature-Gated Tests
         run: cargo test --all-features --lib --tests
 
       - name: Check Spectrogram on wasm32
         run: cargo check --lib --target wasm32-unknown-unknown --features spectrogram
+
+  # One stable check that is green when tests passed or were rightly skipped,
+  # so a docs-only PR still reports a result. Require this check, not the
+  # individual jobs, if CI checks become required.
+  ci:
+    name: CI
+    if: always()
+    needs:
+      - changes
+      - test
+      - feature-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Job Results
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
