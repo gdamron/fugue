@@ -5,6 +5,7 @@
 use serde_json::json;
 
 use super::*;
+use crate::invention::manual_backend::{start_manual, Pump, SAMPLE_RATE};
 use crate::rpc::StructuralEdit;
 use crate::ControlWriteIntent;
 
@@ -24,9 +25,15 @@ fn stored_config(running: &RunningInvention, id: &str) -> serde_json::Value {
     running.state.lock().unwrap().modules[id].config.clone()
 }
 
-/// The retained document, as a save would write it.
+/// The retained document as saving writes it and loading reads it back.
 fn saved(running: &RunningInvention) -> Invention {
-    running.document().unwrap()
+    let json = running.document().unwrap().to_json().unwrap();
+    Invention::from_json(&json).unwrap()
+}
+
+fn start_pumped(json: &str) -> (RunningInvention, Pump) {
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(doc(json)).unwrap();
+    start_manual(runtime)
 }
 
 /// Asserts the reload changed no module structurally: nothing added,
@@ -55,6 +62,34 @@ fn reloading_the_original_restores_an_authored_value_through_a_control_write() {
         number(440.0)
     );
     assert_eq!(running.document(), Some(doc(BASE)));
+}
+
+#[test]
+fn an_authored_value_restored_by_reload_keeps_the_oscillators_phase() {
+    // The reload restores osc1's value as a twin that never reloaded does
+    // with a control write at the same point, sample for sample: the
+    // instance was not rebuilt.
+    let (mut reloaded, reloaded_pump) = start_pumped(BASE);
+    let (twin, twin_pump) = start_pumped(BASE);
+    for running in [&reloaded, &twin] {
+        running
+            .set_control("osc1", "frequency", number(330.0))
+            .unwrap();
+    }
+    assert_eq!(reloaded_pump.render(7), twin_pump.render(7));
+
+    let report = reloaded.reload(doc(BASE)).expect("diff applies");
+    assert_eq!(report.controls_updated, ["osc1.frequency"]);
+    twin.snapshot()
+        .set_control_with_intent(
+            "osc1",
+            "frequency",
+            number(440.0),
+            ControlWriteIntent::Perform,
+        )
+        .unwrap();
+
+    assert_eq!(reloaded_pump.render(20), twin_pump.render(20));
 }
 
 #[test]
