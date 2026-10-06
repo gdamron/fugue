@@ -25,6 +25,9 @@ impl CellSequencerOutputs {
         }
     }
 
+    // Per-sample hot path: one plain argument per output port avoids building
+    // a struct per sample, so keep the long signature.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     pub fn set(
         &mut self,

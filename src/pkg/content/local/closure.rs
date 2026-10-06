@@ -243,7 +243,7 @@ impl ContentRoots {
                             )
                             .map_err(|e| err("dependency_not_found", e))?;
                             contained(&resolved.install_dir, &resolved.file)?;
-                            let m = pkg::parse_path(&resolved.install_dir.join("fugue.pkg.json"))
+                            let m = pkg::parse_path(resolved.install_dir.join("fugue.pkg.json"))
                                 .map_err(|e| err("invalid_content", e))?;
                             self.package_integrity(&resolved.install_dir, &m, closure)?;
                             push_unique(&mut closure.assets, text);
