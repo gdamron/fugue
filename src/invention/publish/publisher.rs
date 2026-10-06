@@ -32,6 +32,9 @@ pub(crate) struct Publisher {
     /// Publications made so far; a prepared change records the generation
     /// it was prepared against.
     generation: u64,
+    /// Whether an input write tagged with the current generation was
+    /// queued: only then does folding that generation keep a remap from it.
+    written: bool,
     block_size: usize,
     publications: Arc<Mailbox<Publication>>,
     /// Publications the audio thread has installed (observed by tests).
@@ -58,6 +61,7 @@ impl Publisher {
         let publisher = Self {
             mirror: TopologyMirror::of(&graph.modules, &graph.edges),
             generation: 0,
+            written: false,
             block_size: graph.block_size,
             publications,
             applied,
@@ -115,6 +119,21 @@ impl Publisher {
             port_idx,
             value,
         })
+    }
+
+    /// Records that a write resolved by [`Self::input_write`] was queued.
+    pub(crate) fn note_written(&mut self) {
+        self.written = true;
+    }
+
+    /// Generations folded into the untaken publication that keep a remap
+    /// for queued writes, if one is waiting.
+    #[cfg(test)]
+    pub(crate) fn pending_absorbed(&self) -> Option<Vec<u64>> {
+        let pending = self.publications.take()?;
+        let generations = pending.absorbed.iter().map(|a| a.generation).collect();
+        drop(self.publications.put(pending));
+        Some(generations)
     }
 
     /// Block size publications are compiled for.
@@ -178,13 +197,14 @@ impl Publisher {
         let superseded = self
             .publications
             .take()
-            .map(|pending| publication.absorb(pending));
+            .map(|pending| publication.absorb(pending, self.written));
         // Only this publisher puts, under its lock, so the slot is empty.
         // Input writes are queued under the same lock, so every write tagged
         // with the previous generation is in the channel before this put,
         // whose release the audio thread's take acquires.
         drop(self.publications.put(publication));
         self.generation += 1;
+        self.written = false;
         let previous = std::mem::replace(&mut self.mirror, mirror);
         Ok(Published {
             previous,

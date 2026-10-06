@@ -56,8 +56,9 @@ pub(crate) struct Publication {
     /// The publisher generation this publication creates. Set by the
     /// publisher as it publishes; a folded publication keeps the newer one.
     pub(crate) generation: u64,
-    /// For each generation folded into this one, a remap from that
-    /// generation's order into `modules` (see [`Self::absorb`]).
+    /// For each generation folded into this one that has input writes
+    /// queued against it, a remap from that generation's order into
+    /// `modules` (see [`Self::absorb`]).
     pub(crate) absorbed: Vec<Absorbed>,
 }
 
@@ -99,20 +100,29 @@ impl Publication {
     /// needs, for the caller to drop once it has released the publisher.
     ///
     /// Before composing, this remap still maps from the earlier
-    /// publication's order, so it is kept (with any the earlier one carried,
-    /// composed through it) for writes resolved against the earlier
-    /// generation. Control thread only: allocates.
+    /// publication's order. When input writes were queued against the
+    /// earlier generation (`earlier_written`), it is kept for them as an
+    /// [`Absorbed`] entry; entries the earlier one carried are composed
+    /// through it. So entries exist only for generations with writes still
+    /// outstanding, which bounds them by the input queue and ring capacity
+    /// however many publications fold. Control thread only: allocates.
     #[must_use = "the superseded publication should be dropped off the publisher lock"]
-    pub(crate) fn absorb(&mut self, mut earlier: Box<Publication>) -> Box<Publication> {
+    pub(crate) fn absorb(
+        &mut self,
+        mut earlier: Box<Publication>,
+        earlier_written: bool,
+    ) -> Box<Publication> {
         for mut folded in earlier.absorbed.drain(..) {
             folded.remap = folded.remap.then(&self.remap);
             self.absorbed.push(folded);
         }
-        self.absorbed.push(Absorbed {
-            generation: earlier.generation,
-            ids: earlier.modules.keys().cloned().collect(),
-            remap: self.remap.clone(),
-        });
+        if earlier_written {
+            self.absorbed.push(Absorbed {
+                generation: earlier.generation,
+                ids: earlier.modules.keys().cloned().collect(),
+                remap: self.remap.clone(),
+            });
+        }
         let Publication {
             modules, survivor, ..
         } = &mut *earlier;

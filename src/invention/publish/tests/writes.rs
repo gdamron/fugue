@@ -275,6 +275,43 @@ fn writes_follow_their_modules_through_two_folds() {
 }
 
 #[test]
+fn folding_keeps_a_remap_only_for_generations_with_writes() {
+    let (mut rig, probes) = rig_with_probes(&["p1"]);
+    let fm = || edge("osc1", "audio", "osc2", "fm");
+    let toggle = |rig: &Rig, n: usize| {
+        if n.is_multiple_of(2) {
+            rig.live.connect(fm()).unwrap();
+        } else {
+            rig.live.disconnect(fm()).unwrap();
+        }
+    };
+    let pending_absorbed = |rig: &Rig| {
+        let publisher = rig.live.publisher().lock().unwrap();
+        publisher.pending_absorbed().unwrap()
+    };
+
+    // Many folds with no writes keep nothing.
+    for n in 0..6 {
+        toggle(&rig, n);
+    }
+    assert_eq!(pending_absorbed(&rig), Vec::<u64>::new());
+
+    // Writes at one generation keep exactly its remap through later folds.
+    let written = rig.live.generation();
+    rig.live.write_input("p1", "a", 1.0).unwrap();
+    rig.live.write_input("p1", "b", 2.0).unwrap();
+    for n in 6..9 {
+        toggle(&rig, n);
+    }
+    assert_eq!(pending_absorbed(&rig), [written]);
+    rig.render(1);
+    assert_eq!(
+        probes.take(),
+        [got("p1", 0, "a", 1.0), got("p1", 0, "b", 2.0)]
+    );
+}
+
+#[test]
 fn a_folded_write_to_a_module_rebuilt_by_the_fold_is_dropped() {
     let (mut rig, probes) = rig_with_probes(&["p1"]);
     let p2 = probe(&rig, "p2");

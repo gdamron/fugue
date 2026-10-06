@@ -291,9 +291,12 @@ impl LiveGraph {
         port: &str,
         value: f32,
     ) -> Result<(), GraphCommandError> {
-        let publisher = self.publisher.lock().unwrap();
+        let mut publisher = self.publisher.lock().unwrap();
         let write = publisher.input_write(module_id, port, value)?;
         let sent = self.inputs.try_send(write);
+        if sent.is_ok() {
+            publisher.note_written();
+        }
         drop(publisher);
         sent.map_err(|error| match error {
             TrySendError::Full(_) => GraphCommandError::QueueFull,

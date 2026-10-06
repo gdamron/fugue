@@ -297,7 +297,7 @@ fn an_untaken_publication_folds_into_the_next() {
         vec![edge("osc3", "dac", "audio"), edge("osc4", "dac", "audio")],
     );
     next.map_survivors(["osc1", "osc2", "dac", "osc3"]);
-    drop(next.absorb(ends.publications.take().unwrap()));
+    drop(next.absorb(ends.publications.take().unwrap(), false));
     assert_eq!(next.survivor_count(), 3);
     // The folded remap maps from the graph still running, which has no osc3.
     let remap: Vec<_> = next.remap.survivors().collect();
@@ -390,7 +390,7 @@ fn folding_composes_survivor_remaps_against_the_running_graph() {
     );
     next.map_survivors(["osc2", "dac"]);
     assert_eq!((next.remap.get(0), next.remap.get(1)), (Some(1), Some(0)));
-    drop(next.absorb(first));
+    drop(next.absorb(first, false));
 
     // Only the running dac survives both: the running osc1 was removed, and
     // osc2 is the instance the first publication built.
