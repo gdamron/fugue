@@ -9,6 +9,8 @@ impl SignalGraph {
     /// Process groups run in topological order: acyclic modules a whole block at
     /// a time, feedback cycles sample-by-sample. Zero heap allocations.
     pub(crate) fn process_block(&mut self, left: &mut [f32], right: &mut [f32]) {
+        // Debug builds: control-side locks taken from here on panic.
+        let _audio_block = crate::control_cells::AudioBlockScope::enter();
         self.ensure_process_order();
 
         let frames = left.len().min(right.len());

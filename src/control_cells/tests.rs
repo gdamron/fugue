@@ -243,3 +243,65 @@ fn audio_block_scopes_nest_and_restore() {
     drop(outer);
     drop(lock.lock());
 }
+
+/// Tries to take a control lock from inside `process()`, recording whether
+/// the debug check refused.
+#[cfg(debug_assertions)]
+struct LocksInProcess {
+    refused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    buffer: [f32; crate::MAX_BLOCK],
+}
+
+#[cfg(debug_assertions)]
+impl crate::Module for LocksInProcess {
+    fn name(&self) -> &str {
+        "locks_in_process"
+    }
+    fn process(&mut self, _frames: usize) -> bool {
+        let lock = ControlLock::new();
+        let refused = catch_unwind(AssertUnwindSafe(|| drop(lock.lock()))).is_err();
+        self.refused
+            .store(refused, std::sync::atomic::Ordering::Relaxed);
+        true
+    }
+    fn inputs(&self) -> &[&str] {
+        &[]
+    }
+    fn outputs(&self) -> &[&str] {
+        &[]
+    }
+    fn input_block_mut(&mut self, _index: usize) -> &mut [f32] {
+        &mut self.buffer
+    }
+    fn output_block(&self, _index: usize) -> &[f32] {
+        &self.buffer
+    }
+    fn set_input(&mut self, port: &str, _value: f32) -> Result<(), String> {
+        Err(format!("no input {port}"))
+    }
+    fn get_output(&self, port: &str) -> Result<f32, String> {
+        Err(format!("no output {port}"))
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn process_block_refuses_control_locks_in_debug() {
+    use crate::invention::graph::{MasterObservers, SignalGraph};
+    let refused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let module = LocksInProcess {
+        refused: refused.clone(),
+        buffer: [0.0; crate::MAX_BLOCK],
+    };
+    let mut modules = indexmap::IndexMap::new();
+    modules.insert(
+        "locker".to_string(),
+        crate::factory::GraphModule::Module(Box::new(module)),
+    );
+    let mut graph = SignalGraph::new(modules, Vec::new(), Vec::new(), MasterObservers::default());
+    graph.recompile();
+    let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+    graph.process_block(&mut left, &mut right);
+    assert!(refused.load(std::sync::atomic::Ordering::Relaxed));
+    drop(ControlLock::new().lock());
+}
