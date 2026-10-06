@@ -231,7 +231,9 @@ impl SignalGraph {
     /// previous module map (with removed and replaced instances, and vacant
     /// placeholders where survivors were) and the previous derived state.
     /// Survivors keep their feedback carry; added and rebuilt modules start
-    /// from zero.
+    /// from zero. A loop is sample-identical across the install as long as
+    /// the edit leaves its per-sample order (and so its delayed edge) as it
+    /// was.
     fn install(&mut self, publication: &mut Publication) {
         let mut moved = 0;
         for (id, instance) in self.modules.iter_mut() {
