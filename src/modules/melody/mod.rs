@@ -15,6 +15,7 @@ pub use self::controls::MelodyControls;
 mod controls;
 mod inputs;
 mod outputs;
+mod pending;
 mod snapshot;
 
 /// Factory for constructing MelodyGenerator modules from configuration.
@@ -204,6 +205,10 @@ impl Module for MelodyGenerator {
             }
             self.last_seed_version = seed_version;
         }
+
+        // Land degree-table edits, including writes deferred while the table
+        // was busy, at block rate (never blocks; a no-op when unchanged).
+        self.degrees.sync(&self.ctrl);
 
         for i in 0..frames {
             // Detect rising edge of gate input

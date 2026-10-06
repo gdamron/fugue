@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
+use super::pending::Pending;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 /// Maximum number of scale degrees a melody can choose between.
@@ -93,9 +94,48 @@ impl DegreeTable {
         }
     }
 
-    fn out_of_range(&self, what: &str, index: usize) -> String {
-        format!("{what} index {index} out of range (count: {})", self.count)
+    /// Number of active positions.
+    pub(super) fn count(&self) -> usize {
+        self.count
     }
+
+    /// Sets the active count, recomputing the table. Returns whether it
+    /// changed.
+    pub(super) fn set_count(&mut self, count: usize) -> bool {
+        if self.count == count {
+            return false;
+        }
+        self.count = count;
+        self.recompute();
+        true
+    }
+
+    /// Writes the degree at position `index` (already clamped, below
+    /// [`MAX_DEGREES`]). An active position plays it now; a hidden one keeps
+    /// it for when the count grows. Returns whether the position is active.
+    pub(super) fn write_degree(&mut self, index: usize, value: i32) -> bool {
+        self.written_degrees[index] = Some(value);
+        let active = index < self.count;
+        if active {
+            self.degrees[index] = value;
+        }
+        active
+    }
+
+    /// Writes the weight at position `index`, as [`Self::write_degree`] does.
+    pub(super) fn write_weight(&mut self, index: usize, value: f32) -> bool {
+        self.written_weights[index] = Some(value);
+        let active = index < self.count;
+        if active {
+            self.weights[index] = value;
+        }
+        active
+    }
+}
+
+/// The error a single-position read or write past the active count returns.
+pub(super) fn out_of_range(what: &str, index: usize, count: usize) -> String {
+    format!("{what} index {index} out of range (count: {count})")
 }
 
 /// Thread-safe controls for the MelodyGenerator module.
@@ -104,6 +144,13 @@ impl DegreeTable {
 /// behind a `Mutex` gated by an atomic version counter: the audio thread keeps
 /// its own pre-allocated copy and only `try_lock`s the table when the version
 /// has changed, so control edits never block the audio callback.
+///
+/// Single-position and count controls (`degree.N`, `note_weight.N`,
+/// `degree_count`) never block either, since a `control_scheduler` reads and
+/// writes them from the audio thread: when the table is busy, a write is
+/// deferred to a lock-free mailbox that the next lock holder drains, and a
+/// read answers from it or from a lock-free mirror of the table (see
+/// [`super::pending`]). Whole-table edits lock as before.
 ///
 /// Note: Due to the complex types (Vec), this module exposes typed methods
 /// rather than the uniform f32 get/set_control API for most parameters.
@@ -126,6 +173,9 @@ pub struct MelodyControls {
     /// Bumped (while holding `table`) after every table edit; the audio
     /// thread re-copies the table when it observes a change.
     pub(crate) table_version: Arc<AtomicU64>,
+    /// Writes deferred while the table was busy, and a mirror of the table
+    /// for reads that find it busy.
+    pub(super) pending: Arc<Pending>,
     /// RNG seed value; only meaningful when `seed_version > 0`.
     pub(crate) seed_value: Arc<AtomicU64>,
     /// Bumped on every `set_seed`; `0` means "never seeded" (entropy RNG).
@@ -141,9 +191,11 @@ impl MelodyControls {
     /// [`MAX_DEGREES`] degrees are kept.
     pub fn new(root_note: u8, mut allowed_degrees: Vec<i32>) -> Self {
         allowed_degrees.truncate(MAX_DEGREES);
+        let table = DegreeTable::new(allowed_degrees);
         Self {
             root_note: Arc::new(AtomicU8::new(root_note)),
-            table: Arc::new(Mutex::new(DegreeTable::new(allowed_degrees))),
+            pending: Arc::new(Pending::new(&table)),
+            table: Arc::new(Mutex::new(table)),
             table_version: Arc::new(AtomicU64::new(0)),
             seed_value: Arc::new(AtomicU64::new(0)),
             seed_version: Arc::new(AtomicU64::new(0)),
@@ -186,19 +238,20 @@ impl MelodyControls {
         self.table_version.load(Ordering::Acquire)
     }
 
-    /// Applies `edit` to the degree table and publishes the change to the
-    /// audio thread. The version is bumped while the lock is still held, so
-    /// a reader that observes the new version always copies the edited table.
-    fn edit_table<R>(&self, edit: impl FnOnce(&mut DegreeTable) -> R) -> R {
-        let mut table = self.table.lock().unwrap();
-        let result = edit(&mut table);
+    /// Applies a whole-table `edit` (control thread: it blocks on the lock)
+    /// and publishes the change. The version is bumped while the lock is
+    /// still held, so a reader that observes the new version always copies
+    /// the edited table.
+    fn edit_table(&self, edit: impl FnOnce(&mut DegreeTable)) {
+        let mut table = self.lock_table();
+        edit(&mut table);
+        self.pending.publish(&table);
         self.table_version.fetch_add(1, Ordering::Release);
-        result
     }
 
-    /// Gets the active scale degrees.
+    /// Gets the active scale degrees. Control thread only: it blocks.
     pub fn allowed_degrees(&self) -> Vec<i32> {
-        self.table.lock().unwrap().degrees.clone()
+        self.lock_table().degrees.clone()
     }
 
     /// Sets the base scale: which degrees can be used for note selection.
@@ -216,9 +269,9 @@ impl MelodyControls {
         });
     }
 
-    /// Gets the active note weights.
+    /// Gets the active note weights. Control thread only: it blocks.
     pub fn note_weights(&self) -> Vec<f32> {
-        self.table.lock().unwrap().weights.clone()
+        self.lock_table().weights.clone()
     }
 
     /// Sets the base probability weights for note selection, forgetting
@@ -235,71 +288,98 @@ impl MelodyControls {
         });
     }
 
-    /// Gets the number of active degrees.
+    /// Gets the number of active degrees. Never blocks.
     pub fn degree_count(&self) -> usize {
-        self.table.lock().unwrap().degrees.len()
+        match self.try_lock_table() {
+            Some(table) => table.count(),
+            None => self.pending.latest_count(),
+        }
     }
 
-    /// Sets the number of active degrees (1 to [`MAX_DEGREES`]).
+    /// Sets the number of active degrees (1 to [`MAX_DEGREES`]). Never
+    /// blocks: a write that finds the table busy is deferred.
     ///
     /// Shrinking hides the positions past the count; growing shows them again
     /// as they were. Positions past the base scale repeat it from the start.
     pub fn set_degree_count(&self, count: usize) {
         let count = count.clamp(1, MAX_DEGREES);
-        // A ramp writes the count every sample; only a change is an edit.
-        let mut table = self.table.lock().unwrap();
-        if table.count == count {
-            return;
+        match self.try_lock_table() {
+            // A ramp writes the count every sample; only a change is an edit.
+            Some(mut table) => {
+                if table.set_count(count) {
+                    self.pending.publish(&table);
+                    self.table_version.fetch_add(1, Ordering::Release);
+                }
+            }
+            None => {
+                if self.pending.latest_count() != count {
+                    self.pending.deposit_count(count);
+                    self.retry_drain();
+                }
+            }
         }
-        table.count = count;
-        table.recompute();
-        self.table_version.fetch_add(1, Ordering::Release);
     }
 
-    /// Gets the scale degree at active position `index`.
+    /// Gets the scale degree at active position `index`. Never blocks.
     pub fn degree(&self, index: usize) -> Result<i32, String> {
-        let table = self.table.lock().unwrap();
-        table
-            .degrees
-            .get(index)
-            .copied()
-            .ok_or_else(|| table.out_of_range("Degree", index))
+        match self.try_lock_table() {
+            Some(table) => table
+                .degrees
+                .get(index)
+                .copied()
+                .ok_or_else(|| out_of_range("Degree", index, table.count())),
+            None => self.pending.degree(index),
+        }
     }
 
     /// Sets the scale degree at active position `index` (clamped to ±127).
+    /// Never blocks: a write that finds the table busy is deferred.
     pub fn set_degree(&self, index: usize, value: i32) -> Result<(), String> {
-        self.edit_table(|table| {
-            if index >= table.degrees.len() {
-                return Err(table.out_of_range("Degree", index));
-            }
-            let value = value.clamp(-127, 127);
-            table.written_degrees[index] = Some(value);
-            table.degrees[index] = value;
-            Ok(())
-        })
+        let value = value.clamp(-127, 127);
+        let Some(mut table) = self.try_lock_table() else {
+            self.pending.check_index("Degree", index)?;
+            self.pending.deposit_degree(index, value);
+            self.retry_drain();
+            return Ok(());
+        };
+        if index >= table.count() {
+            return Err(out_of_range("Degree", index, table.count()));
+        }
+        table.write_degree(index, value);
+        self.pending.publish_degree(index, value);
+        self.table_version.fetch_add(1, Ordering::Release);
+        Ok(())
     }
 
-    /// Gets the note weight at active position `index`.
+    /// Gets the note weight at active position `index`. Never blocks.
     pub fn note_weight(&self, index: usize) -> Result<f32, String> {
-        let table = self.table.lock().unwrap();
-        table
-            .weights
-            .get(index)
-            .copied()
-            .ok_or_else(|| table.out_of_range("Weight", index))
+        match self.try_lock_table() {
+            Some(table) => table
+                .weights
+                .get(index)
+                .copied()
+                .ok_or_else(|| out_of_range("Weight", index, table.count())),
+            None => self.pending.weight(index),
+        }
     }
 
     /// Sets the note weight at active position `index` (clamped to 0-10).
+    /// Never blocks: a write that finds the table busy is deferred.
     pub fn set_note_weight(&self, index: usize, value: f32) -> Result<(), String> {
-        self.edit_table(|table| {
-            if index >= table.weights.len() {
-                return Err(table.out_of_range("Weight", index));
-            }
-            let value = value.clamp(0.0, 10.0);
-            table.written_weights[index] = Some(value);
-            table.weights[index] = value;
-            Ok(())
-        })
+        let value = value.clamp(0.0, 10.0);
+        let Some(mut table) = self.try_lock_table() else {
+            self.pending.check_index("Weight", index)?;
+            self.pending.deposit_weight(index, value);
+            self.retry_drain();
+            return Ok(());
+        };
+        if index >= table.count() {
+            return Err(out_of_range("Weight", index, table.count()));
+        }
+        table.write_weight(index, value);
+        self.pending.publish_weight(index, value);
+        self.table_version.fetch_add(1, Ordering::Release);
+        Ok(())
     }
 
     /// Restores a degree and a weight written to single positions, as a

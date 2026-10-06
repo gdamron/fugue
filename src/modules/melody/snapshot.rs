@@ -1,15 +1,14 @@
 //! Audio-thread copy of the melody's degree table.
 
-use std::sync::TryLockError;
-
 use super::controls::{DegreeTable, MelodyControls, MAX_DEGREES};
 
 /// Pre-allocated copy of the allowed degrees and their weights.
 ///
 /// Owned by the audio thread. [`DegreeSnapshot::sync`] refreshes it from
-/// [`MelodyControls`] only when the table version changed, using `try_lock`
-/// so it never blocks; if a control thread holds the lock, the previous copy
-/// is kept and the sync is retried on the next call.
+/// [`MelodyControls`] only when the table version changed or a deferred
+/// write is pending, using `try_lock` so it never blocks; if a control thread
+/// holds the lock, the previous copy is kept and the sync is retried on the
+/// next call.
 pub(super) struct DegreeSnapshot {
     degrees: [i32; MAX_DEGREES],
     degree_count: usize,
@@ -30,27 +29,30 @@ impl DegreeSnapshot {
             weights: [0.0; MAX_DEGREES],
             weight_count: 0,
             total_weight: 0.0,
-            version: ctrl.table_version(),
+            version: 0,
         };
-        let table = ctrl.table.lock().unwrap_or_else(|e| e.into_inner());
+        let table = ctrl.lock_table();
+        snapshot.version = ctrl.table_version();
         snapshot.copy_from(&table);
         snapshot
     }
 
-    /// Re-copies the table if it changed. Lock-free unless the version moved,
-    /// and never blocks. Returns `true` if the snapshot was refreshed.
+    /// Re-copies the table if it changed, draining any deferred write first.
+    /// Lock-free unless the version moved or a write is pending, and never
+    /// blocks. Returns `true` if the snapshot was refreshed.
     pub(super) fn sync(&mut self, ctrl: &MelodyControls) -> bool {
-        // Read the version before locking: an edit that lands in between is
-        // copied now and caught again by the next version check.
+        if !ctrl.has_pending() && ctrl.table_version() == self.version {
+            return false;
+        }
+        // Locking drains deferred writes. Every edit bumps the version under
+        // the lock, so the version read here matches the table copied.
+        let Some(table) = ctrl.try_lock_table() else {
+            return false;
+        };
         let version = ctrl.table_version();
         if version == self.version {
             return false;
         }
-        let table = match ctrl.table.try_lock() {
-            Ok(table) => table,
-            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-            Err(TryLockError::WouldBlock) => return false,
-        };
         self.copy_from(&table);
         self.version = version;
         true
