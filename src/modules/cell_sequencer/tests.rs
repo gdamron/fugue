@@ -1030,3 +1030,39 @@ fn test_grace_controls_round_trip() {
         200.0
     );
 }
+
+#[test]
+fn bank_numbers_read_whole_floats_and_are_refused_with_their_path() {
+    let build = |config: Value| {
+        CellSequencerFactory
+            .build(44_100, &config)
+            .map(|built| built.control_surface.unwrap())
+            .map_err(|error| error.to_string())
+    };
+    let surface = build(serde_json::json!({ "sequences": [[{ "note": 2.0 }], [4.0]] })).unwrap();
+    let ControlValue::String(bank) = surface.get_control("sequences_json").unwrap() else {
+        panic!("sequences_json should be a string");
+    };
+    assert_eq!(bank, r#"[[{"note":2}],[{"note":4}]]"#);
+
+    let error = build(serde_json::json!({ "sequences": [[0], [1, { "note": 1.5 }]] }));
+    assert_eq!(
+        error.err().unwrap(),
+        "cell_sequencer config 'sequences[1][1].note' expects a whole number from -128 to 127, \
+         got 1.5"
+    );
+    let error = build(serde_json::json!({ "sequences_json": "[[{\"gate\": 1e39}]]" }));
+    assert!(error
+        .err()
+        .unwrap()
+        .contains("'sequences_json[0][0].gate' expects a finite number"));
+
+    // The bank control reads by the same rules at runtime.
+    let error = surface
+        .set_control("sequences_json", ControlValue::from("[[2.5]]"))
+        .unwrap_err();
+    assert!(
+        error.contains("'sequences_json[0][0]' expects a whole number"),
+        "{error}"
+    );
+}

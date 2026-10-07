@@ -632,3 +632,74 @@ fn test_grace_placement_control_on_beat() {
     let grace_freq = Note::new((DEFAULT_BASE_NOTE as i16 + 8) as u8).frequency();
     assert!((stream[onsets[0]].0 - grace_freq).abs() < 0.01);
 }
+
+fn pattern_of(config: serde_json::Value) -> Result<Vec<Step>, String> {
+    let built = StepSequencerFactory
+        .build(44_100, &config)
+        .map_err(|error| error.to_string())?;
+    let controls = built.handles[0].1.downcast_ref::<StepSequencerControls>();
+    Ok(controls.unwrap().pattern())
+}
+
+#[test]
+fn pattern_numbers_read_whole_floats_as_written() {
+    let pattern = pattern_of(serde_json::json!({
+        "pattern": [{ "note": 2.0, "grace": [-1.0] }, 4.0, { "note": -3, "gate": 2 }]
+    }))
+    .unwrap();
+    // `{"note": 2.0}` was a rest, and a bare `4.0` was refused.
+    assert_eq!(pattern[0].note, Some(2));
+    assert_eq!(pattern[0].grace.iter().collect::<Vec<_>>(), vec![-1]);
+    assert_eq!(pattern[1].note, Some(4));
+    // Gate and amplitude stay clamped to 0..=1.
+    assert_eq!(
+        (pattern[2].note, pattern[2].gate_length),
+        (Some(-3), Some(1.0))
+    );
+}
+
+#[test]
+fn pattern_numbers_are_refused_with_their_path() {
+    let refused = |pattern: serde_json::Value| {
+        pattern_of(serde_json::json!({ "pattern": pattern })).unwrap_err()
+    };
+    let note = "expects a whole number from -128 to 127";
+    assert_eq!(
+        refused(serde_json::json!([0, { "note": 2.5 }])),
+        format!("step_sequencer config 'pattern[1].note' {note}, got 2.5")
+    );
+    // `as i8` used to wrap 300 to 44.
+    assert!(refused(serde_json::json!([{ "note": 300 }])).contains("'pattern[0].note'"));
+    // A note of another type was a rest.
+    assert!(refused(serde_json::json!([{ "note": "C4" }])).contains("'pattern[0].note'"));
+    assert_eq!(
+        refused(serde_json::json!([7.5])),
+        format!("step_sequencer config 'pattern[0]' {note}, got 7.5")
+    );
+    assert!(
+        refused(serde_json::json!([{ "note": 0, "grace": [1, 1.5] }]))
+            .contains("'pattern[0].grace[1]' expects a whole number")
+    );
+    for field in ["gate", "amplitude"] {
+        let error = refused(serde_json::json!([{ "note": 0, field: 1e39 }]));
+        assert!(
+            error.contains(&format!("'pattern[0].{field}' expects a finite number")),
+            "{error}"
+        );
+    }
+    let config = serde_json::json!({ "pattern_json": r#"[{"note": 0.5}]"# });
+    assert!(pattern_of(config)
+        .unwrap_err()
+        .contains("'pattern_json[0].note'"));
+}
+
+#[test]
+fn the_pattern_control_reads_step_numbers_by_the_same_rules() {
+    let controls = StepSequencerControls::new();
+    let write = |json: &str| controls.set_pattern_json(json);
+    write(r#"[{"note": 2.0}, 3.0]"#).unwrap();
+    let notes: Vec<_> = controls.pattern().iter().map(|step| step.note).collect();
+    assert_eq!(notes, vec![Some(2), Some(3)]);
+    let error = write(r#"[{"note": 2.5}]"#).unwrap_err();
+    assert!(error.contains("'note' expects a whole number"), "{error}");
+}

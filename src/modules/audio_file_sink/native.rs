@@ -16,9 +16,11 @@ use std::time::Duration;
 
 use hound::{SampleFormat, WavSpec, WavWriter};
 
-use super::{AudioFileSink, AudioFileSinkHandle};
+use super::{AudioFileSink, AudioFileSinkHandle, TYPE_ID};
+use crate::module_config::{ConfigKey, ConfigReader};
 
 const DEFAULT_BUFFER_FRAMES: usize = 65_536;
+pub(super) const BUFFER_FRAMES: ConfigKey = ConfigKey::int::<usize>("buffer_frames");
 /// Bit depth used when encoding FLAC output. 24-bit preserves most of the f32
 /// graph signal's dynamic range while keeping files lossless.
 const FLAC_BITS_PER_SAMPLE: u32 = 24;
@@ -59,10 +61,8 @@ pub(super) fn inspection_config(
         .get("path")
         .and_then(|value| value.as_str())
         .ok_or("audio_file_sink requires config.path")?;
-    let buffer_frames = config
-        .get("buffer_frames")
-        .and_then(|value| value.as_u64())
-        .map(|value| value as usize)
+    let buffer_frames = ConfigReader::new(TYPE_ID, config)
+        .int::<usize>(&BUFFER_FRAMES)?
         .unwrap_or(DEFAULT_BUFFER_FRAMES);
     if buffer_frames == 0 {
         return Err("audio_file_sink buffer_frames must be greater than zero".into());

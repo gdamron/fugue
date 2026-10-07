@@ -313,7 +313,7 @@ fn test_config_validation_errors() {
         ),
         (
             serde_json::json!({ "samples": [{ "key": 36.5, "asset": kick_str }] }),
-            "must be an integer",
+            "sample_kit config 'samples[0].key' expects a whole number",
         ),
         (
             serde_json::json!({ "samples": [{ "key": "", "asset": kick_str }] }),
@@ -321,7 +321,7 @@ fn test_config_validation_errors() {
         ),
         (
             serde_json::json!({ "samples": [{ "key": 36, "asset": kick_str, "gain": "loud" }] }),
-            "'gain' must be a number",
+            "'samples[0].gain' expects a finite number",
         ),
         (serde_json::json!({ "samples": {} }), "must be an array"),
     ];
@@ -374,4 +374,32 @@ fn test_package_ref_slot_resolves_through_cache() {
         kit.process(1);
         assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
     });
+}
+
+#[test]
+fn slot_numbers_read_whole_floats_and_are_refused_with_their_path() {
+    let kick = write_level_wav(0.5, 8);
+    let slot = |key: serde_json::Value, gain: serde_json::Value| {
+        let asset = kick.to_str().unwrap();
+        let config =
+            serde_json::json!({ "samples": [{ "key": key, "asset": asset, "gain": gain }] });
+        SampleKitFactory
+            .build(44_100, &config)
+            .map(|built| built.control_surface.unwrap())
+            .map_err(|error| error.to_string())
+    };
+    let surface = slot(serde_json::json!(36.0), serde_json::json!(0.5)).unwrap();
+    assert_eq!(surface.get_control("key.0"), Ok(ControlValue::from("36")));
+    assert_eq!(
+        slot(serde_json::json!(36), serde_json::json!(1e39)).err(),
+        Some("sample_kit config 'samples[0].gain' expects a finite number, got 1e39".into())
+    );
+    let error = slot(serde_json::json!(3e9), serde_json::json!(1))
+        .err()
+        .unwrap();
+    assert!(
+        error.contains("'samples[0].key' expects a whole number from -2147483648"),
+        "{error}"
+    );
+    let _ = std::fs::remove_file(kick);
 }

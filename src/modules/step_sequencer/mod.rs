@@ -74,7 +74,7 @@ use grace::{
     clamp_per_grace, release_gap, GracePlayer, DEFAULT_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS,
     MIN_GRACE_DURATION_MS,
 };
-pub(crate) use parse::{parse_pattern, parse_step};
+pub(crate) use parse::{parse_pattern, parse_step, StepError};
 pub use step::{GraceChain, Step, MAX_GRACE_NOTES};
 
 /// Default number of steps in a pattern.

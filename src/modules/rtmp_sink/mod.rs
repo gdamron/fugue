@@ -26,6 +26,8 @@ use native::SharedHandle;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::RtmpSinkConfig;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use native::CONFIG_KEYS as RTMP_CONFIG_KEYS;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct RtmpSinkFactory;
@@ -46,6 +48,10 @@ impl ModuleFactory for RtmpSinkFactory {
 
     fn type_id(&self) -> &'static str {
         "rtmp_sink"
+    }
+
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        native::CONFIG_KEYS
     }
 
     fn build(

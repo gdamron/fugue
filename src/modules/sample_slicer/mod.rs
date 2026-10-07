@@ -41,6 +41,7 @@
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::pkg::SampleSlice;
 use crate::Module;
 
@@ -63,9 +64,16 @@ struct SliceRange {
 /// Factory for the built-in `sample_slicer` module.
 pub struct SampleSlicerFactory;
 
+const TYPE_ID: &str = "sample_slicer";
+const SLICE: ConfigKey = ConfigKey::int::<usize>("slice");
+
 impl ModuleFactory for SampleSlicerFactory {
     fn type_id(&self) -> &'static str {
-        "sample_slicer"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[SLICE]
     }
 
     fn build(
@@ -83,17 +91,9 @@ impl ModuleFactory for SampleSlicerFactory {
             None => slices_from_sample_pack(&resolved_source)?,
         };
         let ranges = resolve_ranges(&slices, &sample)?;
-        let initial_slice = config
-            .get("slice")
-            .map(|value| {
-                value.as_u64().ok_or_else(|| {
-                    "sample_slicer: 'slice' must be a non-negative integer".to_string()
-                })
-            })
-            .transpose()?
+        let initial_slice = ConfigReader::new(TYPE_ID, config)
+            .int::<usize>(&SLICE)?
             .unwrap_or(0);
-        let initial_slice =
-            usize::try_from(initial_slice).map_err(|_| "sample_slicer: 'slice' is too large")?;
         if initial_slice >= ranges.len() {
             return Err(format!(
                 "sample_slicer: initial slice {} is out of range for {} slices",

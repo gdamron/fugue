@@ -580,7 +580,7 @@ fn test_config_validation_errors() {
         ),
         (
             serde_json::json!({ "zones": [{ "root": 200, "asset": wav_str }] }),
-            "'root' must be a MIDI note number",
+            "'zones[0].root' expects a whole number from 0 to 127, got 200",
         ),
         (
             serde_json::json!({ "zones": [{ "root": 60 }] }),
@@ -596,7 +596,7 @@ fn test_config_validation_errors() {
         ),
         (
             serde_json::json!({ "zones": [{ "root": 60, "asset": wav_str, "gain": "loud" }] }),
-            "'gain' must be a number",
+            "'zones[0].gain' expects a finite number, got \"loud\"",
         ),
         (
             serde_json::json!({ "zones": [{ "root": 60, "asset": wav_str,
@@ -619,11 +619,11 @@ fn test_config_validation_errors() {
         ),
         (
             serde_json::json!({ "voices": 0 }),
-            "'voices' must be an integer",
+            "'voices' expects a whole number from 1 to",
         ),
         (
             serde_json::json!({ "voices": 99 }),
-            "'voices' must be an integer",
+            "'voices' expects a whole number from 1 to",
         ),
         (
             serde_json::json!({ "release": -1.0 }),
@@ -665,4 +665,56 @@ fn test_note_control_validation() {
         .unwrap();
 
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn zone_numbers_read_whole_floats_and_are_refused_with_their_path() {
+    let wav = write_level_wav(0.5, 8);
+    let zone = |fields: serde_json::Value| {
+        let mut zone = serde_json::json!({ "asset": wav.to_str().unwrap() });
+        zone.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        let config = serde_json::json!({ "zones": [zone] });
+        SampleInstrumentFactory
+            .build(44_100, &config)
+            .map(|built| built.control_surface.unwrap())
+            .map_err(|error| error.to_string())
+    };
+    let surface = zone(serde_json::json!({
+        "root": 60.0, "key_range": [48.0, 72], "gain": 0.5,
+        "loop": { "start_frames": 2.0, "end_frames": 6, "crossfade_frames": 1.0 }
+    }))
+    .unwrap();
+    assert_eq!(
+        surface.get_control("root.0"),
+        Ok(ControlValue::Number(60.0))
+    );
+
+    let cases = [
+        (
+            serde_json::json!({ "root": 60.5 }),
+            "'zones[0].root' expects a whole",
+        ),
+        (
+            serde_json::json!({ "root": 60, "key_range": [48, 72.5] }),
+            "'zones[0].key_range[1]' expects a whole number from 0 to 127",
+        ),
+        (
+            serde_json::json!({ "root": 60, "gain": 1e39 }),
+            "'zones[0].gain' expects a finite number, got 1e39",
+        ),
+        (
+            serde_json::json!({ "root": 60, "loop": { "start_frames": 2.5, "end_frames": 6 } }),
+            "'zones[0].loop.start_frames' expects a whole number",
+        ),
+    ];
+    for (fields, expected) in cases {
+        let error = zone(fields.clone()).err().unwrap();
+        assert!(
+            error.starts_with("sample_instrument config ") && error.contains(expected),
+            "{fields}: {error}"
+        );
+    }
+    let _ = std::fs::remove_file(wav);
 }

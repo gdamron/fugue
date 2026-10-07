@@ -60,6 +60,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{finite_f32, whole_number, whole_number_in, ConfigKey, ConfigReader};
 use crate::music::Note;
 use crate::Module;
 
@@ -79,9 +80,17 @@ const DEFAULT_RELEASE: f32 = 0.1;
 
 pub struct SampleInstrumentFactory;
 
+const TYPE_ID: &str = "sample_instrument";
+const VOICES: ConfigKey = ConfigKey::integer("voices", 1, MAX_VOICES as i128);
+const RELEASE: ConfigKey = ConfigKey::float("release");
+
 impl ModuleFactory for SampleInstrumentFactory {
     fn type_id(&self) -> &'static str {
-        "sample_instrument"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[VOICES, RELEASE]
     }
 
     fn build(
@@ -110,24 +119,16 @@ impl ModuleFactory for SampleInstrumentFactory {
 /// config builds an empty instrument (module type discovery constructs
 /// every type with a null config).
 fn parse_config(config: &serde_json::Value) -> Result<(Vec<ZoneSpec>, usize, f32), String> {
-    let voices = match config.get("voices") {
-        None => DEFAULT_VOICES,
-        Some(value) => value
-            .as_u64()
-            .filter(|&count| (1..=MAX_VOICES as u64).contains(&count))
-            .ok_or_else(|| format!("'voices' must be an integer in 1..={}", MAX_VOICES))?
-            as usize,
-    };
+    let reader = ConfigReader::new(TYPE_ID, config);
+    let voices = reader
+        .int::<usize>(&VOICES)
+        .map_err(|error| error.to_string())?
+        .unwrap_or(DEFAULT_VOICES);
 
-    let release = match config.get("release") {
+    let release = match reader.float(&RELEASE).map_err(|error| error.to_string())? {
         None => DEFAULT_RELEASE,
-        Some(value) => {
-            let release = value
-                .as_f64()
-                .filter(|release| release.is_finite() && *release > 0.0)
-                .ok_or("'release' must be a positive number of seconds")? as f32;
-            release.clamp(1e-3, 30.0)
-        }
+        Some(release) if release > 0.0 => release.clamp(1e-3, 30.0),
+        Some(_) => return Err("'release' must be a positive number of seconds".to_string()),
     };
 
     let Some(zones) = config.get("zones") else {
@@ -142,7 +143,7 @@ fn parse_config(config: &serde_json::Value) -> Result<(Vec<ZoneSpec>, usize, f32
         let zone = entry
             .as_object()
             .ok_or_else(|| format!("zones[{}] must be an object", index))?;
-        specs.push(parse_zone(zone, index)?);
+        specs.push(parse_zone(zone, index, &reader)?);
     }
     Ok((specs, voices, release))
 }
@@ -150,13 +151,18 @@ fn parse_config(config: &serde_json::Value) -> Result<(Vec<ZoneSpec>, usize, f32
 fn parse_zone(
     zone: &serde_json::Map<String, serde_json::Value>,
     index: usize,
+    reader: &ConfigReader,
 ) -> Result<ZoneSpec, String> {
-    let root = zone
-        .get("root")
-        .and_then(|value| value.as_u64())
-        .filter(|&root| root <= 127)
-        .ok_or_else(|| format!("zones[{}]: 'root' must be a MIDI note number 0..=127", index))?
-        as u8;
+    let midi_note = |value, path: String| {
+        whole_number_in::<u8>(value, 0, 127).map_err(|r| reader.refuse(&path, r).to_string())
+    };
+    let root = zone.get("root").ok_or_else(|| {
+        format!(
+            "zones[{}]: 'root' must be a MIDI note number 0..=127",
+            index
+        )
+    })?;
+    let root = midi_note(root, format!("zones[{index}].root"))?;
 
     let (key_low, key_high) = match zone.get("key_range") {
         // A zone without a range covers only its root; other notes reach it
@@ -167,16 +173,8 @@ fn parse_zone(
                 .as_array()
                 .filter(|range| range.len() == 2)
                 .ok_or_else(|| format!("zones[{}]: 'key_range' must be [low, high]", index))?;
-            let mut bounds = range.iter().map(|bound| {
-                bound.as_u64().filter(|&key| key <= 127).ok_or_else(|| {
-                    format!(
-                        "zones[{}]: 'key_range' bounds must be MIDI notes 0..=127",
-                        index
-                    )
-                })
-            });
-            let low = bounds.next().unwrap()? as u8;
-            let high = bounds.next().unwrap()? as u8;
+            let low = midi_note(&range[0], format!("zones[{index}].key_range[0]"))?;
+            let high = midi_note(&range[1], format!("zones[{index}].key_range[1]"))?;
             if low > high {
                 return Err(format!("zones[{}]: 'key_range' low exceeds high", index));
             }
@@ -195,16 +193,17 @@ fn parse_zone(
     };
 
     let gain = match zone.get("gain") {
-        Some(value) => value
-            .as_f64()
-            .ok_or_else(|| format!("zones[{}]: 'gain' must be a number", index))?
-            as f32,
+        Some(value) => finite_f32(value).map_err(|r| {
+            reader
+                .refuse(&format!("zones[{index}].gain"), r)
+                .to_string()
+        })?,
         None => 1.0,
     };
 
     let loop_spec = zone
         .get("loop")
-        .map(|value| parse_loop(value, index))
+        .map(|value| parse_loop(value, index, reader))
         .transpose()?;
 
     Ok(ZoneSpec {
@@ -217,15 +216,21 @@ fn parse_zone(
     })
 }
 
-fn parse_loop(value: &serde_json::Value, index: usize) -> Result<LoopSpec, String> {
+fn parse_loop(
+    value: &serde_json::Value,
+    index: usize,
+    reader: &ConfigReader,
+) -> Result<LoopSpec, String> {
     let object = value
         .as_object()
         .ok_or_else(|| format!("zones[{}]: 'loop' must be an object", index))?;
     let frames = |key: &str| {
         object.get(key).map(|value| {
-            value
-                .as_u64()
-                .ok_or_else(|| format!("zones[{}]: loop '{}' must be a frame count", index, key))
+            whole_number::<u64>(value).map_err(|r| {
+                reader
+                    .refuse(&format!("zones[{index}].loop.{key}"), r)
+                    .to_string()
+            })
         })
     };
     let start_frames = frames("start_frames")

@@ -49,6 +49,7 @@
 //! ```
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::{Module, MAX_BLOCK};
 
 /// Upper bound on pool voices; bounds port count and per-block work.
@@ -86,9 +87,16 @@ const INPUTS: [&str; 3] = ["frequency", "gate", "velocity"];
 /// Factory for constructing divisi modules from configuration.
 pub struct DivisiFactory;
 
+const TYPE_ID: &str = "divisi";
+const VOICES: ConfigKey = ConfigKey::integer("voices", 1, MAX_VOICES as i128);
+
 impl ModuleFactory for DivisiFactory {
     fn type_id(&self) -> &'static str {
-        "divisi"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[VOICES]
     }
 
     fn build(
@@ -96,18 +104,9 @@ impl ModuleFactory for DivisiFactory {
         _sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let voices = config
-            .get("voices")
-            .map(|value| {
-                value
-                    .as_u64()
-                    .filter(|&count| (1..=MAX_VOICES as u64).contains(&count))
-                    .ok_or_else(|| {
-                        format!("divisi: voices must be an integer in 1..={}", MAX_VOICES)
-                    })
-            })
-            .transpose()?
-            .unwrap_or(1) as usize;
+        let voices = ConfigReader::new(TYPE_ID, config)
+            .int::<usize>(&VOICES)?
+            .unwrap_or(1);
 
         if let Some(steal) = config.get("steal") {
             match steal.as_str() {

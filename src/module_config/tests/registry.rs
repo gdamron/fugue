@@ -8,20 +8,10 @@ use super::*;
 use crate::{ControlKind, ControlValue, GraphModule, ModuleRegistry, DEFAULT_BLOCK_SIZE};
 
 /// Types whose factories still read numbers their own way, exempt from the
-/// control-key and completeness checks. Slices 2 and 3 of FUG-306 migrate
-/// them to [`ConfigReader`] and empty this list: a type leaves it when its
-/// factory declares its keys in `config_keys()`.
-const NOT_YET_MIGRATED: &[&str] = &[
-    "audio_file_sink",
-    "cell_sequencer",
-    "divisi",
-    "rtmp_sink",
-    "sample_instrument",
-    "sample_kit",
-    "sample_slicer",
-    "step_sequencer",
-    "youtube_sink",
-];
+/// control-key and completeness checks. Every built-in factory reads through
+/// [`ConfigReader`], so it is empty: a new factory declares its keys in
+/// `config_keys()` rather than joining it.
+pub(super) const NOT_YET_MIGRATED: &[&str] = &[];
 
 /// Number controls a factory does not read from config, so a config value
 /// for them is ignored rather than refused: (type, key, why).
@@ -29,6 +19,24 @@ const CONTROLS_NOT_READ_FROM_CONFIG: &[(&str, &str, &str)] = &[
     ("agent", "request_count", "a counter the runtime keeps"),
     ("agent", "trigger_count", "a counter the gate input keeps"),
     ("agent", "reset_count", "a counter the reset input keeps"),
+    ("cell_sequencer", "loop_count", "read-only telemetry"),
+    ("cell_sequencer", "current_cell", "read-only telemetry"),
+    ("cell_sequencer", "total_cells", "read-only telemetry"),
+    (
+        "cell_sequencer",
+        "advance",
+        "an action: a write advances the bank",
+    ),
+    (
+        "sample_instrument",
+        "note_on",
+        "an action: a write starts a note",
+    ),
+    (
+        "sample_instrument",
+        "note_off",
+        "an action: a write releases a note",
+    ),
     ("control_scheduler", "step", "read-only playhead"),
 ];
 
@@ -38,11 +46,39 @@ const UNBUILDABLE: &[(&str, &str)] = &[("wasm_module", "needs a compiled guest m
 /// The config each type is built from before a key is added: enough for
 /// types whose config is mandatory (assets, say) to build.
 fn base_config(type_id: &str) -> Value {
+    let size = json!({ "width": 640, "height": 360 });
     match type_id {
+        "audio_file_sink" => json!({ "path": "never-written.wav" }),
         "cell_sequencer" => json!({ "sequences": [[60, null], [62]] }),
-        "youtube_sink" => json!({ "stream_key": "test-stream-key" }),
+        "rtmp_sink" => with(&size, "url", json!("rtmp://example.test/live")),
+        "sample_slicer" => json!({
+            "asset": { "path": eight_frame_wav() },
+            "slices": (0..4)
+                .map(|n| json!({ "start_frames": 2 * n, "end_frames": 2 * n + 2 }))
+                .collect::<Vec<_>>(),
+        }),
+        "youtube_sink" => with(&size, "stream_key", json!("test-stream-key")),
         _ => json!({}),
     }
+}
+
+/// A silent eight-frame WAV, written once per test process.
+fn eight_frame_wav() -> &'static str {
+    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let name = format!("fugue-module-config-{}.wav", std::process::id());
+        let path = std::env::temp_dir().join(name);
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        (0..8).for_each(|_| writer.write_sample(0_i16).unwrap());
+        writer.finalize().unwrap();
+        path.to_string_lossy().into_owned()
+    })
 }
 
 /// `base` (an object) with `key` set to `value`.
@@ -88,7 +124,8 @@ fn observe(registry: &ModuleRegistry, type_id: &str, config: &Value) -> Result<O
         .collect();
     let outputs: Vec<String> = module.outputs().iter().map(|p| p.to_string()).collect();
     let mut samples = vec![Vec::new(); outputs.len()];
-    if let GraphModule::Module(module) = &mut built.module {
+    // A sink's inspection build is inert: it has ports but plays nothing.
+    if let (GraphModule::Module(module), None) = (&mut built.module, built.sink) {
         for _ in 0..4 {
             module.process(DEFAULT_BLOCK_SIZE);
             for (index, samples) in samples.iter_mut().enumerate() {
