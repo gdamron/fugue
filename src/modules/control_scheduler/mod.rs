@@ -26,7 +26,10 @@
 //! and arrives exactly at `value` on the boundary of step `at + N`,
 //! interpolating linearly in between (hairpin-style automation). Boundary
 //! values are exact: at every intermediate step boundary `at + k` the control
-//! is exactly `from + (to - from) * k / N`.
+//! is exactly `from + (to - from) * k / N`, computed in `f64` and rounded once
+//! to `f32`, whatever the measured step length. The interpolation never
+//! overflows or leaves the range between the endpoints, so a ramp between any
+//! two finite values writes only finite values.
 //!
 //! # Example Invention
 //!
@@ -119,6 +122,22 @@ struct ActiveRamp {
     steps_total: u64,
     /// Step boundaries crossed since the ramp fired.
     steps_done: u64,
+}
+
+/// The ramp value `from + (to - from) * progress` for `progress` in `[0, 1]`.
+///
+/// Computed in `f64`: `to - from` overflows `f32` when the endpoints are far
+/// apart (`f32::MIN` to `f32::MAX`), which would write infinities, or NaN at
+/// progress 0. Every step is monotonic in `progress`, and the result is kept
+/// between the endpoints so rounding never overshoots `to` before the final
+/// boundary writes it exactly. Uses `max`/`min` rather than `clamp`, which
+/// panics on NaN bounds; a NaN `from` (never written by the scheduler) yields
+/// `to`. Allocation-free: safe on the audio thread.
+#[inline]
+fn ramp_value(from: f32, to: f32, progress: f32) -> f32 {
+    let (from_wide, to_wide) = (f64::from(from), f64::from(to));
+    let value = (from_wide + (to_wide - from_wide) * f64::from(progress)) as f32;
+    value.max(from.min(to)).min(from.max(to))
 }
 
 /// Applies scheduled control changes on clock-gate step boundaries.
@@ -237,8 +256,8 @@ impl ControlScheduler {
     }
 
     /// Advances ramps in flight across a step boundary, writing the exact
-    /// boundary value `from + (to - from) * k / N` (and exactly `to` on the
-    /// final boundary).
+    /// boundary value `from + (to - from) * k / N` (see [`ramp_value`]; and
+    /// exactly `to` on the final boundary).
     fn advance_ramps_on_edge(&mut self) {
         let entries = &self.entries;
         self.ramps.retain_mut(|ramp| {
@@ -251,7 +270,7 @@ impl ControlScheduler {
                 false
             } else {
                 let progress = ramp.steps_done as f32 / ramp.steps_total as f32;
-                let value = ramp.from + (ramp.to - ramp.from) * progress;
+                let value = ramp_value(ramp.from, ramp.to, progress);
                 let _ = entry
                     .surface
                     .set_control(&entry.control, ControlValue::Number(value));
@@ -307,7 +326,7 @@ impl ControlScheduler {
         let entries = &self.entries;
         for ramp in &self.ramps {
             let progress = ((ramp.steps_done as f32 + frac) / ramp.steps_total as f32).min(1.0);
-            let value = ramp.from + (ramp.to - ramp.from) * progress;
+            let value = ramp_value(ramp.from, ramp.to, progress);
             let entry = &entries[ramp.entry_idx];
             let _ = entry
                 .surface
