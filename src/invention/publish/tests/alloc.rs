@@ -1,7 +1,8 @@
 //! Allocation-counted publishing: folded publications, a full retire
-//! channel, and input writes beside a publication. Each counts the install
-//! (`ensure_process_order`) and the blocks after it. The shapes a single
-//! change can take are counted where changes are prepared.
+//! channel, and input writes beside, across, and waiting for a publication.
+//! Each counts the install (`ensure_process_order`) and the blocks after it.
+//! The shapes a single change can take are counted where changes are
+//! prepared.
 
 use super::*;
 use crate::invention::publish::publisher::RETIRE_CAPACITY;
@@ -82,26 +83,81 @@ fn a_full_retire_channel_keeps_blocks_clean_until_drained() {
     assert_eq!(rig.generation_and_applied().1, applied + 1);
 }
 
+/// The value in the first frame of `id`'s `port` input block.
+fn input_value(rig: &mut Rig, id: &str, port: &str) -> f32 {
+    let module = rig.graph.modules.get_mut(id).unwrap().module_mut();
+    let index = module.input_port_index(port).unwrap();
+    module.input_block_mut(index)[0]
+}
+
 #[test]
-fn an_input_write_beside_a_publication_frees_only_its_strings() {
+fn an_input_write_beside_a_publication_is_clean() {
     let mut rig = Rig::new(BASE);
     rig.render(1);
     upsert(&rig, "osc3", "oscillator", serde_json::json!({}));
-    rig.live
-        .write_input(InputWrite {
-            module_id: "osc1".to_string(),
-            port: "fm".to_string(),
-            value: 0.5,
-        })
-        .unwrap();
+    rig.live.write_input("osc1", "frequency", 0.5).unwrap();
 
-    // The install itself is clean; the write's two id strings are dropped
-    // on the audio thread. This count drops to zero once input writes are
-    // resolved on the control thread to plain indices.
+    // The write is a plain record resolved on the control thread: nothing
+    // to free when it is applied.
     let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
-    assert_eq!((allocs, frees), (0, 2));
+    assert_eq!((allocs, frees), (0, 0));
     assert!(!rig.graph.topo_dirty);
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "osc3"]);
+    assert_eq!(input_value(&mut rig, "osc1", "frequency"), 0.5);
+}
+
+#[test]
+fn a_write_remapped_across_an_install_is_clean() {
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    // Resolved while osc2 is at index 1; removing osc1 moves it to 0.
+    rig.live.write_input("osc2", "frequency", 0.5).unwrap();
+    rig.live.remove_module("osc1").unwrap();
+
+    let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0));
+    assert!(!rig.graph.topo_dirty);
+    assert_eq!(rig.module_ids(), ["osc2", "dac"]);
+    assert_eq!(input_value(&mut rig, "osc2", "frequency"), 0.5);
+}
+
+#[test]
+fn a_write_for_a_folded_publication_is_clean() {
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    upsert(&rig, "osc3", "oscillator", serde_json::json!({}));
+    rig.live.write_input("osc3", "frequency", 0.5).unwrap();
+    // Folds the untaken publication that added osc3 into this one.
+    rig.live.remove_module("osc1").unwrap();
+
+    let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0));
+    assert!(!rig.graph.topo_dirty);
+    assert_eq!(rig.module_ids(), ["osc2", "dac", "osc3"]);
+    assert_eq!(input_value(&mut rig, "osc3", "frequency"), 0.5);
+}
+
+#[test]
+fn a_write_held_for_a_pending_publication_is_clean() {
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    rig.hold_a_retirement();
+    let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
+    rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
+    rig.live.write_input("osc3", "frequency", 0.5).unwrap();
+
+    // The publication stays untaken, so the write waits in the ring.
+    let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0), "holding the write");
+    assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
+
+    // Once there is room the publication installs and the write follows.
+    rig.live.reclaim();
+    let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0), "applying the held write");
+    assert!(!rig.graph.topo_dirty);
+    assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "osc3"]);
+    assert_eq!(input_value(&mut rig, "osc3", "frequency"), 0.5);
 }
 
 #[test]

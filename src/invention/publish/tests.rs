@@ -10,6 +10,7 @@ mod alloc;
 mod carry;
 mod drops;
 pub(crate) mod probe;
+mod writes;
 
 use probe::{DropProbeFactory, DROP_PROBE};
 
@@ -89,6 +90,34 @@ impl Rig {
 
     fn module_ids(&self) -> Vec<String> {
         self.graph.modules.keys().cloned().collect()
+    }
+
+    /// Publishes a change without `begin` or `edit`, which would reclaim
+    /// and so empty the retire channel.
+    fn publish_unreclaimed(&self, edit: impl FnOnce(&mut GraphChange)) {
+        let mut publisher = self.live.publisher().lock().unwrap();
+        let mut change = self.live.change_on(&publisher);
+        edit(&mut change);
+        publisher.publish(change.prepare().unwrap()).unwrap();
+    }
+
+    /// Empties the retire channel, then installs one more publication than
+    /// it holds, never reclaiming: the audio side then holds a retirement
+    /// and takes no publication until [`LiveGraph::reclaim`] makes room.
+    /// Every publication made so far is installed. Needs `osc1` and `osc2`.
+    fn hold_a_retirement(&mut self) {
+        self.live.reclaim();
+        let fm = edge("osc1", "audio", "osc2", "fm");
+        for n in 0..=publisher::RETIRE_CAPACITY {
+            self.publish_unreclaimed(|change| {
+                if n.is_multiple_of(2) {
+                    change.connect(fm.clone()).unwrap();
+                } else {
+                    change.disconnect(fm.clone());
+                }
+            });
+            self.render(1);
+        }
     }
 
     fn generation_and_applied(&self) -> (u64, u64) {
@@ -409,18 +438,11 @@ fn a_started_reclaimer_frees_removed_modules_off_the_audio_thread() {
 #[test]
 fn a_full_input_queue_refuses_writes_until_the_audio_thread_drains_it() {
     let mut rig = Rig::new(BASE);
-    let write = || InputWrite {
-        module_id: "osc1".to_string(),
-        port: "fm".to_string(),
-        value: 0.0,
-    };
+    let write = |rig: &Rig| rig.live.write_input("osc1", "fm", 0.0);
     for _ in 0..publisher::INPUT_QUEUE_CAPACITY {
-        rig.live.write_input(write()).unwrap();
+        write(&rig).unwrap();
     }
-    assert!(matches!(
-        rig.live.write_input(write()),
-        Err(GraphCommandError::QueueFull)
-    ));
+    assert!(matches!(write(&rig), Err(GraphCommandError::QueueFull)));
     rig.render(1);
-    rig.live.write_input(write()).unwrap();
+    write(&rig).unwrap();
 }

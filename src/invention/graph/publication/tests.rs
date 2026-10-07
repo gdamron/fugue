@@ -92,6 +92,8 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         edges,
         topology,
         remap: SurvivorRemap::default(),
+        generation: 0,
+        absorbed: Vec::new(),
     })
 }
 
@@ -114,6 +116,7 @@ fn link(graph: &mut SignalGraph, retire_capacity: usize) -> ControlEnds {
     graph.link = Some(AudioLink::new(
         publications.clone(),
         input_rx,
+        16,
         retire,
         applied.clone(),
     ));
@@ -294,7 +297,7 @@ fn an_untaken_publication_folds_into_the_next() {
         vec![edge("osc3", "dac", "audio"), edge("osc4", "dac", "audio")],
     );
     next.map_survivors(["osc1", "osc2", "dac", "osc3"]);
-    drop(next.absorb(ends.publications.take().unwrap()));
+    drop(next.absorb(ends.publications.take().unwrap(), false));
     assert_eq!(next.survivor_count(), 3);
     // The folded remap maps from the graph still running, which has no osc3.
     let remap: Vec<_> = next.remap.survivors().collect();
@@ -332,21 +335,30 @@ fn a_survivor_missing_from_the_running_graph_falls_back_to_recompiling() {
         .all(|r| r.from_module != ghost));
 }
 
+/// The oscillators' `frequency` input index.
+fn frequency_port(graph: &SignalGraph) -> usize {
+    graph.modules["osc1"]
+        .module()
+        .input_port_index("frequency")
+        .unwrap()
+}
+
 #[test]
 fn queued_input_writes_reach_the_module() {
     let mut graph = base_graph();
     let ends = link(&mut graph, 4);
     ends.inputs
         .try_send(InputWrite {
-            module_id: "osc1".to_string(),
-            port: "frequency".to_string(),
+            generation: 0,
+            module_idx: 0,
+            port_idx: frequency_port(&graph),
             value: 0.25,
         })
         .unwrap();
-    let ((), allocs, _) = allocator_events(|| graph.ensure_process_order());
-    assert_eq!(allocs, 0);
+    let ((), allocs, frees) = allocator_events(|| graph.ensure_process_order());
+    assert_eq!((allocs, frees), (0, 0));
+    let port = frequency_port(&graph);
     let osc1 = graph.modules.get_mut("osc1").unwrap().module_mut();
-    let port = osc1.input_port_index("frequency").unwrap();
     assert!(osc1.input_block_mut(port).iter().all(|v| *v == 0.25));
 }
 
@@ -378,7 +390,7 @@ fn folding_composes_survivor_remaps_against_the_running_graph() {
     );
     next.map_survivors(["osc2", "dac"]);
     assert_eq!((next.remap.get(0), next.remap.get(1)), (Some(1), Some(0)));
-    drop(next.absorb(first));
+    drop(next.absorb(first, false));
 
     // Only the running dac survives both: the running osc1 was removed, and
     // osc2 is the instance the first publication built.

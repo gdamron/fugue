@@ -6,7 +6,9 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::Arc;
 
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
-use crate::invention::graph::{AudioLink, InputWrite, Mailbox, Publication, SignalGraph};
+use crate::invention::graph::{
+    AudioLink, InputWrite, Mailbox, Publication, SignalGraph, MAX_INPUT_PORT_NAME,
+};
 use crate::invention::runtime::GraphCommandError;
 
 /// Input writes that may wait for the audio thread before a write is
@@ -30,6 +32,9 @@ pub(crate) struct Publisher {
     /// Publications made so far; a prepared change records the generation
     /// it was prepared against.
     generation: u64,
+    /// Whether an input write tagged with the current generation was
+    /// queued: only then does folding that generation keep a remap from it.
+    written: bool,
     block_size: usize,
     publications: Arc<Mailbox<Publication>>,
     /// Publications the audio thread has installed (observed by tests).
@@ -49,12 +54,14 @@ impl Publisher {
         graph.link = Some(AudioLink::new(
             publications.clone(),
             input_rx,
+            INPUT_QUEUE_CAPACITY,
             retire_tx,
             applied.clone(),
         ));
         let publisher = Self {
             mirror: TopologyMirror::of(&graph.modules, &graph.edges),
             generation: 0,
+            written: false,
             block_size: graph.block_size,
             publications,
             applied,
@@ -76,6 +83,57 @@ impl Publisher {
     #[cfg(test)]
     pub(crate) fn applied(&self) -> u64 {
         self.applied.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Resolves a write to `port` of `module_id` against the mirror, the
+    /// audio graph's module order once the current generation is installed,
+    /// into a record the audio thread applies without allocating. Fails
+    /// with [`GraphCommandError::UnknownModule`] or
+    /// [`GraphCommandError::InvalidPort`] (a port name longer than
+    /// [`MAX_INPUT_PORT_NAME`] included).
+    pub(crate) fn input_write(
+        &self,
+        module_id: &str,
+        port: &str,
+        value: f32,
+    ) -> Result<InputWrite, GraphCommandError> {
+        let (module_idx, _, module) = self
+            .mirror
+            .modules
+            .get_full(module_id)
+            .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
+        let inputs = &module.ports.inputs;
+        let port_idx = inputs.iter().position(|p| p == port).ok_or_else(|| {
+            GraphCommandError::InvalidPort(format!(
+                "module '{module_id}' does not have input port '{port}' (available: {inputs:?})"
+            ))
+        })?;
+        if port.len() > MAX_INPUT_PORT_NAME {
+            return Err(GraphCommandError::InvalidPort(format!(
+                "input port name '{port}' is longer than {MAX_INPUT_PORT_NAME} bytes"
+            )));
+        }
+        Ok(InputWrite {
+            generation: self.generation,
+            module_idx,
+            port_idx,
+            value,
+        })
+    }
+
+    /// Records that a write resolved by [`Self::input_write`] was queued.
+    pub(crate) fn note_written(&mut self) {
+        self.written = true;
+    }
+
+    /// Generations folded into the untaken publication that keep a remap
+    /// for queued writes, if one is waiting.
+    #[cfg(test)]
+    pub(crate) fn pending_absorbed(&self) -> Option<Vec<u64>> {
+        let pending = self.publications.take()?;
+        let generations = pending.absorbed.iter().map(|a| a.generation).collect();
+        drop(self.publications.put(pending));
+        Some(generations)
     }
 
     /// Block size publications are compiled for.
@@ -135,13 +193,18 @@ impl Publisher {
         // it installs this, unless an untaken publication is folded in,
         // whose remap then composes in front of this one.
         publication.map_survivors(self.mirror.modules.keys().map(String::as_str));
+        publication.generation = self.generation + 1;
         let superseded = self
             .publications
             .take()
-            .map(|pending| publication.absorb(pending));
+            .map(|pending| publication.absorb(pending, self.written));
         // Only this publisher puts, under its lock, so the slot is empty.
+        // Input writes are queued under the same lock, so every write tagged
+        // with the previous generation is in the channel before this put,
+        // whose release the audio thread's take acquires.
         drop(self.publications.put(publication));
         self.generation += 1;
+        self.written = false;
         let previous = std::mem::replace(&mut self.mirror, mirror);
         Ok(Published {
             previous,

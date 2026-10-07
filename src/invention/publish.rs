@@ -328,12 +328,33 @@ impl LiveGraph {
     }
 
     /// Queues a direct write to a module's input port for the next block.
-    /// Fails with [`GraphCommandError::QueueFull`] when the audio thread
-    /// has not drained earlier writes, and with
-    /// [`GraphCommandError::AudioThreadStopped`] when it is gone. Never waits on
-    /// the publisher, so a write is not held up by a change being prepared.
-    pub(crate) fn write_input(&self, write: InputWrite) -> Result<(), GraphCommandError> {
-        self.inputs.try_send(write).map_err(|error| match error {
+    ///
+    /// The module and port are resolved here, against the publisher's
+    /// mirror, so an unknown module or port fails at once with
+    /// [`GraphCommandError::UnknownModule`] or
+    /// [`GraphCommandError::InvalidPort`]. Fails with
+    /// [`GraphCommandError::QueueFull`] when the audio thread has not drained
+    /// earlier writes, and with [`GraphCommandError::AudioThreadStopped`] when
+    /// it is gone.
+    ///
+    /// Takes the publisher briefly, so a write may wait for an [`Self::edit`]
+    /// to attach and compile its change. The write is queued before the
+    /// publisher is released, so it reaches the audio thread before any
+    /// publication made after it (see `graph::publication::AudioLink`).
+    pub(crate) fn write_input(
+        &self,
+        module_id: &str,
+        port: &str,
+        value: f32,
+    ) -> Result<(), GraphCommandError> {
+        let mut publisher = self.publisher.lock().unwrap();
+        let write = publisher.input_write(module_id, port, value)?;
+        let sent = self.inputs.try_send(write);
+        if sent.is_ok() {
+            publisher.note_written();
+        }
+        drop(publisher);
+        sent.map_err(|error| match error {
             TrySendError::Full(_) => GraphCommandError::QueueFull,
             TrySendError::Disconnected(_) => GraphCommandError::AudioThreadStopped,
         })

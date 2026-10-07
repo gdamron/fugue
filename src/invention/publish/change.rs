@@ -458,6 +458,8 @@ fn build_publication(
         edges: mirror.edges.clone(),
         topology,
         remap: SurvivorRemap::default(),
+        generation: 0,
+        absorbed: Vec::new(),
     })
 }
 
