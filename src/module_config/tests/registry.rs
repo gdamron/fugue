@@ -47,13 +47,9 @@ fn base_config(type_id: &str) -> Value {
     }
 }
 
-/// `base` with `key` set to `value`.
+/// `base` (an object) with `key` set to `value`.
 fn with(base: &Value, key: &str, value: Value) -> Value {
-    let mut config = if base.is_object() {
-        base.clone()
-    } else {
-        json!({})
-    };
+    let mut config = base.clone();
     config[key] = value;
     config
 }
@@ -110,11 +106,6 @@ fn observe(registry: &ModuleRegistry, type_id: &str, config: &Value) -> Result<O
     })
 }
 
-/// A whole number in `min..=max` to probe an integer key with.
-fn integer_probe(min: i128, max: i128) -> i128 {
-    3.clamp(min, max)
-}
-
 /// Checks each declared key of `type_id`, pushing what fails to `misses`.
 fn check_declared_keys(registry: &ModuleRegistry, type_id: &str, misses: &mut Vec<String>) {
     let base = base_config(type_id);
@@ -122,7 +113,7 @@ fn check_declared_keys(registry: &ModuleRegistry, type_id: &str, misses: &mut Ve
         let name = format!("{type_id}.{}", key.key);
         match key.kind {
             ConfigKind::Integer { min, max } => {
-                let n = integer_probe(min, max);
+                let n = 3.clamp(min, max);
                 let as_integer = observe(registry, type_id, &with(&base, key.key, json!(n as i64)));
                 let as_float = observe(registry, type_id, &with(&base, key.key, json!(n as f64)));
                 match (&as_integer, &as_float) {
