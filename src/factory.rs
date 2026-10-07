@@ -118,7 +118,7 @@ pub trait ModuleFactory: Send + Sync + 'static {
     /// The registry-wide config test builds each declared key from its
     /// alternative spellings (`72.0` for an integer, `1e39` for a float), and
     /// declared module interfaces will describe config from it. Keys applied
-    /// through a module's controls (see [`apply_control_keys`]) are not
+    /// through a module's controls (`apply_control_keys`) are not
     /// listed. Default is none.
     fn config_keys(&self) -> &'static [ConfigKey] {
         &[]
