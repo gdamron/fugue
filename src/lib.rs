@@ -13,6 +13,7 @@ mod http;
 #[cfg(feature = "ffi")]
 pub mod ffi;
 pub mod invention;
+pub mod module_config;
 pub mod modules;
 pub mod music;
 pub mod pkg;

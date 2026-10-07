@@ -4,6 +4,7 @@
 //! Each module type provides a factory implementation that knows how to construct
 //! instances from configuration.
 
+use crate::module_config::ConfigKey;
 use crate::{ControlSurface, Module, SinkModule};
 use std::any::Any;
 use std::sync::Arc;
@@ -109,6 +110,19 @@ pub trait ModuleFactory: Send + Sync + 'static {
     fn output_ports(&self) -> Option<&'static [&'static str]> {
         None
     }
+
+    /// The numeric keys this type's config reads through
+    /// [`ConfigReader`](crate::module_config::ConfigReader), each declared
+    /// once as a [`ConfigKey`] constant and read through it.
+    ///
+    /// The registry-wide config test builds each declared key from its
+    /// alternative spellings (`72.0` for an integer, `1e39` for a float), and
+    /// declared module interfaces will describe config from it. Keys applied
+    /// through a module's controls (see [`apply_control_keys`]) are not
+    /// listed. Default is none.
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[]
+    }
 }
 
 /// Applies the entries of `config` whose keys `selects` picks to `surface`
@@ -123,6 +137,9 @@ pub trait ModuleFactory: Send + Sync + 'static {
 /// module starts from these values; a control key wins over the config key
 /// it overlaps, since it records a later write. Unindexed keys (a count) are
 /// applied before indexed ones (`degree.3`) so a count sizes what follows.
+/// A number that is not finite as an `f32` (`1e39`) is refused with
+/// `config '{key}' expects a finite number, got {value}`, as a live control
+/// write is.
 pub(crate) fn apply_control_keys(
     surface: &dyn crate::ControlSurface,
     config: &serde_json::Value,
@@ -135,9 +152,10 @@ pub(crate) fn apply_control_keys(
     keys.sort_by_key(|key| key.contains('.'));
     for key in keys {
         let value = match &entries[key.as_str()] {
-            serde_json::Value::Number(number) => {
-                crate::ControlValue::Number(number.as_f64().unwrap_or(0.0) as f32)
-            }
+            number @ serde_json::Value::Number(_) => crate::ControlValue::Number(
+                crate::module_config::finite_f32(number)
+                    .map_err(|refusal| format!("config '{key}' {refusal}"))?,
+            ),
             serde_json::Value::Bool(flag) => crate::ControlValue::Bool(*flag),
             serde_json::Value::String(text) => crate::ControlValue::String(text.clone()),
             _ => return Err(format!("config '{key}' must be a number, boolean or text").into()),
