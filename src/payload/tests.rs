@@ -1,12 +1,13 @@
 //! Payloads: applying one is allocation- and free-free, retired values drop
 //! on the draining thread, a saturated retire path holds and then defers
-//! rather than dropping on the audio thread, and the debug check catches an
-//! audio-thread drop.
+//! rather than dropping on the audio thread, the producer never waits for a
+//! stalled consumer, and the debug check catches an audio-thread drop.
 
 use std::sync::mpsc::{self, Receiver, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 
+use super::ring::{Producer, Ring};
 use super::{
     AudioThreadScope, Payload, RetireQueue, Retired, Retirer, Shared, MAX_RETIRES_PER_REQUEST,
     RETIRE_HOLD,
@@ -370,6 +371,116 @@ fn the_reclaimer_drains_its_payload_queue() {
     let drops = ledger.drops();
     assert_eq!(drops.len(), 1);
     assert_ne!(drops[0].1, audio);
+}
+
+#[test]
+fn the_producer_never_waits_for_a_stalled_consumer() {
+    let ledger = Ledger::default();
+    let queue = RetireQueue::with_capacity(1);
+    let mut retirer = Retirer::new(Arc::clone(&queue), 2);
+    let [one, two, three] = [1, 2, 3].map(|id| Box::new(ledger.value(id)));
+    retirer.retire(one);
+    let mut audio_threads = Vec::new();
+
+    // The consumer has moved value 1 out but not yet released its slot: the
+    // audio side finds the queue full and holds, without waiting.
+    let popped = queue.pop_paused(|| {
+        let ((), audio) = on_audio(&mut retirer, |retirer| {
+            retirer.retire(two);
+            retirer.flush();
+            retirer.retire(three);
+            assert_eq!(retirer.held(), 2);
+        });
+        audio_threads.push(audio);
+    });
+    drop(popped);
+    assert_eq!(ledger.dropped_ids(), [1]);
+
+    for (drained, held) in [(2, 1), (3, 0)] {
+        let ((), audio) = on_audio(&mut retirer, |retirer| {
+            retirer.flush();
+            assert_eq!(retirer.held(), held);
+        });
+        audio_threads.push(audio);
+        assert_eq!(queue.drain(), 1);
+        assert_eq!(ledger.drops().len(), drained);
+    }
+    assert_eq!(ledger.dropped_ids(), [1, 2, 3]);
+    assert!(ledger
+        .drops()
+        .iter()
+        .all(|(_, dropper)| !audio_threads.contains(dropper)));
+}
+
+#[test]
+#[should_panic(expected = "already has a producer")]
+fn a_second_retirer_on_a_claimed_queue_panics() {
+    let queue = RetireQueue::with_capacity(1);
+    let _first = Retirer::new(Arc::clone(&queue), 1);
+    let _second = Retirer::new(queue, 1);
+}
+
+#[test]
+fn a_queue_is_claimed_again_after_its_retirer_drops_and_frees_leftovers() {
+    let ledger = Ledger::default();
+    let queue = RetireQueue::with_capacity(4);
+    let mut first = Retirer::new(Arc::clone(&queue), 1);
+    first.retire(Box::new(ledger.value(1)));
+    drop(first);
+
+    // A later retirer, on another thread, continues from the first's tail.
+    let second_queue = Arc::clone(&queue);
+    let value = Box::new(ledger.value(2));
+    thread::spawn(move || Retirer::new(second_queue, 1).retire(value))
+        .join()
+        .unwrap();
+    assert!(ledger.drops().is_empty());
+
+    // Dropping the queue frees what it still holds.
+    drop(queue);
+    assert_eq!(ledger.dropped_ids(), [1, 2]);
+}
+
+#[test]
+fn a_ring_moves_every_value_once_in_order_across_threads() {
+    const COUNT: usize = if cfg!(miri) { 200 } else { 20_000 };
+    let ledger = Ledger::default();
+    let ring = Ring::with_capacity(4);
+    let mut producer = Producer::claim(Arc::clone(&ring));
+    let consumer = thread::scope(|scope| {
+        scope.spawn(|| {
+            for id in 0..COUNT {
+                let mut value = ledger.value(id);
+                while let Err(back) = producer.push(value) {
+                    value = back;
+                    thread::yield_now();
+                }
+            }
+        });
+        scope
+            .spawn(|| {
+                let mut next = 0;
+                while next < COUNT {
+                    match ring.pop() {
+                        Some(value) => {
+                            assert_eq!(value.id, next);
+                            next += 1;
+                        }
+                        None => thread::yield_now(),
+                    }
+                }
+                thread::current().id()
+            })
+            .join()
+            .unwrap()
+    });
+    assert!(ring.pop().is_none());
+    let drops = ledger.drops();
+    assert_eq!(drops.len(), COUNT);
+    assert!(drops
+        .iter()
+        .enumerate()
+        .all(|(index, &(id, dropper))| id == index && dropper == consumer));
 }
 
 #[cfg(debug_assertions)]

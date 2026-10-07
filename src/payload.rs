@@ -18,12 +18,18 @@
 //!    value a module replaces is retired too, and so is every audio-side
 //!    clone of a `Shared<T>`. No accessor hands out the raw [`Arc`], so a
 //!    clone cannot escape this rule.
-//! 4. A [`Retirer`] sends retirements on a bounded [`RetireQueue`]. Its
-//!    `try_send` is allocation-free (the array flavor of `sync_channel`)
-//!    and lock-free while the control side only ever `try_recv`s: a
-//!    receiver parked in `recv` would make `try_send` take the waker lock.
-//! 5. A control thread drains the queue and drops what it receives: the
-//!    graph `Reclaimer`, which owns one queue per engine.
+//! 4. A [`Retirer`], the one producer of its [`RetireQueue`], pushes
+//!    retirements onto that bounded single-producer, single-consumer ring.
+//!    A push never waits for the consumer: it loads `head` (Acquire,
+//!    pairing with the Release that frees a slot once its value is read)
+//!    and either writes a free slot and publishes it with a Release store
+//!    of `tail`, or hands the value back at once. A slot the consumer is
+//!    still reading counts as full. Pushing allocates, frees and locks
+//!    nothing.
+//! 5. A control thread drains the queue: under the queue's consumer lock
+//!    it loads `tail` (Acquire, pairing with the push's Release), moves the
+//!    value out and releases the slot, then drops the value after the
+//!    lock. The graph `Reclaimer` owns one queue per engine and drains it.
 //!
 //! So whichever thread drops the last `Arc` of a payload is a control
 //! thread. Modules, and the `Shared<T>`s they hold, are torn down off the
@@ -34,7 +40,7 @@
 //!
 //! # Backpressure: defer at apply
 //!
-//! When the reclaimer stalls, the retire channel fills and the `Retirer`
+//! When the reclaimer stalls, the retire queue fills and the `Retirer`
 //! holds up to [`RETIRE_HOLD`] retirements in a preallocated buffer. The
 //! request drain must never retire past that, so it calls
 //! [`Retirer::flush`] at the start of each block and checks
@@ -55,8 +61,11 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
+
+use ring::{Producer, Ring};
+
+mod ring;
 
 /// Retirements an engine's [`RetireQueue`] holds before its [`Retirer`]
 /// starts holding them. The reclaimer drains every few tens of ms.
@@ -202,55 +211,15 @@ impl Drop for Retired {
     }
 }
 
-/// A bounded queue of retired values: the audio side only `try_send`s, a
-/// control thread only `try_recv`s and drops what it receives.
-pub(crate) struct RetireQueue {
-    sender: SyncSender<Retired>,
-    receiver: Mutex<Receiver<Retired>>,
-}
+/// A bounded queue of retired values: one [`Retirer`] pushes, a control
+/// thread drains (`with_capacity`, `drain`) and drops what it pops.
+pub(crate) type RetireQueue = Ring<Retired>;
 
-impl RetireQueue {
-    /// A queue with `capacity` slots. Control thread only: allocates.
-    pub(crate) fn with_capacity(capacity: usize) -> Arc<Self> {
-        let (sender, receiver) = mpsc::sync_channel(capacity.max(1));
-        Arc::new(Self {
-            sender,
-            receiver: Mutex::new(receiver),
-        })
-    }
-
-    /// Audio side: queues `retired`, or hands it back when the queue is
-    /// full. Allocation-, free- and lock-free.
-    fn try_retire(&self, retired: Retired) -> Result<(), Retired> {
-        self.sender.try_send(retired).map_err(|error| match error {
-            TrySendError::Full(retired) | TrySendError::Disconnected(retired) => retired,
-        })
-    }
-
-    /// Control thread: frees every value retired so far and returns how
-    /// many. Each is received under the lock and dropped after releasing
-    /// it, since a value may be slow to free.
-    pub(crate) fn drain(&self) -> usize {
-        let mut freed = 0;
-        loop {
-            let next = self
-                .receiver
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .try_recv();
-            let Ok(retired) = next else {
-                return freed;
-            };
-            drop(retired);
-            freed += 1;
-        }
-    }
-}
-
-/// The audio side's end of a [`RetireQueue`], one per request drain. Built
-/// on a control thread, then owned by the audio side.
+/// The audio side's end of a [`RetireQueue`], one per request drain and the
+/// queue's only producer. Built on a control thread, then owned by the
+/// audio side.
 pub(crate) struct Retirer {
-    queue: Arc<RetireQueue>,
+    producer: Producer<Retired>,
     /// Retirements the queue had no room for, oldest first. Preallocated;
     /// never grows past `limit`.
     hold: VecDeque<Retired>,
@@ -261,9 +230,13 @@ pub(crate) struct Retirer {
 impl Retirer {
     /// A retirer that can hold `hold` retirements while `queue` is full.
     /// Control thread only: allocates the hold buffer.
+    ///
+    /// # Panics
+    ///
+    /// If `queue` already has a live `Retirer`.
     pub(crate) fn new(queue: Arc<RetireQueue>, hold: usize) -> Self {
         Self {
-            queue,
+            producer: Producer::claim(queue),
             hold: VecDeque::with_capacity(hold),
             limit: hold,
             leaked: 0,
@@ -274,7 +247,7 @@ impl Retirer {
     /// first the queue has no room for. Allocation-, free- and lock-free.
     pub(crate) fn flush(&mut self) {
         while let Some(retired) = self.hold.pop_front() {
-            if let Err(retired) = self.queue.try_retire(retired) {
+            if let Err(retired) = self.producer.push(retired) {
                 self.hold.push_front(retired);
                 return;
             }
@@ -295,7 +268,7 @@ impl Retirer {
     /// release builds leak the value (see [`Self::leaked`]) rather than free
     /// it on the audio thread.
     pub(crate) fn retire(&mut self, value: impl Into<Retired>) {
-        let Err(retired) = self.queue.try_retire(value.into()) else {
+        let Err(retired) = self.producer.push(value.into()) else {
             return;
         };
         if self.hold.len() < self.limit {
@@ -323,7 +296,7 @@ impl Retirer {
 impl Drop for Retirer {
     /// Sends held retirements on; any the queue has no room for drop here.
     /// A retirer is torn down off the audio thread, like the engine that
-    /// owns it.
+    /// owns it. Its claim on the queue is released after this final flush.
     fn drop(&mut self) {
         self.flush();
     }
