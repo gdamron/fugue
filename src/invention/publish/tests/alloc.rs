@@ -161,6 +161,42 @@ fn a_write_held_for_a_pending_publication_is_clean() {
 }
 
 #[test]
+fn installs_that_keep_written_inputs_stay_clean() {
+    let mut rig = Rig::new(BASE);
+    rig.live.write_input("osc1", "frequency", 0.5).unwrap();
+    rig.live.write_input("osc2", "frequency", 0.75).unwrap();
+    rig.render(1);
+    let osc3_to_osc2 = edge("osc3", "audio", "osc2", "frequency");
+
+    // Each install compares every survivor's connectivity before and after
+    // and keeps the written ports that stay unconnected.
+    upsert(&rig, "osc3", "oscillator", serde_json::json!({}));
+    assert_clean_install(&mut rig, "adding a module");
+    rig.live
+        .connect(edge("osc1", "audio", "osc2", "fm"))
+        .unwrap();
+    assert_clean_install(&mut rig, "connecting another port");
+    rig.live.connect(osc3_to_osc2.clone()).unwrap();
+    assert_clean_install(&mut rig, "connecting a written port");
+    rig.live.disconnect(osc3_to_osc2).unwrap();
+    assert_clean_install(&mut rig, "disconnecting it");
+    assert_eq!(input_value(&mut rig, "osc1", "frequency"), 0.5);
+    assert_eq!(input_value(&mut rig, "osc2", "frequency"), 0.0);
+
+    // Removing osc1 moves osc2, written again, to a new index.
+    rig.live.write_input("osc2", "frequency", 0.75).unwrap();
+    rig.render(1);
+    rig.live.remove_module("osc1").unwrap();
+    assert_clean_install(&mut rig, "removing a module");
+    assert_eq!(rig.module_ids(), ["osc2", "dac", "osc3"]);
+    assert_eq!(input_value(&mut rig, "osc2", "frequency"), 0.75);
+
+    upsert(&rig, "osc3", "oscillator", serde_json::json!({}));
+    assert_clean_install(&mut rig, "rebuilding a module");
+    assert_eq!(input_value(&mut rig, "osc2", "frequency"), 0.75);
+}
+
+#[test]
 fn an_install_that_carries_feedback_state_stays_clean() {
     let mut rig = Rig::new(super::carry::LOOP);
     rig.render(3);

@@ -146,7 +146,9 @@ pub(crate) struct SignalGraph {
     pub(crate) compiled_routes: Vec<Vec<CompiledRoute>>,
     /// Distinct connected input port indices per module. The hot path zeros
     /// these before summing routes, so multiple sources into one port mix
-    /// (e.g. several voices into a DAC `audio` port).
+    /// (e.g. several voices into a DAC `audio` port). Recompiling compares
+    /// it by index to keep unconnected inputs, so it is emptied whenever a
+    /// module is added or removed outside a publication.
     pub(crate) connected_in_ports: Vec<Vec<usize>>,
     /// Process groups (SCC condensation) in topological order.
     pub(crate) process_groups: Vec<ProcessGroup>,
@@ -227,6 +229,7 @@ impl SignalGraph {
             GraphCommand::AddModule { module_id, module } => {
                 let is_sink = matches!(module, GraphModule::Sink(_));
                 self.modules.insert(module_id.clone(), module);
+                self.connected_in_ports.clear();
                 if is_sink && !self.sinks.contains(&module_id) {
                     self.sinks.push(module_id);
                 }
@@ -237,6 +240,7 @@ impl SignalGraph {
                 // does: the delayed edge inside a feedback group follows
                 // module order.
                 self.modules.shift_remove(&module_id);
+                self.connected_in_ports.clear();
                 self.sinks.retain(|id| id != &module_id);
                 self.edges
                     .retain(|e| e.from_module != module_id && e.to_module != module_id);

@@ -5,8 +5,9 @@
 //! start of a block the audio thread takes it and installs it in one step:
 //! surviving instances move by key into the prepared module map (keeping
 //! their phase and state), the derived structures are swapped in, each
-//! survivor's feedback carry is copied across (see [`SurvivorRemap`]), and the
-//! boxed publication, now holding the old map and old derived structures
+//! survivor's feedback carry is copied across and only its inputs whose
+//! connectivity changed are reset (see [`SurvivorRemap`]), and the boxed
+//! publication, now holding the old map and old derived structures
 //! (including removed and replaced instances), goes back to the control
 //! thread on a bounded retire channel to be freed there. Installing never
 //! allocates, frees, or locks, and no block ever plays part of a
@@ -305,12 +306,13 @@ impl AudioLink {
 impl SignalGraph {
     /// Installs a pending publication and applies queued input writes (see
     /// [`AudioLink`] for which instance each write reaches). Writes are
-    /// applied after the install, so they survive its input reset (though
-    /// not the full reset when an install falls back to recompiling, which
-    /// `ensure_process_order` runs afterwards), and before the retired
-    /// publication goes back, so its remaps are in hand. Takes at most the
-    /// ring's capacity from the channel per block, so a sender keeping pace
-    /// cannot hold the block here.
+    /// applied after the install, so its input reset never clears one, and
+    /// before the retired publication goes back, so its remaps are in hand.
+    /// A written port that stays unconnected keeps its value through later
+    /// installs too, including one that falls back to recompiling (which
+    /// `ensure_process_order` runs afterwards; see [`SignalGraph::recompile`]).
+    /// Takes at most the ring's capacity from the channel per block, so a
+    /// sender keeping pace cannot hold the block here.
     /// Allocation-, free-, and lock-free; runs at the start of a block.
     pub(super) fn drain_link(&mut self) {
         let Some(mut link) = self.link.take() else {
@@ -432,10 +434,11 @@ impl SignalGraph {
     /// Swaps a prepared publication in. Afterwards `publication` holds the
     /// previous module map (with removed and replaced instances, and vacant
     /// placeholders where survivors were) and the previous derived state.
-    /// Survivors keep their feedback carry; added and rebuilt modules start
-    /// from zero. A loop is sample-identical across the install as long as
-    /// the edit leaves its per-sample order (and so its delayed edge) as it
-    /// was.
+    /// Survivors keep their feedback carry and every input that stays
+    /// unconnected, with any value written to it; added and rebuilt modules
+    /// start from zero. A loop is sample-identical across the install as
+    /// long as the edit leaves its per-sample order (and so its delayed edge)
+    /// as it was.
     fn install(&mut self, publication: &mut Publication) {
         let mut moved = 0;
         for (id, instance) in self.modules.iter_mut() {
@@ -457,13 +460,58 @@ impl SignalGraph {
         // mirror rules out) or buffers sized for another block size fall back
         // to recompiling from the instances themselves, so the hot path never
         // indexes a placeholder's missing ports. Recompiling resets every
-        // carry, so the fallback copies none.
+        // carry, so the fallback copies none. It keeps the inputs, though:
+        // the module order is already the installed one, so it resets only
+        // ports whose connectivity it changes.
         if moved != expected || self.block_capacity != self.block_size.clamp(1, MAX_BLOCK) {
             self.topo_dirty = true;
         } else {
             self.carry_survivors(publication);
         }
-        self.reset_inputs();
+        self.reset_installed_inputs(publication, moved);
+    }
+
+    /// Whether the running module at `old` in the retired map and the
+    /// installed module at `new` have the same id: the defensive check every
+    /// use of a remap makes before trusting an entry.
+    fn same_module(
+        &self,
+        retired: &IndexMap<String, ModuleInstance>,
+        old: usize,
+        new: usize,
+    ) -> bool {
+        match (retired.get_index(old), self.modules.get_index(new)) {
+            (Some((old_id, _)), Some((new_id, _))) => old_id == new_id,
+            _ => false,
+        }
+    }
+
+    /// Brings every installed module's inputs in line with the installed
+    /// connectivity (see [`Self::reset_module_inputs`]). Each survivor is
+    /// compared with its connectivity in the retired topology, by the
+    /// survivor remap, so its inputs that stay unconnected keep their
+    /// values; every other module starts fresh. Defensive: unless the remap
+    /// covers the retired map and vouches, id for id, for every one of the
+    /// `moved` survivors, every module starts fresh. Allocation-free.
+    fn reset_installed_inputs(&mut self, retired: &Publication, moved: usize) {
+        let remap = &retired.remap;
+        let vouched = remap.len() == retired.modules.len()
+            && remap.survivors().count() == moved
+            && remap
+                .survivors()
+                .all(|(old, new)| self.same_module(&retired.modules, old, new));
+        for mi in 0..self.modules.len() {
+            let survivor = retired.survivor.get(mi).copied().unwrap_or(false);
+            if !(vouched && survivor) {
+                self.reset_module_inputs(mi, None);
+            }
+        }
+        if vouched {
+            for (old, new) in remap.survivors() {
+                let was = retired.topology.connected_in_ports.get(old);
+                self.reset_module_inputs(new, was.map(Vec::as_slice));
+            }
+        }
     }
 
     /// Copies each survivor's previous-block outputs from the retired
@@ -477,11 +525,7 @@ impl SignalGraph {
             return;
         }
         for (old, new) in retired.remap.survivors() {
-            let same_module = match (retired.modules.get_index(old), self.modules.get_index(new)) {
-                (Some((old_id, _)), Some((new_id, _))) => old_id == new_id,
-                _ => false,
-            };
-            if !same_module {
+            if !self.same_module(&retired.modules, old, new) {
                 continue;
             }
             let (Some(src), Some(dst)) = (

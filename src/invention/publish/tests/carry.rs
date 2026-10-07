@@ -37,7 +37,7 @@ fn upsert_osc(rig: &Rig, id: &str, config: serde_json::Value) {
 /// Asserts two renders are bit-identical, naming the first sample that
 /// differs rather than printing both renders.
 #[track_caller]
-fn assert_identical(edited: &[f32], twin: &[f32], label: &str) {
+pub(super) fn assert_identical(edited: &[f32], twin: &[f32], label: &str) {
     assert_eq!(edited.len(), twin.len(), "{label}: lengths differ");
     if let Some(i) = (0..edited.len()).find(|&i| edited[i].to_bits() != twin[i].to_bits()) {
         panic!(
