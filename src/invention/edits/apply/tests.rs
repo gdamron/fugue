@@ -13,6 +13,7 @@ use crate::rpc::{StructuralEdit, WrittenControl};
 use crate::{ControlValue, Invention, ModuleRegistry};
 
 mod commit;
+mod config_refusals;
 mod real_modules;
 mod refusals;
 mod scripted;

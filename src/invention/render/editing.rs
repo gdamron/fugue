@@ -28,7 +28,9 @@ impl RenderEngine {
         let result = self
             .registry
             .build(module_type, self.sample_rate, config)
-            .map_err(|e| GraphCommandError::ModuleBuildFailed(e.to_string()))?;
+            .map_err(|e| {
+                GraphCommandError::ModuleBuildFailed(format!("module '{module_id}': {e}"))
+            })?;
 
         let mut new_handles = std::collections::HashMap::new();
         for (handle_name, handle) in result.handles {

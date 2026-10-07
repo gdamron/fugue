@@ -191,7 +191,7 @@ impl GraphChange {
         }
         let result = registry
             .build(module_type, sample_rate, config)
-            .map_err(|e| GraphCommandError::ModuleBuildFailed(e.to_string()))?;
+            .map_err(|e| GraphCommandError::ModuleBuildFailed(format!("module '{id}': {e}")))?;
         Ok(BuiltModule {
             module: MirrorModule {
                 ports: ports_of(&result.module),
