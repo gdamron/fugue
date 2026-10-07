@@ -7,7 +7,8 @@
 //! mutator of module control state.
 //!
 //! Every ordering argument lives in [`queue`](self::queue) and [`EventCounter`],
-//! built on the `sync` shim below, so modules never need one.
+//! and the `loom_tests` models check the shipped source files against loom's
+//! atomics and cells (the `sync` shim below), so modules never need one.
 //!
 //! This module holds the request types, the queue and the sender. The
 //! audio-side pending store and drain, the outcomes path, typed control
@@ -58,5 +59,7 @@ pub(crate) use request::{
 };
 pub(crate) use sender::{request_channel, QueueFull, RequestSender};
 
+#[cfg(test)]
+mod loom_tests;
 #[cfg(test)]
 mod tests;
