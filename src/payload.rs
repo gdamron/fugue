@@ -65,9 +65,9 @@ pub(crate) const RETIRE_CAPACITY: usize = 256;
 /// Retirements a [`Retirer`] can hold while the queue is full.
 pub(crate) const RETIRE_HOLD: usize = 64;
 
-/// The most retirements applying one request can make: the payload's
-/// previous value plus the payload itself when it is refused. The drain
-/// reserves this much room before taking each request.
+/// The most retirements applying one request may make: the value a module
+/// replaces plus one superseded or refused payload. The drain reserves this
+/// much room before taking each request.
 pub(crate) const MAX_RETIRES_PER_REQUEST: usize = 2;
 
 /// The erased, single-owner handle a request carries. Not `Clone`: it is
