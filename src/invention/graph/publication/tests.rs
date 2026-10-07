@@ -343,6 +343,58 @@ fn frequency_port(graph: &SignalGraph) -> usize {
         .unwrap()
 }
 
+/// `osc1`'s whole `frequency` input block.
+fn osc1_frequency(graph: &mut SignalGraph) -> Vec<f32> {
+    let port = frequency_port(graph);
+    let osc1 = graph.modules.get_mut("osc1").unwrap().module_mut();
+    osc1.input_block_mut(port).to_vec()
+}
+
+#[test]
+fn a_fallback_install_keeps_inputs_only_when_its_remap_vouches_for_them() {
+    // A survivor missing from the running graph makes each install fall
+    // back to recompiling, with or without a remap.
+    let ghost = || {
+        publication(
+            vec![
+                ("osc1", Next::Survivor("oscillator")),
+                ("ghost", Next::Survivor("oscillator")),
+                ("dac", Next::Survivor("dac")),
+            ],
+            vec![edge("osc1", "dac", "audio"), edge("ghost", "dac", "audio")],
+        )
+    };
+    for mapped in [true, false] {
+        let mut graph = base_graph();
+        let ends = link(&mut graph, 4);
+        let write = InputWrite {
+            generation: 0,
+            module_idx: 0,
+            port_idx: frequency_port(&graph),
+            value: 0.25,
+        };
+        ends.inputs.try_send(write).unwrap();
+        render(&mut graph, 1);
+        assert!(osc1_frequency(&mut graph).iter().all(|v| *v == 0.25));
+
+        let mut next = ghost();
+        if mapped {
+            next.map_survivors(BASE_IDS);
+        }
+        drop(ends.publications.put(next));
+        render(&mut graph, 1);
+        assert_eq!(ends.applied.load(Ordering::Relaxed), 1);
+        // osc1's frequency stayed unconnected: it keeps the written value
+        // through the install and the recompile, unless the remap cannot
+        // vouch for osc1 being the instance it was written to.
+        let expected = if mapped { 0.25 } else { 0.0 };
+        assert!(
+            osc1_frequency(&mut graph).iter().all(|v| *v == expected),
+            "mapped: {mapped}"
+        );
+    }
+}
+
 #[test]
 fn queued_input_writes_reach_the_module() {
     let mut graph = base_graph();

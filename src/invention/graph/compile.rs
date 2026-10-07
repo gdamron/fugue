@@ -257,7 +257,14 @@ pub(crate) fn compile_topology(
 
 impl SignalGraph {
     /// Recompiles the derived topology from the graph's own modules, edges,
-    /// and sinks, then resets input connectivity.
+    /// and sinks, then brings input connectivity in line with it.
+    ///
+    /// While the previous connectivity still describes the modules by index
+    /// (nothing was added or removed since: see [`Self::apply_command`],
+    /// which forgets it otherwise), only ports whose connectivity changed are
+    /// reset, so an unconnected input keeps the value last written to it
+    /// across a block size change or an install that fell back to
+    /// recompiling. Otherwise every input is reset.
     ///
     /// Allocates: called before a live graph moves to the audio thread, by
     /// offline render, and as the audio thread's fallback when a block size
@@ -266,30 +273,46 @@ impl SignalGraph {
         let mut topology =
             compile_topology(&self.modules, &self.edges, &self.sinks, self.block_size);
         topology.swap_with(self);
-        self.reset_inputs();
+        // `topology` now holds the previous derived state.
+        let previous = &topology.connected_in_ports;
+        let same_order = previous.len() == self.modules.len();
+        for mi in 0..self.modules.len() {
+            let was = previous.get(mi).filter(|_| same_order);
+            self.reset_module_inputs(mi, was.map(Vec::as_slice));
+        }
         self.topo_dirty = false;
     }
 
-    /// Clears every module's input blocks over the active span and declares
-    /// which input ports are connected. Allocation-free: it runs on the audio
-    /// thread after a publication. Only the active block span is read, so
-    /// zeroing the full `MAX_BLOCK` would be wasted work.
-    pub(super) fn reset_inputs(&mut self) {
-        let clear = self.block_size.clamp(1, MAX_BLOCK);
-        for mi in 0..self.modules.len() {
-            let Some((_, inst)) = self.modules.get_index_mut(mi) else {
-                continue;
-            };
-            let module = inst.module_mut();
-            let n_in = module.inputs().len();
-            for p in 0..n_in {
-                module.input_block_mut(p)[..clear].fill(0.0);
+    /// Brings module `mi`'s inputs in line with the graph's connectivity.
+    /// `was` is the ports connected before, for the same instance; `None`
+    /// treats the module as starting fresh.
+    ///
+    /// A port connected now is declared connected; routing fills it each
+    /// block. A port unconnected now is cleared and declared unconnected,
+    /// unless `was` shows it unconnected before too: that port is left as it
+    /// is, keeping any value written to it (see [`crate::Module::set_input`]).
+    ///
+    /// Clearing covers the whole buffer, not just the active span, so an
+    /// unconnected input never holds routed samples beyond it that a larger
+    /// block size would later expose. Only ports that change are cleared, so
+    /// this costs nothing for the modules an edit leaves alone.
+    /// Allocation-free: it runs on the audio thread at each install.
+    pub(super) fn reset_module_inputs(&mut self, mi: usize, was: Option<&[usize]>) {
+        let Some((_, inst)) = self.modules.get_index_mut(mi) else {
+            return;
+        };
+        let now = self
+            .connected_in_ports
+            .get(mi)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let module = inst.module_mut();
+        for p in 0..module.inputs().len() {
+            if now.contains(&p) {
+                module.set_input_connected(p, true);
+            } else if was.is_none_or(|was| was.contains(&p)) {
+                module.input_block_mut(p).fill(0.0);
                 module.set_input_connected(p, false);
-            }
-            if let Some(ports) = self.connected_in_ports.get(mi) {
-                for &p in ports {
-                    module.set_input_connected(p, true);
-                }
             }
         }
     }
