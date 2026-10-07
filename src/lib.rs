@@ -16,6 +16,7 @@ pub mod invention;
 pub mod module_config;
 pub mod modules;
 pub mod music;
+pub(crate) mod payload;
 pub mod pkg;
 #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
 pub mod plugins;
