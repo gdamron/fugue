@@ -19,13 +19,13 @@
 //!    clone of a `Shared<T>`. No accessor hands out the raw [`Arc`], so a
 //!    clone cannot escape this rule.
 //! 4. A [`Retirer`], the one producer of its [`RetireQueue`], pushes
-//!    retirements onto that bounded single-producer, single-consumer ring.
-//!    A push never waits for the consumer: it loads `head` (Acquire,
-//!    pairing with the Release that frees a slot once its value is read)
-//!    and either writes a free slot and publishes it with a Release store
-//!    of `tail`, or hands the value back at once. A slot the consumer is
-//!    still reading counts as full. Pushing allocates, frees and locks
-//!    nothing.
+//!    retirements onto that bounded single-producer, single-consumer ring
+//!    (`crate::spsc`). A push never waits for the consumer: it loads
+//!    `head` (Acquire, pairing with the Release that frees a slot once its
+//!    value is read) and either writes a free slot and publishes it with a
+//!    Release store of `tail`, or hands the value back at once. A slot the
+//!    consumer is still reading counts as full. Pushing allocates, frees
+//!    and locks nothing.
 //! 5. A control thread drains the queue: under the queue's consumer lock
 //!    it loads `tail` (Acquire, pairing with the push's Release), moves the
 //!    value out and releases the slot, then drops the value after the
@@ -63,9 +63,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use ring::{Producer, Ring};
-
-mod ring;
+use crate::spsc::{Producer, Ring};
 
 /// Retirements an engine's [`RetireQueue`] holds before its [`Retirer`]
 /// starts holding them. The reclaimer drains every few tens of ms.

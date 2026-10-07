@@ -7,7 +7,6 @@ use std::sync::mpsc::{self, Receiver, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 
-use super::ring::{Producer, Ring};
 use super::{
     AudioThreadScope, Payload, RetireQueue, Retired, Retirer, Shared, MAX_RETIRES_PER_REQUEST,
     RETIRE_HOLD,
@@ -439,48 +438,6 @@ fn a_queue_is_claimed_again_after_its_retirer_drops_and_frees_leftovers() {
     // Dropping the queue frees what it still holds.
     drop(queue);
     assert_eq!(ledger.dropped_ids(), [1, 2]);
-}
-
-#[test]
-fn a_ring_moves_every_value_once_in_order_across_threads() {
-    const COUNT: usize = if cfg!(miri) { 200 } else { 20_000 };
-    let ledger = Ledger::default();
-    let ring = Ring::with_capacity(4);
-    let mut producer = Producer::claim(Arc::clone(&ring));
-    let consumer = thread::scope(|scope| {
-        scope.spawn(|| {
-            for id in 0..COUNT {
-                let mut value = ledger.value(id);
-                while let Err(back) = producer.push(value) {
-                    value = back;
-                    thread::yield_now();
-                }
-            }
-        });
-        scope
-            .spawn(|| {
-                let mut next = 0;
-                while next < COUNT {
-                    match ring.pop() {
-                        Some(value) => {
-                            assert_eq!(value.id, next);
-                            next += 1;
-                        }
-                        None => thread::yield_now(),
-                    }
-                }
-                thread::current().id()
-            })
-            .join()
-            .unwrap()
-    });
-    assert!(ring.pop().is_none());
-    let drops = ledger.drops();
-    assert_eq!(drops.len(), COUNT);
-    assert!(drops
-        .iter()
-        .enumerate()
-        .all(|(index, &(id, dropper))| id == index && dropper == consumer));
 }
 
 #[cfg(debug_assertions)]
