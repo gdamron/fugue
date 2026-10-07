@@ -9,6 +9,7 @@ use std::thread::{self, ThreadId};
 
 use super::{
     AudioThreadScope, Payload, RetireQueue, Retired, Retirer, Shared, MAX_RETIRES_PER_REQUEST,
+    RETIRE_HOLD,
 };
 use crate::alloc_counter::allocator_events;
 
@@ -351,6 +352,24 @@ fn dropping_a_retirer_sends_held_values_on() {
     assert_eq!(ledger.dropped_ids(), [1]);
     assert_eq!(queue.drain(), 1);
     assert_eq!(ledger.dropped_ids(), [1, 2]);
+}
+
+#[test]
+fn the_reclaimer_drains_its_payload_queue() {
+    use crate::invention::graph::Publication;
+    use crate::invention::publish::Reclaimer;
+
+    let ledger = Ledger::default();
+    let (_retire, retired) = mpsc::sync_channel::<Box<Publication>>(1);
+    let reclaimer = Reclaimer::new(retired);
+    let mut retirer = Retirer::new(Arc::clone(reclaimer.payload_queue()), RETIRE_HOLD);
+    let value = Shared::new(ledger.value(1));
+    let ((), audio) = on_audio(&mut retirer, |retirer| retirer.retire(value));
+    assert!(ledger.drops().is_empty());
+    assert_eq!(reclaimer.reclaim(), 0);
+    let drops = ledger.drops();
+    assert_eq!(drops.len(), 1);
+    assert_ne!(drops[0].1, audio);
 }
 
 #[cfg(debug_assertions)]
