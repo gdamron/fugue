@@ -16,7 +16,8 @@ use crate::invention::runtime::ModuleInstance;
 /// frees, or locks. Install uses it to carry each survivor's previous-block
 /// outputs (the feedback carry), so an edit that does not touch a feedback
 /// loop leaves the loop sample-identical while added and rebuilt modules
-/// start from zero. (Sample-identical as long as the edit leaves the loop's
+/// start from zero, and to compare each survivor's input connectivity
+/// before and after, so its inputs that stay unconnected keep their values. (Sample-identical as long as the edit leaves the loop's
 /// per-sample order unchanged: which edge of a loop is delayed follows module
 /// order and the edges into the loop, so an edit that moves the loop's entry
 /// point changes which edge reads the carry.) It is general on purpose: any

@@ -282,8 +282,10 @@ pub trait Module: Send {
     /// Processes a block of `frames` audio frames (always `<= MAX_BLOCK`).
     ///
     /// On entry, each connected input port's buffer holds `frames` samples of
-    /// upstream signal (see [`Module::input_block_mut`]); unconnected input
-    /// buffers hold silence (zeros) unless the module arbitrates via
+    /// upstream signal (see [`Module::input_block_mut`]); an unconnected
+    /// input buffer holds silence (zeros), or the value last written to it
+    /// with [`Module::set_input`], which graph edits leave in place while the
+    /// port stays unconnected. Modules may arbitrate via
     /// [`Module::set_input_connected`]. The module must write `frames` samples
     /// to each of its output port buffers.
     ///
@@ -341,11 +343,15 @@ pub trait Module: Send {
 
     /// Declares whether an input port is fed by an upstream connection.
     ///
-    /// Called by the signal graph on topology change (never on the hot path),
-    /// once per input port. Modules that arbitrate between an incoming signal
-    /// and a control default (e.g. an oscillator's `frequency` port) override
-    /// this to record connectivity. The default ignores it — most modules
-    /// simply read their input buffers (which are silence when unconnected).
+    /// Called by the signal graph on topology change (never on the hot path):
+    /// with `true` for every connected port, and with `false` for a port it
+    /// disconnects or, on a module starting fresh, finds unconnected. A port
+    /// that stays unconnected is not declared again, so whatever
+    /// [`Module::set_input`] recorded for it stands. Modules that arbitrate
+    /// between an incoming signal and a control default (e.g. an
+    /// oscillator's `frequency` port) override this to record connectivity.
+    /// The default ignores it — most modules simply read their input buffers
+    /// (silence when unconnected, unless written).
     fn set_input_connected(&mut self, _index: usize, _connected: bool) {}
 
     /// Ids of modules whose controls this module writes during

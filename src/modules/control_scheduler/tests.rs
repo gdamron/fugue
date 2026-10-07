@@ -356,3 +356,125 @@ fn a_prepared_scheduler_processes_its_first_block_without_allocating() {
     assert_eq!((allocs, frees), (0, 0));
     assert_eq!(mixer.level(0), 0.5);
 }
+
+/// A one-control surface (`raw.value`) that stores any number unclamped and
+/// records every write, so a test can see exactly what a ramp writes.
+struct RecordingSurface {
+    writes: Mutex<Vec<f32>>,
+    value: Mutex<f32>,
+}
+
+impl ControlSurface for RecordingSurface {
+    fn controls(&self) -> Vec<ControlMeta> {
+        vec![ControlMeta::number("value", "Unclamped number")]
+    }
+
+    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        match key {
+            "value" => Ok(ControlValue::Number(*self.value.lock().unwrap())),
+            _ => Err(format!("Unknown control: {}", key)),
+        }
+    }
+
+    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        match (key, value) {
+            ("value", ControlValue::Number(number)) => {
+                *self.value.lock().unwrap() = number;
+                self.writes.lock().unwrap().push(number);
+                Ok(())
+            }
+            _ => Err(format!("Unsupported write to '{}'", key)),
+        }
+    }
+}
+
+#[test]
+fn ramp_between_extreme_values_writes_only_finite_monotonic_values() {
+    // The FUG-302 repro: the control starts at f32::MIN and ramps to 3.4e38,
+    // whose difference overflows f32.
+    let surface = Arc::new(RecordingSurface {
+        writes: Mutex::new(Vec::new()),
+        value: Mutex::new(f32::MIN),
+    });
+    let mut map: SurfaceMap = IndexMap::new();
+    map.insert(
+        "raw".to_string(),
+        surface.clone() as Arc<dyn ControlSurface + Send + Sync>,
+    );
+    let directory: SurfaceDirectory = Arc::new(Mutex::new(map));
+    let spec = parse_schedule_json(
+        r#"[{ "at": 0, "module": "raw", "control": "value", "value": 3.4e38, "ramp": 4 }]"#,
+    )
+    .unwrap();
+    let ctrl = ControlSchedulerControls::new(spec);
+    ctrl.attach("sched", &directory).unwrap();
+    let mut module = ControlScheduler::new(48_000, ctrl);
+
+    for _ in 0..6 {
+        pulse(&mut module, 15);
+    }
+
+    let writes = surface.writes.lock().unwrap();
+    assert!(writes.len() > 4, "the ramp must write between boundaries");
+    for pair in writes.windows(2) {
+        assert!(pair[1] >= pair[0], "ramp moved backwards: {:?}", pair);
+    }
+    for &value in writes.iter() {
+        assert!(value.is_finite(), "ramp wrote a non-finite value");
+        assert!((f32::MIN..=3.4e38).contains(&value));
+    }
+    assert_eq!(*writes.last().unwrap(), 3.4e38_f32);
+}
+
+#[test]
+fn ramp_value_is_finite_and_monotonic_between_the_extremes() {
+    for (from, to) in [(f32::MIN, f32::MAX), (f32::MAX, f32::MIN)] {
+        assert_eq!(ramp_value(from, to, 0.0), from);
+        assert_eq!(ramp_value(from, to, 1.0), to);
+        let mut last = from;
+        for i in 0..=1024 {
+            let value = ramp_value(from, to, i as f32 / 1024.0);
+            assert!(value.is_finite());
+            assert!(value >= from.min(to) && value <= from.max(to));
+            if to > from {
+                assert!(value >= last);
+            } else {
+                assert!(value <= last);
+            }
+            last = value;
+        }
+    }
+}
+
+#[test]
+fn ramp_value_matches_the_f32_formula_for_typical_ranges() {
+    // Levels, pans, frequencies, decibels and tempos, in both directions.
+    let ranges = [
+        (0.0_f32, 1.0_f32),
+        (1.0, 0.0),
+        (0.2, 2.0),
+        (-1.0, 1.0),
+        (20.0, 20_000.0),
+        (440.0, 220.0),
+        (-60.0, 0.0),
+        (60.0, 180.0),
+        (120.0, 90.0),
+    ];
+    for (from, to) in ranges {
+        let tolerance = 2.0 * f32::EPSILON * from.abs().max(to.abs());
+        for i in 0..=1000 {
+            let progress = i as f32 / 1000.0;
+            let previous = from + (to - from) * progress;
+            let value = ramp_value(from, to, progress);
+            assert!(
+                (value - previous).abs() <= tolerance,
+                "{} -> {} at {}: {} vs {}",
+                from,
+                to,
+                progress,
+                value,
+                previous
+            );
+        }
+    }
+}
