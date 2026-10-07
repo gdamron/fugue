@@ -29,7 +29,8 @@ impl RunningInvention {
 
     /// Adds a new module to the running graph.
     ///
-    /// The module is built on the calling thread using the registry, then
+    /// The module is built on the calling thread using the current registry
+    /// (rebuilt if a reload adopts another first), then
     /// published to the audio thread. Handles are returned immediately (they
     /// use shared state internally and work regardless of graph state).
     ///
@@ -42,13 +43,9 @@ impl RunningInvention {
         config: &serde_json::Value,
     ) -> Result<InventionHandles, GraphCommandError> {
         let module_id = module_id.into();
-        let committed = self.live.add_module(
-            &self.registry,
-            self.sample_rate,
-            &module_id,
-            module_type,
-            config,
-        )?;
+        let committed = self
+            .live
+            .add_module(self.sample_rate, &module_id, module_type, config)?;
         Ok(self.follow_up(committed))
     }
 
@@ -68,7 +65,6 @@ impl RunningInvention {
     ) -> Result<InventionHandles, GraphCommandError> {
         let module_id = module_id.into();
         let committed = self.live.swap_module(
-            &self.registry,
             self.sample_rate,
             &module_id,
             module_type,

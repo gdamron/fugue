@@ -7,6 +7,7 @@ use crate::invention::runtime::{GraphCommandError, RunningInvention};
 use crate::{ControlValue, Invention};
 
 mod races;
+mod registry;
 
 const BASE: &str = r#"{
     "version": "1.0.0",

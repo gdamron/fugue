@@ -151,11 +151,10 @@ fn a_plan_that_reaches_past_the_batch_is_refused() {
     // was made without it, so its plan would remove a module no edit
     // names.
     let scripted = Scripted::default();
-    let registry = scripted.registry();
-    let (mut running, pump) = start_with(registry.clone(), BASE);
+    let (mut running, pump) = start_with(scripted.registry(), BASE);
     let live = running.live.clone();
     scripted.then(None).then(Some(Step::Run(Box::new(move || {
-        live.add_module(&registry, SAMPLE_RATE, "late", "oscillator", &json!({}))
+        live.add_module(SAMPLE_RATE, "late", "oscillator", &json!({}))
             .unwrap();
     }))));
     let events = Events::listen(&running);

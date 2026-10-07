@@ -94,6 +94,7 @@ impl InventionRuntime {
             self.state.clone(),
             control_surfaces.clone(),
             module_ports.clone(),
+            Arc::new(self.registry),
         );
         // Removed modules (a sink finalizing its file, say) are freed on a
         // control thread within a few blocks, not at the next edit.
@@ -120,7 +121,6 @@ impl InventionRuntime {
             backend: Box::new(backend),
             control_surfaces,
             live,
-            registry: self.registry,
             base_registry: self.base_registry,
             development_definitions: self.development_definitions,
             sample_rate: self.sample_rate,
@@ -182,9 +182,9 @@ pub(crate) fn end_reached_in(
 pub struct RunningInvention {
     backend: Box<dyn AudioBackend>,
     pub(crate) control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
-    /// The single path by which the audio graph changes.
+    /// The single path by which the audio graph changes. Also holds the
+    /// registry live edits build against (see [`Self::registry`]).
     pub(crate) live: LiveGraph,
-    pub(crate) registry: ModuleRegistry,
     pub(crate) base_registry: ModuleRegistry,
     pub(crate) development_definitions: crate::invention::reload::DevelopmentDefinitions,
     pub(crate) sample_rate: u32,
@@ -277,10 +277,20 @@ impl RunningInvention {
         snapshot
     }
 
+    /// The registry modules are built and described against now: the one
+    /// the latest reload adopted, shared with every controller through the
+    /// live graph.
+    pub(crate) fn registry(&self) -> Arc<ModuleRegistry> {
+        self.live.registry()
+    }
+
     pub fn controller(&self) -> RuntimeController {
         RuntimeController {
             snapshot: self.snapshot(),
-            registry: self.registry.clone(),
+            // A live controller builds through `live`, against the live
+            // graph's current registry, so one that outlives a reload builds
+            // what the reload adopted.
+            registry: None,
             sample_rate: self.sample_rate,
             graph: None,
             live: Some(self.live.clone()),

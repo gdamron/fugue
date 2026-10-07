@@ -89,7 +89,7 @@ impl RenderEngine {
     pub fn controller(&self) -> Option<RuntimeController> {
         Some(RuntimeController {
             snapshot: self.snapshot(),
-            registry: self.registry.clone(),
+            registry: Some(self.registry.clone()),
             sample_rate: self.sample_rate,
             graph: Some(self.graph.as_ref()?.clone()),
             live: None,

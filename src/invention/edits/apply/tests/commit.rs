@@ -8,12 +8,10 @@ use crate::rpc::{RpcErrorCode, MODULE_ERROR_BYTES};
 
 /// A hook replacing `spare` in place through the live graph, as a script's
 /// edit would, so the graph moves under the batch.
-fn replace_spare(running: &RunningInvention, registry: &ModuleRegistry) -> Step {
+fn replace_spare(running: &RunningInvention) -> Step {
     let live = running.live.clone();
-    let registry = registry.clone();
     Step::Run(Box::new(move || {
         live.add_module(
-            &registry,
             SAMPLE_RATE,
             "spare",
             "oscillator",
@@ -36,11 +34,10 @@ fn moving_batch() -> Vec<StructuralEdit> {
 #[test]
 fn a_batch_the_graph_moves_under_is_planned_again_and_commits() {
     let scripted = Scripted::default();
-    let registry = scripted.registry();
-    let (mut running, pump) = start_with(registry.clone(), BASE);
+    let (mut running, pump) = start_with(scripted.registry(), BASE);
     // Checked, validated, then the first attempt's build lets another edit
     // publish; the second attempt's build passes.
-    let hook = replace_spare(&running, &registry);
+    let hook = replace_spare(&running);
     scripted.then(None).then(None).then(Some(hook));
     let events = Events::listen(&running);
     let generation = running.live.generation();
@@ -62,11 +59,10 @@ fn a_batch_the_graph_moves_under_is_planned_again_and_commits() {
 #[test]
 fn a_batch_the_graph_keeps_moving_under_is_refused_after_three_attempts() {
     let scripted = Scripted::default();
-    let registry = scripted.registry();
-    let (mut running, pump) = start_with(registry.clone(), BASE);
+    let (mut running, pump) = start_with(scripted.registry(), BASE);
     scripted.then(None).then(None);
     for _ in 0..3 {
-        scripted.then(Some(replace_spare(&running, &registry)));
+        scripted.then(Some(replace_spare(&running)));
     }
     let events = Events::listen(&running);
 

@@ -407,7 +407,7 @@ pub(crate) struct ValidatedDocument {
     /// The document with assets resolved, to diff.
     pub(crate) resolved: Invention,
     /// The registry with the document's development factories registered.
-    pub(crate) registry: ModuleRegistry,
+    pub(crate) registry: Arc<ModuleRegistry>,
     /// The document's development definitions as loaded.
     pub(crate) definitions: DevelopmentDefinitions,
 }
@@ -486,7 +486,7 @@ impl RunningInvention {
         Ok(ValidatedDocument {
             document,
             resolved,
-            registry,
+            registry: Arc::new(registry),
             definitions,
         })
     }
