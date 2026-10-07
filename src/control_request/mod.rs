@@ -26,7 +26,7 @@ mod sender;
 /// same source files against loom's versions instead.
 mod sync {
     pub(super) use std::hint::spin_loop;
-    pub(super) use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+    pub(super) use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
     pub(super) use std::sync::Arc;
 
     /// `std`'s `UnsafeCell` behind `loom::cell::UnsafeCell`'s closure API,

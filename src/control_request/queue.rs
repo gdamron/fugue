@@ -17,8 +17,9 @@
 //! # Protocol
 //!
 //! This is Dmitry Vyukov's bounded array queue with the consumer side
-//! specialised to one thread. Positions count up from 0 and wrap at
-//! `usize::MAX`; position `pos` lives in slot `pos % capacity`. Each slot's
+//! specialised to one thread. Positions are `u64` stamps counting up from 0
+//! (wrapping at `u64::MAX`); position `pos` lives in slot `pos % capacity`.
+//! Each slot's
 //! `seq` says what the slot is waiting for:
 //!
 //! - `seq == pos`: free for the producer of `pos`;
@@ -28,7 +29,7 @@
 //!
 //! A producer claims `pos` by moving the shared `tail` from `pos` to
 //! `pos + 1` with a compare-exchange, writes the value, then publishes it.
-//! The consumer's `head` is its own (a plain `usize`): it reads the slot at
+//! The consumer's `head` is its own (a plain `u64`): it reads the slot at
 //! `head` only once that slot's `seq` is `head + 1`.
 //!
 //! # Ordering
@@ -42,6 +43,17 @@
 //! out positions: RMW atomicity alone gives each `pos` to exactly one
 //! producer, so it is `Relaxed`, and it orders no data.
 //!
+//! # Why 64-bit stamps on every target
+//!
+//! The compare-exchange is open to ABA: a producer paused after loading
+//! `seq == pos` and before its exchange would win a stale exchange if the
+//! other threads completed a full cycle of positions meanwhile, landing
+//! `tail` on `pos` again; it would then overwrite an unconsumed value and
+//! wedge the consumer. No memory ordering prevents that; only making the
+//! cycle unreachable does. With `usize` positions a 32-bit target (wasm32)
+//! cycles after 2^32 pushes, so positions and sequences are `u64` on every
+//! target: a cycle takes 2^64 pushes, centuries at 10^9 pushes a second.
+//!
 //! # Progress
 //!
 //! [`QueueProducer::try_push`] is lock-free (it retries only when another
@@ -52,7 +64,7 @@
 
 use std::mem::MaybeUninit;
 
-use super::sync::{spin_loop, Arc, AtomicUsize, Ordering, UnsafeCell};
+use super::sync::{spin_loop, Arc, AtomicU64, Ordering, UnsafeCell};
 
 /// Creates a queue holding up to `capacity` items, rounded up to a power of
 /// two and at least 2 (one lap must tell a full slot from a free one).
@@ -66,27 +78,27 @@ pub(crate) fn bounded<T: Send>(capacity: usize) -> (QueueProducer<T>, QueueConsu
 }
 
 /// [`bounded`], with positions counting from `start`, so tests can reach
-/// the `usize` wrap.
+/// the `u64` wrap.
 pub(super) fn bounded_from<T: Send>(
     capacity: usize,
-    start: usize,
+    start: u64,
 ) -> (QueueProducer<T>, QueueConsumer<T>) {
     let capacity = capacity
         .max(2)
         .checked_next_power_of_two()
         .expect("queue capacity overflows usize");
-    let mask = capacity - 1;
-    let slots = (0..capacity)
+    let mask = capacity as u64 - 1;
+    let slots = (0..capacity as u64)
         .map(|index| Slot {
             // The first position from `start` that lands in this slot.
-            seq: AtomicUsize::new(start.wrapping_add(index.wrapping_sub(start) & mask)),
+            seq: AtomicU64::new(start.wrapping_add(index.wrapping_sub(start) & mask)),
             value: UnsafeCell::new(MaybeUninit::uninit()),
         })
         .collect();
     let shared = Arc::new(Shared {
         slots,
         mask,
-        tail: AtomicUsize::new(start),
+        tail: AtomicU64::new(start),
     });
     let producer = QueueProducer {
         shared: shared.clone(),
@@ -101,16 +113,16 @@ pub(super) fn bounded_from<T: Send>(
 }
 
 struct Slot<T> {
-    seq: AtomicUsize,
+    seq: AtomicU64,
     value: UnsafeCell<MaybeUninit<T>>,
 }
 
 struct Shared<T> {
     slots: Box<[Slot<T>]>,
     /// `capacity - 1`; the capacity is a power of two.
-    mask: usize,
+    mask: u64,
     /// The next position a producer claims.
-    tail: AtomicUsize,
+    tail: AtomicU64,
 }
 
 // SAFETY: the queue moves `T` values between threads and never shares a
@@ -122,11 +134,18 @@ unsafe impl<T: Send> Send for Shared<T> {}
 // between its `Acquire` load of that `seq` and its own `Release` store.
 unsafe impl<T: Send> Sync for Shared<T> {}
 
+impl<T> Shared<T> {
+    #[inline]
+    fn slot(&self, pos: u64) -> &Slot<T> {
+        &self.slots[(pos & self.mask) as usize]
+    }
+}
+
 impl<T> Drop for Shared<T> {
     /// Drops the items pushed and not popped. Runs when the last handle is
     /// dropped, which frees the slots: a control-thread operation.
     fn drop(&mut self) {
-        for (index, slot) in self.slots.iter().enumerate() {
+        for (index, slot) in (0u64..).zip(self.slots.iter()) {
             // `&mut self`: every other handle is gone, and the `Arc` drop
             // that got here synchronized with each of them, so `Relaxed`
             // sees every push and pop. A slot is full exactly when its
@@ -165,11 +184,11 @@ impl<T> QueueProducer<T> {
         let shared = &*self.shared;
         let mut pos = shared.tail.load(Ordering::Relaxed);
         loop {
-            let slot = &shared.slots[pos & shared.mask];
+            let slot = shared.slot(pos);
             let seq = slot.seq.load(Ordering::Acquire);
             // Laps the slot is ahead of (+) or behind (-) `pos`, wrapping so
-            // that positions overflowing `usize` are harmless.
-            let lag = seq.wrapping_sub(pos) as isize;
+            // that positions overflowing `u64` are harmless.
+            let lag = seq.wrapping_sub(pos) as i64;
             if lag == 0 {
                 match shared.tail.compare_exchange(
                     pos,
@@ -203,7 +222,7 @@ impl<T> QueueProducer<T> {
 pub(crate) struct QueueConsumer<T> {
     shared: Arc<Shared<T>>,
     /// The next position to read.
-    head: usize,
+    head: u64,
 }
 
 impl<T> QueueConsumer<T> {
@@ -211,7 +230,7 @@ impl<T> QueueConsumer<T> {
     /// published yet. Wait-free, allocation-free and never frees.
     pub(crate) fn pop(&mut self) -> Option<T> {
         let shared = &*self.shared;
-        let slot = &shared.slots[self.head & shared.mask];
+        let slot = shared.slot(self.head);
         if slot.seq.load(Ordering::Acquire) != self.head.wrapping_add(1) {
             return None;
         }

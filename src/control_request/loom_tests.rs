@@ -9,39 +9,39 @@
 //! loom fails a model if two slot accesses race (are not ordered by
 //! happens-before).
 //!
-//! The shim's [`AtomicUsize`](sync::AtomicUsize) closes a gap in loom's
+//! The shim's [`AtomicU64`](sync::AtomicU64) closes a gap in loom's
 //! partial-order reduction: loom remembers only the *last* access to an
 //! atomic, so when thread A loads a slot's `seq` and thread B then loads
 //! and stores it, B's store is checked against its own load only, and the
 //! schedule where B's store precedes A's load is never explored. That is
 //! exactly the queue's pattern (each side loads `seq`, then stores it), and
 //! without the shim no model explores a `pop` that sees a concurrent push,
-//! so weakening any ordering passes. See [`sync::AtomicUsize`].
+//! so weakening any ordering passes. See [`sync::AtomicU64`].
 // The source files are deliberately loaded a second time, and not every item
 // they define is exercised here.
 #![allow(clippy::duplicate_mod, dead_code)]
 
 mod sync {
     pub(super) use loom::cell::UnsafeCell;
-    pub(super) use loom::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+    pub(super) use loom::sync::atomic::{AtomicU32, Ordering};
     pub(super) use loom::sync::Arc;
     pub(super) use loom::thread::yield_now as spin_loop;
 
-    /// loom's `AtomicUsize`, with every access also made a `Relaxed` RMW of
+    /// loom's `AtomicU64`, with every access also made a `Relaxed` RMW of
     /// a shadow atomic, so loom treats any two accesses as dependent and
     /// explores both of their orders (see the module docs). `Relaxed` RMWs
     /// create no happens-before edge, and the value cell's semantics are
     /// untouched, so this adds schedules without hiding any race.
-    pub(super) struct AtomicUsize {
-        value: loom::sync::atomic::AtomicUsize,
-        shadow: loom::sync::atomic::AtomicUsize,
+    pub(super) struct AtomicU64 {
+        value: loom::sync::atomic::AtomicU64,
+        shadow: loom::sync::atomic::AtomicU64,
     }
 
-    impl AtomicUsize {
-        pub(super) fn new(value: usize) -> Self {
+    impl AtomicU64 {
+        pub(super) fn new(value: u64) -> Self {
             Self {
-                value: loom::sync::atomic::AtomicUsize::new(value),
-                shadow: loom::sync::atomic::AtomicUsize::new(0),
+                value: loom::sync::atomic::AtomicU64::new(value),
+                shadow: loom::sync::atomic::AtomicU64::new(0),
             }
         }
 
@@ -49,23 +49,23 @@ mod sync {
             self.shadow.fetch_add(1, Ordering::Relaxed);
         }
 
-        pub(super) fn load(&self, order: Ordering) -> usize {
+        pub(super) fn load(&self, order: Ordering) -> u64 {
             self.conflict();
             self.value.load(order)
         }
 
-        pub(super) fn store(&self, value: usize, order: Ordering) {
+        pub(super) fn store(&self, value: u64, order: Ordering) {
             self.conflict();
             self.value.store(value, order);
         }
 
         pub(super) fn compare_exchange(
             &self,
-            current: usize,
-            new: usize,
+            current: u64,
+            new: u64,
             success: Ordering,
             failure: Ordering,
-        ) -> Result<usize, usize> {
+        ) -> Result<u64, u64> {
             self.conflict();
             self.value.compare_exchange(current, new, success, failure)
         }

@@ -60,8 +60,8 @@ fn a_full_queue_hands_the_value_back() {
 }
 
 #[test]
-fn positions_wrap_past_usize_max() {
-    let (producer, mut consumer) = bounded_from(4, usize::MAX - 5);
+fn positions_wrap_past_u64_max() {
+    let (producer, mut consumer) = bounded_from(4, u64::MAX - 5);
     for i in 0..40u32 {
         producer.try_push(i).unwrap();
         if i % 3 == 0 {
@@ -87,7 +87,7 @@ impl Drop for Tracked {
 
 #[test]
 fn dropping_the_queue_drops_unpopped_items_once() {
-    for (start, consumer_first) in [(0, true), (0, false), (usize::MAX - 2, true)] {
+    for (start, consumer_first) in [(0, true), (0, false), (u64::MAX - 2, true)] {
         let drops = Arc::new(AtomicUsize::new(0));
         let (producer, mut consumer) = bounded_from(4, start);
         // Lap the slots once so the full/free test sees reused slots.
