@@ -108,18 +108,13 @@ fn a_float_key_refuses_numbers_too_large_for_an_f32() {
 }
 
 #[test]
-fn nan_and_infinities_are_refused_where_they_can_be_spelled() {
-    // serde_json has no NaN or infinity: building a Value from one gives
-    // null, which reads as absent, as on any document that saved one.
-    assert_eq!(Value::from(f64::NAN), Value::Null);
-    assert_eq!(Value::from(f64::INFINITY), Value::Null);
-    assert_eq!(gain(json!({ "gain": f64::NAN })), Ok(None));
-    // A number that reaches the narrowing as one is refused.
-    for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1e39] {
-        let refusal = finite_f32_from(number).unwrap_err();
-        assert_eq!(refusal.expected, "a finite number", "{number}");
+fn nan_and_infinities_read_as_absent_since_json_cannot_hold_them() {
+    // serde_json has no NaN or infinity: a Value built from one is null,
+    // which reads as absent, as on a document that saved one.
+    for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(Value::from(number), Value::Null);
+        assert_eq!(gain(json!({ "gain": number })), Ok(None));
     }
-    assert_eq!(finite_f32_from(f64::from(f32::MAX)), Ok(f32::MAX));
 }
 
 #[test]

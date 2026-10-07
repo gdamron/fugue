@@ -1,33 +1,24 @@
-//! Typed reads of the numbers in a module's config.
-//!
-//! A module's config is JSON written by people, agents and authored control
-//! writes, so the same number can arrive spelled several ways. Factories
-//! read their numbers through [`ConfigReader`] so every module agrees on
-//! what a number means:
+//! Typed reads of the numbers in a module's config, so every module agrees
+//! on what a number means. Read on the control thread, while a module is
+//! built.
 //!
 //! - An integer key accepts a JSON integer, or a float that is exactly whole
-//!   and in range (`72.0` reads as 72). A fractional (`72.5`) or
-//!   out-of-range value is refused, never replaced by the default. A float
-//!   beyond 2^53 is refused too, since it may not be the integer that was
-//!   written; such values (a large seed, say) must be written as integers.
-//! - A float key accepts any number that is finite as an `f32`, `f32::MAX`
-//!   included. A value too large for an `f32` (`1e39`) would become an
-//!   infinity, so it is refused with "expects a finite number", as a live
+//!   and in range (`72.0` reads as 72). A fractional or out-of-range value
+//!   is refused, never replaced by the default. A float beyond 2^53 may not
+//!   be the integer that was written, so such values (a large seed) must be
+//!   written as integers.
+//! - A float key accepts any number finite as an `f32`. One too large for an
+//!   `f32` (`1e39`) is refused with "expects a finite number", as a live
 //!   control write is.
-//! - An absent key, or JSON `null`, reads as absent (the module's default).
-//!   A present value of another JSON type (text, a boolean, an object) is
-//!   refused.
+//! - An absent key, or `null`, reads as absent (the default). A value of
+//!   another JSON type (text, a boolean, an object) is refused.
 //!
 //! A factory declares each key once as a [`ConfigKey`] constant, reads it
-//! through that constant, and lists the constants in
+//! through that constant and lists it in
 //! [`ModuleFactory::config_keys`](crate::ModuleFactory::config_keys), so the
-//! declaration and the read cannot name different keys. Arrays and nested
-//! objects are read element by element with the value-level helpers
-//! ([`whole_number`], [`whole_number_in`], [`finite_f32`]) and refused
-//! through [`ConfigReader::refuse`].
-//!
-//! Config is read on the control thread, while a module is built; none of
-//! this runs on the audio thread.
+//! declaration and the read cannot diverge. Array elements and nested
+//! values are read with [`whole_number`], [`whole_number_in`] and
+//! [`finite_f32`], and refused through [`ConfigReader::refuse`].
 
 use serde_json::Value;
 use std::fmt;
@@ -47,9 +38,7 @@ pub enum ConfigKind {
     Float,
 }
 
-/// A numeric key a module's config may hold, declared once and used for
-/// both [`ModuleFactory::config_keys`](crate::ModuleFactory::config_keys)
-/// and the read.
+/// A numeric key a module's config may hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConfigKey {
     /// The key, as the config's JSON object names it.
@@ -123,10 +112,9 @@ pub struct NumberRefusal {
 
 impl NumberRefusal {
     fn new(expected: impl Into<String>, value: &Value) -> Self {
-        Self {
-            expected: expected.into(),
-            got: written(value),
-        }
+        let got = written(value);
+        let expected = expected.into();
+        Self { expected, got }
     }
 }
 
@@ -240,59 +228,35 @@ pub fn whole_number_in<T: ConfigInt>(
 ) -> Result<T, NumberRefusal> {
     let (min, max) = (min.max(T::MIN), max.min(T::MAX));
     let expected = format!("a whole number from {min} to {max}");
-    let refused = || NumberRefusal::new(expected.clone(), value);
-    let Value::Number(number) = value else {
-        return Err(refused());
-    };
-    let whole = match (number.as_i64(), number.as_u64()) {
-        (Some(int), _) => i128::from(int),
-        (None, Some(int)) => i128::from(int),
-        (None, None) => {
+    let whole = match value {
+        // serde_json holds only finite floats.
+        Value::Number(number) if number.is_f64() => {
             let float = number.as_f64().unwrap_or(f64::NAN);
-            if !float.is_finite() || float.fract() != 0.0 {
-                return Err(refused());
+            let in_range = float >= min as f64 && float <= max as f64;
+            if float.fract() == 0.0 && in_range && float.abs() > EXACT_FLOAT_LIMIT {
+                let expected = format!("{expected}, written as an integer beyond 2^53");
+                return Err(NumberRefusal::new(expected, value));
             }
-            if float < min as f64 || float > max as f64 {
-                return Err(refused());
-            }
-            if float.abs() > EXACT_FLOAT_LIMIT {
-                return Err(NumberRefusal::new(
-                    format!("{expected}, written as an integer beyond 2^53"),
-                    value,
-                ));
-            }
-            float as i128
+            (float.fract() == 0.0 && in_range).then_some(float as i128)
         }
+        Value::Number(number) => number
+            .as_i64()
+            .map(i128::from)
+            .or(number.as_u64().map(i128::from)),
+        _ => None,
     };
-    if whole < min || whole > max {
-        return Err(refused());
+    match whole {
+        Some(whole) if (min..=max).contains(&whole) => Ok(T::from_checked(whole)),
+        _ => Err(NumberRefusal::new(expected, value)),
     }
-    Ok(T::from_checked(whole))
 }
 
-/// Reads `value` as a number that is finite as an `f32`.
+/// Reads `value` as a number that is finite as an `f32`; one too large for
+/// an `f32` would become an infinity.
 pub fn finite_f32(value: &Value) -> Result<f32, NumberRefusal> {
-    let number = match value {
-        Value::Number(number) => number.as_f64().unwrap_or(f64::NAN),
-        _ => f64::NAN,
-    };
-    finite_f32_from(number).map_err(|mut refusal| {
-        refusal.got = written(value);
-        refusal
-    })
-}
-
-/// `number` as an `f32`, refused when that is NaN or an infinity (as a
-/// number too large for an `f32` becomes).
-pub(crate) fn finite_f32_from(number: f64) -> Result<f32, NumberRefusal> {
-    let narrowed = number as f32;
-    if narrowed.is_finite() {
-        Ok(narrowed)
-    } else {
-        Err(NumberRefusal {
-            expected: "a finite number".to_string(),
-            got: format!("{number:?}"),
-        })
+    match value.as_f64().map(|number| number as f32) {
+        Some(narrowed) if narrowed.is_finite() => Ok(narrowed),
+        _ => Err(NumberRefusal::new("a finite number", value)),
     }
 }
 
