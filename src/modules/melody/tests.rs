@@ -403,3 +403,70 @@ fn an_unchanged_count_is_not_an_edit() {
     controls.set_degree_count(4);
     assert_ne!(controls.table_version(), version);
 }
+
+/// The controls a melody built from `config` starts with, or the refusal.
+fn built_controls(config: serde_json::Value) -> Result<MelodyControls, String> {
+    use crate::factory::ModuleFactory;
+    let built = MelodyFactory
+        .build(48_000, &config)
+        .map_err(|error| error.to_string())?;
+    let (_, handle) = &built.handles[0];
+    Ok(handle.downcast_ref::<MelodyControls>().unwrap().clone())
+}
+
+#[test]
+fn a_whole_float_root_note_and_seed_read_as_written() {
+    let controls = built_controls(serde_json::json!({ "root_note": 72.0, "seed": 99.0 })).unwrap();
+    assert_eq!(controls.root_note(), 72);
+    assert_eq!(controls.seed(), Some(99));
+}
+
+#[test]
+fn a_fractional_or_out_of_range_root_note_is_refused() {
+    let error = built_controls(serde_json::json!({ "root_note": 72.5 })).err();
+    assert_eq!(
+        error.as_deref(),
+        Some("melody config 'root_note' expects a whole number from 0 to 255, got 72.5")
+    );
+    // Was read `as u8`, so 256 played as 0.
+    let error = built_controls(serde_json::json!({ "root_note": 256 })).err();
+    assert_eq!(
+        error.as_deref(),
+        Some("melody config 'root_note' expects a whole number from 0 to 255, got 256")
+    );
+}
+
+#[test]
+fn scale_degrees_and_note_weights_refuse_a_non_number_rather_than_drop_it() {
+    let controls = built_controls(
+        serde_json::json!({ "scale_degrees": [0, 4.0, 7], "note_weights": [1, 0.5] }),
+    )
+    .unwrap();
+    assert_eq!(controls.allowed_degrees(), [0, 4, 7]);
+    assert_eq!(controls.note_weights(), [1.0, 0.5, 1.0]);
+    for (config, refusal) in [
+        (
+            serde_json::json!({ "scale_degrees": [0, "4", 7] }),
+            "melody config 'scale_degrees[1]' expects a whole number",
+        ),
+        (
+            serde_json::json!({ "scale_degrees": [0, 4.5] }),
+            "melody config 'scale_degrees[1]' expects a whole number",
+        ),
+        (
+            serde_json::json!({ "note_weights": [1, null] }),
+            "melody config 'note_weights[1]' expects a finite number, got null",
+        ),
+        (
+            serde_json::json!({ "note_weights": [1e39] }),
+            "melody config 'note_weights[0]' expects a finite number, got 1e39",
+        ),
+        (
+            serde_json::json!({ "note_weights": 2 }),
+            "melody config 'note_weights' expects an array of numbers, got 2",
+        ),
+    ] {
+        let error = built_controls(config.clone()).err().unwrap_or_default();
+        assert!(error.starts_with(refusal), "{config}: {error}");
+    }
+}

@@ -10,6 +10,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigError, ConfigKey, ConfigReader};
 use crate::{ControlMeta, ControlSurface, Module};
 
 pub use self::controls::AgentControls;
@@ -33,9 +34,16 @@ struct AgentConfig {
     cooldown_ms: f32,
 }
 
+const TYPE_ID: &str = "agent";
+const COOLDOWN_MS: ConfigKey = ConfigKey::float("cooldown_ms");
+
 impl ModuleFactory for AgentFactory {
     fn type_id(&self) -> &'static str {
-        "agent"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[COOLDOWN_MS]
     }
 
     fn build(
@@ -43,7 +51,7 @@ impl ModuleFactory for AgentFactory {
         _sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let config = parse_config(config);
+        let config = parse_config(config)?;
         let controls = AgentControls::new(
             config.enabled,
             config.prompt,
@@ -69,8 +77,8 @@ impl ModuleFactory for AgentFactory {
     }
 }
 
-fn parse_config(config: &serde_json::Value) -> AgentConfig {
-    AgentConfig {
+fn parse_config(config: &serde_json::Value) -> Result<AgentConfig, ConfigError> {
+    Ok(AgentConfig {
         enabled: config
             .get("enabled")
             .and_then(|value| value.as_bool())
@@ -90,11 +98,10 @@ fn parse_config(config: &serde_json::Value) -> AgentConfig {
             .and_then(|value| value.as_str())
             .unwrap_or("local:auto")
             .to_string(),
-        cooldown_ms: config
-            .get("cooldown_ms")
-            .and_then(|value| value.as_f64())
-            .unwrap_or(0.0) as f32,
-    }
+        cooldown_ms: ConfigReader::new(TYPE_ID, config)
+            .float(&COOLDOWN_MS)?
+            .unwrap_or(0.0),
+    })
 }
 
 /// Audio-graph shell for an agent worker.

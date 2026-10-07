@@ -4,6 +4,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -16,9 +17,19 @@ mod outputs;
 /// Factory for constructing ADSR modules from configuration.
 pub struct AdsrFactory;
 
+const TYPE_ID: &str = "adsr";
+const ATTACK: ConfigKey = ConfigKey::float("attack");
+const DECAY: ConfigKey = ConfigKey::float("decay");
+const SUSTAIN: ConfigKey = ConfigKey::float("sustain");
+const RELEASE: ConfigKey = ConfigKey::float("release");
+
 impl ModuleFactory for AdsrFactory {
     fn type_id(&self) -> &'static str {
-        "adsr"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[ATTACK, DECAY, SUSTAIN, RELEASE]
     }
 
     fn build(
@@ -27,19 +38,11 @@ impl ModuleFactory for AdsrFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         // Parse config values with defaults
-        let attack = config
-            .get("attack")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.01) as f32;
-        let decay = config.get("decay").and_then(|v| v.as_f64()).unwrap_or(0.1) as f32;
-        let sustain = config
-            .get("sustain")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.7) as f32;
-        let release = config
-            .get("release")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.2) as f32;
+        let reader = ConfigReader::new(TYPE_ID, config);
+        let attack = reader.float(&ATTACK)?.unwrap_or(0.01);
+        let decay = reader.float(&DECAY)?.unwrap_or(0.1);
+        let sustain = reader.float(&SUSTAIN)?.unwrap_or(0.7);
+        let release = reader.float(&RELEASE)?.unwrap_or(0.2);
 
         // Create controls with initial values
         let controls = AdsrControls::new(attack, decay, sustain, release);

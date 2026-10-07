@@ -12,26 +12,24 @@ use crate::{ControlKind, ControlValue, GraphModule, ModuleRegistry, DEFAULT_BLOC
 /// them to [`ConfigReader`] and empty this list: a type leaves it when its
 /// factory declares its keys in `config_keys()`.
 const NOT_YET_MIGRATED: &[&str] = &[
-    "adsr",
-    "agent",
     "audio_file_sink",
     "cell_sequencer",
-    "clock",
-    "code",
-    "control_scheduler",
     "divisi",
-    "filter",
-    "lfo",
-    "melody",
-    "mixer",
-    "reverb",
     "rtmp_sink",
     "sample_instrument",
     "sample_kit",
     "sample_slicer",
     "step_sequencer",
-    "vca",
     "youtube_sink",
+];
+
+/// Number controls a factory does not read from config, so a config value
+/// for them is ignored rather than refused: (type, key, why).
+const CONTROLS_NOT_READ_FROM_CONFIG: &[(&str, &str, &str)] = &[
+    ("agent", "request_count", "a counter the runtime keeps"),
+    ("agent", "trigger_count", "a counter the gate input keeps"),
+    ("agent", "reset_count", "a counter the reset input keeps"),
+    ("control_scheduler", "step", "read-only playhead"),
 ];
 
 /// Types the harness cannot build: they need what a test has not got.
@@ -150,13 +148,28 @@ fn expect_not_finite(
     key: &str,
     misses: &mut Vec<String>,
 ) {
+    expect_1e39_refused(registry, type_id, base, key, "a finite number", misses);
+}
+
+/// Pushes a miss unless `{key: 1e39}` is refused as not `expected`.
+fn expect_1e39_refused(
+    registry: &ModuleRegistry,
+    type_id: &str,
+    base: &Value,
+    key: &str,
+    expected: &str,
+    misses: &mut Vec<String>,
+) {
     match observe(registry, type_id, &with(base, key, json!(1e39))) {
-        Err(error) if error.contains(&format!("'{key}' expects a finite number, got 1e39")) => {}
+        Err(error)
+            if error.contains(&format!("'{key}' expects {expected}"))
+                && error.ends_with("got 1e39") => {}
         other => misses.push(format!("{type_id}.{key}: 1e39 gave {other:?}")),
     }
 }
 
-/// Checks that each number control of `type_id` refuses `1e39` in config.
+/// Checks that each number control of `type_id` refuses `1e39` in config:
+/// as not finite, or as not whole for a control declared an integer key.
 fn check_control_keys(registry: &ModuleRegistry, type_id: &str, misses: &mut Vec<String>) {
     let base = base_config(type_id);
     let built = match registry.for_validation().build(type_id, 48_000, &base) {
@@ -166,10 +179,25 @@ fn check_control_keys(registry: &ModuleRegistry, type_id: &str, misses: &mut Vec
     let Some(surface) = built.control_surface else {
         return;
     };
+    let not_read = |key: &str| {
+        CONTROLS_NOT_READ_FROM_CONFIG
+            .iter()
+            .any(|(id, not_read, _)| *id == type_id && *not_read == key)
+    };
     for meta in surface.controls() {
-        if matches!(meta.kind, ControlKind::Number { .. }) {
-            expect_not_finite(registry, type_id, &base, &meta.key, misses);
+        if !matches!(meta.kind, ControlKind::Number { .. }) || not_read(&meta.key) {
+            continue;
         }
+        let integer = registry
+            .config_keys(type_id)
+            .iter()
+            .any(|key| key.key == meta.key && matches!(key.kind, ConfigKind::Integer { .. }));
+        let expected = if integer {
+            "a whole number"
+        } else {
+            "a finite number"
+        };
+        expect_1e39_refused(registry, type_id, &base, &meta.key, expected, misses);
     }
 }
 

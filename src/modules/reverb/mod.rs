@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 use crate::dsp::{Allpass, Damper, DelayLine};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -446,9 +447,21 @@ impl Module for Reverb {
 /// Factory for constructing Reverb modules from configuration.
 pub struct ReverbFactory;
 
+const TYPE_ID: &str = "reverb";
+const ROOM_SIZE: ConfigKey = ConfigKey::float("room_size");
+const DECAY: ConfigKey = ConfigKey::float("decay");
+const DAMPING: ConfigKey = ConfigKey::float("damping");
+const WET: ConfigKey = ConfigKey::float("wet");
+const DRY: ConfigKey = ConfigKey::float("dry");
+const WIDTH: ConfigKey = ConfigKey::float("width");
+
 impl ModuleFactory for ReverbFactory {
     fn type_id(&self) -> &'static str {
-        "reverb"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[ROOM_SIZE, DECAY, DAMPING, WET, DRY, WIDTH]
     }
 
     fn build(
@@ -456,18 +469,13 @@ impl ModuleFactory for ReverbFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let room_size = config
-            .get("room_size")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.5) as f32;
-        let decay = config.get("decay").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
-        let damping = config
-            .get("damping")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.5) as f32;
-        let wet = config.get("wet").and_then(|v| v.as_f64()).unwrap_or(0.33) as f32;
-        let dry = config.get("dry").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-        let width = config.get("width").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+        let reader = ConfigReader::new(TYPE_ID, config);
+        let room_size = reader.float(&ROOM_SIZE)?.unwrap_or(0.5);
+        let decay = reader.float(&DECAY)?.unwrap_or(0.5);
+        let damping = reader.float(&DAMPING)?.unwrap_or(0.5);
+        let wet = reader.float(&WET)?.unwrap_or(0.33);
+        let dry = reader.float(&DRY)?.unwrap_or(1.0);
+        let width = reader.float(&WIDTH)?.unwrap_or(1.0);
         let freeze = config
             .get("freeze")
             .and_then(|v| v.as_bool())

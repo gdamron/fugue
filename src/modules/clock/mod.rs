@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{whole_number, ConfigError, ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -15,9 +16,18 @@ mod outputs;
 /// Factory for constructing Clock modules from configuration.
 pub struct ClockFactory;
 
+const TYPE_ID: &str = "clock";
+const BPM: ConfigKey = ConfigKey::float("bpm");
+const GATE_DURATION: ConfigKey = ConfigKey::float("gate_duration");
+
 impl ModuleFactory for ClockFactory {
     fn type_id(&self) -> &'static str {
-        "clock"
+        TYPE_ID
+    }
+
+    // `time_signature.beats_per_measure`, nested, is read as a `u32` too.
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[BPM, GATE_DURATION]
     }
 
     fn build(
@@ -25,20 +35,16 @@ impl ModuleFactory for ClockFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let bpm = config.get("bpm").and_then(|v| v.as_f64()).unwrap_or(120.0);
-        let gate_duration = config
-            .get("gate_duration")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.25);
+        let reader = ConfigReader::new(TYPE_ID, config);
+        let bpm = reader.float(&BPM)?.map_or(120.0, f64::from);
+        let gate_duration = reader.float(&GATE_DURATION)?.map_or(0.25, f64::from);
 
         let controls = ClockControls::new_with_gate_duration(bpm, gate_duration);
         let mut clock = Clock::new(sample_rate, controls.clone());
 
         // Apply time signature if specified
-        if let Some(ts) = config.get("time_signature") {
-            if let Some(beats) = ts.get("beats_per_measure").and_then(|v| v.as_u64()) {
-                clock = clock.with_time_signature(beats as u32);
-            }
+        if let Some(beats) = beats_per_measure(&reader)? {
+            clock = clock.with_time_signature(beats);
         }
 
         Ok(ModuleBuildResult {
@@ -51,6 +57,20 @@ impl ModuleFactory for ClockFactory {
             sink: None,
         })
     }
+}
+
+/// Reads `time_signature.beats_per_measure`, or `None` when it is absent.
+fn beats_per_measure(reader: &ConfigReader) -> Result<Option<u32>, ConfigError> {
+    let Some(beats) = reader
+        .get("time_signature")
+        .and_then(|ts| ts.get("beats_per_measure"))
+        .filter(|beats| !beats.is_null())
+    else {
+        return Ok(None);
+    };
+    whole_number::<u32>(beats)
+        .map(Some)
+        .map_err(|r| reader.refuse("time_signature.beats_per_measure", r))
 }
 
 /// A master clock that generates timing signals for tempo-synchronized modules.
@@ -277,5 +297,41 @@ impl Module for Clock {
             }
             _ => Err(format!("Unknown control key: {}", key)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn beats(config: serde_json::Value) -> Result<Option<u32>, String> {
+        beats_per_measure(&ConfigReader::new(TYPE_ID, &config)).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn beats_per_measure_reads_a_whole_float_and_refuses_a_fraction() {
+        assert_eq!(beats(json!({})), Ok(None));
+        assert_eq!(beats(json!({ "time_signature": {} })), Ok(None));
+        assert_eq!(
+            beats(json!({ "time_signature": { "beats_per_measure": 3 } })),
+            Ok(Some(3))
+        );
+        assert_eq!(
+            beats(json!({ "time_signature": { "beats_per_measure": 4.0 } })),
+            Ok(Some(4))
+        );
+        let fraction = json!({ "time_signature": { "beats_per_measure": 4.5 } });
+        let error = ClockFactory
+            .build(48_000, &fraction)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            error.starts_with(
+                "clock config 'time_signature.beats_per_measure' expects a whole number"
+            ) && error.ends_with("got 4.5"),
+            "{error}"
+        );
     }
 }

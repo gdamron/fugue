@@ -40,6 +40,7 @@ use std::f32::consts::FRAC_PI_4;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{finite_f32, ConfigError, ConfigKey, ConfigReader, NumberRefusal};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -330,9 +331,17 @@ impl Module for Mixer {
 /// ```
 pub struct MixerFactory;
 
+const TYPE_ID: &str = "mixer";
+const CHANNELS: ConfigKey = ConfigKey::int::<usize>("channels");
+const MASTER: ConfigKey = ConfigKey::float("master");
+
 impl ModuleFactory for MixerFactory {
     fn type_id(&self) -> &'static str {
-        "mixer"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[CHANNELS, MASTER]
     }
 
     fn build(
@@ -340,33 +349,11 @@ impl ModuleFactory for MixerFactory {
         _sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let channels = config
-            .get("channels")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize)
-            .unwrap_or(4);
-
-        let master = config.get("master").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-
-        let levels: Vec<f32> = config
-            .get("levels")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_f64().map(|n| n as f32))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let pans: Vec<f32> = config
-            .get("pans")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_f64().map(|n| n as f32))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let reader = ConfigReader::new(TYPE_ID, config);
+        let channels = reader.int::<usize>(&CHANNELS)?.unwrap_or(4);
+        let master = reader.float(&MASTER)?.unwrap_or(1.0);
+        let levels = read_floats(&reader, "levels")?;
+        let pans = read_floats(&reader, "pans")?;
 
         let controls = MixerControls::new_with_config(channels, &levels, &pans, master);
         crate::factory::apply_control_keys(&controls, config, |key| {
@@ -384,6 +371,28 @@ impl ModuleFactory for MixerFactory {
             sink: None,
         })
     }
+}
+
+/// Reads array `key` of finite numbers (empty when absent), refusing the
+/// first element that is not one by its path (`levels[2]`).
+fn read_floats(reader: &ConfigReader, key: &str) -> Result<Vec<f32>, ConfigError> {
+    let Some(value) = reader.get(key) else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = value.as_array() else {
+        let refusal = NumberRefusal {
+            expected: "an array of numbers".to_string(),
+            got: value.to_string(),
+        };
+        return Err(reader.refuse(key, refusal));
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            finite_f32(value).map_err(|refusal| reader.refuse(&format!("{key}[{index}]"), refusal))
+        })
+        .collect()
 }
 
 #[cfg(test)]
