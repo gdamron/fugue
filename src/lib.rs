@@ -2,6 +2,7 @@ pub mod agents;
 #[cfg(test)]
 mod alloc_counter;
 mod atomic;
+pub(crate) mod control_request;
 pub mod dsp;
 #[cfg(test)]
 mod example_catalog;
