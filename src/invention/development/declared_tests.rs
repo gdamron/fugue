@@ -264,3 +264,90 @@ fn outputs_a(graph: &Arc<Mutex<SignalGraph>>) -> f32 {
     module.process(1);
     module.output_block(0)[0]
 }
+
+#[test]
+fn a_scheduled_ramp_on_a_legacy_only_key_allocates_nothing() {
+    use crate::modules::control_scheduler::{
+        ControlScheduler, ControlSchedulerControls, ScheduleEntry, ScheduleValue,
+    };
+    let definition = json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "l", "type": "lfo" }],
+        "connections": [],
+        "controls": [{ "key": "rate", "module": "l", "control": "rate" }]
+    });
+    let built = factory("legacy", definition)
+        .build(48_000, &json!({}))
+        .unwrap();
+    let surface = built.control_surface.unwrap();
+    let mut map = IndexMap::new();
+    map.insert("dev".to_string(), surface.clone());
+    let directory = Arc::new(Mutex::new(map));
+    let entry = ScheduleEntry {
+        at: 0,
+        module: "dev".into(),
+        control: "rate".into(),
+        value: ScheduleValue::Number(4.0),
+        ramp: Some(2),
+    };
+    let controls = ControlSchedulerControls::new(vec![entry]);
+    controls.attach("sched", &directory).unwrap();
+    let mut scheduler = ControlScheduler::new(48_000, controls);
+    scheduler.prepare_for_publication();
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        scheduler.set_input("gate", gate).unwrap();
+        let (_, allocs, frees) = allocator_events(|| scheduler.process(64));
+        assert_eq!((allocs, frees), (0, 0));
+    }
+    assert_ne!(surface.get_control("rate").unwrap(), json_number(1.0));
+}
+
+fn json_number(value: f32) -> ControlValue {
+    ControlValue::Number(value)
+}
+
+#[test]
+fn a_pending_jump_reads_clamped_through_nested_developments() {
+    let leaf = json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "a", "type": "dial" }],
+        "connections": [],
+        "controls": [{ "key": "lvl", "module": "a", "control": "level" }]
+    });
+    let outer = json!({
+        "version": "1.0.0",
+        "developments": [{ "name": "inner", "definition": leaf }],
+        "modules": [{ "id": "n", "type": "inner" }],
+        "connections": [],
+        "controls": [{ "key": "lvl", "module": "n", "control": "lvl" }]
+    });
+    let built = factory("outer", outer).build(48_000, &json!({})).unwrap();
+    let lvl = built.control_surface.unwrap().automation("lvl").unwrap();
+    lvl.write_number(2.0);
+    assert_eq!(lvl.current(), Some(1.0), "as the leaf dial will hold it");
+}
+
+#[test]
+fn a_choice_fans_out_by_option_name_whatever_each_alias_numbers_it() {
+    let definition = json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
+        "connections": [],
+        "controls": [
+            { "key": "form", "module": "a", "control": "shape" },
+            { "key": "form", "module": "b", "control": "slope" },
+            { "key": "b_slope", "module": "b", "control": "slope" }
+        ]
+    });
+    let (_graph, surface) = running_from(
+        factory("choices", definition),
+        json!({ "form": "flat" }),
+    );
+    assert_eq!(surface.get_control("form").unwrap(), "flat".into());
+    assert_eq!(surface.get_control("b_slope").unwrap(), "flat".into());
+    surface.set_control("form", "steep".into()).unwrap();
+    assert_eq!(surface.get_control("b_slope").unwrap(), "steep".into());
+    // An option one alias lacks changes neither.
+    assert!(surface.set_control("form", "gentle".into()).is_err());
+    assert_eq!(surface.get_control("b_slope").unwrap(), "steep".into());
+}

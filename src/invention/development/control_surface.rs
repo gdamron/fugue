@@ -131,9 +131,14 @@ impl ControlSurface for DevelopmentControlSurface {
         // out across internal modules (e.g. one `decay` reaching every voice
         // of a bank); apply the write to every aliased target. Aliases on
         // the legacy path are written here; declared ones take it as one
-        // request for the development. Every alias is checked first, so a
-        // value one of them cannot hold changes none of them.
-        self.validate_control(key, &value, &self.surfaces)?;
+        // request for the development. Every alias of a declared key is
+        // checked first, so a value one of them cannot hold changes none of
+        // them. A key on the legacy path alone keeps its old, unchecked
+        // fan-out: a scheduler still writes it from the audio thread, where
+        // checking would allocate.
+        if self.declared(key).is_some() {
+            self.validate_control(key, &value, &self.surfaces)?;
+        }
         self.set_legacy(key, value.clone())?;
         match self.declared(key) {
             Some(declared) => declared.set_control(key, value),

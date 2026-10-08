@@ -36,14 +36,22 @@ struct Alias {
     module: usize,
     index: ControlIndex,
     /// Its own kind, so a value converts to what it holds; `None` when the
-    /// key's value can never be one (a choice of other options, a payload).
+    /// key's value can never be one (a payload).
     kind: Option<DeclKind>,
+    /// For a choice reached by a choice: each of the key's options as this
+    /// alias numbers it, by name (`None` where it has no such option).
+    choices: Box<[Option<u32>]>,
 }
 
 /// `value` as a control of `kind` holds it: a number and an integer convert
 /// (a fraction never becomes an integer); anything else must match.
-fn convert(value: RtValue, kind: DeclKind) -> Option<RtValue> {
+fn convert(value: RtValue, kind: DeclKind, choices: &[Option<u32>]) -> Option<RtValue> {
     match (kind, value) {
+        (DeclKind::Choice(_), RtValue::U32(position)) => choices
+            .get(position as usize)
+            .copied()
+            .flatten()
+            .map(RtValue::U32),
         (DeclKind::Number { .. }, RtValue::F32(_)) => Some(value),
         (DeclKind::Number { .. }, RtValue::I32(whole)) => Some(RtValue::F32(whole as f32)),
         (DeclKind::Integer { min, max }, RtValue::I32(whole)) => {
@@ -53,18 +61,25 @@ fn convert(value: RtValue, kind: DeclKind) -> Option<RtValue> {
             let whole = number.fract() == 0.0 && number >= min as f32 && number <= max as f32;
             whole.then_some(RtValue::I32(number as i32))
         }
-        (DeclKind::Bool, RtValue::Bool(_)) | (DeclKind::Choice(_), RtValue::U32(_)) => Some(value),
+        (DeclKind::Bool, RtValue::Bool(_)) => Some(value),
         _ => None,
     }
 }
 
-/// Whether a value of the key's kind `first` can reach a control of kind
-/// `alias` (see [`convert`]).
-fn reachable(first: DeclKind, alias: DeclKind) -> bool {
+/// How an alias of kind `alias` takes values of the key's kind `first`:
+/// whether it can at all, and for a choice, the key's options by the
+/// alias's positions. Allocates: control thread, as the development builds.
+fn reach(first: DeclKind, alias: DeclKind) -> (Option<DeclKind>, Box<[Option<u32>]>) {
     match (first, alias) {
-        (DeclKind::Choice(a), DeclKind::Choice(b)) => a == b,
-        (DeclKind::Payload, _) | (_, DeclKind::Payload) => false,
-        _ => true,
+        (DeclKind::Choice(key), DeclKind::Choice(own)) => {
+            let positions = key.iter().map(|option| {
+                let position = own.iter().position(|o| o.eq_ignore_ascii_case(option));
+                position.map(|position| position as u32)
+            });
+            (Some(alias), positions.collect())
+        }
+        (DeclKind::Payload, _) | (_, DeclKind::Payload) => (None, Box::new([])),
+        _ => (Some(alias), Box::new([])),
     }
 }
 
@@ -108,12 +123,12 @@ impl DevelopmentControls {
             };
             // One event alias makes the key an event: never coalesced.
             decls[position].event |= found.decl.event;
-            let kind = found.decl.kind;
-            let kind = reachable(decls[position].kind, kind).then_some(kind);
+            let (kind, choices) = reach(decls[position].kind, found.decl.kind);
             aliases[position].push(Alias {
                 module,
                 index: found.index,
                 kind,
+                choices,
             });
         }
         if decls.is_empty() {
@@ -160,7 +175,9 @@ impl DevelopmentControls {
             let module = module.module_mut();
             // Its own automation still waiting was written before this.
             take_automation(module);
-            let converted = alias.kind.and_then(|kind| convert(value, kind));
+            let converted = alias
+                .kind
+                .and_then(|kind| convert(value, kind, &alias.choices));
             let result = converted.ok_or(Refusal::Invalid).and_then(|value| {
                 apply_declared(module, alias.index, value)?;
                 let (_, cells) = module.declared().ok_or(Refusal::Unsupported)?;

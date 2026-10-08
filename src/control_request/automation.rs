@@ -146,6 +146,15 @@ impl Automation {
         }
     }
 
+    /// The clamp of the control a value finally lands in: the end of the
+    /// origin chain through nested developments.
+    fn leaf_clamp(&self) -> Option<(f32, f32)> {
+        match &self.origin {
+            Some(origin) => origin.leaf_clamp(),
+            None => self.clamp,
+        }
+    }
+
     /// The control's value as automation last left it: its latest write
     /// this block, else what it holds. A ramp starts from here.
     #[inline]
@@ -153,10 +162,12 @@ impl Automation {
         let value = match (self.cells.automation.written(self.index), &self.origin) {
             // A development's write fans out unclamped; its first alias
             // will hold it as that alias clamps it.
-            (Some(RtValue::F32(written)), Some(origin)) => RtValue::F32(match origin.clamp {
-                Some((min, max)) => written.max(min).min(max),
-                None => written,
-            }),
+            (Some(RtValue::F32(written)), Some(origin)) => {
+                RtValue::F32(match origin.leaf_clamp() {
+                    Some((min, max)) => written.max(min).min(max),
+                    None => written,
+                })
+            }
             (Some(written), _) => written,
             (None, Some(origin)) => return origin.current(),
             (None, None) => self.cells.load(self.index)?,

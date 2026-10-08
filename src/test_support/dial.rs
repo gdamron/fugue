@@ -15,6 +15,7 @@ pub(crate) const DIAL: &str = "dial";
 pub(crate) const LEVEL: ControlIndex = ControlIndex(0);
 pub(crate) const SHAPE: ControlIndex = ControlIndex(1);
 pub(crate) const PULSE: ControlIndex = ControlIndex(2);
+pub(crate) const SLOPE: ControlIndex = ControlIndex(3);
 
 const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
@@ -22,7 +23,8 @@ const DECLS: &[ControlDecl] = &[
         DeclKind::Number { min: 0.0, max: 1.0 },
         RtValue::F32(0.25),
         "Output level",
-    ),
+    )
+    .clamped(0.0, 1.0),
     ControlDecl::new(
         "shape",
         DeclKind::Choice(&["flat", "steep"]),
@@ -36,6 +38,12 @@ const DECLS: &[ControlDecl] = &[
         "Counts a pulse",
     )
     .event(),
+    ControlDecl::new(
+        "slope",
+        DeclKind::Choice(&["steep", "flat", "gentle"]),
+        RtValue::U32(0),
+        "The shape options, ordered otherwise",
+    ),
 ];
 
 static TABLE: ControlTable = ControlTable::of(DECLS);
@@ -44,6 +52,7 @@ static TABLE: ControlTable = ControlTable::of(DECLS);
 pub(crate) struct Dial {
     level: f32,
     shape: u32,
+    slope: u32,
     pulses: u32,
     cells: Arc<ControlCells>,
     out: [f32; MAX_BLOCK],
@@ -66,6 +75,7 @@ impl ModuleFactory for DialFactory {
         let dial = Dial {
             level: 0.25,
             shape: 0,
+            slope: 0,
             pulses: 0,
             cells,
             out: [0.0; MAX_BLOCK],
@@ -128,6 +138,10 @@ impl Module for Dial {
                 Ok(value)
             }
             (SHAPE, RtValue::U32(_)) => Err(Refusal::Invalid),
+            (SLOPE, RtValue::U32(slope)) if slope < 3 => {
+                self.slope = slope;
+                Ok(value)
+            }
             (PULSE, RtValue::Bool(true)) => {
                 self.pulses += 1;
                 Ok(value)
