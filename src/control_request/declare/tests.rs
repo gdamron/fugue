@@ -45,6 +45,10 @@ fn coerce(key: &str, value: impl Into<ControlValue>) -> Result<RtValue, String> 
 
 #[test]
 fn keys_resolve_to_consecutive_indices_and_back() {
+    for index in 0..TABLE.len() {
+        let index = ControlIndex(index as u16);
+        assert_eq!(TABLE.resolve(&TABLE.key(index).unwrap()), Some(index));
+    }
     assert_eq!(TABLE.len(), 8);
     let keys = [
         "level", "shape", "step.0", "step.1", "step.2", "note", "on", "cell",
@@ -151,13 +155,13 @@ fn an_indexed_control_keeps_its_index_whatever_its_count() {
 
 #[test]
 fn a_table_past_its_index_space_or_exact_integers_is_refused() {
-    let flags = |count| {
-        ControlDecl::new("flag", DeclKind::Bool, RtValue::Bool(false), "Flag").indexed(count)
+    let flags = |key, count| {
+        ControlDecl::new(key, DeclKind::Bool, RtValue::Bool(false), "Flag").indexed(count)
     };
-    let full = ControlTable::built(vec![flags(u16::MAX), flags(1)]).unwrap();
+    let full = ControlTable::built(vec![flags("a", u16::MAX), flags("b", 1)]).unwrap();
     assert_eq!(full.len(), MAX_CONTROLS);
-    assert_eq!(full.resolve("flag.0"), Some(ControlIndex(0)));
-    assert!(ControlTable::built(vec![flags(u16::MAX), flags(2)]).is_err());
+    assert_eq!(full.resolve("b.0"), Some(ControlIndex(u16::MAX)));
+    assert!(ControlTable::built(vec![flags("a", u16::MAX), flags("b", 2)]).is_err());
 
     let integer =
         |min, max| ControlDecl::new("n", DeclKind::Integer { min, max }, RtValue::I32(0), "N");
@@ -191,4 +195,58 @@ fn a_payload_reads_back_through_its_surface_not_a_scalar() {
     let listed = table.metas(|_| Some("[1, 0]".into()));
     assert_eq!(listed[0].default, "[1, 0]".into());
     assert_eq!(table.metas(|_| None)[0].default, "".into());
+}
+
+#[test]
+fn two_controls_claiming_one_key_are_refused() {
+    let plain = |key| ControlDecl::new(key, DeclKind::Bool, RtValue::Bool(false), "Flag");
+    let built = |decls: Vec<ControlDecl>| ControlTable::built(decls).map(|_| ());
+    let refused = Err("two controls claim the same key");
+    assert_eq!(built(vec![plain("gain"), plain("gain")]), refused);
+    assert_eq!(
+        built(vec![plain("gain").indexed(2), plain("gain").indexed(1)]),
+        refused
+    );
+    assert_eq!(
+        built(vec![plain("gain").indexed(2), plain("gain.1")]),
+        refused
+    );
+    assert_eq!(
+        built(vec![plain("gain.0"), plain("gain").indexed(1)]),
+        refused
+    );
+    // Spellings the indexed control never claims.
+    for other in ["gain.2", "gain.01", "gain.", "gain.x", "gains.0", "gain"] {
+        assert_eq!(
+            built(vec![plain("gain").indexed(2), plain(other)]),
+            Ok(()),
+            "{other}"
+        );
+    }
+}
+
+#[test]
+fn a_default_its_kind_cannot_hold_is_refused() {
+    let with = |kind, default| {
+        ControlTable::built(vec![ControlDecl::new("x", kind, default, "X")]).map(|_| ())
+    };
+    let number = DeclKind::Number { min: 0.0, max: 1.0 };
+    let integer = DeclKind::Integer { min: 0, max: 127 };
+    let refused = Err("a control's default must be a value its kind holds");
+    assert_eq!(with(number, RtValue::F32(f32::NAN)), refused);
+    assert_eq!(with(number, RtValue::Bool(true)), refused);
+    assert_eq!(with(integer, RtValue::I32(128)), refused);
+    assert_eq!(with(DeclKind::Bool, RtValue::F32(1.0)), refused);
+    assert_eq!(
+        with(DeclKind::Choice(&["a", "b"]), RtValue::U32(2)),
+        refused
+    );
+    assert_eq!(with(DeclKind::Choice(&["a", "b"]), RtValue::U32(1)), Ok(()));
+    assert_eq!(
+        with(number, RtValue::F32(2.0)),
+        Ok(()),
+        "the range is a hint"
+    );
+    let backwards = DeclKind::Integer { min: 1, max: 0 };
+    assert!(with(backwards, RtValue::I32(0)).is_err());
 }

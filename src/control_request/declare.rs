@@ -321,8 +321,9 @@ impl ControlTable {
 }
 
 /// Why `decls` cannot be a table: more indices than a [`ControlIndex`]
-/// addresses, a plain control not taking exactly one, or an integer range
-/// a client's `f32` cannot read back exactly.
+/// addresses, a plain control not taking exactly one, an integer range a
+/// client's `f32` cannot read back exactly, a default its kind cannot hold,
+/// or two declarations claiming one key.
 const fn invalid(decls: &[ControlDecl]) -> Option<&'static str> {
     let mut total = 0usize;
     let mut i = 0;
@@ -333,9 +334,19 @@ const fn invalid(decls: &[ControlDecl]) -> Option<&'static str> {
             return Some("a plain control takes exactly one index");
         }
         if let DeclKind::Integer { min, max } = decl.kind {
-            if min < -MAX_EXACT_INTEGER || max > MAX_EXACT_INTEGER {
+            if min < -MAX_EXACT_INTEGER || max > MAX_EXACT_INTEGER || min > max {
                 return Some("an integer control's range must lie within 2^24 of zero");
             }
+        }
+        if !holds_default(decl) {
+            return Some("a control's default must be a value its kind holds");
+        }
+        let mut j = 0;
+        while j < i {
+            if claims_same_key(&decls[j], decl) || claims_same_key(decl, &decls[j]) {
+                return Some("two controls claim the same key");
+            }
+            j += 1;
         }
         i += 1;
     }
@@ -343,6 +354,69 @@ const fn invalid(decls: &[ControlDecl]) -> Option<&'static str> {
         return Some("a control table declares at most 2^16 controls");
     }
     None
+}
+
+/// Whether `decl`'s default is a value its kind holds (any, for a payload).
+const fn holds_default(decl: &ControlDecl) -> bool {
+    match (decl.kind, decl.default) {
+        (DeclKind::Number { .. }, RtValue::F32(value)) => value.is_finite(),
+        (DeclKind::Integer { min, max }, RtValue::I32(value)) => min <= value && value <= max,
+        (DeclKind::Bool, RtValue::Bool(_)) => true,
+        (DeclKind::Choice(options), RtValue::U32(position)) => (position as usize) < options.len(),
+        (DeclKind::Payload, _) => true,
+        _ => false,
+    }
+}
+
+/// Whether a key `a` declares is also one `b` declares: equal keys of the
+/// same form, or a plain `a` spelled as one of indexed `b`'s keys.
+const fn claims_same_key(a: &ControlDecl, b: &ControlDecl) -> bool {
+    let (a_key, b_key) = (key_bytes(a), key_bytes(b));
+    if a.indexed == b.indexed {
+        return same_bytes(a_key, b_key);
+    }
+    if a.indexed || a_key.len() <= b_key.len() + 1 {
+        return false;
+    }
+    let (stem, rest) = a_key.split_at(b_key.len());
+    if !same_bytes(stem, b_key) || rest[0] != b'.' {
+        return false;
+    }
+    let digits = rest.split_at(1).1;
+    if digits.len() > 1 && digits[0] == b'0' {
+        return false;
+    }
+    let mut position = 0u32;
+    let mut k = 0;
+    while k < digits.len() {
+        if !digits[k].is_ascii_digit() || position > u16::MAX as u32 {
+            return false;
+        }
+        position = position * 10 + (digits[k] - b'0') as u32;
+        k += 1;
+    }
+    position < b.count as u32
+}
+
+const fn key_bytes(decl: &ControlDecl) -> &[u8] {
+    match &decl.key {
+        Cow::Borrowed(key) => key.as_bytes(),
+        Cow::Owned(key) => key.as_str().as_bytes(),
+    }
+}
+
+const fn same_bytes(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut k = 0;
+    while k < a.len() {
+        if a[k] != b[k] {
+            return false;
+        }
+        k += 1;
+    }
+    true
 }
 
 #[cfg(test)]
