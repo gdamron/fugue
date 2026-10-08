@@ -81,8 +81,8 @@
 use super::publication::{Disposition, Publication};
 use super::SignalGraph;
 use crate::control_request::{
-    apply_declared, ControlIndex, Outcome, OutcomeSender, PendingStore, QueueConsumer, Refusal,
-    Request, RequestValue, RtValue, When,
+    apply_declared, take_automation, ControlIndex, Outcome, OutcomeSender, PendingStore,
+    QueueConsumer, Refusal, Request, RequestValue, RtValue, When,
 };
 use crate::payload::Retirer;
 
@@ -260,6 +260,8 @@ impl SignalGraph {
                     .modules
                     .get_index_mut(module_idx)
                     .ok_or(Refusal::TargetGone)?;
+                // Automation still waiting was written before this sample.
+                take_automation(instance.module_mut());
                 apply_declared(instance.module_mut(), control, value)
             }
             RequestValue::Payload(payload) => {
@@ -279,6 +281,7 @@ impl SignalGraph {
         value: RtValue,
     ) -> Result<(), Refusal> {
         let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
+        take_automation(instance.module_mut());
         apply_declared(instance.module_mut(), control, value)
     }
 

@@ -102,6 +102,11 @@ pub(crate) struct Automation {
     pub(crate) cells: Arc<ControlCells>,
     pub(crate) index: ControlIndex,
     pub(crate) kind: DeclKind,
+    /// The range the module clamps a number to (see
+    /// [`ControlDecl::clamp`](super::ControlDecl)), applied as it is
+    /// written, so a ramp starting from a pending write starts where the
+    /// module will be.
+    pub(crate) clamp: Option<(f32, f32)>,
 }
 
 impl Automation {
@@ -110,7 +115,10 @@ impl Automation {
     #[inline]
     pub(crate) fn write_number(&self, value: f32) {
         let value = match self.kind {
-            DeclKind::Number { .. } => Some(RtValue::F32(value)),
+            DeclKind::Number { .. } => Some(RtValue::F32(match self.clamp {
+                Some((min, max)) => value.max(min).min(max),
+                None => value,
+            })),
             DeclKind::Integer { min, max } => {
                 let whole = value.fract() == 0.0 && value >= min as f32 && value <= max as f32;
                 whole.then_some(RtValue::I32(value as i32))

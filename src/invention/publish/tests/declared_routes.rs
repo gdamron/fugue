@@ -280,3 +280,16 @@ fn a_scheduled_write_reaches_a_declared_target_before_it_processes() {
     );
     assert_eq!(level(&surface(&rig, "dial")), 0.5.into());
 }
+
+#[test]
+fn a_request_applies_after_automation_written_before_its_sample() {
+    let mut rig = dial_rig();
+    let dial = surface(&rig, "dial");
+    // Written on the audio thread in an earlier sample, never taken: the
+    // newer request must not be overwritten by it.
+    dial.automation("level").unwrap().write_number(0.9);
+    dial.set_control("level", 0.3.into()).unwrap();
+    let out = rig.render(1);
+    assert!(out.iter().all(|v| *v == 0.3), "{out:?}");
+    assert_eq!(level(&dial), 0.3.into());
+}

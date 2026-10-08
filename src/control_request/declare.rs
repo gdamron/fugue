@@ -67,6 +67,9 @@ pub(crate) struct ControlDecl {
     /// a state: two at one sample are two events, so its requests are
     /// never coalesced, and a module adopting its state never replays one.
     pub(crate) event: bool,
+    /// For a number its module clamps to as it applies (`min`, `max`), so
+    /// automation can see the value a write will hold before it applies.
+    pub(crate) clamp: Option<(f32, f32)>,
     /// The unit a number is in (`"Hz"`, `"s"`), or `""`.
     pub(crate) unit: &'static str,
     /// The value a module starts from when its config leaves it out.
@@ -89,6 +92,7 @@ impl ControlDecl {
             count: 1,
             kind,
             event: false,
+            clamp: None,
             unit: "",
             default,
             writer: Writer::Parameter,
@@ -111,6 +115,12 @@ impl ControlDecl {
     /// Makes each write an event rather than a state (see the field).
     pub(crate) const fn event(mut self) -> Self {
         self.event = true;
+        self
+    }
+
+    /// Declares the range its module clamps a number to as it applies.
+    pub(crate) const fn clamped(mut self, min: f32, max: f32) -> Self {
+        self.clamp = Some((min, max));
         self
     }
 
@@ -336,6 +346,12 @@ const fn invalid(decls: &[ControlDecl]) -> Option<&'static str> {
         if let DeclKind::Integer { min, max } = decl.kind {
             if min < -MAX_EXACT_INTEGER || max > MAX_EXACT_INTEGER || min > max {
                 return Some("an integer control's range must lie within 2^24 of zero");
+            }
+        }
+        if let Some((min, max)) = decl.clamp {
+            let number = matches!(decl.kind, DeclKind::Number { .. });
+            if !number || min.is_nan() || max.is_nan() || min > max {
+                return Some("only a number clamps, to a range from min to max");
             }
         }
         if !holds_default(decl) {

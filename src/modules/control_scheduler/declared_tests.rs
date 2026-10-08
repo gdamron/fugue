@@ -22,7 +22,8 @@ const DECLS: &[ControlDecl] = &[
         DeclKind::Number { min: 0.0, max: 1.0 },
         RtValue::F32(1.0),
         "Level",
-    ),
+    )
+    .clamped(0.0, 1.0),
     ControlDecl::new("tap", DeclKind::Bool, RtValue::Bool(false), "Tap").event(),
     ControlDecl::new(
         "voices",
@@ -71,7 +72,7 @@ impl Module for Knob {
     }
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         match (control.0, value) {
-            (0, RtValue::F32(level)) => self.level = level,
+            (0, RtValue::F32(level)) => self.level = level.clamp(0.0, 1.0),
             (2, RtValue::I32(voices)) if voices <= 4 => self.voices = voices,
             (2, RtValue::I32(_)) => return Err(Refusal::Invalid),
             _ => return Err(Refusal::Unsupported),
@@ -179,4 +180,19 @@ fn an_event_control_cannot_be_scheduled() {
     let ctrl = ControlSchedulerControls::new(parse_schedule_json(schedule).unwrap());
     let refused = ctrl.attach("sched", &directory).unwrap_err();
     assert!(refused.contains("cannot be scheduled"), "{refused}");
+}
+
+#[test]
+fn a_ramp_after_an_out_of_range_jump_starts_where_the_module_clamped_it() {
+    let (mut scheduler, mut knob, _) = setup(
+        r#"[
+            { "at": 0, "module": "knob", "control": "level", "value": 2.0 },
+            { "at": 0, "module": "knob", "control": "level", "value": 0.0, "ramp": 2 }
+        ]"#,
+    );
+    knob.level = 0.0;
+    step(&mut scheduler, &mut knob, 32);
+    // Already below 1 a few samples in: the ramp left from 1, not from 2
+    // (which the knob would hold at 1 for the first half of the ramp).
+    assert!(knob.level > 0.99 && knob.level < 1.0, "{}", knob.level);
 }

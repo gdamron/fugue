@@ -255,6 +255,7 @@ impl ControlSurface for DeclaredSurface {
             cells: self.cells.clone(),
             index,
             kind: decl.kind,
+            clamp: decl.clamp,
         })
     }
 }
