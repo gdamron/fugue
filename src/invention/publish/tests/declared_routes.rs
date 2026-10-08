@@ -253,3 +253,30 @@ fn a_replaced_render_refuses_writes_through_its_old_surfaces() {
     assert!(!graph.lock().unwrap().modules.contains_key("late"));
     assert!(remove_offline(&graph, &surfaces, "dial").is_err());
 }
+
+#[test]
+fn a_scheduled_write_reaches_a_declared_target_before_it_processes() {
+    let mut rig = dial_rig();
+    let schedule = serde_json::json!({
+        "schedule": [{ "at": 0, "module": "dial", "control": "level", "value": 0.5 }]
+    });
+    let scheduler = rig.build("sched", "control_scheduler", schedule);
+    let edit = |change: &mut GraphChange| {
+        change.upsert("sched", scheduler);
+        Ok(())
+    };
+    rig.live.edit(edit).unwrap();
+    rig.render(1);
+    rig.live.write_input("sched", "gate", 1.0).unwrap();
+
+    let mut left = [0.0f32; 64];
+    let mut right = [0.0f32; 64];
+    let ((), allocs, frees) =
+        crate::alloc_counter::allocator_events(|| rig.graph.process_block(&mut left, &mut right));
+    assert_eq!((allocs, frees), (0, 0));
+    assert!(
+        left.iter().all(|v| *v == 0.5),
+        "from the edge's block on: {left:?}"
+    );
+    assert_eq!(level(&surface(&rig, "dial")), 0.5.into());
+}

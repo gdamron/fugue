@@ -6,7 +6,9 @@
 //! - [`ControlMeta`] - Metadata describing a module control for UI/REPL discovery
 use serde::{Deserialize, Serialize};
 
-use crate::control_request::{ControlCells, ControlIndex, ControlTable, Refusal, RtValue};
+use crate::control_request::{
+    Automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue,
+};
 use crate::invention::declared::Route;
 
 mod control_meta;
@@ -224,6 +226,17 @@ pub trait ControlSurface: Send + Sync {
     /// removed or replaced. Legacy surfaces ignore it.
     #[doc(hidden)]
     fn retire(&self) {}
+
+    /// The declared control `key`, as automation on the audio thread writes
+    /// it (see [`crate::control_request::Automation`]), or `None` for a
+    /// legacy surface, or a control automation cannot write. Control
+    /// thread: resolved once, when a schedule is.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn automation(&self, key: &str) -> Option<Automation> {
+        let _ = key;
+        None
+    }
 
     /// Coerces `value` to `key`'s declared [`ControlKind`] via
     /// [`ControlValue::coerced_to`]. Unknown keys pass through untouched so

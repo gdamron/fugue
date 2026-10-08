@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::automation::AutomationSlots;
 use super::pending::Refusal;
 use super::request::{ControlIndex, RtValue};
 use crate::Module;
@@ -30,17 +31,21 @@ use crate::Module;
 /// state: melody's scale).
 pub(crate) struct ControlCells {
     cells: Box<[AtomicU64]>,
+    /// Writes automation made on the audio thread, waiting for the module
+    /// to process (see [`super::automation`]).
+    pub(crate) automation: AutomationSlots,
 }
 
 impl ControlCells {
     /// Cells holding `values`, in control index order. Allocates: call it on
     /// a control thread, as the module is built.
     pub(crate) fn new(values: impl IntoIterator<Item = RtValue>) -> Self {
-        let cells = values
+        let cells: Box<[AtomicU64]> = values
             .into_iter()
             .map(|value| AtomicU64::new(encode(value)))
             .collect();
-        Self { cells }
+        let automation = AutomationSlots::new(cells.len());
+        Self { cells, automation }
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -87,7 +92,7 @@ const I32: u64 = 2;
 const BOOL: u64 = 3;
 
 #[inline]
-fn encode(value: RtValue) -> u64 {
+pub(super) fn encode(value: RtValue) -> u64 {
     let (tag, bits) = match value {
         RtValue::F32(value) => (F32, value.to_bits()),
         RtValue::U32(value) => (U32, value),
@@ -98,7 +103,7 @@ fn encode(value: RtValue) -> u64 {
 }
 
 #[inline]
-fn decode(word: u64) -> RtValue {
+pub(super) fn decode(word: u64) -> RtValue {
     let bits = word as u32;
     match word >> 32 {
         F32 => RtValue::F32(f32::from_bits(bits)),

@@ -1,3 +1,4 @@
+use crate::control_request::take_automation;
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::graph::RoutingConnection;
 use crate::invention::runtime::{
@@ -332,6 +333,7 @@ impl DevelopmentModule {
                     .copy_from_slice(&self.graph.out_bufs[conn.from_module][base..base + frames]);
             }
 
+            take_automation(self.graph.modules[m].module_mut());
             self.graph.modules[m].module_mut().process(frames);
 
             let n_out = self.graph.out_counts[m];
@@ -384,6 +386,7 @@ impl DevelopmentModule {
                 }
 
                 if let Some(module) = self.graph.modules.get_mut(module_index) {
+                    take_automation(module.module_mut());
                     module.module_mut().process(1);
                 }
             }

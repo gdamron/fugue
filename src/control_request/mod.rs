@@ -20,6 +20,7 @@
 //! and `unused_imports` allowance below; remove it once they land.
 #![allow(dead_code, unused_imports)]
 
+mod automation;
 mod cells;
 mod declare;
 mod event;
@@ -61,6 +62,7 @@ mod sync {
     }
 }
 
+pub(crate) use automation::{take_automation, Automation};
 pub(crate) use cells::{apply_declared, ControlCells};
 pub(crate) use declare::{ControlDecl, ControlTable, DeclKind, Writer};
 pub(crate) use event::{EventCounter, EventCursor};

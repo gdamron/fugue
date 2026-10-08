@@ -10,6 +10,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use crate::control_request::Automation;
 use crate::{ControlSurface, ControlValue};
 
 /// Shared control surface map used to resolve schedule targets.
@@ -194,6 +195,40 @@ pub(crate) struct ResolvedEntry {
     /// Ramp length in steps; 0 means an immediate jump.
     pub(crate) ramp_steps: u64,
     pub(crate) surface: Arc<dyn ControlSurface + Send + Sync>,
+    /// The target as automation writes it, when its module declares its
+    /// controls: written without a lock, an allocation or a formatted
+    /// error. `None` keeps the legacy setter.
+    pub(crate) automation: Option<Automation>,
+}
+
+impl ResolvedEntry {
+    /// Writes `value` to the target. Audio thread: allocation- and
+    /// lock-free for a declared target; a legacy target's setter is its
+    /// own (and its error, which may allocate, is dropped).
+    #[inline]
+    pub(crate) fn write(&self, value: ScheduleValue) {
+        match (&self.automation, value) {
+            (Some(target), ScheduleValue::Number(number)) => target.write_number(number),
+            (Some(target), ScheduleValue::Bool(flag)) => target.write_bool(flag),
+            (None, value) => {
+                let _ = self
+                    .surface
+                    .set_control(&self.control, value.to_control_value());
+            }
+        }
+    }
+
+    /// The target's current number, where a ramp starts.
+    #[inline]
+    pub(crate) fn current_number(&self) -> Option<f32> {
+        match &self.automation {
+            Some(target) => target.current(),
+            None => match self.surface.get_control(&self.control) {
+                Ok(ControlValue::Number(number)) => Some(number),
+                _ => None,
+            },
+        }
+    }
 }
 
 /// Resolves schedule entries against the control surfaces of an invention.
@@ -251,6 +286,7 @@ pub(crate) fn resolve_schedule(
             value: entry.value,
             ramp_steps: entry.ramp.unwrap_or(0),
             surface: surface.clone(),
+            automation: surface.automation(&entry.control),
         });
     }
     resolved.sort_by_key(|entry| entry.at);

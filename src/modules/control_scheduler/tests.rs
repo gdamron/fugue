@@ -6,7 +6,7 @@ use super::schedule::{parse_schedule, parse_schedule_json, SurfaceMap};
 use super::*;
 use crate::modules::cell_sequencer::CellSequencerControls;
 use crate::modules::mixer::MixerControls;
-use crate::ControlSurface;
+use crate::{ControlSurface, ControlValue};
 
 /// Builds a scheduler attached to a directory containing a 2-channel mixer
 /// (id `mixer`, all levels 1.0) and a cell sequencer (id `cells`).
