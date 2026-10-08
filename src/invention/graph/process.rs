@@ -2,6 +2,7 @@
 
 use super::SignalGraph;
 use crate::audio_thread::AudioThreadScope;
+use crate::control_request::take_automation;
 
 impl SignalGraph {
     /// Processes a block of `frames` frames (`frames == left.len() == right.len()`,
@@ -101,6 +102,7 @@ impl SignalGraph {
         }
 
         if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
+            take_automation(inst.module_mut());
             inst.module_mut().process(frames);
         }
 
@@ -150,6 +152,7 @@ impl SignalGraph {
                 }
 
                 if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
+                    take_automation(inst.module_mut());
                     inst.module_mut().process(1);
                 }
 

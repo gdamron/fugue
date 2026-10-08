@@ -37,8 +37,8 @@ use super::graph::{GraphCommand, SignalGraph};
 use super::publish::Publisher;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
-    apply_declared, ControlCells, ControlIndex, ControlTable, Refusal, Request, RequestSender,
-    RequestValue, RtValue,
+    apply_declared, Automation, ControlCells, ControlIndex, ControlTable, DeclKind, Refusal,
+    Request, RequestSender, RequestValue, RtValue, Writer,
 };
 use crate::traits::ControlSurfaceMap;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
@@ -237,6 +237,26 @@ impl ControlSurface for DeclaredSurface {
 
     fn retire(&self) {
         *self.route.lock().unwrap() = Route::Retired;
+    }
+
+    fn declares(&self, key: &str) -> bool {
+        self.table.resolve(key).is_some()
+    }
+
+    fn automation(&self, key: &str) -> Option<Automation> {
+        let index = self.table.resolve(key)?;
+        let (decl, _) = self.table.decl(index)?;
+        let writable = decl.writer == Writer::Parameter && !decl.event;
+        let scalar = matches!(
+            decl.kind,
+            DeclKind::Number { .. } | DeclKind::Integer { .. } | DeclKind::Bool
+        );
+        (writable && scalar).then(|| Automation {
+            cells: self.cells.clone(),
+            index,
+            kind: decl.kind,
+            clamp: decl.clamp,
+        })
     }
 }
 

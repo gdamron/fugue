@@ -253,3 +253,43 @@ fn a_replaced_render_refuses_writes_through_its_old_surfaces() {
     assert!(!graph.lock().unwrap().modules.contains_key("late"));
     assert!(remove_offline(&graph, &surfaces, "dial").is_err());
 }
+
+#[test]
+fn a_scheduled_write_reaches_a_declared_target_before_it_processes() {
+    let mut rig = dial_rig();
+    let schedule = serde_json::json!({
+        "schedule": [{ "at": 0, "module": "dial", "control": "level", "value": 0.5 }]
+    });
+    let scheduler = rig.build("sched", "control_scheduler", schedule);
+    let edit = |change: &mut GraphChange| {
+        change.upsert("sched", scheduler);
+        Ok(())
+    };
+    rig.live.edit(edit).unwrap();
+    rig.render(1);
+    rig.live.write_input("sched", "gate", 1.0).unwrap();
+
+    let mut left = [0.0f32; 64];
+    let mut right = [0.0f32; 64];
+    let ((), allocs, frees) =
+        crate::alloc_counter::allocator_events(|| rig.graph.process_block(&mut left, &mut right));
+    assert_eq!((allocs, frees), (0, 0));
+    assert!(
+        left.iter().all(|v| *v == 0.5),
+        "from the edge's block on: {left:?}"
+    );
+    assert_eq!(level(&surface(&rig, "dial")), 0.5.into());
+}
+
+#[test]
+fn a_request_applies_after_automation_written_before_its_sample() {
+    let mut rig = dial_rig();
+    let dial = surface(&rig, "dial");
+    // Written on the audio thread in an earlier sample, never taken: the
+    // newer request must not be overwritten by it.
+    dial.automation("level").unwrap().write_number(0.9);
+    dial.set_control("level", 0.3.into()).unwrap();
+    let out = rig.render(1);
+    assert!(out.iter().all(|v| *v == 0.3), "{out:?}");
+    assert_eq!(level(&dial), 0.3.into());
+}

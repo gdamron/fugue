@@ -13,9 +13,11 @@
 //! step 0, matching sequencer numbering. Step granularity is whatever gate
 //! subdivision is patched in (`gate` for beats, `gate_x4` for 16ths, ...).
 //!
-//! Control writes go through the target module's shared atomic control
-//! surface, so a change becomes visible to a target when it processes its
-//! next block. The signal graph orders the scheduler before its targets (see
+//! A target whose module declares its controls is written through its
+//! automation slots, which the graph applies just before the target
+//! processes (see `crate::control_request::Automation`); a legacy target
+//! through its shared control surface. Either way a change becomes visible
+//! to a target when it processes its next block. The signal graph orders the scheduler before its targets (see
 //! [`crate::Module::control_targets`]), so within a block the write is never
 //! late; scheduling the same clock that drives the scheduler (tempo
 //! automation) forms a cycle, which the graph processes sample-by-sample.
@@ -86,7 +88,7 @@
 //! drives the sequencers into this module's `gate` input.
 
 use crate::traits::ControlMeta;
-use crate::{ControlValue, Module};
+use crate::Module;
 
 pub use self::controls::ControlSchedulerControls;
 pub use self::factory::ControlSchedulerFactory;
@@ -264,16 +266,11 @@ impl ControlScheduler {
             ramp.steps_done += 1;
             let entry = &entries[ramp.entry_idx];
             if ramp.steps_done >= ramp.steps_total {
-                let _ = entry
-                    .surface
-                    .set_control(&entry.control, ControlValue::Number(ramp.to));
+                entry.write(ScheduleValue::Number(ramp.to));
                 false
             } else {
                 let progress = ramp.steps_done as f32 / ramp.steps_total as f32;
-                let value = ramp_value(ramp.from, ramp.to, progress);
-                let _ = entry
-                    .surface
-                    .set_control(&entry.control, ControlValue::Number(value));
+                entry.write(ScheduleValue::Number(ramp_value(ramp.from, ramp.to, progress)));
                 true
             }
         });
@@ -289,15 +286,13 @@ impl ControlScheduler {
             self.cancel_conflicting_ramp(entry_idx);
             let entry = &self.entries[entry_idx];
             if entry.ramp_steps == 0 {
-                let _ = entry
-                    .surface
-                    .set_control(&entry.control, entry.value.to_control_value());
+                entry.write(entry.value);
                 continue;
             }
             // Ramp: sample the control's current value as the start point.
             // Resolution validated the control is numeric; if the target
             // changed shape since, skip rather than misbehave.
-            let Ok(ControlValue::Number(from)) = entry.surface.get_control(&entry.control) else {
+            let Some(from) = entry.current_number() else {
                 continue;
             };
             let ScheduleValue::Number(to) = entry.value else {
@@ -327,10 +322,7 @@ impl ControlScheduler {
         for ramp in &self.ramps {
             let progress = ((ramp.steps_done as f32 + frac) / ramp.steps_total as f32).min(1.0);
             let value = ramp_value(ramp.from, ramp.to, progress);
-            let entry = &entries[ramp.entry_idx];
-            let _ = entry
-                .surface
-                .set_control(&entry.control, ControlValue::Number(value));
+            entries[ramp.entry_idx].write(ScheduleValue::Number(value));
         }
     }
 
@@ -438,5 +430,7 @@ impl Module for ControlScheduler {
     }
 }
 
+#[cfg(test)]
+mod declared_tests;
 #[cfg(test)]
 mod tests;
