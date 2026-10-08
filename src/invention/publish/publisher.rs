@@ -88,7 +88,8 @@ impl Publisher {
         let publications = Arc::new(Mailbox::new());
         let inputs = Ring::with_capacity(INPUT_QUEUE_CAPACITY);
         let retired = RetireRing::with_capacity(RETIRE_CAPACITY);
-        let (requests, request_rx) = request_channel(REQUEST_QUEUE_CAPACITY);
+        let (requests, request_rx) =
+            request_channel(REQUEST_QUEUE_CAPACITY, Arc::clone(&graph.transport));
         let payloads = RetireQueue::with_capacity(payload::RETIRE_CAPACITY);
         let (outcome_tx, outcomes) = outcome_channel(OUTCOME_QUEUE_CAPACITY);
         graph.requests = Some(RequestDrain::new(

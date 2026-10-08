@@ -16,6 +16,8 @@ fn holding_a_request_for_a_pending_publication_is_clean() {
     let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
     rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
     let id = submit(&rig, "osc3", port, 0.5, When::Now);
+    // `Now` is due at the block that takes it, which holds it instead.
+    let due = rig.graph.current_sample;
 
     assert_eq!(counted_block(&mut rig), (0, 0), "holding");
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
@@ -28,7 +30,10 @@ fn holding_a_request_for_a_pending_publication_is_clean() {
     );
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "osc3"]);
     assert_eq!(frequency(&mut rig, "osc3", port), 0.5);
-    assert_eq!(outcomes(&mut rig), [(id, Outcome::Applied { at: start })]);
+    assert_eq!(
+        outcomes(&mut rig),
+        [(id, Outcome::AppliedLate { at: start, due })]
+    );
 }
 
 #[test]

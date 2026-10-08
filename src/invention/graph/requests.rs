@@ -81,7 +81,7 @@
 use super::publication::{Disposition, Publication};
 use super::SignalGraph;
 use crate::control_request::{
-    apply_declared, take_automation, ControlIndex, Outcome, OutcomeSender, PendingStore,
+    apply_declared, expired, take_automation, ControlIndex, Outcome, OutcomeSender, PendingStore,
     QueueConsumer, Refusal, Request, RequestValue, RtValue, When,
 };
 use crate::payload::Retirer;
@@ -152,21 +152,29 @@ impl SignalGraph {
             });
         }
         let now = self.current_sample;
-        // Where a request lands: its target in the installed order (`None`
-        // when its module went away) and its sample. A time already past
-        // keeps its place in time order and applies late, at the first
-        // segment start.
+        // Where a request lands: its target in the installed order and its
+        // sample, or why it is refused: its module went away, or it could
+        // only apply after its `expires` sample. A time already past keeps
+        // its place in time order and applies late, at the first segment
+        // start.
         let resolve = |graph: &Self, request: &Request| {
             let mut target = request.target;
             if target.generation <= installed {
-                target.module_idx = map(graph, target.generation, target.module_idx)?;
+                target.module_idx =
+                    map(graph, target.generation, target.module_idx).ok_or(Refusal::TargetGone)?;
                 target.generation = installed;
             }
             let at = match request.when {
                 When::Now => now,
                 When::AtSample(sample) => sample,
+                // Resolved by the sender; counted from here only for a
+                // request that never went through it.
+                When::AfterSamples(samples) => now.saturating_add(samples),
             };
-            Some((target, at))
+            if expired(request, at.max(now)) {
+                return Err(Refusal::Expired);
+            }
+            Ok((target, at))
         };
         let mut mapped = true;
         for _ in 0..drain.pop_limit {
@@ -195,7 +203,7 @@ impl SignalGraph {
             if !owed
                 && drain.pending.is_full()
                 && !landing
-                    .is_some_and(|(target, at)| drain.pending.coalesces_with(&target, at, event))
+                    .is_ok_and(|(target, at)| drain.pending.coalesces_with(&target, at, event))
             {
                 break;
             }
@@ -204,14 +212,14 @@ impl SignalGraph {
             };
             drain.pending.outcomes.reserve(&request);
             match landing {
-                Some((target, at)) => {
+                Ok((target, at)) => {
                     request.target = target;
                     drain.pending.insert(request, at);
                 }
-                None => drain
+                Err(refusal) => drain
                     .pending
                     .outcomes
-                    .settle(request, Outcome::Refused(Refusal::TargetGone)),
+                    .settle(request, Outcome::Refused(refusal)),
             }
         }
         self.requests = Some(drain);

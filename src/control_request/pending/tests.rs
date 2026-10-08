@@ -169,3 +169,36 @@ fn pending_payloads_reserve_retire_room_until_they_settle() {
         ]
     );
 }
+
+#[test]
+fn an_entry_applied_past_its_due_sample_is_late_and_past_its_expiry_is_refused() {
+    let (mut store, outcomes) = store_of(8);
+    let mut expiring = request(1, target(INSTALLED, 0, 0), 1.0);
+    expiring.expires = Some(15);
+    store.insert(expiring, 10);
+    let mut lasting = request(2, target(INSTALLED, 0, 1), 2.0);
+    lasting.expires = Some(20);
+    store.insert(lasting, 10);
+    store.insert(request(3, target(INSTALLED, 0, 2), 3.0), 20);
+
+    // Applied at 20: the first expired at 15, the second is late but still
+    // in time, the third is exactly on time.
+    let mut applied = Vec::with_capacity(8);
+    let ((), allocs, frees) = allocator_events(|| {
+        store.apply_due(20, INSTALLED, |target, _, _| {
+            applied.push(target.control.0);
+            Ok(())
+        })
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(applied, [1, 2]);
+    assert_eq!(
+        log(&outcomes),
+        [
+            (1, Outcome::Refused(Refusal::Expired)),
+            (2, Outcome::AppliedLate { at: 20, due: 10 }),
+            (3, Outcome::Applied { at: 20 }),
+        ]
+    );
+    assert_eq!(store.len(), 0);
+}

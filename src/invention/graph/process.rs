@@ -26,6 +26,7 @@ impl SignalGraph {
             self.process_segment(&mut left[start..end], &mut right[start..end]);
             start = end;
         }
+        self.transport.publish(self.current_sample);
     }
 
     /// Processes `left.len()` frames (`== right.len()`, at least one) from

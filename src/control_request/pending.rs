@@ -17,16 +17,24 @@ pub(crate) enum Refusal {
     Unsupported,
     /// Its value is not one the control holds (a choice past its options).
     Invalid,
+    /// Its `ttl` ran out before it could apply: the sample it would apply
+    /// at is past its `expires` sample.
+    Expired,
 }
 
 /// How a request left the audio thread's hands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Outcome {
-    /// Applied at this sample: its due time, or, when it was already past
-    /// on arrival (or when its generation installed), the first segment
-    /// start after it.
+    /// Applied exactly at its due sample.
     Applied {
         at: u64,
+    },
+    /// Applied at `at`, the first segment start after its due sample `due`,
+    /// which had already passed when it arrived (or when its generation
+    /// installed).
+    AppliedLate {
+        at: u64,
+        due: u64,
     },
     /// Replaced by a later request for the same control and sample.
     Superseded,
@@ -98,6 +106,12 @@ impl Outcomes {
         }
         self.sender.send(id, outcome);
     }
+}
+
+/// Whether `request`, applied at sample `at`, would apply after its
+/// `expires` sample.
+pub(crate) fn expired(request: &Request, at: u64) -> bool {
+    request.expires.is_some_and(|last| at > last)
 }
 
 struct Pending {
@@ -193,8 +207,9 @@ impl PendingStore {
 
     /// Applies, in order, every entry due at `now` (`at <= now`) whose
     /// target is in the `installed` generation, settling each applied or
-    /// refused as `apply` decides. Held entries stay. Compacts in place:
-    /// allocation- and free-free.
+    /// refused as `apply` decides, or refused [`Refusal::Expired`] without
+    /// calling `apply` when `now` is past its `expires` sample. Held
+    /// entries stay. Compacts in place: allocation- and free-free.
     ///
     /// `apply` owns the value it is handed. A payload it either keeps or
     /// retires, applied or refused, retiring at most
@@ -210,12 +225,18 @@ impl PendingStore {
         let applied = self
             .entries
             .extract_if(..due, |e| e.request.target.generation == installed);
-        for entry in applied {
+        for Pending { request, at: due } in applied {
+            if expired(&request, now) {
+                self.outcomes
+                    .settle(request, Outcome::Refused(Refusal::Expired));
+                continue;
+            }
             let Request {
                 target, value, id, ..
-            } = entry.request;
+            } = request;
             let payload = value.is_payload();
             let outcome = match apply(&target, value, &mut self.outcomes.retirer) {
+                Ok(()) if due < now => Outcome::AppliedLate { at: now, due },
                 Ok(()) => Outcome::Applied { at: now },
                 Err(refusal) => Outcome::Refused(refusal),
             };
