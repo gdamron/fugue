@@ -312,7 +312,7 @@ mod tests {
         engine.load_json(INVENTION).unwrap();
         // Diverge a control from its build-time config value.
         engine
-            .set_control("vca", "cv", ControlValue::Number(0.5))
+            .set_control("vca", "level", ControlValue::Number(0.5))
             .unwrap();
 
         let snapshot = engine.full_snapshot();
@@ -334,13 +334,13 @@ mod tests {
         // The runtime mutation is captured as an override and re-applies cleanly.
         let overrides = snapshot.control_overrides();
         assert!(overrides.iter().any(|(module, key, value)| module == "vca"
-            && key == "cv"
+            && key == "level"
             && *value == ControlValue::Number(0.5)));
         for (module, key, value) in overrides {
             rebuilt.set_control(&module, &key, value).unwrap();
         }
         assert_eq!(
-            rebuilt.get_control("vca", "cv").unwrap(),
+            rebuilt.get_control("vca", "level").unwrap(),
             ControlValue::Number(0.5)
         );
     }
@@ -367,10 +367,10 @@ mod tests {
         let mut engine = RenderEngine::new(48_000);
         engine.load_json(INVENTION).unwrap();
         engine
-            .set_control("vca", "cv", ControlValue::String("0.5".to_string()))
+            .set_control("vca", "level", ControlValue::String("0.5".to_string()))
             .expect("stringified numeric write coerces and lands");
         assert_eq!(
-            engine.get_control("vca", "cv").unwrap(),
+            engine.get_control("vca", "level").unwrap(),
             ControlValue::Number(0.5)
         );
 
@@ -378,7 +378,7 @@ mod tests {
         // save/reload round-trip stays numeric rather than persisting a string.
         let overrides = engine.full_snapshot().control_overrides();
         assert!(overrides.iter().any(|(module, key, value)| module == "vca"
-            && key == "cv"
+            && key == "level"
             && *value == ControlValue::Number(0.5)));
     }
 
@@ -409,7 +409,7 @@ mod tests {
         let writes = vec![
             ControlWrite::new(
                 "vca".to_string(),
-                "cv".to_string(),
+                "level".to_string(),
                 ControlValue::Number(0.8),
             ),
             ControlWrite::new(
@@ -421,7 +421,7 @@ mod tests {
         engine.set_controls(&writes).expect("batch applies");
 
         assert_eq!(
-            engine.get_control("vca", "cv").unwrap(),
+            engine.get_control("vca", "level").unwrap(),
             ControlValue::Number(0.8)
         );
         assert_eq!(

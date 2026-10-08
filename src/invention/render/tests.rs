@@ -33,7 +33,7 @@ fn render_engine_renders_interleaved_audio() {
     let mut engine = RenderEngine::new(48_000);
     engine.load_json(SIMPLE_INVENTION).unwrap();
     engine
-        .set_control("vca", "cv", ControlValue::Number(0.5))
+        .set_control("vca", "level", ControlValue::Number(0.5))
         .unwrap();
 
     let mut output = [0.0f32; 16];
@@ -48,18 +48,18 @@ fn render_engine_reset_restores_state() {
     let mut engine = RenderEngine::new(48_000);
     engine.load_json(SIMPLE_INVENTION).unwrap();
     engine
-        .set_control("vca", "cv", ControlValue::Number(0.0))
+        .set_control("vca", "level", ControlValue::Number(0.0))
         .unwrap();
 
     let mut silent = [0.0f32; 8];
     engine.render_interleaved(&mut silent).unwrap();
 
     engine
-        .set_control("vca", "cv", ControlValue::Number(0.8))
+        .set_control("vca", "level", ControlValue::Number(0.8))
         .unwrap();
     engine.reset().unwrap();
 
-    let level = engine.get_control("vca", "cv").unwrap();
+    let level = engine.get_control("vca", "level").unwrap();
     assert_eq!(level, ControlValue::Number(1.0));
 }
 
@@ -91,7 +91,7 @@ fn render_engine_supports_runtime_graph_mutation() {
     engine.connect("osc", "audio", "vca", "audio").unwrap();
     engine.connect("vca", "audio", "dac", "audio").unwrap();
     engine
-        .set_control("vca", "cv", ControlValue::Number(0.5))
+        .set_control("vca", "level", ControlValue::Number(0.5))
         .unwrap();
 
     assert_eq!(engine.list_modules().len(), 3);
@@ -265,7 +265,7 @@ const ONE_SHOT_INVENTION: &str = r#"{
     "connections": [
         { "from": "clock", "from_port": "gate", "to": "seq", "to_port": "gate" },
         { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
-        { "from": "seq", "from_port": "gate", "to": "vca", "to_port": "cv" },
+        { "from": "seq", "from_port": "gate", "to": "vca", "to_port": "level" },
         { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
         { "from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio" }
     ]

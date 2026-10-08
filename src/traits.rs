@@ -294,7 +294,7 @@ pub trait Module: Send {
 
     /// Returns the names of all input ports this module accepts.
     ///
-    /// Port names should be stable and descriptive (e.g., "frequency", "gate", "fm", "cv").
+    /// Port names should be stable and descriptive (e.g., "frequency", "gate", "frequency_mod", "level").
     fn inputs(&self) -> &[&str];
 
     /// Returns the names of all output ports this module provides.

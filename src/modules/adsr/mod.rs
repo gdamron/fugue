@@ -88,7 +88,7 @@ impl ModuleFactory for AdsrFactory {
 /// {
 ///   "connections": [
 ///     {"from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate"},
-///     {"from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "cv"}
+///     {"from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level"}
 ///   ]
 /// }
 /// ```

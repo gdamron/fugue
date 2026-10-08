@@ -37,14 +37,14 @@ const ACYCLIC_INVENTION: &str = r#"{
         { "id": "osc", "type": "oscillator", "config": { "waveform": "sawtooth", "frequency": 220.0, "frequency_mod_depth": 40.0 } },
         { "id": "adsr", "type": "adsr", "config": { "attack": 0.005, "decay": 0.1, "sustain": 0.6, "release": 0.2 } },
         { "id": "filter", "type": "filter", "config": { "filter_type": "lowpass", "cutoff": 1200.0, "resonance": 0.4 } },
-        { "id": "vca", "type": "vca", "config": { "cv": 0.0 } },
+        { "id": "vca", "type": "vca", "config": { "level": 0.0 } },
         { "id": "dac", "type": "dac", "config": { "soft_clip": true } }
     ],
     "connections": [
         { "from": "lfo", "from_port": "bipolar", "to": "osc", "to_port": "frequency_mod" },
         { "from": "osc", "from_port": "audio", "to": "filter", "to_port": "audio" },
         { "from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate" },
-        { "from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "cv" },
+        { "from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level" },
         { "from": "filter", "from_port": "audio", "to": "vca", "to_port": "audio" },
         { "from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio" }
     ]

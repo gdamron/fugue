@@ -21,7 +21,7 @@ fn voice_development() -> Invention {
             crate::ModuleSpec {
                 id: "vca".to_string(),
                 module_type: "vca".to_string(),
-                config: serde_json::json!({"cv": 1.0}),
+                config: serde_json::json!({"level": 1.0}),
             },
         ],
         connections: vec![crate::Connection {
@@ -143,12 +143,12 @@ fn development_fans_out_exposed_inputs_and_caches_outputs() {
             crate::ModuleSpec {
                 id: "full".to_string(),
                 module_type: "vca".to_string(),
-                config: serde_json::json!({"cv": 1.0}),
+                config: serde_json::json!({"level": 1.0}),
             },
             crate::ModuleSpec {
                 id: "half".to_string(),
                 module_type: "vca".to_string(),
-                config: serde_json::json!({"cv": 0.5}),
+                config: serde_json::json!({"level": 0.5}),
             },
         ],
         connections: vec![],

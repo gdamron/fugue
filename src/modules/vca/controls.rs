@@ -5,15 +5,15 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 
 /// Thread-safe controls for the Vca module.
 ///
-/// The VCA has a single control `cv` which is used as the amplitude multiplier
-/// when no CV signal is connected to the cv input port.
+/// The VCA has a single control `level` which is used as the amplitude
+/// multiplier when no signal is connected to the level input port.
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// let controls: VcaControls = handles.get("vca.controls").unwrap();
 ///
-/// // Set default CV level (used when no cv signal connected)
+/// // Set default level (used when no level signal connected)
 /// controls.set_cv(0.5);  // 50% amplitude
 /// ```
 #[derive(Clone)]
@@ -51,7 +51,7 @@ impl Default for VcaControls {
 impl ControlSurface for VcaControls {
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::number("cv", "Default CV level (when no signal connected)")
+            ControlMeta::number("level", "Default level (when no signal connected)")
                 .with_range(0.0, 1.0)
                 .with_default(self.cv()),
         ]
@@ -59,14 +59,14 @@ impl ControlSurface for VcaControls {
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
-            "cv" => Ok(self.cv().into()),
+            "level" => Ok(self.cv().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
-            "cv" => {
+            "level" => {
                 self.set_cv(value.as_number()?);
                 Ok(())
             }

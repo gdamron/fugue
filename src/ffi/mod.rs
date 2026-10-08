@@ -349,7 +349,7 @@ mod tests {
     fn ffi_engine_loads_and_renders() {
         let engine = fugue_engine_new(48_000);
         let module = CString::new("vca").unwrap();
-        let key = CString::new("cv").unwrap();
+        let key = CString::new("level").unwrap();
         let mut output = [0.0f32; 16];
 
         unsafe {

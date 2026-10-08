@@ -22,7 +22,7 @@ const VOICE_DEVELOPMENT: &str = r#"{
     ],
     "inputs": [ { "name": "frequency", "to": "osc", "to_port": "frequency" } ],
     "outputs": [ { "name": "audio", "from": "amp", "from_port": "audio" } ],
-    "controls": [ { "key": "cv", "module": "amp", "control": "cv" } ]
+    "controls": [ { "key": "level", "module": "amp", "control": "level" } ]
 }"#;
 
 fn invention_with_path_development(dir: &Path) -> PathBuf {
@@ -104,7 +104,7 @@ fn mutated_invention_round_trips_to_an_equivalent_graph() {
         .connect("lfo", "bipolar", "lead", "frequency")
         .unwrap();
     running
-        .set_control("lead", "cv", ControlValue::Number(0.7))
+        .set_control("lead", "level", ControlValue::Number(0.7))
         .unwrap();
 
     let document = running.document().expect("document retained");
@@ -122,7 +122,7 @@ fn mutated_invention_round_trips_to_an_equivalent_graph() {
         .iter()
         .find(|module| module.id == "lead")
         .expect("development instance present");
-    assert_eq!(lead.config["cv"], 0.7);
+    assert_eq!(lead.config["level"], 0.7);
     assert!(document
         .connections
         .iter()
@@ -138,7 +138,7 @@ fn mutated_invention_round_trips_to_an_equivalent_graph() {
     assert_eq!(snapshot.modules.len(), 3);
     assert_eq!(snapshot.connections.len(), 2);
     assert_eq!(
-        reloaded.get_control("lead", "cv").unwrap(),
+        reloaded.get_control("lead", "level").unwrap(),
         ControlValue::Number(0.7)
     );
     reloaded.stop();
@@ -151,7 +151,7 @@ fn integral_control_values_save_as_json_integers() {
     let running = start_from_file(&source);
 
     running
-        .set_control("lead", "cv", ControlValue::Number(16.0))
+        .set_control("lead", "level", ControlValue::Number(16.0))
         .unwrap();
     let document = running.document().expect("document retained");
     running.stop();
@@ -163,8 +163,8 @@ fn integral_control_values_save_as_json_integers() {
         .unwrap();
     // 16.0f32 lands as the integer 16, so a reload diff against an authored
     // integer sees no spurious change.
-    assert!(lead.config["cv"].is_i64(), "{:?}", lead.config["cv"]);
-    assert_eq!(lead.config["cv"], 16);
+    assert!(lead.config["level"].is_i64(), "{:?}", lead.config["level"]);
+    assert_eq!(lead.config["level"], 16);
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn transient_control_writes_stay_out_of_the_document() {
 
     running
         .snapshot()
-        .set_control_transient("lead", "cv", ControlValue::Number(0.9))
+        .set_control_transient("lead", "level", ControlValue::Number(0.9))
         .unwrap();
     let document = running.document().expect("document retained");
 
@@ -185,13 +185,13 @@ fn transient_control_writes_stay_out_of_the_document() {
         .find(|module| module.id == "lead")
         .unwrap();
     assert!(
-        lead.config.get("cv").is_none(),
+        lead.config.get("level").is_none(),
         "transient write leaked into the document: {:?}",
         lead.config
     );
     // The live control still changed.
     assert_eq!(
-        running.get_control("lead", "cv").unwrap(),
+        running.get_control("lead", "level").unwrap(),
         ControlValue::Number(0.9)
     );
     running.stop();
@@ -219,7 +219,7 @@ fn development_config_initializes_exposed_controls() {
         "version": "1.0.0",
         "developments": [ { "name": "voice", "path": "voice.json" } ],
         "modules": [
-            { "id": "lead", "type": "voice", "config": { "cv": 0.25 } },
+            { "id": "lead", "type": "voice", "config": { "level": 0.25 } },
             { "id": "dac", "type": "dac", "config": {} }
         ],
         "connections": [
@@ -231,7 +231,7 @@ fn development_config_initializes_exposed_controls() {
 
     let running = start_from_file(&path);
     assert_eq!(
-        running.get_control("lead", "cv").unwrap(),
+        running.get_control("lead", "level").unwrap(),
         ControlValue::Number(0.25)
     );
     running.stop();
