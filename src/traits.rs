@@ -211,6 +211,15 @@ pub trait ControlSurface: Send + Sync {
         let _ = (route, module);
     }
 
+    /// Opens a surface [`bound`](Self::bind) to a change still being
+    /// prepared to `route`, once that change has committed. Legacy surfaces
+    /// ignore it.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn activate(&self, route: Route) {
+        let _ = route;
+    }
+
     /// Refuses every later write: the module behind this surface was
     /// removed or replaced. Legacy surfaces ignore it.
     #[doc(hidden)]

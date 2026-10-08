@@ -11,6 +11,9 @@
 //!   is bound to run (what it was built with stands for the rest).
 //! - **Live**: a request through the live graph's queue, applied on the
 //!   audio thread at its sample.
+//! - **Prepared**: bound to a change not yet committed; writes are refused
+//!   until the change publishes the module (then **Live**), or for good if
+//!   it never does.
 //! - **Retired**: the module was removed or replaced; writes are refused.
 //!
 //! Reads come from the cells, which hold what each control was last set
@@ -40,6 +43,7 @@ pub(crate) enum Route {
     /// The controls written so far, each once.
     Building(Vec<ControlIndex>),
     Live(RequestPort),
+    Prepared,
     Retired,
 }
 
@@ -125,6 +129,7 @@ impl DeclaredSurface {
                 publisher.note_written();
                 Ok(())
             }
+            Route::Prepared => Err("This module is being installed; try again".into()),
             Route::Retired => Err("This module has been removed or replaced".into()),
         }
     }
@@ -186,6 +191,13 @@ impl ControlSurface for DeclaredSurface {
             }
         }
         *current = route;
+    }
+
+    fn activate(&self, route: Route) {
+        let mut current = self.route.lock().unwrap();
+        if matches!(*current, Route::Prepared) {
+            *current = route;
+        }
     }
 
     fn retire(&self) {

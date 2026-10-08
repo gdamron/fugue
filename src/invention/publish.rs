@@ -26,11 +26,11 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use super::declared::RequestPort;
 use super::graph::{RoutingConnection, SignalGraph};
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
-use super::declared::RequestPort;
 use crate::control_request::{OutcomeReceiver, RequestSender};
 use crate::ModuleRegistry;
 
@@ -155,14 +155,12 @@ impl LiveGraph {
     }
 
     fn change_on(&self, publisher: &Publisher) -> GraphChange {
-        let mut change = GraphChange::new(
+        GraphChange::new(
             publisher.generation(),
             publisher.mirror().clone(),
             self.control_surfaces.clone(),
             publisher.block_size(),
-        );
-        change.port = Some(self.port());
-        change
+        )
     }
 
     /// The request queue declared surfaces submit to, for any module.
@@ -314,9 +312,13 @@ impl LiveGraph {
                     surface.retire();
                 }
             }
+            // Published now, so each built module's writes are requests
+            // resolved against this generation, where it is the module.
+            let port = self.port();
             for (id, module) in &published.built {
                 match &module.surface {
                     Some(surface) => {
+                        surface.activate(port.to(id));
                         surfaces.insert(id.clone(), surface.clone());
                     }
                     None => {

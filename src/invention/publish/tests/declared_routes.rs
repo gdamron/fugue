@@ -40,6 +40,33 @@ fn a_write_while_building_is_adopted_when_the_module_runs() {
 }
 
 #[test]
+fn a_built_surface_takes_requests_only_once_its_change_commits() {
+    let mut rig = dial_rig();
+    let dial = rig.build("dial", "dial", serde_json::json!({}));
+    let built = dial.surface.clone().unwrap();
+    let mut change = rig.live.begin();
+    change.upsert("dial", dial);
+    let prepared = change.prepare().unwrap();
+    let refused = built.set_control("level", 0.5.into()).unwrap_err();
+    assert!(refused.contains("being installed"), "{refused}");
+
+    rig.live.commit(prepared).unwrap();
+    built.set_control("level", 0.5.into()).unwrap();
+    rig.render(1);
+    assert_eq!(level(&built), 0.5.into());
+
+    // A change that never commits leaves its surfaces refusing for good.
+    let dial = rig.build("dial", "dial", serde_json::json!({}));
+    let orphan = dial.surface.clone().unwrap();
+    let mut change = rig.live.begin();
+    change.upsert("dial", dial);
+    let stale = change.prepare().unwrap();
+    upsert(&rig, rig.build("dial", "dial", serde_json::json!({})));
+    assert!(rig.live.commit(stale).is_err());
+    assert!(orphan.set_control("level", 0.5.into()).is_err());
+}
+
+#[test]
 fn a_live_write_reads_back_once_the_audio_thread_applies_it() {
     let mut rig = dial_rig();
     let dial = surface(&rig, "dial");
