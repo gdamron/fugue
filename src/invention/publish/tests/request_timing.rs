@@ -284,6 +284,9 @@ fn a_held_request_that_expires_never_erases_the_one_before_it() {
     assert_eq!(
         outcomes(&mut rig),
         [
+            // Refused as the install maps them, before anything applies.
+            (never, Outcome::Refused(Refusal::Expired)),
+            (too_late, Outcome::Refused(Refusal::Expired)),
             (
                 first,
                 Outcome::AppliedLate {
@@ -291,8 +294,47 @@ fn a_held_request_that_expires_never_erases_the_one_before_it() {
                     due: start + 10
                 }
             ),
-            (never, Outcome::Refused(Refusal::Expired)),
-            (too_late, Outcome::Refused(Refusal::Expired)),
         ]
     );
+}
+
+/// Requests held for a publication and expired by the time it installs
+/// leave at the install, however far off their sample: otherwise a store
+/// full of them would back-pressure every producer until those samples.
+#[test]
+fn an_install_refuses_expired_held_requests_at_once_and_restores_intake() {
+    use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
+    let (mut rig, port) = oscillator_rig();
+    rig.hold_a_retirement();
+    let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
+    rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
+    // Fill the store, a queue at a time.
+    for batch in 0..(PENDING_REQUEST_CAPACITY / REQUEST_QUEUE_CAPACITY) as u64 {
+        for n in 0..REQUEST_QUEUE_CAPACITY as u64 {
+            let far = When::AfterSamples(1_000_000 + batch * 1_000 + n);
+            submit_with_ttl(&rig, "osc3", port, 0.5, far, 0);
+        }
+        assert_eq!(counted_block(&mut rig), (0, 0), "holding");
+    }
+    assert_eq!(
+        rig.graph.requests.as_ref().unwrap().pending.len(),
+        PENDING_REQUEST_CAPACITY
+    );
+    assert_eq!(outcomes(&mut rig), []);
+
+    rig.live.reclaim();
+    assert_eq!(counted_block(&mut rig), (0, 0), "installing");
+    let settled = outcomes(&mut rig);
+    assert_eq!(settled.len(), PENDING_REQUEST_CAPACITY);
+    assert!(settled
+        .iter()
+        .all(|(_, outcome)| *outcome == Outcome::Refused(Refusal::Expired)));
+    assert_eq!(rig.graph.requests.as_ref().unwrap().pending.len(), 0);
+
+    // Intake is open again at once.
+    let start = rig.graph.current_sample;
+    let id = submit(&rig, "osc3", port, 0.25, When::Now);
+    assert_eq!(counted_block(&mut rig), (0, 0), "after the install");
+    assert_eq!(frequency(&mut rig, "osc3", port), 0.25);
+    assert_eq!(outcomes(&mut rig), [(id, Outcome::Applied { at: start })]);
 }

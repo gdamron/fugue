@@ -270,30 +270,45 @@ impl PendingStore {
     /// Maps every entry resolved against a generation older than
     /// `installed` into it: `map` gives the module's index in the installed
     /// order, or `None` when its module went away, which settles the entry
-    /// refused ([`Refusal::TargetGone`]). Held entries stay as they are.
-    /// Allocation- and free-free.
+    /// refused ([`Refusal::TargetGone`]). Then settles refused
+    /// ([`Refusal::Expired`]) every entry of the installed generation that
+    /// can no longer apply by its `expires` sample, due or not: a request
+    /// held for this install was never checked, and one far in the future
+    /// would otherwise keep its room until its sample. Held entries stay as
+    /// they are.
+    ///
+    /// Runs in each block with an install's remaps in hand: one pass over
+    /// the store (at most its capacity), compacting in place. Allocation-
+    /// and free-free.
     pub(crate) fn remap(
         &mut self,
         installed: u64,
+        now: u64,
         mut map: impl FnMut(&ControlTarget) -> Option<usize>,
     ) {
         let gone = self.entries.extract_if(.., |e| {
             let target = &mut e.request.target;
-            if target.generation >= installed {
+            if target.generation > installed {
                 return false;
             }
-            match map(target) {
-                Some(module_idx) => {
-                    target.generation = installed;
-                    target.module_idx = module_idx;
-                    false
-                }
-                None => true,
+            if target.generation < installed {
+                let Some(module_idx) = map(target) else {
+                    return true;
+                };
+                target.generation = installed;
+                target.module_idx = module_idx;
             }
+            expired(&e.request, e.at.max(now))
         });
         for entry in gone {
+            // A target left in an older generation went away.
+            let refusal = if entry.request.target.generation < installed {
+                Refusal::TargetGone
+            } else {
+                Refusal::Expired
+            };
             self.outcomes
-                .settle(entry.request, Outcome::Refused(Refusal::TargetGone));
+                .settle(entry.request, Outcome::Refused(refusal));
         }
     }
 }

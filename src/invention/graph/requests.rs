@@ -146,12 +146,12 @@ impl SignalGraph {
             Disposition::Apply(new) => Some(new),
             Disposition::Hold | Disposition::Drop => None,
         };
+        let now = self.current_sample;
         if retired.is_some() {
-            drain.pending.remap(installed, |target| {
+            drain.pending.remap(installed, now, |target| {
                 map(self, target.generation, target.module_idx)
             });
         }
-        let now = self.current_sample;
         // Where a request lands: its target in the installed order and its
         // sample, or why it is refused: its module went away, or it could
         // only apply after its `expires` sample. A time already past keeps

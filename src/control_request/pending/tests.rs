@@ -119,7 +119,7 @@ fn remapping_rewrites_or_refuses_older_entries_only() {
     store.insert(request(3, target(INSTALLED + 1, 4, 0), 3.0), 10);
     store.insert(request(4, target(INSTALLED, 4, 0), 4.0), 10);
     // Module 3 moved to 1; module 4 went away.
-    store.remap(INSTALLED, |target| (target.module_idx == 3).then_some(1));
+    store.remap(INSTALLED, 0, |target| (target.module_idx == 3).then_some(1));
     assert_eq!(log(&outcomes), [(2, Outcome::Refused(Refusal::TargetGone))]);
     assert_eq!(apply_at(&mut store, 10), [(1, 0, 1.0), (4, 0, 4.0)]);
     assert_eq!(store.len(), 1, "the held entry stays");
@@ -158,7 +158,7 @@ fn pending_payloads_reserve_retire_room_until_they_settle() {
     // Superseding one, or refusing one, retires it and releases its room.
     store.insert(request(5, target(INSTALLED, 0, 0), 2.0), 10);
     let gone = |t: &ControlTarget| (t.module_idx != 1).then_some(t.module_idx);
-    store.remap(INSTALLED + 1, gone);
+    store.remap(INSTALLED + 1, 0, gone);
     assert!(store.outcomes.has_room_for_payload());
     take_payload(&mut store, 6, target(INSTALLED + 1, 6, 0), 10);
     assert_eq!(
