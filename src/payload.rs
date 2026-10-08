@@ -35,8 +35,9 @@
 //! thread. Modules, and the `Shared<T>`s they hold, are torn down off the
 //! audio thread, since graph publication retires them to the reclaimer.
 //! Release builds rely on this discipline; debug builds enforce it: inside
-//! an [`AudioThreadScope`], dropping a `Payload`, `Shared<T>` or [`Retired`]
-//! panics.
+//! an [`AudioThreadScope`](crate::audio_thread::AudioThreadScope) (which
+//! `SignalGraph::process_block` enters), dropping a `Payload`, `Shared<T>`
+//! or [`Retired`] panics.
 //!
 //! # Backpressure: defer at apply
 //!
@@ -59,10 +60,10 @@
 use std::any::Any;
 use std::collections::VecDeque;
 use std::fmt;
-use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use crate::audio_thread::on_audio_thread;
 use crate::spsc::{Producer, Ring};
 
 /// Retirements an engine's [`RetireQueue`] holds before its [`Retirer`]
@@ -300,53 +301,14 @@ impl Drop for Retirer {
     }
 }
 
-#[cfg(debug_assertions)]
-thread_local! {
-    static ON_AUDIO_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Marks the current thread as the audio thread until dropped, so debug
-/// builds catch payload drops there. Saves and restores the previous state,
-/// so scopes nest. A no-op in release builds; never allocates.
-// Same shape as FUG-308's `AudioBlockScope`; whichever lands second unifies
-// the two.
-#[must_use = "the scope ends when this value is dropped"]
-pub(crate) struct AudioThreadScope {
-    #[cfg(debug_assertions)]
-    outer: bool,
-    /// Tied to the thread whose flag it set.
-    _not_send: PhantomData<*const ()>,
-}
-
-impl AudioThreadScope {
-    #[inline]
-    pub(crate) fn enter() -> Self {
-        Self {
-            #[cfg(debug_assertions)]
-            outer: ON_AUDIO_THREAD.with(|flag| flag.replace(true)),
-            _not_send: PhantomData,
-        }
-    }
-}
-
-impl Drop for AudioThreadScope {
-    #[inline]
-    fn drop(&mut self) {
-        #[cfg(debug_assertions)]
-        ON_AUDIO_THREAD.with(|flag| flag.set(self.outer));
-    }
-}
-
 /// Panics in debug builds when `what` is dropped inside an
-/// [`AudioThreadScope`], unless the thread is already unwinding.
+/// [`AudioThreadScope`](crate::audio_thread::AudioThreadScope), unless the
+/// thread is already unwinding.
 #[inline]
 fn debug_assert_off_audio_thread(what: &str) {
-    #[cfg(debug_assertions)]
-    if ON_AUDIO_THREAD.try_with(std::cell::Cell::get) == Ok(true) && !std::thread::panicking() {
+    if on_audio_thread() {
         panic!("{what} was dropped on the audio thread: retire it instead");
     }
-    #[cfg(not(debug_assertions))]
-    let _ = what;
 }
 
 #[cfg(test)]

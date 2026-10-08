@@ -7,11 +7,9 @@ use std::sync::mpsc::{self, Receiver, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 
-use super::{
-    AudioThreadScope, Payload, RetireQueue, Retired, Retirer, Shared, MAX_RETIRES_PER_REQUEST,
-    RETIRE_HOLD,
-};
+use super::{Payload, RetireQueue, Retired, Retirer, Shared, MAX_RETIRES_PER_REQUEST, RETIRE_HOLD};
 use crate::alloc_counter::allocator_events;
+use crate::audio_thread::AudioThreadScope;
 
 /// Records which thread drops each [`Tracked`] value.
 #[derive(Clone, Default)]
@@ -444,12 +442,9 @@ fn a_queue_is_claimed_again_after_its_retirer_drops_and_frees_leftovers() {
 mod debug_checks {
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
-    use super::super::{AudioThreadScope, Payload, RetireQueue, Retirer, Shared, ON_AUDIO_THREAD};
+    use super::super::{Payload, RetireQueue, Retirer, Shared};
     use super::Retired;
-
-    fn on_audio_thread() -> bool {
-        ON_AUDIO_THREAD.with(std::cell::Cell::get)
-    }
+    use crate::audio_thread::{on_audio_thread, AudioThreadScope};
 
     /// Drops `value` inside an audio-thread scope; returns the panic message.
     fn drop_on_audio<T>(value: T) -> String {

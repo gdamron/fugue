@@ -31,6 +31,8 @@ mod sync {
     pub(super) use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
     pub(super) use std::sync::Arc;
 
+    pub(super) use crate::audio_thread::debug_assert_control_thread;
+
     /// `std`'s `UnsafeCell` behind `loom::cell::UnsafeCell`'s closure API,
     /// so the queue's slot accesses compile unchanged against loom, which
     /// checks every one of them for data races.

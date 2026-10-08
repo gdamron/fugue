@@ -269,3 +269,17 @@ fn overdue_requests_for_different_targets_apply_in_time_order() {
     let applied = Outcome::Applied { at: start };
     assert_eq!(outcomes(&mut rig), [(earlier, applied), (later, applied)]);
 }
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "request_channel called on the audio thread")]
+fn process_block_refuses_control_only_calls_in_debug() {
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    rig.graph.request_hook = Some(|_, _, _, _| {
+        drop(crate::control_request::request_channel(4));
+        Ok(())
+    });
+    submit(&rig, "osc1", 0, 0.5, When::Now);
+    rig.render(1);
+}

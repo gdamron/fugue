@@ -27,6 +27,9 @@ mod sync {
     pub(super) use loom::sync::Arc;
     pub(super) use loom::thread::yield_now as spin_loop;
 
+    /// The audio-thread scope is not modeled.
+    pub(super) fn debug_assert_control_thread(_what: &str) {}
+
     /// loom's `AtomicU64`, with every access also made a `Relaxed` RMW of
     /// a shadow atomic, so loom treats any two accesses as dependent and
     /// explores both of their orders (see the module docs). `Relaxed` RMWs
