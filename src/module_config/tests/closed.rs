@@ -50,6 +50,22 @@ fn a_declared_indexed_family_takes_every_index() {
 }
 
 #[test]
+fn a_dotted_control_that_is_not_indexed_is_taken_exactly() {
+    let voice = r#"{"version": "1.0.0", "connections": [],
+        "modules": [{"id": "osc", "type": "oscillator"}],
+        "controls": [{"key": "osc.frequency", "module": "osc", "control": "frequency"}]}"#;
+    let document = format!(
+        r#"{{"version": "1.0.0", "connections": [],
+            "developments": [{{"name": "voice", "definition": {voice}}}],
+            "modules": [{{"id": "v", "type": "voice", "config": {{"osc.frequency": 220.0}}}}]}}"#
+    );
+    let registry = ModuleRegistry::default().for_validation();
+    let built = InventionBuilder::with_registry(48_000, registry)
+        .build(Invention::from_json(&document).unwrap());
+    assert!(built.is_ok(), "{:?}", built.err());
+}
+
+#[test]
 fn a_sink_refuses_an_undeclared_key_before_it_opens_its_file() {
     let path = std::env::temp_dir().join(format!("fugue-closed-config-{}.wav", std::process::id()));
     let config = json!({ "path": path.to_string_lossy(), "max_secs": 1 });

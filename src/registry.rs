@@ -127,9 +127,9 @@ impl ModuleRegistry {
             // An indexed key past the family's current count (`degree.6`
             // written before the count shrank) is still the family's.
             let is_control = |key: &str| {
-                controls.iter().any(|meta| match meta.key.split_once('.') {
-                    Some((stem, _)) => declares(&format!("{stem}.N"), key),
-                    None => meta.key == key,
+                let family = indexed_stem(key);
+                controls.iter().any(|meta| {
+                    meta.key == key || (family.is_some() && indexed_stem(&meta.key) == family)
                 })
             };
             if let Some(key) = undeclared.into_iter().find(|key| !is_control(key)) {
@@ -202,12 +202,18 @@ impl ModuleRegistry {
 /// True when declared key `declared` names `key`: exactly, or as an indexed
 /// family `stem.N` that takes every `stem.0`, `stem.1`, ….
 fn declares(declared: &str, key: &str) -> bool {
-    match (declared.strip_suffix(".N"), key.split_once('.')) {
-        (Some(stem), Some((key_stem, index))) => {
-            stem == key_stem && !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit())
-        }
-        _ => declared == key,
+    match declared.strip_suffix(".N") {
+        Some(stem) => indexed_stem(key) == Some(stem),
+        None => declared == key,
     }
+}
+
+/// The stem of an indexed key (`level` of `level.3`), or `None` when `key`
+/// has no digit index (`osc.frequency`).
+fn indexed_stem(key: &str) -> Option<&str> {
+    let (stem, index) = key.split_once('.')?;
+    let digits = !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit());
+    digits.then_some(stem)
 }
 
 /// The refusal of config key `key`, listing the keys `type_id` takes, with
