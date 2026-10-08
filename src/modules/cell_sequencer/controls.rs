@@ -322,6 +322,11 @@ impl ControlSurface for CellSequencerControls {
             ControlMeta::number("steps", "Number of steps per sequence")
                 .with_range(1.0, MAX_STEPS as f32)
                 .with_default(self.steps() as f32),
+            ControlMeta::boolean(
+                "auto_steps",
+                "Wrap each cycle at the selected cell's own length instead of steps",
+                self.auto_steps(),
+            ),
             ControlMeta::number("gate_length", "Default gate length ratio")
                 .with_range(0.0, 1.0)
                 .with_default(self.gate_length()),
@@ -379,6 +384,7 @@ impl ControlSurface for CellSequencerControls {
         match key {
             "base_note" => Ok((self.base_note() as f32).into()),
             "steps" => Ok((self.steps() as f32).into()),
+            "auto_steps" => Ok(self.auto_steps().into()),
             "gate_length" => Ok(self.gate_length().into()),
             "selected_sequence" => Ok((self.selected_sequence() as f32).into()),
             "wait_for_cycle_end" => Ok(self.wait_for_cycle_end().into()),
@@ -400,6 +406,7 @@ impl ControlSurface for CellSequencerControls {
         match key {
             "base_note" => self.set_base_note(value.as_number()? as u8),
             "steps" => self.set_steps(value.as_number()? as usize),
+            "auto_steps" => self.set_auto_steps(value.as_bool()?),
             "gate_length" => self.set_gate_length(value.as_number()?),
             "selected_sequence" => self.set_selected_sequence(value.as_number()?.max(0.0) as usize),
             "wait_for_cycle_end" => self.set_wait_for_cycle_end(value.as_bool()?),
