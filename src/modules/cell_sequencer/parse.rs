@@ -8,9 +8,12 @@ pub(super) fn normalize_sequence_index(index: usize, len: usize) -> usize {
     }
 }
 
+/// Parses a sequence bank; a refused number names its path from `name`
+/// (`sequences[1][3].note`).
 pub(super) fn parse_sequence_bank(
     value: Option<&Value>,
-) -> Result<Vec<Vec<Step>>, Box<dyn std::error::Error>> {
+    name: &str,
+) -> Result<Vec<Vec<Step>>, StepError> {
     let Some(array) = value.and_then(|value| value.as_array()) else {
         return Ok(Vec::new());
     };
@@ -24,8 +27,8 @@ pub(super) fn parse_sequence_bank(
     }
 
     let mut bank = Vec::with_capacity(array.len());
-    for sequence in array {
-        let parsed = parse_pattern(Some(sequence))?;
+    for (index, sequence) in array.iter().enumerate() {
+        let parsed = parse_pattern(Some(sequence), &format!("{name}[{index}]"))?;
         if parsed.len() > MAX_STEPS {
             return Err(format!(
                 "each sequence may not contain more than {} steps",
@@ -41,5 +44,5 @@ pub(super) fn parse_sequence_bank(
 
 pub(crate) fn parse_sequence_bank_json(value: &str) -> Result<Vec<Vec<Step>>, String> {
     let value: Value = serde_json::from_str(value).map_err(|err| err.to_string())?;
-    parse_sequence_bank(Some(&value)).map_err(|err| err.to_string())
+    parse_sequence_bank(Some(&value), "sequences_json").map_err(|err| err.to_string())
 }

@@ -23,6 +23,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{finite_f32, whole_number, ConfigReader};
 use crate::modules::sample_loading::SampleData;
 use crate::Module;
 
@@ -34,9 +35,11 @@ mod outputs;
 
 pub struct SampleKitFactory;
 
+const TYPE_ID: &str = "sample_kit";
+
 impl ModuleFactory for SampleKitFactory {
     fn type_id(&self) -> &'static str {
-        "sample_kit"
+        TYPE_ID
     }
 
     fn build(
@@ -63,6 +66,7 @@ impl ModuleFactory for SampleKitFactory {
 /// Parses the `samples` slot list. A missing or null config builds an empty
 /// kit (module type discovery constructs every type with a null config).
 fn parse_config(config: &serde_json::Value) -> Result<Vec<SlotSpec>, String> {
+    let reader = ConfigReader::new(TYPE_ID, config);
     let Some(samples) = config.get("samples") else {
         return Ok(Vec::new());
     };
@@ -76,7 +80,7 @@ fn parse_config(config: &serde_json::Value) -> Result<Vec<SlotSpec>, String> {
             .as_object()
             .ok_or_else(|| format!("samples[{}] must be an object", index))?;
 
-        let key = parse_key(slot.get("key"), index)?;
+        let key = parse_key(slot.get("key"), index, &reader)?;
         if specs.iter().any(|spec| spec.key == key) {
             return Err(format!("samples[{}]: duplicate key '{}'", index, key));
         }
@@ -92,10 +96,11 @@ fn parse_config(config: &serde_json::Value) -> Result<Vec<SlotSpec>, String> {
         };
 
         let gain = match slot.get("gain") {
-            Some(value) => value
-                .as_f64()
-                .ok_or_else(|| format!("samples[{}]: 'gain' must be a number", index))?
-                as f32,
+            Some(value) => finite_f32(value).map_err(|r| {
+                reader
+                    .refuse(&format!("samples[{index}].gain"), r)
+                    .to_string()
+            })?,
             None => 1.0,
         };
 
@@ -107,20 +112,19 @@ fn parse_config(config: &serde_json::Value) -> Result<Vec<SlotSpec>, String> {
 /// A slot key is a JSON integer (trigger value / MIDI note number) or a
 /// non-numeric string name. Numeric strings are rejected so a name can never
 /// shadow an integer key in `trigger` lookups.
-fn parse_key(key: Option<&serde_json::Value>, index: usize) -> Result<SlotKey, String> {
+fn parse_key(
+    key: Option<&serde_json::Value>,
+    index: usize,
+    reader: &ConfigReader,
+) -> Result<SlotKey, String> {
     match key {
-        Some(serde_json::Value::Number(number)) => {
-            let value = number
-                .as_i64()
-                .filter(|value| i32::try_from(*value).is_ok())
-                .ok_or_else(|| {
-                    format!(
-                        "samples[{}]: 'key' must be an integer (e.g. a MIDI note)",
-                        index
-                    )
-                })?;
-            Ok(SlotKey::Number(value as i32))
-        }
+        Some(number @ serde_json::Value::Number(_)) => whole_number::<i32>(number)
+            .map(SlotKey::Number)
+            .map_err(|r| {
+                reader
+                    .refuse(&format!("samples[{index}].key"), r)
+                    .to_string()
+            }),
         Some(serde_json::Value::String(name)) => {
             let name = name.trim();
             if name.is_empty() {

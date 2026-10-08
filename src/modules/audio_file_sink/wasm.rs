@@ -9,10 +9,13 @@ use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use super::{AudioFileSink, AudioFileSinkHandle};
+use super::{AudioFileSink, AudioFileSinkHandle, TYPE_ID};
+use crate::module_config::{ConfigKey, ConfigReader};
 
 const WAV_HEADER_LEN: usize = 44;
 const WAV_FRAME_BYTES: usize = 8;
+pub(super) const MAX_FRAMES: ConfigKey = ConfigKey::int::<usize>("max_frames");
+pub(super) const MAX_SECONDS: ConfigKey = ConfigKey::float("max_seconds");
 
 /// Shared handle type used by [`AudioFileSink`] on wasm targets.
 pub(super) type SharedHandle = Arc<WasmAudioFileSinkShared>;
@@ -39,16 +42,17 @@ pub(super) fn max_frames(
     config: &serde_json::Value,
     sample_rate: u32,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    if let Some(max_frames) = config.get("max_frames").and_then(|value| value.as_u64()) {
+    let reader = ConfigReader::new(TYPE_ID, config);
+    if let Some(max_frames) = reader.int::<usize>(&MAX_FRAMES)? {
         if max_frames > 0 {
-            return Ok(max_frames as usize);
+            return Ok(max_frames);
         }
         return Err("audio_file_sink max_frames must be greater than zero".into());
     }
 
-    if let Some(max_seconds) = config.get("max_seconds").and_then(|value| value.as_f64()) {
-        if max_seconds.is_finite() && max_seconds > 0.0 {
-            return Ok((max_seconds * sample_rate as f64).ceil() as usize);
+    if let Some(max_seconds) = reader.float(&MAX_SECONDS)? {
+        if max_seconds > 0.0 {
+            return Ok((f64::from(max_seconds) * f64::from(sample_rate)).ceil() as usize);
         }
         return Err("audio_file_sink max_seconds must be greater than zero".into());
     }

@@ -56,7 +56,8 @@ use super::step_sequencer::grace::{clamp_per_grace, release_gap, GracePlayer, Gr
 pub(crate) use super::step_sequencer::grace::{
     DEFAULT_GRACE_DURATION_MS, DEFAULT_GRACE_VELOCITY, MAX_GRACE_DURATION_MS, MIN_GRACE_DURATION_MS,
 };
-use super::step_sequencer::{parse_pattern, GraceChain, Step};
+use super::step_sequencer::{parse_pattern, GraceChain, Step, StepError};
+use crate::module_config::{ConfigKey, ConfigReader};
 
 pub use self::controls::CellSequencerControls;
 
@@ -922,9 +923,28 @@ impl Module for CellSequencer {
 
 pub struct CellSequencerFactory;
 
+const TYPE_ID: &str = "cell_sequencer";
+const BASE_NOTE: ConfigKey = ConfigKey::int::<u8>("base_note");
+const STEPS: ConfigKey = ConfigKey::int::<usize>("steps");
+const GATE_LENGTH: ConfigKey = ConfigKey::float("gate_length");
+const SELECTED_SEQUENCE: ConfigKey = ConfigKey::int::<usize>("selected_sequence");
+const GRACE_DURATION_MS: ConfigKey = ConfigKey::float("grace_duration_ms");
+const GRACE_VELOCITY: ConfigKey = ConfigKey::float("grace_velocity");
+
 impl ModuleFactory for CellSequencerFactory {
     fn type_id(&self) -> &'static str {
-        "cell_sequencer"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[
+            BASE_NOTE,
+            STEPS,
+            GATE_LENGTH,
+            SELECTED_SEQUENCE,
+            GRACE_DURATION_MS,
+            GRACE_VELOCITY,
+        ]
     }
 
     fn build(
@@ -932,26 +952,11 @@ impl ModuleFactory for CellSequencerFactory {
         sample_rate: u32,
         config: &Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let base_note = config
-            .get("base_note")
-            .and_then(|value| value.as_u64())
-            .map(|value| value as u8)
-            .unwrap_or(DEFAULT_BASE_NOTE);
-        let steps = config
-            .get("steps")
-            .and_then(|value| value.as_u64())
-            .map(|value| value as usize)
-            .unwrap_or(DEFAULT_STEPS);
-        let gate_length = config
-            .get("gate_length")
-            .and_then(|value| value.as_f64())
-            .map(|value| value as f32)
-            .unwrap_or(DEFAULT_GATE_LENGTH);
-        let selected_sequence = config
-            .get("selected_sequence")
-            .and_then(|value| value.as_u64())
-            .map(|value| value as usize)
-            .unwrap_or(0);
+        let reader = ConfigReader::new(TYPE_ID, config);
+        let base_note = reader.int::<u8>(&BASE_NOTE)?.unwrap_or(DEFAULT_BASE_NOTE);
+        let steps = reader.int::<usize>(&STEPS)?.unwrap_or(DEFAULT_STEPS);
+        let gate_length = reader.float(&GATE_LENGTH)?.unwrap_or(DEFAULT_GATE_LENGTH);
+        let selected_sequence = reader.int::<usize>(&SELECTED_SEQUENCE)?.unwrap_or(0);
         let wait_for_cycle_end = config
             .get("wait_for_cycle_end")
             .and_then(|value| value.as_bool())
@@ -962,9 +967,10 @@ impl ModuleFactory for CellSequencerFactory {
             .get("sequences_json")
             .and_then(|value| value.as_str())
         {
-            Some(json) => parse::parse_sequence_bank_json(json)?,
-            None => parse_sequence_bank(config.get("sequences"))?,
-        };
+            Some(json) => parse_sequence_bank(Some(&serde_json::from_str(json)?), "sequences_json"),
+            None => parse_sequence_bank(config.get("sequences"), "sequences"),
+        }
+        .map_err(|error| error.refused_by(&reader))?;
 
         let controls = CellSequencerControls::new_with_values(
             base_note,
@@ -980,17 +986,11 @@ impl ModuleFactory for CellSequencerFactory {
         if let Some(mode) = config.get("mode").and_then(|value| value.as_str()) {
             controls.set_mode(mode)?;
         }
-        if let Some(ms) = config
-            .get("grace_duration_ms")
-            .and_then(|value| value.as_f64())
-        {
-            controls.set_grace_duration_ms(ms as f32);
+        if let Some(ms) = reader.float(&GRACE_DURATION_MS)? {
+            controls.set_grace_duration_ms(ms);
         }
-        if let Some(scale) = config
-            .get("grace_velocity")
-            .and_then(|value| value.as_f64())
-        {
-            controls.set_grace_velocity(scale as f32);
+        if let Some(scale) = reader.float(&GRACE_VELOCITY)? {
+            controls.set_grace_velocity(scale);
         }
         if let Some(placement) = config
             .get("grace_placement")

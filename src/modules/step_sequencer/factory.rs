@@ -1,4 +1,5 @@
 use super::*;
+use crate::module_config::{ConfigKey, ConfigReader};
 
 /// Factory for constructing StepSequencer modules from configuration.
 ///
@@ -39,9 +40,19 @@ use super::*;
 /// ```
 pub struct StepSequencerFactory;
 
+const TYPE_ID: &str = "step_sequencer";
+const BASE_NOTE: ConfigKey = ConfigKey::int::<u8>("base_note");
+const STEPS: ConfigKey = ConfigKey::int::<usize>("steps");
+const GATE_LENGTH: ConfigKey = ConfigKey::float("gate_length");
+const GRACE_DURATION_MS: ConfigKey = ConfigKey::float("grace_duration_ms");
+
 impl ModuleFactory for StepSequencerFactory {
     fn type_id(&self) -> &'static str {
-        "step_sequencer"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[BASE_NOTE, STEPS, GATE_LENGTH, GRACE_DURATION_MS]
     }
 
     fn build(
@@ -49,37 +60,25 @@ impl ModuleFactory for StepSequencerFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let base_note = config
-            .get("base_note")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u8)
-            .unwrap_or(DEFAULT_BASE_NOTE);
-
-        let steps = config
-            .get("steps")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize)
-            .unwrap_or(DEFAULT_STEPS);
-
-        let gate_length = config
-            .get("gate_length")
-            .and_then(|v| v.as_f64())
-            .map(|v| v as f32)
-            .unwrap_or(DEFAULT_GATE_LENGTH);
+        let reader = ConfigReader::new(TYPE_ID, config);
+        let base_note = reader.int::<u8>(&BASE_NOTE)?.unwrap_or(DEFAULT_BASE_NOTE);
+        let steps = reader.int::<usize>(&STEPS)?.unwrap_or(DEFAULT_STEPS);
+        let gate_length = reader.float(&GATE_LENGTH)?.unwrap_or(DEFAULT_GATE_LENGTH);
 
         // `pattern_json` is the pattern control's key, which an authored
         // write records; it wins over `pattern`.
         let pattern = match config.get("pattern_json").and_then(|value| value.as_str()) {
-            Some(json) => parse_pattern(Some(&serde_json::from_str(json)?))?,
-            None => parse_pattern(config.get("pattern"))?,
-        };
+            Some(json) => parse_pattern(Some(&serde_json::from_str(json)?), "pattern_json"),
+            None => parse_pattern(config.get("pattern"), "pattern"),
+        }
+        .map_err(|error| error.refused_by(&reader))?;
 
         let controls = StepSequencerControls::new_with_values(base_note, steps, gate_length);
         if let Some(mode) = config.get("mode").and_then(|v| v.as_str()) {
             controls.set_mode(mode)?;
         }
-        if let Some(ms) = config.get("grace_duration_ms").and_then(|v| v.as_f64()) {
-            controls.set_grace_duration_ms(ms as f32);
+        if let Some(ms) = reader.float(&GRACE_DURATION_MS)? {
+            controls.set_grace_duration_ms(ms);
         }
         if let Some(placement) = config.get("grace_placement").and_then(|v| v.as_str()) {
             controls.set_grace_placement(placement)?;

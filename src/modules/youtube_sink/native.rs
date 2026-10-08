@@ -97,7 +97,7 @@ pub(super) fn from_json_with_env(
         .entry("gop_seconds".to_string())
         .or_insert_with(|| Value::from(2));
 
-    RtmpSinkConfig::from_json(&Value::Object(mapped), sample_rate)
+    RtmpSinkConfig::from_json_as("youtube_sink", &Value::Object(mapped), sample_rate)
 }
 
 fn optional_nonempty_string(
@@ -184,6 +184,16 @@ mod tests {
         assert_eq!(config.sample_rate, 44_100);
         assert_eq!(config.background_video.as_deref(), Some("./loop.mp4"));
         assert_eq!(config.tee_to_disk.as_deref(), Some("./broadcast.mkv"));
+    }
+
+    #[test]
+    fn numbers_are_refused_in_the_youtube_sink_name() {
+        let config = json!({ "stream_key": "key", "fps": 59.5 });
+        let error = from_json_with_env(&config, 48_000, |_| None).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "youtube_sink config 'fps' expects a whole number from 0 to 4294967295, got 59.5"
+        );
     }
 
     #[test]

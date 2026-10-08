@@ -13,6 +13,29 @@ use crate::streaming::video::{
 };
 
 use super::{RtmpSink, RtmpSinkHandle, RtmpSinkStats};
+use crate::module_config::{ConfigKey, ConfigReader};
+
+const WIDTH: ConfigKey = ConfigKey::int::<u32>("width");
+const HEIGHT: ConfigKey = ConfigKey::int::<u32>("height");
+const FPS: ConfigKey = ConfigKey::int::<u32>("fps");
+const GOP_SECONDS: ConfigKey = ConfigKey::int::<u32>("gop_seconds");
+const BUFFER_FRAMES: ConfigKey = ConfigKey::int::<usize>("buffer_frames");
+const VIDEO_QUEUE_FRAMES: ConfigKey = ConfigKey::int::<usize>("video_queue_frames");
+// Whole kbps, or text such as "2500k".
+const VIDEO_BITRATE: ConfigKey = ConfigKey::int::<u64>("video_bitrate");
+const AUDIO_BITRATE: ConfigKey = ConfigKey::int::<u64>("audio_bitrate");
+
+/// The numeric keys of `rtmp_sink` config, which `youtube_sink` passes on.
+pub(crate) const CONFIG_KEYS: &[ConfigKey] = &[
+    WIDTH,
+    HEIGHT,
+    FPS,
+    GOP_SECONDS,
+    BUFFER_FRAMES,
+    VIDEO_QUEUE_FRAMES,
+    VIDEO_BITRATE,
+    AUDIO_BITRATE,
+];
 
 #[derive(Clone)]
 pub(super) struct SharedHandle {
@@ -56,29 +79,39 @@ impl RtmpSinkConfig {
         config: &serde_json::Value,
         sample_rate: u32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::from_json_as("rtmp_sink", config, sample_rate)
+    }
+
+    /// Like [`Self::from_json`], naming `module_type` in number refusals.
+    pub(crate) fn from_json_as(
+        module_type: &str,
+        config: &serde_json::Value,
+        sample_rate: u32,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let config = &ConfigReader::new(module_type, config);
         let url = required_string(config, "url")?;
         let (width, height) = parse_dimensions(config)?;
         if width == 0 || height == 0 {
             return Err("rtmp_sink width and height must be greater than zero".into());
         }
 
-        let fps = optional_u32(config, "fps", 30)?;
+        let fps = optional_u32(config, &FPS, 30)?;
         if fps == 0 {
             return Err("rtmp_sink fps must be greater than zero".into());
         }
 
-        let gop_seconds = optional_u32(config, "gop_seconds", 2)?;
+        let gop_seconds = optional_u32(config, &GOP_SECONDS, 2)?;
         if gop_seconds == 0 {
             return Err("rtmp_sink gop_seconds must be greater than zero".into());
         }
 
-        let buffer_frames = optional_usize(config, "buffer_frames", DEFAULT_AUDIO_BUFFER_FRAMES)?;
+        let buffer_frames = optional_usize(config, &BUFFER_FRAMES, DEFAULT_AUDIO_BUFFER_FRAMES)?;
         if buffer_frames == 0 {
             return Err("rtmp_sink buffer_frames must be greater than zero".into());
         }
 
         let video_queue_frames =
-            optional_usize(config, "video_queue_frames", DEFAULT_VIDEO_QUEUE_FRAMES)?;
+            optional_usize(config, &VIDEO_QUEUE_FRAMES, DEFAULT_VIDEO_QUEUE_FRAMES)?;
         if video_queue_frames == 0 {
             return Err("rtmp_sink video_queue_frames must be greater than zero".into());
         }
@@ -93,8 +126,8 @@ impl RtmpSinkConfig {
             sample_rate,
             video_encoder: optional_string(config, "video_encoder", "libx264"),
             audio_encoder: optional_string(config, "audio_encoder", "aac"),
-            video_bitrate: optional_bitrate(config, "video_bitrate", "2500k")?,
-            audio_bitrate: optional_bitrate(config, "audio_bitrate", "128k")?,
+            video_bitrate: optional_bitrate(config, &VIDEO_BITRATE, "2500k")?,
+            audio_bitrate: optional_bitrate(config, &AUDIO_BITRATE, "128k")?,
             gop_seconds,
             buffer_frames,
             video_queue_frames,
@@ -297,10 +330,7 @@ impl From<FfmpegStreamStats> for RtmpSinkStats {
     }
 }
 
-fn required_string(
-    config: &serde_json::Value,
-    key: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+fn required_string(config: &ConfigReader, key: &str) -> Result<String, Box<dyn std::error::Error>> {
     config
         .get(key)
         .and_then(|value| value.as_str())
@@ -308,11 +338,11 @@ fn required_string(
         .ok_or_else(|| format!("rtmp_sink requires config.{key}").into())
 }
 
-fn parse_dimensions(config: &serde_json::Value) -> Result<(u32, u32), Box<dyn std::error::Error>> {
+fn parse_dimensions(config: &ConfigReader) -> Result<(u32, u32), Box<dyn std::error::Error>> {
     match (config.get("width"), config.get("height")) {
         (Some(_), Some(_)) => Ok((
-            required_u32(config, "width")?,
-            required_u32(config, "height")?,
+            required_u32(config, &WIDTH)?,
+            required_u32(config, &HEIGHT)?,
         )),
         (None, None) => parse_resolution(config),
         _ => Err(
@@ -321,7 +351,7 @@ fn parse_dimensions(config: &serde_json::Value) -> Result<(u32, u32), Box<dyn st
     }
 }
 
-fn parse_resolution(config: &serde_json::Value) -> Result<(u32, u32), Box<dyn std::error::Error>> {
+fn parse_resolution(config: &ConfigReader) -> Result<(u32, u32), Box<dyn std::error::Error>> {
     let resolution = config
         .get("resolution")
         .and_then(|value| value.as_str())
@@ -339,7 +369,7 @@ fn parse_resolution(config: &serde_json::Value) -> Result<(u32, u32), Box<dyn st
     Ok((width, height))
 }
 
-fn optional_string(config: &serde_json::Value, key: &str, default: &str) -> String {
+fn optional_string(config: &ConfigReader, key: &str, default: &str) -> String {
     config
         .get(key)
         .and_then(|value| value.as_str())
@@ -348,7 +378,7 @@ fn optional_string(config: &serde_json::Value, key: &str, default: &str) -> Stri
 }
 
 fn optional_string_value(
-    config: &serde_json::Value,
+    config: &ConfigReader,
     key: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     match config.get(key) {
@@ -359,7 +389,7 @@ fn optional_string_value(
 }
 
 fn optional_nonempty_string_value(
-    config: &serde_json::Value,
+    config: &ConfigReader,
     key: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     match optional_string_value(config, key)? {
@@ -370,53 +400,47 @@ fn optional_nonempty_string_value(
     }
 }
 
+/// A bitrate as text (`"2500k"`) or as whole kbps.
 fn optional_bitrate(
-    config: &serde_json::Value,
-    key: &str,
+    config: &ConfigReader,
+    key: &ConfigKey,
     default: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    match config.get(key) {
-        Some(value) if value.is_string() => Ok(value.as_str().unwrap().to_string()),
-        Some(value) if value.is_u64() => Ok(format!("{}k", value.as_u64().unwrap())),
-        Some(_) => Err(format!("rtmp_sink config.{key} must be a string or integer kbps").into()),
-        None => Ok(default.to_string()),
+    match config.get(key.key) {
+        Some(serde_json::Value::String(text)) => Ok(text.clone()),
+        Some(serde_json::Value::Number(_)) | None => Ok(config
+            .int::<u64>(key)?
+            .map_or_else(|| default.to_string(), |kbps| format!("{kbps}k"))),
+        Some(_) => Err(format!(
+            "rtmp_sink config.{} must be a string or integer kbps",
+            key.key
+        )
+        .into()),
     }
 }
 
-fn required_u32(config: &serde_json::Value, key: &str) -> Result<u32, Box<dyn std::error::Error>> {
-    let value = config
-        .get(key)
-        .and_then(|value| value.as_u64())
-        .ok_or_else(|| format!("rtmp_sink requires numeric config.{key}"))?;
-    u32::try_from(value).map_err(|_| format!("rtmp_sink config.{key} is too large").into())
+fn required_u32(config: &ConfigReader, key: &ConfigKey) -> Result<u32, Box<dyn std::error::Error>> {
+    let value = config.int::<u32>(key)?;
+    Ok(value.ok_or_else(|| format!("rtmp_sink requires numeric config.{}", key.key))?)
 }
 
 fn optional_u32(
-    config: &serde_json::Value,
-    key: &str,
+    config: &ConfigReader,
+    key: &ConfigKey,
     default: u32,
 ) -> Result<u32, Box<dyn std::error::Error>> {
-    match config.get(key).and_then(|value| value.as_u64()) {
-        Some(value) => {
-            u32::try_from(value).map_err(|_| format!("rtmp_sink config.{key} is too large").into())
-        }
-        None => Ok(default),
-    }
+    Ok(config.int::<u32>(key)?.unwrap_or(default))
 }
 
 fn optional_usize(
-    config: &serde_json::Value,
-    key: &str,
+    config: &ConfigReader,
+    key: &ConfigKey,
     default: usize,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    match config.get(key).and_then(|value| value.as_u64()) {
-        Some(value) => usize::try_from(value)
-            .map_err(|_| format!("rtmp_sink config.{key} is too large").into()),
-        None => Ok(default),
-    }
+    Ok(config.int::<usize>(key)?.unwrap_or(default))
 }
 
-fn optional_bool(config: &serde_json::Value, key: &str, default: bool) -> bool {
+fn optional_bool(config: &ConfigReader, key: &str, default: bool) -> bool {
     config
         .get(key)
         .and_then(|value| value.as_bool())
@@ -548,6 +572,26 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("tee_to_disk"));
+    }
+
+    #[test]
+    fn numbers_read_whole_floats_and_are_refused_by_name() {
+        let mut config = minimal_config();
+        config["fps"] = json!(60.0);
+        config["video_bitrate"] = json!(4500.0);
+        config["audio_bitrate"] = json!("96k");
+        let parsed = RtmpSinkConfig::from_json(&config, 48_000).unwrap();
+        assert_eq!(parsed.fps, 60);
+        assert_eq!(parsed.video_bitrate, "4500k");
+        assert_eq!(parsed.audio_bitrate, "96k");
+
+        for (key, value) in [("width", json!(640.5)), ("audio_bitrate", json!(128.5))] {
+            let mut config = minimal_config();
+            config[key] = value;
+            let error = RtmpSinkConfig::from_json(&config, 48_000).unwrap_err();
+            let expected = format!("rtmp_sink config '{key}' expects a whole number");
+            assert!(error.to_string().starts_with(&expected), "{error}");
+        }
     }
 
     #[test]

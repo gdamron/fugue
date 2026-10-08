@@ -34,6 +34,8 @@ use wasm::SharedHandle;
 
 pub struct AudioFileSinkFactory;
 
+const TYPE_ID: &str = "audio_file_sink";
+
 impl ModuleFactory for AudioFileSinkFactory {
     fn build_for_inspection(
         &self,
@@ -51,7 +53,14 @@ impl ModuleFactory for AudioFileSinkFactory {
     }
 
     fn type_id(&self) -> &'static str {
-        "audio_file_sink"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        #[cfg(not(target_arch = "wasm32"))]
+        return &[native::BUFFER_FRAMES];
+        #[cfg(target_arch = "wasm32")]
+        return &[wasm::MAX_FRAMES, wasm::MAX_SECONDS];
     }
 
     fn build(
