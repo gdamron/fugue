@@ -126,6 +126,19 @@ impl ControlSurface for DevelopmentControlSurface {
         }
     }
 
+    /// Whether any alias of `key` is a declared control. Automation cannot
+    /// write through a development yet, so a schedule targeting such a key
+    /// is refused rather than reach a declared setter from the audio thread.
+    fn declares(&self, key: &str) -> bool {
+        self.controls
+            .iter()
+            .filter(|entry| entry.meta.key == key)
+            .any(|entry| {
+                let surface = self.surfaces.get(&entry.module_id);
+                surface.is_some_and(|surface| surface.declares(&entry.key))
+            })
+    }
+
     /// Validates the write against every internal control `key` aliases.
     /// Inner surfaces resolve against the development's own directory, as
     /// their setters do, never against the outer candidate's.
