@@ -5,8 +5,9 @@
 //! bounded, allocation-free MPSC queue ([`bounded`]). The audio thread is
 //! the queue's only consumer and the only mutator of module control state,
 //! and it reports what became of each request through an outcome channel
-//! ([`outcome_channel`]). Modules name their controls with typed
-//! [`ControlKey`]s.
+//! ([`outcome_channel`]). Modules declare their controls in a
+//! [`ControlTable`], which control threads resolve keys and coerce values
+//! against.
 //!
 //! Every ordering argument lives in [`queue`](self::queue) and [`EventCounter`],
 //! and the `loom_tests` models check the shipped source files against loom's
@@ -18,6 +19,7 @@
 //! and `unused_imports` allowance below; remove it once they land.
 #![allow(dead_code, unused_imports)]
 
+mod declare;
 mod event;
 mod key;
 mod outcome;
@@ -57,6 +59,7 @@ mod sync {
     }
 }
 
+pub(crate) use declare::{ControlDecl, ControlTable, DeclKind, Writer};
 pub(crate) use event::{EventCounter, EventCursor};
 pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
 pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
