@@ -80,11 +80,9 @@
 
 use super::publication::{Disposition, Publication};
 use super::SignalGraph;
-#[cfg(test)]
-use crate::control_request::RtValue;
 use crate::control_request::{
     apply_declared, ControlIndex, Outcome, OutcomeSender, PendingStore, QueueConsumer, Refusal,
-    Request, RequestValue, When,
+    Request, RequestValue, RtValue, When,
 };
 use crate::payload::Retirer;
 
@@ -269,6 +267,19 @@ impl SignalGraph {
                 Err(Refusal::Unsupported)
             }
         }
+    }
+
+    /// Applies `value` to declared control `control` of module `module_id`
+    /// at once: an offline render's control write, made under the lock its
+    /// renders take (see [`crate::invention::declared::Route`]).
+    pub(crate) fn apply_control(
+        &mut self,
+        module_id: &str,
+        control: ControlIndex,
+        value: RtValue,
+    ) -> Result<(), Refusal> {
+        let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
+        apply_declared(instance.module_mut(), control, value)
     }
 
     /// A [`RequestHook`] applying an `F32` request as an input write, with

@@ -1,10 +1,11 @@
 //! A declared module's surface: what a write does while the module is
-//! building, running live, or gone.
+//! building, running live, running in an offline render, or gone.
 
-use super::declared::dial_rig;
+use super::declared::{dial_rig, DialFactory};
 use super::requests::{counted_block, outcomes};
 use super::*;
 use crate::control_request::Outcome;
+use crate::invention::declared::{add_offline, remove_offline, retire_offline, Route};
 use crate::ControlValue;
 
 fn surface(rig: &Rig, id: &str) -> ControlSurfaceInstance {
@@ -126,4 +127,129 @@ fn a_live_write_is_refused_once_the_audio_graph_is_gone() {
     let refused = dial.set_control("level", 0.5.into()).unwrap_err();
     assert!(refused.contains("stopped"), "{refused}");
     drop(live);
+}
+
+#[test]
+fn an_offline_write_applies_at_once_under_the_render_lock() {
+    let graph = Arc::new(Mutex::new(SignalGraph::new(
+        IndexMap::new(),
+        Vec::new(),
+        Vec::new(),
+        MasterObservers::default(),
+    )));
+    let mut registry = ModuleRegistry::default();
+    registry.register(DialFactory);
+    let build = || {
+        GraphChange::build(
+            &registry,
+            SAMPLE_RATE,
+            "dial",
+            "dial",
+            &serde_json::json!({}),
+        )
+    };
+    let surfaces = Mutex::new(IndexMap::new());
+    let dial = build().unwrap();
+    let first = dial.surface.clone().unwrap();
+    first.set_control("level", 0.5.into()).unwrap();
+    add_offline(
+        &graph,
+        &surfaces,
+        "dial",
+        dial.instance.unwrap(),
+        Some(first.clone()),
+    )
+    .unwrap();
+
+    first.set_control("level", 0.75.into()).unwrap();
+    assert_eq!(level(&first), 0.75.into(), "applied at once");
+    let module = |graph: &Arc<Mutex<SignalGraph>>| {
+        let mut graph = graph.lock().unwrap();
+        let module = graph.modules["dial"].module_mut();
+        module.process(1);
+        module.output_block(0)[0]
+    };
+    assert_eq!(module(&graph), 0.75);
+
+    let second = build().unwrap();
+    let surface = second.surface.clone().unwrap();
+    add_offline(
+        &graph,
+        &surfaces,
+        "dial",
+        second.instance.unwrap(),
+        Some(surface.clone()),
+    )
+    .unwrap();
+    assert!(first.set_control("level", 0.5.into()).is_err(), "displaced");
+    assert!(Arc::ptr_eq(&surfaces.lock().unwrap()["dial"], &surface));
+    assert_eq!(
+        module(&graph),
+        0.25,
+        "the replacement starts from its own state"
+    );
+
+    // A displaced surface stays retired even if something binds it again.
+    let mut graph_lock = graph.lock().unwrap();
+    first.bind(Route::Retired, graph_lock.modules["dial"].module_mut());
+    drop(graph_lock);
+    assert!(first.set_control("level", 0.5.into()).is_err());
+
+    remove_offline(&graph, &surfaces, "dial").unwrap();
+    assert!(surfaces.lock().unwrap().is_empty());
+    assert!(surface.set_control("level", 0.5.into()).is_err());
+}
+
+#[test]
+fn a_replaced_render_refuses_writes_through_its_old_surfaces() {
+    let graph = Arc::new(Mutex::new(SignalGraph::new(
+        IndexMap::new(),
+        Vec::new(),
+        Vec::new(),
+        MasterObservers::default(),
+    )));
+    let mut registry = ModuleRegistry::default();
+    registry.register(DialFactory);
+    let surfaces = Mutex::new(IndexMap::new());
+    let dial = GraphChange::build(
+        &registry,
+        SAMPLE_RATE,
+        "dial",
+        "dial",
+        &serde_json::json!({}),
+    )
+    .unwrap();
+    let surface = dial.surface.clone().unwrap();
+    add_offline(
+        &graph,
+        &surfaces,
+        "dial",
+        dial.instance.unwrap(),
+        Some(surface.clone()),
+    )
+    .unwrap();
+    // A controller may keep the old graph alive past its replacement, and
+    // an edit through it may still be in flight.
+    let late = GraphChange::build(
+        &registry,
+        SAMPLE_RATE,
+        "late",
+        "dial",
+        &serde_json::json!({}),
+    )
+    .unwrap();
+    retire_offline(&graph, &surfaces);
+    assert!(surface.set_control("level", 0.5.into()).is_err());
+    let late_surface = late.surface.clone().unwrap();
+    assert!(add_offline(
+        &graph,
+        &surfaces,
+        "late",
+        late.instance.unwrap(),
+        late.surface
+    )
+    .is_err());
+    assert!(late_surface.set_control("level", 0.5.into()).is_err());
+    assert!(!graph.lock().unwrap().modules.contains_key("late"));
+    assert!(remove_offline(&graph, &surfaces, "dial").is_err());
 }

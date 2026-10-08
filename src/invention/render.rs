@@ -322,15 +322,20 @@ impl RenderEngine {
         self.agents.stop_all();
         runtime.state.lock().unwrap().running = true;
 
+        if let Some(previous) = &self.graph {
+            super::declared::retire_offline(previous, &self.control_surfaces);
+        }
         *self.module_ports.lock().unwrap() = module_ports(&runtime.modules);
-        self.graph = Some(Arc::new(Mutex::new(SignalGraph::new(
+        let graph = Arc::new(Mutex::new(SignalGraph::new(
             runtime.modules,
             runtime.sinks,
             runtime.routing,
             // Offline render has no sampler: a meter nobody drains, and no
             // spectrum ring.
             super::graph::MasterObservers::default(),
-        ))));
+        )));
+        super::declared::bind_offline(&graph, &runtime.control_surfaces);
+        self.graph = Some(graph);
         self.registry = runtime.registry;
         self.state = runtime.state;
         // Adopt the runtime's directory (rather than copying its contents)

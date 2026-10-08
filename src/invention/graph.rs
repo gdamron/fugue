@@ -177,6 +177,9 @@ pub(crate) struct SignalGraph {
     pub(crate) block_size: usize,
     /// Flag indicating topology changed and derived state needs recomputation.
     pub(crate) topo_dirty: bool,
+    /// An offline render's graph that a new render replaced: no module is
+    /// added to it or removed from it again (see `declared::retire_offline`).
+    pub(crate) retired: bool,
     /// Observers of the mixed master output (peak meter, spectrum tap), fed
     /// once per block for off-thread samplers to read.
     pub(crate) master: MasterObservers,
@@ -212,6 +215,7 @@ impl SignalGraph {
             block_capacity: 0,
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
+            retired: false,
             master,
         }
     }
