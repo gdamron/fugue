@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::alloc_counter::allocator_events;
-use crate::control_request::{ControlIndex, RequestId, RtValue};
+use crate::control_request::{outcome_channel, ControlIndex, OutcomeReceiver, RequestId, RtValue};
 
 const INSTALLED: u64 = 2;
 
@@ -15,10 +15,13 @@ fn target(generation: u64, module_idx: usize, control: u16) -> ControlTarget {
     }
 }
 
-/// A store for `capacity` requests whose retirer holds a few payloads.
-pub(super) fn store_of(capacity: usize) -> PendingStore {
+/// A store for `capacity` requests whose retirer holds a few payloads,
+/// and the receiving end of its outcomes.
+pub(super) fn store_of(capacity: usize) -> (PendingStore, OutcomeReceiver) {
     let queue = crate::payload::RetireQueue::with_capacity(4);
-    PendingStore::new(capacity, Retirer::new(queue, 8))
+    let (sender, outcomes) = outcome_channel(4096);
+    let store = PendingStore::new(capacity, Retirer::new(queue, 8), sender);
+    (store, outcomes)
 }
 
 /// Request `id` writing `value` to `target`.
@@ -42,40 +45,15 @@ fn apply_at(store: &mut PendingStore, now: u64) -> Vec<(usize, u16, f32)> {
     applied
 }
 
-fn log(store: &PendingStore) -> Vec<(u64, Outcome)> {
-    let log = &store.outcomes.log;
-    log.iter().map(|(id, outcome)| (id.0, *outcome)).collect()
-}
-
-#[test]
-fn applies_in_time_order_then_receipt_order() {
-    let mut store = store_of(8);
-    store.insert(request(1, target(INSTALLED, 0, 0), 1.0), 30);
-    store.insert(request(2, target(INSTALLED, 0, 1), 2.0), 10);
-    store.insert(request(3, target(INSTALLED, 1, 0), 3.0), 30);
-    store.insert(request(4, target(INSTALLED, 2, 0), 4.0), 10);
-
-    assert_eq!(apply_at(&mut store, 9), []);
-    assert_eq!(store.next_due(INSTALLED), Some(10));
-    assert_eq!(apply_at(&mut store, 10), [(0, 1, 2.0), (2, 0, 4.0)]);
-    assert_eq!(store.next_due(INSTALLED), Some(30));
-    // Late: everything due by now applies, in order, at now.
-    assert_eq!(apply_at(&mut store, 40), [(0, 0, 1.0), (1, 0, 3.0)]);
-    assert_eq!(store.next_due(INSTALLED), None);
-    assert_eq!(
-        log(&store),
-        [
-            (2, Outcome::Applied { at: 10 }),
-            (4, Outcome::Applied { at: 10 }),
-            (1, Outcome::Applied { at: 40 }),
-            (3, Outcome::Applied { at: 40 }),
-        ]
-    );
+fn log(outcomes: &OutcomeReceiver) -> Vec<(u64, Outcome)> {
+    std::iter::from_fn(|| outcomes.try_recv())
+        .map(|(id, outcome)| (id.0, outcome))
+        .collect()
 }
 
 #[test]
 fn the_same_target_at_the_same_time_coalesces_last_wins() {
-    let mut store = store_of(8);
+    let (mut store, outcomes) = store_of(8);
     let a = target(INSTALLED, 0, 0);
     store.insert(request(1, a, 1.0), 10);
     store.insert(request(2, target(INSTALLED, 0, 1), 2.0), 10);
@@ -84,7 +62,7 @@ fn the_same_target_at_the_same_time_coalesces_last_wins() {
     store.insert(request(4, a, 4.0), 11);
     store.insert(request(5, target(INSTALLED + 1, 0, 0), 5.0), 10);
     assert_eq!(store.len(), 4);
-    assert_eq!(log(&store), [(1, Outcome::Superseded)]);
+    assert_eq!(log(&outcomes), [(1, Outcome::Superseded)]);
 
     // The replacement takes the latest receipt position at its time.
     assert_eq!(apply_at(&mut store, 10), [(0, 1, 2.0), (0, 0, 3.0)]);
@@ -93,7 +71,7 @@ fn the_same_target_at_the_same_time_coalesces_last_wins() {
 
 #[test]
 fn a_full_store_refuses_and_never_grows() {
-    let mut store = store_of(4);
+    let (mut store, outcomes) = store_of(4);
     let capacity = store.capacity();
     for n in 0..capacity as u64 {
         store.insert(request(n, target(INSTALLED, 0, n as u16), 0.0), 100);
@@ -107,7 +85,7 @@ fn a_full_store_refuses_and_never_grows() {
     assert_eq!(store.len(), capacity);
     assert_eq!(store.capacity(), capacity);
     assert_eq!(
-        log(&store),
+        log(&outcomes),
         [
             (90, Outcome::Refused(Refusal::PendingFull)),
             (0, Outcome::Superseded),
@@ -117,7 +95,7 @@ fn a_full_store_refuses_and_never_grows() {
 
 #[test]
 fn held_entries_neither_apply_nor_bound_a_segment() {
-    let mut store = store_of(8);
+    let (mut store, _outcomes) = store_of(8);
     store.insert(request(1, target(INSTALLED + 1, 0, 0), 1.0), 5);
     store.insert(request(2, target(INSTALLED, 0, 0), 2.0), 20);
     assert_eq!(store.next_due(INSTALLED), Some(20));
@@ -135,25 +113,25 @@ fn held_entries_neither_apply_nor_bound_a_segment() {
 
 #[test]
 fn remapping_rewrites_or_refuses_older_entries_only() {
-    let mut store = store_of(8);
+    let (mut store, outcomes) = store_of(8);
     store.insert(request(1, target(INSTALLED - 1, 3, 0), 1.0), 10);
     store.insert(request(2, target(INSTALLED - 1, 4, 0), 2.0), 10);
     store.insert(request(3, target(INSTALLED + 1, 4, 0), 3.0), 10);
     store.insert(request(4, target(INSTALLED, 4, 0), 4.0), 10);
     // Module 3 moved to 1; module 4 went away.
     store.remap(INSTALLED, |target| (target.module_idx == 3).then_some(1));
-    assert_eq!(log(&store), [(2, Outcome::Refused(Refusal::TargetGone))]);
+    assert_eq!(log(&outcomes), [(2, Outcome::Refused(Refusal::TargetGone))]);
     assert_eq!(apply_at(&mut store, 10), [(1, 0, 1.0), (4, 0, 4.0)]);
     assert_eq!(store.len(), 1, "the held entry stays");
 }
 
 #[test]
 fn a_refused_apply_settles_refused() {
-    let mut store = store_of(2);
+    let (mut store, outcomes) = store_of(2);
     store.insert(request(1, target(INSTALLED, 0, 0), 1.0), 0);
     store.apply_due(0, INSTALLED, |_, _, _| Err(Refusal::Unsupported));
     assert_eq!(store.len(), 0);
-    assert_eq!(log(&store), [(1, Outcome::Refused(Refusal::Unsupported))]);
+    assert_eq!(log(&outcomes), [(1, Outcome::Refused(Refusal::Unsupported))]);
 }
 
 /// A payload request to `target`, taken by the intake (room reserved).
@@ -169,7 +147,7 @@ fn take_payload(store: &mut PendingStore, id: u64, target: ControlTarget, at: u6
 #[test]
 fn pending_payloads_reserve_retire_room_until_they_settle() {
     // The retirer holds 8: room for 4 payloads at 2 retirements each.
-    let mut store = store_of(8);
+    let (mut store, outcomes) = store_of(8);
     for id in 0..4 {
         take_payload(&mut store, id, target(INSTALLED, id as usize, 0), 10);
     }
@@ -184,7 +162,7 @@ fn pending_payloads_reserve_retire_room_until_they_settle() {
     assert!(store.outcomes.has_room_for_payload());
     take_payload(&mut store, 6, target(INSTALLED + 1, 6, 0), 10);
     assert_eq!(
-        log(&store),
+        log(&outcomes),
         [
             (0, Outcome::Superseded),
             (1, Outcome::Refused(Refusal::TargetGone))

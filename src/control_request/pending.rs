@@ -1,6 +1,7 @@
 //! The audio thread's store of requests waiting for their sample, and the
 //! one point every request leaves the audio thread's hands through.
 
+use super::outcome::OutcomeSender;
 use super::request::{ControlTarget, Request, RequestValue};
 use crate::payload::{Retirer, MAX_RETIRES_PER_REQUEST};
 
@@ -47,19 +48,15 @@ pub(crate) struct Outcomes {
     pub(crate) retirer: Retirer,
     /// Retirements reserved by pending payload requests.
     reserved: usize,
-    /// Every outcome settled so far, in order, while there is room: the log
-    /// is allocated once and never grows, so tests can count blocks clean.
-    #[cfg(test)]
-    pub(crate) log: Vec<(super::RequestId, Outcome)>,
+    sender: OutcomeSender,
 }
 
 impl Outcomes {
-    fn new(retirer: Retirer) -> Self {
+    fn new(retirer: Retirer, sender: OutcomeSender) -> Self {
         Self {
             retirer,
             reserved: 0,
-            #[cfg(test)]
-            log: Vec::with_capacity(4096),
+            sender,
         }
     }
 
@@ -91,18 +88,13 @@ impl Outcomes {
         self.record(id, payload, outcome);
     }
 
-    /// Records the outcome of a request whose value is already disposed of
-    /// and releases its reservation. Slice 3 publishes it from here.
+    /// Records the outcome of a request whose value is already disposed of,
+    /// releases its reservation and sends the outcome to the control side.
     fn record(&mut self, id: super::RequestId, payload: bool, outcome: Outcome) {
         if payload {
             self.reserved -= MAX_RETIRES_PER_REQUEST;
         }
-        #[cfg(test)]
-        if self.log.len() < self.log.capacity() {
-            self.log.push((id, outcome));
-        }
-        #[cfg(not(test))]
-        let _ = (id, outcome);
+        self.sender.send(id, outcome);
     }
 }
 
@@ -124,7 +116,9 @@ struct Pending {
 /// at the same sample replaces the waiting one (last write wins), which is
 /// settled [`Outcome::Superseded`]. A remap across a publication may merge
 /// two targets afterwards; both then apply in receipt order, which leaves
-/// the same value.
+/// the same value. That is right for a value, not for an event: two
+/// triggers at one sample are two events, so A3 (FUG-310) must keep event
+/// controls out of coalescing.
 ///
 /// An entry whose target generation is newer than the installed one is
 /// held: it is never due, and never bounds a segment, until its
@@ -137,12 +131,13 @@ pub(crate) struct PendingStore {
 
 impl PendingStore {
     /// A store for up to `capacity` requests, retiring the payloads it
-    /// does not apply through `retirer`. Allocates: control thread.
-    pub(crate) fn new(capacity: usize, retirer: Retirer) -> Self {
+    /// does not apply through `retirer` and sending every outcome through
+    /// `sender`. Allocates: control thread.
+    pub(crate) fn new(capacity: usize, retirer: Retirer, sender: OutcomeSender) -> Self {
         Self {
             entries: Vec::with_capacity(capacity),
             limit: capacity,
-            outcomes: Outcomes::new(retirer),
+            outcomes: Outcomes::new(retirer, sender),
         }
     }
 

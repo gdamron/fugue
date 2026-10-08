@@ -57,10 +57,9 @@ pub(super) fn hook(rig: &mut Rig) {
     rig.graph.request_hook = Some(SignalGraph::request_as_input_write);
 }
 
-/// Takes the outcomes settled so far, keeping the log's capacity.
+/// Receives the outcomes settled so far, as a front door would.
 pub(super) fn outcomes(rig: &mut Rig) -> Vec<(RequestId, Outcome)> {
-    let drain = rig.graph.requests.as_mut().unwrap();
-    drain.pending.outcomes.log.drain(..).collect()
+    std::iter::from_fn(|| rig.live.outcomes.try_recv()).collect()
 }
 
 const LEVEL: &str = "level";
