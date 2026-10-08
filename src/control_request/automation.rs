@@ -151,6 +151,12 @@ impl Automation {
     #[inline]
     pub(crate) fn current(&self) -> Option<f32> {
         let value = match (self.cells.automation.written(self.index), &self.origin) {
+            // A development's write fans out unclamped; its first alias
+            // will hold it as that alias clamps it.
+            (Some(RtValue::F32(written)), Some(origin)) => RtValue::F32(match origin.clamp {
+                Some((min, max)) => written.max(min).min(max),
+                None => written,
+            }),
             (Some(written), _) => written,
             (None, Some(origin)) => return origin.current(),
             (None, None) => self.cells.load(self.index)?,

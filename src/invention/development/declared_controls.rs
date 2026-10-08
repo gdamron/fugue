@@ -97,13 +97,17 @@ impl DevelopmentControls {
                         key: Cow::Owned(control.key.clone()),
                         indexed: false,
                         count: 1,
-                        ..found.decl
+                        // Each alias clamps for itself as it applies.
+                        clamp: None,
+                        ..found.decl.clone()
                     });
                     current.push(found.current);
                     aliases.push(Vec::new());
                     decls.len() - 1
                 }
             };
+            // One event alias makes the key an event: never coalesced.
+            decls[position].event |= found.decl.event;
             let kind = found.decl.kind;
             let kind = reachable(decls[position].kind, kind).then_some(kind);
             aliases[position].push(Alias {

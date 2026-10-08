@@ -101,7 +101,8 @@ fn running_from(
         "pair",
         built.module,
         Some(surface.clone()),
-    );
+    )
+    .unwrap();
     (graph, surface)
 }
 
@@ -197,11 +198,40 @@ fn a_nested_mixed_key_reaches_both_parts_through_the_outer_development() {
 }
 
 #[test]
-fn an_alias_that_cannot_hold_the_value_is_reported_and_the_others_still_apply() {
+fn a_value_one_alias_cannot_hold_changes_no_alias_and_fails_a_cold_load() {
     let (graph, surface) = running_from(factory("mixed", mixed()), json!({}));
     let refused = surface.set_control("odd", 0.5.into()).unwrap_err();
-    assert!(refused.contains("cannot hold"), "{refused}");
-    assert_eq!(outputs_a(&graph), 0.5, "the level alias applied");
+    assert!(refused.contains("string"), "{refused}");
+    assert_eq!(outputs_a(&graph), 0.25, "the level alias is untouched too");
+    let config = json!({ "odd": 0.5 });
+    assert!(factory("mixed", mixed()).build(48_000, &config).is_err());
+}
+
+#[test]
+fn a_key_with_any_event_alias_is_an_event_in_either_order() {
+    for aliases in [["level", "pulse"], ["pulse", "level"]] {
+        let definition = json!({
+            "version": "1.0.0",
+            "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
+            "connections": [],
+            "controls": [
+                { "key": "x", "module": "a", "control": aliases[0] },
+                { "key": "x", "module": "b", "control": aliases[1] }
+            ]
+        });
+        let built = factory("events", definition)
+            .build(48_000, &json!({}))
+            .unwrap();
+        let declaration = built.control_surface.unwrap().declaration("x").unwrap();
+        assert!(declaration.decl.event, "{aliases:?}");
+    }
+}
+
+#[test]
+fn scheduled_writes_fan_out_unclamped_so_each_alias_clamps_for_itself() {
+    let (_, surface) = running(json!({}));
+    let level = surface.automation("level").unwrap();
+    assert_eq!(level.clamp, None);
 }
 
 #[test]

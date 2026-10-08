@@ -131,7 +131,9 @@ impl ControlSurface for DevelopmentControlSurface {
         // out across internal modules (e.g. one `decay` reaching every voice
         // of a bank); apply the write to every aliased target. Aliases on
         // the legacy path are written here; declared ones take it as one
-        // request for the development.
+        // request for the development. Every alias is checked first, so a
+        // value one of them cannot hold changes none of them.
+        self.validate_control(key, &value, &self.surfaces)?;
         self.set_legacy(key, value.clone())?;
         match self.declared(key) {
             Some(declared) => declared.set_control(key, value),
