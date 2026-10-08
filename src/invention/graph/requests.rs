@@ -9,15 +9,17 @@
 //! publisher lock, then calls `note_written`. So every request tagged with
 //! generation `g` is published in the queue before publication `g + 1` is
 //! put in the mailbox, under that same lock; the audio thread's take of
-//! `g + 1` acquires that put before it pops. Requests from the audio
-//! thread itself (automation, later) are tagged with the installed
-//! generation. In the block that installs a publication, then:
+//! `g + 1` acquires that put before it pops. Since every submission is
+//! serialized by the publisher lock and the publisher's generation only
+//! grows, the queue holds requests in generation order. (A producer on the
+//! audio thread, such as automation later, cannot take that lock; it must
+//! insert into the pending store directly instead.) In the block that
+//! installs a publication, then:
 //!
 //! - every request still tagged with an older generation (the one
 //!   installed before, or one folded into the publication installing) is
-//!   already in the queue, in front of any tagged with a newer one (the
-//!   publisher lock serializes the pushes), and the queue holds at most its
-//!   capacity, so popping up to that capacity reaches them all;
+//!   already in the queue, in front of any tagged with the installed or a
+//!   newer one, so popping until the head is not older reaches them all;
 //! - each one, and every pending entry with an older generation, is mapped
 //!   through the retired publication's remaps exactly as an input write is
 //!   (see `SignalGraph::dispose`): onto its module's new index, or refused
@@ -27,12 +29,13 @@
 //!
 //! # Two intake modes: back-pressure outside install blocks
 //!
-//! - **An install block** pops until the queue is empty (at most its
-//!   capacity) and settles what does not fit as refused
+//! - **An install block** pops every request older than the installed
+//!   generation and settles what does not fit as refused
 //!   ([`Refusal::PendingFull`]). It must: this is the last block with the
 //!   retired publication's remaps in hand, so a request left in the queue
 //!   with an older generation could never be mapped again.
-//! - **Every other block** pops only while the store has room, or while
+//! - **Every other request** (all of them outside an install block) is
+//!   popped only while the store has room, or while
 //!   the request at the head replaces a waiting one (same target and
 //!   sample: it needs no room, and last write wins), and leaves the rest
 //!   in the queue. Producers then get a synchronous `QueueFull`,
@@ -53,12 +56,17 @@
 //! popping: the request and everything behind it stay queued, in order,
 //! and the next block retries once a control thread has drained the retire
 //! queue. Outside an install that is all. An install block cannot leave
-//! older-generation requests behind, so when it stops early the link keeps
+//! older-generation requests behind, so when it stops at one the link keeps
 //! the retired publication, taking no new one, and every following block
-//! goes on popping with its remaps in hand until the install's debt (the
-//! queue's capacity, counted from the install) is popped or the queue is
-//! empty; only then does the publication go back. That cannot deadlock:
-//! the retire queue drains on a control thread.
+//! goes on popping with its remaps in hand until the head is no longer
+//! older (or the queue is empty); only then does the publication go back.
+//!
+//! The retirer is sized to cover every pending request and a full queue
+//! (see `Publisher::link`), so reservations alone never exhaust it: room
+//! runs out only while retirements wait for the reclaimer, which drains on
+//! a control thread every few tens of ms. A kept publication therefore
+//! waits for the reclaimer, never for a request's sample or a later
+//! install, and cannot deadlock.
 //!
 //! # Sample accuracy by splitting the block
 //!
@@ -93,10 +101,6 @@ pub(crate) struct RequestDrain {
     pub(crate) pending: PendingStore,
     /// The installed publication's generation, as of the last drain.
     installed: u64,
-    /// Requests still to pop, in install mode, before the install whose
-    /// retired publication is in hand has popped every request resolved
-    /// against an older generation: the queue's capacity at the install.
-    debt: usize,
 }
 
 impl RequestDrain {
@@ -114,20 +118,18 @@ impl RequestDrain {
             pop_limit,
             pending: PendingStore::new(pending, retirer),
             installed: 0,
-            debt: 0,
         }
     }
 }
 
 impl SignalGraph {
     /// Maps pending requests across the install whose retired publication
-    /// is in hand (if any), then pops the queue into the pending store: in
-    /// install mode until the install's debt is paid, otherwise only while
-    /// the store has room, and in both only while the retirer has room for
-    /// a payload (see the module docs). Runs in `drain_link`. Returns false
-    /// when an install's older-generation requests may still be queued, so
-    /// the caller must keep `retired` for the next block. Allocation-,
-    /// free- and lock-free.
+    /// is in hand (if any), then pops the queue into the pending store:
+    /// every request older than `installed`, and the rest only while the
+    /// store has room, all only while the retirer has room for a payload
+    /// (see the module docs). Runs in `drain_link`. Returns false when a
+    /// request older than `installed` is still queued, so the caller must
+    /// keep `retired` for the next block. Allocation-, free- and lock-free.
     pub(super) fn drain_requests(
         &mut self,
         installed: u64,
@@ -137,9 +139,6 @@ impl SignalGraph {
             return true;
         };
         drain.pending.outcomes.retirer.flush();
-        if installed != drain.installed {
-            drain.debt = drain.pop_limit;
-        }
         drain.installed = installed;
         let map = |graph: &Self, generation, module_idx| match graph
             .dispose(generation, module_idx, installed, retired)
@@ -169,24 +168,26 @@ impl SignalGraph {
             };
             Some((target, at))
         };
-        let install = retired.is_some();
-        let mut budget = if install { drain.debt } else { drain.pop_limit };
-        while budget > 0 {
-            let head = drain
-                .requests
-                .peek(|head| (head.value.is_payload(), resolve(self, head)));
-            let Some((payload, landing)) = head else {
-                // Empty: nothing older than the install is left behind.
-                budget = 0;
+        let mut mapped = true;
+        for _ in 0..drain.pop_limit {
+            let head = drain.requests.peek(|head| {
+                let older = head.target.generation < installed;
+                (head.value.is_payload(), older, resolve(self, head))
+            });
+            let Some((payload, older, landing)) = head else {
                 break;
             };
+            // An install must pop every older request while it holds the
+            // remaps; any it cannot keep the retired publication in hand.
+            let owed = retired.is_some() && older;
             if payload && !drain.pending.outcomes.has_room_for_payload() {
+                mapped = !owed;
                 break;
             }
-            // Back-pressure outside an install block, except for a request
-            // that replaces a waiting one, which needs no room: last write
-            // wins even when the store is saturated.
-            if !install
+            // Back-pressure for the rest, except for a request that
+            // replaces a waiting one, which needs no room: last write wins
+            // even when the store is saturated.
+            if !owed
                 && drain.pending.is_full()
                 && !landing.is_some_and(|(target, at)| drain.pending.coalesces_with(&target, at))
             {
@@ -195,7 +196,6 @@ impl SignalGraph {
             let Some(mut request) = drain.requests.pop() else {
                 break;
             };
-            budget -= 1;
             drain.pending.outcomes.reserve(&request);
             match landing {
                 Some((target, at)) => {
@@ -208,12 +208,8 @@ impl SignalGraph {
                     .settle(request, Outcome::Refused(Refusal::TargetGone)),
             }
         }
-        if install {
-            drain.debt = budget;
-        }
-        let paid = drain.debt == 0;
         self.requests = Some(drain);
-        !install || paid
+        mapped
     }
 
     /// Applies every request due at the current sample and returns the

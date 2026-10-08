@@ -59,6 +59,15 @@ fn saturate_retirer(rig: &mut Rig) {
     }
 }
 
+/// Reclaims until the retirer holds nothing, a block flushing it each time.
+fn reclaim_all(rig: &mut Rig) {
+    while retirer(rig).held() > 0 {
+        rig.live.reclaim();
+        rig.render(1);
+    }
+    rig.live.reclaim();
+}
+
 #[test]
 fn refused_and_superseded_payloads_are_freed_off_the_audio_thread() {
     let mut rig = Rig::new(BASE);
@@ -175,6 +184,50 @@ fn an_install_without_retire_room_keeps_the_retired_publication() {
     assert_eq!(outcomes(&mut rig), [(payload, refused)]);
     rig.render(1);
     assert_eq!(rig.generation_and_applied(), (2, 2));
-    rig.live.reclaim();
+    reclaim_all(&mut rig);
     assert_eq!(drops.count(), 1);
+}
+
+#[test]
+fn payloads_waiting_for_their_publication_never_keep_it_from_installing() {
+    use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
+
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    rig.hold_a_retirement();
+    let (generation, applied) = rig.generation_and_applied();
+    let fm = edge("osc1", "audio", "osc2", "fm");
+    rig.publish_unreclaimed(|change| change.disconnect(fm));
+    // Payload requests for the published, not yet installed generation
+    // fill the store, each reserving retire room, then the queue behind it.
+    let drops = Drops::default();
+    let start = rig.graph.current_sample;
+    let mut n = 0;
+    let mut submit_queueful = |rig: &Rig| {
+        for _ in 0..REQUEST_QUEUE_CAPACITY {
+            submit(rig, "osc1", drops.payload(), When::AtSample(start + n));
+            n += 1;
+        }
+    };
+    for _ in 0..PENDING_REQUEST_CAPACITY / REQUEST_QUEUE_CAPACITY {
+        submit_queueful(&rig);
+        assert_eq!(counted_block(&mut rig), (0, 0), "holding");
+    }
+    submit_queueful(&rig);
+    assert_eq!(counted_block(&mut rig), (0, 0), "back-pressure");
+    assert!(rig.graph.requests.as_ref().unwrap().pending.is_full());
+
+    // Their reservations leave room for the install, which completes.
+    rig.live.reclaim();
+    assert_eq!(counted_block(&mut rig), (0, 0), "installing");
+    assert_eq!(rig.generation_and_applied(), (generation + 1, applied + 1));
+    let fm = edge("osc1", "audio", "osc2", "fm");
+    rig.publish_unreclaimed(|change| change.connect(fm).unwrap());
+    // Every request's sample has passed after another 12 blocks.
+    rig.render(12);
+    assert_eq!(rig.generation_and_applied(), (generation + 2, applied + 2));
+    let settled = outcomes(&mut rig).len();
+    assert_eq!(settled, PENDING_REQUEST_CAPACITY + REQUEST_QUEUE_CAPACITY);
+    reclaim_all(&mut rig);
+    assert_eq!(drops.count(), settled);
 }
