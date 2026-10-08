@@ -12,6 +12,7 @@ use crate::invention::graph::{
     AudioLink, InputWrite, Mailbox, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
 };
 use crate::invention::runtime::GraphCommandError;
+use crate::payload::{self, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
 
 /// Input writes that may wait for the audio thread before a write is
 /// refused with [`GraphCommandError::QueueFull`].
@@ -32,6 +33,13 @@ pub(crate) const REQUEST_QUEUE_CAPACITY: usize = 256;
 /// what does not fit is refused (`Refusal::PendingFull`). See
 /// `graph::requests`.
 pub(crate) const PENDING_REQUEST_CAPACITY: usize = 512;
+
+/// Payload retirements the request drain's retirer can hold while the
+/// reclaimer is behind: enough for every pending request and a full queue,
+/// so pending requests' reservations can never use it all and room runs out
+/// only while retirements wait for the reclaimer (see `graph::requests`).
+pub(crate) const PAYLOAD_RETIRE_HOLD: usize =
+    (PENDING_REQUEST_CAPACITY + REQUEST_QUEUE_CAPACITY) * MAX_RETIRES_PER_REQUEST;
 
 /// Retired publications the audio thread may hand back before the control
 /// thread frees them. The audio thread takes at most one publication per
@@ -69,10 +77,12 @@ impl Publisher {
         let (inputs, input_rx) = mpsc::sync_channel(INPUT_QUEUE_CAPACITY);
         let (retire_tx, retired) = mpsc::sync_channel(RETIRE_CAPACITY);
         let (requests, request_rx) = request_channel(REQUEST_QUEUE_CAPACITY);
+        let payloads = RetireQueue::with_capacity(payload::RETIRE_CAPACITY);
         graph.requests = Some(RequestDrain::new(
             request_rx,
             REQUEST_QUEUE_CAPACITY,
             PENDING_REQUEST_CAPACITY,
+            Retirer::new(Arc::clone(&payloads), PAYLOAD_RETIRE_HOLD),
         ));
         let applied = Arc::new(AtomicU64::new(0));
         graph.link = Some(AudioLink::new(
@@ -94,6 +104,7 @@ impl Publisher {
             inputs,
             requests,
             retired,
+            payloads,
         };
         (publisher, ends)
     }
@@ -299,6 +310,8 @@ pub(crate) struct LinkEnds {
     pub(crate) requests: RequestSender,
     /// Retired publications, to free off the audio thread.
     pub(crate) retired: Receiver<Box<Publication>>,
+    /// Retired request payloads, to free off the audio thread.
+    pub(crate) payloads: Arc<RetireQueue>,
 }
 
 /// What a publication replaced, for committing the runtime's other mirrors.

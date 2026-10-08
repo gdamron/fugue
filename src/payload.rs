@@ -44,17 +44,20 @@
 //! When the reclaimer stalls, the retire queue fills and the `Retirer`
 //! holds up to [`RETIRE_HOLD`] retirements in a preallocated buffer. The
 //! request drain must never retire past that, so it calls
-//! [`Retirer::flush`] at the start of each block and checks
-//! [`Retirer::has_room`]`(`[`MAX_RETIRES_PER_REQUEST`]`)` before taking each
-//! request. When there is no room it stops draining for the block: requests
+//! [`Retirer::flush`] at the start of each block, and takes a payload
+//! request only while [`Retirer::has_room`] covers
+//! [`MAX_RETIRES_PER_REQUEST`] for it on top of what every payload request
+//! still waiting for its sample has reserved (see
+//! `control_request::Outcomes`). When there is no room it stops draining
+//! for the block: requests
 //! stay queued in order, the next block retries, and a request queue that
 //! fills up meanwhile reaches submitters as `QueueFull`. Refusing at apply
 //! cannot work (the refused payload itself needs a retirement) and refusing
 //! at submit would need a saturation signal that is stale by the time a
 //! submitter reads it.
 
-// Nothing carries payloads yet: the request queue (FUG-308) wires the
-// drain, and FUG-310 and its siblings migrate the first modules.
+// The request drain (FUG-308) retires payloads; no module keeps one until
+// FUG-310 and its siblings migrate the first modules.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use std::any::Any;

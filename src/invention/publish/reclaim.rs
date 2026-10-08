@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::invention::graph::Publication;
-use crate::payload::{RetireQueue, RETIRE_CAPACITY};
+use crate::payload::RetireQueue;
 
 /// How often the reclaimer thread frees retired publications.
 pub(crate) const RECLAIM_INTERVAL: Duration = Duration::from_millis(25);
@@ -28,17 +28,13 @@ pub(crate) struct Reclaimer {
 }
 
 impl Reclaimer {
-    pub(crate) fn new(retired: Receiver<Box<Publication>>) -> Self {
+    /// Frees what arrives on `retired` and `payloads` (the queue the
+    /// engine's request drain retires payloads to).
+    pub(crate) fn new(retired: Receiver<Box<Publication>>, payloads: Arc<RetireQueue>) -> Self {
         Self {
             retired: Mutex::new(retired),
-            payloads: RetireQueue::with_capacity(RETIRE_CAPACITY),
+            payloads,
         }
-    }
-
-    /// The queue the engine's request drain retires payloads to.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn payload_queue(&self) -> &Arc<RetireQueue> {
-        &self.payloads
     }
 
     /// Frees every publication retired so far and returns how many. They

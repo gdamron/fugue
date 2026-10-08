@@ -18,11 +18,23 @@ pub(super) fn try_submit(
     value: f32,
     when: When,
 ) -> Result<RequestId, QueueFull> {
+    let value = RequestValue::Value(RtValue::F32(value));
+    try_submit_value(rig, module_id, control, value, when)
+}
+
+/// [`try_submit`] for any value, a payload included.
+pub(super) fn try_submit_value(
+    rig: &Rig,
+    module_id: &str,
+    control: u16,
+    value: RequestValue,
+    when: When,
+) -> Result<RequestId, QueueFull> {
     let mut publisher = rig.live.publisher().lock().unwrap();
     let target = publisher
         .control_target(module_id, ControlIndex(control))
         .unwrap();
-    let mut request = Request::new(target, RequestValue::Value(RtValue::F32(value)));
+    let mut request = Request::new(target, value);
     request.when = when;
     let id = rig.live.requests.submit(request)?;
     publisher.note_written();
@@ -276,7 +288,7 @@ fn overdue_requests_for_different_targets_apply_in_time_order() {
 fn process_block_refuses_control_only_calls_in_debug() {
     let mut rig = Rig::new(BASE);
     rig.render(1);
-    rig.graph.request_hook = Some(|_, _, _, _| {
+    rig.graph.request_hook = Some(|_, _, _, _, _| {
         drop(crate::control_request::request_channel(4));
         Ok(())
     });

@@ -359,8 +359,9 @@ fn the_reclaimer_drains_its_payload_queue() {
 
     let ledger = Ledger::default();
     let (_retire, retired) = mpsc::sync_channel::<Box<Publication>>(1);
-    let reclaimer = Reclaimer::new(retired);
-    let mut retirer = Retirer::new(Arc::clone(reclaimer.payload_queue()), RETIRE_HOLD);
+    let queue = RetireQueue::with_capacity(4);
+    let reclaimer = Reclaimer::new(retired, Arc::clone(&queue));
+    let mut retirer = Retirer::new(queue, RETIRE_HOLD);
     let value = Shared::new(ledger.value(1));
     let ((), audio) = on_audio(&mut retirer, |retirer| retirer.retire(value));
     assert!(ledger.drops().is_empty());

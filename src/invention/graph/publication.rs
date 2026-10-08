@@ -245,6 +245,12 @@ pub(crate) struct AudioLink {
     /// further publication is taken, so the audio thread never holds more
     /// than this one; it is sent as soon as the channel has room.
     held: Option<Box<Publication>>,
+    /// A retired publication whose remaps older-generation control
+    /// requests still need, with the generation installed before it: an
+    /// install block that ran out of payload retire room keeps it until
+    /// the drain has popped them (see `graph::requests`). While it is kept
+    /// no further publication is taken.
+    mapping: Option<(u64, Box<Publication>)>,
     /// Publications installed so far, for observation off the audio thread.
     applied: Arc<AtomicU64>,
     /// The generation of the installed publication; the publisher starts
@@ -274,6 +280,7 @@ impl AudioLink {
             inputs,
             retire,
             held: None,
+            mapping: None,
             applied,
             installed: 0,
             pending: Vec::with_capacity(input_capacity.max(1)),
@@ -314,15 +321,20 @@ impl SignalGraph {
     /// Takes at most the ring's capacity from the channel per block, so a
     /// sender keeping pace cannot hold the block here.
     /// Then maps and pops control requests (see `graph::requests`), with the
-    /// retired publication still in hand.
+    /// retired publication still in hand; when they need it for another
+    /// block, it is kept, and that block maps writes and requests through it
+    /// again instead of taking a new publication.
     /// Allocation-, free-, and lock-free; runs at the start of a block.
     pub(super) fn drain_link(&mut self) {
         let Some(mut link) = self.link.take() else {
             return;
         };
-        let previous = link.installed;
+        let mut previous = link.installed;
         let mut taken: Option<Box<Publication>> = None;
-        if link.flush_held() {
+        if let Some((before, mapping)) = link.mapping.take() {
+            previous = before;
+            taken = Some(mapping);
+        } else if link.flush_held() {
             if let Some(mut publication) = link.publications.take() {
                 self.install(&mut publication);
                 link.installed = publication.generation;
@@ -361,9 +373,13 @@ impl SignalGraph {
                 Disposition::Drop => {}
             }
         }
-        self.drain_requests(installed, retired);
+        let mapped = self.drain_requests(installed, retired);
         if let Some(publication) = taken {
-            link.retire(publication);
+            if mapped {
+                link.retire(publication);
+            } else {
+                link.mapping = Some((previous, publication));
+            }
         }
         self.link = Some(link);
     }

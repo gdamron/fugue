@@ -59,8 +59,7 @@ pub(crate) use event::{EventCounter, EventCursor};
 pub(crate) use pending::{Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::{bounded, QueueConsumer, QueueProducer};
 pub(crate) use request::{
-    ControlIndex, ControlTarget, Intent, PayloadHandle, Request, RequestId, RequestValue, RtValue,
-    Source, When,
+    ControlIndex, ControlTarget, Intent, Request, RequestId, RequestValue, RtValue, Source, When,
 };
 pub(crate) use sender::{request_channel, QueueFull, RequestSender};
 

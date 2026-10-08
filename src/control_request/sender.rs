@@ -20,7 +20,7 @@ pub(crate) fn request_channel(capacity: usize) -> (RequestSender, QueueConsumer<
 
 /// The queue had no room: the request comes back unsent, so a payload it
 /// carries is never dropped by the queue.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct QueueFull(pub(crate) Request);
 
 /// Submits requests to one channel. Clone it for each producer.
