@@ -193,6 +193,28 @@ fn slots_are_reused_only_after_the_read() {
     });
 }
 
+/// A peek racing a producer that laps a queue of two sees nothing or the
+/// head value, which the next pop returns: peeking never reads a slot the
+/// producer is rewriting (loom checks the slot accesses).
+#[test]
+fn a_peek_sees_nothing_or_the_value_the_next_pop_returns() {
+    const A: &[u32] = &[1, 2, 3];
+    loom::model(|| {
+        let (producer, mut consumer) = bounded(2);
+        let a = spawn_producer(&producer, A);
+        let mut received = Vec::new();
+        for _ in 0..2 {
+            if let Some(head) = consumer.peek(|value| *value) {
+                assert_eq!(consumer.pop(), Some(head));
+                received.push(head);
+            }
+        }
+        let refused = a.join().unwrap();
+        drain(&mut consumer, &mut received);
+        assert_exactly_once(&[A], &received, &refused);
+    });
+}
+
 /// Items left in the queue are dropped once, by whichever handle goes last.
 #[test]
 fn the_last_handle_drops_unpopped_items() {

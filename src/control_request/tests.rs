@@ -229,3 +229,17 @@ fn event_cursors_count_across_the_wrap() {
     assert_eq!(cursor.take(&counter), 3);
     assert_eq!(cursor.take(&counter), 0);
 }
+
+#[test]
+fn peeking_leaves_the_head_queued() {
+    let (producer, mut consumer) = bounded(4);
+    assert_eq!(consumer.peek(|v: &u32| *v), None);
+    producer.try_push(1).unwrap();
+    producer.try_push(2).unwrap();
+    assert_eq!(consumer.peek(|v| *v), Some(1));
+    assert_eq!(consumer.peek(|v| *v), Some(1));
+    assert_eq!(consumer.pop(), Some(1));
+    assert_eq!(consumer.peek(|v| *v), Some(2));
+    assert_eq!(consumer.pop(), Some(2));
+    assert_eq!(consumer.peek(|v| *v), None);
+}

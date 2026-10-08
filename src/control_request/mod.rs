@@ -10,14 +10,16 @@
 //! and the `loom_tests` models check the shipped source files against loom's
 //! atomics and cells (the `sync` shim below), so modules never need one.
 //!
-//! This module holds the request types, the queue and the sender. The
-//! audio-side pending store and drain, the outcomes path, typed control
-//! keys and the module control tables come in later slices (FUG-308,
-//! FUG-310), hence the `dead_code` and `unused_imports` allowance below;
-//! remove it once consumers land.
+//! This module holds the request types, the queue, the sender and the
+//! audio side's pending store. The drain that feeds the store (with the
+//! graph, in `invention::graph::requests`), the outcomes path, typed control
+//! keys and the module control tables come in later slices (FUG-308, FUG-310),
+//! hence the `dead_code` and `unused_imports` allowance below; remove it
+//! once consumers land.
 #![allow(dead_code, unused_imports)]
 
 mod event;
+mod pending;
 mod queue;
 mod request;
 mod sender;
@@ -52,6 +54,7 @@ mod sync {
 }
 
 pub(crate) use event::{EventCounter, EventCursor};
+pub(crate) use pending::{Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::{bounded, QueueConsumer, QueueProducer};
 pub(crate) use request::{
     ControlIndex, ControlTarget, Intent, PayloadHandle, Request, RequestId, RequestValue, RtValue,

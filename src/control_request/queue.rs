@@ -226,6 +226,29 @@ pub(crate) struct QueueConsumer<T> {
 }
 
 impl<T> QueueConsumer<T> {
+    /// Calls `f` with the oldest published item, leaving it queued, or
+    /// returns `None` exactly when [`Self::pop`] would. Wait-free,
+    /// allocation-free and never frees.
+    ///
+    /// Takes `&mut self` although it only reads: the consumer is `Sync`
+    /// whenever `T: Send`, so a `&self` peek would let two threads hold
+    /// `&T` at once for a `T` that is not `Sync` (a `Cell`, say).
+    pub(crate) fn peek<R>(&mut self, f: impl FnOnce(&T) -> R) -> Option<R> {
+        let slot = self.shared.slot(self.head);
+        if slot.seq.load(Ordering::Acquire) != self.head.wrapping_add(1) {
+            return None;
+        }
+        // SAFETY: as in `pop`, the value is initialized and its write
+        // happens-before this read. The slot stays the consumer's until its
+        // `Release` store in `pop`, which cannot run while `self` is
+        // borrowed, so no producer writes it during `f`; and `&mut self`
+        // makes this the only reference to it.
+        Some(
+            slot.value
+                .with(|cell| f(unsafe { (*cell).assume_init_ref() })),
+        )
+    }
+
     /// Pops the oldest published item, or `None` if the next one is not
     /// published yet. Wait-free, allocation-free and never frees.
     pub(crate) fn pop(&mut self) -> Option<T> {

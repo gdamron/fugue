@@ -1,0 +1,151 @@
+//! The pending store on its own: order, coalescing, holding, remapping and
+//! a full store, with a recording `apply`.
+
+use super::*;
+use crate::alloc_counter::allocator_events;
+use crate::control_request::{ControlIndex, RequestId, RtValue};
+
+const INSTALLED: u64 = 2;
+
+fn target(generation: u64, module_idx: usize, control: u16) -> ControlTarget {
+    ControlTarget {
+        generation,
+        module_idx,
+        control: ControlIndex(control),
+    }
+}
+
+/// Request `id` writing `value` to `target`.
+fn request(id: u64, target: ControlTarget, value: f32) -> Request {
+    let mut request = Request::new(target, RequestValue::Value(RtValue::F32(value)));
+    request.id = RequestId(id);
+    request
+}
+
+/// Applies everything due at `now`, returning `(module, control, value)` in
+/// the order applied.
+fn apply_at(store: &mut PendingStore, now: u64) -> Vec<(usize, u16, f32)> {
+    let mut applied = Vec::new();
+    store.apply_due(now, INSTALLED, |target, value| {
+        let RequestValue::Value(RtValue::F32(value)) = value else {
+            panic!("unexpected value {value:?}");
+        };
+        applied.push((target.module_idx, target.control.0, *value));
+        Ok(())
+    });
+    applied
+}
+
+fn log(store: &PendingStore) -> Vec<(u64, Outcome)> {
+    let log = &store.outcomes.log;
+    log.iter().map(|(id, outcome)| (id.0, *outcome)).collect()
+}
+
+#[test]
+fn applies_in_time_order_then_receipt_order() {
+    let mut store = PendingStore::with_capacity(8);
+    store.insert(request(1, target(INSTALLED, 0, 0), 1.0), 30);
+    store.insert(request(2, target(INSTALLED, 0, 1), 2.0), 10);
+    store.insert(request(3, target(INSTALLED, 1, 0), 3.0), 30);
+    store.insert(request(4, target(INSTALLED, 2, 0), 4.0), 10);
+
+    assert_eq!(apply_at(&mut store, 9), []);
+    assert_eq!(store.next_due(INSTALLED), Some(10));
+    assert_eq!(apply_at(&mut store, 10), [(0, 1, 2.0), (2, 0, 4.0)]);
+    assert_eq!(store.next_due(INSTALLED), Some(30));
+    // Late: everything due by now applies, in order, at now.
+    assert_eq!(apply_at(&mut store, 40), [(0, 0, 1.0), (1, 0, 3.0)]);
+    assert_eq!(store.next_due(INSTALLED), None);
+    assert_eq!(
+        log(&store),
+        [
+            (2, Outcome::Applied { at: 10 }),
+            (4, Outcome::Applied { at: 10 }),
+            (1, Outcome::Applied { at: 40 }),
+            (3, Outcome::Applied { at: 40 }),
+        ]
+    );
+}
+
+#[test]
+fn the_same_target_at_the_same_time_coalesces_last_wins() {
+    let mut store = PendingStore::with_capacity(8);
+    let a = target(INSTALLED, 0, 0);
+    store.insert(request(1, a, 1.0), 10);
+    store.insert(request(2, target(INSTALLED, 0, 1), 2.0), 10);
+    store.insert(request(3, a, 3.0), 10);
+    // A different time or another generation does not coalesce.
+    store.insert(request(4, a, 4.0), 11);
+    store.insert(request(5, target(INSTALLED + 1, 0, 0), 5.0), 10);
+    assert_eq!(store.len(), 4);
+    assert_eq!(log(&store), [(1, Outcome::Superseded)]);
+
+    // The replacement takes the latest receipt position at its time.
+    assert_eq!(apply_at(&mut store, 10), [(0, 1, 2.0), (0, 0, 3.0)]);
+    assert_eq!(apply_at(&mut store, 11), [(0, 0, 4.0)]);
+}
+
+#[test]
+fn a_full_store_refuses_and_never_grows() {
+    let mut store = PendingStore::with_capacity(4);
+    let capacity = store.capacity();
+    for n in 0..capacity as u64 {
+        store.insert(request(n, target(INSTALLED, 0, n as u16), 0.0), 100);
+    }
+    let ((), allocs, frees) = allocator_events(|| {
+        store.insert(request(90, target(INSTALLED, 0, 90), 0.0), 50);
+        // Coalescing still works when full: it does not grow the store.
+        store.insert(request(91, target(INSTALLED, 0, 0), 1.0), 100);
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(store.len(), capacity);
+    assert_eq!(store.capacity(), capacity);
+    assert_eq!(
+        log(&store),
+        [
+            (90, Outcome::Refused(Refusal::PendingFull)),
+            (0, Outcome::Superseded),
+        ]
+    );
+}
+
+#[test]
+fn held_entries_neither_apply_nor_bound_a_segment() {
+    let mut store = PendingStore::with_capacity(8);
+    store.insert(request(1, target(INSTALLED + 1, 0, 0), 1.0), 5);
+    store.insert(request(2, target(INSTALLED, 0, 0), 2.0), 20);
+    assert_eq!(store.next_due(INSTALLED), Some(20));
+    assert_eq!(apply_at(&mut store, 10), []);
+    assert_eq!(store.len(), 2);
+
+    // Once its generation installs it is due (late) at once.
+    let mut applied = Vec::new();
+    store.apply_due(10, INSTALLED + 1, |target, _| {
+        applied.push(target.module_idx);
+        Ok(())
+    });
+    assert_eq!(applied, [0]);
+}
+
+#[test]
+fn remapping_rewrites_or_refuses_older_entries_only() {
+    let mut store = PendingStore::with_capacity(8);
+    store.insert(request(1, target(INSTALLED - 1, 3, 0), 1.0), 10);
+    store.insert(request(2, target(INSTALLED - 1, 4, 0), 2.0), 10);
+    store.insert(request(3, target(INSTALLED + 1, 4, 0), 3.0), 10);
+    store.insert(request(4, target(INSTALLED, 4, 0), 4.0), 10);
+    // Module 3 moved to 1; module 4 went away.
+    store.remap(INSTALLED, |target| (target.module_idx == 3).then_some(1));
+    assert_eq!(log(&store), [(2, Outcome::Refused(Refusal::TargetGone))]);
+    assert_eq!(apply_at(&mut store, 10), [(1, 0, 1.0), (4, 0, 4.0)]);
+    assert_eq!(store.len(), 1, "the held entry stays");
+}
+
+#[test]
+fn a_refused_apply_settles_refused() {
+    let mut store = PendingStore::with_capacity(2);
+    store.insert(request(1, target(INSTALLED, 0, 0), 1.0), 0);
+    store.apply_due(0, INSTALLED, |_, _| Err(Refusal::Unsupported));
+    assert_eq!(store.len(), 0);
+    assert_eq!(log(&store), [(1, Outcome::Refused(Refusal::Unsupported))]);
+}
