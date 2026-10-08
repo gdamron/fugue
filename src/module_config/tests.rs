@@ -162,3 +162,33 @@ fn value_helpers_read_elements_and_refuse_through_the_reader() {
     assert_eq!(whole_number_in::<i8>(&json!(-3.0), -12, 12), Ok(-3));
     assert!(whole_number_in::<i8>(&json!(13), -12, 12).is_err());
 }
+
+#[test]
+fn an_array_key_reads_finite_numbers_and_refuses_the_rest_by_path() {
+    const LEVELS: ConfigKey = ConfigKey::json("levels");
+    let floats = |config: Value| {
+        ConfigReader::new("mixer", &config)
+            .floats(&LEVELS)
+            .map_err(|error| error.to_string())
+    };
+    assert_eq!(floats(json!({})), Ok(None));
+    assert_eq!(floats(json!({ "levels": null })), Ok(None));
+    assert_eq!(floats(json!({ "levels": [] })), Ok(Some(vec![])));
+    assert_eq!(
+        floats(json!({ "levels": [0.5, 1, -2.25] })),
+        Ok(Some(vec![0.5, 1.0, -2.25]))
+    );
+    assert_eq!(
+        floats(json!({ "levels": [0.5, "x"] })),
+        Err("mixer config 'levels[1]' expects a finite number, got \"x\"".into())
+    );
+    assert_eq!(
+        floats(json!({ "levels": { "0": 1 } })),
+        Err("mixer config 'levels' expects an array of numbers, got {\"0\":1}".into())
+    );
+    // The whole-value refusal prints the value as written, as it always has.
+    assert_eq!(
+        floats(json!({ "levels": 1e39 })),
+        Err("mixer config 'levels' expects an array of numbers, got 1e+39".into())
+    );
+}
