@@ -20,6 +20,9 @@ pub(crate) enum Refusal {
     /// Its `ttl` ran out before it could apply: the sample it would apply
     /// at is past its `expires` sample.
     Expired,
+    /// It was timed by wall clock, and the engine has none to place it on
+    /// (offline render).
+    NoClock,
 }
 
 /// How a request left the audio thread's hands.

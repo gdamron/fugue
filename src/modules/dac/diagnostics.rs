@@ -1,7 +1,7 @@
 //! Lock-free audio callback diagnostics shared by native audio backends.
 
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -126,6 +126,9 @@ pub struct AudioDiagnostics {
     /// Nanoseconds from `epoch` to the latest callback, plus one; zero means
     /// no callback yet.
     last_callback_ns: AtomicU64,
+    /// The output latency the host reported for the latest callback: how
+    /// long after the callback its first frame is played.
+    output_latency_ns: AtomicU64,
 }
 
 impl AudioDiagnostics {
@@ -143,6 +146,7 @@ impl AudioDiagnostics {
             stream_restart_count: AtomicU64::new(0),
             epoch: Instant::now(),
             last_callback_ns: AtomicU64::new(0),
+            output_latency_ns: AtomicU64::new(0),
         }
     }
 
@@ -186,6 +190,29 @@ impl AudioDiagnostics {
         let ns = at.saturating_duration_since(self.epoch).as_nanos();
         let ns = ns.min(u128::from(u64::MAX - 1)) as u64;
         self.last_callback_ns.store(ns + 1, Ordering::Relaxed);
+    }
+
+    /// Records the output latency the host reported for the callback just
+    /// marked by [`Self::record_callback_at`].
+    #[inline]
+    pub fn record_output_latency(&self, latency: Duration) {
+        let ns = latency.as_nanos().min(u128::from(u64::MAX)) as u64;
+        self.output_latency_ns.store(ns, Ordering::Relaxed);
+    }
+
+    /// When the latest callback started and its reported output latency,
+    /// or `None` before the first. Read on the callback's own thread, as the
+    /// transport's wall clock does, it is that callback's.
+    pub(crate) fn callback_timing(&self) -> Option<(Instant, Duration)> {
+        let ns = self
+            .last_callback_ns
+            .load(Ordering::Relaxed)
+            .checked_sub(1)?;
+        let latency = self.output_latency_ns.load(Ordering::Relaxed);
+        Some((
+            self.epoch + Duration::from_nanos(ns),
+            Duration::from_nanos(latency),
+        ))
     }
 
     fn last_callback_age_ns(&self, now: Instant) -> Option<u64> {
