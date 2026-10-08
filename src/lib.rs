@@ -7,12 +7,17 @@ pub mod dsp;
 #[cfg(test)]
 mod example_catalog;
 pub mod factory;
+#[cfg(feature = "ffi")]
+pub mod ffi;
 #[cfg(not(target_arch = "wasm32"))]
 mod hex;
 #[cfg(not(target_arch = "wasm32"))]
 mod http;
-#[cfg(feature = "ffi")]
-pub mod ffi;
+#[cfg_attr(
+    not(all(feature = "plugins", not(target_arch = "wasm32"))),
+    allow(dead_code)
+)]
+pub(crate) mod interface_naming;
 pub mod invention;
 pub mod module_config;
 pub mod modules;
@@ -28,9 +33,9 @@ pub mod scripting;
 pub mod spectrum;
 pub(crate) mod spsc;
 pub(crate) mod streaming;
-pub mod traits;
 #[cfg(test)]
 mod test_support;
+pub mod traits;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 

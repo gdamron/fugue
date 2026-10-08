@@ -273,6 +273,11 @@ impl ControlSurface for StepSequencerControls {
             )
             .with_options(vec!["before".to_string(), "on_beat".to_string()])
             .with_default(self.grace_placement()),
+            ControlMeta::boolean(
+                "ended",
+                "Read-only: a one_shot pattern has played through",
+                self.ended(),
+            ),
         ]
     }
 

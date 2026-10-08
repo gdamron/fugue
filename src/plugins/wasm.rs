@@ -191,6 +191,16 @@ impl WasmModule {
 
         self.input_names = leak_port_names(&self.inputs);
         self.output_names = leak_port_names(&self.outputs);
+        for port in self.inputs.iter().chain(&self.outputs) {
+            let problems = crate::interface_naming::naming_problems(port);
+            if !problems.is_empty() {
+                eprintln!(
+                    "wasm module '{}': port '{port}' does not follow the interface convention: it {}",
+                    self.name,
+                    problems.join("; it ")
+                );
+            }
+        }
         Ok(())
     }
 
