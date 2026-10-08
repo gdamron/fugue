@@ -117,7 +117,10 @@ impl Transport {
     ///
     /// A backend without device timing anchors at each render call with no
     /// latency, so the result can also be early by its whole output
-    /// latency.
+    /// latency. While the stream is stopped (its device gone, say) nothing
+    /// anchors and the count stands still, so a time converted then is
+    /// placed as if the stream had kept running: it is heard later than
+    /// asked by however long the stream stopped.
     pub(crate) fn sample_at(&self, at: Instant) -> Option<u64> {
         let clock = self.clock.get()?;
         let at = match at.checked_duration_since(clock.epoch) {
