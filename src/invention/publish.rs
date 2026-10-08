@@ -32,7 +32,7 @@ use super::graph::{InputWrite, RoutingConnection, SignalGraph};
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
-use crate::control_request::RequestSender;
+use crate::control_request::{OutcomeReceiver, RequestSender};
 use crate::ModuleRegistry;
 
 mod change;
@@ -63,6 +63,10 @@ pub(crate) struct LiveGraph {
     /// front doors that submit through it arrive with FUG-310's controls.
     #[cfg_attr(not(test), allow(dead_code))]
     requests: RequestSender,
+    /// What became of each request; the front doors that report outcomes
+    /// arrive with FUG-317.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) outcomes: OutcomeReceiver,
     state: Arc<Mutex<RuntimeState>>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
@@ -97,6 +101,7 @@ impl LiveGraph {
             reclaimer: Arc::new(Reclaimer::new(ends.retired, ends.payloads)),
             inputs: ends.inputs,
             requests: ends.requests,
+            outcomes: ends.outcomes,
             state,
             control_surfaces,
             module_ports,

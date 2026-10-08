@@ -83,7 +83,7 @@ use super::SignalGraph;
 #[cfg(test)]
 use crate::control_request::RtValue;
 use crate::control_request::{
-    ControlIndex, Outcome, PendingStore, QueueConsumer, Refusal, Request, RequestValue, When,
+    ControlIndex, Outcome, OutcomeSender, PendingStore, QueueConsumer, Refusal, Request, RequestValue, When,
 };
 use crate::payload::Retirer;
 
@@ -106,17 +106,18 @@ pub(crate) struct RequestDrain {
 impl RequestDrain {
     /// Allocates the pending store: call it on a control thread. The queue
     /// must hold at most `pop_limit` requests; `retirer` takes every payload
-    /// the audio side does not keep.
+    /// the audio side does not keep, and `outcomes` reports every request.
     pub(crate) fn new(
         requests: QueueConsumer<Request>,
         pop_limit: usize,
         pending: usize,
         retirer: Retirer,
+        outcomes: OutcomeSender,
     ) -> Self {
         Self {
             requests,
             pop_limit,
-            pending: PendingStore::new(pending, retirer),
+            pending: PendingStore::new(pending, retirer, outcomes),
             installed: 0,
         }
     }

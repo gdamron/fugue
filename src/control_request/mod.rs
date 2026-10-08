@@ -1,24 +1,26 @@
 //! Control requests: how every control write reaches the audio thread.
 //!
-//! A control write (from RPC, MCP agents, scripts, reload, or the audio
-//! thread's own automation) becomes a typed [`Request`] submitted through a
-//! [`RequestSender`] into one bounded, allocation-free MPSC queue
-//! ([`bounded`]). The audio thread is the queue's only consumer and the only
-//! mutator of module control state.
+//! A control write (from RPC, MCP agents, scripts or reload) becomes a
+//! typed [`Request`] submitted through a [`RequestSender`] into one
+//! bounded, allocation-free MPSC queue ([`bounded`]). The audio thread is
+//! the queue's only consumer and the only mutator of module control state,
+//! and it reports what became of each request through an outcome channel
+//! ([`outcome_channel`]). Modules name their controls with typed
+//! [`ControlKey`]s.
 //!
 //! Every ordering argument lives in [`queue`](self::queue) and [`EventCounter`],
 //! and the `loom_tests` models check the shipped source files against loom's
 //! atomics and cells (the `sync` shim below), so modules never need one.
 //!
-//! This module holds the request types, the queue, the sender and the
-//! audio side's pending store. The drain that feeds the store (with the
-//! graph, in `invention::graph::requests`), the outcomes path, typed control
-//! keys and the module control tables come in later slices (FUG-308, FUG-310),
-//! hence the `dead_code` and `unused_imports` allowance below; remove it
-//! once consumers land.
+//! The drain that feeds the pending store lives with the graph, in
+//! `invention::graph::requests`. Front doors and the module control tables
+//! that use the rest come with FUG-310 and FUG-317, hence the `dead_code`
+//! and `unused_imports` allowance below; remove it once they land.
 #![allow(dead_code, unused_imports)]
 
 mod event;
+mod key;
+mod outcome;
 mod pending;
 mod queue;
 mod request;
@@ -56,6 +58,8 @@ mod sync {
 }
 
 pub(crate) use event::{EventCounter, EventCursor};
+pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
+pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
 pub(crate) use pending::{Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::{bounded, QueueConsumer, QueueProducer};
 pub(crate) use request::{

@@ -246,3 +246,37 @@ fn peeking_leaves_the_head_queued() {
     assert_eq!(consumer.pop(), Some(2));
     assert_eq!(consumer.peek(|v| *v), None);
 }
+
+#[test]
+fn a_full_outcome_queue_counts_what_it_drops() {
+    let (mut sender, receiver) = outcome_channel(2);
+    let mut cursor = EventCursor::new();
+    for id in 1..=3 {
+        sender.send(RequestId(id), Outcome::Superseded);
+    }
+    assert_eq!(receiver.try_recv(), Some((RequestId(1), Outcome::Superseded)));
+    assert_eq!(receiver.try_recv(), Some((RequestId(2), Outcome::Superseded)));
+    assert_eq!(receiver.try_recv(), None);
+    assert_eq!(cursor.take(receiver.dropped()), 1);
+}
+
+const CONTROLS: usize = 4;
+const LEVEL: ControlKey<f32, CONTROLS> = ControlKey::new(0);
+const STEPS: ControlKeys<i32, CONTROLS> = ControlKeys::new(1, 3);
+
+#[test]
+fn typed_keys_name_their_index_and_value_type() {
+    assert_eq!(LEVEL.index(), ControlIndex(0));
+    assert_eq!(STEPS.len(), 3);
+    assert_eq!(STEPS.at(2).index(), ControlIndex(3));
+    assert_eq!(0.5f32.into_rt(), RtValue::F32(0.5));
+    assert_eq!(i32::from_rt(RtValue::I32(-2)), Some(-2));
+    assert_eq!(bool::from_rt(RtValue::F32(1.0)), None, "no implicit casts");
+}
+
+#[test]
+#[should_panic(expected = "control index out of range")]
+fn a_key_past_its_table_is_refused() {
+    let index = CONTROLS;
+    let _ = ControlKey::<f32, CONTROLS>::new(index);
+}
