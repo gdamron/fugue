@@ -3,9 +3,15 @@ use crate::invention::builder::InventionBuilder;
 use crate::modules::NullBackend;
 
 mod authored;
+mod numeric;
 
 fn doc(json: &str) -> Invention {
     Invention::from_json(json).unwrap()
+}
+
+/// No declared numeric keys: every value compares as JSON.
+fn no_keys(_: &str) -> &'static [crate::module_config::ConfigKey] {
+    &[]
 }
 
 fn start(json: &str) -> RunningInvention {
@@ -288,7 +294,10 @@ fn config_deltas_that_cannot_be_controls_force_a_swap() {
             }],
             ..doc(r#"{ "modules": [], "connections": [] }"#)
         };
-        plan_reload(&current, &[], &new, &HashSet::new(), |_, _| has_control).unwrap()
+        plan_reload(&current, &[], &new, &HashSet::new(), no_keys, |_, _| {
+            has_control
+        })
+        .unwrap()
     };
 
     // A scalar delta on an exposed control key stays live.
@@ -341,7 +350,7 @@ fn null_and_empty_configs_are_equivalent() {
         ..doc(r#"{ "modules": [], "connections": [] }"#)
     };
 
-    let plan = plan_reload(&current, &[], &new, &HashSet::new(), |_, _| false).unwrap();
+    let plan = plan_reload(&current, &[], &new, &HashSet::new(), no_keys, |_, _| false).unwrap();
     assert_eq!(plan.unchanged, vec!["dac"]);
     assert!(plan.swapped.is_empty());
 }
@@ -381,6 +390,7 @@ fn connection_diff_skips_endpoints_of_removed_modules() {
         &current_connections,
         &new,
         &HashSet::new(),
+        no_keys,
         |_, _| false,
     )
     .unwrap();

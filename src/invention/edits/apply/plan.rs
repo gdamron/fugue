@@ -18,6 +18,7 @@ use crate::invention::edits::EditedCandidate;
 use crate::invention::reload::{plan_reload, ReloadPlan};
 use crate::invention::state::{RuntimeModuleInfo, RuntimeState};
 use crate::rpc::{RpcError, RpcErrorCode};
+use crate::ModuleRegistry;
 
 /// Plans the change from the running graph, as `state` describes it, to
 /// `candidate`, and refuses a plan that would touch a module the batch does
@@ -30,6 +31,7 @@ use crate::rpc::{RpcError, RpcErrorCode};
 pub(super) fn plan_edits(
     state: &RuntimeState,
     candidate: &EditedCandidate,
+    registry: &ModuleRegistry,
 ) -> Result<ReloadPlan, RpcError> {
     let authored: HashMap<&str, &serde_json::Value> = state
         .document
@@ -63,6 +65,7 @@ pub(super) fn plan_edits(
         &state.connections,
         &candidate.document,
         &HashSet::new(),
+        |module_type| registry.config_keys(module_type),
         |module_id, key| written.contains(&(module_id, key)),
     )
     .map_err(|error| {

@@ -38,6 +38,27 @@ pub enum ConfigKind {
     Float,
 }
 
+impl ConfigKind {
+    /// Whether `a` and `b` read as one value of this kind, however each is
+    /// spelled: `440` and `440.0` are one float, `72` and `72.0` one
+    /// integer. An integer compares exactly, never through a float, and a
+    /// float beyond 2^53 never equals an integer (the reader refuses it). A
+    /// float compares as the `f32` the reader makes, bit for bit. A value
+    /// the reader refuses is never the same as another.
+    pub fn same_value(self, a: &Value, b: &Value) -> bool {
+        match self {
+            Self::Integer { min, max } => {
+                let read = |value| exact_whole(value).filter(|whole| (min..=max).contains(whole));
+                matches!((read(a), read(b)), (Some(a), Some(b)) if a == b)
+            }
+            Self::Float => matches!(
+                (finite_f32(a), finite_f32(b)),
+                (Ok(a), Ok(b)) if a.to_bits() == b.to_bits()
+            ),
+        }
+    }
+}
+
 /// A numeric key a module's config may hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConfigKey {
@@ -249,6 +270,23 @@ pub fn whole_number_in<T: ConfigInt>(
         Some(whole) if (min..=max).contains(&whole) => Ok(T::from_checked(whole)),
         _ => Err(NumberRefusal::new(expected, value)),
     }
+}
+
+/// `value` as the whole number an integer key reads it as, before its
+/// range: a JSON integer, or a float that is exactly whole and no larger
+/// than 2^53.
+fn exact_whole(value: &Value) -> Option<i128> {
+    let Value::Number(number) = value else {
+        return None;
+    };
+    if number.is_f64() {
+        let float = number.as_f64()?;
+        return (float.fract() == 0.0 && float.abs() <= EXACT_FLOAT_LIMIT).then_some(float as i128);
+    }
+    number
+        .as_i64()
+        .map(i128::from)
+        .or(number.as_u64().map(i128::from))
 }
 
 /// Reads `value` as a number that is finite as an `f32`; one too large for
