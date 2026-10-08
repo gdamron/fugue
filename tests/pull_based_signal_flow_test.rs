@@ -254,8 +254,8 @@ fn test_cycle_is_safe() {
             }
         ],
         "connections": [
-            {"from": "osc1", "from_port": "audio", "to": "osc2", "to_port": "fm"},
-            {"from": "osc2", "from_port": "audio", "to": "osc1", "to_port": "fm"},
+            {"from": "osc1", "from_port": "audio", "to": "osc2", "to_port": "frequency_mod"},
+            {"from": "osc2", "from_port": "audio", "to": "osc1", "to_port": "frequency_mod"},
             {"from": "osc1", "from_port": "audio", "to": "dac", "to_port": "audio"}
         ]
     }

@@ -281,7 +281,7 @@ fn writes_follow_their_modules_through_two_folds() {
 #[test]
 fn folding_keeps_a_remap_only_for_generations_with_writes() {
     let (mut rig, probes) = rig_with_probes(&["p1"]);
-    let fm = || edge("osc1", "audio", "osc2", "fm");
+    let fm = || edge("osc1", "audio", "osc2", "frequency_mod");
     let toggle = |rig: &Rig, n: usize| {
         if n.is_multiple_of(2) {
             rig.live.connect(fm()).unwrap();

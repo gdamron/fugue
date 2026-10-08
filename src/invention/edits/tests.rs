@@ -34,12 +34,12 @@ fn type_facts(module_type: &str) -> Option<ModuleFacts> {
     };
     match module_type {
         "oscillator" => Some(ModuleFacts {
-            inputs: names(&["frequency", "fm"]),
+            inputs: names(&["frequency", "frequency_mod"]),
             outputs: names(&["audio"]),
             controls: BTreeMap::from([
                 ("frequency".to_string(), number()),
                 (
-                    "type".to_string(),
+                    "waveform".to_string(),
                     ControlKind::String {
                         options: Some(vec!["sine".into(), "square".into()]),
                     },
@@ -182,7 +182,7 @@ fn has_connection(document: &Invention, from: &str, to: &str, to_port: &str) -> 
 fn later_edits_see_earlier_ones() {
     let candidate = apply(vec![
         add("lfo", "lfo", json!({ "rate": 2 })),
-        connect("lfo", "bipolar", "osc1", "fm"),
+        connect("lfo", "bipolar", "osc1", "frequency_mod"),
         set("lfo", "retrigger", ControlValue::Bool(true)),
     ])
     .unwrap();
@@ -191,7 +191,12 @@ fn later_edits_see_earlier_ones() {
         config_of(&candidate.document, "lfo"),
         &json!({ "rate": 2, "retrigger": true })
     );
-    assert!(has_connection(&candidate.document, "lfo", "osc1", "fm"));
+    assert!(has_connection(
+        &candidate.document,
+        "lfo",
+        "osc1",
+        "frequency_mod"
+    ));
     assert_eq!(
         candidate.named_modules,
         BTreeSet::from(["lfo".to_string(), "osc1".to_string()])
@@ -249,7 +254,7 @@ fn removing_then_adding_an_id_replaces_it_with_the_new_type() {
     let candidate = apply(vec![
         remove("osc1"),
         add("osc1", "lfo", json!(null)),
-        connect("osc1", "bipolar", "osc2", "fm"),
+        connect("osc1", "bipolar", "osc2", "frequency_mod"),
         set("osc1", "retrigger", ControlValue::Bool(false)),
     ])
     .unwrap();
@@ -260,7 +265,12 @@ fn removing_then_adding_an_id_replaces_it_with_the_new_type() {
         .find(|spec| spec.id == "osc1")
         .unwrap();
     assert_eq!(spec.module_type, "lfo");
-    assert!(has_connection(&candidate.document, "osc1", "osc2", "fm"));
+    assert!(has_connection(
+        &candidate.document,
+        "osc1",
+        "osc2",
+        "frequency_mod"
+    ));
 }
 
 #[test]
@@ -291,9 +301,9 @@ fn unknown_types_and_refused_configs_name_the_add() {
 fn connections_must_name_existing_ports_once() {
     let failure = refused(vec![connect("osc1", "audio", "osc2", "phase")]);
     assert_eq!(failure.reason, EditFailureReason::UnknownPort);
-    assert!(failure.message.contains("frequency, fm"));
+    assert!(failure.message.contains("frequency, frequency_mod"));
 
-    let failure = refused(vec![connect("dac", "audio", "osc2", "fm")]);
+    let failure = refused(vec![connect("dac", "audio", "osc2", "frequency_mod")]);
     assert_eq!(failure.reason, EditFailureReason::UnknownPort);
     assert!(failure.message.contains("available: none"));
 
@@ -303,7 +313,7 @@ fn connections_must_name_existing_ports_once() {
 
 #[test]
 fn disconnecting_a_missing_connection_is_refused() {
-    let failure = refused(vec![disconnect("osc1", "audio", "osc2", "fm")]);
+    let failure = refused(vec![disconnect("osc1", "audio", "osc2", "frequency_mod")]);
     assert_eq!(failure.reason, EditFailureReason::ConnectionNotFound);
 
     let failure = refused(vec![
@@ -321,7 +331,11 @@ fn disconnecting_a_missing_connection_is_refused() {
 
 #[test]
 fn removing_a_module_drops_its_connections() {
-    let candidate = apply(vec![connect("osc1", "audio", "osc2", "fm"), remove("osc1")]).unwrap();
+    let candidate = apply(vec![
+        connect("osc1", "audio", "osc2", "frequency_mod"),
+        remove("osc1"),
+    ])
+    .unwrap();
     assert!(candidate
         .document
         .connections
@@ -334,7 +348,7 @@ fn removing_a_module_drops_its_connections() {
 fn unknown_controls_are_refused() {
     let failure = refused(vec![set("osc1", "cutoff", ControlValue::Number(1.0))]);
     assert_eq!(failure.reason, EditFailureReason::UnknownControl);
-    assert!(failure.message.contains("frequency, type"));
+    assert!(failure.message.contains("frequency, waveform"));
 
     let failure = refused(vec![set("dac", "level", ControlValue::Number(1.0))]);
     assert_eq!(failure.reason, EditFailureReason::UnknownControl);
@@ -345,7 +359,7 @@ fn control_values_are_coerced_to_the_declared_kind() {
     let candidate = apply(vec![
         set("osc1", "frequency", ControlValue::String("330".into())),
         set("osc2", "frequency", ControlValue::Number(0.7)),
-        set("osc2", "type", ControlValue::String("square".into())),
+        set("osc2", "waveform", ControlValue::String("square".into())),
         add("lfo", "lfo", json!(null)),
         set("lfo", "retrigger", ControlValue::String("true".into())),
     ])
@@ -358,7 +372,7 @@ fn control_values_are_coerced_to_the_declared_kind() {
     );
     assert_eq!(
         config_of(&candidate.document, "osc2"),
-        &json!({ "frequency": 0.7, "type": "square" })
+        &json!({ "frequency": 0.7, "waveform": "square" })
     );
     assert_eq!(
         config_of(&candidate.document, "lfo"),
@@ -380,7 +394,11 @@ fn control_values_are_coerced_to_the_declared_kind() {
         [
             (0, "osc1.frequency".into(), ControlValue::Number(330.0)),
             (1, "osc2.frequency".into(), ControlValue::Number(0.7)),
-            (2, "osc2.type".into(), ControlValue::String("square".into())),
+            (
+                2,
+                "osc2.waveform".into(),
+                ControlValue::String("square".into())
+            ),
             (4, "lfo.retrigger".into(), ControlValue::Bool(true)),
         ]
     );
@@ -419,7 +437,7 @@ fn a_module_in_the_document_but_not_running_is_unknown() {
     facts.running.remove("osc2");
     let failure = apply_to_candidate(
         &document,
-        &[connect("osc2", "audio", "osc1", "fm")],
+        &[connect("osc2", "audio", "osc1", "frequency_mod")],
         &mut facts,
     )
     .unwrap_err();

@@ -31,8 +31,8 @@ described here is made by the daemon, and every refusal is structured.
   "expected_revision": { "session_id": "…", "revision": 12 },
   "edits": [
     { "op": "add_module", "id": "tremolo", "module_type": "lfo", "config": { "rate": 5 } },
-    { "op": "connect", "from": "tremolo", "from_port": "bipolar", "to": "lead", "to_port": "am" },
-    { "op": "set_control", "module_id": "lead", "key": "am_amount", "value": 0.3 }
+    { "op": "connect", "from": "tremolo", "from_port": "bipolar", "to": "lead", "to_port": "amplitude_mod" },
+    { "op": "set_control", "module_id": "lead", "key": "amplitude_mod_depth", "value": 0.3 }
   ]
 }
 ```
@@ -102,7 +102,7 @@ A committed batch answers with `kind: "edits_applied"`:
   "added": ["tremolo"],
   "removed": [],
   "rebuilt": [],
-  "controls_written": [{ "module_id": "lead", "key": "am_amount" }],
+  "controls_written": [{ "module_id": "lead", "key": "amplitude_mod_depth" }],
   "connections_added": 1,
   "connections_removed": 0,
   "untouched": 41
@@ -331,7 +331,7 @@ third attempt, the batch is refused as `internal` and nothing was applied.
    audio block before the new graph. Added and rebuilt modules are built from
    their final configs and take the batch's values through their setters
    before the new graph is prepared, so they arrive with them: a control's key
-   need not be the config key the module is built from (an oscillator's `type`
+   need not be the config key the module is built from (a filter's `type`
    control, say). Writes are made in batch order, as they were checked, so a
    control written more than once ends at its last value.
 3. One `control_changed { module_id, key, value }` is emitted per control

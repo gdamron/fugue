@@ -7,7 +7,7 @@
       "id": "osc",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "triangle"
+        "waveform": "triangle"
       }
     },
     {

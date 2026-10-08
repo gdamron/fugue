@@ -335,7 +335,7 @@ mod tests {
         "version": "1.0.0",
         "title": "ffi-test",
         "modules": [
-            { "id": "osc", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+            { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
             { "id": "vca", "type": "vca", "config": {} },
             { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
         ],

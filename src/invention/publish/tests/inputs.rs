@@ -15,7 +15,7 @@ const HELD: &str = r#"{
     "version": "1.0.0",
     "modules": [
         { "id": "lfo", "type": "oscillator", "config": { "frequency": 3.0 } },
-        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
         { "id": "vca", "type": "vca" },
         { "id": "dac", "type": "dac" }
     ],
@@ -84,7 +84,7 @@ fn written_inputs_hold_across_unrelated_edits() {
     upsert(&edited, "aux", "oscillator", serde_json::json!({}));
     assert_identical(&edited.render(3), &twin.render(3), "after adding aux");
 
-    let lfo_to_aux = edge("lfo", "audio", "aux", "fm");
+    let lfo_to_aux = edge("lfo", "audio", "aux", "frequency_mod");
     edited.live.connect(lfo_to_aux.clone()).unwrap();
     assert_identical(&edited.render(3), &twin.render(3), "after connecting aux");
     edited.live.disconnect(lfo_to_aux).unwrap();
@@ -98,7 +98,7 @@ fn written_inputs_hold_across_unrelated_edits() {
     // at osc1's default fm amount of zero, and the written port is kept.
     edited
         .live
-        .connect(edge("lfo", "audio", "osc1", "fm"))
+        .connect(edge("lfo", "audio", "osc1", "frequency_mod"))
         .unwrap();
     assert_identical(&edited.render(3), &twin.render(3), "after connecting fm");
 
@@ -127,7 +127,7 @@ fn written_inputs_hold_across_folded_publications() {
     edited.live.remove_module("lfo").unwrap();
     edited
         .live
-        .connect(edge("aux", "audio", "osc1", "am"))
+        .connect(edge("aux", "audio", "osc1", "amplitude_mod"))
         .unwrap();
     assert_identical(&edited.render(5), &twin.render(5), "after folding");
     assert_held(&mut edited);
@@ -145,7 +145,7 @@ fn rebuilt_and_added_modules_start_fresh() {
         let osc1 = rig.build(
             "osc1",
             "oscillator",
-            serde_json::json!({ "type": "sine", "frequency": 440.0 }),
+            serde_json::json!({ "waveform": "sine", "frequency": 440.0 }),
         );
         rig.live
             .edit(|change| {

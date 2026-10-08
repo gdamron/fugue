@@ -7,8 +7,8 @@
       "id": "osc",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "sine",
-        "am_amount": 0.18
+        "waveform": "sine",
+        "amplitude_mod_depth": 0.18
       }
     },
     {
@@ -52,7 +52,7 @@
       "from": "tremolo_lfo",
       "from_port": "bipolar",
       "to": "osc",
-      "to_port": "am"
+      "to_port": "amplitude_mod"
     },
     {
       "from": "osc",
@@ -117,7 +117,7 @@
     {
       "key": "tremolo_depth",
       "module": "osc",
-      "control": "am_amount"
+      "control": "amplitude_mod_depth"
     },
     {
       "key": "tremolo_rate",

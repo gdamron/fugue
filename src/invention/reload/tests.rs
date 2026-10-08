@@ -24,8 +24,8 @@ fn start(json: &str) -> RunningInvention {
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [
@@ -95,14 +95,14 @@ fn applied_control_updates_are_not_redetected_by_the_next_reload() {
 fn reload_adds_removes_and_swaps_modules() {
     let mut running = start(BASE);
 
-    // osc1's waveform changes (not a control key -> rebuilt in place),
+    // osc1's waveform changes (a control key -> written, not rebuilt),
     // osc2 is gone, osc3 arrives with a connection.
     let report = running
         .reload(doc(r#"{
             "version": "1.0.0",
             "modules": [
-                { "id": "osc1", "type": "oscillator", "config": { "oscillator_type": "square", "frequency": 440.0 } },
-                { "id": "osc3", "type": "oscillator", "config": { "type": "sine", "frequency": 660.0 } },
+                { "id": "osc1", "type": "oscillator", "config": { "waveform": "square", "frequency": 440.0 } },
+                { "id": "osc3", "type": "oscillator", "config": { "waveform": "sine", "frequency": 660.0 } },
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
@@ -112,7 +112,8 @@ fn reload_adds_removes_and_swaps_modules() {
         }"#))
         .expect("diff applies");
 
-    assert_eq!(report.swapped, vec!["osc1"]);
+    assert!(report.swapped.is_empty(), "{report:?}");
+    assert_eq!(report.controls_updated, ["osc1.waveform"]);
     assert_eq!(report.added, vec!["osc3"]);
     assert_eq!(report.removed, vec!["osc2"]);
     assert_eq!(report.connections_added, 1);
@@ -161,7 +162,7 @@ const DEV_BASE: &str = r#"{
             "name": "voice",
             "definition": {
                 "modules": [
-                    { "id": "o", "type": "oscillator", "config": { "type": "sine", "frequency": 300.0 } }
+                    { "id": "o", "type": "oscillator", "config": { "waveform": "sine", "frequency": 300.0 } }
                 ],
                 "connections": [],
                 "outputs": [ { "name": "audio", "from": "o", "from_port": "audio" } ]
@@ -171,7 +172,7 @@ const DEV_BASE: &str = r#"{
     "modules": [
         { "id": "v1", "type": "voice" },
         { "id": "v2", "type": "voice" },
-        { "id": "solo", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+        { "id": "solo", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [

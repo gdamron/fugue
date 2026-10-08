@@ -2,7 +2,7 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 3] = ["frequency", "fm", "am"];
+pub const INPUTS: [&str; 3] = ["frequency", "frequency_mod", "amplitude_mod"];
 
 pub struct OscillatorInputs {
     frequency: [f32; MAX_BLOCK],
@@ -29,11 +29,11 @@ impl OscillatorInputs {
                 self.frequency_connected = true;
                 Ok(())
             }
-            "fm" => {
+            "frequency_mod" => {
                 self.fm.fill(value);
                 Ok(())
             }
-            "am" => {
+            "amplitude_mod" => {
                 self.am.fill(value);
                 Ok(())
             }

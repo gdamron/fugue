@@ -27,7 +27,7 @@
       "id": "osc",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "square"
+        "waveform": "square"
       }
     },
     {

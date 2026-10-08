@@ -35,8 +35,8 @@
       "id": "osc",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "square",
-        "am_amount": 0.6
+        "waveform": "square",
+        "amplitude_mod_depth": 0.6
       }
     },
     {
@@ -81,7 +81,7 @@
       "from": "tremolo_lfo",
       "from_port": "bipolar",
       "to": "osc",
-      "to_port": "am"
+      "to_port": "amplitude_mod"
     },
     {
       "from": "melody",

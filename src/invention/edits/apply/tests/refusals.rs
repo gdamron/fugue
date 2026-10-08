@@ -53,9 +53,9 @@ fn per_edit_and_control_value_refusals_change_nothing() {
     let error = refused(
         &mut running,
         &[
-            set("osc1", "type", ControlValue::String("square".into())),
-            set("osc1", "type", ControlValue::String("bogus".into())),
-            set("osc1", "type", ControlValue::String("sine".into())),
+            set("osc1", "waveform", ControlValue::String("square".into())),
+            set("osc1", "waveform", ControlValue::String("bogus".into())),
+            set("osc1", "waveform", ControlValue::String("sine".into())),
         ],
     );
     assert_eq!(at_edit(&error), (1, EditFailureReason::InvalidControlValue));
@@ -65,7 +65,7 @@ fn per_edit_and_control_value_refusals_change_nothing() {
         &mut running,
         &[
             add("v", "oscillator", json!({})),
-            set("v", "type", ControlValue::String("bogus".into())),
+            set("v", "waveform", ControlValue::String("bogus".into())),
         ],
     );
     assert_eq!(at_edit(&error), (1, EditFailureReason::InvalidControlValue));
@@ -200,7 +200,7 @@ fn the_guard_names_the_first_module_the_batch_does_not_name() {
         from: from.into(),
         from_port: "audio".into(),
         to: to.into(),
-        to_port: "fm".into(),
+        to_port: "frequency_mod".into(),
     };
     let plans: Vec<(ReloadPlan, &str)> = vec![
         (

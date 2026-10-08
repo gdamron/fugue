@@ -8,7 +8,7 @@
       "type": "oscillator",
       "config": {
         "frequency": 220.0,
-        "type": "sawtooth"
+        "waveform": "sawtooth"
       }
     },
     {
@@ -63,7 +63,7 @@
     {
       "key": "waveform",
       "module": "osc",
-      "control": "type"
+      "control": "waveform"
     },
     {
       "key": "attack",

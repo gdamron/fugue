@@ -22,7 +22,7 @@
 //! ```json
 //! {
 //!   "modules": [
-//!     { "id": "osc", "type": "oscillator", "config": { "oscillator_type": "sawtooth" } },
+//!     { "id": "osc", "type": "oscillator", "config": { "waveform": "sawtooth" } },
 //!     { "id": "filter", "type": "filter", "config": { "filter_type": "lowpass", "cutoff": 1000.0, "resonance": 0.5 } },
 //!     { "id": "env", "type": "adsr", "config": { "attack": 0.01, "decay": 0.3, "sustain": 0.2, "release": 0.5 } }
 //!   ],

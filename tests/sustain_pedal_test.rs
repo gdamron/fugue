@@ -67,7 +67,7 @@ fn invention(pedaled: bool) -> String {
                     "developments": [
                         {{ "name": "ring_voice", "definition": {{
                             "modules": [
-                                {{ "id": "osc", "type": "oscillator", "config": {{ "oscillator_type": "sine" }} }},
+                                {{ "id": "osc", "type": "oscillator", "config": {{ "waveform": "sine" }} }},
                                 {{ "id": "sus", "type": "sustain" }},
                                 {{ "id": "env", "type": "adsr",
                                    "config": {{ "attack": 0.002, "decay": 2.5, "sustain": 0.0, "release": 0.02 }} }},

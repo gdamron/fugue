@@ -17,7 +17,7 @@
 //! ```json
 //! {
 //!   "modules": [
-//!     { "id": "osc", "type": "oscillator", "config": { "oscillator_type": "sawtooth" } },
+//!     { "id": "osc", "type": "oscillator", "config": { "waveform": "sawtooth" } },
 //!     { "id": "reverb", "type": "reverb", "config": { "room_size": 0.5, "decay": 0.6, "wet": 0.4, "dry": 0.8 } },
 //!     { "id": "dac", "type": "dac" }
 //!   ],

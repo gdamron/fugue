@@ -117,7 +117,7 @@ impl RuntimeState {
     ///
     /// Only a key the stored config already contains is written. A control
     /// key can be absent from it (a default the file omits, an alias such as
-    /// an oscillator's `type` for its `waveform`, an indexed key such as a
+    /// a filter's `type` for its `filter_type`, an indexed key such as a
     /// mixer's `level.2` from its `levels` array), and adding one would make
     /// reloading the original file see that key removed, which reload can
     /// only express by rebuilding the module, resetting its phase. Leaving

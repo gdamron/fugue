@@ -21,8 +21,8 @@ const SAMPLE_RATE: u32 = 48_000;
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "type": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [
@@ -109,7 +109,7 @@ impl Rig {
     /// Every publication made so far is installed. Needs `osc1` and `osc2`.
     fn hold_a_retirement(&mut self) {
         self.live.reclaim();
-        let fm = edge("osc1", "audio", "osc2", "fm");
+        let fm = edge("osc1", "audio", "osc2", "frequency_mod");
         for n in 0..=publisher::RETIRE_CAPACITY {
             self.publish_unreclaimed(|change| {
                 if n.is_multiple_of(2) {
@@ -144,14 +144,16 @@ impl Rig {
             self.build(
                 "osc1",
                 "oscillator",
-                serde_json::json!({ "type": "square" }),
+                serde_json::json!({ "waveform": "square" }),
             ),
         );
         change.disconnect(edge("osc1", "audio", "dac", "audio"));
         change
             .connect(edge("osc3", "audio", "dac", "audio"))
             .unwrap();
-        change.connect(edge("osc3", "audio", "osc1", "fm")).unwrap();
+        change
+            .connect(edge("osc3", "audio", "osc1", "frequency_mod"))
+            .unwrap();
         change.prepare().unwrap()
     }
 }
@@ -363,7 +365,7 @@ fn a_change_that_edits_nothing_publishes_nothing() {
     let mut rig = Rig::new(BASE);
     rig.live.remove_module("missing").unwrap();
     rig.live
-        .disconnect(edge("osc1", "audio", "osc2", "fm"))
+        .disconnect(edge("osc1", "audio", "osc2", "frequency_mod"))
         .unwrap();
     let prepared = rig.live.begin().prepare().unwrap();
     assert!(prepared.is_empty());
@@ -385,7 +387,7 @@ fn a_swap_keeps_compatible_connections_only_when_asked() {
                 SAMPLE_RATE,
                 "osc1",
                 "oscillator",
-                &serde_json::json!({ "type": "square" }),
+                &serde_json::json!({ "waveform": "square" }),
                 preserve,
             )
             .unwrap()
@@ -440,7 +442,7 @@ fn a_started_reclaimer_frees_removed_modules_off_the_audio_thread() {
 #[test]
 fn a_full_input_queue_refuses_writes_until_the_audio_thread_drains_it() {
     let mut rig = Rig::new(BASE);
-    let write = |rig: &Rig| rig.live.write_input("osc1", "fm", 0.0);
+    let write = |rig: &Rig| rig.live.write_input("osc1", "frequency_mod", 0.0);
     for _ in 0..publisher::INPUT_QUEUE_CAPACITY {
         write(&rig).unwrap();
     }

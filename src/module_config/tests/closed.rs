@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 fn an_undeclared_config_key_is_refused_naming_the_module_and_key() {
     let document = Invention::from_json(
         r#"{"version": "1.0.0", "connections": [],
-            "modules": [{"id": "voice", "type": "oscillator", "config": {"waveform": "sawtooth"}}]}"#,
+            "modules": [{"id": "voice", "type": "oscillator", "config": {"oscillator_type": "sawtooth"}}]}"#,
     )
     .unwrap();
     let registry = ModuleRegistry::default().for_validation();
@@ -25,11 +25,11 @@ fn an_undeclared_config_key_is_refused_naming_the_module_and_key() {
         .to_string();
     assert!(
         error.contains("module 'voice'")
-            && error.contains("oscillator config has no key 'waveform'"),
+            && error.contains("oscillator config has no key 'oscillator_type'"),
         "{error}"
     );
     // Control keys are config keys too.
-    let config: Value = json!({ "type": "sawtooth", "frequency": 220.0 });
+    let config: Value = json!({ "waveform": "sawtooth", "frequency": 220.0 });
     assert!(ModuleRegistry::default()
         .build("oscillator", 48_000, &config)
         .is_ok());

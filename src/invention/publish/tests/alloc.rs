@@ -53,7 +53,7 @@ fn folded_publications_install_once_without_recompiling() {
 fn a_full_retire_channel_keeps_blocks_clean_until_drained() {
     let mut rig = Rig::new(BASE);
     rig.render(1);
-    let fm = edge("osc1", "audio", "osc2", "fm");
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
     // Publishes without `begin`, which would reclaim and empty the channel.
     let toggle = |rig: &Rig, n: usize| {
         let mut publisher = rig.live.publisher().lock().unwrap();
@@ -173,7 +173,7 @@ fn installs_that_keep_written_inputs_stay_clean() {
     upsert(&rig, "osc3", "oscillator", serde_json::json!({}));
     assert_clean_install(&mut rig, "adding a module");
     rig.live
-        .connect(edge("osc1", "audio", "osc2", "fm"))
+        .connect(edge("osc1", "audio", "osc2", "frequency_mod"))
         .unwrap();
     assert_clean_install(&mut rig, "connecting another port");
     rig.live.connect(osc3_to_osc2.clone()).unwrap();
@@ -223,7 +223,7 @@ fn an_install_that_carries_feedback_state_stays_clean() {
     // install that carries through them is just as clean.
     upsert(&rig, "aux", "oscillator", serde_json::json!({}));
     rig.live
-        .connect(edge("aux", "audio", "osc2", "am"))
+        .connect(edge("aux", "audio", "osc2", "amplitude_mod"))
         .unwrap();
     let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
     assert_eq!((allocs, frees), (0, 0), "folded install that carries");

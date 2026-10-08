@@ -38,7 +38,7 @@ fn a_removed_module_takes_its_earlier_writes_with_it() {
 fn a_replaced_module_keeps_only_the_writes_made_after_it_was_added_again() {
     let candidate = apply(vec![
         set("osc2", "frequency", ControlValue::Number(330.0)),
-        set("osc2", "type", ControlValue::String("square".into())),
+        set("osc2", "waveform", ControlValue::String("square".into())),
         remove("osc2"),
         add("osc2", "lfo", json!(null)),
         set("osc2", "rate", ControlValue::Number(0.5)),
@@ -60,7 +60,7 @@ fn final_writes_hold_one_entry_per_control_with_the_last_value() {
         set("osc1", "frequency", ControlValue::Number(100.0)),
         set("osc2", "frequency", ControlValue::Number(200.0)),
         set("osc1", "frequency", ControlValue::Number(300.0)),
-        set("osc1", "type", ControlValue::String("square".into())),
+        set("osc1", "waveform", ControlValue::String("square".into())),
     ])
     .unwrap();
     // Every write stays in control_writes, so each is checked at commit.
@@ -71,7 +71,11 @@ fn final_writes_hold_one_entry_per_control_with_the_last_value() {
         [
             (2, "osc1.frequency".into(), ControlValue::Number(300.0)),
             (1, "osc2.frequency".into(), ControlValue::Number(200.0)),
-            (3, "osc1.type".into(), ControlValue::String("square".into())),
+            (
+                3,
+                "osc1.waveform".into(),
+                ControlValue::String("square".into())
+            ),
         ]
     );
 }
@@ -140,7 +144,7 @@ fn the_latest_describe_for_an_id_wins() {
             add("mod", "lfo", json!({ "rate": 2 })),
             // The lfo's port, not the oscillator's: the overlay holds the
             // latest facts.
-            connect("mod", "bipolar", "osc1", "fm"),
+            connect("mod", "bipolar", "osc1", "frequency_mod"),
         ],
         &mut facts,
     )
@@ -251,14 +255,14 @@ fn refusals_echo_a_bounded_part_of_the_value() {
 fn a_number_sent_to_a_string_control_becomes_its_text() {
     // Coerced as a standalone write coerces it. Whether the module offers
     // that option is the module's own check, made at commit.
-    let candidate = apply(vec![set("osc1", "type", ControlValue::Number(3.0))]).unwrap();
+    let candidate = apply(vec![set("osc1", "waveform", ControlValue::Number(3.0))]).unwrap();
     assert_eq!(
         writes(&candidate.control_writes),
-        [(0, "osc1.type".into(), ControlValue::String("3".into()))]
+        [(0, "osc1.waveform".into(), ControlValue::String("3".into()))]
     );
     assert_eq!(
         config_of(&candidate.document, "osc1"),
-        &json!({ "frequency": 440, "type": "3" })
+        &json!({ "frequency": 440, "waveform": "3" })
     );
 }
 

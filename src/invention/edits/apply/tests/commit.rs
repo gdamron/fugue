@@ -150,10 +150,10 @@ fn a_batch_publication_installs_without_allocating() {
         .apply_edits(&[
             add("v", "oscillator", json!({ "frequency": 330.0 })),
             connect("v", "audio", "dac", "audio"),
-            connect("v", "audio", "osc1", "fm"),
+            connect("v", "audio", "osc1", "frequency_mod"),
             remove("spare"),
             remove("osc2"),
-            add("osc2", "oscillator", json!({ "type": "square" })),
+            add("osc2", "oscillator", json!({ "waveform": "square" })),
             connect("osc2", "audio", "dac", "audio"),
             set("osc1", "frequency", number(220.0)),
         ])

@@ -100,18 +100,24 @@ fn a_refused_batch_never_opens_the_file_of_a_recorder_it_adds() {
 
 #[test]
 fn a_control_written_to_an_added_module_is_made_through_its_setter() {
-    // An oscillator is built from `oscillator_type`; its control is `type`.
+    // An oscillator's `waveform` is both its config key and its control.
     let (mut running, pump) = start(BASE);
     let report = running
         .apply_edits(&[
             add("lead", "oscillator", json!({ "frequency": 220.0 })),
-            set("lead", "type", text("square")),
+            set("lead", "waveform", text("square")),
         ])
         .expect("the batch commits");
     assert!(report.controls_failed.is_empty());
-    assert_eq!(running.get_control("lead", "type").unwrap(), text("square"));
+    assert_eq!(
+        running.get_control("lead", "waveform").unwrap(),
+        text("square")
+    );
     pump.render(1);
-    assert_eq!(running.get_control("lead", "type").unwrap(), text("square"));
+    assert_eq!(
+        running.get_control("lead", "waveform").unwrap(),
+        text("square")
+    );
 }
 
 #[test]
@@ -121,11 +127,11 @@ fn a_control_written_to_a_replaced_module_is_made_through_its_setter() {
         .apply_edits(&[
             remove("spare"),
             add("spare", "oscillator", json!({ "frequency": 330.0 })),
-            set("spare", "type", text("sawtooth")),
+            set("spare", "waveform", text("sawtooth")),
         ])
         .expect("the batch commits");
     assert_eq!(
-        running.get_control("spare", "type").unwrap(),
+        running.get_control("spare", "waveform").unwrap(),
         text("sawtooth")
     );
 }

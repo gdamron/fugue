@@ -17,8 +17,8 @@
 //! ```json
 //! {
 //!   "modules": [
-//!     { "id": "osc1", "type": "oscillator", "config": { "oscillator_type": "sawtooth" } },
-//!     { "id": "osc2", "type": "oscillator", "config": { "oscillator_type": "square" } },
+//!     { "id": "osc1", "type": "oscillator", "config": { "waveform": "sawtooth" } },
+//!     { "id": "osc2", "type": "oscillator", "config": { "waveform": "square" } },
 //!     {
 //!       "id": "mixer",
 //!       "type": "mixer",
