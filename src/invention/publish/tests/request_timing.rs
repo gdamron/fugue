@@ -384,6 +384,7 @@ fn a_wall_clock_request_applies_at_the_sample_heard_then() {
     // The next sample is heard now, so 20 ms on is 960 samples on.
     let now = Instant::now();
     rig.graph.transport.start_clock(now, SAMPLE_RATE);
+    rig.graph.transport.anchor(start, now);
     let id = submit(
         &rig,
         "level",
@@ -433,5 +434,35 @@ fn an_unplaced_wall_clock_request_for_a_pending_publication_waits_queued() {
             (unplaced, Outcome::Refused(Refusal::NoClock)),
             (behind, Outcome::Applied { at: start }),
         ]
+    );
+}
+
+/// Submitted before the first callback anchors the clock, a wall-clock
+/// time is placed by the audio thread once it has: a stream that starts
+/// late, or with more latency, moves it.
+#[test]
+fn a_wall_clock_request_submitted_before_the_first_anchor_waits_for_it() {
+    let mut rig = level_rig();
+    let start = rig.graph.transport.rendered();
+    let now = Instant::now();
+    rig.graph.transport.start_clock(now, SAMPLE_RATE);
+    let id = submit(
+        &rig,
+        "level",
+        0,
+        1.0,
+        When::AtTime(now + Duration::from_millis(20)),
+    );
+    // The first callback: its first sample is heard 5 ms after `now`.
+    rig.graph
+        .transport
+        .anchor(start, now + Duration::from_millis(5));
+
+    // Placed on the audio thread, allocation- and free-free.
+    let out = render_in_blocks(&mut rig, 1024, &[64]);
+    assert_eq!(out.iter().position(|v| *v == 1.0), Some(720));
+    assert_eq!(
+        outcomes(&mut rig),
+        [(id, Outcome::Applied { at: start + 720 })]
     );
 }

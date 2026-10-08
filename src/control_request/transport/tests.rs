@@ -14,25 +14,17 @@ fn without_a_wall_clock_nothing_converts() {
 }
 
 #[test]
-fn a_started_clock_hears_the_next_sample_at_its_epoch_until_anchored() {
+fn a_started_clock_converts_nothing_until_anchored() {
     let transport = Transport::new();
-    transport.publish(4_800);
     let epoch = Instant::now();
     transport.start_clock(epoch, RATE);
-    assert_eq!(transport.sample_at(epoch), Some(4_800));
-    assert_eq!(
-        transport.sample_at(epoch + Duration::from_millis(20)),
-        Some(4_800 + 960)
-    );
-    // Before sample 0 is heard: sample 0.
-    let early = epoch.checked_sub(Duration::from_secs(1));
-    assert!(early.is_none_or(|early| transport.sample_at(early) == Some(0)));
+    assert_eq!(transport.sample_at(epoch), None);
     assert_eq!(
         transport.samples_in(Duration::from_millis(250)),
         Some(12_000)
     );
 
-    // Anchoring is allocation-free, and moves the relation.
+    // Anchoring is allocation-free, and sets the relation.
     let heard = epoch + Duration::from_millis(500);
     let ((), allocs, frees) = allocator_events(|| transport.anchor(9_600, heard));
     assert_eq!((allocs, frees), (0, 0));
@@ -41,6 +33,10 @@ fn a_started_clock_hears_the_next_sample_at_its_epoch_until_anchored() {
         transport.sample_at(heard + Duration::from_millis(1)),
         Some(9_648)
     );
+    // Sample 0 was heard at `epoch + 300 ms`: before it gives 0.
+    assert_eq!(transport.sample_at(epoch), Some(0));
+    let early = epoch.checked_sub(Duration::from_secs(1));
+    assert!(early.is_none_or(|early| transport.sample_at(early) == Some(0)));
 }
 
 /// A device whose clock runs `DRIFT` fast against the system's, with a

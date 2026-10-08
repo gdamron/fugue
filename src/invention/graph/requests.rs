@@ -163,9 +163,8 @@ impl SignalGraph {
         // and lift the back-pressure that bounds the folded remaps. Until
         // then it cannot know whether it applies, so with a ttl it replaces
         // nothing (`PendingStore::insert_beside`). For the same reason a
-        // wall-clock time the sender could not place (no wall clock) stays
-        // queued until its generation installs (`Ok(None)`), and is refused
-        // then.
+        // wall-clock time nothing can place (no wall clock) stays queued
+        // until its generation installs (`Ok(None)`), and is refused then.
         let resolve = |graph: &Self, request: &Request| {
             let mut target = request.target;
             let at = match request.when {
@@ -174,7 +173,9 @@ impl SignalGraph {
                 // Resolved by the sender; counted from here only for a
                 // request that never went through it.
                 When::AfterSamples(samples) => Some(now.saturating_add(samples)),
-                When::AtTime(_) => None,
+                // Left for this thread when the clock was not yet anchored
+                // at submission: it is now, unless there is no clock.
+                When::AtTime(time) => graph.transport.sample_at(time),
             };
             if target.generation > installed {
                 return Ok(at.map(|at| (target, at)));

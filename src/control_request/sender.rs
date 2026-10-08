@@ -56,7 +56,8 @@ impl RequestSender {
     /// published count ([`Transport::rendered`]) as of this call: they
     /// become [`When::AtSample`] and the request's `expires` sample.
     /// [`When::AtTime`] becomes the sample heard then
-    /// ([`Transport::sample_at`]). They are resolved once, so a request
+    /// ([`Transport::sample_at`]) once the clock is anchored; before that
+    /// the audio thread places it. They are resolved once, so a request
     /// handed back in [`QueueFull`] keeps its times when submitted again.
     ///
     /// # Errors

@@ -14,8 +14,9 @@ use crate::modules::AudioDiagnostics;
 /// within microseconds, while their frames are heard a whole buffer apart.
 /// So with device timing (a backend's [`AudioDiagnostics`]) only the first
 /// render call of each callback anchors, with the callback's start plus the
-/// output latency the host reported; a backend without it anchors at every
-/// render call, with no latency.
+/// output latency the host reported; a backend without it (or whose
+/// diagnostics record no callback times) anchors at every render call, with
+/// no latency.
 pub(crate) struct CallbackClock {
     device: Option<Arc<AudioDiagnostics>>,
     /// The start of the latest callback anchored.
@@ -50,10 +51,11 @@ impl CallbackClock {
 
     /// When the render call starting now is heard, if it should anchor.
     fn heard(&mut self) -> Option<Instant> {
-        let Some(device) = &self.device else {
+        let timing = self.device.as_ref().and_then(|d| d.callback_timing());
+        let Some((started, latency)) = timing else {
+            // No device timing (not every backend's diagnostics record it).
             return Some(Instant::now());
         };
-        let (started, latency) = device.callback_timing()?;
         if self.anchored == Some(started) {
             return None;
         }
@@ -75,8 +77,9 @@ mod tests {
         let mut clock = CallbackClock::start(&transport, 48_000, Some(Arc::clone(&device)));
         let latency = Duration::from_millis(10);
 
-        // No callback yet: nothing anchors.
-        assert_eq!(clock.heard(), None);
+        // No callback timing recorded yet: the render call itself anchors.
+        let before = Instant::now();
+        assert!(clock.heard().is_some_and(|heard| heard >= before));
         let first = Instant::now();
         device.record_callback_at(first);
         device.record_output_latency(latency);

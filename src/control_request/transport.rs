@@ -19,7 +19,9 @@
 //! reports). A sample's time follows from the latest anchor at the nominal
 //! sample rate, so one word holds the whole relation: when sample 0 would be
 //! heard. Control threads convert a wall-clock time to the sample heard
-//! then ([`Transport::sample_at`]). Offline render has no wall clock.
+//! then ([`Transport::sample_at`]), once the first callback has anchored
+//! the clock; until then the audio thread converts it as it takes the
+//! request, after anchoring. Offline render has no wall clock.
 
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -27,6 +29,9 @@ use std::time::{Duration, Instant};
 use super::sync::{AtomicU64, Ordering};
 
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
+
+/// `WallClock::heard_zero` before the first anchor.
+const UNANCHORED: i64 = i64::MIN;
 
 /// The engine's published sample count. Shared between the audio thread,
 /// its only writer, and any number of control-thread readers.
@@ -49,7 +54,8 @@ struct WallClock {
     sample_rate: u32,
     /// When sample 0 is heard, in nanoseconds after `epoch` (an `i64`'s
     /// bits; negative when that was before `epoch`), as of the latest
-    /// anchor. One word, so `Relaxed` publishes it whole.
+    /// anchor, or [`UNANCHORED`]. One word, so `Relaxed` publishes it
+    /// whole.
     heard_zero: AtomicU64,
 }
 
@@ -59,7 +65,7 @@ impl WallClock {
         let heard = i128::try_from(heard.saturating_duration_since(self.epoch).as_nanos())
             .unwrap_or(i128::MAX);
         let since_zero = i128::from(sample) * NANOS_PER_SECOND / i128::from(self.sample_rate);
-        (heard - since_zero).clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+        (heard - since_zero).clamp(i128::from(UNANCHORED) + 1, i128::from(i64::MAX)) as i64
     }
 }
 
@@ -71,19 +77,15 @@ impl Transport {
         }
     }
 
-    /// Gives a live stream's transport its wall clock, before the audio
-    /// thread runs: until the first callback anchors it, the next sample is
-    /// taken to be heard at `epoch`. A clock already started stays. Control
-    /// thread.
+    /// Gives a live stream's transport its wall clock, unanchored, before
+    /// the audio thread runs; times measure from `epoch`. A clock already
+    /// started stays. Control thread.
     pub(crate) fn start_clock(&self, epoch: Instant, sample_rate: u32) {
-        let clock = WallClock {
+        let _ = self.clock.set(WallClock {
             epoch,
             sample_rate: sample_rate.max(1),
-            heard_zero: AtomicU64::new(0),
-        };
-        let zero = clock.zero(self.rendered(), epoch);
-        clock.heard_zero.store(zero as u64, Ordering::Relaxed);
-        let _ = self.clock.set(clock);
+            heard_zero: AtomicU64::new(UNANCHORED as u64),
+        });
     }
 
     /// Anchors the wall clock: `sample` is heard at `heard`. Audio thread,
@@ -98,7 +100,9 @@ impl Transport {
     }
 
     /// The sample heard at `at`, from the latest anchor: `None` without a
-    /// wall clock (offline render). A time before sample 0 gives 0.
+    /// wall clock (offline render) or before the first anchor. A time before
+    /// sample 0 gives 0. Wait-free, allocation- and lock-free: the audio
+    /// thread calls it too.
     ///
     /// # Error bound
     ///
@@ -127,7 +131,11 @@ impl Transport {
             Some(after) => i128::try_from(after.as_nanos()).unwrap_or(i128::MAX),
             None => -i128::try_from(clock.epoch.duration_since(at).as_nanos()).unwrap_or(i128::MAX),
         };
-        let since_zero = at - i128::from(clock.heard_zero.load(Ordering::Relaxed) as i64);
+        let zero = clock.heard_zero.load(Ordering::Relaxed) as i64;
+        if zero == UNANCHORED {
+            return None;
+        }
+        let since_zero = at - i128::from(zero);
         let rate = i128::from(clock.sample_rate);
         let sample = (since_zero * rate + NANOS_PER_SECOND / 2).div_euclid(NANOS_PER_SECOND);
         Some(sample.clamp(0, i128::from(u64::MAX)) as u64)

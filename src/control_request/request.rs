@@ -59,9 +59,9 @@ pub(crate) enum When {
     /// The sample heard at this wall-clock time, within the bound
     /// [`Transport::sample_at`](super::Transport::sample_at) documents.
     /// [`RequestSender::submit`](super::RequestSender::submit) resolves it
-    /// to [`When::AtSample`]; without a wall clock (offline render) it stays
-    /// as it is and is refused
-    /// ([`Refusal::NoClock`](super::Refusal::NoClock)).
+    /// to [`When::AtSample`], or, before the clock's first anchor, the audio
+    /// thread does as it takes the request. Without a wall clock (offline
+    /// render) it is refused ([`Refusal::NoClock`](super::Refusal::NoClock)).
     AtTime(Instant),
 }
 
