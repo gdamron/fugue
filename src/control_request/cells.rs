@@ -69,8 +69,8 @@ impl ControlCells {
 /// its module runs: allocation-, free- and lock-free as long as the
 /// module's [`apply`](Module::apply) is.
 #[inline]
-pub(crate) fn apply_declared(
-    module: &mut dyn Module,
+pub(crate) fn apply_declared<M: Module + ?Sized>(
+    module: &mut M,
     control: ControlIndex,
     value: RtValue,
 ) -> Result<(), Refusal> {

@@ -8,6 +8,7 @@ use crate::control_request::{
     ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, Outcome, Refusal, Request,
     RequestId, RequestValue, RtValue, When,
 };
+use crate::invention::declared::DeclaredSurface;
 use crate::{GraphModule, Module, ModuleBuildResult, ModuleFactory, MAX_BLOCK};
 
 const DIAL: &str = "dial";
@@ -44,11 +45,11 @@ pub(super) struct Dial {
     level: f32,
     shape: u32,
     pulses: u32,
-    cells: ControlCells,
+    cells: Arc<ControlCells>,
     out: [f32; MAX_BLOCK],
 }
 
-struct DialFactory;
+pub(super) struct DialFactory;
 
 impl ModuleFactory for DialFactory {
     fn type_id(&self) -> &'static str {
@@ -60,7 +61,8 @@ impl ModuleFactory for DialFactory {
         _sample_rate: u32,
         _config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let cells = ControlCells::new(DECLS.iter().map(|decl| decl.default));
+        let cells = Arc::new(ControlCells::new(DECLS.iter().map(|decl| decl.default)));
+        let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
         let dial = Dial {
             level: 0.25,
             shape: 0,
@@ -71,7 +73,7 @@ impl ModuleFactory for DialFactory {
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(dial)),
             handles: Vec::new(),
-            control_surface: None,
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
     }
@@ -136,7 +138,7 @@ impl Module for Dial {
 }
 
 /// A dial alone into an unclipped dac, so the output is what it holds.
-fn dial_rig() -> Rig {
+pub(super) fn dial_rig() -> Rig {
     let mut rig = Rig::new(
         r#"{
             "version": "1.0.0",

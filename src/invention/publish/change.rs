@@ -10,6 +10,7 @@ use indexmap::IndexMap;
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::invention::declared::RequestPort;
 use crate::invention::graph::{
     compile_topology, vacant, Publication, RoutingConnection, SurvivorRemap, TopologyFacts,
 };
@@ -149,6 +150,9 @@ pub(crate) struct GraphChange {
     /// drop them after releasing it.
     discarded: Vec<BuiltModule>,
     block_size: usize,
+    /// The live graph's request queue, which built modules' declared
+    /// surfaces are bound to as the change is compiled.
+    pub(crate) port: Option<RequestPort>,
 }
 
 impl GraphChange {
@@ -168,6 +172,7 @@ impl GraphChange {
             built: IndexMap::new(),
             discarded: Vec::new(),
             block_size,
+            port: None,
         }
     }
 
@@ -322,8 +327,13 @@ impl GraphChange {
         }
         // Attached, so each new instance can do its one-time setup here
         // rather than in its first block on the audio thread.
-        for module in self.built.values_mut() {
+        // Bound as it is prepared: no write can reach a built surface
+        // before the change commits, so none is lost in between.
+        for (id, module) in self.built.iter_mut() {
             if let Some(instance) = module.instance.as_mut() {
+                if let (Some(surface), Some(port)) = (&module.surface, &self.port) {
+                    surface.bind(port.to(id), instance.module_mut());
+                }
                 instance.module_mut().prepare_for_publication();
             }
         }
