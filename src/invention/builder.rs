@@ -411,7 +411,10 @@ pub(crate) fn load_development_definition(
             crate::pkg::content::ContentRoots::from_environment()?.load_development(reference)?
         );
         #[cfg(target_arch = "wasm32")]
-        return Err("Catalog references require a daemon filesystem".into());
+        {
+            let _ = reference;
+            return Err("Catalog references require a daemon filesystem".into());
+        }
     }
     match (&development.path, &development.definition) {
         (Some(path), None) => {

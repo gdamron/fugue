@@ -96,6 +96,8 @@ pub struct ContentError {
     pub message: String,
 }
 impl ContentError {
+    // Its only caller reads the local filesystem, which wasm32 lacks.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn new(code: &str, message: impl ToString) -> Self {
         Self {
             code: code.into(),
