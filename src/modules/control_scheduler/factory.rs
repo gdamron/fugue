@@ -6,13 +6,20 @@ use std::sync::Arc;
 use super::CONTROL_SCHEDULER_TYPE_ID;
 use super::{schedule, ControlScheduler, ControlSchedulerControls, SurfaceDirectory};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 
 /// Factory for constructing ControlScheduler modules from configuration.
 pub struct ControlSchedulerFactory;
 
+const BPM_SCALE: ConfigKey = ConfigKey::float("bpm_scale");
+
 impl ModuleFactory for ControlSchedulerFactory {
     fn type_id(&self) -> &'static str {
         CONTROL_SCHEDULER_TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[BPM_SCALE]
     }
 
     fn build(
@@ -20,6 +27,10 @@ impl ModuleFactory for ControlSchedulerFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        // Read even without a tempo map, so a bad value is refused as written.
+        let bpm_scale = ConfigReader::new(CONTROL_SCHEDULER_TYPE_ID, config)
+            .float(&BPM_SCALE)?
+            .unwrap_or(1.0);
         let mut spec =
             schedule::parse_schedule(config.get("schedule").unwrap_or(&serde_json::Value::Null))?;
         // A score tempo map (spliced in via `$asset`) compiles into schedule
@@ -33,10 +44,6 @@ impl ModuleFactory for ControlSchedulerFactory {
                 .get("tempo_control")
                 .and_then(|value| value.as_str())
                 .unwrap_or("bpm");
-            let bpm_scale = config
-                .get("bpm_scale")
-                .and_then(|value| value.as_f64())
-                .unwrap_or(1.0) as f32;
             spec.extend(schedule::compile_tempo_map(
                 tempo_map, module, control, bpm_scale,
             )?);

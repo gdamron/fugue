@@ -244,3 +244,50 @@ fn test_mixer_controls() {
     assert!(mixer.get_control("level.5").is_err()); // Only 2 channels
     assert!(mixer.get_control("pan.5").is_err()); // Only 2 channels
 }
+
+#[test]
+fn a_whole_float_channel_count_builds_that_many_channels() {
+    let built = MixerFactory
+        .build(44_100, &serde_json::json!({ "channels": 2.0 }))
+        .unwrap();
+    // in1-in2, level1-level2, pan1-pan2 and master.
+    assert_eq!(built.module.module().inputs().len(), 7);
+    let error = MixerFactory
+        .build(44_100, &serde_json::json!({ "channels": 2.5 }))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.starts_with("mixer config 'channels' expects a whole number"),
+        "{error}"
+    );
+}
+
+#[test]
+fn levels_and_pans_refuse_a_non_number_rather_than_drop_it() {
+    // Dropping `"0.2"` used to shift 0.4 onto the second channel.
+    for (config, refusal) in [
+        (
+            serde_json::json!({ "levels": [0.8, "0.2", 0.4] }),
+            "mixer config 'levels[1]' expects a finite number, got \"0.2\"",
+        ),
+        (
+            serde_json::json!({ "pans": [-0.5, null] }),
+            "mixer config 'pans[1]' expects a finite number, got null",
+        ),
+        (
+            serde_json::json!({ "pans": [1e39] }),
+            "mixer config 'pans[0]' expects a finite number, got 1e39",
+        ),
+        (
+            serde_json::json!({ "levels": 0.5 }),
+            "mixer config 'levels' expects an array of numbers, got 0.5",
+        ),
+    ] {
+        let error = MixerFactory
+            .build(44_100, &config)
+            .err()
+            .map(|e| e.to_string());
+        assert_eq!(error.as_deref(), Some(refusal), "{config}");
+    }
+}

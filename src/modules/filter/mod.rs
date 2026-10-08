@@ -38,6 +38,7 @@ use std::f32::consts::PI;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -381,9 +382,18 @@ impl Module for Filter {
 /// Factory for constructing Filter modules from configuration.
 pub struct FilterFactory;
 
+const TYPE_ID: &str = "filter";
+const CUTOFF: ConfigKey = ConfigKey::float("cutoff");
+const RESONANCE: ConfigKey = ConfigKey::float("resonance");
+const CV_AMOUNT: ConfigKey = ConfigKey::float("cv_amount");
+
 impl ModuleFactory for FilterFactory {
     fn type_id(&self) -> &'static str {
-        "filter"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[CUTOFF, RESONANCE, CV_AMOUNT]
     }
 
     fn build(
@@ -398,18 +408,10 @@ impl ModuleFactory for FilterFactory {
                 .unwrap_or("lowpass"),
         )?;
 
-        let cutoff = config
-            .get("cutoff")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1000.0) as f32;
-        let resonance = config
-            .get("resonance")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32;
-        let cv_amount = config
-            .get("cv_amount")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(5000.0) as f32;
+        let reader = ConfigReader::new(TYPE_ID, config);
+        let cutoff = reader.float(&CUTOFF)?.unwrap_or(1000.0);
+        let resonance = reader.float(&RESONANCE)?.unwrap_or(0.0);
+        let cv_amount = reader.float(&CV_AMOUNT)?.unwrap_or(5000.0);
 
         let controls = FilterControls::new(cutoff, resonance, filter_type, cv_amount);
         crate::factory::apply_control_keys(&controls, config, |key| key == "type")?;

@@ -31,6 +31,7 @@ use std::f32::consts::PI;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::modules::OscillatorType;
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -258,9 +259,16 @@ impl Module for Lfo {
 /// Factory for constructing LFO modules from configuration.
 pub struct LfoFactory;
 
+const TYPE_ID: &str = "lfo";
+const FREQUENCY: ConfigKey = ConfigKey::float("frequency");
+
 impl ModuleFactory for LfoFactory {
     fn type_id(&self) -> &'static str {
-        "lfo"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[FREQUENCY]
     }
 
     fn build(
@@ -275,10 +283,9 @@ impl ModuleFactory for LfoFactory {
                 .unwrap_or("sine"),
         )?;
 
-        let frequency = config
-            .get("frequency")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1.0) as f32;
+        let frequency = ConfigReader::new(TYPE_ID, config)
+            .float(&FREQUENCY)?
+            .unwrap_or(1.0);
 
         let controls = LfoControls::new(frequency, waveform);
         let lfo = Lfo::new_with_controls(sample_rate, controls.clone());

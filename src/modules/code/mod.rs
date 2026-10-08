@@ -2,6 +2,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::{ControlMeta, ControlSurface, Module};
 
 pub use self::controls::CodeControls;
@@ -26,9 +27,16 @@ struct CodeConfig {
     tick_hz: f32,
 }
 
+const TYPE_ID: &str = "code";
+const TICK_HZ: ConfigKey = ConfigKey::float("tick_hz");
+
 impl ModuleFactory for CodeFactory {
     fn type_id(&self) -> &'static str {
-        "code"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[TICK_HZ]
     }
 
     fn build(
@@ -73,10 +81,9 @@ fn parse_config(config: &serde_json::Value) -> Result<CodeConfig, Box<dyn std::e
         .get("enabled")
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
-    let tick_hz = config
-        .get("tick_hz")
-        .and_then(|value| value.as_f64())
-        .unwrap_or(0.0) as f32;
+    let tick_hz = ConfigReader::new(TYPE_ID, config)
+        .float(&TICK_HZ)?
+        .unwrap_or(0.0);
 
     Ok(CodeConfig {
         script,

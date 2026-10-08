@@ -8,6 +8,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -20,9 +21,16 @@ mod outputs;
 /// Factory for constructing VCA modules from configuration.
 pub struct VcaFactory;
 
+const TYPE_ID: &str = "vca";
+const CV: ConfigKey = ConfigKey::float("cv");
+
 impl ModuleFactory for VcaFactory {
     fn type_id(&self) -> &'static str {
-        "vca"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[CV]
     }
 
     fn build(
@@ -30,7 +38,9 @@ impl ModuleFactory for VcaFactory {
         _sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let cv = config.get("cv").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+        let cv = ConfigReader::new(TYPE_ID, config)
+            .float(&CV)?
+            .unwrap_or(1.0);
 
         let controls = VcaControls::new(cv);
         let vca = Vca::new_with_controls(controls.clone());

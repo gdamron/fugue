@@ -4,6 +4,9 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{
+    finite_f32, whole_number, ConfigError, ConfigKey, ConfigReader, NumberRefusal,
+};
 use crate::music::{Note, Scale};
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -20,9 +23,17 @@ mod snapshot;
 /// Factory for constructing MelodyGenerator modules from configuration.
 pub struct MelodyFactory;
 
+const TYPE_ID: &str = "melody";
+const ROOT_NOTE: ConfigKey = ConfigKey::int::<u8>("root_note");
+const SEED: ConfigKey = ConfigKey::seed("seed");
+
 impl ModuleFactory for MelodyFactory {
     fn type_id(&self) -> &'static str {
-        "melody"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[ROOT_NOTE, SEED]
     }
 
     fn build(
@@ -30,31 +41,18 @@ impl ModuleFactory for MelodyFactory {
         _sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let root_note = config
-            .get("root_note")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(60) as u8;
-
-        let degrees = config
-            .get("scale_degrees")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_i64().map(|n| n as i32))
-                    .collect()
-            })
+        let reader = ConfigReader::new(TYPE_ID, config);
+        let root_note = reader.int::<u8>(&ROOT_NOTE)?.unwrap_or(60);
+        let degrees = read_array(&reader, "scale_degrees", whole_number::<i32>)?
             .unwrap_or_else(|| vec![0, 2, 4, 5, 7, 9, 11]);
+        let seed = reader.int::<u64>(&SEED)?;
+        let weights = read_array(&reader, "note_weights", finite_f32)?;
 
         let controls = MelodyControls::new(root_note, degrees);
-        if let Some(seed) = config.get("seed").and_then(|v| v.as_u64()) {
+        if let Some(seed) = seed {
             controls.set_seed(seed);
         }
-
-        if let Some(weights) = config.get("note_weights").and_then(|v| v.as_array()) {
-            let weights: Vec<f32> = weights
-                .iter()
-                .filter_map(|v| v.as_f64().map(|n| n as f32))
-                .collect();
+        if let Some(weights) = weights {
             controls.set_note_weights(weights);
         }
 
@@ -62,7 +60,7 @@ impl ModuleFactory for MelodyFactory {
         // Degrees and weights written to single positions, as a document
         // records them; one past the count stays hidden until it grows. Taken
         // as the setters take them: a number, or a number as text.
-        let written = |prefix: &str| -> Result<Vec<(usize, f64)>, String> {
+        let written = |prefix: &str| -> Result<Vec<(usize, f32)>, String> {
             let mut written = Vec::new();
             for (key, value) in config.as_object().into_iter().flatten() {
                 let Some(index) = key.strip_prefix(prefix) else {
@@ -73,12 +71,17 @@ impl ModuleFactory for MelodyFactory {
                     .parse::<usize>()
                     .map_err(|_| refuse("invalid index"))?;
                 let value = match value {
-                    serde_json::Value::Number(number) => number.as_f64(),
-                    serde_json::Value::String(text) => text.trim().parse::<f64>().ok(),
-                    _ => None,
-                }
-                .filter(|value| value.is_finite())
-                .ok_or_else(|| refuse("expected a number"))?;
+                    serde_json::Value::Number(_) => {
+                        finite_f32(value).map_err(|refusal| format!("config '{key}' {refusal}"))?
+                    }
+                    serde_json::Value::String(text) => text
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|value| value.is_finite())
+                        .ok_or_else(|| refuse("expected a number"))?,
+                    _ => return Err(refuse("expected a number")),
+                };
                 written.push((index, value));
             }
             Ok(written)
@@ -87,10 +90,8 @@ impl ModuleFactory for MelodyFactory {
             written("degree.")?
                 .into_iter()
                 // Through f32, as the setter takes a control value.
-                .map(|(index, value)| (index, value as f32 as i32)),
-            written("note_weight.")?
-                .into_iter()
-                .map(|(index, value)| (index, value as f32)),
+                .map(|(index, value)| (index, value as i32)),
+            written("note_weight.")?,
         );
 
         let melody = MelodyGenerator::new(controls.clone());
@@ -105,6 +106,34 @@ impl ModuleFactory for MelodyFactory {
             sink: None,
         })
     }
+}
+
+/// Reads array `key` element by element with `read`, or `None` when it is
+/// absent, refusing the first element `read` refuses by its path
+/// (`scale_degrees[2]`).
+fn read_array<T>(
+    reader: &ConfigReader,
+    key: &str,
+    read: impl Fn(&serde_json::Value) -> Result<T, NumberRefusal>,
+) -> Result<Option<Vec<T>>, ConfigError> {
+    let Some(value) = reader.get(key) else {
+        return Ok(None);
+    };
+    let Some(values) = value.as_array() else {
+        let refusal = NumberRefusal {
+            expected: "an array of numbers".to_string(),
+            got: value.to_string(),
+        };
+        return Err(reader.refuse(key, refusal));
+    };
+    let read =
+        |(index, value)| read(value).map_err(|r| reader.refuse(&format!("{key}[{index}]"), r));
+    values
+        .iter()
+        .enumerate()
+        .map(read)
+        .collect::<Result<_, _>>()
+        .map(Some)
 }
 
 /// Generates melodies by selecting notes from a scale based on weighted probabilities.
