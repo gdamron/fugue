@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::control_request::{
     Automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue,
 };
-use crate::invention::declared::Route;
+use crate::invention::declared::{Declaration, Route};
 
 mod control_meta;
 mod control_validation;
@@ -234,6 +234,15 @@ pub trait ControlSurface: Send + Sync {
     fn declares(&self, key: &str) -> bool {
         let _ = key;
         false
+    }
+
+    /// The declared control `key`, for a development aliasing it, or `None`
+    /// for a legacy surface. Control thread.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn declaration(&self, key: &str) -> Option<Declaration> {
+        let _ = key;
+        None
     }
 
     /// The declared control `key`, as automation on the audio thread writes

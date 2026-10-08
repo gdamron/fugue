@@ -1,4 +1,6 @@
 use super::*;
+use crate::control_request::Automation;
+use crate::invention::declared::{Declaration, DeclaredSurface, Route};
 use crate::modules::control_scheduler::SurfaceDirectory;
 
 pub(super) struct AliasedControl {
@@ -29,6 +31,9 @@ pub(super) struct DevelopmentControlSurface {
     /// touched on the audio thread.
     #[allow(dead_code)]
     pub(super) directory: SurfaceDirectory,
+    /// The exposed controls reaching declared inner controls (see
+    /// `declared_controls`): written as the development's own requests.
+    pub(super) declared: Option<DeclaredSurface>,
 }
 
 impl DevelopmentControlSurface {
@@ -37,6 +42,7 @@ impl DevelopmentControlSurface {
     pub(super) fn new(
         definition: &Invention,
         directory: SurfaceDirectory,
+        declared: Option<DeclaredSurface>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let surfaces = directory.lock().unwrap().clone();
         let mut controls = Vec::with_capacity(definition.controls.len());
@@ -72,7 +78,14 @@ impl DevelopmentControlSurface {
             controls,
             surfaces,
             directory,
+            declared,
         })
+    }
+
+    /// The declared part, when `key` is one of its controls.
+    fn declared(&self, key: &str) -> Option<&DeclaredSurface> {
+        let declared = self.declared.as_ref()?;
+        declared.declares(key).then_some(declared)
     }
 
     fn lookup(&self, key: &str) -> Result<(&AliasedControl, &ControlSurfaceInstance), String> {
@@ -102,6 +115,13 @@ impl ControlSurface for DevelopmentControlSurface {
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        // Until the development runs, a declared control's writes wait in
+        // its own cells; after, its first alias holds what was applied.
+        if let Some(declared) = self.declared(key) {
+            if declared.is_building() {
+                return declared.get_control(key);
+            }
+        }
         let (control, surface) = self.lookup(key)?;
         surface.get_control(&control.key)
     }
@@ -109,34 +129,66 @@ impl ControlSurface for DevelopmentControlSurface {
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         // A development may list the same key several times to fan a control
         // out across internal modules (e.g. one `decay` reaching every voice
-        // of a bank); apply the write to every aliased target.
+        // of a bank); apply the write to every aliased target. Declared
+        // aliases take it as one request for the development.
         let mut found = false;
         for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
             let surface = self
                 .surfaces
                 .get(&control.module_id)
                 .ok_or_else(|| format!("Unknown control module: {}", control.module_id))?;
-            surface.set_control(&control.key, value.clone())?;
+            if surface.declaration(&control.key).is_none() {
+                surface.set_control(&control.key, value.clone())?;
+            }
             found = true;
         }
-        if found {
-            Ok(())
-        } else {
-            Err(format!("Unknown control: {}", key))
+        match self.declared(key) {
+            Some(declared) => declared.set_control(key, value),
+            None if found => Ok(()),
+            None => Err(format!("Unknown control: {}", key)),
         }
     }
 
-    /// Whether any alias of `key` is a declared control. Automation cannot
-    /// write through a development yet, so a schedule targeting such a key
-    /// is refused rather than reach a declared setter from the audio thread.
+    fn bind(&self, route: Route, module: &mut dyn Module) {
+        if let Some(declared) = &self.declared {
+            declared.bind(route, module);
+        }
+    }
+
+    fn activate(&self, route: Route) {
+        if let Some(declared) = &self.declared {
+            declared.activate(route);
+        }
+    }
+
+    fn retire(&self) {
+        if let Some(declared) = &self.declared {
+            declared.retire();
+        }
+    }
+
     fn declares(&self, key: &str) -> bool {
-        self.controls
+        self.declared(key).is_some()
+    }
+
+    fn automation(&self, key: &str) -> Option<Automation> {
+        self.declared(key)?.automation(key)
+    }
+
+    /// Declared to a development nesting this one only when every alias
+    /// is: a write then reaches them all as one request. A key still
+    /// fanning out to a legacy alias stays a legacy control there.
+    fn declaration(&self, key: &str) -> Option<Declaration> {
+        let declared = self.declared(key)?;
+        let all = self
+            .controls
             .iter()
             .filter(|entry| entry.meta.key == key)
-            .any(|entry| {
+            .all(|entry| {
                 let surface = self.surfaces.get(&entry.module_id);
-                surface.is_some_and(|surface| surface.declares(&entry.key))
-            })
+                surface.is_some_and(|surface| surface.declaration(&entry.key).is_some())
+            });
+        all.then(|| declared.declaration(key)).flatten()
     }
 
     /// Validates the write against every internal control `key` aliases.

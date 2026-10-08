@@ -65,7 +65,8 @@ fn a_development_owns_the_directory_its_surfaces_mirror() {
         .build(definition.clone())
         .unwrap();
     let surface =
-        DevelopmentControlSurface::new(&definition, runtime.control_surfaces.clone()).unwrap();
+        DevelopmentControlSurface::new(&definition, runtime.control_surfaces.clone(), None)
+            .unwrap();
     drop(runtime);
 
     // The surface is the directory's only owner, so nothing can change it
