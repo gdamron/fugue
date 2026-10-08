@@ -141,9 +141,10 @@ fn without_retire_room_payload_requests_wait_in_the_queue() {
     saturate_retirer(&mut rig);
     let drops = Drops::default();
     let payload = submit(&rig, "osc1", drops.payload(), When::Now);
+    // To a module that takes no requests, so both are refused once taken.
     let behind = submit(
         &rig,
-        "osc2",
+        "dac",
         RequestValue::Value(RtValue::F32(0.5)),
         When::Now,
     );

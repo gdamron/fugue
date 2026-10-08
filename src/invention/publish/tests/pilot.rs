@@ -65,3 +65,55 @@ fn a_scheduled_vca_jump_past_its_range_reads_as_the_vca_will_hold_it() {
     // A ramp starting here starts from 1, as the old clamping setter left it.
     assert_eq!(level.current(), Some(1.0));
 }
+
+#[test]
+fn oscillator_writes_apply_on_the_audio_thread_and_read_back() {
+    let mut rig = Rig::new(PATCH);
+    rig.render(1);
+    write(&rig, "osc", "frequency", 12_000.0.into());
+    write(&rig, "osc", "waveform", "square".into());
+    write(&rig, "vca", "level", 2.0.into());
+    assert_eq!(read(&rig, "osc", "waveform"), "sine".into(), "pending");
+
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(read(&rig, "osc", "frequency"), 12_000.0.into());
+    assert_eq!(read(&rig, "osc", "waveform"), "square".into());
+    assert_eq!(
+        read(&rig, "vca", "level"),
+        1.0.into(),
+        "as the vca clamped it"
+    );
+    let out = rig.render(1);
+    assert!(
+        out.iter().all(|v| v.abs() == 1.0),
+        "a full-scale square: {out:?}"
+    );
+
+    write(&rig, "vca", "level", 0.5.into());
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert!(rig.render(1).iter().all(|v| v.abs() == 0.5));
+}
+
+#[test]
+fn a_scheduler_ramps_an_oscillator_without_allocating() {
+    let mut rig = Rig::new(PATCH);
+    let schedule = serde_json::json!({ "schedule": [
+        { "at": 0, "module": "osc", "control": "frequency", "value": 880.0, "ramp": 4 }
+    ]});
+    let scheduler = rig.build("sched", "control_scheduler", schedule);
+    rig.live
+        .edit(|change| {
+            change.upsert("sched", scheduler);
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        rig.live.write_input("sched", "gate", gate).unwrap();
+        assert_eq!(counted_block(&mut rig), (0, 0));
+    }
+    let ControlValue::Number(frequency) = read(&rig, "osc", "frequency") else {
+        panic!("a number");
+    };
+    assert!(frequency > 440.0 && frequency < 880.0, "{frequency}");
+}

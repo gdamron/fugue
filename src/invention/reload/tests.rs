@@ -1,5 +1,6 @@
 use super::*;
 use crate::invention::builder::InventionBuilder;
+use crate::invention::manual_backend::Settled;
 use crate::modules::NullBackend;
 
 mod authored;
@@ -14,11 +15,9 @@ fn no_keys(_: &str) -> &'static [crate::module_config::ConfigKey] {
     &[]
 }
 
-fn start(json: &str) -> RunningInvention {
+fn start(json: &str) -> Settled {
     let (runtime, _) = InventionBuilder::new(48_000).build(doc(json)).unwrap();
-    runtime
-        .start_with_backend(NullBackend::new(48_000))
-        .unwrap()
+    Settled::start(runtime)
 }
 
 const BASE: &str = r#"{

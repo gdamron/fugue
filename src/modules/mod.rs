@@ -2,7 +2,7 @@
 //!
 //! This module contains all the building blocks for creating modular synthesis setups:
 //! - [`Clock`] / [`ClockControls`] - Timing and tempo control
-//! - [`Oscillator`] / [`OscillatorControls`] / [`OscillatorType`] - Waveform generation
+//! - [`Oscillator`] / [`OscillatorType`] - Waveform generation
 //! - [`Lfo`] / [`LfoControls`] - Low frequency oscillator for modulation
 //! - [`Filter`] / [`FilterControls`] / [`FilterType`] - Resonant filter for subtractive synthesis
 //! - [`Mixer`] / [`MixerControls`] - Multi-channel audio mixer
@@ -72,7 +72,7 @@ pub use lfo::{Lfo, LfoControls};
 pub use melody::{MelodyControls, MelodyGenerator};
 
 pub use mixer::{Mixer, MixerControls};
-pub use oscillator::{Oscillator, OscillatorControls, OscillatorType};
+pub use oscillator::{Oscillator, OscillatorType};
 pub use reverb::{Reverb, ReverbControls};
 #[cfg(not(target_arch = "wasm32"))]
 pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};

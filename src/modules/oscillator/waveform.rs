@@ -31,6 +31,16 @@ impl OscillatorType {
         }
     }
 
+    /// Its position among the oscillator's `waveform` options.
+    pub(crate) fn position(self) -> u32 {
+        self.to_index() as u32
+    }
+
+    /// The waveform at `position` among the `waveform` options.
+    pub(crate) fn from_position(position: u32) -> Option<Self> {
+        (position < 4).then(|| Self::from_index(position as f32))
+    }
+
     /// Converts oscillator type to f32 index.
     ///
     /// - Sine = 0.0

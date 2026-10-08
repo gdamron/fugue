@@ -300,6 +300,7 @@ fn control_only_edits_write_each_value_once_in_order_and_announce_the_final_valu
         scripted.writes(),
         [level(0.25), level(0.5), level(0.25), level(0.5)]
     );
+    pump.block();
     assert_eq!(
         running.get_control("osc1", "frequency").unwrap(),
         number(220.0)

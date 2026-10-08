@@ -73,3 +73,42 @@ pub(crate) fn start_manual(runtime: InventionRuntime) -> (RunningInvention, Pump
         .expect("a manual backend starts");
     (running, pump)
 }
+
+/// A running invention on a manual backend whose control reads first
+/// render a block, so a write made before one reads back once the audio
+/// thread has applied it, as it would within a block on a live device.
+pub(crate) struct Settled {
+    pub(crate) running: RunningInvention,
+    pub(crate) pump: Pump,
+}
+
+impl Settled {
+    pub(crate) fn start(runtime: InventionRuntime) -> Self {
+        let (running, pump) = start_manual(runtime);
+        Self { running, pump }
+    }
+
+    /// Renders a block, then reads `key` of `module_id`.
+    pub(crate) fn get_control(
+        &self,
+        module_id: &str,
+        key: &str,
+    ) -> Result<crate::ControlValue, crate::GraphCommandError> {
+        self.pump.block();
+        self.running.get_control(module_id, key)
+    }
+}
+
+impl std::ops::Deref for Settled {
+    type Target = RunningInvention;
+
+    fn deref(&self) -> &RunningInvention {
+        &self.running
+    }
+}
+
+impl std::ops::DerefMut for Settled {
+    fn deref_mut(&mut self) -> &mut RunningInvention {
+        &mut self.running
+    }
+}

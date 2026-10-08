@@ -121,11 +121,10 @@ fn a_set_controls_batch_stops_at_a_non_finite_write() {
         error.to_string().contains("expects a finite number"),
         "{error}"
     );
-    // The write before the refusal stands; the one after never runs.
-    assert_eq!(
-        running.get_control("osc", "frequency").unwrap(),
-        ControlValue::Number(550.0)
-    );
+    // The write before the refusal stands (once the audio thread applies
+    // it); the one after never runs.
+    let stood = || running.get_control("osc", "frequency").unwrap() == ControlValue::Number(550.0);
+    assert!(crate::test_support::wait_until(stood));
     assert_eq!(authored_frequency(&running).as_f64(), Some(550.0));
     running.stop();
 }
