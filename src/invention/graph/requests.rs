@@ -156,14 +156,12 @@ impl SignalGraph {
         // sample, or why it is refused: its module went away, or it could
         // only apply after its `expires` sample. A time already past keeps
         // its place in time order and applies late, at the first segment
-        // start.
+        // start. A request for a generation not yet installed is held
+        // whatever its expiry, and refused once due after the install
+        // (`PendingStore::apply_due`): refusing it here would free its room
+        // and lift the back-pressure that bounds the folded remaps.
         let resolve = |graph: &Self, request: &Request| {
             let mut target = request.target;
-            if target.generation <= installed {
-                target.module_idx =
-                    map(graph, target.generation, target.module_idx).ok_or(Refusal::TargetGone)?;
-                target.generation = installed;
-            }
             let at = match request.when {
                 When::Now => now,
                 When::AtSample(sample) => sample,
@@ -171,8 +169,13 @@ impl SignalGraph {
                 // request that never went through it.
                 When::AfterSamples(samples) => now.saturating_add(samples),
             };
-            if expired(request, at.max(now)) {
-                return Err(Refusal::Expired);
+            if target.generation <= installed {
+                target.module_idx =
+                    map(graph, target.generation, target.module_idx).ok_or(Refusal::TargetGone)?;
+                target.generation = installed;
+                if expired(request, at.max(now)) {
+                    return Err(Refusal::Expired);
+                }
             }
             Ok((target, at))
         };

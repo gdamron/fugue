@@ -11,7 +11,28 @@ use crate::control_request::{
 };
 
 /// Submits `value` for `control` of `module_id` as a front door would, with
-/// a ttl.
+/// a ttl, unless the queue is full.
+fn try_submit_with_ttl(
+    rig: &Rig,
+    module_id: &str,
+    control: u16,
+    value: f32,
+    when: When,
+    ttl: u64,
+) -> Option<RequestId> {
+    let mut publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher
+        .control_target(module_id, ControlIndex(control))
+        .unwrap();
+    let mut request = Request::new(target, RequestValue::Value(RtValue::F32(value)));
+    request.when = when;
+    request.ttl = Some(ttl);
+    let id = rig.live.requests.submit(request).ok()?;
+    publisher.note_written();
+    Some(id)
+}
+
+/// [`try_submit_with_ttl`], which must find room.
 fn submit_with_ttl(
     rig: &Rig,
     module_id: &str,
@@ -20,16 +41,7 @@ fn submit_with_ttl(
     when: When,
     ttl: u64,
 ) -> RequestId {
-    let mut publisher = rig.live.publisher().lock().unwrap();
-    let target = publisher
-        .control_target(module_id, ControlIndex(control))
-        .unwrap();
-    let mut request = Request::new(target, RequestValue::Value(RtValue::F32(value)));
-    request.when = when;
-    request.ttl = Some(ttl);
-    let id = rig.live.requests.submit(request).unwrap();
-    publisher.note_written();
-    id
+    try_submit_with_ttl(rig, module_id, control, value, when, ttl).unwrap()
 }
 
 /// Renders `frames` frames in blocks of the given lengths, cycling, and
@@ -192,4 +204,56 @@ fn a_request_held_for_its_publication_past_its_ttl_is_refused() {
             (held, Outcome::Applied { at: start + 64 + 3 }),
         ]
     );
+}
+
+/// The twin of `deferred_installs_bound_the_folded_remaps_by_back_pressure`
+/// with requests that expire while held: they keep their room until the
+/// install, so producers still meet `QueueFull` and the folded remaps stay
+/// bounded by the store and queue capacity.
+#[test]
+fn requests_expiring_while_installs_are_deferred_keep_the_back_pressure() {
+    use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
+    let (mut rig, port) = oscillator_rig();
+    rig.hold_a_retirement();
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
+    let (per_round, rounds) = (100, 12);
+    let mut written_rounds = 0;
+    let mut queue_full = 0;
+    for round in 0..rounds {
+        rig.publish_unreclaimed(|change| {
+            if round % 2 == 0 {
+                change.connect(fm.clone()).unwrap();
+            } else {
+                change.disconnect(fm.clone());
+            }
+        });
+        let mut written = false;
+        for n in 0..per_round {
+            let when = When::AfterSamples(64 + n);
+            match try_submit_with_ttl(&rig, "osc1", port, 1.0, when, 0) {
+                Some(_) => written = true,
+                None => queue_full += 1,
+            }
+        }
+        written_rounds += usize::from(written);
+        assert_eq!(counted_block(&mut rig), (0, 0), "round {round}");
+    }
+    let capacity = PENDING_REQUEST_CAPACITY + REQUEST_QUEUE_CAPACITY;
+    assert_eq!(queue_full, rounds * per_round as usize - capacity);
+    assert_eq!(outcomes(&mut rig), [], "nothing was settled while held");
+    let absorbed = {
+        let publisher = rig.live.publisher().lock().unwrap();
+        publisher.pending_absorbed().unwrap()
+    };
+    assert_eq!(absorbed.len(), written_rounds);
+    assert_eq!(written_rounds, capacity.div_ceil(per_round as usize));
+
+    // Once installed, every one of them is refused for its ttl.
+    rig.live.reclaim();
+    assert_eq!(counted_block(&mut rig), (0, 0), "installing");
+    let settled = outcomes(&mut rig);
+    assert_eq!(settled.len(), capacity);
+    assert!(settled
+        .iter()
+        .all(|(_, outcome)| *outcome == Outcome::Refused(Refusal::Expired)));
 }
