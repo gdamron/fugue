@@ -218,13 +218,14 @@ impl VideoPlaybackHandle {
     }
 
     pub(crate) fn restart(&self) {
-        {
-            let mut control = self.shared.control.lock().unwrap();
-            control.restart_generation = control.restart_generation.wrapping_add(1);
-            control.playing = true;
-            self.shared.wake.notify_all();
-        }
-        self.shared.kill_decoder();
+        let mut control = self.shared.control.lock().unwrap();
+        control.restart_generation = control.restart_generation.wrapping_add(1);
+        control.playing = true;
+        self.shared.wake.notify_all();
+        // Kill under the control lock, and only an older generation's
+        // decoder: once the lock is released the worker may already have
+        // started the new generation's decoder, which must keep running.
+        self.shared.kill_stale_decoder(control.restart_generation);
     }
 
     pub(crate) fn set_loop_enabled(&self, enabled: bool) {
@@ -263,7 +264,8 @@ struct VideoPlaybackShared {
     target: VideoFrameTarget,
     control: Mutex<PlaybackControl>,
     wake: Condvar,
-    child: Mutex<Option<Child>>,
+    /// The running decoder and the restart generation it was started for.
+    child: Mutex<Option<(u64, Child)>>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
     frames_emitted: AtomicUsize,
     loops: AtomicUsize,
@@ -272,8 +274,17 @@ struct VideoPlaybackShared {
 
 impl VideoPlaybackShared {
     fn kill_decoder(&self) {
-        if let Some(child) = self.child.lock().unwrap().as_mut() {
+        if let Some((_, child)) = self.child.lock().unwrap().as_mut() {
             let _ = child.kill();
+        }
+    }
+
+    /// Kills the running decoder unless it was started for `generation`.
+    fn kill_stale_decoder(&self, generation: u64) {
+        if let Some((started_for, child)) = self.child.lock().unwrap().as_mut() {
+            if *started_for != generation {
+                let _ = child.kill();
+            }
         }
     }
 
@@ -364,7 +375,7 @@ fn playback_worker(shared: Arc<VideoPlaybackShared>) {
         if snapshot.stopping {
             break;
         }
-        let mut decoder = match spawn_decoder(&shared) {
+        let mut decoder = match spawn_decoder(&shared, snapshot.restart_generation) {
             Ok(decoder) => decoder,
             Err(err) => {
                 shared.set_error(err);
@@ -455,7 +466,7 @@ fn control_snapshot(shared: &VideoPlaybackShared) -> ControlSnapshot {
     }
 }
 
-fn spawn_decoder(shared: &VideoPlaybackShared) -> Result<Decoder, String> {
+fn spawn_decoder(shared: &VideoPlaybackShared, generation: u64) -> Result<Decoder, String> {
     let spec = FfmpegVideoCommandSpec::new(&shared.config);
     let mut child = Command::new(&spec.program)
         .args(&spec.args)
@@ -468,7 +479,7 @@ fn spawn_decoder(shared: &VideoPlaybackShared) -> Result<Decoder, String> {
         .stdout
         .take()
         .ok_or_else(|| "background video decoder stdout was unavailable".to_string())?;
-    *shared.child.lock().unwrap() = Some(child);
+    *shared.child.lock().unwrap() = Some((generation, child));
     Ok(Decoder { stdout })
 }
 
@@ -586,7 +597,7 @@ fn changed_outcome(
 
 fn reap_decoder(shared: &VideoPlaybackShared) -> Option<ExitStatus> {
     let child = shared.child.lock().unwrap().take();
-    child.and_then(|mut child| child.wait().ok())
+    child.and_then(|(_, mut child)| child.wait().ok())
 }
 
 #[cfg(test)]
@@ -821,9 +832,53 @@ PY
 
             playback.set_loop_enabled(false);
             playback.restart();
-            wait_until(|| frames.load(Ordering::Acquire) > paused_at);
+            assert!(wait_until(|| frames.load(Ordering::Acquire) > paused_at));
             playback.finish();
             assert!(frames.load(Ordering::Acquire) > paused_at);
+        }
+
+        #[test]
+        fn restart_kills_only_a_decoder_started_for_an_older_generation() {
+            let (ffmpeg, video) = fixture(1);
+            let mut config = fake_config(ffmpeg, video);
+            config.autoplay = false;
+            let target: VideoFrameTarget = Arc::new(|_| Ok(()));
+            let playback = VideoPlayback::start(config, target).unwrap();
+            // Stop the worker so the decoder slot is ours alone.
+            playback.finish();
+
+            let running = |generation| {
+                let child = Command::new("sleep").arg("30").spawn().unwrap();
+                *playback.shared.child.lock().unwrap() = Some((generation, child));
+            };
+            let exited = || {
+                let mut slot = playback.shared.child.lock().unwrap();
+                let (_, child) = slot.as_mut().unwrap();
+                wait_until(|| child.try_wait().unwrap().is_some())
+            };
+
+            // A restart to generation 1 finds the worker already running
+            // generation 1's decoder: that decoder keeps running.
+            running(1);
+            playback.shared.kill_stale_decoder(1);
+            assert!(playback
+                .shared
+                .child
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .1
+                .try_wait()
+                .unwrap()
+                .is_none());
+            playback.shared.kill_decoder();
+            assert!(exited());
+
+            // An older generation's decoder is killed.
+            running(0);
+            playback.shared.kill_stale_decoder(1);
+            assert!(exited());
         }
     }
 }
