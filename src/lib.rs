@@ -24,6 +24,7 @@ pub mod rpc;
 pub mod scripting;
 #[cfg(feature = "spectrogram")]
 pub mod spectrum;
+pub(crate) mod spsc;
 pub(crate) mod streaming;
 pub mod traits;
 #[cfg(test)]
