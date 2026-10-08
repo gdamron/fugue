@@ -207,8 +207,8 @@ pub(crate) struct InputWrite {
     pub(crate) value: f32,
 }
 
-/// What the audio thread does with a queued write this block.
-enum Disposition {
+/// What the audio thread does with a queued write or request this block.
+pub(super) enum Disposition {
     /// Apply it at this module index of the running graph.
     Apply(usize),
     /// Keep it: it targets a publication not yet installed.
@@ -313,6 +313,8 @@ impl SignalGraph {
     /// `ensure_process_order` runs afterwards; see [`SignalGraph::recompile`]).
     /// Takes at most the ring's capacity from the channel per block, so a
     /// sender keeping pace cannot hold the block here.
+    /// Then maps and pops control requests (see `graph::requests`), with the
+    /// retired publication still in hand.
     /// Allocation-, free-, and lock-free; runs at the start of a block.
     pub(super) fn drain_link(&mut self) {
         let Some(mut link) = self.link.take() else {
@@ -331,15 +333,16 @@ impl SignalGraph {
         let retired = taken.as_deref().map(|retired| (previous, retired));
         let installed = link.installed;
         // Held writes came off the channel first, so they go first.
-        link.pending
-            .retain(|write| match self.dispose(write, installed, retired) {
+        link.pending.retain(|write| {
+            match self.dispose(write.generation, write.module_idx, installed, retired) {
                 Disposition::Apply(module_idx) => {
                     self.apply_input(module_idx, write.port_idx, write.value);
                     false
                 }
                 Disposition::Hold => true,
                 Disposition::Drop => false,
-            });
+            }
+        });
         // A full ring leaves the rest in the channel: every write behind a
         // held one is at least as new, so it would be held too.
         let limit = link.pending.capacity();
@@ -350,7 +353,7 @@ impl SignalGraph {
             let Ok(write) = link.inputs.try_recv() else {
                 break;
             };
-            match self.dispose(&write, installed, retired) {
+            match self.dispose(write.generation, write.module_idx, installed, retired) {
                 Disposition::Apply(module_idx) => {
                     self.apply_input(module_idx, write.port_idx, write.value)
                 }
@@ -358,32 +361,34 @@ impl SignalGraph {
                 Disposition::Drop => {}
             }
         }
+        self.drain_requests(installed, retired);
         if let Some(publication) = taken {
             link.retire(publication);
         }
         self.link = Some(link);
     }
 
-    /// Decides where `write` goes, given the installed generation and, in a
-    /// block that installed, the generation installed before it with the
-    /// retired publication (whose remap maps from that generation's order).
-    fn dispose(
+    /// Decides where a write or request resolved against module `old` of
+    /// `generation` goes, given the installed generation and, in a block
+    /// that installed, the generation installed before it with the retired
+    /// publication (whose remap maps from that generation's order).
+    pub(super) fn dispose(
         &self,
-        write: &InputWrite,
+        generation: u64,
+        old: usize,
         installed: u64,
         retired: Option<(u64, &Publication)>,
     ) -> Disposition {
-        if write.generation == installed {
-            return Disposition::Apply(write.module_idx);
+        if generation == installed {
+            return Disposition::Apply(old);
         }
-        if write.generation > installed {
+        if generation > installed {
             return Disposition::Hold;
         }
         let Some((previous, retired)) = retired else {
             return Disposition::Drop;
         };
-        let old = write.module_idx;
-        let target = if write.generation == previous {
+        let target = if generation == previous {
             // The retired map is the previous generation's order.
             let old_id = retired.modules.get_index(old).map(|(id, _)| id);
             retired.remap.get(old).map(|new| (old_id, new))
@@ -391,7 +396,7 @@ impl SignalGraph {
             retired
                 .absorbed
                 .iter()
-                .find(|folded| folded.generation == write.generation)
+                .find(|folded| folded.generation == generation)
                 .and_then(|folded| folded.remap.get(old).map(|new| (folded.ids.get(old), new)))
         };
         // The same defensive id check as `carry_survivors`.
@@ -413,7 +418,7 @@ impl SignalGraph {
     /// buffer, since `Module::set_input` takes a name and the module cannot
     /// stay borrowed for it. Allocation-free as long as the module's own
     /// `set_input` is.
-    fn apply_input(&mut self, module_idx: usize, port_idx: usize, value: f32) {
+    pub(super) fn apply_input(&mut self, module_idx: usize, port_idx: usize, value: f32) {
         let Some((_, instance)) = self.modules.get_index_mut(module_idx) else {
             return;
         };

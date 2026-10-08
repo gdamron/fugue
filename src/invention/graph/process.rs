@@ -8,14 +8,27 @@ impl SignalGraph {
     ///
     /// Process groups run in topological order: acyclic modules a whole block at
     /// a time, feedback cycles sample-by-sample. Zero heap allocations.
+    ///
+    /// The block runs as segments split at each pending control request's
+    /// sample (see [`super::requests`]); with none due it is one segment.
     pub(crate) fn process_block(&mut self, left: &mut [f32], right: &mut [f32]) {
         self.ensure_process_order();
 
-        let frames = left.len().min(right.len());
-        if frames == 0 {
-            return;
+        let frames = left.len().min(right.len()).min(self.block_capacity);
+        let mut start = 0;
+        while start < frames {
+            let end = start + self.apply_due_requests(frames - start);
+            self.process_segment(&mut left[start..end], &mut right[start..end]);
+            start = end;
         }
-        let frames = frames.min(self.block_capacity);
+    }
+
+    /// Processes `left.len()` frames (`== right.len()`, at least one) from
+    /// the current sample, as one block: every module's input and output
+    /// buffers start at frame 0 again, and the feedback carry is stored at
+    /// the end, so the next segment continues sample for sample.
+    fn process_segment(&mut self, left: &mut [f32], right: &mut [f32]) {
+        let frames = left.len();
         self.current_sample += frames as u64;
 
         for g in 0..self.process_groups.len() {

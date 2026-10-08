@@ -6,14 +6,31 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::Arc;
 
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
+use crate::control_request::{request_channel, ControlIndex, ControlTarget, RequestSender};
 use crate::invention::graph::{
-    AudioLink, InputWrite, Mailbox, Publication, SignalGraph, MAX_INPUT_PORT_NAME,
+    AudioLink, InputWrite, Mailbox, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
 };
 use crate::invention::runtime::GraphCommandError;
 
 /// Input writes that may wait for the audio thread before a write is
 /// refused with [`GraphCommandError::QueueFull`].
 pub(crate) const INPUT_QUEUE_CAPACITY: usize = 256;
+
+/// Control requests that may wait in the queue before a submission is
+/// refused with `QueueFull`. The audio thread pops the queue at every block
+/// start while the pending store has room, and all of it in a block that
+/// installs a publication.
+pub(crate) const REQUEST_QUEUE_CAPACITY: usize = 256;
+
+/// Popped requests that may wait for their sample (or for their
+/// publication to install). Twice the queue, so a full queue fits in a
+/// store already half full of timed requests. While the store is full the
+/// audio thread leaves requests in the queue (back-pressure), except in a
+/// block that installs a publication: that one must pop every request
+/// resolved against an older generation, while it can still map them, so
+/// what does not fit is refused (`Refusal::PendingFull`). See
+/// `graph::requests`.
+pub(crate) const PENDING_REQUEST_CAPACITY: usize = 512;
 
 /// Retired publications the audio thread may hand back before the control
 /// thread frees them. The audio thread takes at most one publication per
@@ -50,6 +67,12 @@ impl Publisher {
         let publications = Arc::new(Mailbox::new());
         let (inputs, input_rx) = mpsc::sync_channel(INPUT_QUEUE_CAPACITY);
         let (retire_tx, retired) = mpsc::sync_channel(RETIRE_CAPACITY);
+        let (requests, request_rx) = request_channel(REQUEST_QUEUE_CAPACITY);
+        graph.requests = Some(RequestDrain::new(
+            request_rx,
+            REQUEST_QUEUE_CAPACITY,
+            PENDING_REQUEST_CAPACITY,
+        ));
         let applied = Arc::new(AtomicU64::new(0));
         graph.link = Some(AudioLink::new(
             publications.clone(),
@@ -66,7 +89,12 @@ impl Publisher {
             publications,
             applied,
         };
-        (publisher, LinkEnds { inputs, retired })
+        let ends = LinkEnds {
+            inputs,
+            requests,
+            retired,
+        };
+        (publisher, ends)
     }
 
     /// The topology as of the latest publication.
@@ -121,7 +149,38 @@ impl Publisher {
         })
     }
 
-    /// Records that a write resolved by [`Self::input_write`] was queued.
+    /// Resolves `control` of `module_id` against the mirror, the audio
+    /// graph's module order once the current generation is installed, into
+    /// the target a request carries. Fails with
+    /// [`GraphCommandError::UnknownModule`]; whether the module has the
+    /// control is checked by its control table (FUG-310).
+    ///
+    /// The caller submits the request before releasing the publisher and
+    /// then calls [`Self::note_written`], exactly as for an input write: so
+    /// the request is in the queue before any later publication, and a fold
+    /// of this generation keeps the remap it needs (see
+    /// `graph::requests`).
+    // The front doors that submit requests arrive with FUG-310's controls.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn control_target(
+        &self,
+        module_id: &str,
+        control: ControlIndex,
+    ) -> Result<ControlTarget, GraphCommandError> {
+        let module_idx = self
+            .mirror
+            .modules
+            .get_index_of(module_id)
+            .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?;
+        Ok(ControlTarget {
+            generation: self.generation,
+            module_idx,
+            control,
+        })
+    }
+
+    /// Records that a write resolved by [`Self::input_write`], or a request
+    /// resolved by [`Self::control_target`], was queued.
     pub(crate) fn note_written(&mut self) {
         self.written = true;
     }
@@ -233,6 +292,9 @@ impl std::fmt::Debug for Refused {
 pub(crate) struct LinkEnds {
     /// Queues direct input writes for the next block.
     pub(crate) inputs: SyncSender<InputWrite>,
+    /// Submits control requests. Submit only under the publisher (see
+    /// [`Publisher::control_target`]).
+    pub(crate) requests: RequestSender,
     /// Retired publications, to free off the audio thread.
     pub(crate) retired: Receiver<Box<Publication>>,
 }
