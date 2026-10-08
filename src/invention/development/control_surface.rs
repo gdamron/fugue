@@ -129,23 +129,32 @@ impl ControlSurface for DevelopmentControlSurface {
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         // A development may list the same key several times to fan a control
         // out across internal modules (e.g. one `decay` reaching every voice
-        // of a bank); apply the write to every aliased target. Declared
-        // aliases take it as one request for the development.
+        // of a bank); apply the write to every aliased target. Aliases on
+        // the legacy path are written here; declared ones take it as one
+        // request for the development.
+        self.set_legacy(key, value.clone())?;
+        match self.declared(key) {
+            Some(declared) => declared.set_control(key, value),
+            None => Ok(()),
+        }
+    }
+
+    /// Writes `key`'s aliases still on the legacy path, and theirs in a
+    /// nested development, on this (control) thread.
+    fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
         let mut found = false;
         for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
             let surface = self
                 .surfaces
                 .get(&control.module_id)
                 .ok_or_else(|| format!("Unknown control module: {}", control.module_id))?;
-            if surface.declaration(&control.key).is_none() {
-                surface.set_control(&control.key, value.clone())?;
-            }
+            surface.set_legacy(&control.key, value.clone())?;
             found = true;
         }
-        match self.declared(key) {
-            Some(declared) => declared.set_control(key, value),
-            None if found => Ok(()),
-            None => Err(format!("Unknown control: {}", key)),
+        if found {
+            Ok(())
+        } else {
+            Err(format!("Unknown control: {}", key))
         }
     }
 
@@ -171,24 +180,25 @@ impl ControlSurface for DevelopmentControlSurface {
         self.declared(key).is_some()
     }
 
+    /// Only for a key every alias of which automation can write: a key
+    /// still reaching a legacy alias cannot be scheduled (its setter would
+    /// lock on the audio thread). A ramp starts from what the first alias
+    /// holds, which an inner scheduler may have moved since.
     fn automation(&self, key: &str) -> Option<Automation> {
-        self.declared(key)?.automation(key)
+        let mut automation = self.declared(key)?.automation(key)?;
+        for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
+            let surface = self.surfaces.get(&control.module_id)?;
+            let alias = surface.automation(&control.key)?;
+            automation.origin.get_or_insert_with(|| Arc::new(alias));
+        }
+        Some(automation)
     }
 
-    /// Declared to a development nesting this one only when every alias
-    /// is: a write then reaches them all as one request. A key still
-    /// fanning out to a legacy alias stays a legacy control there.
+    /// Its declared part, to a development nesting this one: the nesting
+    /// development reaches it by request, and the rest by
+    /// [`ControlSurface::set_legacy`].
     fn declaration(&self, key: &str) -> Option<Declaration> {
-        let declared = self.declared(key)?;
-        let all = self
-            .controls
-            .iter()
-            .filter(|entry| entry.meta.key == key)
-            .all(|entry| {
-                let surface = self.surfaces.get(&entry.module_id);
-                surface.is_some_and(|surface| surface.declaration(&entry.key).is_some())
-            });
-        all.then(|| declared.declaration(key)).flatten()
+        self.declared(key)?.declaration(key)
     }
 
     /// Validates the write against every internal control `key` aliases.

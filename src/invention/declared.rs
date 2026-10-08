@@ -260,6 +260,10 @@ impl ControlSurface for DeclaredSurface {
         self.table.resolve(key).is_some()
     }
 
+    fn set_legacy(&self, key: &str, _value: ControlValue) -> Result<(), String> {
+        self.index(key).map(drop)
+    }
+
     fn declaration(&self, key: &str) -> Option<Declaration> {
         let index = self.table.resolve(key)?;
         Some(Declaration {
@@ -282,6 +286,7 @@ impl ControlSurface for DeclaredSurface {
             index,
             kind: decl.kind,
             clamp: decl.clamp,
+            origin: None,
         })
     }
 }

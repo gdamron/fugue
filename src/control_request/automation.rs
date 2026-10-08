@@ -107,6 +107,10 @@ pub(crate) struct Automation {
     /// written, so a ramp starting from a pending write starts where the
     /// module will be.
     pub(crate) clamp: Option<(f32, f32)>,
+    /// Where the control's value is read from when automation has not
+    /// written it this block: a development's control reads its first
+    /// alias. `None` reads these cells.
+    pub(crate) origin: Option<Arc<Automation>>,
 }
 
 impl Automation {
@@ -146,11 +150,11 @@ impl Automation {
     /// this block, else what it holds. A ramp starts from here.
     #[inline]
     pub(crate) fn current(&self) -> Option<f32> {
-        let value = self
-            .cells
-            .automation
-            .written(self.index)
-            .or_else(|| self.cells.load(self.index))?;
+        let value = match (self.cells.automation.written(self.index), &self.origin) {
+            (Some(written), _) => written,
+            (None, Some(origin)) => return origin.current(),
+            (None, None) => self.cells.load(self.index)?,
+        };
         match value {
             RtValue::F32(value) => Some(value),
             RtValue::I32(value) => Some(value as f32),

@@ -13,6 +13,38 @@ use crate::invention::declared::add_offline;
 use crate::invention::graph::{MasterObservers, SignalGraph};
 use crate::test_support::dial::DialFactory;
 
+/// A development factory over `definition`, with dials registered.
+fn factory(name: &str, definition: serde_json::Value) -> DevelopmentFactory {
+    let mut registry = ModuleRegistry::default();
+    registry.register(DialFactory);
+    DevelopmentFactory {
+        name: name.to_string(),
+        definition: serde_json::from_value(definition).unwrap(),
+        registry,
+        registered: Arc::new(Mutex::new(HashSet::new())),
+        loaded: Arc::new(LoadedDevelopments::default()),
+    }
+}
+
+/// A dial and a (legacy) lfo behind one exposed `mix`, with the lfo's rate
+/// also exposed alone as `rate`, and `odd` reaching a dial's number and
+/// its choice at once.
+fn mixed() -> serde_json::Value {
+    json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "lfo" }],
+        "connections": [],
+        "outputs": [{ "name": "a", "from": "a", "from_port": "out" }],
+        "controls": [
+            { "key": "mix", "module": "a", "control": "level" },
+            { "key": "mix", "module": "l", "control": "rate" },
+            { "key": "rate", "module": "l", "control": "rate" },
+            { "key": "odd", "module": "a", "control": "level" },
+            { "key": "odd", "module": "a", "control": "shape" }
+        ]
+    })
+}
+
 /// Two dials behind one exposed `level` (and `pulse` on the first), each
 /// to its own output.
 fn pair() -> DevelopmentFactory {
@@ -47,7 +79,14 @@ fn pair() -> DevelopmentFactory {
 
 /// The development built with `config`, running alone in an offline graph.
 fn running(config: serde_json::Value) -> (Arc<Mutex<SignalGraph>>, ControlSurfaceInstance) {
-    let built = pair().build(48_000, &config).unwrap();
+    running_from(pair(), config)
+}
+
+fn running_from(
+    factory: DevelopmentFactory,
+    config: serde_json::Value,
+) -> (Arc<Mutex<SignalGraph>>, ControlSurfaceInstance) {
+    let built = factory.build(48_000, &config).unwrap();
     let surface = built.control_surface.unwrap();
     let graph = Arc::new(Mutex::new(SignalGraph::new(
         IndexMap::new(),
@@ -123,4 +162,75 @@ fn inner_surfaces_are_reached_only_through_the_development() {
     let refused = inner.set_control("level", 0.5.into()).unwrap_err();
     assert!(refused.contains("through its development"), "{refused}");
     drop(module);
+}
+
+#[test]
+fn a_key_mixing_declared_and_legacy_aliases_reaches_both_but_cannot_be_scheduled() {
+    let (graph, surface) = running_from(factory("mixed", mixed()), json!({ "mix": 3.0 }));
+    assert_eq!(outputs_a(&graph), 1.0, "the dial, clamped");
+    assert_eq!(surface.get_control("rate").unwrap(), 3.0.into(), "the lfo");
+    surface.set_control("mix", 0.5.into()).unwrap();
+    assert_eq!(outputs_a(&graph), 0.5);
+    assert_eq!(surface.get_control("rate").unwrap(), 0.5.into());
+    assert!(surface.declares("mix") && surface.automation("mix").is_none());
+}
+
+#[test]
+fn a_nested_mixed_key_reaches_both_parts_through_the_outer_development() {
+    let outer = json!({
+        "version": "1.0.0",
+        "developments": [{ "name": "inner", "definition": mixed() }],
+        "modules": [{ "id": "n", "type": "inner" }],
+        "connections": [],
+        "outputs": [{ "name": "a", "from": "n", "from_port": "a" }],
+        "controls": [
+            { "key": "mix", "module": "n", "control": "mix" },
+            { "key": "rate", "module": "n", "control": "rate" }
+        ]
+    });
+    let (graph, surface) = running_from(factory("outer", outer), json!({ "mix": 0.5 }));
+    assert_eq!(outputs_a(&graph), 0.5);
+    assert_eq!(surface.get_control("rate").unwrap(), 0.5.into());
+    surface.set_control("mix", 0.75.into()).unwrap();
+    assert_eq!(outputs_a(&graph), 0.75);
+    assert_eq!(surface.get_control("rate").unwrap(), 0.75.into());
+}
+
+#[test]
+fn an_alias_that_cannot_hold_the_value_is_reported_and_the_others_still_apply() {
+    let (graph, surface) = running_from(factory("mixed", mixed()), json!({}));
+    let refused = surface.set_control("odd", 0.5.into()).unwrap_err();
+    assert!(refused.contains("cannot hold"), "{refused}");
+    assert_eq!(outputs_a(&graph), 0.5, "the level alias applied");
+}
+
+#[test]
+fn a_ramp_starts_from_what_the_first_alias_holds() {
+    let definition: Invention = serde_json::from_value(json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "a", "type": "dial" }],
+        "connections": [],
+        "outputs": [{ "name": "a", "from": "a", "from_port": "out" }],
+        "controls": [{ "key": "level", "module": "a", "control": "level" }]
+    }))
+    .unwrap();
+    let mut registry = ModuleRegistry::default();
+    registry.register(DialFactory);
+    let (runtime, _) = InventionBuilder::with_registry(48_000, registry)
+        .build(definition.clone())
+        .unwrap();
+    let inner = runtime.control_surfaces.lock().unwrap()["a"].clone();
+    let (mut module, surface) = DevelopmentModule::new("one", runtime, &definition).unwrap();
+    // An inner scheduler moves the alias; the development's cells never see it.
+    inner.automation("level").unwrap().write_number(0.6);
+    module.process(1);
+    assert_eq!(surface.automation("level").unwrap().current(), Some(0.6));
+}
+
+/// Processes one frame and returns the development's first output.
+fn outputs_a(graph: &Arc<Mutex<SignalGraph>>) -> f32 {
+    let mut graph = graph.lock().unwrap();
+    let module = graph.modules["pair"].module_mut();
+    module.process(1);
+    module.output_block(0)[0]
 }
