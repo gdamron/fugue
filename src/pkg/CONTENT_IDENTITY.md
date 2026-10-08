@@ -258,7 +258,7 @@ clock triggers a sustained A3 pad through the bundled instrument:
   }],
   "modules":[
     {"id":"clock","type":"clock","config":{"bpm":60,"gate_duration":0.5}},
-    {"id":"pitch","type":"melody","config":{"root_note":57,"scale_degrees":[0],"note_weights":[1]}},
+    {"id":"pitch","type":"melody","config":{"root_note":57,"degrees":[0],"note_weights":[1]}},
     {"id":"voice","type":"my_pad"},
     {"id":"out","type":"dac"}
   ],

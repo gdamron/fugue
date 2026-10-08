@@ -4,9 +4,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
-use crate::module_config::{
-    finite_f32, whole_number, ConfigError, ConfigKey, ConfigReader, NumberRefusal,
-};
+use crate::module_config::{finite_f32, ConfigKey, ConfigReader};
 use crate::music::{Note, Scale};
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -26,6 +24,8 @@ pub struct MelodyFactory;
 const TYPE_ID: &str = "melody";
 const ROOT_NOTE: ConfigKey = ConfigKey::int::<u8>("root_note");
 const SEED: ConfigKey = ConfigKey::seed("seed");
+const DEGREES: ConfigKey = ConfigKey::json("degrees");
+const NOTE_WEIGHTS: ConfigKey = ConfigKey::json("note_weights");
 
 impl ModuleFactory for MelodyFactory {
     fn type_id(&self) -> &'static str {
@@ -37,8 +37,8 @@ impl ModuleFactory for MelodyFactory {
             &[
                 ROOT_NOTE,
                 SEED,
-                ConfigKey::json("scale_degrees"),
-                ConfigKey::json("note_weights"),
+                DEGREES,
+                NOTE_WEIGHTS,
                 // Kept past the active count, so declared as families.
                 ConfigKey::json("degree.N"),
                 ConfigKey::json("note_weight.N"),
@@ -53,10 +53,11 @@ impl ModuleFactory for MelodyFactory {
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let reader = ConfigReader::new(TYPE_ID, config);
         let root_note = reader.int::<u8>(&ROOT_NOTE)?.unwrap_or(60);
-        let degrees = read_array(&reader, "scale_degrees", whole_number::<i32>)?
+        let degrees = reader
+            .whole_numbers::<i32>(&DEGREES)?
             .unwrap_or_else(|| vec![0, 2, 4, 5, 7, 9, 11]);
         let seed = reader.int::<u64>(&SEED)?;
-        let weights = read_array(&reader, "note_weights", finite_f32)?;
+        let weights = reader.floats(&NOTE_WEIGHTS)?;
 
         let controls = MelodyControls::new(root_note, degrees);
         if let Some(seed) = seed {
@@ -116,34 +117,6 @@ impl ModuleFactory for MelodyFactory {
             sink: None,
         })
     }
-}
-
-/// Reads array `key` element by element with `read`, or `None` when it is
-/// absent, refusing the first element `read` refuses by its path
-/// (`scale_degrees[2]`).
-fn read_array<T>(
-    reader: &ConfigReader,
-    key: &str,
-    read: impl Fn(&serde_json::Value) -> Result<T, NumberRefusal>,
-) -> Result<Option<Vec<T>>, ConfigError> {
-    let Some(value) = reader.get(key) else {
-        return Ok(None);
-    };
-    let Some(values) = value.as_array() else {
-        let refusal = NumberRefusal {
-            expected: "an array of numbers".to_string(),
-            got: value.to_string(),
-        };
-        return Err(reader.refuse(key, refusal));
-    };
-    let read =
-        |(index, value)| read(value).map_err(|r| reader.refuse(&format!("{key}[{index}]"), r));
-    values
-        .iter()
-        .enumerate()
-        .map(read)
-        .collect::<Result<_, _>>()
-        .map(Some)
 }
 
 /// Generates melodies by selecting notes from a scale based on weighted probabilities.
