@@ -20,7 +20,13 @@ const DECLS: &[ControlDecl] = &[
         "Step",
     )
     .indexed(3),
-    ControlDecl::new("pulse", DeclKind::Event, RtValue::Bool(false), "Pulse"),
+    ControlDecl::new(
+        "note",
+        DeclKind::Integer { min: 0, max: 127 },
+        RtValue::I32(60),
+        "Note",
+    )
+    .event(),
     ControlDecl::new("on", DeclKind::Bool, RtValue::Bool(true), "On"),
     ControlDecl::new(
         "cell",
@@ -41,7 +47,7 @@ fn coerce(key: &str, value: impl Into<ControlValue>) -> Result<RtValue, String> 
 fn keys_resolve_to_consecutive_indices_and_back() {
     assert_eq!(TABLE.len(), 8);
     let keys = [
-        "level", "shape", "step.0", "step.1", "step.2", "pulse", "on", "cell",
+        "level", "shape", "step.0", "step.1", "step.2", "note", "on", "cell",
     ];
     for (index, key) in keys.iter().enumerate() {
         assert_eq!(
@@ -94,8 +100,11 @@ fn choices_bools_and_events_coerce_by_name() {
         .contains("expects one of"));
     assert!(coerce("shape", 1.0).is_err(), "a choice is written by name");
     assert_eq!(coerce("on", "false"), Ok(RtValue::Bool(false)));
-    assert_eq!(coerce("pulse", true), Ok(RtValue::Bool(true)));
-    assert!(coerce("pulse", false).is_err());
+    assert_eq!(
+        coerce("note", 61.0),
+        Ok(RtValue::I32(61)),
+        "an event carries its value"
+    );
     assert!(coerce("cell", 1.0).unwrap_err().contains("read-only"));
 }
 
@@ -107,13 +116,14 @@ fn values_read_back_as_clients_wrote_them() {
     let step = TABLE.resolve("step.2").unwrap();
     assert_eq!(TABLE.value(step, RtValue::I32(-2)), Some((-2.0).into()));
 
-    let metas = TABLE.metas(|index| TABLE.decl(index).unwrap().0.default);
+    let metas = TABLE.metas(|index| (index == ControlIndex(0)).then(|| 0.5.into()));
     let keys: Vec<_> = metas.iter().map(|meta| meta.key.as_str()).collect();
     assert_eq!(
         keys,
-        ["level", "shape", "step.0", "step.1", "step.2", "pulse", "on", "cell"]
+        ["level", "shape", "step.0", "step.1", "step.2", "note", "on", "cell"]
     );
-    assert_eq!(metas[1].default, "sine".into());
+    assert_eq!(metas[0].default, 0.5.into(), "what it holds now");
+    assert_eq!(metas[1].default, "sine".into(), "else its declared default");
     assert_eq!(
         metas[2].kind,
         ControlKind::Number {
@@ -121,4 +131,64 @@ fn values_read_back_as_clients_wrote_them() {
             max: 12.0
         }
     );
+}
+
+#[test]
+fn an_indexed_control_keeps_its_index_whatever_its_count() {
+    const DECLS: &[ControlDecl] = &[
+        ControlDecl::new("gain", DeclKind::Bool, RtValue::Bool(true), "Gain").indexed(1),
+        ControlDecl::new("unused", DeclKind::Bool, RtValue::Bool(true), "None").indexed(0),
+        ControlDecl::new("pan", DeclKind::Bool, RtValue::Bool(true), "Pan"),
+    ];
+    let table = ControlTable::of(DECLS);
+    assert_eq!(table.len(), 2);
+    assert_eq!(table.resolve("gain.0"), Some(ControlIndex(0)));
+    assert_eq!(table.resolve("gain"), None);
+    assert_eq!(table.resolve("unused.0"), None);
+    assert_eq!(table.resolve("pan"), Some(ControlIndex(1)));
+    assert_eq!(table.key(ControlIndex(0)).as_deref(), Some("gain.0"));
+}
+
+#[test]
+fn a_table_past_its_index_space_or_exact_integers_is_refused() {
+    let flags = |count| {
+        ControlDecl::new("flag", DeclKind::Bool, RtValue::Bool(false), "Flag").indexed(count)
+    };
+    let full = ControlTable::built(vec![flags(u16::MAX), flags(1)]).unwrap();
+    assert_eq!(full.len(), MAX_CONTROLS);
+    assert_eq!(full.resolve("flag.0"), Some(ControlIndex(0)));
+    assert!(ControlTable::built(vec![flags(u16::MAX), flags(2)]).is_err());
+
+    let integer =
+        |min, max| ControlDecl::new("n", DeclKind::Integer { min, max }, RtValue::I32(0), "N");
+    let table = ControlTable::built(vec![integer(-MAX_EXACT_INTEGER, MAX_EXACT_INTEGER)]).unwrap();
+    let n = ControlIndex(0);
+    for whole in [MAX_EXACT_INTEGER, -MAX_EXACT_INTEGER, MAX_EXACT_INTEGER - 1] {
+        let read = table.value(n, RtValue::I32(whole)).unwrap();
+        assert_eq!(table.coerce(n, &read), Ok(RtValue::I32(whole)), "{whole}");
+    }
+    assert!(ControlTable::built(vec![integer(0, MAX_EXACT_INTEGER + 1)]).is_err());
+    assert!(ControlTable::built(vec![integer(i32::MIN, 0)]).is_err());
+    let plain_of_two = ControlDecl {
+        count: 2,
+        ..integer(0, 1)
+    };
+    assert!(ControlTable::built(vec![plain_of_two]).is_err());
+}
+
+#[test]
+fn a_payload_reads_back_through_its_surface_not_a_scalar() {
+    const DECLS: &[ControlDecl] = &[ControlDecl::new(
+        "pattern",
+        DeclKind::Payload,
+        RtValue::Bool(false),
+        "Pattern",
+    )];
+    let table = ControlTable::of(DECLS);
+    let pattern = ControlIndex(0);
+    assert_eq!(table.value(pattern, RtValue::Bool(false)), None);
+    assert!(table.coerce(pattern, &"[]".into()).is_err());
+    let listed = table.metas(|_| Some("[1, 0]".into()));
+    assert_eq!(listed[0].default, "[1, 0]".into());
+    assert_eq!(table.metas(|_| None)[0].default, "".into());
 }

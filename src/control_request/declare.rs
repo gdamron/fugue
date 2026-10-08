@@ -32,13 +32,17 @@ pub(crate) enum DeclKind {
     Bool,
     /// One of `options`, by name, carried as its position ([`RtValue::U32`]).
     Choice(&'static [&'static str]),
-    /// An event such as a trigger ([`RtValue::Bool`]`(true)`). Two at one
-    /// sample are two events: never coalesced, and never re-applied when a
-    /// module adopts its declared state.
-    Event,
-    /// A heavy value carried as a payload; no scalar write reaches it.
+    /// A heavy value carried as a payload; no scalar write reaches it, and
+    /// its module reads it back through its surface, not its cells.
     Payload,
 }
+
+/// The largest magnitude an integer control may declare: every whole number
+/// up to 2^24 reads back exactly through a client's `f32`.
+pub(crate) const MAX_EXACT_INTEGER: i32 = 1 << 24;
+
+/// The most indices a table may declare: one per [`ControlIndex`].
+pub(crate) const MAX_CONTROLS: usize = 1 << 16;
 
 /// Who writes a control (R1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,9 +57,16 @@ pub(crate) enum Writer {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ControlDecl {
     pub(crate) key: Cow<'static, str>,
-    /// 1 for a plain control; more declares `key.N` for every `N < count`.
+    /// Whether it declares `key.N` for every `N < count` (any count, one
+    /// or none included) rather than plain `key`.
+    pub(crate) indexed: bool,
+    /// How many indices it takes: 1 for a plain control.
     pub(crate) count: u16,
     pub(crate) kind: DeclKind,
+    /// Whether a write fires an event (a trigger, a note) rather than sets
+    /// a state: two at one sample are two events, so its requests are
+    /// never coalesced, and a module adopting its state never replays one.
+    pub(crate) event: bool,
     /// The unit a number is in (`"Hz"`, `"s"`), or `""`.
     pub(crate) unit: &'static str,
     /// The value a module starts from when its config leaves it out.
@@ -74,8 +85,10 @@ impl ControlDecl {
     ) -> Self {
         Self {
             key: Cow::Borrowed(key),
+            indexed: false,
             count: 1,
             kind,
+            event: false,
             unit: "",
             default,
             writer: Writer::Parameter,
@@ -90,7 +103,14 @@ impl ControlDecl {
 
     /// Declares `key.0` to `key.{count - 1}` instead of `key` (R5).
     pub(crate) const fn indexed(mut self, count: u16) -> Self {
+        self.indexed = true;
         self.count = count;
+        self
+    }
+
+    /// Makes each write an event rather than a state (see the field).
+    pub(crate) const fn event(mut self) -> Self {
+        self.event = true;
         self
     }
 
@@ -108,13 +128,25 @@ pub(crate) struct ControlTable(Cow<'static, [ControlDecl]>);
 
 impl ControlTable {
     /// A module type's fixed table.
+    ///
+    /// # Panics
+    ///
+    /// If the table is invalid (see [`invalid`]): a compile error when
+    /// evaluated in a `const` or `static`.
     pub(crate) const fn of(decls: &'static [ControlDecl]) -> Self {
+        if let Some(why) = invalid(decls) {
+            panic!("{}", why);
+        }
         Self(Cow::Borrowed(decls))
     }
 
-    /// A table built for one instance (a development's exposed controls).
-    pub(crate) fn built(decls: Vec<ControlDecl>) -> Self {
-        Self(Cow::Owned(decls))
+    /// A table built for one instance (a development's exposed controls),
+    /// or why it cannot be one.
+    pub(crate) fn built(decls: Vec<ControlDecl>) -> Result<Self, &'static str> {
+        match invalid(&decls) {
+            Some(why) => Err(why),
+            None => Ok(Self(Cow::Owned(decls))),
+        }
     }
 
     /// How many indices the table declares.
@@ -139,7 +171,7 @@ impl ControlTable {
     pub(crate) fn resolve(&self, key: &str) -> Option<ControlIndex> {
         let mut first = 0usize;
         for decl in self.0.iter() {
-            let position = if decl.count == 1 {
+            let position = if !decl.indexed {
                 (key == decl.key).then_some(0)
             } else {
                 key.strip_prefix(decl.key.as_ref())
@@ -161,7 +193,7 @@ impl ControlTable {
     /// The key of `index`, as clients write it.
     pub(crate) fn key(&self, index: ControlIndex) -> Option<String> {
         let (decl, position) = self.decl(index)?;
-        Some(if decl.count == 1 {
+        Some(if !decl.indexed {
             decl.key.to_string()
         } else {
             format!("{}.{}", decl.key, position)
@@ -210,18 +242,13 @@ impl ControlTable {
                     .map(RtValue::I32)
                     .map_err(|refusal| format!("Control '{key}' {refusal}"))
             }
-            DeclKind::Bool | DeclKind::Event => {
+            DeclKind::Bool => {
                 let flag = match (value, text) {
                     (ControlValue::Bool(flag), _) => *flag,
                     (_, Some("true")) => true,
                     (_, Some("false")) => false,
                     _ => value.as_bool()?,
                 };
-                if decl.kind == DeclKind::Event && !flag {
-                    return Err(format!(
-                        "Control '{key}' is an event: write true to fire it"
-                    ));
-                }
                 Ok(RtValue::Bool(flag))
             }
             DeclKind::Choice(options) => {
@@ -241,9 +268,11 @@ impl ControlTable {
     }
 
     /// `value`, held by `index`, as clients read it: a choice by name.
+    /// `None` for a payload, which no scalar holds.
     pub(crate) fn value(&self, index: ControlIndex, value: RtValue) -> Option<ControlValue> {
         let (decl, _) = self.decl(index)?;
         Some(match (decl.kind, value) {
+            (DeclKind::Payload, _) => return None,
             (DeclKind::Choice(options), RtValue::U32(position)) => {
                 ControlValue::String(options.get(position as usize)?.to_string())
             }
@@ -255,8 +284,12 @@ impl ControlTable {
     }
 
     /// Every declared control as clients list it, each with `current(index)`
-    /// as its default (what describe shows: the value it holds now).
-    pub(crate) fn metas(&self, current: impl Fn(ControlIndex) -> RtValue) -> Vec<ControlMeta> {
+    /// as its default (what describe shows: the value it holds now), or its
+    /// declared default when `current` has none.
+    pub(crate) fn metas(
+        &self,
+        current: impl Fn(ControlIndex) -> Option<ControlValue>,
+    ) -> Vec<ControlMeta> {
         (0..self.len())
             .filter_map(|index| {
                 let index = ControlIndex(index as u16);
@@ -267,21 +300,49 @@ impl ControlTable {
                         min: min as f32,
                         max: max as f32,
                     },
-                    DeclKind::Bool | DeclKind::Event => ControlKind::Bool,
+                    DeclKind::Bool => ControlKind::Bool,
                     DeclKind::Choice(options) => ControlKind::String {
                         options: Some(options.iter().map(|o| o.to_string()).collect()),
                     },
                     DeclKind::Payload => ControlKind::String { options: None },
                 };
+                let default = current(index)
+                    .or_else(|| self.value(index, decl.default))
+                    .unwrap_or_else(|| ControlValue::String(String::new()));
                 Some(ControlMeta {
                     key: self.key(index)?,
                     description: decl.description.to_string(),
-                    default: self.value(index, current(index))?,
+                    default,
                     kind,
                 })
             })
             .collect()
     }
+}
+
+/// Why `decls` cannot be a table: more indices than a [`ControlIndex`]
+/// addresses, a plain control not taking exactly one, or an integer range
+/// a client's `f32` cannot read back exactly.
+const fn invalid(decls: &[ControlDecl]) -> Option<&'static str> {
+    let mut total = 0usize;
+    let mut i = 0;
+    while i < decls.len() {
+        let decl = &decls[i];
+        total += decl.count as usize;
+        if !decl.indexed && decl.count != 1 {
+            return Some("a plain control takes exactly one index");
+        }
+        if let DeclKind::Integer { min, max } = decl.kind {
+            if min < -MAX_EXACT_INTEGER || max > MAX_EXACT_INTEGER {
+                return Some("an integer control's range must lie within 2^24 of zero");
+            }
+        }
+        i += 1;
+    }
+    if total > MAX_CONTROLS {
+        return Some("a control table declares at most 2^16 controls");
+    }
+    None
 }
 
 #[cfg(test)]
