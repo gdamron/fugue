@@ -937,14 +937,22 @@ impl ModuleFactory for CellSequencerFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[
-            BASE_NOTE,
-            STEPS,
-            GATE_LENGTH,
-            SELECTED_SEQUENCE,
-            GRACE_DURATION_MS,
-            GRACE_VELOCITY,
-        ]
+        const {
+            &[
+                BASE_NOTE,
+                STEPS,
+                GATE_LENGTH,
+                SELECTED_SEQUENCE,
+                GRACE_DURATION_MS,
+                GRACE_VELOCITY,
+                ConfigKey::boolean("wait_for_cycle_end"),
+                ConfigKey::text("sequences_json"),
+                ConfigKey::json("sequences"),
+                ConfigKey::boolean("auto_steps"),
+                ConfigKey::text("mode"),
+                ConfigKey::text("grace_placement"),
+            ]
+        }
     }
 
     fn build(

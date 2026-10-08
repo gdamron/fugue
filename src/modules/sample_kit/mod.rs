@@ -42,6 +42,10 @@ impl ModuleFactory for SampleKitFactory {
         TYPE_ID
     }
 
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        const { &[crate::module_config::ConfigKey::json("samples")] }
+    }
+
     fn build(
         &self,
         sample_rate: u32,

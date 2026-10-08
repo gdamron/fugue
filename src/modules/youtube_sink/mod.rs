@@ -35,7 +35,7 @@ impl ModuleFactory for YoutubeSinkFactory {
     }
 
     fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
-        super::rtmp_sink::RTMP_CONFIG_KEYS
+        &super::rtmp_sink::RTMP_CONFIG_KEYS[1..]
     }
 
     fn build(

@@ -20,8 +20,8 @@ const SAMPLE_RATE: u32 = 48_000;
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "type": "sine", "frequency": 550.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [
@@ -143,7 +143,7 @@ impl Rig {
             self.build(
                 "osc1",
                 "oscillator",
-                serde_json::json!({ "waveform": "square" }),
+                serde_json::json!({ "type": "square" }),
             ),
         );
         change.disconnect(edge("osc1", "audio", "dac", "audio"));
@@ -384,7 +384,7 @@ fn a_swap_keeps_compatible_connections_only_when_asked() {
                 SAMPLE_RATE,
                 "osc1",
                 "oscillator",
-                &serde_json::json!({ "waveform": "square" }),
+                &serde_json::json!({ "type": "square" }),
                 preserve,
             )
             .unwrap()

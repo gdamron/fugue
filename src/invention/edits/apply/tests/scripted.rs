@@ -116,6 +116,15 @@ impl crate::ModuleFactory for Scripted {
         SCRIPTED
     }
 
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        const {
+            &[
+                crate::module_config::ConfigKey::float("level"),
+                crate::module_config::ConfigKey::text("error"),
+            ]
+        }
+    }
+
     fn build(
         &self,
         sample_rate: u32,

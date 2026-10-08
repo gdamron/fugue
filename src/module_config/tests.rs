@@ -3,9 +3,10 @@
 use super::*;
 use serde_json::json;
 
+mod closed;
 mod guard;
 pub(crate) mod probe;
-mod registry;
+pub(crate) mod registry;
 
 const ROOT_NOTE: ConfigKey = ConfigKey::int::<u8>("root_note");
 const SEED: ConfigKey = ConfigKey::seed("seed");

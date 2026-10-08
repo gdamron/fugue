@@ -14,7 +14,7 @@
             "type": "oscillator",
             "config": {
               "frequency": 220.0,
-              "waveform": "square"
+              "type": "square"
             }
           },
           {

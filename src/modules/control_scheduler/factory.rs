@@ -19,7 +19,15 @@ impl ModuleFactory for ControlSchedulerFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[BPM_SCALE]
+        const {
+            &[
+                BPM_SCALE,
+                ConfigKey::json("schedule"),
+                ConfigKey::json("tempo_map"),
+                ConfigKey::text("tempo_target"),
+                ConfigKey::text("tempo_control"),
+            ]
+        }
     }
 
     fn build(

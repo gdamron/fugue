@@ -15,7 +15,7 @@ const HELD: &str = r#"{
     "version": "1.0.0",
     "modules": [
         { "id": "lfo", "type": "oscillator", "config": { "frequency": 3.0 } },
-        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
         { "id": "vca", "type": "vca" },
         { "id": "dac", "type": "dac" }
     ],
@@ -145,7 +145,7 @@ fn rebuilt_and_added_modules_start_fresh() {
         let osc1 = rig.build(
             "osc1",
             "oscillator",
-            serde_json::json!({ "waveform": "sine", "frequency": 440.0 }),
+            serde_json::json!({ "type": "sine", "frequency": 440.0 }),
         );
         rig.live
             .edit(|change| {

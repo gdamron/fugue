@@ -111,17 +111,27 @@ pub trait ModuleFactory: Send + Sync + 'static {
         None
     }
 
-    /// The numeric keys this type's config reads through
+    /// Every key this type's config reads, other than its control keys:
+    /// numeric keys read through
     /// [`ConfigReader`](crate::module_config::ConfigReader), each declared
-    /// once as a [`ConfigKey`] constant and read through it.
+    /// once as a [`ConfigKey`] constant and read through it, and its text,
+    /// boolean and structured keys.
     ///
-    /// The registry-wide config test builds each declared key from its
-    /// alternative spellings (`72.0` for an integer, `1e39` for a float), and
-    /// declared module interfaces will describe config from it. Keys applied
-    /// through a module's controls (`apply_control_keys`) are not
-    /// listed. Default is none.
+    /// Config is closed: [`ModuleRegistry::build`](crate::ModuleRegistry::build)
+    /// refuses a key that is neither listed here nor one of the module's
+    /// controls. The registry-wide config test builds each declared numeric
+    /// key from its alternative spellings (`72.0` for an integer, `1e39` for
+    /// a float). Keys applied through a module's controls
+    /// (`apply_control_keys`) need not be listed. Default is none.
     fn config_keys(&self) -> &'static [ConfigKey] {
         &[]
+    }
+
+    /// True when this type's config may hold keys it does not declare, so
+    /// [`ModuleRegistry::build`](crate::ModuleRegistry::build) does not
+    /// refuse them. Default is false: config is closed.
+    fn open_config(&self) -> bool {
+        false
     }
 }
 

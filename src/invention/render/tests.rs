@@ -6,8 +6,8 @@ const SIMPLE_INVENTION: &str = r#"{
     "version": "1.0.0",
     "title": "render-test",
     "modules": [
-        { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
-        { "id": "vca", "type": "vca", "config": { "level": 0.0 } },
+        { "id": "osc", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+        { "id": "vca", "type": "vca", "config": {} },
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
@@ -82,11 +82,11 @@ fn render_engine_supports_runtime_graph_mutation() {
         .add_module(
             "osc",
             "oscillator",
-            &serde_json::json!({ "waveform": "sine", "frequency": 440.0 }),
+            &serde_json::json!({ "type": "sine", "frequency": 440.0 }),
         )
         .unwrap();
     engine
-        .add_module("vca", "vca", &serde_json::json!({ "level": 0.0 }))
+        .add_module("vca", "vca", &serde_json::json!({}))
         .unwrap();
     engine.connect("osc", "audio", "vca", "audio").unwrap();
     engine.connect("vca", "audio", "dac", "audio").unwrap();
@@ -114,7 +114,7 @@ fn render_engine_runs_code_module_init_hook() {
                     "id": "code1",
                     "type": "code",
                     "config": {
-                        "script": "function init() { graph.addModule('osc_from_code', 'oscillator', { waveform: 'sine', frequency: 330.0 }) }"
+                        "script": "function init() { graph.addModule('osc_from_code', 'oscillator', { type: 'sine', frequency: 330.0 }) }"
                     }
                 },
                 { "id": "dac", "type": "dac" }
@@ -178,7 +178,7 @@ fn render_engine_supports_returned_lifecycle_object() {
                     "id": "code1",
                     "type": "code",
                     "config": {
-                        "script": "(() => ({ init() { graph.addModule('osc_from_object', 'oscillator', { waveform: 'sine', frequency: 440.0 }) } }))()"
+                        "script": "(() => ({ init() { graph.addModule('osc_from_object', 'oscillator', { type: 'sine', frequency: 440.0 }) } }))()"
                     }
                 },
                 { "id": "dac", "type": "dac" }
@@ -204,7 +204,7 @@ fn render_engine_supports_custom_entrypoint_function() {
                     "type": "code",
                     "config": {
                         "entrypoint": "boot",
-                        "script": "function boot() { graph.addModule('osc_from_boot', 'oscillator', { waveform: 'sine', frequency: 660.0 }) }"
+                        "script": "function boot() { graph.addModule('osc_from_boot', 'oscillator', { type: 'sine', frequency: 660.0 }) }"
                     }
                 },
                 { "id": "dac", "type": "dac" }
@@ -229,7 +229,7 @@ fn render_engine_keeps_legacy_globalthis_hooks_working() {
                     "id": "code1",
                     "type": "code",
                     "config": {
-                        "script": "globalThis.init = function () { graph.addModule('osc_from_legacy', 'oscillator', { waveform: 'sine', frequency: 550.0 }) }"
+                        "script": "globalThis.init = function () { graph.addModule('osc_from_legacy', 'oscillator', { type: 'sine', frequency: 550.0 }) }"
                     }
                 },
                 { "id": "dac", "type": "dac" }
@@ -258,7 +258,7 @@ const ONE_SHOT_INVENTION: &str = r#"{
                 "pattern": [ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]
             }
         },
-        { "id": "osc", "type": "oscillator", "config": { "waveform": "sine" } },
+        { "id": "osc", "type": "oscillator", "config": { "type": "sine" } },
         { "id": "vca", "type": "vca" },
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],

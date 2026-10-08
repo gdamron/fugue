@@ -51,7 +51,8 @@ impl ModuleFactory for RtmpSinkFactory {
     }
 
     fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
-        native::CONFIG_KEYS
+        let keys = native::CONFIG_KEYS;
+        &keys[..keys.len() - 3]
     }
 
     fn build(

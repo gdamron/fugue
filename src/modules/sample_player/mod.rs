@@ -27,6 +27,19 @@ impl ModuleFactory for SamplePlayerFactory {
         "sample_player"
     }
 
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        use crate::module_config::ConfigKey;
+        const {
+            &[
+                ConfigKey::json("asset"),
+                ConfigKey::text("source"),
+                ConfigKey::boolean("play"),
+                ConfigKey::boolean("loop_enabled"),
+                ConfigKey::text("mode"),
+            ]
+        }
+    }
+
     fn build(
         &self,
         sample_rate: u32,

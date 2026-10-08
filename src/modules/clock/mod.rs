@@ -27,7 +27,7 @@ impl ModuleFactory for ClockFactory {
 
     // `time_signature.beats_per_measure`, nested, is read as a `u32` too.
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[BPM, GATE_DURATION]
+        const { &[BPM, GATE_DURATION, ConfigKey::json("time_signature")] }
     }
 
     fn build(

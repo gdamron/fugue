@@ -84,6 +84,12 @@ impl ModuleRegistry {
     ///
     /// Returns an error if the type_id is not registered or if the factory
     /// fails to build the module.
+    ///
+    /// Config is closed: a key that is neither one of the factory's
+    /// [`config_keys`](ModuleFactory::config_keys) nor one of the built
+    /// module's controls is refused, naming the type and the key. A sink's
+    /// undeclared keys are refused before it is built, since a live sink
+    /// build may open a file or a stream.
     pub fn build(
         &self,
         type_id: &str,
@@ -94,11 +100,44 @@ impl ModuleRegistry {
             .factories
             .get(type_id)
             .ok_or_else(|| format!("Unknown module type: {}", type_id))?;
-        match self.mode {
+        let declared = factory.config_keys();
+        let undeclared: Vec<&String> = match config.as_object() {
+            Some(entries) if !factory.open_config() => entries
+                .keys()
+                .filter(|key| declared.iter().all(|d| d.key != key.as_str()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        if factory.is_sink() {
+            if let Some(key) = undeclared.first() {
+                return Err(unknown_config_key(type_id, key, declared, &[]).into());
+            }
+        }
+        let built = match self.mode {
             BuildMode::Live => factory.build(sample_rate, config),
             BuildMode::Inspection => factory.build_for_inspection(sample_rate, config),
             BuildMode::Validation => factory.build_for_validation(sample_rate, config),
+        }?;
+        if !undeclared.is_empty() {
+            let controls = built
+                .control_surface
+                .as_ref()
+                .map(|surface| surface.controls())
+                .unwrap_or_default();
+            // An indexed key past the family's current count (`degree.6`
+            // written before the count shrank) is still the family's.
+            let family = |key: &str| key.split_once('.').map(|(stem, _)| format!("{stem}."));
+            let is_control = |key: &str| {
+                let stem = family(key);
+                controls.iter().any(|meta| {
+                    meta.key == key || stem.as_ref().is_some_and(|s| meta.key.starts_with(s))
+                })
+            };
+            if let Some(key) = undeclared.into_iter().find(|key| !is_control(key)) {
+                return Err(unknown_config_key(type_id, key, declared, &controls).into());
+            }
         }
+        Ok(built)
     }
 
     /// Internal registry view that preserves inspection mode through nested
@@ -146,7 +185,7 @@ impl ModuleRegistry {
         self.factories.get(type_id).and_then(|f| f.output_ports())
     }
 
-    /// The numeric config keys a type declares (see
+    /// The config keys a type declares (see
     /// [`ModuleFactory::config_keys`]); none for an unknown type.
     pub fn config_keys(&self, type_id: &str) -> &'static [crate::module_config::ConfigKey] {
         self.factories
@@ -159,6 +198,30 @@ impl ModuleRegistry {
     pub fn types(&self) -> impl Iterator<Item = &str> + '_ {
         self.factories.keys().map(String::as_str)
     }
+}
+
+/// The refusal of config key `key`, listing the keys `type_id` takes, with
+/// an indexed family of controls (`level.0`, `level.1`, …) shown once.
+fn unknown_config_key(
+    type_id: &str,
+    key: &str,
+    declared: &[crate::module_config::ConfigKey],
+    controls: &[crate::ControlMeta],
+) -> String {
+    let mut keys: Vec<String> = declared.iter().map(|d| d.key.to_string()).collect();
+    for meta in controls {
+        let key = match meta.key.split_once('.') {
+            Some((stem, _)) => format!("{stem}.N"),
+            None => meta.key.clone(),
+        };
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    format!(
+        "{type_id} config has no key '{key}'; it takes {}",
+        keys.join(", ")
+    )
 }
 
 impl Default for ModuleRegistry {

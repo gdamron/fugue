@@ -461,7 +461,17 @@ impl ModuleFactory for ReverbFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[ROOM_SIZE, DECAY, DAMPING, WET, DRY, WIDTH]
+        const {
+            &[
+                ROOM_SIZE,
+                DECAY,
+                DAMPING,
+                WET,
+                DRY,
+                WIDTH,
+                ConfigKey::boolean("freeze"),
+            ]
+        }
     }
 
     fn build(

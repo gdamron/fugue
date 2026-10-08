@@ -44,7 +44,14 @@ impl ModuleFactory for OscillatorFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[FREQUENCY, FM_AMOUNT, AM_AMOUNT]
+        const {
+            &[
+                FREQUENCY,
+                FM_AMOUNT,
+                AM_AMOUNT,
+                ConfigKey::text("oscillator_type"),
+            ]
+        }
     }
 
     fn build(

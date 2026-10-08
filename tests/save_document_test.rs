@@ -14,7 +14,7 @@ const SAMPLE_RATE: u32 = 48_000;
 const VOICE_DEVELOPMENT: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 220.0 } },
+        { "id": "osc", "type": "oscillator", "config": { "type": "sine", "frequency": 220.0 } },
         { "id": "amp", "type": "vca", "config": {} }
     ],
     "connections": [

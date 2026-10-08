@@ -33,6 +33,10 @@ impl ModuleFactory for WriteProbeFactory {
         WRITE_PROBE
     }
 
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        const { &[crate::module_config::ConfigKey::text("id")] }
+    }
+
     fn build(
         &self,
         _sample_rate: u32,

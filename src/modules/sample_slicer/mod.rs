@@ -73,7 +73,15 @@ impl ModuleFactory for SampleSlicerFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[SLICE]
+        const {
+            &[
+                SLICE,
+                ConfigKey::json("asset"),
+                ConfigKey::text("source"),
+                ConfigKey::json("slices"),
+                ConfigKey::text("mode"),
+            ]
+        }
     }
 
     fn build(
