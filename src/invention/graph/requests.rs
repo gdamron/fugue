@@ -74,7 +74,7 @@
 //! pending requests: at each segment start it applies every due request,
 //! then processes up to the next due time. Every module so gets sample
 //! accuracy without handling an offset itself, and a module's apply stays a
-//! plain setter (FUG-310). The number of segments is bounded by distinct
+//! plain setter. The number of segments is bounded by distinct
 //! due times in the block, which coalescing and the bounded store bound. A
 //! block with nothing due is one segment, exactly as before.
 
@@ -83,7 +83,8 @@ use super::SignalGraph;
 #[cfg(test)]
 use crate::control_request::RtValue;
 use crate::control_request::{
-    ControlIndex, Outcome, OutcomeSender, PendingStore, QueueConsumer, Refusal, Request, RequestValue, When,
+    apply_declared, ControlIndex, Outcome, OutcomeSender, PendingStore, QueueConsumer, Refusal,
+    Request, RequestValue, When,
 };
 use crate::payload::Retirer;
 
@@ -173,9 +174,14 @@ impl SignalGraph {
         for _ in 0..drain.pop_limit {
             let head = drain.requests.peek(|head| {
                 let older = head.target.generation < installed;
-                (head.value.is_payload(), older, resolve(self, head))
+                (
+                    head.value.is_payload(),
+                    head.event,
+                    older,
+                    resolve(self, head),
+                )
             });
-            let Some((payload, older, landing)) = head else {
+            let Some((payload, event, older, landing)) = head else {
                 break;
             };
             // An install must pop every older request while it holds the
@@ -190,7 +196,8 @@ impl SignalGraph {
             // even when the store is saturated.
             if !owed
                 && drain.pending.is_full()
-                && !landing.is_some_and(|(target, at)| drain.pending.coalesces_with(&target, at))
+                && !landing
+                    .is_some_and(|(target, at)| drain.pending.coalesces_with(&target, at, event))
             {
                 break;
             }
@@ -233,9 +240,11 @@ impl SignalGraph {
     }
 
     /// Applies `value` to `control` of the module at `module_idx`, under
-    /// [`PendingStore::apply_due`]'s contract. No module accepts requests
-    /// until FUG-310, so this refuses with [`Refusal::Unsupported`],
-    /// retiring a payload, except through a test's hook.
+    /// [`PendingStore::apply_due`]'s contract: a value through the module's
+    /// [`apply`](crate::Module::apply), publishing what the control then
+    /// holds (see [`apply_declared`]). No module takes a payload yet, so one
+    /// is retired and refused with [`Refusal::Unsupported`]. A test's hook
+    /// replaces all of it.
     fn apply_request(
         &mut self,
         module_idx: usize,
@@ -247,11 +256,19 @@ impl SignalGraph {
         if let Some(hook) = self.request_hook {
             return hook(self, module_idx, control, value, retirer);
         }
-        let _ = (module_idx, control);
-        if let RequestValue::Payload(payload) = value {
-            retirer.retire(payload);
+        match value {
+            RequestValue::Value(value) => {
+                let (_, instance) = self
+                    .modules
+                    .get_index_mut(module_idx)
+                    .ok_or(Refusal::TargetGone)?;
+                apply_declared(instance.module_mut(), control, value)
+            }
+            RequestValue::Payload(payload) => {
+                retirer.retire(payload);
+                Err(Refusal::Unsupported)
+            }
         }
-        Err(Refusal::Unsupported)
     }
 
     /// A [`RequestHook`] applying an `F32` request as an input write, with

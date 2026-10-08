@@ -7,7 +7,8 @@
 //! and it reports what became of each request through an outcome channel
 //! ([`outcome_channel`]). Modules declare their controls in a
 //! [`ControlTable`], which control threads resolve keys and coerce values
-//! against.
+//! against, apply them with [`Module::apply`](crate::Module::apply) and
+//! publish what they hold to [`ControlCells`] for read-back.
 //!
 //! Every ordering argument lives in [`queue`](self::queue) and [`EventCounter`],
 //! and the `loom_tests` models check the shipped source files against loom's
@@ -19,6 +20,7 @@
 //! and `unused_imports` allowance below; remove it once they land.
 #![allow(dead_code, unused_imports)]
 
+mod cells;
 mod declare;
 mod event;
 mod key;
@@ -59,6 +61,7 @@ mod sync {
     }
 }
 
+pub(crate) use cells::{apply_declared, ControlCells};
 pub(crate) use declare::{ControlDecl, ControlTable, DeclKind, Writer};
 pub(crate) use event::{EventCounter, EventCursor};
 pub(crate) use key::{ControlKey, ControlKeys, RtScalar};

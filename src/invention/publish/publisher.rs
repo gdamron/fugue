@@ -180,7 +180,7 @@ impl Publisher {
     /// graph's module order once the current generation is installed, into
     /// the target a request carries. Fails with
     /// [`GraphCommandError::UnknownModule`]; whether the module has the
-    /// control is checked by its control table (FUG-310).
+    /// control is checked by its declared control table.
     ///
     /// The caller submits the request before releasing the publisher and
     /// then calls [`Self::note_written`], exactly as for an input write: so

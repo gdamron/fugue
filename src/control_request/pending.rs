@@ -12,9 +12,11 @@ pub(crate) enum Refusal {
     TargetGone,
     /// The pending store had no room when it arrived.
     PendingFull,
-    /// Its module does not accept it (no module accepts requests until
-    /// FUG-310).
+    /// Its module does not accept requests for that control, or not of
+    /// that kind (a payload where it declares a value).
     Unsupported,
+    /// Its value is not one the control holds (a choice past its options).
+    Invalid,
 }
 
 /// How a request left the audio thread's hands.
@@ -116,9 +118,8 @@ struct Pending {
 /// at the same sample replaces the waiting one (last write wins), which is
 /// settled [`Outcome::Superseded`]. A remap across a publication may merge
 /// two targets afterwards; both then apply in receipt order, which leaves
-/// the same value. That is right for a value, not for an event: two
-/// triggers at one sample are two events, so A3 (FUG-310) must keep event
-/// controls out of coalescing.
+/// the same value. Events ([`Request::event`]) never coalesce: two
+/// triggers at one sample are two events, and both apply.
 ///
 /// An entry whose target generation is newer than the installed one is
 /// held: it is never due, and never bounds a segment, until its
@@ -146,8 +147,11 @@ impl PendingStore {
     }
 
     /// Whether a request for `target` at `at` would replace a waiting one
-    /// (and so needs no room).
-    pub(crate) fn coalesces_with(&self, target: &ControlTarget, at: u64) -> bool {
+    /// (and so needs no room). An event never does.
+    pub(crate) fn coalesces_with(&self, target: &ControlTarget, at: u64, event: bool) -> bool {
+        if event {
+            return false;
+        }
         let first = self.entries.partition_point(|e| e.at < at);
         self.entries[first..]
             .iter()
@@ -166,7 +170,7 @@ impl PendingStore {
     }
 
     /// Stores `request` to apply at sample `at`, replacing a waiting request
-    /// for the same target and sample, or settles it refused
+    /// for the same target and sample unless it is an event, or settles it refused
     /// ([`Refusal::PendingFull`]) when the store is full. Binary search,
     /// then an in-place shift: allocation- and free-free.
     pub(crate) fn insert(&mut self, request: Request, at: u64) {
@@ -174,7 +178,7 @@ impl PendingStore {
         let mut end = first + self.entries[first..].partition_point(|e| e.at == at);
         let same = self.entries[first..end]
             .iter()
-            .position(|e| e.request.target == request.target);
+            .position(|e| !request.event && e.request.target == request.target);
         if let Some(offset) = same {
             let old = self.entries.remove(first + offset);
             self.outcomes.settle(old.request, Outcome::Superseded);

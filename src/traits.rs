@@ -6,6 +6,8 @@
 //! - [`ControlMeta`] - Metadata describing a module control for UI/REPL discovery
 use serde::{Deserialize, Serialize};
 
+use crate::control_request::{ControlCells, ControlIndex, ControlTable, Refusal, RtValue};
+
 mod control_meta;
 mod control_validation;
 
@@ -375,6 +377,35 @@ pub trait Module: Send {
     /// audio thread, such as adopting shared state that needs a lock or an
     /// allocation. May lock and allocate. The default does nothing.
     fn prepare_for_publication(&mut self) {}
+
+    /// This module's declared controls and the cells it publishes their
+    /// values to, once it takes control requests. A module that
+    /// returns `None` keeps the legacy `set_control` path.
+    ///
+    /// Crate-internal for now: first-party modules only, until the plugin
+    /// interface can declare controls.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        None
+    }
+
+    /// Applies `value` to declared control `control` and returns the value
+    /// the control now holds (after any clamping), or refuses it.
+    ///
+    /// Runs on the audio thread, between [`Module::process`] calls, at the
+    /// sample the request is due, so the module needs no synchronization of
+    /// its own and no sample offset: it sets its state as a plain setter. It
+    /// must not allocate, free, lock or block. `value` is of the kind the
+    /// table declares (a control thread coerced it), though a module still
+    /// refuses one it cannot hold. Applying the value a control holds
+    /// changes nothing, except for an event.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        let _ = (control, value);
+        Err(Refusal::Unsupported)
+    }
 
     /// Legacy module-local control metadata surface.
     fn controls(&self) -> Vec<ControlMeta> {
