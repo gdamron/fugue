@@ -135,11 +135,11 @@ fn root_note_72_and_72_point_0_are_one_note_and_73_is_another() {
 
 #[test]
 fn an_integer_only_count_compares_whole_values() {
-    let channels = |value: Value| json!({ "channels": value });
+    let channels = |value: Value| json!({ "channel_count": value });
     assert!(writes(&plan("mixer", channels(json!(4)), channels(json!(4.0)))).is_empty());
     assert_eq!(
         writes(&plan("mixer", channels(json!(4)), channels(json!(5.0)))),
-        ["channels = Number(5.0)"]
+        ["channel_count = Number(5.0)"]
     );
 }
 
@@ -172,8 +172,8 @@ fn an_undeclared_key_compares_as_json() {
     // declared numeric keys, so their spelling still counts.
     let plan = plan(
         "mixer",
-        json!({ "channels": 2, "levels": [1, 1] }),
-        json!({ "channels": 2.0, "levels": [1.0, 1] }),
+        json!({ "channel_count": 2, "levels": [1, 1] }),
+        json!({ "channel_count": 2.0, "levels": [1.0, 1] }),
     );
     assert_eq!(plan.swapped.len(), 1, "{plan:?}");
 }

@@ -67,7 +67,7 @@
       "id": "mixer",
       "type": "mixer",
       "config": {
-        "channels": 3,
+        "channel_count": 3,
         "levels": [0.45, 0.35, 0.25],
         "pans": [-0.35, 0.3, 0.0],
         "master": 0.55
@@ -137,29 +137,29 @@
       "from": "bass",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in1"
+      "to_port": "audio.0"
     },
     {
       "from": "melody",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in2"
+      "to_port": "audio.1"
     },
     {
       "from": "pad",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in3"
+      "to_port": "audio.2"
     },
     {
       "from": "mixer",
-      "from_port": "left",
+      "from_port": "audio_left",
       "to": "dac",
       "to_port": "audio_left"
     },
     {
       "from": "mixer",
-      "from_port": "right",
+      "from_port": "audio_right",
       "to": "dac",
       "to_port": "audio_right"
     }

@@ -62,16 +62,16 @@ fn an_integer_key_refuses_fractions_and_out_of_range_values() {
 
 #[test]
 fn a_declared_range_narrows_the_type_range() {
-    const CHANNELS: ConfigKey = ConfigKey::integer("channels", 1, 64);
+    const CHANNELS: ConfigKey = ConfigKey::integer("channel_count", 1, 64);
     let read = |value: Value| {
-        ConfigReader::new("mixer", &json!({ "channels": value }))
+        ConfigReader::new("mixer", &json!({ "channel_count": value }))
             .int::<usize>(&CHANNELS)
             .map_err(|error| error.to_string())
     };
     assert_eq!(read(json!(2.0)), Ok(Some(2)));
     assert_eq!(
         read(json!(0)),
-        Err("mixer config 'channels' expects a whole number from 1 to 64, got 0".into())
+        Err("mixer config 'channel_count' expects a whole number from 1 to 64, got 0".into())
     );
 }
 

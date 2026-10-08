@@ -28,8 +28,8 @@
 //!
 //! A note starts on a `gate` rising edge — the `frequency` and `velocity`
 //! inputs are latched at that instant — and releases on the falling edge.
-//! The three inputs mirror a `divisi` voice trio (`frequencyN` / `gateN` /
-//! `velocityN`), so divisi can fan a line across several instances, while a
+//! The three inputs mirror a `divisi` voice trio (`frequency.N` / `gate.N` /
+//! `velocity.N`), so divisi can fan a line across several instances, while a
 //! single instance still absorbs overlapping release tails on its own pool.
 //!
 //! # Sustain looping

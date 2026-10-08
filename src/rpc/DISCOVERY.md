@@ -15,7 +15,7 @@ registered names; `detail: "full"` requests default-config metadata:
 `describe_module` accepts exactly one of `type` or `module_id`:
 
 ```json
-{"schema_version":1,"kind":"command","command":"describe_module","type":"mixer","config":{"channels":8}}
+{"schema_version":1,"kind":"command","command":"describe_module","type":"mixer","config":{"channel_count":8}}
 ```
 
 ```json

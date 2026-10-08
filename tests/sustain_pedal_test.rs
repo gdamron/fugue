@@ -31,29 +31,29 @@ fn invention(pedaled: bool) -> String {
     // The bank: divisi fans the line across four explicit ring_voice
     // instances; the pedal input fans out to each voice's sustain module.
     let mut bank_modules =
-        vec![r#"{ "id": "div", "type": "divisi", "config": { "voices": 4 } }"#.to_string()];
+        vec![r#"{ "id": "div", "type": "divisi", "config": { "voice_count": 4 } }"#.to_string()];
     let mut bank_connections = Vec::new();
     let mut bank_inputs = vec![
         r#"{ "name": "frequency", "to": "div", "to_port": "frequency" }"#.to_string(),
         r#"{ "name": "gate", "to": "div", "to_port": "gate" }"#.to_string(),
     ];
-    for n in 1..=4 {
+    for n in 0..4 {
         bank_modules.push(format!(r#"{{ "id": "v{n}", "type": "ring_voice" }}"#));
         bank_connections.push(format!(
-            r#"{{ "from": "div", "from_port": "frequency{n}", "to": "v{n}", "to_port": "frequency" }}"#
+            r#"{{ "from": "div", "from_port": "frequency.{n}", "to": "v{n}", "to_port": "frequency" }}"#
         ));
         bank_connections.push(format!(
-            r#"{{ "from": "div", "from_port": "gate{n}", "to": "v{n}", "to_port": "gate" }}"#
+            r#"{{ "from": "div", "from_port": "gate.{n}", "to": "v{n}", "to_port": "gate" }}"#
         ));
         bank_connections.push(format!(
-            r#"{{ "from": "v{n}", "from_port": "audio", "to": "mix", "to_port": "in{n}" }}"#
+            r#"{{ "from": "v{n}", "from_port": "audio", "to": "mix", "to_port": "audio.{n}" }}"#
         ));
         bank_inputs.push(format!(
             r#"{{ "name": "pedal", "to": "v{n}", "to_port": "pedal" }}"#
         ));
     }
     bank_modules.push(
-        r#"{ "id": "mix", "type": "mixer", "config": { "channels": 4, "levels": [1.0, 1.0, 1.0, 1.0] } }"#
+        r#"{ "id": "mix", "type": "mixer", "config": { "channel_count": 4, "levels": [1.0, 1.0, 1.0, 1.0] } }"#
             .to_string(),
     );
 
@@ -92,7 +92,7 @@ fn invention(pedaled: bool) -> String {
                     "connections": [ {bank_connections} ],
                     "inputs": [ {bank_inputs} ],
                     "outputs": [
-                        {{ "name": "audio", "from": "mix", "from_port": "left" }}
+                        {{ "name": "audio", "from": "mix", "from_port": "audio_left" }}
                     ]
                 }}
             }}

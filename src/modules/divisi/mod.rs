@@ -16,7 +16,7 @@
 //! one sample so the downstream envelope retriggers.
 //!
 //! # Configuration
-//! - `voices`: Pool size, 1..=16 (default 1)
+//! - `voice_count`: Pool size, 1..=16 (default 1)
 //! - `steal`: Voice-steal policy; only `"oldest"` (the default) exists today
 //!
 //! # Inputs
@@ -24,8 +24,8 @@
 //! - `gate`: Note gate; edges drive allocation
 //! - `velocity`: Note level, latched per voice at note-on
 //!
-//! # Outputs (per voice N in 1..=voices)
-//! - `frequencyN`, `gateN`, `velocityN`
+//! # Outputs (per voice N in 0..voice_count)
+//! - `frequency.N`, `gate.N`, `velocity.N`
 //!
 //! # Example
 //!
@@ -33,54 +33,32 @@
 //! // A two-voice bank: divisi fans the sequencer's line across two voices.
 //! {
 //!   "modules": [
-//!     { "id": "div", "type": "divisi", "config": { "voices": 2 } },
+//!     { "id": "div", "type": "divisi", "config": { "voice_count": 2 } },
 //!     { "id": "v1", "type": "piano_voice" },
 //!     { "id": "v2", "type": "piano_voice" }
 //!   ],
 //!   "connections": [
-//!     { "from": "div", "from_port": "frequency1", "to": "v1", "to_port": "frequency" },
-//!     { "from": "div", "from_port": "gate1", "to": "v1", "to_port": "gate" },
-//!     { "from": "div", "from_port": "velocity1", "to": "v1", "to_port": "velocity" },
-//!     { "from": "div", "from_port": "frequency2", "to": "v2", "to_port": "frequency" },
-//!     { "from": "div", "from_port": "gate2", "to": "v2", "to_port": "gate" },
-//!     { "from": "div", "from_port": "velocity2", "to": "v2", "to_port": "velocity" }
+//!     { "from": "div", "from_port": "frequency.0", "to": "v1", "to_port": "frequency" },
+//!     { "from": "div", "from_port": "gate.0", "to": "v1", "to_port": "gate" },
+//!     { "from": "div", "from_port": "velocity.0", "to": "v1", "to_port": "velocity" },
+//!     { "from": "div", "from_port": "frequency.1", "to": "v2", "to_port": "frequency" },
+//!     { "from": "div", "from_port": "gate.1", "to": "v2", "to_port": "gate" },
+//!     { "from": "div", "from_port": "velocity.1", "to": "v2", "to_port": "velocity" }
 //!   ]
 //! }
 //! ```
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{ConfigKey, ConfigReader};
+use crate::modules::indexed_names::IndexedNames;
 use crate::{Module, MAX_BLOCK};
 
 /// Upper bound on pool voices; bounds port count and per-block work.
 pub const MAX_VOICES: usize = 16;
 
-macro_rules! divisi_port_names {
-    ($prefix:literal) => {
-        [
-            concat!($prefix, "1"),
-            concat!($prefix, "2"),
-            concat!($prefix, "3"),
-            concat!($prefix, "4"),
-            concat!($prefix, "5"),
-            concat!($prefix, "6"),
-            concat!($prefix, "7"),
-            concat!($prefix, "8"),
-            concat!($prefix, "9"),
-            concat!($prefix, "10"),
-            concat!($prefix, "11"),
-            concat!($prefix, "12"),
-            concat!($prefix, "13"),
-            concat!($prefix, "14"),
-            concat!($prefix, "15"),
-            concat!($prefix, "16"),
-        ]
-    };
-}
-
-static FREQUENCY_NAMES: [&str; MAX_VOICES] = divisi_port_names!("frequency");
-static GATE_NAMES: [&str; MAX_VOICES] = divisi_port_names!("gate");
-static VELOCITY_NAMES: [&str; MAX_VOICES] = divisi_port_names!("velocity");
+static FREQUENCY_NAMES: IndexedNames = IndexedNames::new("frequency", MAX_VOICES);
+static GATE_NAMES: IndexedNames = IndexedNames::new("gate", MAX_VOICES);
+static VELOCITY_NAMES: IndexedNames = IndexedNames::new("velocity", MAX_VOICES);
 
 const INPUTS: [&str; 3] = ["frequency", "gate", "velocity"];
 
@@ -88,7 +66,7 @@ const INPUTS: [&str; 3] = ["frequency", "gate", "velocity"];
 pub struct DivisiFactory;
 
 const TYPE_ID: &str = "divisi";
-const VOICES: ConfigKey = ConfigKey::integer("voices", 1, MAX_VOICES as i128);
+const VOICE_COUNT: ConfigKey = ConfigKey::integer("voice_count", 1, MAX_VOICES as i128);
 
 impl ModuleFactory for DivisiFactory {
     fn type_id(&self) -> &'static str {
@@ -96,7 +74,7 @@ impl ModuleFactory for DivisiFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const { &[VOICES, ConfigKey::text("steal")] }
+        const { &[VOICE_COUNT, ConfigKey::text("steal")] }
     }
 
     fn build(
@@ -105,7 +83,7 @@ impl ModuleFactory for DivisiFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let voices = ConfigReader::new(TYPE_ID, config)
-            .int::<usize>(&VOICES)?
+            .int::<usize>(&VOICE_COUNT)?
             .unwrap_or(1);
 
         if let Some(steal) = config.get("steal") {
@@ -149,9 +127,9 @@ impl Divisi {
     pub fn new(voices: usize) -> Self {
         let voices = voices.clamp(1, MAX_VOICES);
         let mut output_names = Vec::with_capacity(voices * 3);
-        output_names.extend(FREQUENCY_NAMES.iter().take(voices));
-        output_names.extend(GATE_NAMES.iter().take(voices));
-        output_names.extend(VELOCITY_NAMES.iter().take(voices));
+        output_names.extend(FREQUENCY_NAMES.first(voices));
+        output_names.extend(GATE_NAMES.first(voices));
+        output_names.extend(VELOCITY_NAMES.first(voices));
         Self {
             voices,
             output_names,
@@ -322,14 +300,14 @@ mod tests {
         strike(&mut divisi, 330.0, 0.7, 4, 2);
 
         // Voice 1 keeps its latched pitch/level after its gate ended.
-        assert_eq!(divisi.get_output("frequency1").unwrap(), 220.0);
-        assert_eq!(divisi.get_output("velocity1").unwrap(), 0.5);
-        assert_eq!(divisi.get_output("gate1").unwrap(), 0.0);
+        assert_eq!(divisi.get_output("frequency.0").unwrap(), 220.0);
+        assert_eq!(divisi.get_output("velocity.0").unwrap(), 0.5);
+        assert_eq!(divisi.get_output("gate.0").unwrap(), 0.0);
         // Voice 2 got the second note.
-        assert_eq!(divisi.get_output("frequency2").unwrap(), 330.0);
-        assert_eq!(divisi.get_output("velocity2").unwrap(), 0.7);
+        assert_eq!(divisi.get_output("frequency.1").unwrap(), 330.0);
+        assert_eq!(divisi.get_output("velocity.1").unwrap(), 0.7);
         // Voice 3 untouched.
-        assert_eq!(divisi.get_output("frequency3").unwrap(), 0.0);
+        assert_eq!(divisi.get_output("frequency.2").unwrap(), 0.0);
     }
 
     #[test]
@@ -338,12 +316,12 @@ mod tests {
         divisi.set_input("frequency", 220.0).unwrap();
         divisi.set_input("gate", 1.0).unwrap();
         divisi.process(1);
-        assert_eq!(divisi.get_output("gate1").unwrap(), 1.0);
-        assert_eq!(divisi.get_output("gate2").unwrap(), 0.0);
+        assert_eq!(divisi.get_output("gate.0").unwrap(), 1.0);
+        assert_eq!(divisi.get_output("gate.1").unwrap(), 0.0);
 
         divisi.set_input("gate", 0.0).unwrap();
         divisi.process(1);
-        assert_eq!(divisi.get_output("gate1").unwrap(), 0.0);
+        assert_eq!(divisi.get_output("gate.0").unwrap(), 0.0);
     }
 
     #[test]
@@ -356,15 +334,15 @@ mod tests {
         strike(&mut divisi, 200.0, 1.0, 2, 1);
         strike(&mut divisi, 300.0, 1.0, 2, 1);
         // Third note wrapped onto voice 1.
-        assert_eq!(divisi.get_output("frequency1").unwrap(), 300.0);
-        assert_eq!(divisi.get_output("frequency2").unwrap(), 200.0);
+        assert_eq!(divisi.get_output("frequency.0").unwrap(), 300.0);
+        assert_eq!(divisi.get_output("frequency.1").unwrap(), 200.0);
 
         // Steal a voice whose gate is still high: voice 2 is next; hold a
         // note (no gate-off), then strike again twice to wrap onto it.
         divisi.set_input("frequency", 400.0).unwrap();
         divisi.set_input("gate", 1.0).unwrap();
         divisi.process(1); // voice 2, gate high
-        assert_eq!(divisi.get_output("gate2").unwrap(), 1.0);
+        assert_eq!(divisi.get_output("gate.1").unwrap(), 1.0);
         divisi.set_input("gate", 0.0).unwrap();
         divisi.process(1);
         divisi.set_input("frequency", 500.0).unwrap();
@@ -380,7 +358,7 @@ mod tests {
         divisi.set_input("gate", 1.0).unwrap();
         // This strike lands on voice 1 — currently un-gated, plain rise.
         divisi.process(1);
-        assert_eq!(divisi.get_output("gate1").unwrap(), 1.0);
+        assert_eq!(divisi.get_output("gate.0").unwrap(), 1.0);
     }
 
     #[test]
@@ -389,7 +367,7 @@ mod tests {
         divisi.set_input("frequency", 220.0).unwrap();
         divisi.set_input("gate", 1.0).unwrap();
         divisi.process(1);
-        assert_eq!(divisi.get_output("gate1").unwrap(), 1.0);
+        assert_eq!(divisi.get_output("gate.0").unwrap(), 1.0);
 
         // Re-strike the single voice while its gate is still high: the pool
         // wraps onto it and must dip for exactly one sample.
@@ -397,17 +375,36 @@ mod tests {
         divisi.process(1);
         divisi.set_input("gate", 1.0).unwrap();
         divisi.process(1);
-        assert_eq!(divisi.get_output("gate1").unwrap(), 1.0);
+        assert_eq!(divisi.get_output("gate.0").unwrap(), 1.0);
+    }
+
+    #[test]
+    fn outputs_count_from_zero_and_the_old_names_are_gone() {
+        let divisi = Divisi::new(2);
+        assert_eq!(
+            divisi.outputs(),
+            [
+                "frequency.0",
+                "frequency.1",
+                "gate.0",
+                "gate.1",
+                "velocity.0",
+                "velocity.1"
+            ]
+        );
+        for old in ["frequency1", "gate2", "velocity1", "gate.2"] {
+            assert!(divisi.get_output(old).is_err(), "{old}");
+        }
     }
 
     #[test]
     fn rejects_out_of_range_voices_config() {
         let factory = DivisiFactory;
         assert!(factory
-            .build(48_000, &serde_json::json!({ "voices": 0 }))
+            .build(48_000, &serde_json::json!({ "voice_count": 0 }))
             .is_err());
         assert!(factory
-            .build(48_000, &serde_json::json!({ "voices": 99 }))
+            .build(48_000, &serde_json::json!({ "voice_count": 99 }))
             .is_err());
         assert!(factory
             .build(48_000, &serde_json::json!({ "steal": "newest" }))

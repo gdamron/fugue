@@ -670,7 +670,7 @@
       "id": "mixer",
       "type": "mixer",
       "config": {
-        "channels": 20,
+        "channel_count": 20,
         "levels": [
           0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
           0, 0, 0, 0, 0, 0
@@ -720,7 +720,7 @@
       "from": "pulse",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in1"
+      "to_port": "audio.0"
     },
     {
       "from": "clock",
@@ -744,7 +744,7 @@
       "from": "voice_1",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in2"
+      "to_port": "audio.1"
     },
     {
       "from": "clock",
@@ -768,7 +768,7 @@
       "from": "voice_2",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in3"
+      "to_port": "audio.2"
     },
     {
       "from": "clock",
@@ -792,7 +792,7 @@
       "from": "voice_3",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in4"
+      "to_port": "audio.3"
     },
     {
       "from": "clock",
@@ -816,7 +816,7 @@
       "from": "voice_4",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in5"
+      "to_port": "audio.4"
     },
     {
       "from": "clock",
@@ -840,7 +840,7 @@
       "from": "voice_5",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in6"
+      "to_port": "audio.5"
     },
     {
       "from": "clock",
@@ -864,7 +864,7 @@
       "from": "voice_6",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in7"
+      "to_port": "audio.6"
     },
     {
       "from": "clock",
@@ -888,7 +888,7 @@
       "from": "voice_7",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in8"
+      "to_port": "audio.7"
     },
     {
       "from": "clock",
@@ -912,7 +912,7 @@
       "from": "voice_8",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in9"
+      "to_port": "audio.8"
     },
     {
       "from": "clock",
@@ -936,7 +936,7 @@
       "from": "voice_9",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in10"
+      "to_port": "audio.9"
     },
     {
       "from": "clock",
@@ -960,7 +960,7 @@
       "from": "voice_10",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in11"
+      "to_port": "audio.10"
     },
     {
       "from": "clock",
@@ -984,7 +984,7 @@
       "from": "voice_11",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in12"
+      "to_port": "audio.11"
     },
     {
       "from": "clock",
@@ -1008,7 +1008,7 @@
       "from": "voice_12",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in13"
+      "to_port": "audio.12"
     },
     {
       "from": "clock",
@@ -1032,7 +1032,7 @@
       "from": "voice_13",
       "from_port": "audio",
       "to": "mixer",
-      "to_port": "in14"
+      "to_port": "audio.13"
     },
     {
       "from": "clock",
@@ -1042,13 +1042,13 @@
     },
     {
       "from": "mixer",
-      "from_port": "left",
+      "from_port": "audio_left",
       "to": "reverb",
       "to_port": "audio_left"
     },
     {
       "from": "mixer",
-      "from_port": "right",
+      "from_port": "audio_right",
       "to": "reverb",
       "to_port": "audio_right"
     },

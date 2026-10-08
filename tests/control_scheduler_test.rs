@@ -19,7 +19,7 @@ const SCHEDULED_CUT_INVENTION: &str = r#"{
     "title": "scheduled-cut-test",
     "modules": [
         { "id": "clock", "type": "clock", "config": { "bpm": 22500.0 } },
-        { "id": "mixer", "type": "mixer", "config": { "channels": 1 } },
+        { "id": "mixer", "type": "mixer", "config": { "channel_count": 1 } },
         {
             "id": "sched",
             "type": "control_scheduler",
@@ -33,9 +33,9 @@ const SCHEDULED_CUT_INVENTION: &str = r#"{
     ],
     "connections": [
         { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" },
-        { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "in1" },
-        { "from": "mixer", "from_port": "left", "to": "dac", "to_port": "audio_left" },
-        { "from": "mixer", "from_port": "right", "to": "dac", "to_port": "audio_right" }
+        { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "audio.0" },
+        { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+        { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
     ]
 }"#;
 
@@ -93,7 +93,7 @@ fn scheduled_renders_are_byte_identical() {
                 "version": "1.0.0",
                 "modules": [
                     { "id": "clock", "type": "clock", "config": { "bpm": 22500.0 } },
-                    { "id": "mixer", "type": "mixer", "config": { "channels": 1 } },
+                    { "id": "mixer", "type": "mixer", "config": { "channel_count": 1 } },
                     {
                         "id": "sched",
                         "type": "control_scheduler",
@@ -109,9 +109,9 @@ fn scheduled_renders_are_byte_identical() {
                 ],
                 "connections": [
                     { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" },
-                    { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "in1" },
-                    { "from": "mixer", "from_port": "left", "to": "dac", "to_port": "audio_left" },
-                    { "from": "mixer", "from_port": "right", "to": "dac", "to_port": "audio_right" }
+                    { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "audio.0" },
+                    { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+                    { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
                 ]
             }"#,
             )
@@ -238,7 +238,7 @@ fn schedules_splice_in_via_assets() {
             "assets": { "dynamics": { "path": "dynamics.json" } },
             "modules": [
                 { "id": "clock", "type": "clock", "config": { "bpm": 22500.0 } },
-                { "id": "mixer", "type": "mixer", "config": { "channels": 1 } },
+                { "id": "mixer", "type": "mixer", "config": { "channel_count": 1 } },
                 {
                     "id": "sched",
                     "type": "control_scheduler",
@@ -248,9 +248,9 @@ fn schedules_splice_in_via_assets() {
             ],
             "connections": [
                 { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" },
-                { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "in1" },
-                { "from": "mixer", "from_port": "left", "to": "dac", "to_port": "audio_left" },
-                { "from": "mixer", "from_port": "right", "to": "dac", "to_port": "audio_right" }
+                { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "audio.0" },
+                { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+                { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
             ]
         }"#,
     )
