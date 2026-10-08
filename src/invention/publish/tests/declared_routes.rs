@@ -116,3 +116,14 @@ fn a_replaced_or_removed_module_refuses_writes_through_its_old_surface() {
         .unwrap();
     assert!(new.set_control("level", 0.5.into()).is_err());
 }
+
+#[test]
+fn a_live_write_is_refused_once_the_audio_graph_is_gone() {
+    let rig = dial_rig();
+    let dial = surface(&rig, "dial");
+    let Rig { graph, live, .. } = rig;
+    drop(graph);
+    let refused = dial.set_control("level", 0.5.into()).unwrap_err();
+    assert!(refused.contains("stopped"), "{refused}");
+    drop(live);
+}

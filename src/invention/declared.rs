@@ -118,6 +118,11 @@ impl DeclaredSurface {
                     .ok_or("The audio thread has stopped")?;
                 let mut publisher = publisher.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Live(_)))?;
+                // A kept controller can outlive the audio graph: never queue
+                // a request nothing will drain.
+                if !publisher.audio_alive() {
+                    return Err("The audio thread has stopped".into());
+                }
                 let target = publisher
                     .control_target(&port.module_id, index)
                     .map_err(|error| error.to_string())?;

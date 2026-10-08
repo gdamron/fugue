@@ -244,7 +244,7 @@ impl Publisher {
     }
 
     /// Whether the audio side of the link still exists.
-    fn audio_alive(&self) -> bool {
+    pub(crate) fn audio_alive(&self) -> bool {
         Arc::strong_count(&self.publications) > 1
     }
 
