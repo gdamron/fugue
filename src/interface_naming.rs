@@ -31,7 +31,8 @@ const BARE_NAMES: &[&str] = &["in", "out", "left", "right"];
 const BOOLEAN_PREFIXES: &[&str] = &["is_", "no_", "enable_", "disable_"];
 
 /// How `name` breaks the convention: one reason per broken rule, none when
-/// it conforms. An indexed name is `stem.N`, N from 0 with no leading zero.
+/// it conforms. An indexed name is `stem.N`, N from 0 with no leading zero,
+/// or `stem.N` itself for a declared family.
 pub(crate) fn naming_problems(name: &str) -> Vec<String> {
     let (stem, index) = match name.split_once('.') {
         Some((stem, index)) => (stem, Some(index)),
@@ -44,7 +45,7 @@ pub(crate) fn naming_problems(name: &str) -> Vec<String> {
         && segments
             .iter()
             .all(|s| !s.is_empty() && s.chars().all(lower))
-        && index.is_none_or(|n| n == "0" || (!n.starts_with('0') && is_digits(n)));
+        && index.is_none_or(|n| n == "0" || n == "N" || (!n.starts_with('0') && is_digits(n)));
     if !spelled {
         problems.push("is not lower snake_case with an optional .N index".to_string());
     }
