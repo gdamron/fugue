@@ -31,7 +31,7 @@ use super::graph::{RoutingConnection, SignalGraph};
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
-use crate::control_request::{OutcomeReceiver, RequestSender};
+use crate::control_request::{Outcome, RequestId, RequestSender};
 use crate::ModuleRegistry;
 
 mod change;
@@ -61,10 +61,6 @@ pub(crate) struct LiveGraph {
     reclaimer: Arc<Reclaimer>,
     /// Where declared surfaces submit their writes (see [`Self::port`]).
     requests: RequestSender,
-    /// What became of each request; the front doors that report outcomes
-    /// arrive with FUG-317.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) outcomes: OutcomeReceiver,
     /// Writes declared surfaces submitted, until settled.
     pending: Arc<Mutex<PendingLog>>,
     state: Arc<Mutex<RuntimeState>>,
@@ -100,8 +96,7 @@ impl LiveGraph {
             publisher: Arc::new(Mutex::new(publisher)),
             reclaimer: Arc::new(Reclaimer::new(ends.retired, ends.payloads)),
             requests: ends.requests,
-            pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes.clone()))),
-            outcomes: ends.outcomes,
+            pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes))),
             state,
             control_surfaces,
             module_ports,
@@ -174,6 +169,13 @@ impl LiveGraph {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn pending_writes(&self) -> Vec<PendingWrite> {
         self.pending.lock().unwrap().pending()
+    }
+
+    /// What became of each request since the last call, oldest first.
+    // Reported to clients once the front doors submit requests themselves.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn take_outcomes(&self) -> Vec<(RequestId, Outcome)> {
+        self.pending.lock().unwrap().take_outcomes()
     }
 
     /// The request queue declared surfaces submit to, for any module.

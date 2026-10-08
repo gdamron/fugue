@@ -1,16 +1,19 @@
 //! Control writes submitted to a live graph and not yet settled, for
 //! read-back: reads return what was applied, and what is still on its way
 //! is listed here.
+//!
+//! The log is the outcome channel's one consumer: it settles its own
+//! writes and keeps every outcome it receives for whoever reports them
+//! (see [`PendingLog::take_outcomes`]).
 
 use std::collections::VecDeque;
 
-use super::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
-use crate::control_request::{OutcomeReceiver, RequestId};
+use super::publisher::{OUTCOME_QUEUE_CAPACITY, PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
+use crate::control_request::{EventCursor, Outcome, OutcomeReceiver, RequestId};
 use crate::ControlValue;
 
 /// The most writes the log remembers: every request the queue and the
-/// pending store can hold. Older entries are forgotten, so a lost outcome
-/// never grows the log.
+/// pending store can hold at once.
 const LOG_CAPACITY: usize = REQUEST_QUEUE_CAPACITY + PENDING_REQUEST_CAPACITY;
 
 /// A control write waiting to be applied.
@@ -21,22 +24,47 @@ pub(crate) struct PendingWrite {
     pub(crate) value: ControlValue,
 }
 
-/// Submitted writes, oldest first, until their outcome arrives. Control
-/// threads only; the audio thread reports through the outcome channel.
+/// Submitted writes, oldest first, until their outcome arrives, and the
+/// outcomes received and not yet taken. Control threads only, behind the
+/// live graph's lock for it, which a submitter takes under the publisher
+/// (publisher, then this).
 pub(crate) struct PendingLog {
     writes: VecDeque<(RequestId, PendingWrite)>,
-    outcomes: OutcomeReceiver,
+    outcomes: VecDeque<(RequestId, Outcome)>,
+    receiver: OutcomeReceiver,
+    dropped: EventCursor,
 }
 
 impl PendingLog {
-    pub(crate) fn new(outcomes: OutcomeReceiver) -> Self {
+    pub(crate) fn new(receiver: OutcomeReceiver) -> Self {
         Self {
             writes: VecDeque::new(),
-            outcomes,
+            outcomes: VecDeque::new(),
+            receiver,
+            dropped: EventCursor::new(),
         }
     }
 
-    /// Records a write submitted as request `id`.
+    /// Receives every outcome waiting, settling the writes they belong to.
+    /// When the audio thread had to drop outcomes, which writes they
+    /// settled cannot be known, so the log forgets every write it holds
+    /// rather than list one as pending for ever.
+    pub(crate) fn settle(&mut self) {
+        while let Some((id, outcome)) = self.receiver.try_recv() {
+            self.writes.retain(|(pending, _)| *pending != id);
+            if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
+                self.outcomes.pop_front();
+            }
+            self.outcomes.push_back((id, outcome));
+        }
+        if self.dropped.take(self.receiver.dropped()) > 0 {
+            self.writes.clear();
+        }
+    }
+
+    /// Records a write just submitted as request `id`. Call it under the
+    /// log's lock, taken before the submission, so the outcome cannot be
+    /// received before the write is recorded.
     pub(crate) fn submitted(&mut self, id: RequestId, write: PendingWrite) {
         if self.writes.len() == LOG_CAPACITY {
             self.writes.pop_front();
@@ -44,12 +72,16 @@ impl PendingLog {
         self.writes.push_back((id, write));
     }
 
-    /// The writes still waiting, oldest first, once every outcome received
-    /// so far has settled its write.
+    /// The writes still waiting, oldest first.
     pub(crate) fn pending(&mut self) -> Vec<PendingWrite> {
-        while let Some((id, _)) = self.outcomes.try_recv() {
-            self.writes.retain(|(pending, _)| *pending != id);
-        }
+        self.settle();
         self.writes.iter().map(|(_, write)| write.clone()).collect()
+    }
+
+    /// Every outcome received and not yet taken, oldest first: what the
+    /// front doors report.
+    pub(crate) fn take_outcomes(&mut self) -> Vec<(RequestId, Outcome)> {
+        self.settle();
+        self.outcomes.drain(..).collect()
     }
 }

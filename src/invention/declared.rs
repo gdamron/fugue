@@ -155,12 +155,15 @@ impl DeclaredSurface {
                     .map_err(|error| error.to_string())?;
                 let mut request = Request::new(target, RequestValue::Value(value));
                 request.event = event;
+                // The log is locked before the submission, so its outcome
+                // cannot be received before the write is recorded.
+                let mut pending = port.pending.lock().unwrap();
+                pending.settle();
                 let id = port
                     .requests
                     .submit(request)
                     .map_err(|_| "The control request queue is full; try again")?;
                 publisher.note_written();
-                drop(publisher);
                 if let (Some(key), Some(value)) =
                     (self.table.key(index), self.table.value(index, value))
                 {
@@ -170,7 +173,7 @@ impl DeclaredSurface {
                         key,
                         value,
                     };
-                    port.pending.lock().unwrap().submitted(id, write);
+                    pending.submitted(id, write);
                 }
                 Ok(())
             }
