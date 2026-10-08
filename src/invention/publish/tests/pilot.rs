@@ -54,3 +54,14 @@ fn vca_writes_apply_on_the_audio_thread_and_read_back() {
     );
     assert!(rig.render(1).iter().all(|v| *v == 0.0));
 }
+
+#[test]
+fn a_scheduled_vca_jump_past_its_range_reads_as_the_vca_will_hold_it() {
+    let built = crate::ModuleRegistry::default()
+        .build("vca", 48_000, &serde_json::json!({}))
+        .unwrap();
+    let level = built.control_surface.unwrap().automation("level").unwrap();
+    level.write_number(2.0);
+    // A ramp starting here starts from 1, as the old clamping setter left it.
+    assert_eq!(level.current(), Some(1.0));
+}
