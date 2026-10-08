@@ -142,8 +142,7 @@ pub(crate) struct SignalGraph {
     pub(crate) link: Option<AudioLink>,
     /// The live graph's control requests; `None` for offline render.
     pub(crate) requests: Option<RequestDrain>,
-    /// Applies requests in tests, in place of the modules (which accept
-    /// none until FUG-310).
+    /// Applies requests in tests, in place of the modules' own `apply`.
     #[cfg(test)]
     pub(crate) request_hook: Option<requests::RequestHook>,
     /// Pre-computed topological processing order as module indices. Used for

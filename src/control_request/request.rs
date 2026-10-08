@@ -12,8 +12,8 @@ pub(crate) enum RtValue {
     Bool(bool),
 }
 
-/// A control's position in its module's control table (declared by the
-/// module, FUG-310).
+/// A control's position in its module's declared
+/// [`ControlTable`](super::ControlTable).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct ControlIndex(pub(crate) u16);
 
@@ -106,6 +106,10 @@ pub(crate) struct Request {
     pub(crate) priority: i16,
     /// Samples after which an unapplied request is refused (slice 3).
     pub(crate) ttl: Option<u64>,
+    /// Whether it fires an event (its control is declared an event, see
+    /// [`ControlDecl::event`](super::ControlDecl)): never coalesced with
+    /// another request for the same control and sample.
+    pub(crate) event: bool,
     /// Assigned by [`RequestSender::submit`](super::RequestSender::submit).
     pub(crate) id: RequestId,
 }
@@ -121,6 +125,7 @@ impl Request {
             source: Source::User,
             priority: 0,
             ttl: None,
+            event: false,
             id: RequestId(0),
         }
     }
