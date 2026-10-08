@@ -242,8 +242,8 @@ fn high_polyphony_nested_development_throughput() {
             "id": "seq",
             "type": "step_sequencer",
             "config": {
-                "base_note": 60,
-                "steps": 1,
+                "root_note": 60,
+                "step_count": 1,
                 "gate_length": 0.8,
                 "pattern": [{ "note": 0, "gate": 0.8 }]
             }
@@ -253,7 +253,7 @@ fn high_polyphony_nested_development_throughput() {
         "from": "clock",
         "from_port": "gate_x4",
         "to": "seq",
-        "to_port": "gate"
+        "to_port": "clock"
     })];
 
     for voice in 0..VOICES {

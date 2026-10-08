@@ -7,14 +7,14 @@ use crate::atomic::AtomicF32;
 use crate::traits::{check_listed_control, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
-use super::grace::{DEFAULT_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS, MIN_GRACE_DURATION_MS};
-use super::{Step, DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS};
+use super::grace::{DEFAULT_GRACE_DURATION, MAX_GRACE_DURATION, MIN_GRACE_DURATION};
+use super::{Step, DEFAULT_GATE_LENGTH, DEFAULT_ROOT_NOTE, DEFAULT_STEPS};
 
 /// Thread-safe controls for the StepSequencer module.
 ///
 /// Controls use the uniform f32 get/set API:
-/// - `base_note` - Base MIDI note (0-127)
-/// - `steps` - Number of steps in pattern (1-64)
+/// - `root_note` - Root MIDI note (0-127)
+/// - `step_count` - Number of steps in pattern (1-64)
 /// - `gate_length` - Default gate length ratio (0.0-1.0)
 ///
 /// # Example
@@ -23,14 +23,14 @@ use super::{Step, DEFAULT_BASE_NOTE, DEFAULT_GATE_LENGTH, DEFAULT_STEPS};
 /// let controls: StepSequencerControls = handles.get("step_sequencer.controls").unwrap();
 ///
 /// // Adjust parameters in real-time
-/// controls.set_base_note(36);
-/// controls.set_steps(8);
+/// controls.set_root_note(36);
+/// controls.set_step_count(8);
 /// controls.set_gate_length(0.75);
 /// ```
 #[derive(Clone)]
 pub struct StepSequencerControls {
-    pub(crate) base_note: Arc<Mutex<u8>>,
-    pub(crate) steps: Arc<Mutex<usize>>,
+    pub(crate) root_note: Arc<Mutex<u8>>,
+    pub(crate) step_count: Arc<Mutex<usize>>,
     pub(crate) gate_length: Arc<Mutex<f32>>,
     pub(crate) pattern: Arc<Mutex<Vec<Step>>>,
     /// One-shot playback flag; an atomic because the audio thread reads it
@@ -40,9 +40,9 @@ pub struct StepSequencerControls {
     /// cleared on re-arm), so live surfaces can observe the end without
     /// touching the graph. Exposed as the read-only `ended` control.
     pub(crate) ended: Arc<AtomicBool>,
-    /// Duration of a single grace note in milliseconds; read once per block
-    /// by the audio thread.
-    pub(crate) grace_duration_ms: Arc<AtomicF32>,
+    /// Duration of a single grace note in seconds; read once per block by
+    /// the audio thread.
+    pub(crate) grace_duration: Arc<AtomicF32>,
     /// Grace placement (the `grace_placement` control): `false` = before the
     /// beat, `true` = on the beat.
     pub(crate) grace_on_beat: Arc<AtomicBool>,
@@ -52,49 +52,49 @@ impl StepSequencerControls {
     /// Creates new step sequencer controls with default values.
     pub fn new() -> Self {
         Self {
-            base_note: Arc::new(Mutex::new(DEFAULT_BASE_NOTE)),
-            steps: Arc::new(Mutex::new(DEFAULT_STEPS)),
+            root_note: Arc::new(Mutex::new(DEFAULT_ROOT_NOTE)),
+            step_count: Arc::new(Mutex::new(DEFAULT_STEPS)),
             gate_length: Arc::new(Mutex::new(DEFAULT_GATE_LENGTH)),
             pattern: Arc::new(Mutex::new(Vec::new())),
             one_shot: Arc::new(AtomicBool::new(false)),
             ended: Arc::new(AtomicBool::new(false)),
-            grace_duration_ms: Arc::new(AtomicF32::new(DEFAULT_GRACE_DURATION_MS)),
+            grace_duration: Arc::new(AtomicF32::new(DEFAULT_GRACE_DURATION)),
             grace_on_beat: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Creates new step sequencer controls with specified values.
-    pub fn new_with_values(base_note: u8, steps: usize, gate_length: f32) -> Self {
+    pub fn new_with_values(root_note: u8, step_count: usize, gate_length: f32) -> Self {
         Self {
-            base_note: Arc::new(Mutex::new(base_note.min(127))),
-            steps: Arc::new(Mutex::new(steps.clamp(1, 64))),
+            root_note: Arc::new(Mutex::new(root_note.min(127))),
+            step_count: Arc::new(Mutex::new(step_count.clamp(1, 64))),
             gate_length: Arc::new(Mutex::new(gate_length.clamp(0.0, 1.0))),
             pattern: Arc::new(Mutex::new(Vec::new())),
             one_shot: Arc::new(AtomicBool::new(false)),
             ended: Arc::new(AtomicBool::new(false)),
-            grace_duration_ms: Arc::new(AtomicF32::new(DEFAULT_GRACE_DURATION_MS)),
+            grace_duration: Arc::new(AtomicF32::new(DEFAULT_GRACE_DURATION)),
             grace_on_beat: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Gets the base MIDI note.
-    pub fn base_note(&self) -> u8 {
-        *self.base_note.lock().unwrap()
+    pub fn root_note(&self) -> u8 {
+        *self.root_note.lock().unwrap()
     }
 
     /// Sets the base MIDI note (0-127).
-    pub fn set_base_note(&self, note: u8) {
-        *self.base_note.lock().unwrap() = note.min(127);
+    pub fn set_root_note(&self, note: u8) {
+        *self.root_note.lock().unwrap() = note.min(127);
     }
 
     /// Gets the number of steps.
-    pub fn steps(&self) -> usize {
-        *self.steps.lock().unwrap()
+    pub fn step_count(&self) -> usize {
+        *self.step_count.lock().unwrap()
     }
 
     /// Sets the number of steps (1-64).
-    pub fn set_steps(&self, steps: usize) {
-        *self.steps.lock().unwrap() = steps.clamp(1, 64);
+    pub fn set_step_count(&self, step_count: usize) {
+        *self.step_count.lock().unwrap() = step_count.clamp(1, 64);
     }
 
     /// Gets the default gate length ratio.
@@ -132,14 +132,14 @@ impl StepSequencerControls {
         Ok(())
     }
 
-    /// Duration of a single grace note in milliseconds.
-    pub fn grace_duration_ms(&self) -> f32 {
-        self.grace_duration_ms.load()
+    /// Duration of a single grace note in seconds.
+    pub fn grace_duration(&self) -> f32 {
+        self.grace_duration.load()
     }
 
-    pub fn set_grace_duration_ms(&self, ms: f32) {
-        self.grace_duration_ms
-            .store(ms.clamp(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS));
+    pub fn set_grace_duration(&self, seconds: f32) {
+        self.grace_duration
+            .store(seconds.clamp(MIN_GRACE_DURATION, MAX_GRACE_DURATION));
     }
 
     /// Whether grace chains play on the beat (delaying the principal) rather
@@ -233,7 +233,7 @@ fn grace_is_on_beat(placement: &str) -> Result<bool, String> {
 fn parse_pattern_json(value: &str) -> Result<Vec<Step>, String> {
     let pattern: Vec<Step> = serde_json::from_str(value).map_err(|err| err.to_string())?;
     if pattern.len() > 64 {
-        return Err("pattern_json may not contain more than 64 steps".to_string());
+        return Err("pattern may not contain more than 64 steps".to_string());
     }
     Ok(pattern)
 }
@@ -247,26 +247,26 @@ impl Default for StepSequencerControls {
 impl ControlSurface for StepSequencerControls {
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::number("base_note", "Base MIDI note")
+            ControlMeta::number("root_note", "Root MIDI note")
                 .with_range(0.0, 127.0)
-                .with_default(self.base_note() as f32),
-            ControlMeta::number("steps", "Number of steps in pattern")
+                .with_default(self.root_note() as f32),
+            ControlMeta::number("step_count", "Number of steps in pattern")
                 .with_range(1.0, 64.0)
-                .with_default(self.steps() as f32),
+                .with_default(self.step_count() as f32),
             ControlMeta::number("gate_length", "Default gate length ratio")
                 .with_range(0.0, 1.0)
                 .with_default(self.gate_length()),
-            ControlMeta::string("pattern_json", "Step pattern as JSON")
+            ControlMeta::string("pattern", "Step pattern as JSON")
                 .with_default(self.pattern_json()),
             ControlMeta::string(
                 "mode",
-                "Playback mode: loop repeats; one_shot plays once and fires the end gate",
+                "Playback mode: loop repeats; one_shot plays once and fires the ended gate",
             )
             .with_options(vec!["loop".to_string(), "one_shot".to_string()])
             .with_default(self.mode()),
-            ControlMeta::number("grace_duration_ms", "Duration of a single grace note in ms")
-                .with_range(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS)
-                .with_default(self.grace_duration_ms()),
+            ControlMeta::number("grace_duration", "Duration of a single grace note in seconds")
+                .with_range(MIN_GRACE_DURATION, MAX_GRACE_DURATION)
+                .with_default(self.grace_duration()),
             ControlMeta::string(
                 "grace_placement",
                 "Grace placement: before steals the previous step's tail; on_beat delays the principal",
@@ -283,12 +283,12 @@ impl ControlSurface for StepSequencerControls {
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
-            "base_note" => Ok((self.base_note() as f32).into()),
-            "steps" => Ok((self.steps() as f32).into()),
+            "root_note" => Ok((self.root_note() as f32).into()),
+            "step_count" => Ok((self.step_count() as f32).into()),
             "gate_length" => Ok(self.gate_length().into()),
-            "pattern_json" => Ok(self.pattern_json().into()),
+            "pattern" => Ok(self.pattern_json().into()),
             "mode" => Ok(self.mode().into()),
-            "grace_duration_ms" => Ok(self.grace_duration_ms().into()),
+            "grace_duration" => Ok(self.grace_duration().into()),
             "grace_placement" => Ok(self.grace_placement().into()),
             "ended" => Ok(self.ended().into()),
             _ => Err(format!("Unknown control: {}", key)),
@@ -297,12 +297,12 @@ impl ControlSurface for StepSequencerControls {
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
-            "base_note" => self.set_base_note(value.as_number()? as u8),
-            "steps" => self.set_steps(value.as_number()? as usize),
+            "root_note" => self.set_root_note(value.as_number()? as u8),
+            "step_count" => self.set_step_count(value.as_number()? as usize),
             "gate_length" => self.set_gate_length(value.as_number()?),
-            "pattern_json" => self.set_pattern_json(value.as_string()?)?,
+            "pattern" => self.set_pattern_json(value.as_string()?)?,
             "mode" => self.set_mode(value.as_string()?)?,
-            "grace_duration_ms" => self.set_grace_duration_ms(value.as_number()?),
+            "grace_duration" => self.set_grace_duration(value.as_number()?),
             "grace_placement" => self.set_grace_placement(value.as_string()?)?,
             "ended" => return Err("Control 'ended' is read-only".to_string()),
             _ => return Err(format!("Unknown control: {}", key)),
@@ -317,7 +317,7 @@ impl ControlSurface for StepSequencerControls {
         _surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
         match key {
-            "pattern_json" => parse_pattern_json(value.as_string()?).map(drop),
+            "pattern" => parse_pattern_json(value.as_string()?).map(drop),
             "mode" => mode_is_one_shot(value.as_string()?).map(drop),
             "grace_placement" => grace_is_on_beat(value.as_string()?).map(drop),
             "ended" => crate::traits::read_only(key),

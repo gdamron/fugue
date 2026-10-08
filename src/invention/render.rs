@@ -19,6 +19,13 @@ mod editing;
 
 pub use code_modules::CodeModuleRuntimeInfo;
 
+/// Whether an output port is a one-shot module's latched end-of-playback
+/// gate: `ended` by the convention. The cell sequencer still names it `end`
+/// until its own rename (C2-7), which drops that spelling here.
+fn is_end_output(port: &str) -> bool {
+    matches!(port, "ended" | "end")
+}
+
 /// Offline renderer for inventions.
 ///
 /// Unlike [`super::runtime::RunningInvention`], this type does not own an audio
@@ -180,21 +187,21 @@ impl RenderEngine {
             .unwrap_or(crate::DEFAULT_BLOCK_SIZE)
     }
 
-    /// Scans the most recently rendered block for a rising `end` gate and
+    /// Scans the most recently rendered block for a rising `ended` gate and
     /// returns the frame index (within that block) where the piece ended.
     ///
     /// `source` names the module whose `end` output is authoritative; when
-    /// `None`, every module exposing an `end` output is watched and the
+    /// `None`, every module exposing an `ended` output is watched and the
     /// earliest high frame wins ("the piece ends when any end gate fires" —
     /// name a source for multi-lane pieces with uneven lanes). `frames` is
     /// the number of valid frames in the last render call, which must not
     /// have exceeded one graph block for the scan to be frame-exact (the
-    /// `end` gate is latched, so a coarser host still cannot *miss* it —
+    /// `ended` gate is latched, so a coarser host still cannot *miss* it —
     /// only land on a later frame).
     ///
     /// Errors when no invention is loaded, when a named source does not
-    /// exist or has no `end` output, or when `source` is `None` and nothing
-    /// in the graph exposes an `end` output (the render would never stop).
+    /// exist or has no `ended` output, or when `source` is `None` and nothing
+    /// in the graph exposes an `ended` output (the render would never stop).
     pub fn scan_end_gate(
         &self,
         source: Option<&str>,
@@ -215,9 +222,9 @@ impl RenderEngine {
                 }
             }
             let module = module.module();
-            let Some(port) = module.outputs().iter().position(|port| *port == "end") else {
+            let Some(port) = module.outputs().iter().position(|port| is_end_output(port)) else {
                 if source.is_some() {
-                    return Err(format!("module '{}' has no 'end' output", id).into());
+                    return Err(format!("module '{}' has no 'ended' output", id).into());
                 }
                 continue;
             };
@@ -232,7 +239,7 @@ impl RenderEngine {
         if candidates == 0 {
             return Err(match source {
                 Some(wanted) => format!("unknown end source module '{}'", wanted).into(),
-                None => "no module exposes an 'end' output; the render would never stop \
+                None => "no module exposes an 'ended' output; the render would never stop \
                      (use a one_shot sequencer or an explicit duration)"
                     .to_string()
                     .into(),

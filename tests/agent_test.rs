@@ -16,8 +16,8 @@ fn agent_trigger_applies_step_pattern_response() {
                     "id": "bass_seq",
                     "type": "step_sequencer",
                     "config": {
-                        "base_note": 36,
-                        "steps": 4,
+                        "root_note": 36,
+                        "step_count": 4,
                         "pattern": [
                             { "note": 0 },
                             { "note": null },
@@ -63,7 +63,7 @@ fn agent_trigger_applies_step_pattern_response() {
                             {
                                 "from": "$.payload.pattern",
                                 "to": "bass_seq",
-                                "control": "pattern_json",
+                                "control": "pattern",
                                 "type": "json_string"
                             }
                         ]
@@ -103,9 +103,9 @@ fn agent_trigger_applies_step_pattern_response() {
         thread::sleep(Duration::from_millis(20));
     }
 
-    let pattern_json = running.get_control("bass_seq", "pattern_json").unwrap();
+    let pattern_json = running.get_control("bass_seq", "pattern").unwrap();
     let ControlValue::String(pattern_json) = pattern_json else {
-        panic!("pattern_json should be a string control");
+        panic!("pattern should be a string control");
     };
     let pattern: serde_json::Value = serde_json::from_str(&pattern_json).unwrap();
     assert_eq!(pattern.as_array().unwrap().len(), 3);
@@ -124,8 +124,8 @@ fn agent_apply_preflights_all_paths_before_writing() {
                     "id": "bass_seq",
                     "type": "step_sequencer",
                     "config": {
-                        "base_note": 36,
-                        "steps": 4,
+                        "root_note": 36,
+                        "step_count": 4,
                         "pattern": [
                             { "note": 0 },
                             { "note": null },
@@ -162,13 +162,13 @@ fn agent_apply_preflights_all_paths_before_writing() {
                             {
                                 "from": "$.payload.pattern",
                                 "to": "bass_seq",
-                                "control": "pattern_json",
+                                "control": "pattern",
                                 "type": "json_string"
                             },
                             {
                                 "from": "$.payload.missing",
                                 "to": "bass_seq",
-                                "control": "steps",
+                                "control": "step_count",
                                 "type": "number"
                             }
                         ]
@@ -211,9 +211,9 @@ fn agent_apply_preflights_all_paths_before_writing() {
         thread::sleep(Duration::from_millis(20));
     }
 
-    let pattern_json = running.get_control("bass_seq", "pattern_json").unwrap();
+    let pattern_json = running.get_control("bass_seq", "pattern").unwrap();
     let ControlValue::String(pattern_json) = pattern_json else {
-        panic!("pattern_json should be a string control");
+        panic!("pattern should be a string control");
     };
     let pattern: serde_json::Value = serde_json::from_str(&pattern_json).unwrap();
     assert_eq!(pattern.as_array().unwrap().len(), 4);
@@ -223,7 +223,7 @@ fn agent_apply_preflights_all_paths_before_writing() {
 }
 
 #[test]
-fn step_sequencer_pattern_json_round_trips() {
+fn step_sequencer_pattern_round_trips() {
     let invention = Invention::from_json(
         r#"{
             "version": "1.0.0",
@@ -243,13 +243,13 @@ fn step_sequencer_pattern_json_round_trips() {
     running
         .set_control(
             "seq",
-            "pattern_json",
+            "pattern",
             ControlValue::String(r#"[{"note":0,"gate":0.5},{"note":null}]"#.to_string()),
         )
         .unwrap();
-    let value = running.get_control("seq", "pattern_json").unwrap();
+    let value = running.get_control("seq", "pattern").unwrap();
     let ControlValue::String(value) = value else {
-        panic!("pattern_json should be a string control");
+        panic!("pattern should be a string control");
     };
     let parsed: serde_json::Value = serde_json::from_str(&value).unwrap();
     assert_eq!(parsed.as_array().unwrap().len(), 2);

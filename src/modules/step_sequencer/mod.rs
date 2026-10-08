@@ -23,8 +23,8 @@
 //!       "id": "seq",
 //!       "type": "step_sequencer",
 //!       "config": {
-//!         "base_note": 48,
-//!         "steps": 8,
+//!         "root_note": 48,
+//!         "step_count": 8,
 //!         "gate_length": 0.5,
 //!         "pattern": [
 //!           { "note": 0 },
@@ -43,7 +43,7 @@
 //!     { "id": "dac", "type": "dac" }
 //!   ],
 //!   "connections": [
-//!     { "from": "clock", "from_port": "gate", "to": "seq", "to_port": "gate" },
+//!     { "from": "clock", "from_port": "gate", "to": "seq", "to_port": "clock" },
 //!     { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
 //!     { "from": "seq", "from_port": "gate", "to": "vca", "to_port": "level" },
 //!     { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
@@ -71,8 +71,8 @@ mod step;
 
 pub use factory::StepSequencerFactory;
 use grace::{
-    clamp_per_grace, release_gap, GracePlayer, DEFAULT_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS,
-    MIN_GRACE_DURATION_MS,
+    clamp_per_grace, release_gap, GracePlayer, DEFAULT_GRACE_DURATION, MAX_GRACE_DURATION,
+    MIN_GRACE_DURATION,
 };
 pub(crate) use parse::{parse_pattern, parse_step, StepError};
 pub use step::{GraceChain, Step, MAX_GRACE_NOTES};
@@ -84,7 +84,7 @@ pub const DEFAULT_STEPS: usize = 16;
 pub const DEFAULT_GATE_LENGTH: f32 = 0.5;
 
 /// Default base MIDI note (C3).
-pub const DEFAULT_BASE_NOTE: u8 = 48;
+pub const DEFAULT_ROOT_NOTE: u8 = 48;
 
 /// A deterministic step sequencer for pattern playback.
 ///
@@ -93,7 +93,7 @@ pub const DEFAULT_BASE_NOTE: u8 = 48;
 ///
 /// # Inputs
 ///
-/// - `gate` - Clock gate input (rising edge advances step)
+/// - `clock` - Clock input (rising edge advances step)
 /// - `reset` - Reset input (rising edge resets to step 0 and re-arms one-shot)
 ///
 /// # Outputs
@@ -101,7 +101,7 @@ pub const DEFAULT_BASE_NOTE: u8 = 48;
 /// - `frequency` - Current note frequency in Hz (0.0 during rest)
 /// - `gate` - Output gate signal (high during note, low during rest)
 /// - `step` - Current step number (0 to steps-1)
-/// - `end` - End-of-sequence gate: 0.0 while playing; latches to 1.0 when a
+/// - `ended` - End-of-sequence gate: 0.0 while playing; latches to 1.0 when a
 ///   one-shot pattern completes (exactly one rising edge per playthrough) and
 ///   stays high until `reset` or a switch back to loop mode
 ///
@@ -109,8 +109,8 @@ pub const DEFAULT_BASE_NOTE: u8 = 48;
 ///
 /// A step's `grace` chain plays as short separate attacks on the mono
 /// frequency/gate stream ahead of the principal, each followed by a real
-/// release gap so downstream envelopes retrigger. `grace_duration_ms`
-/// (default 60) sets each grace's length (the chain clamps to half the
+/// release gap so downstream envelopes retrigger. `grace_duration`
+/// (seconds, default 0.06) sets each grace's length (the chain clamps to half the
 /// measured step duration); `grace_placement` selects `before` (default:
 /// steal the previous step's tail, principal on the grid) or `on_beat`
 /// (chain starts at the edge and delays the principal). A decorated step
@@ -123,7 +123,7 @@ pub const DEFAULT_BASE_NOTE: u8 = 48;
 /// The `mode` control selects `loop` (default; the pattern repeats forever)
 /// or `one_shot`: the pattern plays once, the final step sounds for its full
 /// duration, and on the next clock edge the sequencer falls silent and fires
-/// `end`. Further clock edges are ignored until `reset` re-arms it.
+/// `ended`. Further clock edges are ignored until `reset` re-arms it.
 ///
 /// # Example
 ///
@@ -131,8 +131,8 @@ pub const DEFAULT_BASE_NOTE: u8 = 48;
 /// use fugue::modules::step_sequencer::{StepSequencer, Step};
 ///
 /// let mut seq = StepSequencer::new(44100)
-///     .with_base_note(48)
-///     .with_steps(8)
+///     .with_root_note(48)
+///     .with_step_count(8)
 ///     .with_pattern(vec![
 ///         Step::note(0),
 ///         Step::rest(),
@@ -143,7 +143,7 @@ pub const DEFAULT_BASE_NOTE: u8 = 48;
 pub struct StepSequencer {
     #[allow(dead_code)] // Reserved for future use (e.g., sample-accurate timing)
     sample_rate: u32,
-    /// Thread-safe controls for base_note, steps, and gate_length.
+    /// Thread-safe controls for root_note, step_count, and gate_length.
     ctrl: StepSequencerControls,
     // State
     /// Current step index (0 to steps-1).
@@ -158,7 +158,7 @@ pub struct StepSequencer {
     first_gate_received: bool,
     /// Frequency for the current active note, retained across held steps.
     active_note: Option<i8>,
-    /// One-shot playback has completed; the `end` output latches high and
+    /// One-shot playback has completed; the `ended` output latches high and
     /// clock edges are ignored until reset (or a switch back to loop mode).
     finished: bool,
     /// Force the output gate low for exactly this sample: a new note is
@@ -258,14 +258,14 @@ impl StepSequencer {
     }
 
     /// Sets the base MIDI note.
-    pub fn with_base_note(self, base_note: u8) -> Self {
-        self.ctrl.set_base_note(base_note);
+    pub fn with_root_note(self, root_note: u8) -> Self {
+        self.ctrl.set_root_note(root_note);
         self
     }
 
     /// Sets the number of steps in the pattern.
-    pub fn with_steps(self, steps: usize) -> Self {
-        self.ctrl.set_steps(steps);
+    pub fn with_step_count(self, step_count: usize) -> Self {
+        self.ctrl.set_step_count(step_count);
         self
     }
 
@@ -288,13 +288,13 @@ impl StepSequencer {
     }
 
     /// Sets the base MIDI note.
-    pub fn set_base_note(&mut self, base_note: u8) {
-        self.ctrl.set_base_note(base_note);
+    pub fn set_root_note(&mut self, root_note: u8) {
+        self.ctrl.set_root_note(root_note);
     }
 
     /// Sets the number of steps.
-    pub fn set_steps(&mut self, steps: usize) {
-        self.ctrl.set_steps(steps);
+    pub fn set_step_count(&mut self, step_count: usize) {
+        self.ctrl.set_step_count(step_count);
     }
 
     /// Sets the default gate length.
@@ -314,7 +314,7 @@ impl StepSequencer {
 
     /// Returns the number of steps.
     pub fn step_count(&self) -> usize {
-        self.ctrl.steps()
+        self.ctrl.step_count()
     }
 
     /// Returns a reference to the step sequencer controls.
@@ -329,14 +329,14 @@ impl StepSequencer {
 
     /// Calculates the frequency for a note offset.
     fn note_frequency(&self, offset: i8) -> f32 {
-        let base = self.ctrl.base_note();
+        let base = self.ctrl.root_note();
         let midi_note = (base as i16 + offset as i16).clamp(0, 127) as u8;
         Note::new(midi_note).frequency()
     }
 
     fn next_step_is_held(&self) -> bool {
         let next_step = self.current_step + 1;
-        next_step < self.ctrl.steps() && self.get_step(next_step).held
+        next_step < self.ctrl.step_count() && self.get_step(next_step).held
     }
 
     /// Calculates the gate duration in samples for the current step.
@@ -422,7 +422,7 @@ impl StepSequencer {
             return;
         }
         let next_index = self.current_step + 1;
-        if next_index >= self.ctrl.steps() {
+        if next_index >= self.ctrl.step_count() {
             return;
         }
         let next = self.get_step(next_index);
@@ -462,7 +462,7 @@ impl StepSequencer {
 
     /// Advances to the next step.
     fn advance_step(&mut self) {
-        self.current_step = (self.current_step + 1) % self.ctrl.steps();
+        self.current_step = (self.current_step + 1) % self.ctrl.step_count();
     }
 
     /// Resets to step 0 and re-arms one-shot playback.
@@ -474,7 +474,7 @@ impl StepSequencer {
         self.set_finished(false);
     }
 
-    /// Ends one-shot playback: silence the voice and latch the `end` gate.
+    /// Ends one-shot playback: silence the voice and latch the `ended` gate.
     fn finish(&mut self) {
         self.set_finished(true);
         self.active_note = None;
@@ -492,7 +492,7 @@ impl StepSequencer {
     /// Processes one sample.
     fn process_sample(&mut self, i: usize, one_shot: bool) {
         // Detect rising edges
-        let gate_rising = self.inputs.gate(i) > 0.5 && self.last_gate_in <= 0.5;
+        let gate_rising = self.inputs.clock(i) > 0.5 && self.last_gate_in <= 0.5;
         let reset_rising = self.inputs.reset(i) > 0.5 && self.last_reset_in <= 0.5;
 
         // Handle reset (takes priority)
@@ -516,7 +516,7 @@ impl StepSequencer {
             // Advance step on every gate EXCEPT the first one
             // First gate plays step 0, subsequent gates advance
             if self.first_gate_received {
-                if one_shot && self.current_step + 1 >= self.ctrl.steps() {
+                if one_shot && self.current_step + 1 >= self.ctrl.step_count() {
                     // The final step has sounded for its full duration; this
                     // clock edge is the end of the pattern.
                     self.finish();
@@ -609,7 +609,7 @@ impl StepSequencer {
         self.retrigger_dip = false;
 
         // Store for edge detection
-        self.last_gate_in = self.inputs.gate(i);
+        self.last_gate_in = self.inputs.clock(i);
         self.last_reset_in = self.inputs.reset(i);
     }
 }
@@ -622,10 +622,9 @@ impl Module for StepSequencer {
     fn process(&mut self, frames: usize) -> bool {
         // Mode is control-plane state: read it once per block so the
         // per-sample loop carries no atomic load for it. Likewise the grace
-        // controls, converting ms to samples once per block.
+        // controls, converting seconds to samples once per block.
         let one_shot = self.ctrl.one_shot();
-        self.grace_samples_cfg =
-            (self.ctrl.grace_duration_ms() * self.sample_rate as f32 / 1000.0) as u32;
+        self.grace_samples_cfg = (self.ctrl.grace_duration() * self.sample_rate as f32) as u32;
         self.grace_on_beat_cfg = self.ctrl.grace_on_beat();
         for i in 0..frames {
             self.process_sample(i, one_shot);
@@ -659,10 +658,10 @@ impl Module for StepSequencer {
 
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::new("base_note", "Base MIDI note")
+            ControlMeta::new("root_note", "Root MIDI note")
                 .with_range(0.0, 127.0)
-                .with_default(DEFAULT_BASE_NOTE as f32),
-            ControlMeta::new("steps", "Number of steps in pattern")
+                .with_default(DEFAULT_ROOT_NOTE as f32),
+            ControlMeta::new("step_count", "Number of steps in pattern")
                 .with_range(1.0, 64.0)
                 .with_default(DEFAULT_STEPS as f32),
             ControlMeta::new("gate_length", "Default gate length ratio")
@@ -670,13 +669,16 @@ impl Module for StepSequencer {
                 .with_default(DEFAULT_GATE_LENGTH),
             ControlMeta::string(
                 "mode",
-                "Playback mode: loop repeats; one_shot plays once and fires the end gate",
+                "Playback mode: loop repeats; one_shot plays once and fires the ended gate",
             )
             .with_options(vec!["loop".to_string(), "one_shot".to_string()])
             .with_default("loop"),
-            ControlMeta::new("grace_duration_ms", "Duration of a single grace note in ms")
-                .with_range(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS)
-                .with_default(DEFAULT_GRACE_DURATION_MS),
+            ControlMeta::new(
+                "grace_duration",
+                "Duration of a single grace note in seconds",
+            )
+            .with_range(MIN_GRACE_DURATION, MAX_GRACE_DURATION)
+            .with_default(DEFAULT_GRACE_DURATION),
             ControlMeta::new(
                 "grace_placement",
                 "Grace placement: 0 = before the beat, 1 = on the beat",
@@ -688,12 +690,12 @@ impl Module for StepSequencer {
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
         match key {
-            "base_note" => Ok(self.ctrl.base_note() as f32),
-            "steps" => Ok(self.ctrl.steps() as f32),
+            "root_note" => Ok(self.ctrl.root_note() as f32),
+            "step_count" => Ok(self.ctrl.step_count() as f32),
             "gate_length" => Ok(self.ctrl.gate_length()),
             // Numeric view of the string `mode` control: 0.0 = loop, 1.0 = one_shot.
             "mode" => Ok(if self.ctrl.one_shot() { 1.0 } else { 0.0 }),
-            "grace_duration_ms" => Ok(self.ctrl.grace_duration_ms()),
+            "grace_duration" => Ok(self.ctrl.grace_duration()),
             // Numeric view of `grace_placement`: 0.0 = before, 1.0 = on_beat.
             "grace_placement" => Ok(if self.ctrl.grace_on_beat() { 1.0 } else { 0.0 }),
             _ => Err(format!("Unknown control: {}", key)),
@@ -702,12 +704,12 @@ impl Module for StepSequencer {
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
         match key {
-            "base_note" => {
-                self.ctrl.set_base_note(value as u8);
+            "root_note" => {
+                self.ctrl.set_root_note(value as u8);
                 Ok(())
             }
-            "steps" => {
-                self.ctrl.set_steps(value as usize);
+            "step_count" => {
+                self.ctrl.set_step_count(value as usize);
                 Ok(())
             }
             "gate_length" => {
@@ -718,8 +720,8 @@ impl Module for StepSequencer {
                 self.ctrl.set_one_shot(value > 0.5);
                 Ok(())
             }
-            "grace_duration_ms" => {
-                self.ctrl.set_grace_duration_ms(value);
+            "grace_duration" => {
+                self.ctrl.set_grace_duration(value);
                 Ok(())
             }
             "grace_placement" => {
@@ -743,7 +745,7 @@ mod retrigger_dip_tests {
     #[test]
     fn first_step_overrun_still_retriggers_next_note() {
         let mut seq = StepSequencer::new(1000)
-            .with_steps(4)
+            .with_step_count(4)
             .with_gate_length(0.95)
             .with_pattern(vec![
                 Step::note(0),
@@ -756,7 +758,7 @@ mod retrigger_dip_tests {
         let mut last_gate = 0.0;
         for sample in 0..400 {
             let clock = if sample % 100 < 50 { 1.0 } else { 0.0 };
-            seq.set_input("gate", clock).unwrap();
+            seq.set_input("clock", clock).unwrap();
             seq.process(1);
             let gate = seq.get_output("gate").unwrap();
             if gate > 0.5 && last_gate <= 0.5 {

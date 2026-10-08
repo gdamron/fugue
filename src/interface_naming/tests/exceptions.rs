@@ -14,10 +14,6 @@ pub(super) const EXCEPTION_CEILING: usize = 40;
 // One row per line, so a rename deletes whole lines.
 #[rustfmt::skip]
 pub(super) const CONVENTION_EXCEPTIONS: &[(&str, &str, &str)] = &[
-    // step_sequencer and melody
-    ("step_sequencer", "grace_duration_ms", "becomes grace_duration, in seconds"),
-    ("step_sequencer", "pattern_json", "control becomes pattern; the config key goes"),
-    ("step_sequencer", "pattern", "matches the control once it is pattern"),
     // cell_sequencer
     ("cell_sequencer", "grace_duration_ms", "becomes grace_duration, in seconds"),
     ("cell_sequencer", "sequences_json", "control becomes cells; the config key goes"),

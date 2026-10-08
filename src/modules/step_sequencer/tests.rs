@@ -3,8 +3,8 @@ use super::*;
 #[test]
 fn test_step_sequencer_basic() {
     let mut seq = StepSequencer::new(44100)
-        .with_base_note(48)
-        .with_steps(4)
+        .with_root_note(48)
+        .with_step_count(4)
         .with_pattern(vec![
             Step::note(0),
             Step::rest(),
@@ -16,7 +16,7 @@ fn test_step_sequencer_basic() {
     assert_eq!(seq.current_step(), 0);
 
     // First gate - should stay at step 0 and output frequency
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
 
     let freq = seq.get_output("frequency").unwrap();
@@ -24,11 +24,11 @@ fn test_step_sequencer_basic() {
     assert_eq!(seq.current_step(), 0);
 
     // Gate low
-    seq.set_input("gate", 0.0).unwrap();
+    seq.set_input("clock", 0.0).unwrap();
     seq.process(1);
 
     // Second gate - advance to step 1 (rest)
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
 
     assert_eq!(seq.current_step(), 1);
@@ -39,16 +39,16 @@ fn test_step_sequencer_basic() {
 #[test]
 fn test_step_sequencer_wrapping() {
     let mut seq = StepSequencer::new(44100)
-        .with_steps(4)
+        .with_step_count(4)
         .with_pattern(vec![Step::note(0); 4]);
 
     // Advance through all steps
     for expected_step in 0..8 {
-        seq.set_input("gate", 1.0).unwrap();
+        seq.set_input("clock", 1.0).unwrap();
         seq.process(1);
         assert_eq!(seq.current_step(), expected_step % 4);
 
-        seq.set_input("gate", 0.0).unwrap();
+        seq.set_input("clock", 0.0).unwrap();
         seq.process(1);
     }
 }
@@ -56,14 +56,14 @@ fn test_step_sequencer_wrapping() {
 #[test]
 fn test_step_sequencer_reset() {
     let mut seq = StepSequencer::new(44100)
-        .with_steps(8)
+        .with_step_count(8)
         .with_pattern(vec![Step::note(0); 8]);
 
     // Advance a few steps
     for _ in 0..5 {
-        seq.set_input("gate", 1.0).unwrap();
+        seq.set_input("clock", 1.0).unwrap();
         seq.process(1);
-        seq.set_input("gate", 0.0).unwrap();
+        seq.set_input("clock", 0.0).unwrap();
         seq.process(1);
     }
 
@@ -79,7 +79,7 @@ fn test_step_sequencer_reset() {
 #[test]
 fn test_step_sequencer_gate_length() {
     let mut seq = StepSequencer::new(1000) // 1kHz for easy math
-        .with_steps(2)
+        .with_step_count(2)
         .with_gate_length(0.5) // 50% default
         .with_pattern(vec![
             Step::note(0),                // Uses default 50%
@@ -87,9 +87,9 @@ fn test_step_sequencer_gate_length() {
         ]);
 
     // Trigger first step
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
-    seq.set_input("gate", 0.0).unwrap();
+    seq.set_input("clock", 0.0).unwrap();
 
     // Gate should be high initially
     assert_eq!(seq.get_output("gate").unwrap(), 1.0);
@@ -103,17 +103,17 @@ fn test_step_sequencer_gate_length() {
 #[test]
 fn test_step_sequencer_held_steps_continue_active_note() {
     let mut seq = StepSequencer::new(10)
-        .with_steps(3)
+        .with_step_count(3)
         .with_gate_length(0.4)
         .with_pattern(vec![Step::note(0), Step::held(), Step::rest()]);
 
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
-    let expected = Note::new(DEFAULT_BASE_NOTE).frequency();
+    let expected = Note::new(DEFAULT_ROOT_NOTE).frequency();
     assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
     assert_eq!(seq.get_output("gate").unwrap(), 1.0);
 
-    seq.set_input("gate", 0.0).unwrap();
+    seq.set_input("clock", 0.0).unwrap();
     for _ in 0..3 {
         seq.process(1);
     }
@@ -123,15 +123,15 @@ fn test_step_sequencer_held_steps_continue_active_note() {
         "note followed by a held step should use a full-step gate"
     );
 
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
     assert_eq!(seq.current_step(), 1);
     assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
     assert_eq!(seq.get_output("gate").unwrap(), 1.0);
 
-    seq.set_input("gate", 0.0).unwrap();
+    seq.set_input("clock", 0.0).unwrap();
     seq.process(1);
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
     assert_eq!(seq.current_step(), 2);
     assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
@@ -141,10 +141,10 @@ fn test_step_sequencer_held_steps_continue_active_note() {
 #[test]
 fn test_step_sequencer_contextless_held_step_is_rest() {
     let mut seq = StepSequencer::new(44_100)
-        .with_steps(1)
+        .with_step_count(1)
         .with_pattern(vec![Step::held()]);
 
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
 
     assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
@@ -154,21 +154,21 @@ fn test_step_sequencer_contextless_held_step_is_rest() {
 #[test]
 fn test_step_sequencer_repeated_notes_retrigger() {
     let mut seq = StepSequencer::new(10)
-        .with_steps(2)
+        .with_step_count(2)
         .with_gate_length(0.6)
         .with_pattern(vec![Step::note(0), Step::note(0)]);
 
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
     assert_eq!(seq.get_output("gate").unwrap(), 1.0);
 
-    seq.set_input("gate", 0.0).unwrap();
+    seq.set_input("clock", 0.0).unwrap();
     for _ in 0..4 {
         seq.process(1);
     }
     assert_eq!(seq.get_output("gate").unwrap(), 0.0);
 
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
     assert_eq!(seq.current_step(), 1);
     assert_eq!(seq.get_output("gate").unwrap(), 1.0);
@@ -177,7 +177,7 @@ fn test_step_sequencer_repeated_notes_retrigger() {
 #[test]
 fn test_step_sequencer_frequency_calculation() {
     let _seq = StepSequencer::new(44100)
-        .with_base_note(60) // C4
+        .with_root_note(60) // C4
         .with_pattern(vec![
             Step::note(0),  // C4
             Step::note(12), // C5 (octave up)
@@ -194,9 +194,11 @@ fn test_step_sequencer_frequency_calculation() {
 
 #[test]
 fn test_step_sequencer_empty_pattern() {
-    let mut seq = StepSequencer::new(44100).with_steps(4).with_pattern(vec![]); // Empty pattern
+    let mut seq = StepSequencer::new(44100)
+        .with_step_count(4)
+        .with_pattern(vec![]); // Empty pattern
 
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
 
     // Should treat as rests
@@ -207,15 +209,15 @@ fn test_step_sequencer_empty_pattern() {
 #[test]
 fn test_step_sequencer_step_output() {
     let mut seq = StepSequencer::new(44100)
-        .with_steps(4)
+        .with_step_count(4)
         .with_pattern(vec![Step::note(0); 4]);
 
     for expected in 0..4 {
-        seq.set_input("gate", 1.0).unwrap();
+        seq.set_input("clock", 1.0).unwrap();
         seq.process(1);
         assert_eq!(seq.get_output("step").unwrap(), expected as f32);
 
-        seq.set_input("gate", 0.0).unwrap();
+        seq.set_input("clock", 0.0).unwrap();
         seq.process(1);
     }
 }
@@ -226,8 +228,8 @@ fn test_step_sequencer_factory() {
     assert_eq!(factory.type_id(), "step_sequencer");
 
     let config = serde_json::json!({
-        "base_note": 36,
-        "steps": 8,
+        "root_note": 36,
+        "step_count": 8,
         "gate_length": 0.75,
         "pattern": [
             { "note": 0, "gate": 0.5 },
@@ -241,8 +243,8 @@ fn test_step_sequencer_factory() {
     let module = result.module.module();
 
     assert_eq!(module.name(), "StepSequencer");
-    assert_eq!(module.inputs(), &["gate", "reset"]);
-    assert_eq!(module.outputs(), &["frequency", "gate", "step", "end"]);
+    assert_eq!(module.inputs(), &["clock", "reset"]);
+    assert_eq!(module.outputs(), &["frequency", "gate", "step", "ended"]);
 }
 
 #[test]
@@ -285,10 +287,10 @@ fn test_step_serializes_held_without_note_field() {
 #[test]
 fn test_step_sequencer_negative_note_offset() {
     let mut seq = StepSequencer::new(44100)
-        .with_base_note(60) // C4
+        .with_root_note(60) // C4
         .with_pattern(vec![Step::note(-12)]); // Should be C3
 
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
 
     let freq = seq.get_output("frequency").unwrap();
@@ -302,18 +304,18 @@ fn test_step_sequencer_controls() {
 
     // Verify default control values
     assert_eq!(
-        seq.get_control("base_note").unwrap(),
-        DEFAULT_BASE_NOTE as f32
+        seq.get_control("root_note").unwrap(),
+        DEFAULT_ROOT_NOTE as f32
     );
-    assert_eq!(seq.get_control("steps").unwrap(), DEFAULT_STEPS as f32);
+    assert_eq!(seq.get_control("step_count").unwrap(), DEFAULT_STEPS as f32);
     assert_eq!(seq.get_control("gate_length").unwrap(), DEFAULT_GATE_LENGTH);
 
     // Set controls
-    seq.set_control("base_note", 60.0).unwrap();
-    assert_eq!(seq.get_control("base_note").unwrap(), 60.0);
+    seq.set_control("root_note", 60.0).unwrap();
+    assert_eq!(seq.get_control("root_note").unwrap(), 60.0);
 
-    seq.set_control("steps", 8.0).unwrap();
-    assert_eq!(seq.get_control("steps").unwrap(), 8.0);
+    seq.set_control("step_count", 8.0).unwrap();
+    assert_eq!(seq.get_control("step_count").unwrap(), 8.0);
 
     seq.set_control("gate_length", 0.75).unwrap();
     assert_eq!(seq.get_control("gate_length").unwrap(), 0.75);
@@ -331,11 +333,11 @@ fn test_step_sequencer_controls_metadata() {
     assert_eq!(controls.len(), 6);
 
     let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
-    assert!(keys.contains(&"base_note"));
-    assert!(keys.contains(&"steps"));
+    assert!(keys.contains(&"root_note"));
+    assert!(keys.contains(&"step_count"));
     assert!(keys.contains(&"gate_length"));
     assert!(keys.contains(&"mode"));
-    assert!(keys.contains(&"grace_duration_ms"));
+    assert!(keys.contains(&"grace_duration"));
     assert!(keys.contains(&"grace_placement"));
 }
 
@@ -343,17 +345,17 @@ fn test_step_sequencer_controls_metadata() {
 fn test_step_sequencer_controls_affect_processing() {
     let mut seq = StepSequencer::new(44100).with_pattern(vec![Step::note(0)]);
 
-    // Set base_note via control and verify it affects output
-    seq.set_control("base_note", 60.0).unwrap();
-    seq.set_input("gate", 1.0).unwrap();
+    // Set root_note via control and verify it affects output
+    seq.set_control("root_note", 60.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
 
     let freq = seq.get_output("frequency").unwrap();
     let expected = Note::new(60).frequency();
     assert!((freq - expected).abs() < 0.01);
 
-    // Change base_note and verify output changes
-    seq.set_control("base_note", 72.0).unwrap();
+    // Change root_note and verify output changes
+    seq.set_control("root_note", 72.0).unwrap();
     seq.process(1);
 
     let freq = seq.get_output("frequency").unwrap();
@@ -365,8 +367,8 @@ fn test_step_sequencer_controls_affect_processing() {
 fn test_step_sequencer_factory_returns_handles() {
     let factory = StepSequencerFactory;
     let config = serde_json::json!({
-        "base_note": 36,
-        "steps": 8,
+        "root_note": 36,
+        "step_count": 8,
         "gate_length": 0.75,
     });
 
@@ -379,23 +381,23 @@ fn test_step_sequencer_factory_returns_handles() {
         .1
         .downcast_ref::<StepSequencerControls>()
         .unwrap();
-    assert_eq!(controls.base_note(), 36);
-    assert_eq!(controls.steps(), 8);
+    assert_eq!(controls.root_note(), 36);
+    assert_eq!(controls.step_count(), 8);
     assert!((controls.gate_length() - 0.75).abs() < f32::EPSILON);
 }
 
 /// Drives one full clock pulse (rising edge + release) through the sequencer.
 fn pulse(seq: &mut StepSequencer) {
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
-    seq.set_input("gate", 0.0).unwrap();
+    seq.set_input("clock", 0.0).unwrap();
     seq.process(1);
 }
 
 #[test]
 fn test_one_shot_plays_once_and_fires_end() {
     let mut seq = StepSequencer::new(44100)
-        .with_steps(4)
+        .with_step_count(4)
         .with_pattern(vec![
             Step::note(0),
             Step::note(2),
@@ -409,7 +411,7 @@ fn test_one_shot_plays_once_and_fires_end() {
         pulse(&mut seq);
         assert_eq!(seq.current_step(), expected_step);
         assert_eq!(
-            seq.get_output("end").unwrap(),
+            seq.get_output("ended").unwrap(),
             0.0,
             "end must stay low mid-pattern"
         );
@@ -419,7 +421,7 @@ fn test_one_shot_plays_once_and_fires_end() {
     // The next clock edge marks the final step's completion: silence + end.
     pulse(&mut seq);
     assert_eq!(
-        seq.get_output("end").unwrap(),
+        seq.get_output("ended").unwrap(),
         1.0,
         "end fires at completion"
     );
@@ -429,7 +431,7 @@ fn test_one_shot_plays_once_and_fires_end() {
     // Further clocks are ignored; end stays latched (exactly one rising edge).
     for _ in 0..3 {
         pulse(&mut seq);
-        assert_eq!(seq.get_output("end").unwrap(), 1.0);
+        assert_eq!(seq.get_output("ended").unwrap(), 1.0);
         assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
     }
 }
@@ -437,21 +439,21 @@ fn test_one_shot_plays_once_and_fires_end() {
 #[test]
 fn test_one_shot_reset_rearms() {
     let mut seq = StepSequencer::new(44100)
-        .with_steps(2)
+        .with_step_count(2)
         .with_pattern(vec![Step::note(0), Step::note(2)])
         .with_one_shot(true);
 
     for _ in 0..3 {
         pulse(&mut seq);
     }
-    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+    assert_eq!(seq.get_output("ended").unwrap(), 1.0);
 
     // Reset clears the latch and re-arms playback from step 0.
     seq.set_input("reset", 1.0).unwrap();
     seq.process(1);
     seq.set_input("reset", 0.0).unwrap();
     seq.process(1);
-    assert_eq!(seq.get_output("end").unwrap(), 0.0, "reset clears end");
+    assert_eq!(seq.get_output("ended").unwrap(), 0.0, "reset clears end");
 
     pulse(&mut seq);
     assert!(
@@ -461,7 +463,7 @@ fn test_one_shot_reset_rearms() {
     pulse(&mut seq);
     pulse(&mut seq);
     assert_eq!(
-        seq.get_output("end").unwrap(),
+        seq.get_output("ended").unwrap(),
         1.0,
         "second playthrough ends too"
     );
@@ -470,18 +472,22 @@ fn test_one_shot_reset_rearms() {
 #[test]
 fn test_switching_to_loop_clears_finished() {
     let mut seq = StepSequencer::new(44100)
-        .with_steps(2)
+        .with_step_count(2)
         .with_pattern(vec![Step::note(0), Step::note(2)])
         .with_one_shot(true);
 
     for _ in 0..3 {
         pulse(&mut seq);
     }
-    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+    assert_eq!(seq.get_output("ended").unwrap(), 1.0);
 
     seq.set_control("mode", 0.0).unwrap(); // back to loop
     pulse(&mut seq);
-    assert_eq!(seq.get_output("end").unwrap(), 0.0, "loop mode clears end");
+    assert_eq!(
+        seq.get_output("ended").unwrap(),
+        0.0,
+        "loop mode clears end"
+    );
     assert!(
         seq.get_output("frequency").unwrap() > 0.0,
         "playback resumes"
@@ -491,12 +497,12 @@ fn test_switching_to_loop_clears_finished() {
 #[test]
 fn test_loop_mode_end_never_fires() {
     let mut seq = StepSequencer::new(44100)
-        .with_steps(2)
+        .with_step_count(2)
         .with_pattern(vec![Step::note(0), Step::note(2)]);
 
     for _ in 0..10 {
         pulse(&mut seq);
-        assert_eq!(seq.get_output("end").unwrap(), 0.0);
+        assert_eq!(seq.get_output("ended").unwrap(), 0.0);
     }
     // Wrapped several times, still playing.
     assert!(seq.get_output("frequency").unwrap() > 0.0);
@@ -558,18 +564,20 @@ fn test_step_grace_serde_round_trip() {
 #[test]
 fn test_grace_before_beat_two_attacks() {
     // Sample rate 1000 so the default 60 ms grace is 60 samples.
-    let mut seq = StepSequencer::new(1000).with_steps(4).with_pattern(vec![
-        Step::note(0),
-        Step::rest(),
-        Step::note_with_grace(10, &[8]),
-        Step::rest(),
-    ]);
+    let mut seq = StepSequencer::new(1000)
+        .with_step_count(4)
+        .with_pattern(vec![
+            Step::note(0),
+            Step::rest(),
+            Step::note_with_grace(10, &[8]),
+            Step::rest(),
+        ]);
 
     let mut stream: Vec<(f32, f32)> = Vec::new();
     for _ in 0..4 {
         for s in 0..200 {
             let gate_in = if s < 2 { 1.0 } else { 0.0 };
-            seq.set_input("gate", gate_in).unwrap();
+            seq.set_input("clock", gate_in).unwrap();
             seq.process(1);
             stream.push((
                 seq.get_output("frequency").unwrap(),
@@ -586,8 +594,8 @@ fn test_grace_before_beat_two_attacks() {
     }
     assert_eq!(onsets.len(), 2, "grace + principal, got {:?}", onsets);
     assert_eq!(onsets[1], 400, "principal stays on the grid");
-    let grace_freq = Note::new((DEFAULT_BASE_NOTE as i16 + 8) as u8).frequency();
-    let principal_freq = Note::new((DEFAULT_BASE_NOTE as i16 + 10) as u8).frequency();
+    let grace_freq = Note::new((DEFAULT_ROOT_NOTE as i16 + 8) as u8).frequency();
+    let principal_freq = Note::new((DEFAULT_ROOT_NOTE as i16 + 10) as u8).frequency();
     assert!((stream[onsets[0]].0 - grace_freq).abs() < 0.01);
     assert!((stream[onsets[1] + 5].0 - principal_freq).abs() < 0.01);
 }
@@ -595,7 +603,7 @@ fn test_grace_before_beat_two_attacks() {
 #[test]
 fn test_grace_placement_control_on_beat() {
     let mut seq = StepSequencer::new(1000)
-        .with_steps(2)
+        .with_step_count(2)
         .with_pattern(vec![Step::note(0), Step::note_with_grace(10, &[8])]);
     seq.set_control("grace_placement", 1.0).unwrap();
 
@@ -603,7 +611,7 @@ fn test_grace_placement_control_on_beat() {
     for _ in 0..3 {
         for s in 0..200 {
             let gate_in = if s < 2 { 1.0 } else { 0.0 };
-            seq.set_input("gate", gate_in).unwrap();
+            seq.set_input("clock", gate_in).unwrap();
             seq.process(1);
             stream.push((
                 seq.get_output("frequency").unwrap(),
@@ -629,7 +637,7 @@ fn test_grace_placement_control_on_beat() {
         "principal is delayed by the grace duration, got {}",
         onsets[1]
     );
-    let grace_freq = Note::new((DEFAULT_BASE_NOTE as i16 + 8) as u8).frequency();
+    let grace_freq = Note::new((DEFAULT_ROOT_NOTE as i16 + 8) as u8).frequency();
     assert!((stream[onsets[0]].0 - grace_freq).abs() < 0.01);
 }
 
@@ -687,10 +695,38 @@ fn pattern_numbers_are_refused_with_their_path() {
             "{error}"
         );
     }
-    let config = serde_json::json!({ "pattern_json": r#"[{"note": 0.5}]"# });
+    // The JSON text a written `pattern` control records is refused the same way.
+    let config = serde_json::json!({ "pattern": r#"[{"note": 0.5}]"# });
     assert!(pattern_of(config)
         .unwrap_err()
-        .contains("'pattern_json[0].note'"));
+        .contains("'pattern[0].note'"));
+}
+
+#[test]
+fn pattern_reads_as_an_array_or_as_the_json_text_of_one() {
+    let array = pattern_of(serde_json::json!({ "pattern": [{ "note": 0 }, null, 7] })).unwrap();
+    let text = pattern_of(serde_json::json!({ "pattern": r#"[{"note": 0}, null, 7]"# })).unwrap();
+    assert_eq!(format!("{array:?}"), format!("{text:?}"));
+    assert_eq!(array.len(), 3);
+}
+
+#[test]
+fn grace_duration_is_configured_in_seconds_and_clamped() {
+    let build = |config: serde_json::Value| {
+        let result = StepSequencerFactory.build(44100, &config).unwrap();
+        let controls = result.handles[0]
+            .1
+            .downcast_ref::<StepSequencerControls>()
+            .unwrap();
+        controls.grace_duration()
+    };
+    assert_eq!(build(serde_json::json!({})), 0.06);
+    assert_eq!(build(serde_json::json!({ "grace_duration": 0.08 })), 0.08);
+    assert_eq!(build(serde_json::json!({ "grace_duration": 80.0 })), 0.2);
+    assert_eq!(
+        build(serde_json::json!({ "grace_duration": 0.0001 })),
+        0.005
+    );
 }
 
 #[test]
