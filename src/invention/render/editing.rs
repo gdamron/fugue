@@ -1,6 +1,7 @@
 //! Graph edits on an offline render, applied directly to the owned graph.
 
 use super::RenderEngine;
+use crate::invention::declared::{add_offline, remove_offline};
 use crate::invention::graph::GraphCommand;
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::runtime::{validate_input_port, validate_output_port, GraphCommandError};
@@ -54,12 +55,14 @@ impl RenderEngine {
             .unwrap()
             .merge(InventionHandles::new(new_handles));
 
-        if let Some(control_surface) = result.control_surface {
-            self.control_surfaces
+        let replaced = match &result.control_surface {
+            Some(surface) => self
+                .control_surfaces
                 .lock()
                 .unwrap()
-                .insert(module_id.to_string(), control_surface);
-        }
+                .insert(module_id.to_string(), surface.clone()),
+            None => None,
+        };
 
         self.module_ports.lock().unwrap().insert(
             module_id.to_string(),
@@ -81,13 +84,13 @@ impl RenderEngine {
             },
         );
 
-        graph
-            .lock()
-            .unwrap()
-            .apply_command(GraphCommand::AddModule {
-                module_id: module_id.to_string(),
-                module: result.module,
-            });
+        add_offline(
+            &graph,
+            module_id,
+            result.module,
+            result.control_surface.as_ref(),
+            replaced,
+        );
 
         {
             let mut state = self.state.lock().unwrap();
@@ -133,7 +136,8 @@ impl RenderEngine {
             .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))?;
         self.scripts.stop_module(module_id);
         self.agents.stop_module(module_id);
-        self.control_surfaces
+        let surface = self
+            .control_surfaces
             .lock()
             .unwrap()
             .shift_remove(module_id);
@@ -142,12 +146,7 @@ impl RenderEngine {
             .unwrap()
             .remove_prefix(&format!("{}.", module_id));
         self.module_ports.lock().unwrap().shift_remove(module_id);
-        graph
-            .lock()
-            .unwrap()
-            .apply_command(GraphCommand::RemoveModule {
-                module_id: module_id.to_string(),
-            });
+        remove_offline(graph, module_id, surface);
         let mut state = self.state.lock().unwrap();
         state.modules.shift_remove(module_id);
         state

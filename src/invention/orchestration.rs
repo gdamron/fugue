@@ -12,6 +12,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use super::declared::{add_offline, remove_offline};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
 /// Read/write orchestration surface shared by live and render runtimes.
@@ -408,19 +409,22 @@ impl RuntimeController {
             .map_err(GraphCommandError::ModuleBuildFailed)?;
         }
 
-        if let Some(control_surface) = surface {
-            self.snapshot
+        let graph = self
+            .graph
+            .as_ref()
+            .ok_or(GraphCommandError::AudioThreadStopped)?;
+        let replaced = match &surface {
+            Some(surface) => self
+                .snapshot
                 .control_surfaces
                 .lock()
                 .unwrap()
-                .insert(module_id.to_string(), control_surface);
-        }
+                .insert(module_id.to_string(), surface.clone()),
+            None => None,
+        };
 
         if let Some(module) = instance {
-            self.apply(GraphCommand::AddModule {
-                module_id: module_id.to_string(),
-                module,
-            })?;
+            add_offline(graph, module_id, module, surface.as_ref(), replaced);
         }
 
         self.module_ports
@@ -445,14 +449,17 @@ impl RuntimeController {
         if let Some(live) = &self.live {
             return live.remove_module(module_id).map(drop);
         }
-        self.snapshot
+        let graph = self
+            .graph
+            .as_ref()
+            .ok_or(GraphCommandError::AudioThreadStopped)?;
+        let surface = self
+            .snapshot
             .control_surfaces
             .lock()
             .unwrap()
             .shift_remove(module_id);
-        self.apply(GraphCommand::RemoveModule {
-            module_id: module_id.to_string(),
-        })?;
+        remove_offline(graph, module_id, surface);
         self.module_ports.lock().unwrap().shift_remove(module_id);
         let mut state = self.snapshot.state.lock().unwrap();
         state.modules.shift_remove(module_id);

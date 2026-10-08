@@ -1,10 +1,11 @@
 //! A declared module's surface: what a write does while the module is
-//! building, running live, or gone.
+//! building, running live, running in an offline render, or gone.
 
-use super::declared::dial_rig;
+use super::declared::{dial_rig, DialFactory};
 use super::requests::{counted_block, outcomes};
 use super::*;
 use crate::control_request::Outcome;
+use crate::invention::declared::{add_offline, remove_offline};
 use crate::ControlValue;
 
 fn surface(rig: &Rig, id: &str) -> ControlSurfaceInstance {
@@ -126,4 +127,58 @@ fn a_live_write_is_refused_once_the_audio_graph_is_gone() {
     let refused = dial.set_control("level", 0.5.into()).unwrap_err();
     assert!(refused.contains("stopped"), "{refused}");
     drop(live);
+}
+
+#[test]
+fn an_offline_write_applies_at_once_under_the_render_lock() {
+    let graph = Arc::new(Mutex::new(SignalGraph::new(
+        IndexMap::new(),
+        Vec::new(),
+        Vec::new(),
+        MasterObservers::default(),
+    )));
+    let mut registry = ModuleRegistry::default();
+    registry.register(DialFactory);
+    let build = || {
+        GraphChange::build(
+            &registry,
+            SAMPLE_RATE,
+            "dial",
+            "dial",
+            &serde_json::json!({}),
+        )
+    };
+    let dial = build().unwrap();
+    let first = dial.surface.clone().unwrap();
+    first.set_control("level", 0.5.into()).unwrap();
+    add_offline(&graph, "dial", dial.instance.unwrap(), Some(&first), None);
+
+    first.set_control("level", 0.75.into()).unwrap();
+    assert_eq!(level(&first), 0.75.into(), "applied at once");
+    let module = |graph: &Arc<Mutex<SignalGraph>>| {
+        let mut graph = graph.lock().unwrap();
+        let module = graph.modules["dial"].module_mut();
+        module.process(1);
+        module.output_block(0)[0]
+    };
+    assert_eq!(module(&graph), 0.75);
+
+    let second = build().unwrap();
+    let surface = second.surface.clone();
+    add_offline(
+        &graph,
+        "dial",
+        second.instance.unwrap(),
+        surface.as_ref(),
+        Some(first.clone()),
+    );
+    assert!(first.set_control("level", 0.5.into()).is_err());
+    assert_eq!(
+        module(&graph),
+        0.25,
+        "the replacement starts from its own state"
+    );
+
+    remove_offline(&graph, "dial", surface.clone());
+    assert!(surface.unwrap().set_control("level", 0.5.into()).is_err());
 }

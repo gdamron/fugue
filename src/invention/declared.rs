@@ -11,6 +11,8 @@
 //!   is bound to run (what it was built with stands for the rest).
 //! - **Live**: a request through the live graph's queue, applied on the
 //!   audio thread at its sample.
+//! - **Offline**: applied at once in an offline render's graph, under the
+//!   lock its renders take.
 //! - **Prepared**: bound to a change not yet committed; writes are refused
 //!   until the change publishes the module (then **Live**), or for good if
 //!   it never does.
@@ -22,17 +24,21 @@
 //! # Locks
 //!
 //! A surface's route lock is the innermost lock: a write never holds it
-//! while taking the publisher. It peeks at the route, takes the publisher,
-//! then checks the route again under it, so a module retired meanwhile
-//! (which happens under the publisher, as its replacement commits) refuses
-//! the write rather than letting it reach the module that replaced it.
+//! while taking the publisher or an offline graph's lock. It peeks at the
+//! route, takes that lock, then checks the route again under it, so a
+//! module retired meanwhile (which happens under that same lock, as its
+//! replacement commits or installs) refuses the write rather than letting
+//! it reach the module that replaced it.
 
+use indexmap::IndexMap;
 use std::sync::{Arc, Mutex, Weak};
 
+use super::graph::{GraphCommand, SignalGraph};
 use super::publish::Publisher;
+use super::runtime::{ControlSurfaceInstance, ModuleInstance};
 use crate::control_request::{
-    apply_declared, ControlCells, ControlIndex, ControlTable, Request, RequestSender, RequestValue,
-    RtValue,
+    apply_declared, ControlCells, ControlIndex, ControlTable, Refusal, Request, RequestSender,
+    RequestValue, RtValue,
 };
 use crate::traits::ControlSurfaceMap;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
@@ -43,6 +49,10 @@ pub(crate) enum Route {
     /// The controls written so far, each once.
     Building(Vec<ControlIndex>),
     Live(RequestPort),
+    Offline {
+        graph: Weak<Mutex<SignalGraph>>,
+        module_id: String,
+    },
     Prepared,
     Retired,
 }
@@ -134,6 +144,14 @@ impl DeclaredSurface {
                 publisher.note_written();
                 Ok(())
             }
+            Route::Offline { graph, module_id } => {
+                let graph = graph.upgrade().ok_or("The render has been replaced")?;
+                let mut graph = graph.lock().unwrap();
+                self.check_still(|route| matches!(route, Route::Offline { .. }))?;
+                graph
+                    .apply_control(&module_id, index, value)
+                    .map_err(|refusal| refused(&self.table, index, refusal))
+            }
             Route::Prepared => Err("This module is being installed; try again".into()),
             Route::Retired => Err("This module has been removed or replaced".into()),
         }
@@ -146,6 +164,14 @@ impl DeclaredSurface {
         } else {
             Err("This module has been removed or replaced".into())
         }
+    }
+}
+
+fn refused(table: &ControlTable, index: ControlIndex, refusal: Refusal) -> String {
+    let key = table.key(index).unwrap_or_default();
+    match refusal {
+        Refusal::Invalid => format!("Control '{key}' cannot hold that value"),
+        _ => format!("Control '{key}' was not applied ({refusal:?})"),
     }
 }
 
@@ -207,5 +233,65 @@ impl ControlSurface for DeclaredSurface {
 
     fn retire(&self) {
         *self.route.lock().unwrap() = Route::Retired;
+    }
+}
+
+/// Binds every surface in `surfaces` to its module in an offline render's
+/// `graph` (a render loading its invention).
+pub(crate) fn bind_offline(
+    graph: &Arc<Mutex<SignalGraph>>,
+    surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
+) {
+    let mut locked = graph.lock().unwrap();
+    for (id, surface) in surfaces.lock().unwrap().iter() {
+        if let Some(instance) = locked.modules.get_mut(id) {
+            surface.bind(offline(graph, id), instance.module_mut());
+        }
+    }
+}
+
+/// Adds `module` to an offline render's `graph` as `module_id`, under the
+/// lock its renders take: binds its `surface` there and retires the
+/// surface of the module it replaces, if any.
+pub(crate) fn add_offline(
+    graph: &Arc<Mutex<SignalGraph>>,
+    module_id: &str,
+    mut module: ModuleInstance,
+    surface: Option<&ControlSurfaceInstance>,
+    replaced: Option<ControlSurfaceInstance>,
+) {
+    let mut locked = graph.lock().unwrap();
+    if let Some(replaced) = replaced {
+        replaced.retire();
+    }
+    if let Some(surface) = surface {
+        surface.bind(offline(graph, module_id), module.module_mut());
+    }
+    locked.apply_command(GraphCommand::AddModule {
+        module_id: module_id.to_string(),
+        module,
+    });
+}
+
+/// Removes `module_id` from an offline render's `graph`, retiring its
+/// `surface`, under the lock its renders take.
+pub(crate) fn remove_offline(
+    graph: &Arc<Mutex<SignalGraph>>,
+    module_id: &str,
+    surface: Option<ControlSurfaceInstance>,
+) {
+    let mut locked = graph.lock().unwrap();
+    if let Some(surface) = surface {
+        surface.retire();
+    }
+    locked.apply_command(GraphCommand::RemoveModule {
+        module_id: module_id.to_string(),
+    });
+}
+
+fn offline(graph: &Arc<Mutex<SignalGraph>>, module_id: &str) -> Route {
+    Route::Offline {
+        graph: Arc::downgrade(graph),
+        module_id: module_id.to_string(),
     }
 }
