@@ -294,9 +294,15 @@ fn config_deltas_that_cannot_be_controls_force_a_swap() {
             }],
             ..doc(r#"{ "modules": [], "connections": [] }"#)
         };
-        plan_reload(&current, &[], &new, &HashSet::new(), no_keys, |_, _| {
-            has_control
-        })
+        plan_reload(
+            &current,
+            &[],
+            &new,
+            &HashSet::new(),
+            no_keys,
+            |_, _| None,
+            |_, _| has_control,
+        )
         .unwrap()
     };
 
@@ -350,7 +356,16 @@ fn null_and_empty_configs_are_equivalent() {
         ..doc(r#"{ "modules": [], "connections": [] }"#)
     };
 
-    let plan = plan_reload(&current, &[], &new, &HashSet::new(), no_keys, |_, _| false).unwrap();
+    let plan = plan_reload(
+        &current,
+        &[],
+        &new,
+        &HashSet::new(),
+        no_keys,
+        |_, _| None,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(plan.unchanged, vec!["dac"]);
     assert!(plan.swapped.is_empty());
 }
@@ -391,6 +406,7 @@ fn connection_diff_skips_endpoints_of_removed_modules() {
         &new,
         &HashSet::new(),
         no_keys,
+        |_, _| None,
         |_, _| false,
     )
     .unwrap();

@@ -35,6 +35,7 @@ use crate::control_request::{OutcomeReceiver, RequestSender};
 use crate::ModuleRegistry;
 
 mod change;
+mod pending;
 mod publisher;
 mod reclaim;
 mod registry;
@@ -42,6 +43,7 @@ mod registry;
 pub(crate) mod tests;
 
 pub(crate) use change::{BuiltModule, GraphChange, PreparedChange};
+pub(crate) use pending::{PendingLog, PendingWrite};
 pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
@@ -63,6 +65,8 @@ pub(crate) struct LiveGraph {
     /// arrive with FUG-317.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) outcomes: OutcomeReceiver,
+    /// Writes declared surfaces submitted, until settled.
+    pending: Arc<Mutex<PendingLog>>,
     state: Arc<Mutex<RuntimeState>>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
@@ -96,6 +100,7 @@ impl LiveGraph {
             publisher: Arc::new(Mutex::new(publisher)),
             reclaimer: Arc::new(Reclaimer::new(ends.retired, ends.payloads)),
             requests: ends.requests,
+            pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes.clone()))),
             outcomes: ends.outcomes,
             state,
             control_surfaces,
@@ -163,11 +168,20 @@ impl LiveGraph {
         )
     }
 
+    /// Control writes submitted and not yet applied (or refused), oldest
+    /// first. Reads return applied values; this is what is still pending.
+    // Listed to clients once the front doors submit requests themselves.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn pending_writes(&self) -> Vec<PendingWrite> {
+        self.pending.lock().unwrap().pending()
+    }
+
     /// The request queue declared surfaces submit to, for any module.
     fn port(&self) -> RequestPort {
         RequestPort {
             publisher: Arc::downgrade(&self.publisher),
             requests: self.requests.clone(),
+            pending: self.pending.clone(),
             module_id: String::new(),
         }
     }

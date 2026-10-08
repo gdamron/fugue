@@ -28,6 +28,18 @@ impl RunningInvention {
         result
     }
 
+    /// The config kind a reload reads `key` of `module_id` as, when the
+    /// running module declares it as a control.
+    pub(crate) fn control_kind(
+        &self,
+        module_id: &str,
+        key: &str,
+    ) -> Option<crate::module_config::ConfigKind> {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        let declaration = surfaces.get(module_id)?.declaration(key)?;
+        Some(declaration.decl.kind.config_kind())
+    }
+
     /// Gets the current value of a module control.
     pub fn get_control(
         &self,

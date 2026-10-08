@@ -35,7 +35,7 @@ use indexmap::IndexMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use super::graph::{GraphCommand, SignalGraph};
-use super::publish::Publisher;
+use super::publish::{PendingLog, PendingWrite, Publisher};
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
@@ -72,6 +72,7 @@ pub(crate) struct Declaration {
 pub(crate) struct RequestPort {
     pub(crate) publisher: Weak<Mutex<Publisher>>,
     pub(crate) requests: RequestSender,
+    pub(crate) pending: Arc<Mutex<PendingLog>>,
     pub(crate) module_id: String,
 }
 
@@ -154,10 +155,23 @@ impl DeclaredSurface {
                     .map_err(|error| error.to_string())?;
                 let mut request = Request::new(target, RequestValue::Value(value));
                 request.event = event;
-                port.requests
+                let id = port
+                    .requests
                     .submit(request)
                     .map_err(|_| "The control request queue is full; try again")?;
                 publisher.note_written();
+                drop(publisher);
+                if let (Some(key), Some(value)) =
+                    (self.table.key(index), self.table.value(index, value))
+                {
+                    let module_id = port.module_id.clone();
+                    let write = PendingWrite {
+                        module_id,
+                        key,
+                        value,
+                    };
+                    port.pending.lock().unwrap().submitted(id, write);
+                }
                 Ok(())
             }
             Route::Offline { graph, module_id } => {

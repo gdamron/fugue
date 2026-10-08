@@ -35,6 +35,7 @@ fn plan(module_type: &str, previous: Value, new: Value) -> ReloadPlan {
         &new,
         &HashSet::new(),
         |module_type| registry.config_keys(module_type),
+        |_, _| None,
         |_, _| true,
     )
     .unwrap()
@@ -176,4 +177,57 @@ fn an_undeclared_key_compares_as_json() {
         json!({ "channel_count": 2.0, "levels": [1.0, 1] }),
     );
     assert_eq!(plan.swapped.len(), 1, "{plan:?}");
+}
+
+/// A development exposing its oscillator's frequency as `freq`, played at
+/// `freq` from the file.
+fn voiced(freq: &str) -> String {
+    format!(
+        r#"{{
+        "version": "1.0.0",
+        "developments": [{{
+            "name": "voice",
+            "definition": {{
+                "modules": [{{ "id": "o", "type": "oscillator" }}],
+                "connections": [],
+                "outputs": [{{ "name": "audio", "from": "o", "from_port": "audio" }}],
+                "controls": [{{ "key": "freq", "module": "o", "control": "frequency" }}]
+            }}
+        }}],
+        "modules": [
+            {{ "id": "v", "type": "voice", "config": {{ "freq": {freq} }} }},
+            {{ "id": "dac", "type": "dac" }}
+        ],
+        "connections": [{{ "from": "v", "from_port": "audio", "to": "dac", "to_port": "audio" }}]
+    }}"#
+    )
+}
+
+#[test]
+fn a_declared_control_compares_by_value_even_where_its_type_declares_no_config_key() {
+    // A development's config keys are its exposed controls, which its type
+    // does not list as config keys: the running control's kind reads them.
+    let mut running = start(&voiced("440"));
+    running
+        .snapshot()
+        .set_control_with_intent(
+            "v",
+            "freq",
+            ControlValue::Number(300.0),
+            ControlWriteIntent::Perform,
+        )
+        .unwrap();
+
+    let report = running.reload(doc(&voiced("440.0"))).expect("diff applies");
+
+    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert!(report.swapped.is_empty(), "{report:?}");
+    assert_eq!(
+        running.get_control("v", "freq").unwrap(),
+        ControlValue::Number(300.0),
+        "the performed value stands"
+    );
+
+    let report = running.reload(doc(&voiced("220"))).expect("diff applies");
+    assert_eq!(report.controls_updated, ["v.freq"]);
 }

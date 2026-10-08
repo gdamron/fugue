@@ -22,7 +22,7 @@ use super::builder::{load_development_definition, resolve_invention_assets, Inve
 use super::format::ModuleSpec;
 use super::runtime::{GraphCommandError, RunningInvention};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
-use crate::module_config::ConfigKey;
+use crate::module_config::{ConfigKey, ConfigKind};
 use config_diff::{configs_equal, control_updates_for};
 
 /// Development definitions as loaded for a document, by declaration scope
@@ -195,18 +195,28 @@ pub(crate) struct ReloadPlan {
 /// exposes; otherwise the module is swapped. A number compares by value
 /// under the key type its module type declares (`config_keys`), so `440`
 /// and `440.0` are no change; see [`ConfigKind::same_value`](crate::module_config::ConfigKind::same_value).
-/// `has_control` answers whether a module exposes a control key at runtime.
+/// So does a key `control_kind` reports a running module declares as a
+/// control. `has_control` answers whether a module exposes a control key at
+/// runtime.
 pub(crate) fn plan_reload(
     current_modules: &IndexMap<String, RuntimeModuleInfo>,
     current_connections: &[RuntimeConnectionInfo],
     new: &Invention,
     changed_types: &HashSet<String>,
     config_keys: impl Fn(&str) -> &'static [ConfigKey],
+    control_kind: impl Fn(&str, &str) -> Option<ConfigKind>,
     mut has_control: impl FnMut(&str, &str) -> bool,
 ) -> Result<ReloadPlan, String> {
     let mut plan = ReloadPlan::default();
 
     for spec in &new.modules {
+        let keys = config_keys(&spec.module_type);
+        let kind = |key: &str| {
+            let declared = keys.iter().find(|declared| declared.key == key);
+            declared
+                .map(|declared| declared.kind)
+                .or_else(|| control_kind(&spec.id, key))
+        };
         match current_modules.get(&spec.id) {
             None => plan.added.push(spec.clone()),
             Some(info)
@@ -215,15 +225,10 @@ pub(crate) fn plan_reload(
             {
                 plan.swapped.push(spec.clone());
             }
-            Some(info)
-                if !configs_equal(&info.config, &spec.config, config_keys(&spec.module_type)) =>
-            {
-                match control_updates_for(
-                    &info.config,
-                    &spec.config,
-                    config_keys(&spec.module_type),
-                    |key| has_control(&spec.id, key),
-                ) {
+            Some(info) if !configs_equal(&info.config, &spec.config, &kind) => {
+                match control_updates_for(&info.config, &spec.config, &kind, |key| {
+                    has_control(&spec.id, key)
+                }) {
                     Some(updates) => {
                         plan.unchanged.push(spec.id.clone());
                         plan.refreshed_configs
@@ -469,6 +474,7 @@ impl RunningInvention {
             &validated.resolved,
             &changed_types,
             |module_type| validated.registry.config_keys(module_type),
+            |module_id, key| self.control_kind(module_id, key),
             |module_id, key| self.get_control(module_id, key).is_ok(),
         )
         .map_err(ReloadError::Invalid)

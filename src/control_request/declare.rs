@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use serde_json::Value;
 
 use super::request::{ControlIndex, RtValue};
-use crate::module_config::whole_number_in;
+use crate::module_config::{whole_number_in, ConfigKind};
 use crate::traits::check_finite;
 use crate::{ControlKind, ControlMeta, ControlValue};
 
@@ -43,6 +43,23 @@ pub(crate) const MAX_EXACT_INTEGER: i32 = 1 << 24;
 
 /// The most indices a table may declare: one per [`ControlIndex`].
 pub(crate) const MAX_CONTROLS: usize = 1 << 16;
+
+impl DeclKind {
+    /// The config kind a value of this kind is read as, so a reload
+    /// compares a declared control's config by value (`440` is `440.0`).
+    pub(crate) fn config_kind(self) -> ConfigKind {
+        match self {
+            Self::Number { .. } => ConfigKind::Float,
+            Self::Integer { min, max } => ConfigKind::Integer {
+                min: i128::from(min),
+                max: i128::from(max),
+            },
+            Self::Bool => ConfigKind::Bool,
+            Self::Choice(_) => ConfigKind::Text,
+            Self::Payload => ConfigKind::Json,
+        }
+    }
+}
 
 /// Who writes a control (R1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
