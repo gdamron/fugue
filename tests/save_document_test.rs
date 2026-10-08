@@ -97,10 +97,12 @@ fn mutated_invention_round_trips_to_an_equivalent_graph() {
         .add_module(
             "lfo",
             "lfo",
-            &serde_json::json!({ "frequency": 0.5, "waveform": "sine" }),
+            &serde_json::json!({ "rate": 0.5, "waveform": "sine" }),
         )
         .unwrap();
-    running.connect("lfo", "out", "lead", "frequency").unwrap();
+    running
+        .connect("lfo", "bipolar", "lead", "frequency")
+        .unwrap();
     running
         .set_control("lead", "cv", ControlValue::Number(0.7))
         .unwrap();
@@ -114,7 +116,7 @@ fn mutated_invention_round_trips_to_an_equivalent_graph() {
         .iter()
         .find(|module| module.id == "lfo")
         .expect("added module appears in the document");
-    assert_eq!(lfo.config["frequency"], 0.5);
+    assert_eq!(lfo.config["rate"], 0.5);
     let lead = document
         .modules
         .iter()

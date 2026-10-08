@@ -47,10 +47,10 @@ fn type_facts(module_type: &str) -> Option<ModuleFacts> {
             ]),
         }),
         "lfo" => Some(ModuleFacts {
-            inputs: names(&["rate"]),
-            outputs: names(&["out"]),
+            inputs: names(&["rate_mod"]),
+            outputs: names(&["bipolar"]),
             controls: BTreeMap::from([
-                ("frequency".to_string(), number()),
+                ("rate".to_string(), number()),
                 ("retrigger".to_string(), ControlKind::Bool),
             ]),
         }),
@@ -181,15 +181,15 @@ fn has_connection(document: &Invention, from: &str, to: &str, to_port: &str) -> 
 #[test]
 fn later_edits_see_earlier_ones() {
     let candidate = apply(vec![
-        add("lfo", "lfo", json!({ "frequency": 2 })),
-        connect("lfo", "out", "osc1", "fm"),
+        add("lfo", "lfo", json!({ "rate": 2 })),
+        connect("lfo", "bipolar", "osc1", "fm"),
         set("lfo", "retrigger", ControlValue::Bool(true)),
     ])
     .unwrap();
     assert_eq!(candidate.document.modules.last().unwrap().id, "lfo");
     assert_eq!(
         config_of(&candidate.document, "lfo"),
-        &json!({ "frequency": 2, "retrigger": true })
+        &json!({ "rate": 2, "retrigger": true })
     );
     assert!(has_connection(&candidate.document, "lfo", "osc1", "fm"));
     assert_eq!(
@@ -249,7 +249,7 @@ fn removing_then_adding_an_id_replaces_it_with_the_new_type() {
     let candidate = apply(vec![
         remove("osc1"),
         add("osc1", "lfo", json!(null)),
-        connect("osc1", "out", "osc2", "fm"),
+        connect("osc1", "bipolar", "osc2", "fm"),
         set("osc1", "retrigger", ControlValue::Bool(false)),
     ])
     .unwrap();

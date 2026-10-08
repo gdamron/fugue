@@ -234,7 +234,7 @@ definition, preserving alias targets and duplicate fan-out declarations:
     {"key":"attack","module":"env","control":"attack"},
     {"key":"release","module":"env","control":"release"},
     {"key":"warmth","module":"filter","control":"cutoff"},
-    {"key":"motion","module":"motion_lfo","control":"frequency"}
+    {"key":"motion","module":"motion_lfo","control":"rate"}
   ]
 }
 ```

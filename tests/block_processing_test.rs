@@ -33,7 +33,7 @@ const ACYCLIC_INVENTION: &str = r#"{
     "version": "1.0.0",
     "modules": [
         { "id": "clock", "type": "clock", "config": { "bpm": 128.0, "gate_duration": 0.4 } },
-        { "id": "lfo", "type": "lfo", "config": { "frequency": 5.0, "waveform": "triangle" } },
+        { "id": "lfo", "type": "lfo", "config": { "rate": 5.0, "waveform": "triangle" } },
         { "id": "osc", "type": "oscillator", "config": { "oscillator_type": "sawtooth", "frequency": 220.0, "fm_amount": 40.0 } },
         { "id": "adsr", "type": "adsr", "config": { "attack": 0.005, "decay": 0.1, "sustain": 0.6, "release": 0.2 } },
         { "id": "filter", "type": "filter", "config": { "filter_type": "lowpass", "cutoff": 1200.0, "resonance": 0.4 } },
@@ -41,7 +41,7 @@ const ACYCLIC_INVENTION: &str = r#"{
         { "id": "dac", "type": "dac", "config": { "soft_clip": true } }
     ],
     "connections": [
-        { "from": "lfo", "from_port": "out", "to": "osc", "to_port": "fm" },
+        { "from": "lfo", "from_port": "bipolar", "to": "osc", "to_port": "fm" },
         { "from": "osc", "from_port": "audio", "to": "filter", "to_port": "audio" },
         { "from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate" },
         { "from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "cv" },

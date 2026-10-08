@@ -27,7 +27,7 @@
       "id": "tremolo_lfo",
       "type": "lfo",
       "config": {
-        "frequency": 8.0,
+        "rate": 8.0,
         "waveform": "triangle"
       }
     },
@@ -79,7 +79,7 @@
     },
     {
       "from": "tremolo_lfo",
-      "from_port": "out",
+      "from_port": "bipolar",
       "to": "osc",
       "to_port": "am"
     },

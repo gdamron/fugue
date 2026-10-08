@@ -34,7 +34,7 @@
       "id": "filter_lfo",
       "type": "lfo",
       "config": {
-        "frequency": 2.0,
+        "rate": 2.0,
         "waveform": "triangle"
       }
     },
@@ -94,7 +94,7 @@
     },
     {
       "from": "filter_lfo",
-      "from_port": "out_uni",
+      "from_port": "unipolar",
       "to": "filter",
       "to_port": "cutoff_cv"
     },

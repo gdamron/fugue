@@ -41,16 +41,16 @@ fn a_replaced_module_keeps_only_the_writes_made_after_it_was_added_again() {
         set("osc2", "type", ControlValue::String("square".into())),
         remove("osc2"),
         add("osc2", "lfo", json!(null)),
-        set("osc2", "frequency", ControlValue::Number(0.5)),
+        set("osc2", "rate", ControlValue::Number(0.5)),
     ])
     .unwrap();
     assert_eq!(
         writes(&candidate.control_writes),
-        [(4, "osc2.frequency".into(), ControlValue::Number(0.5))]
+        [(4, "osc2.rate".into(), ControlValue::Number(0.5))]
     );
     assert_eq!(
         config_of(&candidate.document, "osc2"),
-        &json!({ "frequency": 0.5 })
+        &json!({ "rate": 0.5 })
     );
 }
 
@@ -119,7 +119,7 @@ fn a_module_added_and_removed_in_one_batch_leaves_nothing_kept() {
     let mut facts = FakeFacts::for_document(&document);
     let candidate = apply_to_candidate(
         &document,
-        &[add("lfo", "lfo", json!({ "frequency": 1 })), remove("lfo")],
+        &[add("lfo", "lfo", json!({ "rate": 1 })), remove("lfo")],
         &mut facts,
     )
     .unwrap();
@@ -137,10 +137,10 @@ fn the_latest_describe_for_an_id_wins() {
         &[
             add("mod", "oscillator", json!({ "frequency": 1 })),
             remove("mod"),
-            add("mod", "lfo", json!({ "frequency": 2 })),
+            add("mod", "lfo", json!({ "rate": 2 })),
             // The lfo's port, not the oscillator's: the overlay holds the
             // latest facts.
-            connect("mod", "out", "osc1", "fm"),
+            connect("mod", "bipolar", "osc1", "fm"),
         ],
         &mut facts,
     )
@@ -148,7 +148,7 @@ fn the_latest_describe_for_an_id_wins() {
     assert_eq!(facts.described, ["mod", "mod"]);
     assert_eq!(
         facts.kept,
-        HashMap::from([("mod".to_string(), json!({ "frequency": 2 }))])
+        HashMap::from([("mod".to_string(), json!({ "rate": 2 }))])
     );
     assert!(candidate.replaced.is_empty());
 
