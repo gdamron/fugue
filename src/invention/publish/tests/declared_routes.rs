@@ -375,14 +375,14 @@ fn outcomes_and_pending_writes_agree_whichever_is_read_first() {
     let dial = surface(&rig, "dial");
     dial.set_control("level", 0.5.into()).unwrap();
     rig.render(1);
-    let taken = rig.live.take_outcomes();
+    let (taken, _) = rig.live.take_outcomes();
     assert_eq!(taken.len(), 1, "{taken:?}");
     assert_eq!(rig.live.pending_writes(), [], "settled by the same read");
 
     dial.set_control("level", 0.75.into()).unwrap();
     rig.render(1);
     assert_eq!(rig.live.pending_writes(), []);
-    let taken = rig.live.take_outcomes();
+    let (taken, _) = rig.live.take_outcomes();
     assert!(
         matches!(taken.as_slice(), [(_, Outcome::Applied { .. })]),
         "{taken:?}"
@@ -401,5 +401,11 @@ fn many_settled_writes_between_reads_leave_nothing_pending() {
         rig.render(1);
     }
     assert_eq!(rig.live.pending_writes(), []);
-    assert!(!rig.live.take_outcomes().is_empty());
+    let (outcomes, lost) = rig.live.take_outcomes();
+    assert_eq!(
+        outcomes.len() as u64 + lost,
+        1100,
+        "each reported or counted lost"
+    );
+    assert!(lost > 0, "more than are kept");
 }

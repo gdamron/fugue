@@ -171,10 +171,11 @@ impl LiveGraph {
         self.pending.lock().unwrap().pending()
     }
 
-    /// What became of each request since the last call, oldest first.
+    /// What became of each request since the last call, oldest first, and
+    /// how many outcomes were lost meanwhile.
     // Reported to clients once the front doors submit requests themselves.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn take_outcomes(&self) -> Vec<(RequestId, Outcome)> {
+    pub(crate) fn take_outcomes(&self) -> (Vec<(RequestId, Outcome)>, u64) {
         self.pending.lock().unwrap().take_outcomes()
     }
 

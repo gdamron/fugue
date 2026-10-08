@@ -33,6 +33,9 @@ pub(crate) struct PendingLog {
     outcomes: VecDeque<(RequestId, Outcome)>,
     receiver: OutcomeReceiver,
     dropped: EventCursor,
+    /// Outcomes lost since they were last taken: dropped by the audio
+    /// thread for want of room, or evicted here unreported.
+    lost: u64,
 }
 
 impl PendingLog {
@@ -42,6 +45,7 @@ impl PendingLog {
             outcomes: VecDeque::new(),
             receiver,
             dropped: EventCursor::new(),
+            lost: 0,
         }
     }
 
@@ -54,10 +58,13 @@ impl PendingLog {
             self.writes.retain(|(pending, _)| *pending != id);
             if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
                 self.outcomes.pop_front();
+                self.lost += 1;
             }
             self.outcomes.push_back((id, outcome));
         }
-        if self.dropped.take(self.receiver.dropped()) > 0 {
+        let dropped = self.dropped.take(self.receiver.dropped());
+        if dropped > 0 {
+            self.lost += u64::from(dropped);
             self.writes.clear();
         }
     }
@@ -78,10 +85,12 @@ impl PendingLog {
         self.writes.iter().map(|(_, write)| write.clone()).collect()
     }
 
-    /// Every outcome received and not yet taken, oldest first: what the
-    /// front doors report.
-    pub(crate) fn take_outcomes(&mut self) -> Vec<(RequestId, Outcome)> {
+    /// Every outcome received and not yet taken, oldest first, and how
+    /// many were lost since the last call (never silently): what the front
+    /// doors report.
+    pub(crate) fn take_outcomes(&mut self) -> (Vec<(RequestId, Outcome)>, u64) {
         self.settle();
-        self.outcomes.drain(..).collect()
+        let lost = std::mem::take(&mut self.lost);
+        (self.outcomes.drain(..).collect(), lost)
     }
 }
