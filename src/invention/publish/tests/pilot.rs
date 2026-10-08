@@ -131,3 +131,24 @@ fn a_scheduled_oscillator_write_past_its_range_reads_as_it_will_hold_it() {
     frequency.write_number(-5.0);
     assert_eq!(frequency.current(), Some(0.0));
 }
+
+#[test]
+fn an_oscillator_takes_the_waveform_spellings_it_always_took() {
+    let registry = crate::ModuleRegistry::default();
+    for (spelled, read) in [
+        ("saw", "sawtooth"),
+        ("TRI", "triangle"),
+        ("Square", "square"),
+    ] {
+        let config = serde_json::json!({ "waveform": spelled });
+        let built = registry.build("oscillator", 48_000, &config).unwrap();
+        let surface = built.control_surface.unwrap();
+        assert_eq!(surface.get_control("waveform").unwrap(), read.into());
+        surface.set_control("waveform", spelled.into()).unwrap();
+    }
+    let mut rig = Rig::new(PATCH);
+    rig.render(1);
+    write(&rig, "osc", "waveform", "saw".into());
+    rig.render(1);
+    assert_eq!(read(&rig, "osc", "waveform"), "sawtooth".into());
+}

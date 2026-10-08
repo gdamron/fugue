@@ -27,7 +27,8 @@ const DECLS: &[ControlDecl] = &[
         DeclKind::Choice(WAVEFORMS),
         RtValue::U32(0),
         "Waveform",
-    ),
+    )
+    .spellings(&[("saw", "sawtooth"), ("tri", "triangle")]),
     ControlDecl::new(
         "frequency_mod_depth",
         DeclKind::Number {

@@ -70,6 +70,9 @@ pub(crate) struct ControlDecl {
     /// For a number its module clamps to as it applies (`min`, `max`), so
     /// automation can see the value a write will hold before it applies.
     pub(crate) clamp: Option<(f32, f32)>,
+    /// For a choice, other spellings it has always accepted, each with the
+    /// option it means (`("saw", "sawtooth")`).
+    pub(crate) spellings: &'static [(&'static str, &'static str)],
     /// The unit a number is in (`"Hz"`, `"s"`), or `""`.
     pub(crate) unit: &'static str,
     /// The value a module starts from when its config leaves it out.
@@ -93,6 +96,7 @@ impl ControlDecl {
             kind,
             event: false,
             clamp: None,
+            spellings: &[],
             unit: "",
             default,
             writer: Writer::Parameter,
@@ -115,6 +119,16 @@ impl ControlDecl {
     /// Makes each write an event rather than a state (see the field).
     pub(crate) const fn event(mut self) -> Self {
         self.event = true;
+        self
+    }
+
+    /// Accepts `spellings` of a choice's options too, by name, as written
+    /// documents may hold them.
+    pub(crate) const fn spellings(
+        mut self,
+        spellings: &'static [(&'static str, &'static str)],
+    ) -> Self {
+        self.spellings = spellings;
         self
     }
 
@@ -265,6 +279,11 @@ impl ControlTable {
                 let Some(text) = text else {
                     return Err("Expected string control value".to_string());
                 };
+                let spelled = decl
+                    .spellings
+                    .iter()
+                    .find(|(alias, _)| alias.eq_ignore_ascii_case(text));
+                let text = spelled.map_or(text, |(_, option)| option);
                 options
                     .iter()
                     .position(|option| option.eq_ignore_ascii_case(text))
