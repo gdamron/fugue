@@ -102,7 +102,7 @@ fn an_install_block_drains_the_queue_even_into_a_full_store() {
     // retires: they are popped and mapped now, and refused for want of room,
     // never left behind.
     rig.live
-        .connect(edge("osc1", "audio", "osc2", "fm"))
+        .connect(edge("osc1", "audio", "osc2", "frequency_mod"))
         .unwrap();
     assert_eq!(counted_block(&mut rig), (0, 0), "installing");
     let settled = outcomes(&mut rig);

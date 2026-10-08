@@ -196,7 +196,7 @@ fn payloads_waiting_for_their_publication_never_keep_it_from_installing() {
     rig.render(1);
     rig.hold_a_retirement();
     let (generation, applied) = rig.generation_and_applied();
-    let fm = edge("osc1", "audio", "osc2", "fm");
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
     rig.publish_unreclaimed(|change| change.disconnect(fm));
     // Payload requests for the published, not yet installed generation
     // fill the store, each reserving retire room, then the queue behind it.
@@ -221,7 +221,7 @@ fn payloads_waiting_for_their_publication_never_keep_it_from_installing() {
     rig.live.reclaim();
     assert_eq!(counted_block(&mut rig), (0, 0), "installing");
     assert_eq!(rig.generation_and_applied(), (generation + 1, applied + 1));
-    let fm = edge("osc1", "audio", "osc2", "fm");
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
     rig.publish_unreclaimed(|change| change.connect(fm).unwrap());
     // Every request's sample has passed after another 12 blocks.
     rig.render(12);

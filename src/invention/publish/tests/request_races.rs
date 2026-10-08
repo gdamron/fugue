@@ -177,7 +177,7 @@ fn deferred_installs_bound_the_folded_remaps_by_back_pressure() {
     use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
     let (mut rig, probes) = probes(&["p1"]);
     rig.hold_a_retirement();
-    let fm = edge("osc1", "audio", "osc2", "fm");
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
     let far = rig.graph.current_sample + 1_000_000;
     let (per_round, rounds) = (100, 12);
     let mut next = 0;
