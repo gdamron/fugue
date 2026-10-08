@@ -14,7 +14,7 @@
       "id": "motion_lfo",
       "type": "lfo",
       "config": {
-        "frequency": 0.18,
+        "rate": 0.18,
         "waveform": "sine"
       }
     },
@@ -50,7 +50,7 @@
   "connections": [
     {
       "from": "motion_lfo",
-      "from_port": "out_uni",
+      "from_port": "unipolar",
       "to": "filter",
       "to_port": "cutoff_cv"
     },
@@ -122,7 +122,7 @@
     {
       "key": "motion",
       "module": "motion_lfo",
-      "control": "frequency"
+      "control": "rate"
     }
   ]
 }

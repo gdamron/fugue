@@ -16,32 +16,44 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 /// let controls: LfoControls = handles.get("lfo1.controls").unwrap();
 ///
 /// // Adjust LFO in real-time
-/// controls.set_frequency(5.0);
+/// controls.set_rate(5.0);
 /// controls.set_waveform(OscillatorType::Triangle);
 /// ```
 #[derive(Clone)]
 pub struct LfoControls {
-    pub(crate) frequency: AtomicF32,
+    pub(crate) rate: AtomicF32,
+    pub(crate) rate_mod_depth: AtomicF32,
     pub(crate) waveform: AtomicF32,
 }
 
 impl LfoControls {
     /// Creates new LFO controls with the given initial values.
-    pub fn new(frequency: f32, waveform: OscillatorType) -> Self {
+    pub fn new(rate: f32, waveform: OscillatorType, rate_mod_depth: f32) -> Self {
         Self {
-            frequency: AtomicF32::new(frequency.clamp(0.001, 100.0)),
+            rate: AtomicF32::new(rate.clamp(0.001, 100.0)),
+            rate_mod_depth: AtomicF32::new(rate_mod_depth.max(0.0)),
             waveform: AtomicF32::new(waveform.to_index()),
         }
     }
 
-    /// Gets the frequency in Hz.
-    pub fn frequency(&self) -> f32 {
-        self.frequency.load()
+    /// Gets the rate in Hz.
+    pub fn rate(&self) -> f32 {
+        self.rate.load()
     }
 
-    /// Sets the frequency in Hz.
-    pub fn set_frequency(&self, value: f32) {
-        self.frequency.store(value.clamp(0.001, 100.0));
+    /// Sets the rate in Hz.
+    pub fn set_rate(&self, value: f32) {
+        self.rate.store(value.clamp(0.001, 100.0));
+    }
+
+    /// Gets the rate modulation depth in Hz per unit of `rate_mod`.
+    pub fn rate_mod_depth(&self) -> f32 {
+        self.rate_mod_depth.load()
+    }
+
+    /// Sets the rate modulation depth in Hz per unit of `rate_mod`.
+    pub fn set_rate_mod_depth(&self, value: f32) {
+        self.rate_mod_depth.store(value.max(0.0));
     }
 
     /// Gets the waveform type.
@@ -58,9 +70,12 @@ impl LfoControls {
 impl ControlSurface for LfoControls {
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::number("frequency", "LFO rate in Hz")
+            ControlMeta::number("rate", "LFO rate in Hz")
                 .with_range(0.001, 100.0)
-                .with_default(self.frequency()),
+                .with_default(self.rate()),
+            ControlMeta::number("rate_mod_depth", "Rate modulation depth in Hz")
+                .with_range(0.0, 100.0)
+                .with_default(self.rate_mod_depth()),
             ControlMeta::string("waveform", "Waveform type")
                 .with_default(self.waveform().as_str())
                 .with_options(vec![
@@ -74,7 +89,8 @@ impl ControlSurface for LfoControls {
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
-            "frequency" => Ok(self.frequency().into()),
+            "rate" => Ok(self.rate().into()),
+            "rate_mod_depth" => Ok(self.rate_mod_depth().into()),
             "waveform" => Ok(self.waveform().as_str().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
@@ -82,7 +98,8 @@ impl ControlSurface for LfoControls {
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
-            "frequency" => self.set_frequency(value.as_number()?),
+            "rate" => self.set_rate(value.as_number()?),
+            "rate_mod_depth" => self.set_rate_mod_depth(value.as_number()?),
             "waveform" => self.set_waveform(OscillatorType::parse(value.as_string()?)?),
             _ => return Err(format!("Unknown control: {}", key)),
         }

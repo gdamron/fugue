@@ -113,7 +113,7 @@ fn an_untouched_module_keeps_its_phase_and_state_across_a_reload() {
     // are untouched.
     let next = BASE.replace(
         r#"{ "id": "spare", "type": "oscillator", "config": { "frequency": 3.0 } }"#,
-        r#"{ "id": "lfo", "type": "lfo", "config": { "frequency": 2.0 } }"#,
+        r#"{ "id": "lfo", "type": "lfo", "config": { "rate": 2.0 } }"#,
     );
     let report = edited.reload(doc(&next)).expect("reload applies");
     assert_eq!((report.added.len(), report.removed.len()), (1, 1));

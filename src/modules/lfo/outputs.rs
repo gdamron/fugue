@@ -2,41 +2,41 @@
 
 use crate::MAX_BLOCK;
 
-pub const OUTPUTS: [&str; 2] = ["out", "out_uni"];
+pub const OUTPUTS: [&str; 2] = ["bipolar", "unipolar"];
 
 pub struct LfoOutputs {
-    out: [f32; MAX_BLOCK],
-    out_uni: [f32; MAX_BLOCK],
+    bipolar: [f32; MAX_BLOCK],
+    unipolar: [f32; MAX_BLOCK],
 }
 
 impl LfoOutputs {
     pub fn new() -> Self {
         Self {
-            out: [0.0; MAX_BLOCK],
-            out_uni: [0.5; MAX_BLOCK],
+            bipolar: [0.0; MAX_BLOCK],
+            unipolar: [0.5; MAX_BLOCK],
         }
     }
 
     /// Writes the bipolar and derived unipolar output for frame `i`.
     #[inline]
     pub fn set_bipolar(&mut self, i: usize, value: f32) {
-        self.out[i] = value;
-        self.out_uni[i] = (value + 1.0) * 0.5;
+        self.bipolar[i] = value;
+        self.unipolar[i] = (value + 1.0) * 0.5;
     }
 
     /// Block buffer for the indexed output port. Index matches `OUTPUTS`.
     #[inline]
     pub fn block(&self, index: usize) -> &[f32] {
         match index {
-            0 => &self.out,
-            _ => &self.out_uni,
+            0 => &self.bipolar,
+            _ => &self.unipolar,
         }
     }
 
     pub fn get(&self, port: &str) -> Result<f32, String> {
         match port {
-            "out" => Ok(self.out[0]),
-            "out_uni" => Ok(self.out_uni[0]),
+            "bipolar" => Ok(self.bipolar[0]),
+            "unipolar" => Ok(self.unipolar[0]),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }

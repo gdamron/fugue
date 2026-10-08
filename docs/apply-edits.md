@@ -30,8 +30,8 @@ described here is made by the daemon, and every refusal is structured.
   "mutation": { "id": "editor-7f3a-0042", "issued_at": { "session_id": "…", "revision": 12 } },
   "expected_revision": { "session_id": "…", "revision": 12 },
   "edits": [
-    { "op": "add_module", "id": "tremolo", "module_type": "lfo", "config": { "frequency": 5 } },
-    { "op": "connect", "from": "tremolo", "from_port": "out", "to": "lead", "to_port": "am" },
+    { "op": "add_module", "id": "tremolo", "module_type": "lfo", "config": { "rate": 5 } },
+    { "op": "connect", "from": "tremolo", "from_port": "bipolar", "to": "lead", "to_port": "am" },
     { "op": "set_control", "module_id": "lead", "key": "am_amount", "value": 0.3 }
   ]
 }

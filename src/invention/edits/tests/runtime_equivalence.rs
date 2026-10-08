@@ -74,16 +74,16 @@ fn retained(running: &crate::RunningInvention) -> Invention {
 #[test]
 fn the_candidate_matches_the_equivalent_runtime_commands() {
     let edits = vec![
-        add("lfo", "lfo", json!({ "frequency": 2 })),
-        connect("lfo", "out", "osc1", "fm"),
+        add("lfo", "lfo", json!({ "rate": 2 })),
+        connect("lfo", "bipolar", "osc1", "fm"),
         set("osc2", "frequency", ControlValue::String("330".into())),
         set("osc2", "type", ControlValue::String("square".into())),
-        set("lfo", "frequency", ControlValue::Number(0.25)),
+        set("lfo", "rate", ControlValue::Number(0.25)),
         disconnect("osc2", "audio", "dac", "audio"),
         remove("osc1"),
         remove("osc2"),
         add("osc2", "lfo", json!(null)),
-        connect("osc2", "out", "lfo", "rate"),
+        connect("osc2", "bipolar", "lfo", "rate_mod"),
     ];
 
     let running = start(base());
@@ -92,9 +92,9 @@ fn the_candidate_matches_the_equivalent_runtime_commands() {
     let candidate = apply_to_candidate(&before, &edits, &mut facts).expect("the batch applies");
 
     running
-        .add_module("lfo", "lfo", &json!({ "frequency": 2 }))
+        .add_module("lfo", "lfo", &json!({ "rate": 2 }))
         .unwrap();
-    running.connect("lfo", "out", "osc1", "fm").unwrap();
+    running.connect("lfo", "bipolar", "osc1", "fm").unwrap();
     running
         .set_control("osc2", "frequency", ControlValue::String("330".into()))
         .unwrap();
@@ -102,13 +102,15 @@ fn the_candidate_matches_the_equivalent_runtime_commands() {
         .set_control("osc2", "type", ControlValue::String("square".into()))
         .unwrap();
     running
-        .set_control("lfo", "frequency", ControlValue::Number(0.25))
+        .set_control("lfo", "rate", ControlValue::Number(0.25))
         .unwrap();
     running.disconnect("osc2", "audio", "dac", "audio").unwrap();
     running.remove_module("osc1").unwrap();
     running.remove_module("osc2").unwrap();
     running.add_module("osc2", "lfo", &json!(null)).unwrap();
-    running.connect("osc2", "out", "lfo", "rate").unwrap();
+    running
+        .connect("osc2", "bipolar", "lfo", "rate_mod")
+        .unwrap();
 
     assert_eq!(candidate.document, retained(&running));
     // Only the write to the surviving module remains: the osc2 writes were
@@ -118,10 +120,7 @@ fn the_candidate_matches_the_equivalent_runtime_commands() {
         panic!("expected one write, got {:?}", candidate.control_writes);
     };
     assert_eq!((lfo.edit_index, lfo.write.module_id.as_str()), (4, "lfo"));
-    assert_eq!(
-        running.get_control("lfo", "frequency").unwrap(),
-        lfo.write.value
-    );
+    assert_eq!(running.get_control("lfo", "rate").unwrap(), lfo.write.value);
 }
 
 #[test]

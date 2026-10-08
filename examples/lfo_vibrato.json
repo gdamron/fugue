@@ -27,7 +27,7 @@
       "id": "vibrato_lfo",
       "type": "lfo",
       "config": {
-        "frequency": 5.5,
+        "rate": 5.5,
         "waveform": "sine"
       }
     },
@@ -73,7 +73,7 @@
     },
     {
       "from": "vibrato_lfo",
-      "from_port": "out",
+      "from_port": "bipolar",
       "to": "osc",
       "to_port": "fm"
     },
