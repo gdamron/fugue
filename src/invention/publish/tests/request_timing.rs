@@ -257,3 +257,42 @@ fn requests_expiring_while_installs_are_deferred_keep_the_back_pressure() {
         .iter()
         .all(|(_, outcome)| *outcome == Outcome::Refused(Refusal::Expired)));
 }
+
+/// A held request with a ttl cannot know whether it applies until its
+/// publication installs, so it replaces nothing: whichever it would have
+/// replaced still applies when it expires.
+#[test]
+fn a_held_request_that_expires_never_erases_the_one_before_it() {
+    let (mut rig, port) = oscillator_rig();
+    rig.hold_a_retirement();
+    let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
+    rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
+    let start = rig.graph.transport.rendered();
+    let at = When::AtSample(start + 10);
+    // Same control and sample: the second can never apply in time, the
+    // third could have, but its publication installs too late.
+    let first = submit(&rig, "osc3", port, 0.5, at);
+    let never = submit_with_ttl(&rig, "osc3", port, 0.25, at, 5);
+    let too_late = submit_with_ttl(&rig, "osc3", port, 0.75, at, 20);
+
+    assert_eq!(counted_block(&mut rig), (0, 0), "holding");
+    assert_eq!(outcomes(&mut rig), [], "nothing superseded while held");
+    rig.live.reclaim();
+    let installed = rig.graph.current_sample;
+    assert_eq!(counted_block(&mut rig), (0, 0), "installing");
+    assert_eq!(frequency(&mut rig, "osc3", port), 0.5);
+    assert_eq!(
+        outcomes(&mut rig),
+        [
+            (
+                first,
+                Outcome::AppliedLate {
+                    at: installed,
+                    due: start + 10
+                }
+            ),
+            (never, Outcome::Refused(Refusal::Expired)),
+            (too_late, Outcome::Refused(Refusal::Expired)),
+        ]
+    );
+}

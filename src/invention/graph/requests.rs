@@ -159,7 +159,9 @@ impl SignalGraph {
         // start. A request for a generation not yet installed is held
         // whatever its expiry, and refused once due after the install
         // (`PendingStore::apply_due`): refusing it here would free its room
-        // and lift the back-pressure that bounds the folded remaps.
+        // and lift the back-pressure that bounds the folded remaps. Until
+        // then it cannot know whether it applies, so with a ttl it replaces
+        // nothing (`PendingStore::insert_beside`).
         let resolve = |graph: &Self, request: &Request| {
             let mut target = request.target;
             let at = match request.when {
@@ -183,14 +185,16 @@ impl SignalGraph {
         for _ in 0..drain.pop_limit {
             let head = drain.requests.peek(|head| {
                 let older = head.target.generation < installed;
+                let replaces = head.target.generation <= installed || head.expires.is_none();
                 (
                     head.value.is_payload(),
                     head.event,
                     older,
+                    replaces,
                     resolve(self, head),
                 )
             });
-            let Some((payload, event, older, landing)) = head else {
+            let Some((payload, event, older, replaces, landing)) = head else {
                 break;
             };
             // An install must pop every older request while it holds the
@@ -205,8 +209,9 @@ impl SignalGraph {
             // even when the store is saturated.
             if !owed
                 && drain.pending.is_full()
-                && !landing
-                    .is_ok_and(|(target, at)| drain.pending.coalesces_with(&target, at, event))
+                && !(replaces
+                    && landing
+                        .is_ok_and(|(target, at)| drain.pending.coalesces_with(&target, at, event)))
             {
                 break;
             }
@@ -217,7 +222,11 @@ impl SignalGraph {
             match landing {
                 Ok((target, at)) => {
                     request.target = target;
-                    drain.pending.insert(request, at);
+                    if replaces {
+                        drain.pending.insert(request, at);
+                    } else {
+                        drain.pending.insert_beside(request, at);
+                    }
                 }
                 Err(refusal) => drain
                     .pending

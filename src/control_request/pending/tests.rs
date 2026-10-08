@@ -202,3 +202,14 @@ fn an_entry_applied_past_its_due_sample_is_late_and_past_its_expiry_is_refused()
     );
     assert_eq!(store.len(), 0);
 }
+
+#[test]
+fn inserting_beside_replaces_nothing_and_both_apply_in_receipt_order() {
+    let (mut store, outcomes) = store_of(8);
+    let a = target(INSTALLED, 0, 0);
+    store.insert(request(1, a, 1.0), 10);
+    store.insert_beside(request(2, a, 2.0), 10);
+    assert_eq!(store.len(), 2);
+    assert_eq!(log(&outcomes), []);
+    assert_eq!(apply_at(&mut store, 10), [(0, 0, 1.0), (0, 0, 2.0)]);
+}

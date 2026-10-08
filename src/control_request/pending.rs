@@ -137,7 +137,9 @@ struct Pending {
 ///
 /// An entry whose target generation is newer than the installed one is
 /// held: it is never due, and never bounds a segment, until its
-/// publication installs.
+/// publication installs. A held request with a ttl replaces nothing (see
+/// [`Self::insert_beside`]): whether it applies is known only at the
+/// install, so it must not erase a request that would.
 pub(crate) struct PendingStore {
     entries: Vec<Pending>,
     limit: usize,
@@ -188,11 +190,23 @@ impl PendingStore {
     /// ([`Refusal::PendingFull`]) when the store is full. Binary search,
     /// then an in-place shift: allocation- and free-free.
     pub(crate) fn insert(&mut self, request: Request, at: u64) {
+        self.place(request, at, true);
+    }
+
+    /// [`Self::insert`] without replacing a waiting request: for a held
+    /// request that may expire before its publication installs. Both then
+    /// apply in receipt order, which leaves the later value, or the earlier
+    /// one when the later expired.
+    pub(crate) fn insert_beside(&mut self, request: Request, at: u64) {
+        self.place(request, at, false);
+    }
+
+    fn place(&mut self, request: Request, at: u64, replace: bool) {
         let first = self.entries.partition_point(|e| e.at < at);
         let mut end = first + self.entries[first..].partition_point(|e| e.at == at);
         let same = self.entries[first..end]
             .iter()
-            .position(|e| !request.event && e.request.target == request.target);
+            .position(|e| replace && !request.event && e.request.target == request.target);
         if let Some(offset) = same {
             let old = self.entries.remove(first + offset);
             self.outcomes.settle(old.request, Outcome::Superseded);
