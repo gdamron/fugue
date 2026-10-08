@@ -26,9 +26,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use std::sync::mpsc::{SyncSender, TrySendError};
-
-use super::graph::{InputWrite, RoutingConnection, SignalGraph};
+use super::graph::{RoutingConnection, SignalGraph};
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
@@ -58,7 +56,6 @@ const BUILD_ATTEMPTS: usize = 3;
 pub(crate) struct LiveGraph {
     publisher: Arc<Mutex<Publisher>>,
     reclaimer: Arc<Reclaimer>,
-    inputs: SyncSender<InputWrite>,
     /// Kept so the audio thread never holds the queue's last handle; the
     /// front doors that submit through it arrive with FUG-310's controls.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -99,7 +96,6 @@ impl LiveGraph {
         Self {
             publisher: Arc::new(Mutex::new(publisher)),
             reclaimer: Arc::new(Reclaimer::new(ends.retired, ends.payloads)),
-            inputs: ends.inputs,
             requests: ends.requests,
             outcomes: ends.outcomes,
             state,
@@ -360,15 +356,7 @@ impl LiveGraph {
     ) -> Result<(), GraphCommandError> {
         let mut publisher = self.publisher.lock().unwrap();
         let write = publisher.input_write(module_id, port, value)?;
-        let sent = self.inputs.try_send(write);
-        if sent.is_ok() {
-            publisher.note_written();
-        }
-        drop(publisher);
-        sent.map_err(|error| match error {
-            TrySendError::Full(_) => GraphCommandError::QueueFull,
-            TrySendError::Disconnected(_) => GraphCommandError::AudioThreadStopped,
-        })
+        publisher.queue_input(write)
     }
 
     /// Adds a module, replacing one with the same id in place. Built

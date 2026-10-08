@@ -6,7 +6,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 
-use super::{Producer, Ring};
+use super::{Consumer, Producer, Ring};
 use crate::alloc_counter::allocator_events;
 
 /// Records which thread drops each [`Tracked`] value, in order.
@@ -160,4 +160,91 @@ fn a_pop_that_unwinds_releases_its_slot_once() {
     assert!(producer.push(ledger.value(2)).is_ok());
     drop((producer, ring));
     assert_eq!(ledger.dropped_ids(), [1, 2]);
+}
+
+#[test]
+fn a_claimed_consumer_moves_every_value_once_in_order_across_threads() {
+    const COUNT: usize = if cfg!(miri) { 200 } else { 20_000 };
+    let ring = Ring::with_capacity(4);
+    let mut producer = Producer::claim(Arc::clone(&ring));
+    let mut consumer = Consumer::claim(Arc::clone(&ring));
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            for id in 0..COUNT {
+                let mut value = id;
+                while let Err(back) = producer.push(value) {
+                    value = back;
+                    thread::yield_now();
+                }
+            }
+        });
+        scope.spawn(|| {
+            let mut next = 0;
+            while next < COUNT {
+                match consumer.pop() {
+                    Some(value) => {
+                        assert_eq!(value, next);
+                        next += 1;
+                    }
+                    None => thread::yield_now(),
+                }
+            }
+        });
+    });
+    assert_eq!(consumer.pop(), None);
+}
+
+#[test]
+fn a_stalled_producer_never_makes_the_consumer_wait() {
+    let ring = Ring::with_capacity(2);
+    let mut producer = Producer::claim(Arc::clone(&ring));
+    let mut consumer = Consumer::claim(Arc::clone(&ring));
+    producer.push(1usize).unwrap();
+
+    // The producer has written value 2 but not published it: the consumer,
+    // on another thread, takes value 1 and then finds the ring empty at
+    // once, allocating, freeing and locking nothing.
+    let pushed = producer.push_paused(2, || {
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                let (popped, allocs, frees) =
+                    allocator_events(|| [consumer.pop(), consumer.pop()]);
+                assert_eq!(popped, [Some(1), None]);
+                assert_eq!((allocs, frees), (0, 0));
+            });
+        });
+    });
+    assert_eq!(pushed, Ok(()));
+    assert_eq!(consumer.pop(), Some(2));
+}
+
+#[test]
+#[should_panic(expected = "already has a consumer")]
+fn a_second_consumer_panics() {
+    let ring = Ring::<u32>::with_capacity(1);
+    let _first = Consumer::claim(Arc::clone(&ring));
+    let _second = Consumer::claim(ring);
+}
+
+#[test]
+fn a_claimed_consumer_excludes_locked_pops_until_dropped() {
+    let ring = Ring::with_capacity(4);
+    let mut producer = Producer::claim(Arc::clone(&ring));
+    for value in 1..=3 {
+        producer.push(value).unwrap();
+    }
+    let mut consumer = Consumer::claim(Arc::clone(&ring));
+    assert_eq!(consumer.pop(), Some(1));
+    assert!(catch_unwind(AssertUnwindSafe(|| ring.pop())).is_err());
+
+    // A locked pop, then a new consumer on another thread, each continue
+    // from the last one's `head`.
+    drop(consumer);
+    assert_eq!(ring.pop(), Some(2));
+    let second = Arc::clone(&ring);
+    let popped = thread::spawn(move || Consumer::claim(second).pop())
+        .join()
+        .unwrap();
+    assert_eq!(popped, Some(3));
+    assert_eq!(ring.pop(), None);
 }

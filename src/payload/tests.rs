@@ -358,7 +358,7 @@ fn the_reclaimer_drains_its_payload_queue() {
     use crate::invention::publish::Reclaimer;
 
     let ledger = Ledger::default();
-    let (_retire, retired) = mpsc::sync_channel::<Box<Publication>>(1);
+    let retired = crate::spsc::Ring::<Box<Publication>>::with_capacity(1);
     let queue = RetireQueue::with_capacity(4);
     let reclaimer = Reclaimer::new(retired, Arc::clone(&queue));
     let mut retirer = Retirer::new(queue, RETIRE_HOLD);
