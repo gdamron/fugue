@@ -12,18 +12,18 @@ const WRITE_PROBE: &str = "write_probe";
 
 /// One write a probe received: the probe's id (from its config), the
 /// instance's build serial, the port, and the value.
-type Received = (String, usize, String, f32);
+pub(super) type Received = (String, usize, String, f32);
 
 /// Builds probes that log every input write they receive.
 #[derive(Clone, Default)]
-struct WriteProbeFactory {
+pub(super) struct WriteProbeFactory {
     log: Arc<Mutex<Vec<Received>>>,
     built: Arc<AtomicUsize>,
 }
 
 impl WriteProbeFactory {
     /// Takes the writes received so far, in the order they arrived.
-    fn take(&self) -> Vec<Received> {
+    pub(super) fn take(&self) -> Vec<Received> {
         std::mem::take(&mut *self.log.lock().unwrap())
     }
 }
@@ -101,13 +101,13 @@ impl Module for WriteProbe {
     }
 }
 
-fn got(id: &str, serial: usize, port: &str, value: f32) -> Received {
+pub(super) fn got(id: &str, serial: usize, port: &str, value: f32) -> Received {
     (id.to_string(), serial, port.to_string(), value)
 }
 
 /// The base rig with a probe for each of `ids` appended (built in order,
 /// so probe `ids[n]` is serial `n`), installed.
-fn rig_with_probes(ids: &[&str]) -> (Rig, WriteProbeFactory) {
+pub(super) fn rig_with_probes(ids: &[&str]) -> (Rig, WriteProbeFactory) {
     let probes = WriteProbeFactory::default();
     let mut rig = Rig::new(BASE);
     rig.registry.register(probes.clone());
@@ -125,7 +125,7 @@ fn rig_with_probes(ids: &[&str]) -> (Rig, WriteProbeFactory) {
     (rig, probes)
 }
 
-fn probe(rig: &Rig, id: &str) -> change::BuiltModule {
+pub(super) fn probe(rig: &Rig, id: &str) -> change::BuiltModule {
     rig.build(id, WRITE_PROBE, serde_json::json!({ "id": id }))
 }
 
@@ -210,7 +210,7 @@ fn a_write_to_a_removed_or_rebuilt_module_is_dropped() {
 }
 
 /// Publishes one change under the publisher, as a script's edit would.
-fn edit(rig: &Rig, apply: impl FnOnce(&mut GraphChange)) {
+pub(super) fn edit(rig: &Rig, apply: impl FnOnce(&mut GraphChange)) {
     rig.live
         .edit(|change| {
             apply(change);
