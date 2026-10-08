@@ -1,5 +1,7 @@
 //! The typed control request.
 
+use crate::payload::Payload;
+
 /// A real-time control value: `Copy` and small, so carrying, coalescing and
 /// applying one never allocates or frees.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -72,30 +74,28 @@ pub(crate) enum Source {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct RequestId(pub(crate) u64);
 
-/// A heavy value prepared on a control thread (FUG-309, A2).
-///
-/// Uninhabited until A2 replaces it with its type-erased payload handle, so
-/// for now no request can own heap memory. The contract A2 fills in: every
-/// code path that discards a request's value (superseded, refused, applied)
-/// hands a payload to one retire point that frees it off the audio thread;
-/// no path drops one on the audio thread.
-#[derive(Debug, PartialEq)]
-pub(crate) enum PayloadHandle {}
-
 /// What a request writes.
 ///
-/// Not `Copy` or `Clone`: a payload is moved, never duplicated.
-#[derive(Debug, PartialEq)]
+/// Not `Copy` or `Clone`: a payload is moved, never duplicated. On the
+/// audio side a payload leaves only by being kept by the module it applies
+/// to or by being retired (see `crate::payload`), never by being dropped.
+#[derive(Debug)]
 pub(crate) enum RequestValue {
     Value(RtValue),
-    Payload(PayloadHandle),
+    /// A heavy value prepared on a control thread (FUG-309).
+    Payload(Payload),
+}
+
+impl RequestValue {
+    pub(crate) fn is_payload(&self) -> bool {
+        matches!(self, Self::Payload(_))
+    }
 }
 
 /// One control write on its way to the audio thread.
 ///
-/// Not `Copy` or `Clone`, so its payload (once A2 adds one) has exactly one
-/// owner.
-#[derive(Debug, PartialEq)]
+/// Not `Copy` or `Clone`, so its payload has exactly one owner.
+#[derive(Debug)]
 pub(crate) struct Request {
     pub(crate) target: ControlTarget,
     pub(crate) value: RequestValue,

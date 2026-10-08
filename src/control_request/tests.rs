@@ -124,7 +124,10 @@ fn a_full_channel_returns_the_request_and_counts_the_overflow() {
     let first = sender.submit(request(1.0)).unwrap();
     let second = sender.clone().submit(request(2.0)).unwrap();
     let QueueFull(refused) = sender.submit(request(3.0)).unwrap_err();
-    assert_eq!(refused.value, RequestValue::Value(RtValue::F32(3.0)));
+    assert!(matches!(
+        refused.value,
+        RequestValue::Value(RtValue::F32(3.0))
+    ));
     assert!(refused.id != first && refused.id != second);
     assert!(sender.submit(request(4.0)).is_err());
     assert_eq!(cursor.take(sender.overflows()), 2);

@@ -2,6 +2,7 @@
 //! one point every request leaves the audio thread's hands through.
 
 use super::request::{ControlTarget, Request, RequestValue};
+use crate::payload::{Retirer, MAX_RETIRES_PER_REQUEST};
 
 /// Why a request was not applied.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,9 +30,23 @@ pub(crate) enum Outcome {
     Refused(Refusal),
 }
 
-/// Where requests go once settled. This slice only disposes of their
-/// values; slice 3 publishes each outcome from [`Self::settle`].
+/// Where requests go once settled, and the retirer that takes every
+/// payload the audio side does not keep.
+///
+/// # Retire room
+///
+/// A payload must never be dropped on the audio thread, and the
+/// [`Retirer`] can only promise room it has, so each pending payload
+/// request reserves [`MAX_RETIRES_PER_REQUEST`] retirements when it is
+/// taken and releases them when it settles. The intake takes a payload
+/// request only while [`Self::has_room_for_payload`]: the retirer's room
+/// always covers every reservation, so no settle, remap or apply can retire
+/// past it. A request carrying a plain value retires nothing and reserves
+/// nothing (see [`PendingStore::apply_due`]).
 pub(crate) struct Outcomes {
+    pub(crate) retirer: Retirer,
+    /// Retirements reserved by pending payload requests.
+    reserved: usize,
     /// Every outcome settled so far, in order, while there is room: the log
     /// is allocated once and never grows, so tests can count blocks clean.
     #[cfg(test)]
@@ -39,33 +54,55 @@ pub(crate) struct Outcomes {
 }
 
 impl Outcomes {
-    fn new() -> Self {
+    fn new(retirer: Retirer) -> Self {
         Self {
+            retirer,
+            reserved: 0,
             #[cfg(test)]
             log: Vec::with_capacity(4096),
         }
     }
 
-    /// The single exit point: every request the drain pops leaves through
-    /// here exactly once, applied, superseded or refused.
-    /// Allocation- and free-free.
+    /// Whether the retirer has room for one more pending payload request
+    /// on top of those already reserved.
+    pub(crate) fn has_room_for_payload(&self) -> bool {
+        self.retirer
+            .has_room(self.reserved + MAX_RETIRES_PER_REQUEST)
+    }
+
+    /// Reserves retire room for a request just taken: call it before the
+    /// request is inserted or settled, and only once
+    /// [`Self::has_room_for_payload`] said there is room for a payload.
+    pub(crate) fn reserve(&mut self, request: &Request) {
+        if request.value.is_payload() {
+            self.reserved += MAX_RETIRES_PER_REQUEST;
+        }
+    }
+
+    /// The single exit point: every request the drain takes leaves through
+    /// here exactly once, applied, superseded or refused, and a payload it
+    /// still carries is retired. Allocation-, free- and lock-free.
     pub(crate) fn settle(&mut self, request: Request, outcome: Outcome) {
+        let Request { value, id, .. } = request;
+        let payload = value.is_payload();
+        if let RequestValue::Payload(payload) = value {
+            self.retirer.retire(payload);
+        }
+        self.record(id, payload, outcome);
+    }
+
+    /// Records the outcome of a request whose value is already disposed of
+    /// and releases its reservation. Slice 3 publishes it from here.
+    fn record(&mut self, id: super::RequestId, payload: bool, outcome: Outcome) {
+        if payload {
+            self.reserved -= MAX_RETIRES_PER_REQUEST;
+        }
         #[cfg(test)]
         if self.log.len() < self.log.capacity() {
-            self.log.push((request.id, outcome));
+            self.log.push((id, outcome));
         }
         #[cfg(not(test))]
-        let _ = outcome;
-        retire_value(request.value);
-    }
-}
-
-/// Disposes of a settled request's value. A payload (FUG-309) must never be
-/// dropped on the audio thread: A2 hands it to its retire channel here.
-fn retire_value(value: RequestValue) {
-    match value {
-        RequestValue::Value(_) => {}
-        RequestValue::Payload(payload) => match payload {},
+        let _ = (id, outcome);
     }
 }
 
@@ -99,12 +136,13 @@ pub(crate) struct PendingStore {
 }
 
 impl PendingStore {
-    /// A store for up to `capacity` requests. Allocates: control thread.
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
+    /// A store for up to `capacity` requests, retiring the payloads it
+    /// does not apply through `retirer`. Allocates: control thread.
+    pub(crate) fn new(capacity: usize, retirer: Retirer) -> Self {
         Self {
             entries: Vec::with_capacity(capacity),
             limit: capacity,
-            outcomes: Outcomes::new(),
+            outcomes: Outcomes::new(retirer),
         }
     }
 
@@ -158,22 +196,31 @@ impl PendingStore {
     /// target is in the `installed` generation, settling each applied or
     /// refused as `apply` decides. Held entries stay. Compacts in place:
     /// allocation- and free-free.
+    ///
+    /// `apply` owns the value it is handed. A payload it either keeps or
+    /// retires, applied or refused, retiring at most
+    /// [`MAX_RETIRES_PER_REQUEST`] values in all (the payload or the value
+    /// it replaces); a plain value retires nothing.
     pub(crate) fn apply_due(
         &mut self,
         now: u64,
         installed: u64,
-        mut apply: impl FnMut(&ControlTarget, &RequestValue) -> Result<(), Refusal>,
+        mut apply: impl FnMut(&ControlTarget, RequestValue, &mut Retirer) -> Result<(), Refusal>,
     ) {
         let due = self.entries.partition_point(|e| e.at <= now);
         let applied = self
             .entries
             .extract_if(..due, |e| e.request.target.generation == installed);
         for entry in applied {
-            let outcome = match apply(&entry.request.target, &entry.request.value) {
+            let Request {
+                target, value, id, ..
+            } = entry.request;
+            let payload = value.is_payload();
+            let outcome = match apply(&target, value, &mut self.outcomes.retirer) {
                 Ok(()) => Outcome::Applied { at: now },
                 Err(refusal) => Outcome::Refused(refusal),
             };
-            self.outcomes.settle(entry.request, outcome);
+            self.outcomes.record(id, payload, outcome);
         }
     }
 

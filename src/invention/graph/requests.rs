@@ -44,12 +44,21 @@
 //!   input writes are bounded by their ring (FUG-292). Refusing instead
 //!   would let every fold keep one more remap, without bound.
 //!
-//! FUG-309: A2's retirer adds a "has room" check before a request whose
-//! payload may need retiring is popped. Outside an install block that just
-//! stops popping. An install block cannot stop, so the integration must
-//! keep the retired publication (taking no new one) until the queue is
-//! drained. That cannot deadlock: the retire queue drains on a control
-//! thread.
+//! # Retire room: payloads stop the intake
+//!
+//! The drain flushes its retirer at every block start, and takes a request
+//! carrying a payload only while the retirer has room for it on top of
+//! every pending payload's reservation (see
+//! [`Outcomes`](crate::control_request::Outcomes)). Without room it stops
+//! popping: the request and everything behind it stay queued, in order,
+//! and the next block retries once a control thread has drained the retire
+//! queue. Outside an install that is all. An install block cannot leave
+//! older-generation requests behind, so when it stops early the link keeps
+//! the retired publication, taking no new one, and every following block
+//! goes on popping with its remaps in hand until the install's debt (the
+//! queue's capacity, counted from the install) is popped or the queue is
+//! empty; only then does the publication go back. That cannot deadlock:
+//! the retire queue drains on a control thread.
 //!
 //! # Sample accuracy by splitting the block
 //!
@@ -68,11 +77,13 @@ use crate::control_request::RtValue;
 use crate::control_request::{
     ControlIndex, Outcome, PendingStore, QueueConsumer, Refusal, Request, RequestValue, When,
 };
+use crate::payload::Retirer;
 
-/// Applies a request's value in tests (see [`SignalGraph::request_hook`]).
+/// Applies a request's value in tests (see [`SignalGraph::request_hook`]),
+/// under [`PendingStore::apply_due`]'s contract.
 #[cfg(test)]
 pub(crate) type RequestHook =
-    fn(&mut SignalGraph, usize, ControlIndex, RtValue) -> Result<(), Refusal>;
+    fn(&mut SignalGraph, usize, ControlIndex, RequestValue, &mut Retirer) -> Result<(), Refusal>;
 
 /// The audio thread's end of a live graph's request channel.
 pub(crate) struct RequestDrain {
@@ -82,32 +93,53 @@ pub(crate) struct RequestDrain {
     pub(crate) pending: PendingStore,
     /// The installed publication's generation, as of the last drain.
     installed: u64,
+    /// Requests still to pop, in install mode, before the install whose
+    /// retired publication is in hand has popped every request resolved
+    /// against an older generation: the queue's capacity at the install.
+    debt: usize,
 }
 
 impl RequestDrain {
     /// Allocates the pending store: call it on a control thread. The queue
-    /// must hold at most `pop_limit` requests.
-    pub(crate) fn new(requests: QueueConsumer<Request>, pop_limit: usize, pending: usize) -> Self {
+    /// must hold at most `pop_limit` requests; `retirer` takes every payload
+    /// the audio side does not keep.
+    pub(crate) fn new(
+        requests: QueueConsumer<Request>,
+        pop_limit: usize,
+        pending: usize,
+        retirer: Retirer,
+    ) -> Self {
         Self {
             requests,
             pop_limit,
-            pending: PendingStore::with_capacity(pending),
+            pending: PendingStore::new(pending, retirer),
             installed: 0,
+            debt: 0,
         }
     }
 }
 
 impl SignalGraph {
-    /// Maps pending requests across this block's install (if any), then
-    /// pops the queue into the pending store: all of it in an install
-    /// block, otherwise only while the store has room (see the module
-    /// docs). Runs in
-    /// `drain_link` with the retired publication in hand. Allocation-,
+    /// Maps pending requests across the install whose retired publication
+    /// is in hand (if any), then pops the queue into the pending store: in
+    /// install mode until the install's debt is paid, otherwise only while
+    /// the store has room, and in both only while the retirer has room for
+    /// a payload (see the module docs). Runs in `drain_link`. Returns false
+    /// when an install's older-generation requests may still be queued, so
+    /// the caller must keep `retired` for the next block. Allocation-,
     /// free- and lock-free.
-    pub(super) fn drain_requests(&mut self, installed: u64, retired: Option<(u64, &Publication)>) {
+    pub(super) fn drain_requests(
+        &mut self,
+        installed: u64,
+        retired: Option<(u64, &Publication)>,
+    ) -> bool {
         let Some(mut drain) = self.requests.take() else {
-            return;
+            return true;
         };
+        drain.pending.outcomes.retirer.flush();
+        if installed != drain.installed {
+            drain.debt = drain.pop_limit;
+        }
         drain.installed = installed;
         let map = |graph: &Self, generation, module_idx| match graph
             .dispose(generation, module_idx, installed, retired)
@@ -137,23 +169,35 @@ impl SignalGraph {
             };
             Some((target, at))
         };
-        for _ in 0..drain.pop_limit {
+        let install = retired.is_some();
+        let mut budget = if install { drain.debt } else { drain.pop_limit };
+        while budget > 0 {
+            let head = drain
+                .requests
+                .peek(|head| (head.value.is_payload(), resolve(self, head)));
+            let Some((payload, landing)) = head else {
+                // Empty: nothing older than the install is left behind.
+                budget = 0;
+                break;
+            };
+            if payload && !drain.pending.outcomes.has_room_for_payload() {
+                break;
+            }
             // Back-pressure outside an install block, except for a request
             // that replaces a waiting one, which needs no room: last write
             // wins even when the store is saturated.
-            if retired.is_none() && drain.pending.is_full() {
-                let replaces = drain.requests.peek(|head| resolve(self, head));
-                let replaces = replaces
-                    .flatten()
-                    .is_some_and(|(target, at)| drain.pending.coalesces_with(&target, at));
-                if !replaces {
-                    break;
-                }
+            if !install
+                && drain.pending.is_full()
+                && !landing.is_some_and(|(target, at)| drain.pending.coalesces_with(&target, at))
+            {
+                break;
             }
             let Some(mut request) = drain.requests.pop() else {
                 break;
             };
-            match resolve(self, &request) {
+            budget -= 1;
+            drain.pending.outcomes.reserve(&request);
+            match landing {
                 Some((target, at)) => {
                     request.target = target;
                     drain.pending.insert(request, at);
@@ -164,7 +208,12 @@ impl SignalGraph {
                     .settle(request, Outcome::Refused(Refusal::TargetGone)),
             }
         }
+        if install {
+            drain.debt = budget;
+        }
+        let paid = drain.debt == 0;
         self.requests = Some(drain);
+        !install || paid
     }
 
     /// Applies every request due at the current sample and returns the
@@ -178,32 +227,33 @@ impl SignalGraph {
         let now = self.current_sample;
         drain
             .pending
-            .apply_due(now, drain.installed, |target, value| {
-                self.apply_request(target.module_idx, target.control, value)
+            .apply_due(now, drain.installed, |target, value, retirer| {
+                self.apply_request(target.module_idx, target.control, value, retirer)
             });
         let next = drain.pending.next_due(drain.installed);
         self.requests = Some(drain);
         next.map_or(remaining, |at| (at - now).min(remaining as u64) as usize)
     }
 
-    /// Applies `value` to `control` of the module at `module_idx`. No module
-    /// accepts requests until FUG-310, so this refuses with
-    /// [`Refusal::Unsupported`], except through a test's hook.
+    /// Applies `value` to `control` of the module at `module_idx`, under
+    /// [`PendingStore::apply_due`]'s contract. No module accepts requests
+    /// until FUG-310, so this refuses with [`Refusal::Unsupported`],
+    /// retiring a payload, except through a test's hook.
     fn apply_request(
         &mut self,
         module_idx: usize,
         control: ControlIndex,
-        value: &RequestValue,
+        value: RequestValue,
+        retirer: &mut Retirer,
     ) -> Result<(), Refusal> {
-        let value = match value {
-            RequestValue::Value(value) => *value,
-            RequestValue::Payload(payload) => match *payload {},
-        };
         #[cfg(test)]
         if let Some(hook) = self.request_hook {
-            return hook(self, module_idx, control, value);
+            return hook(self, module_idx, control, value, retirer);
         }
-        let _ = (module_idx, control, value);
+        let _ = (module_idx, control);
+        if let RequestValue::Payload(payload) = value {
+            retirer.retire(payload);
+        }
         Err(Refusal::Unsupported)
     }
 
@@ -214,10 +264,16 @@ impl SignalGraph {
         &mut self,
         module_idx: usize,
         control: ControlIndex,
-        value: RtValue,
+        value: RequestValue,
+        retirer: &mut Retirer,
     ) -> Result<(), Refusal> {
-        let RtValue::F32(value) = value else {
-            return Err(Refusal::Unsupported);
+        let value = match value {
+            RequestValue::Value(RtValue::F32(value)) => value,
+            RequestValue::Value(_) => return Err(Refusal::Unsupported),
+            RequestValue::Payload(payload) => {
+                retirer.retire(payload);
+                return Err(Refusal::Unsupported);
+            }
         };
         self.apply_input(module_idx, usize::from(control.0), value);
         Ok(())

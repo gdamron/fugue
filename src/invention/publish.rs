@@ -94,7 +94,7 @@ impl LiveGraph {
         let (publisher, ends) = Publisher::link(graph);
         Self {
             publisher: Arc::new(Mutex::new(publisher)),
-            reclaimer: Arc::new(Reclaimer::new(ends.retired)),
+            reclaimer: Arc::new(Reclaimer::new(ends.retired, ends.payloads)),
             inputs: ends.inputs,
             requests: ends.requests,
             state,
