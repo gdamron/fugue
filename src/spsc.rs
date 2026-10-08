@@ -9,11 +9,15 @@
 //! mid-pop makes the ring look full rather than making the producer spin.
 //! Pushing allocates, frees and locks nothing, and never waits.
 //!
-//! One producer at a time is enforced by [`Producer::claim`]. Consumers are
-//! serialized by a lock the producer never touches, so as written the
-//! consumer side belongs on a control thread.
+//! One producer at a time is enforced by [`Producer::claim`]. The consumer
+//! side is either one claimed [`Consumer`], whose pop takes no lock and
+//! never waits (for the audio thread), or [`Ring::pop`]'s callers,
+//! serialized by a lock the producer never touches (for control threads).
+//! A popping consumer is the mirror image of a pushing producer: a producer
+//! preempted mid-push makes the ring look empty at that slot rather than
+//! making the consumer spin.
 
-// The first user is the request-payload retire queue (FUG-309).
+// Not every user calls every method outside tests.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use std::cell::UnsafeCell;
@@ -30,14 +34,19 @@ pub(crate) struct Ring<T> {
     /// Pushes so far (wrapping). Written only by the claimed producer.
     tail: AtomicUsize,
     producer: AtomicBool,
+    /// Serializes [`Ring::pop`] callers, and [`Consumer::claim`] with them.
     consumer: Mutex<()>,
+    /// Whether a [`Consumer`] holds the consumer end; set and checked only
+    /// under `consumer`, cleared by the consumer's drop.
+    claimed: AtomicBool,
 }
 
 // SAFETY: the ring moves `T`s between threads, hence `T: Send`. Shared use
 // is sound because every slot has one owner at a time: the producer (unique
 // by `Producer::claim`, and `&mut` to push) from seeing it free until it
-// publishes `tail`, then the consumer (unique under `consumer`) from seeing
-// it filled until it publishes `head`.
+// publishes `tail`, then the consumer (the claimed `Consumer`, `&mut` to
+// pop, or else the one holder of `consumer`) from seeing it filled until it
+// publishes `head`.
 unsafe impl<T: Send> Sync for Ring<T> {}
 
 impl<T> Ring<T> {
@@ -52,6 +61,7 @@ impl<T> Ring<T> {
             tail: AtomicUsize::new(0),
             producer: AtomicBool::new(false),
             consumer: Mutex::new(()),
+            claimed: AtomicBool::new(false),
         })
     }
 
@@ -66,15 +76,38 @@ impl<T> Ring<T> {
 
     /// As [`Self::pop`], running `paused` after the value is read but
     /// before its slot is released: a consumer preempted mid-pop.
+    ///
+    /// # Panics
+    ///
+    /// If a [`Consumer`] holds the consumer end: a programming error.
     pub(crate) fn pop_paused(&self, paused: impl FnOnce()) -> Option<T> {
         let _consumer = self.consumer.lock().unwrap_or_else(PoisonError::into_inner);
+        // Acquire pairs with the last claimed consumer's release of its
+        // claim, so this pop starts from its `head`.
+        assert!(
+            !self.claimed.load(Ordering::Acquire),
+            "this queue's consumer is claimed"
+        );
+        // SAFETY: the lock makes this the only `pop`, and no `Consumer`
+        // exists: one claims only under the lock.
+        unsafe { self.take(paused) }
+    }
+
+    /// Takes the oldest value, running `paused` between reading it and
+    /// releasing its slot. Allocates, frees and locks nothing, and never
+    /// waits.
+    ///
+    /// # Safety
+    ///
+    /// The caller must be the only consumer while this runs.
+    unsafe fn take(&self, paused: impl FnOnce()) -> Option<T> {
         let head = self.head.load(Ordering::Relaxed);
         // Acquire pairs with the push's Release: the slot's value is visible.
         if head == self.tail.load(Ordering::Acquire) {
             return None;
         }
         // SAFETY: `head != tail`, so slot `head` holds a published value; the
-        // lock makes this the only consumer, and the producer leaves the slot
+        // caller is the only consumer, and the producer leaves the slot
         // alone until `head` passes it.
         let value = unsafe { (*self.slot(head).get()).assume_init_read() };
         // Releases the slot even if `paused` unwinds, so it is never read twice.
@@ -134,6 +167,12 @@ impl<T> Producer<T> {
 
     /// Queues `value`, or hands it back at once when the ring is full.
     pub(crate) fn push(&mut self, value: T) -> Result<(), T> {
+        self.push_paused(value, || {})
+    }
+
+    /// As [`Self::push`], running `paused` after the value is written but
+    /// before it is published: a producer preempted mid-push.
+    pub(crate) fn push_paused(&mut self, value: T, paused: impl FnOnce()) -> Result<(), T> {
         let ring = &*self.ring;
         let tail = ring.tail.load(Ordering::Relaxed);
         // Acquire pairs with the pop's Release: freed slots are done with.
@@ -144,6 +183,7 @@ impl<T> Producer<T> {
         // free (released by the consumer, or never used), and only this
         // claimed producer writes slots.
         unsafe { (*ring.slot(tail).get()).write(value) };
+        paused();
         // Release pairs with the pop's Acquire: the value is published.
         ring.tail.store(tail.wrapping_add(1), Ordering::Release);
         Ok(())
@@ -153,6 +193,48 @@ impl<T> Producer<T> {
 impl<T> Drop for Producer<T> {
     fn drop(&mut self) {
         self.ring.producer.store(false, Ordering::Release);
+    }
+}
+
+/// The ring's one lock-free consumer, for the audio thread. Popping
+/// allocates, locks and waits for nothing, and frees nothing but what the
+/// caller drops.
+pub(crate) struct Consumer<T> {
+    ring: Arc<Ring<T>>,
+}
+
+impl<T> Consumer<T> {
+    /// Claims `ring`'s consumer end until this is dropped; [`Ring::pop`]
+    /// panics meanwhile. Control thread only: takes the consumer lock.
+    ///
+    /// # Panics
+    ///
+    /// If the ring already has a `Consumer`: a control-thread programming
+    /// error.
+    pub(crate) fn claim(ring: Arc<Ring<T>>) -> Self {
+        let lock = ring.consumer.lock().unwrap_or_else(PoisonError::into_inner);
+        // The lock orders this after every earlier `Ring::pop`, and Acquire
+        // pairs with an earlier consumer's release of its claim: either way
+        // this one starts from the last `head`.
+        let claimed = ring.claimed.swap(true, Ordering::AcqRel);
+        drop(lock);
+        assert!(!claimed, "this queue already has a consumer");
+        Self { ring }
+    }
+
+    /// Takes the oldest value, or `None` at once when there is none
+    /// published, including while the producer is preempted mid-push.
+    pub(crate) fn pop(&mut self) -> Option<T> {
+        // SAFETY: the claim makes this the only consumer, and `&mut self`
+        // keeps it to one call at a time.
+        unsafe { self.ring.take(|| {}) }
+    }
+}
+
+impl<T> Drop for Consumer<T> {
+    fn drop(&mut self) {
+        // Release pairs with the next consumer's Acquire: its `head` is ours.
+        self.ring.claimed.store(false, Ordering::Release);
     }
 }
 

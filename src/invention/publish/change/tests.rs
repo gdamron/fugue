@@ -2,11 +2,11 @@
 //! graph standing in for the publisher.
 
 use std::sync::atomic::AtomicU64;
-use std::sync::mpsc::{self, Receiver, SyncSender};
 
 use super::*;
 use crate::alloc_counter::allocator_events;
 use crate::invention::graph::{AudioLink, InputWrite, Mailbox, MasterObservers, SignalGraph};
+use crate::spsc::{Consumer, Producer, Ring};
 use crate::{Invention, InventionBuilder};
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -41,8 +41,8 @@ struct Harness {
     directory: SurfaceDirectory,
     registry: ModuleRegistry,
     publications: Arc<Mailbox<Publication>>,
-    _inputs: SyncSender<InputWrite>,
-    retired: Receiver<Box<Publication>>,
+    _inputs: Producer<InputWrite>,
+    retired: Arc<Ring<Box<Publication>>>,
 }
 
 impl Harness {
@@ -61,14 +61,14 @@ impl Harness {
         );
         graph.recompile();
         let publications = Arc::new(Mailbox::new());
-        let (inputs, input_rx) = mpsc::sync_channel(4);
-        let (retire, retired) = mpsc::sync_channel(4);
+        let inputs = Ring::with_capacity(4);
+        let retired = Ring::with_capacity(4);
         let applied = Arc::new(AtomicU64::new(0));
         graph.link = Some(AudioLink::new(
             publications.clone(),
-            input_rx,
+            Consumer::claim(Arc::clone(&inputs)),
             4,
-            retire,
+            Producer::claim(Arc::clone(&retired)),
             applied,
         ));
         Self {
@@ -77,7 +77,7 @@ impl Harness {
             directory: runtime.control_surfaces,
             registry: runtime.registry,
             publications,
-            _inputs: inputs,
+            _inputs: Producer::claim(inputs),
             retired,
         }
     }
@@ -98,7 +98,7 @@ impl Harness {
     /// Prepares `change` and hands its publication to the graph, keeping
     /// the mirror and directory as a publisher would.
     fn publish(&mut self, change: GraphChange) {
-        while self.retired.try_recv().is_ok() {}
+        self.retired.drain();
         let prepared = change.prepare().unwrap();
         {
             let mut directory = self.directory.lock().unwrap();

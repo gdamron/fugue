@@ -9,7 +9,7 @@
 //! connectivity changed are reset (see [`SurvivorRemap`]), and the boxed
 //! publication, now holding the old map and old derived structures
 //! (including removed and replaced instances), goes back to the control
-//! thread on a bounded retire channel to be freed there. Installing never
+//! thread on a bounded retire ring to be freed there. Installing never
 //! allocates, frees, or locks, and no block ever plays part of a
 //! publication.
 //!
@@ -17,20 +17,20 @@
 //! thread to module and port indices (see [`InputWrite`]), so applying one
 //! never allocates, frees, or locks either.
 //!
-//! Both channels stay lock-free on the audio side only while the control
-//! side uses `try_send` and `try_recv` exclusively. A control thread parked
-//! in a blocking `send` or `recv` makes the audio thread's `try_*` call take
-//! the channel's internal waker lock to wake it.
+//! Both travel on [`crate::spsc`] rings, whose audio-side ends (a claimed
+//! [`Consumer`] for writes, the [`Producer`] for retirements) allocate,
+//! lock and wait for nothing, even while the control-side peer is preempted
+//! mid-operation. (std's bounded channel can spin or yield then.)
 
 use indexmap::IndexMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::Arc;
 
 use super::compile::CompiledTopology;
 use super::mailbox::Mailbox;
 use super::{RoutingConnection, SignalGraph};
 use crate::invention::runtime::ModuleInstance;
+use crate::spsc::{Consumer, Producer};
 use crate::{GraphModule, Module, MAX_BLOCK};
 
 mod remap;
@@ -231,7 +231,7 @@ pub(super) enum Disposition {
 /// - tagged with a newer generation: its publication is published but not
 ///   yet installed (a retirement is held, say), so it waits in a fixed,
 ///   preallocated ring and is applied right after that install. When the
-///   ring is full the channel is left undrained, so the control side sees
+///   ring is full the queue is left undrained, so the control side sees
 ///   [`crate::invention::runtime::GraphCommandError::QueueFull`] rather than
 ///   a write being lost;
 /// - anything else: dropped. The publisher's generations are consecutive
@@ -239,11 +239,11 @@ pub(super) enum Disposition {
 ///   fallback.
 pub(crate) struct AudioLink {
     publications: Arc<Mailbox<Publication>>,
-    inputs: Receiver<InputWrite>,
-    retire: SyncSender<Box<Publication>>,
-    /// A retirement the retire channel had no room for. While it is held no
+    inputs: Consumer<InputWrite>,
+    retire: Producer<Box<Publication>>,
+    /// A retirement the retire ring had no room for. While it is held no
     /// further publication is taken, so the audio thread never holds more
-    /// than this one; it is sent as soon as the channel has room.
+    /// than this one; it is sent as soon as the ring has room.
     held: Option<Box<Publication>>,
     /// A retired publication whose remaps older-generation control
     /// requests still need, with the generation installed before it: an
@@ -262,17 +262,15 @@ pub(crate) struct AudioLink {
 }
 
 impl AudioLink {
-    /// Links a graph to its publisher. `inputs` must be a bounded
-    /// (`sync_channel`) receiver of `input_capacity`: receiving from it
-    /// never frees, and the ring for writes awaiting a publication is
-    /// allocated here at the same size. The control side must only
-    /// `try_send` on `inputs` and `try_recv` on `retire`'s receiver (see the
-    /// module docs).
+    /// Links a graph to its publisher. `inputs` is the claimed consumer of
+    /// a ring of `input_capacity` writes; the ring for writes awaiting a
+    /// publication is allocated here at the same size. `retire` hands
+    /// retired publications to the control thread.
     pub(crate) fn new(
         publications: Arc<Mailbox<Publication>>,
-        inputs: Receiver<InputWrite>,
+        inputs: Consumer<InputWrite>,
         input_capacity: usize,
-        retire: SyncSender<Box<Publication>>,
+        retire: Producer<Box<Publication>>,
         applied: Arc<AtomicU64>,
     ) -> Self {
         Self {
@@ -299,13 +297,10 @@ impl AudioLink {
     }
 
     /// Hands a publication back to the control thread, holding it when the
-    /// channel is full (or the control side is gone) rather than freeing it.
+    /// ring is full rather than freeing it.
     fn retire(&mut self, retired: Box<Publication>) {
-        match self.retire.try_send(retired) {
-            Ok(()) => {}
-            Err(TrySendError::Full(retired)) | Err(TrySendError::Disconnected(retired)) => {
-                self.held = Some(retired);
-            }
+        if let Err(retired) = self.retire.push(retired) {
+            self.held = Some(retired);
         }
     }
 }
@@ -318,7 +313,7 @@ impl SignalGraph {
     /// A written port that stays unconnected keeps its value through later
     /// installs too, including one that falls back to recompiling (which
     /// `ensure_process_order` runs afterwards; see [`SignalGraph::recompile`]).
-    /// Takes at most the ring's capacity from the channel per block, so a
+    /// Takes at most the ring's capacity from the queue per block, so a
     /// sender keeping pace cannot hold the block here.
     /// Then maps and pops control requests (see `graph::requests`), with the
     /// retired publication still in hand; when they need it for another
@@ -344,7 +339,7 @@ impl SignalGraph {
         }
         let retired = taken.as_deref().map(|retired| (previous, retired));
         let installed = link.installed;
-        // Held writes came off the channel first, so they go first.
+        // Held writes came off the queue first, so they go first.
         link.pending.retain(|write| {
             match self.dispose(write.generation, write.module_idx, installed, retired) {
                 Disposition::Apply(module_idx) => {
@@ -355,14 +350,14 @@ impl SignalGraph {
                 Disposition::Drop => false,
             }
         });
-        // A full ring leaves the rest in the channel: every write behind a
+        // A full ring leaves the rest in the queue: every write behind a
         // held one is at least as new, so it would be held too.
         let limit = link.pending.capacity();
         for _ in 0..limit {
             if link.pending.len() == limit {
                 break;
             }
-            let Ok(write) = link.inputs.try_recv() else {
+            let Some(write) = link.inputs.pop() else {
                 break;
             };
             match self.dispose(write.generation, write.module_idx, installed, retired) {

@@ -2,13 +2,15 @@
 //! publications: no publisher involved.
 
 use std::sync::atomic::AtomicU64;
-use std::sync::mpsc::{self, Receiver, SyncSender};
 
 use super::*;
 use crate::alloc_counter::allocator_events;
 use crate::invention::graph::compile::compile_topology;
 use crate::invention::graph::MasterObservers;
+use crate::spsc::Ring;
 use crate::ModuleRegistry;
+
+mod never_waits;
 
 const SAMPLE_RATE: u32 = 48_000;
 const FRAMES: usize = 64;
@@ -103,26 +105,26 @@ const BASE_IDS: [&str; 3] = ["osc1", "osc2", "dac"];
 /// The control thread's ends of a graph's link.
 struct ControlEnds {
     publications: Arc<Mailbox<Publication>>,
-    inputs: SyncSender<InputWrite>,
-    retired: Receiver<Box<Publication>>,
+    inputs: Producer<InputWrite>,
+    retired: Arc<Ring<Box<Publication>>>,
     applied: Arc<AtomicU64>,
 }
 
 fn link(graph: &mut SignalGraph, retire_capacity: usize) -> ControlEnds {
     let publications = Arc::new(Mailbox::new());
-    let (inputs, input_rx) = mpsc::sync_channel(16);
-    let (retire, retired) = mpsc::sync_channel(retire_capacity);
+    let inputs = Ring::with_capacity(16);
+    let retired = Ring::with_capacity(retire_capacity);
     let applied = Arc::new(AtomicU64::new(0));
     graph.link = Some(AudioLink::new(
         publications.clone(),
-        input_rx,
+        Consumer::claim(Arc::clone(&inputs)),
         16,
-        retire,
+        Producer::claim(Arc::clone(&retired)),
         applied.clone(),
     ));
     ControlEnds {
         publications,
-        inputs,
+        inputs: Producer::claim(inputs),
         retired,
         applied,
     }
@@ -201,7 +203,7 @@ fn installing_a_publication_neither_allocates_nor_frees() {
 
     // The old map, with the removed and replaced instances and the dac's
     // placeholder, comes back to be freed here.
-    let retired = ends.retired.try_recv().unwrap();
+    let retired = ends.retired.pop().unwrap();
     let mut old: Vec<&str> = retired.modules.keys().map(String::as_str).collect();
     old.sort_unstable();
     assert_eq!(old, ["dac", "osc1", "osc2"]);
@@ -262,7 +264,7 @@ fn a_full_retire_channel_holds_one_retirement_and_takes_nothing_more() {
 
     // Draining makes room: the held retirement goes, then the waiting
     // publication installs, all in one clean block.
-    drop(ends.retired.try_recv().unwrap());
+    drop(ends.retired.pop().unwrap());
     assert_eq!(counted_block(&mut graph), (0, 0));
     assert_eq!(ends.applied.load(Ordering::Relaxed), 3);
     assert_eq!(ids(&graph), ["osc1", "dac", "osc3"]);
@@ -366,14 +368,14 @@ fn a_fallback_install_keeps_inputs_only_when_its_remap_vouches_for_them() {
     };
     for mapped in [true, false] {
         let mut graph = base_graph();
-        let ends = link(&mut graph, 4);
+        let mut ends = link(&mut graph, 4);
         let write = InputWrite {
             generation: 0,
             module_idx: 0,
             port_idx: frequency_port(&graph),
             value: 0.25,
         };
-        ends.inputs.try_send(write).unwrap();
+        ends.inputs.push(write).unwrap();
         render(&mut graph, 1);
         assert!(osc1_frequency(&mut graph).iter().all(|v| *v == 0.25));
 
@@ -398,9 +400,9 @@ fn a_fallback_install_keeps_inputs_only_when_its_remap_vouches_for_them() {
 #[test]
 fn queued_input_writes_reach_the_module() {
     let mut graph = base_graph();
-    let ends = link(&mut graph, 4);
+    let mut ends = link(&mut graph, 4);
     ends.inputs
-        .try_send(InputWrite {
+        .push(InputWrite {
             generation: 0,
             module_idx: 0,
             port_idx: frequency_port(&graph),

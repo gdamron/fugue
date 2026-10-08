@@ -2,7 +2,6 @@
 
 use indexmap::IndexMap;
 use std::sync::atomic::AtomicU64;
-use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::Arc;
 
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
@@ -14,6 +13,7 @@ use crate::invention::graph::{
 };
 use crate::invention::runtime::GraphCommandError;
 use crate::payload::{self, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
+use crate::spsc::{Consumer, Producer, Ring};
 
 /// Input writes that may wait for the audio thread before a write is
 /// refused with [`GraphCommandError::QueueFull`].
@@ -55,6 +55,9 @@ pub(crate) const PAYLOAD_RETIRE_HOLD: usize =
 /// there is room.
 pub(crate) const RETIRE_CAPACITY: usize = 8;
 
+/// Retired publications on their way to the control thread to be freed.
+pub(crate) type RetireRing = Ring<Box<Publication>>;
+
 /// Owns the authoritative mirror of a live graph and is the only producer of
 /// its structural changes. Lives behind a control-thread mutex, so prepared
 /// changes publish one at a time, in order.
@@ -69,6 +72,9 @@ pub(crate) struct Publisher {
     written: bool,
     block_size: usize,
     publications: Arc<Mailbox<Publication>>,
+    /// Queues direct input writes for the next block. Only the publisher
+    /// pushes, under its lock, so writes and publications stay in order.
+    inputs: Producer<InputWrite>,
     /// Publications the audio thread has installed (observed by tests).
     #[cfg_attr(not(test), allow(dead_code))]
     applied: Arc<AtomicU64>,
@@ -80,8 +86,8 @@ impl Publisher {
     /// of the link's channels, which need no publisher lock.
     pub(crate) fn link(graph: &mut SignalGraph) -> (Self, LinkEnds) {
         let publications = Arc::new(Mailbox::new());
-        let (inputs, input_rx) = mpsc::sync_channel(INPUT_QUEUE_CAPACITY);
-        let (retire_tx, retired) = mpsc::sync_channel(RETIRE_CAPACITY);
+        let inputs = Ring::with_capacity(INPUT_QUEUE_CAPACITY);
+        let retired = RetireRing::with_capacity(RETIRE_CAPACITY);
         let (requests, request_rx) = request_channel(REQUEST_QUEUE_CAPACITY);
         let payloads = RetireQueue::with_capacity(payload::RETIRE_CAPACITY);
         let (outcome_tx, outcomes) = outcome_channel(OUTCOME_QUEUE_CAPACITY);
@@ -95,9 +101,9 @@ impl Publisher {
         let applied = Arc::new(AtomicU64::new(0));
         graph.link = Some(AudioLink::new(
             publications.clone(),
-            input_rx,
+            Consumer::claim(Arc::clone(&inputs)),
             INPUT_QUEUE_CAPACITY,
-            retire_tx,
+            Producer::claim(Arc::clone(&retired)),
             applied.clone(),
         ));
         let publisher = Self {
@@ -106,10 +112,10 @@ impl Publisher {
             written: false,
             block_size: graph.block_size,
             publications,
+            inputs: Producer::claim(inputs),
             applied,
         };
         let ends = LinkEnds {
-            inputs,
             requests,
             retired,
             payloads,
@@ -207,6 +213,21 @@ impl Publisher {
         self.written = true;
     }
 
+    /// Queues a write resolved by [`Self::input_write`] for the next block,
+    /// noting it written. Fails with [`GraphCommandError::QueueFull`] when
+    /// the audio thread has not drained earlier writes, and with
+    /// [`GraphCommandError::AudioThreadStopped`] when it is gone.
+    pub(crate) fn queue_input(&mut self, write: InputWrite) -> Result<(), GraphCommandError> {
+        if !self.audio_alive() {
+            return Err(GraphCommandError::AudioThreadStopped);
+        }
+        self.inputs
+            .push(write)
+            .map_err(|_| GraphCommandError::QueueFull)?;
+        self.note_written();
+        Ok(())
+    }
+
     /// Generations folded into the untaken publication that keep a remap
     /// for queued writes, if one is waiting.
     #[cfg(test)]
@@ -281,7 +302,7 @@ impl Publisher {
             .map(|pending| publication.absorb(pending, self.written));
         // Only this publisher puts, under its lock, so the slot is empty.
         // Input writes are queued under the same lock, so every write tagged
-        // with the previous generation is in the channel before this put,
+        // with the previous generation is in the ring before this put,
         // whose release the audio thread's take acquires.
         drop(self.publications.put(publication));
         self.generation += 1;
@@ -308,17 +329,14 @@ impl std::fmt::Debug for Refused {
     }
 }
 
-/// The control side's ends of a link's channels. Use only `try_send` on
-/// `inputs` and `try_recv` on `retired`: a control thread blocked on either
-/// would make the audio thread's end take the channel's waker lock.
+/// The control side's ends of a link's queues, which need no publisher
+/// lock. (Input writes are queued by the publisher itself.)
 pub(crate) struct LinkEnds {
-    /// Queues direct input writes for the next block.
-    pub(crate) inputs: SyncSender<InputWrite>,
     /// Submits control requests. Submit only under the publisher (see
     /// [`Publisher::control_target`]).
     pub(crate) requests: RequestSender,
     /// Retired publications, to free off the audio thread.
-    pub(crate) retired: Receiver<Box<Publication>>,
+    pub(crate) retired: Arc<RetireRing>,
     /// Retired request payloads, to free off the audio thread.
     pub(crate) payloads: Arc<RetireQueue>,
     /// What became of each submitted request.

@@ -9,10 +9,10 @@
 //! by. One MPSC queue has one: the order in which pushes claim positions,
 //! which is the order "last write wins" coalescing needs.
 //!
-//! `std::sync::mpsc::sync_channel` (which FUG-292's input writes use) is
-//! lock-free on these paths too, but it is not our source, so loom cannot
-//! check it. This queue compiles against the `sync` shim, and `loom_tests`
-//! model-checks this exact file.
+//! std's bounded channel is not a fit either: its `try_send` and
+//! `try_recv` can spin or yield while a peer is preempted mid-operation,
+//! and it is not our source, so loom cannot check it. This queue compiles
+//! against the `sync` shim, and `loom_tests` model-checks this exact file.
 //!
 //! # Protocol
 //!

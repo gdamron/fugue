@@ -40,7 +40,7 @@
 //!   sample: it needs no room, and last write wins), and leaves the rest
 //!   in the queue. Producers then get a synchronous `QueueFull`,
 //!   which never marks a generation written, so a fold keeps no remap for
-//!   it. While installs are deferred (the retire channel is full and no
+//!   it. While installs are deferred (the retire ring is full and no
 //!   publication is taken), every block is of this kind, so the generations
 //!   with requests outstanding, and with them the folded publication's
 //!   `Absorbed` remaps, stay bounded by the store and queue capacity, as

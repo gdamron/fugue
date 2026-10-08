@@ -7,22 +7,19 @@
 //! The same cadence frees the engine's retired request payloads (see
 //! `crate::payload`).
 
-use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use crate::invention::graph::Publication;
+use super::publisher::RetireRing;
 use crate::payload::RetireQueue;
 
 /// How often the reclaimer thread frees retired publications.
 pub(crate) const RECLAIM_INTERVAL: Duration = Duration::from_millis(25);
 
-/// The control side of a live graph's retire channel.
-///
-/// It only ever calls `try_recv`: a receiver parked in a blocking `recv`
-/// would make the audio thread's `try_send` take the channel's waker lock.
+/// The control side of a live graph's retire ring. Its pops take the
+/// ring's consumer lock, which the audio thread's pushes never touch.
 pub(crate) struct Reclaimer {
-    retired: Mutex<Receiver<Box<Publication>>>,
+    retired: Arc<RetireRing>,
     /// The engine's retired request payloads.
     payloads: Arc<RetireQueue>,
 }
@@ -30,24 +27,18 @@ pub(crate) struct Reclaimer {
 impl Reclaimer {
     /// Frees what arrives on `retired` and `payloads` (the queue the
     /// engine's request drain retires payloads to).
-    pub(crate) fn new(retired: Receiver<Box<Publication>>, payloads: Arc<RetireQueue>) -> Self {
-        Self {
-            retired: Mutex::new(retired),
-            payloads,
-        }
+    pub(crate) fn new(retired: Arc<RetireRing>, payloads: Arc<RetireQueue>) -> Self {
+        Self { retired, payloads }
     }
 
-    /// Frees every publication retired so far and returns how many. They
-    /// are taken under this reclaimer's lock but dropped after releasing it,
-    /// because a sink may block while it finalizes. Never takes the
+    /// Frees every publication retired so far and returns how many. Each
+    /// is taken under the ring's consumer lock but dropped after releasing
+    /// it, because a sink may block while it finalizes. Never takes the
     /// publisher's lock. Also frees the retired payloads, uncounted.
     pub(crate) fn reclaim(&self) -> usize {
-        let retired: Vec<Box<Publication>> = {
-            let receiver = self.retired.lock().unwrap();
-            std::iter::from_fn(|| receiver.try_recv().ok()).collect()
-        };
+        let freed = self.retired.drain();
         self.payloads.drain();
-        retired.len()
+        freed
     }
 
     /// Starts a thread that reclaims every [`RECLAIM_INTERVAL`] until
