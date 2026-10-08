@@ -37,7 +37,7 @@
         "filter_type": "lowpass",
         "cutoff": 200.0,
         "resonance": 0.6,
-        "cv_amount": 4000.0
+        "cutoff_mod_depth": 4000.0
       }
     },
     {
@@ -104,7 +104,7 @@
       "from": "filter_env",
       "from_port": "envelope",
       "to": "filter",
-      "to_port": "cutoff_cv"
+      "to_port": "cutoff_mod"
     },
     {
       "from": "filter",

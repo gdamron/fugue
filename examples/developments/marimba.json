@@ -17,7 +17,7 @@
         "filter_type": "bandpass",
         "cutoff": 900.0,
         "resonance": 0.34,
-        "cv_amount": 2800.0
+        "cutoff_mod_depth": 2800.0
       }
     },
     {
@@ -62,7 +62,7 @@
       "from": "env",
       "from_port": "envelope",
       "to": "filter",
-      "to_port": "cutoff_cv"
+      "to_port": "cutoff_mod"
     },
     {
       "from": "sus",

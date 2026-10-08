@@ -5,8 +5,8 @@ fn test_silence_in_silence_out() {
     let mut reverb = Reverb::new(44100);
     for _ in 0..2000 {
         reverb.process(1);
-        let l = reverb.get_output("left").unwrap();
-        let r = reverb.get_output("right").unwrap();
+        let l = reverb.get_output("audio_left").unwrap();
+        let r = reverb.get_output("audio_right").unwrap();
         assert!(!l.is_nan(), "Left output is NaN");
         assert!(!r.is_nan(), "Right output is NaN");
         assert!(l.is_finite(), "Left output is infinite");
@@ -21,16 +21,16 @@ fn test_impulse_produces_reverb_tail() {
     reverb.set_control("dry", 0.0).unwrap();
 
     // Feed a single impulse
-    reverb.set_input("left", 1.0).unwrap();
+    reverb.set_input("audio_left", 1.0).unwrap();
     reverb.process(1);
-    reverb.set_input("left", 0.0).unwrap();
+    reverb.set_input("audio_left", 0.0).unwrap();
 
     // Check for non-zero output in the tail
     let mut found_output = false;
     for _ in 0..8000 {
         reverb.process(1);
-        let l = reverb.get_output("left").unwrap();
-        let r = reverb.get_output("right").unwrap();
+        let l = reverb.get_output("audio_left").unwrap();
+        let r = reverb.get_output("audio_right").unwrap();
         if l.abs() > 1e-6 || r.abs() > 1e-6 {
             found_output = true;
             break;
@@ -45,12 +45,12 @@ fn test_dry_passthrough() {
     reverb.set_control("wet", 0.0).unwrap();
     reverb.set_control("dry", 1.0).unwrap();
 
-    reverb.set_input("left", 0.75).unwrap();
-    reverb.set_input("right", -0.5).unwrap();
+    reverb.set_input("audio_left", 0.75).unwrap();
+    reverb.set_input("audio_right", -0.5).unwrap();
     reverb.process(1);
 
-    let l = reverb.get_output("left").unwrap();
-    let r = reverb.get_output("right").unwrap();
+    let l = reverb.get_output("audio_left").unwrap();
+    let r = reverb.get_output("audio_right").unwrap();
     assert!(
         (l - 0.75).abs() < 1e-6,
         "Dry passthrough left: expected 0.75, got {}",
@@ -71,10 +71,10 @@ fn test_freeze_sustains_output() {
 
     // Feed signal
     for _ in 0..2000 {
-        reverb.set_input("left", 0.5).unwrap();
+        reverb.set_input("audio_left", 0.5).unwrap();
         reverb.process(1);
     }
-    reverb.set_input("left", 0.0).unwrap();
+    reverb.set_input("audio_left", 0.0).unwrap();
 
     // Enable freeze
     reverb.set_control("freeze", 1.0).unwrap();
@@ -83,7 +83,7 @@ fn test_freeze_sustains_output() {
     let mut energy = 0.0f32;
     for _ in 0..4000 {
         reverb.process(1);
-        energy += reverb.get_output("left").unwrap().abs();
+        energy += reverb.get_output("audio_left").unwrap().abs();
     }
     assert!(
         energy > 1.0,
@@ -100,16 +100,16 @@ fn test_no_denormal_explosion() {
 
     // Feed a brief signal then silence
     for _ in 0..100 {
-        reverb.set_input("left", 0.1).unwrap();
+        reverb.set_input("audio_left", 0.1).unwrap();
         reverb.process(1);
     }
-    reverb.set_input("left", 0.0).unwrap();
+    reverb.set_input("audio_left", 0.0).unwrap();
 
     // Run many samples of silence — output should stay bounded
     for i in 0..50000 {
         reverb.process(1);
-        let l = reverb.get_output("left").unwrap();
-        let r = reverb.get_output("right").unwrap();
+        let l = reverb.get_output("audio_left").unwrap();
+        let r = reverb.get_output("audio_right").unwrap();
         assert!(
             l.abs() < 100.0,
             "Left output exploded at sample {}: {}",

@@ -28,7 +28,7 @@
 //!   ],
 //!   "connections": [
 //!     { "from": "osc", "from_port": "audio", "to": "filter", "to_port": "audio" },
-//!     { "from": "env", "from_port": "envelope", "to": "filter", "to_port": "cutoff_cv" }
+//!     { "from": "env", "from_port": "envelope", "to": "filter", "to_port": "cutoff_mod" }
 //!   ]
 //! }
 //! ```
@@ -100,7 +100,7 @@ fn fast_tan(x: f32) -> f32 {
 ///
 /// - `audio` - Audio signal to filter
 /// - `cutoff` - Cutoff frequency in Hz (overrides control if connected)
-/// - `cutoff_cv` - Cutoff modulation (scaled by cv_amount, in Hz)
+/// - `cutoff_mod` - Cutoff modulation (scaled by cutoff_mod_depth, in Hz)
 /// - `resonance` - Resonance modulation (0.0 to 1.0)
 ///
 /// # Outputs
@@ -111,8 +111,8 @@ fn fast_tan(x: f32) -> f32 {
 ///
 /// - `cutoff` - Base cutoff frequency in Hz (default: 1000.0)
 /// - `resonance` - Resonance/Q 0.0-1.0 (default: 0.0)
-/// - `type` - Filter type (0=LowPass, 1=HighPass, 2=BandPass)
-/// - `cv_amount` - CV modulation depth in Hz (default: 5000.0)
+/// - `filter_type` - Filter type (0=LowPass, 1=HighPass, 2=BandPass)
+/// - `cutoff_mod_depth` - CV modulation depth in Hz (default: 5000.0)
 pub struct Filter {
     sample_rate: u32,
 
@@ -185,8 +185,8 @@ impl Filter {
     }
 
     /// Sets the CV modulation amount in Hz (legacy API).
-    pub fn with_cv_amount(self, amount: f32) -> Self {
-        self.ctrl.set_cv_amount(amount);
+    pub fn with_cutoff_mod_depth(self, amount: f32) -> Self {
+        self.ctrl.set_cutoff_mod_depth(amount);
         self
     }
 
@@ -213,13 +213,13 @@ impl Filter {
         i: usize,
         control_cutoff: f32,
         control_resonance: f32,
-        cv_amount: f32,
+        cutoff_mod_depth: f32,
         filter_type: FilterType,
     ) -> f32 {
         let base_cutoff = self.inputs.cutoff(i, control_cutoff);
         let base_resonance = self.inputs.resonance(i, control_resonance);
         let effective_cutoff =
-            (base_cutoff + self.inputs.cutoff_cv(i) * cv_amount).clamp(20.0, 20000.0);
+            (base_cutoff + self.inputs.cutoff_mod(i) * cutoff_mod_depth).clamp(20.0, 20000.0);
         let effective_resonance = base_resonance.clamp(0.0, 0.99);
 
         // Recompute SVF coefficients only when cutoff or resonance changes.
@@ -279,7 +279,7 @@ impl Module for Filter {
         } else {
             self.ctrl.resonance()
         };
-        let cv_amount = self.ctrl.cv_amount();
+        let cutoff_mod_depth = self.ctrl.cutoff_mod_depth();
         let filter_type = self.ctrl.filter_type();
 
         let mut i = 0;
@@ -288,7 +288,7 @@ impl Module for Filter {
                 i,
                 control_cutoff,
                 control_resonance,
-                cv_amount,
+                cutoff_mod_depth,
                 filter_type,
             );
             self.outputs.set(i, audio);
@@ -333,14 +333,14 @@ impl Module for Filter {
             ControlMeta::new("resonance", "Resonance/Q")
                 .with_range(0.0, 1.0)
                 .with_default(0.0),
-            ControlMeta::new("type", "Filter type")
+            ControlMeta::new("filter_type", "Filter type")
                 .with_default(0.0)
                 .with_variants(vec![
                     "LowPass".to_string(),
                     "HighPass".to_string(),
                     "BandPass".to_string(),
                 ]),
-            ControlMeta::new("cv_amount", "CV modulation depth in Hz")
+            ControlMeta::new("cutoff_mod_depth", "CV modulation depth in Hz")
                 .with_range(0.0, 10000.0)
                 .with_default(5000.0),
         ]
@@ -350,8 +350,8 @@ impl Module for Filter {
         match key {
             "cutoff" => Ok(self.ctrl.cutoff()),
             "resonance" => Ok(self.ctrl.resonance()),
-            "type" => Ok(filter_type_to_index(self.ctrl.filter_type())),
-            "cv_amount" => Ok(self.ctrl.cv_amount()),
+            "filter_type" => Ok(filter_type_to_index(self.ctrl.filter_type())),
+            "cutoff_mod_depth" => Ok(self.ctrl.cutoff_mod_depth()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -366,12 +366,12 @@ impl Module for Filter {
                 self.ctrl.set_resonance(value);
                 Ok(())
             }
-            "type" => {
+            "filter_type" => {
                 self.ctrl.set_filter_type(index_to_filter_type(value));
                 Ok(())
             }
-            "cv_amount" => {
-                self.ctrl.set_cv_amount(value);
+            "cutoff_mod_depth" => {
+                self.ctrl.set_cutoff_mod_depth(value);
                 Ok(())
             }
             _ => Err(format!("Unknown control: {}", key)),
@@ -385,7 +385,7 @@ pub struct FilterFactory;
 const TYPE_ID: &str = "filter";
 const CUTOFF: ConfigKey = ConfigKey::float("cutoff");
 const RESONANCE: ConfigKey = ConfigKey::float("resonance");
-const CV_AMOUNT: ConfigKey = ConfigKey::float("cv_amount");
+const CUTOFF_MOD_DEPTH: ConfigKey = ConfigKey::float("cutoff_mod_depth");
 
 impl ModuleFactory for FilterFactory {
     fn type_id(&self) -> &'static str {
@@ -393,7 +393,14 @@ impl ModuleFactory for FilterFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const { &[CUTOFF, RESONANCE, CV_AMOUNT, ConfigKey::text("filter_type")] }
+        const {
+            &[
+                CUTOFF,
+                RESONANCE,
+                CUTOFF_MOD_DEPTH,
+                ConfigKey::text("filter_type"),
+            ]
+        }
     }
 
     fn build(
@@ -411,10 +418,9 @@ impl ModuleFactory for FilterFactory {
         let reader = ConfigReader::new(TYPE_ID, config);
         let cutoff = reader.float(&CUTOFF)?.unwrap_or(1000.0);
         let resonance = reader.float(&RESONANCE)?.unwrap_or(0.0);
-        let cv_amount = reader.float(&CV_AMOUNT)?.unwrap_or(5000.0);
+        let cutoff_mod_depth = reader.float(&CUTOFF_MOD_DEPTH)?.unwrap_or(5000.0);
 
-        let controls = FilterControls::new(cutoff, resonance, filter_type, cv_amount);
-        crate::factory::apply_control_keys(&controls, config, |key| key == "type")?;
+        let controls = FilterControls::new(cutoff, resonance, filter_type, cutoff_mod_depth);
         let filter = Filter::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
@@ -431,12 +437,7 @@ impl ModuleFactory for FilterFactory {
 
 /// Parses a filter type string into a FilterType enum.
 fn parse_filter_type(s: &str) -> Result<FilterType, Box<dyn std::error::Error>> {
-    match s.to_lowercase().as_str() {
-        "lowpass" | "lpf" | "low" => Ok(FilterType::LowPass),
-        "highpass" | "hpf" | "high" => Ok(FilterType::HighPass),
-        "bandpass" | "bpf" | "band" => Ok(FilterType::BandPass),
-        _ => Err(format!("Unknown filter type: {}", s).into()),
-    }
+    FilterControls::parse_filter_type(s).map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -452,14 +453,14 @@ mod tests {
         assert_eq!(controls.len(), 4);
         assert_eq!(controls[0].key, "cutoff");
         assert_eq!(controls[1].key, "resonance");
-        assert_eq!(controls[2].key, "type");
+        assert_eq!(controls[2].key, "filter_type");
 
         // Test get/set controls
         filter.set_control("cutoff", 2000.0).unwrap();
         assert_eq!(filter.get_control("cutoff").unwrap(), 2000.0);
 
-        filter.set_control("type", 1.0).unwrap(); // HighPass
-        assert_eq!(filter.get_control("type").unwrap(), 1.0);
+        filter.set_control("filter_type", 1.0).unwrap(); // HighPass
+        assert_eq!(filter.get_control("filter_type").unwrap(), 1.0);
     }
 
     #[test]
@@ -505,5 +506,32 @@ mod tests {
         // Check that controls handle is returned
         assert_eq!(result.handles.len(), 1);
         assert_eq!(result.handles[0].0, "controls");
+    }
+
+    #[test]
+    fn config_and_control_share_filter_type_and_modulation_names() {
+        let factory = FilterFactory;
+        // The control's spellings (`low_pass`) are config spellings too, so a
+        // written control value rebuilds from the config.
+        let config = serde_json::json!({
+            "filter_type": "band_pass",
+            "cutoff_mod_depth": 1234.0
+        });
+        let result = factory.build(44100, &config).unwrap();
+        let surface = result.control_surface.unwrap();
+        assert_eq!(
+            surface.get_control("filter_type").unwrap(),
+            "bandpass".into()
+        );
+        assert_eq!(
+            surface.get_control("cutoff_mod_depth").unwrap(),
+            1234.0.into()
+        );
+        assert!(surface.get_control("type").is_err());
+        assert!(surface.get_control("cv_amount").is_err());
+
+        let mut filter = Filter::new(44100);
+        assert!(filter.set_input("cutoff_mod", 1.0).is_ok());
+        assert!(filter.set_input("cutoff_cv", 1.0).is_err());
     }
 }

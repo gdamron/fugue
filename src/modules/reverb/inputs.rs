@@ -2,7 +2,7 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 2] = ["left", "right"];
+pub const INPUTS: [&str; 2] = ["audio_left", "audio_right"];
 
 pub struct ReverbInputs {
     left: [f32; MAX_BLOCK],
@@ -22,11 +22,11 @@ impl ReverbInputs {
     /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
-            "left" => {
+            "audio_left" => {
                 self.left.fill(value);
                 Ok(())
             }
-            "right" => {
+            "audio_right" => {
                 self.right.fill(value);
                 self.right_connected = true;
                 Ok(())
