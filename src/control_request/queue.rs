@@ -64,7 +64,7 @@
 
 use std::mem::MaybeUninit;
 
-use super::sync::{spin_loop, Arc, AtomicU64, Ordering, UnsafeCell};
+use super::sync::{debug_assert_control_thread, spin_loop, Arc, AtomicU64, Ordering, UnsafeCell};
 
 /// Creates a queue holding up to `capacity` items, rounded up to a power of
 /// two and at least 2 (one lap must tell a full slot from a free one).
@@ -145,6 +145,7 @@ impl<T> Drop for Shared<T> {
     /// Drops the items pushed and not popped. Runs when the last handle is
     /// dropped, which frees the slots: a control-thread operation.
     fn drop(&mut self) {
+        debug_assert_control_thread("freeing a request queue");
         for (index, slot) in (0u64..).zip(self.slots.iter()) {
             // `&mut self`: every other handle is gone, and the `Arc` drop
             // that got here synchronized with each of them, so `Relaxed`

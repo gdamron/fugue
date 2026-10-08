@@ -3,12 +3,13 @@
 use super::event::EventCounter;
 use super::queue::{bounded, QueueConsumer, QueueProducer};
 use super::request::{Request, RequestId};
-use super::sync::{Arc, AtomicU64, Ordering};
+use super::sync::{debug_assert_control_thread, Arc, AtomicU64, Ordering};
 
 /// Creates a request channel holding up to `capacity` requests (rounded as
 /// [`bounded`] rounds it). The consumer goes to the audio thread's drain.
 /// Allocates once: call it on a control thread.
 pub(crate) fn request_channel(capacity: usize) -> (RequestSender, QueueConsumer<Request>) {
+    debug_assert_control_thread("request_channel");
     let (queue, consumer) = bounded(capacity);
     let shared = Arc::new(SenderShared {
         next_id: AtomicU64::new(1),

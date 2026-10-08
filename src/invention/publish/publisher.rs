@@ -6,6 +6,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::Arc;
 
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
+use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{request_channel, ControlIndex, ControlTarget, RequestSender};
 use crate::invention::graph::{
     AudioLink, InputWrite, Mailbox, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
@@ -167,6 +168,7 @@ impl Publisher {
         module_id: &str,
         control: ControlIndex,
     ) -> Result<ControlTarget, GraphCommandError> {
+        debug_assert_control_thread("Publisher::control_target");
         let module_idx = self
             .mirror
             .modules
