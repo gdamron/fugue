@@ -2,7 +2,7 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 2] = ["audio", "cv"];
+pub const INPUTS: [&str; 2] = ["audio", "level"];
 
 pub struct VcaInputs {
     audio: [f32; MAX_BLOCK],
@@ -26,7 +26,7 @@ impl VcaInputs {
                 self.audio.fill(value);
                 Ok(())
             }
-            "cv" => {
+            "level" => {
                 self.cv.fill(value.clamp(0.0, 1.0));
                 self.cv_connected = true;
                 Ok(())

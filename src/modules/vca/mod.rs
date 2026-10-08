@@ -22,7 +22,7 @@ mod outputs;
 pub struct VcaFactory;
 
 const TYPE_ID: &str = "vca";
-const CV: ConfigKey = ConfigKey::float("cv");
+const LEVEL: ConfigKey = ConfigKey::float("level");
 
 impl ModuleFactory for VcaFactory {
     fn type_id(&self) -> &'static str {
@@ -30,7 +30,7 @@ impl ModuleFactory for VcaFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[CV]
+        &[LEVEL]
     }
 
     fn build(
@@ -39,7 +39,7 @@ impl ModuleFactory for VcaFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let cv = ConfigReader::new(TYPE_ID, config)
-            .float(&CV)?
+            .float(&LEVEL)?
             .unwrap_or(1.0);
 
         let controls = VcaControls::new(cv);
@@ -61,13 +61,13 @@ impl ModuleFactory for VcaFactory {
 ///
 /// # Inputs
 /// - `audio`: The audio signal to be amplified (typically -1.0 to 1.0)
-/// - `cv`: Control voltage for amplitude (0.0 to 1.0, where 1.0 = full volume)
+/// - `level`: Amplitude (0.0 to 1.0, where 1.0 = full volume)
 ///
 /// # Outputs
-/// - `audio`: The amplified audio signal (audio * cv)
+/// - `audio`: The amplified audio signal (audio * level)
 ///
 /// # Controls
-/// - `cv`: Default CV value used when no cv signal is connected (0.0-1.0)
+/// - `level`: Default level used when no level signal is connected (0.0-1.0)
 ///
 /// # Example
 ///
@@ -77,7 +77,7 @@ impl ModuleFactory for VcaFactory {
 /// {
 ///   "connections": [
 ///     {"from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio"},
-///     {"from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "cv"},
+///     {"from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level"},
 ///     {"from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio"}
 ///   ]
 /// }
@@ -168,7 +168,7 @@ impl Module for Vca {
 
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::new("cv", "Default CV level (when no signal connected)")
+            ControlMeta::new("level", "Default level (when no signal connected)")
                 .with_range(0.0, 1.0)
                 .with_default(1.0),
         ]
@@ -176,14 +176,14 @@ impl Module for Vca {
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
         match key {
-            "cv" => Ok(self.ctrl.cv()),
+            "level" => Ok(self.ctrl.cv()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
         match key {
-            "cv" => {
+            "level" => {
                 self.ctrl.set_cv(value);
                 Ok(())
             }
@@ -206,12 +206,12 @@ mod tests {
         assert_eq!(vca.get_output("audio").unwrap(), 0.5);
 
         // Half volume via CV signal
-        vca.set_input("cv", 0.5).unwrap();
+        vca.set_input("level", 0.5).unwrap();
         vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.25);
 
         // Silence
-        vca.set_input("cv", 0.0).unwrap();
+        vca.set_input("level", 0.0).unwrap();
         vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.0);
     }
@@ -223,12 +223,12 @@ mod tests {
         vca.set_input("audio", 1.0).unwrap();
 
         // CV above 1.0 should be clamped
-        vca.set_input("cv", 2.0).unwrap();
+        vca.set_input("level", 2.0).unwrap();
         vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 1.0);
 
         // CV below 0.0 should be clamped
-        vca.set_input("cv", -0.5).unwrap();
+        vca.set_input("level", -0.5).unwrap();
         vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.0);
     }
@@ -248,11 +248,11 @@ mod tests {
         // Test control metadata
         let control_meta = Module::controls(&vca);
         assert_eq!(control_meta.len(), 1);
-        assert_eq!(control_meta[0].key, "cv");
+        assert_eq!(control_meta[0].key, "level");
 
         // Test get/set controls
-        vca.set_control("cv", 0.5).unwrap();
-        assert_eq!(vca.get_control("cv").unwrap(), 0.5);
+        vca.set_control("level", 0.5).unwrap();
+        assert_eq!(vca.get_control("level").unwrap(), 0.5);
 
         // Test invalid control
         assert!(vca.get_control("invalid").is_err());
@@ -263,17 +263,17 @@ mod tests {
         let mut vca = Vca::new();
 
         // Set control CV
-        vca.set_control("cv", 0.5).unwrap();
+        vca.set_control("level", 0.5).unwrap();
 
         vca.set_input("audio", 1.0).unwrap();
 
-        // Without a connected cv signal, should use control
+        // Without a connected level signal, should use control
         vca.set_input_connected(1, false);
         vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.5);
 
         // With signal, should use signal
-        vca.set_input("cv", 0.25).unwrap();
+        vca.set_input("level", 0.25).unwrap();
         vca.process(1);
         assert_eq!(vca.get_output("audio").unwrap(), 0.25);
 

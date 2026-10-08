@@ -35,7 +35,7 @@ mod tests {
             let envelope = adsr.get_output("envelope").unwrap();
 
             vca.set_input("audio", osc_audio).unwrap();
-            vca.set_input("cv", envelope).unwrap();
+            vca.set_input("level", envelope).unwrap();
 
             let output = vca.get_output("audio").unwrap();
 

@@ -76,7 +76,7 @@ fn invention(pedaled: bool) -> String {
                             "connections": [
                                 {{ "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" }},
                                 {{ "from": "sus", "from_port": "gate", "to": "env", "to_port": "gate" }},
-                                {{ "from": "env", "from_port": "envelope", "to": "vca", "to_port": "cv" }}
+                                {{ "from": "env", "from_port": "envelope", "to": "vca", "to_port": "level" }}
                             ],
                             "inputs": [
                                 {{ "name": "frequency", "to": "osc", "to_port": "frequency" }},

@@ -44,7 +44,7 @@ fn layered() -> AuthoredSnapshot {
     snapshot(
         json!({"title":"Layered arrangement", "modules":modules,"connections":connections,
         "assets":{"harmony":{"path":"./harmony.json"}},
-        "developments":[{"name":"voice","definition":{"modules":[{"id":"osc","type":"oscillator"},{"id":"env","type":"adsr"},{"id":"vca","type":"vca"}],"connections":[{"from":"osc","from_port":"audio","to":"vca","to_port":"audio"},{"from":"env","from_port":"envelope","to":"vca","to_port":"cv"}],"inputs":[{"name":"frequency","to":"osc","to_port":"frequency"},{"name":"gate","to":"env","to_port":"gate"}],"outputs":[{"name":"audio","from":"vca","from_port":"audio"}],"controls":[{"key":"attack","module":"env","control":"attack"}]}}]}),
+        "developments":[{"name":"voice","definition":{"modules":[{"id":"osc","type":"oscillator"},{"id":"env","type":"adsr"},{"id":"vca","type":"vca"}],"connections":[{"from":"osc","from_port":"audio","to":"vca","to_port":"audio"},{"from":"env","from_port":"envelope","to":"vca","to_port":"level"}],"inputs":[{"name":"frequency","to":"osc","to_port":"frequency"},{"name":"gate","to":"env","to_port":"gate"}],"outputs":[{"name":"audio","from":"vca","from_port":"audio"}],"controls":[{"key":"attack","module":"env","control":"attack"}]}}]}),
     )
 }
 
