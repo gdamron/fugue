@@ -43,17 +43,22 @@ pub struct FilterControls {
     pub(crate) cutoff: AtomicF32,
     pub(crate) resonance: AtomicF32,
     pub(crate) filter_type: AtomicF32,
-    pub(crate) cv_amount: AtomicF32,
+    pub(crate) cutoff_mod_depth: AtomicF32,
 }
 
 impl FilterControls {
     /// Creates new filter controls with the given initial values.
-    pub fn new(cutoff: f32, resonance: f32, filter_type: FilterType, cv_amount: f32) -> Self {
+    pub fn new(
+        cutoff: f32,
+        resonance: f32,
+        filter_type: FilterType,
+        cutoff_mod_depth: f32,
+    ) -> Self {
         Self {
             cutoff: AtomicF32::new(cutoff.clamp(20.0, 20000.0)),
             resonance: AtomicF32::new(resonance.clamp(0.0, 1.0)),
             filter_type: AtomicF32::new(filter_type_to_index(filter_type)),
-            cv_amount: AtomicF32::new(cv_amount.max(0.0)),
+            cutoff_mod_depth: AtomicF32::new(cutoff_mod_depth.max(0.0)),
         }
     }
 
@@ -88,13 +93,13 @@ impl FilterControls {
     }
 
     /// Gets the CV modulation amount in Hz.
-    pub fn cv_amount(&self) -> f32 {
-        self.cv_amount.load()
+    pub fn cutoff_mod_depth(&self) -> f32 {
+        self.cutoff_mod_depth.load()
     }
 
     /// Sets the CV modulation amount in Hz.
-    pub fn set_cv_amount(&self, value: f32) {
-        self.cv_amount.store(value.max(0.0));
+    pub fn set_cutoff_mod_depth(&self, value: f32) {
+        self.cutoff_mod_depth.store(value.max(0.0));
     }
 }
 
@@ -107,11 +112,13 @@ impl FilterControls {
         }
     }
 
-    fn parse_filter_type(value: &str) -> Result<FilterType, String> {
+    /// Parses a filter type name; the control and the config key
+    /// `filter_type` share this one spelling set.
+    pub(super) fn parse_filter_type(value: &str) -> Result<FilterType, String> {
         match value.to_lowercase().as_str() {
-            "lowpass" | "low_pass" | "lpf" => Ok(FilterType::LowPass),
-            "highpass" | "high_pass" | "hpf" => Ok(FilterType::HighPass),
-            "bandpass" | "band_pass" | "bpf" => Ok(FilterType::BandPass),
+            "lowpass" | "low_pass" | "lpf" | "low" => Ok(FilterType::LowPass),
+            "highpass" | "high_pass" | "hpf" | "high" => Ok(FilterType::HighPass),
+            "bandpass" | "band_pass" | "bpf" | "band" => Ok(FilterType::BandPass),
             _ => Err(format!("Unknown filter type: {}", value)),
         }
     }
@@ -126,16 +133,16 @@ impl ControlSurface for FilterControls {
             ControlMeta::number("resonance", "Resonance/Q")
                 .with_range(0.0, 1.0)
                 .with_default(self.resonance()),
-            ControlMeta::string("type", "Filter type")
+            ControlMeta::string("filter_type", "Filter type")
                 .with_default(Self::filter_type_name(self.filter_type()))
                 .with_options(vec![
                     "lowpass".to_string(),
                     "highpass".to_string(),
                     "bandpass".to_string(),
                 ]),
-            ControlMeta::number("cv_amount", "CV modulation depth in Hz")
+            ControlMeta::number("cutoff_mod_depth", "CV modulation depth in Hz")
                 .with_range(0.0, 20000.0)
-                .with_default(self.cv_amount()),
+                .with_default(self.cutoff_mod_depth()),
         ]
     }
 
@@ -143,8 +150,8 @@ impl ControlSurface for FilterControls {
         match key {
             "cutoff" => Ok(self.cutoff().into()),
             "resonance" => Ok(self.resonance().into()),
-            "type" => Ok(Self::filter_type_name(self.filter_type()).into()),
-            "cv_amount" => Ok(self.cv_amount().into()),
+            "filter_type" => Ok(Self::filter_type_name(self.filter_type()).into()),
+            "cutoff_mod_depth" => Ok(self.cutoff_mod_depth().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -153,8 +160,8 @@ impl ControlSurface for FilterControls {
         match key {
             "cutoff" => self.set_cutoff(value.as_number()?),
             "resonance" => self.set_resonance(value.as_number()?),
-            "type" => self.set_filter_type(Self::parse_filter_type(value.as_string()?)?),
-            "cv_amount" => self.set_cv_amount(value.as_number()?),
+            "filter_type" => self.set_filter_type(Self::parse_filter_type(value.as_string()?)?),
+            "cutoff_mod_depth" => self.set_cutoff_mod_depth(value.as_number()?),
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
@@ -167,7 +174,7 @@ impl ControlSurface for FilterControls {
         _surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
         match key {
-            "type" => Self::parse_filter_type(value.as_string()?).map(drop),
+            "filter_type" => Self::parse_filter_type(value.as_string()?).map(drop),
             _ => check_listed_control(&self.controls(), key, value),
         }
     }

@@ -2,12 +2,12 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 4] = ["audio", "cutoff", "cutoff_cv", "resonance"];
+pub const INPUTS: [&str; 4] = ["audio", "cutoff", "cutoff_mod", "resonance"];
 
 pub struct FilterInputs {
     audio: [f32; MAX_BLOCK],
     cutoff: [f32; MAX_BLOCK],
-    cutoff_cv: [f32; MAX_BLOCK],
+    cutoff_mod: [f32; MAX_BLOCK],
     resonance: [f32; MAX_BLOCK],
     cutoff_connected: bool,
     resonance_connected: bool,
@@ -18,7 +18,7 @@ impl FilterInputs {
         Self {
             audio: [0.0; MAX_BLOCK],
             cutoff: [0.0; MAX_BLOCK],
-            cutoff_cv: [0.0; MAX_BLOCK],
+            cutoff_mod: [0.0; MAX_BLOCK],
             resonance: [0.0; MAX_BLOCK],
             cutoff_connected: false,
             resonance_connected: false,
@@ -37,8 +37,8 @@ impl FilterInputs {
                 self.cutoff_connected = true;
                 Ok(())
             }
-            "cutoff_cv" => {
-                self.cutoff_cv.fill(value);
+            "cutoff_mod" => {
+                self.cutoff_mod.fill(value);
                 Ok(())
             }
             "resonance" => {
@@ -56,7 +56,7 @@ impl FilterInputs {
         match index {
             0 => &mut self.audio,
             1 => &mut self.cutoff,
-            2 => &mut self.cutoff_cv,
+            2 => &mut self.cutoff_mod,
             _ => &mut self.resonance,
         }
     }
@@ -95,8 +95,8 @@ impl FilterInputs {
     }
 
     #[inline]
-    pub fn cutoff_cv(&self, i: usize) -> f32 {
-        self.cutoff_cv[i]
+    pub fn cutoff_mod(&self, i: usize) -> f32 {
+        self.cutoff_mod[i]
     }
 
     #[inline]

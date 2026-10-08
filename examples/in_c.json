@@ -1044,23 +1044,23 @@
       "from": "mixer",
       "from_port": "left",
       "to": "reverb",
-      "to_port": "left"
+      "to_port": "audio_left"
     },
     {
       "from": "mixer",
       "from_port": "right",
       "to": "reverb",
-      "to_port": "right"
+      "to_port": "audio_right"
     },
     {
       "from": "reverb",
-      "from_port": "left",
+      "from_port": "audio_left",
       "to": "dac",
       "to_port": "audio_left"
     },
     {
       "from": "reverb",
-      "from_port": "right",
+      "from_port": "audio_right",
       "to": "dac",
       "to_port": "audio_right"
     }

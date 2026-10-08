@@ -22,9 +22,9 @@
 //!     { "id": "dac", "type": "dac" }
 //!   ],
 //!   "connections": [
-//!     { "from": "osc", "from_port": "audio", "to": "reverb", "to_port": "left" },
-//!     { "from": "reverb", "from_port": "left", "to": "dac", "to_port": "left" },
-//!     { "from": "reverb", "from_port": "right", "to": "dac", "to_port": "right" }
+//!     { "from": "osc", "from_port": "audio", "to": "reverb", "to_port": "audio_left" },
+//!     { "from": "reverb", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+//!     { "from": "reverb", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
 //!   ]
 //! }
 //! ```
@@ -132,13 +132,13 @@ fn compute_alpha(rt60: f32, sample_rate: u32) -> f32 {
 ///
 /// # Inputs
 ///
-/// - `left` - Left audio input
-/// - `right` - Right audio input (0.0 if not connected; mono input is fine)
+/// - `audio_left` - Left audio input
+/// - `audio_right` - Right audio input (0.0 if not connected; mono input is fine)
 ///
 /// # Outputs
 ///
-/// - `left` - Left audio output
-/// - `right` - Right audio output
+/// - `audio_left` - Left audio output
+/// - `audio_right` - Right audio output
 ///
 /// # Controls
 ///

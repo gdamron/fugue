@@ -25,7 +25,7 @@
         "filter_type": "lowpass",
         "cutoff": 1500.0,
         "resonance": 0.18,
-        "cv_amount": 1600.0
+        "cutoff_mod_depth": 1600.0
       }
     },
     {
@@ -52,7 +52,7 @@
       "from": "motion_lfo",
       "from_port": "unipolar",
       "to": "filter",
-      "to_port": "cutoff_cv"
+      "to_port": "cutoff_mod"
     },
     {
       "from": "osc",

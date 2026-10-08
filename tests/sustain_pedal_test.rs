@@ -119,10 +119,10 @@ fn invention(pedaled: bool) -> String {
             {{ "from": "clock", "from_port": "gate", "to": "seq_pedal", "to_port": "gate" }},
             {{ "from": "seq_notes", "from_port": "frequency", "to": "bank", "to_port": "frequency" }},
             {{ "from": "seq_notes", "from_port": "gate", "to": "bank", "to_port": "gate" }},
-            {{ "from": "bank", "from_port": "audio", "to": "reverb", "to_port": "left" }},
-            {{ "from": "bank", "from_port": "audio", "to": "reverb", "to_port": "right" }},
-            {{ "from": "reverb", "from_port": "left", "to": "dac", "to_port": "audio_left" }},
-            {{ "from": "reverb", "from_port": "right", "to": "dac", "to_port": "audio_right" }}
+            {{ "from": "bank", "from_port": "audio", "to": "reverb", "to_port": "audio_left" }},
+            {{ "from": "bank", "from_port": "audio", "to": "reverb", "to_port": "audio_right" }},
+            {{ "from": "reverb", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" }},
+            {{ "from": "reverb", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }}
             {pedal_connection}
         ]
     }}"#,

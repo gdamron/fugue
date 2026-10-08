@@ -2,7 +2,7 @@
 
 use crate::MAX_BLOCK;
 
-pub const OUTPUTS: [&str; 2] = ["left", "right"];
+pub const OUTPUTS: [&str; 2] = ["audio_left", "audio_right"];
 
 pub struct ReverbOutputs {
     left: [f32; MAX_BLOCK],
@@ -34,8 +34,8 @@ impl ReverbOutputs {
 
     pub fn get(&self, port: &str) -> Result<f32, String> {
         match port {
-            "left" => Ok(self.left[0]),
-            "right" => Ok(self.right[0]),
+            "audio_left" => Ok(self.left[0]),
+            "audio_right" => Ok(self.right[0]),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }

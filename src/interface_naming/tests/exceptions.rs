@@ -14,13 +14,6 @@ pub(super) const EXCEPTION_CEILING: usize = 40;
 // One row per line, so a rename deletes whole lines.
 #[rustfmt::skip]
 pub(super) const CONVENTION_EXCEPTIONS: &[(&str, &str, &str)] = &[
-    // filter and reverb
-    ("filter", "type", "control becomes filter_type, the config's name"),
-    ("filter", "filter_type", "matches the control once it is filter_type"),
-    ("filter", "cutoff_cv", "input becomes cutoff_mod"),
-    ("filter", "cv_amount", "becomes cutoff_mod_depth"),
-    ("reverb", "left", "ports become audio_left"),
-    ("reverb", "right", "ports become audio_right"),
     // mixer and divisi
     ("mixer", "in<N>", "inputs become audio.N, from 0"),
     ("mixer", "level<N>", "inputs become level.N, from 0, the controls' names"),
