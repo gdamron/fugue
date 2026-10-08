@@ -189,7 +189,13 @@ fn transient_control_writes_stay_out_of_the_document() {
         "transient write leaked into the document: {:?}",
         lead.config
     );
-    // The live control still changed.
+    // The live control still changed, once the audio thread applied it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while running.get_control("lead", "level").unwrap() != ControlValue::Number(0.9)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     assert_eq!(
         running.get_control("lead", "level").unwrap(),
         ControlValue::Number(0.9)

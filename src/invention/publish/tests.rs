@@ -12,6 +12,7 @@ mod declared;
 mod declared_routes;
 mod drops;
 mod inputs;
+mod pilot;
 pub(crate) mod probe;
 mod request_intake;
 mod request_payloads;
