@@ -62,7 +62,18 @@ fn keys_resolve_to_consecutive_indices_and_back() {
         assert_eq!(TABLE.key(ControlIndex(index as u16)).as_deref(), Some(*key));
     }
     for unknown in [
-        "step", "step.3", "step.01", "step.-1", "level.0", "levels", "",
+        "step.+0",
+        "step.+00",
+        "step. 1",
+        "step.00",
+        "step.100000",
+        "step",
+        "step.3",
+        "step.01",
+        "step.-1",
+        "level.0",
+        "levels",
+        "",
     ] {
         assert_eq!(TABLE.resolve(unknown), None, "{unknown}");
     }
@@ -249,4 +260,20 @@ fn a_default_its_kind_cannot_hold_is_refused() {
     );
     let backwards = DeclKind::Integer { min: 1, max: 0 };
     assert!(with(backwards, RtValue::I32(0)).is_err());
+}
+
+#[test]
+fn a_signed_or_padded_suffix_neither_resolves_nor_collides() {
+    let plain = |key| ControlDecl::new(key, DeclKind::Bool, RtValue::Bool(false), "Flag");
+    for (first, second) in [
+        (plain("gain").indexed(2), plain("gain.+0")),
+        (plain("gain.+0"), plain("gain").indexed(2)),
+        (plain("gain").indexed(2), plain("gain.+00")),
+    ] {
+        let table = ControlTable::built(vec![first, second]).unwrap();
+        for index in 0..table.len() {
+            let index = ControlIndex(index as u16);
+            assert_eq!(table.resolve(&table.key(index).unwrap()), Some(index));
+        }
+    }
 }

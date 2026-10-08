@@ -176,9 +176,9 @@ impl ControlTable {
             } else {
                 key.strip_prefix(decl.key.as_ref())
                     .and_then(|rest| rest.strip_prefix('.'))
-                    .filter(|n| n == &"0" || !n.starts_with('0'))
-                    .and_then(|n| n.parse::<u16>().ok())
-                    .filter(|n| *n < decl.count)
+                    .and_then(|n| position(n.as_bytes()))
+                    .filter(|n| *n < u32::from(decl.count))
+                    .map(|n| n as u16)
             };
             if let Some(position) = position {
                 return u16::try_from(first + usize::from(position))
@@ -382,20 +382,30 @@ const fn claims_same_key(a: &ControlDecl, b: &ControlDecl) -> bool {
     if !same_bytes(stem, b_key) || rest[0] != b'.' {
         return false;
     }
-    let digits = rest.split_at(1).1;
-    if digits.len() > 1 && digits[0] == b'0' {
-        return false;
+    match position(rest.split_at(1).1) {
+        Some(position) => position < b.count as u32,
+        None => false,
+    }
+}
+
+/// The index an indexed key's suffix spells, in its one canonical form:
+/// ASCII digits, no sign, no leading zero (but `0` itself). Key resolution
+/// and the collision check both read suffixes through this, so a key that
+/// resolves is a key the check saw.
+const fn position(digits: &[u8]) -> Option<u32> {
+    if digits.is_empty() || digits.len() > 5 || (digits.len() > 1 && digits[0] == b'0') {
+        return None;
     }
     let mut position = 0u32;
     let mut k = 0;
     while k < digits.len() {
-        if !digits[k].is_ascii_digit() || position > u16::MAX as u32 {
-            return false;
+        if !digits[k].is_ascii_digit() {
+            return None;
         }
         position = position * 10 + (digits[k] - b'0') as u32;
         k += 1;
     }
-    position < b.count as u32
+    Some(position)
 }
 
 const fn key_bytes(decl: &ControlDecl) -> &[u8] {
