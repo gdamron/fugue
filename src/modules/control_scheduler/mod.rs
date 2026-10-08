@@ -37,7 +37,7 @@
 //! {
 //!   "modules": [
 //!     { "id": "clock", "type": "clock", "config": { "bpm": 120.0 } },
-//!     { "id": "mixer", "type": "mixer", "config": { "channels": 2 } },
+//!     { "id": "mixer", "type": "mixer", "config": { "channel_count": 2 } },
 //!     {
 //!       "id": "automation",
 //!       "type": "control_scheduler",

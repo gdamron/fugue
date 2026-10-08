@@ -14,15 +14,6 @@ pub(super) const EXCEPTION_CEILING: usize = 40;
 // One row per line, so a rename deletes whole lines.
 #[rustfmt::skip]
 pub(super) const CONVENTION_EXCEPTIONS: &[(&str, &str, &str)] = &[
-    // mixer and divisi
-    ("mixer", "in<N>", "inputs become audio.N, from 0"),
-    ("mixer", "level<N>", "inputs become level.N, from 0, the controls' names"),
-    ("mixer", "pan<N>", "inputs become pan.N, from 0, the controls' names"),
-    ("mixer", "left", "output becomes audio_left"),
-    ("mixer", "right", "output becomes audio_right"),
-    ("divisi", "frequency<N>", "outputs become frequency.N, from 0"),
-    ("divisi", "gate<N>", "outputs become gate.N, from 0"),
-    ("divisi", "velocity<N>", "outputs become velocity.N, from 0"),
     // step_sequencer and melody
     ("step_sequencer", "grace_duration_ms", "becomes grace_duration, in seconds"),
     ("step_sequencer", "pattern_json", "control becomes pattern; the config key goes"),

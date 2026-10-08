@@ -28,7 +28,7 @@ fn query(selection: InspectionSelection) -> InspectionQuery {
 fn layered() -> AuthoredSnapshot {
     let mut modules = vec![
         json!({"id":"clock","type":"clock"}),
-        json!({"id":"mix","type":"mixer","config":{"channels":32}}),
+        json!({"id":"mix","type":"mixer","config":{"channel_count":32}}),
     ];
     let mut connections = Vec::new();
     for i in 0..32 {
@@ -38,7 +38,7 @@ fn layered() -> AuthoredSnapshot {
             json!({"from":"clock","to":format!("sequence_{i}"),"from_port":"gate_x4","to_port":"gate"}),
             json!({"from":format!("sequence_{i}"),"to":format!("voice_{i}"),"from_port":"frequency","to_port":"frequency"}),
             json!({"from":format!("sequence_{i}"),"to":format!("voice_{i}"),"from_port":"gate","to_port":"gate"}),
-            json!({"from":format!("voice_{i}"),"to":"mix","from_port":"audio","to_port":format!("in{}",i+1)}),
+            json!({"from":format!("voice_{i}"),"to":"mix","from_port":"audio","to_port":format!("audio.{i}")}),
         ]);
     }
     snapshot(

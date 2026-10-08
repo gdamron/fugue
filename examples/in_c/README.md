@@ -46,9 +46,9 @@ begin again.
   aligned with the active cell length. If the conductor is disabled or has
   not completed a request recently, it applies conservative deterministic
   conducting rules so the example still progresses without LLM credentials.
-- **`mixer`** — 20 channels: channel 1 is the pulse, channels 2–14 are the
-  13 voices spread across the stereo field, channels 15–20 are headroom for
-  the conductor or future per-voice routing.
+- **`mixer`** — 20 channels (`audio.0` to `audio.19`): channel 0 is the
+  pulse, channels 1–13 are the 13 voices spread across the stereo field,
+  channels 14–19 are headroom for the conductor or future per-voice routing.
 - **`reverb`** — a single shared room shared by every voice including the
   pulse.
 
@@ -64,7 +64,7 @@ Edit `examples/in_c.json` directly:
 | `conductor_fallback.config.min_loops_before_advance` | Minimum loops a voice spends on a cell before fallback considers advancing. Higher = slower, more meditative. |
 | `conductor_fallback.config.max_cells_ahead_of_slowest` | How far fallback lets a voice run ahead of the slowest peer. Lower = tighter ensemble. |
 | `conductor_fallback.config.advance_probability` | Per-tick fallback probability of advancing once min-loops is satisfied and the voice is within range. |
-| `mixer.config.levels` / `pans` | Per-channel mix. Channel 1 is the pulse; 2–14 are the voices. |
+| `mixer.config.levels` / `pans` | Per-channel mix. Channel 0 is the pulse; 1–13 are the voices. |
 | Voice count | Add or remove voice pairs (`mel_<i>` + `voice_<i>`) and update the conductor context/apply mappings, fallback `sequencer_ids`, and mixer channel mapping. |
 
 ## Score data

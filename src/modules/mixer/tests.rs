@@ -13,12 +13,12 @@ fn approx_eq(actual: f32, expected: f32) {
 fn test_mixer_basic_summing() {
     let mut mixer = Mixer::new(2);
 
-    mixer.set_input("in1", 0.5).unwrap();
-    mixer.set_input("in2", 0.3).unwrap();
+    mixer.set_input("audio.0", 0.5).unwrap();
+    mixer.set_input("audio.1", 0.3).unwrap();
     mixer.process(1);
 
-    let left = mixer.get_output("left").unwrap();
-    let right = mixer.get_output("right").unwrap();
+    let left = mixer.get_output("audio_left").unwrap();
+    let right = mixer.get_output("audio_right").unwrap();
 
     approx_eq(left, 0.8 * 2.0_f32.sqrt().recip());
     approx_eq(right, 0.8 * 2.0_f32.sqrt().recip());
@@ -30,12 +30,12 @@ fn test_mixer_with_levels() {
         .with_level(0, 0.5) // Channel 1 at 50%
         .with_level(1, 1.0); // Channel 2 at 100%
 
-    mixer.set_input("in1", 1.0).unwrap();
-    mixer.set_input("in2", 1.0).unwrap();
+    mixer.set_input("audio.0", 1.0).unwrap();
+    mixer.set_input("audio.1", 1.0).unwrap();
     mixer.process(1);
 
-    let left = mixer.get_output("left").unwrap();
-    let right = mixer.get_output("right").unwrap();
+    let left = mixer.get_output("audio_left").unwrap();
+    let right = mixer.get_output("audio_right").unwrap();
     let expected = 1.5 * 2.0_f32.sqrt().recip();
 
     approx_eq(left, expected);
@@ -46,12 +46,12 @@ fn test_mixer_with_levels() {
 fn test_mixer_master_level() {
     let mut mixer = Mixer::new(2).with_master(0.5);
 
-    mixer.set_input("in1", 1.0).unwrap();
-    mixer.set_input("in2", 1.0).unwrap();
+    mixer.set_input("audio.0", 1.0).unwrap();
+    mixer.set_input("audio.1", 1.0).unwrap();
     mixer.process(1);
 
-    let left = mixer.get_output("left").unwrap();
-    let right = mixer.get_output("right").unwrap();
+    let left = mixer.get_output("audio_left").unwrap();
+    let right = mixer.get_output("audio_right").unwrap();
     let expected = 2.0_f32.sqrt().recip();
 
     approx_eq(left, expected);
@@ -62,14 +62,14 @@ fn test_mixer_master_level() {
 fn test_mixer_level_cv() {
     let mut mixer = Mixer::new(2);
 
-    mixer.set_input("in1", 1.0).unwrap();
-    mixer.set_input("in2", 1.0).unwrap();
-    mixer.set_input("level1", 0.5).unwrap(); // CV reduces channel 1
-    mixer.set_input("level2", 1.0).unwrap();
+    mixer.set_input("audio.0", 1.0).unwrap();
+    mixer.set_input("audio.1", 1.0).unwrap();
+    mixer.set_input("level.0", 0.5).unwrap(); // CV reduces channel 1
+    mixer.set_input("level.1", 1.0).unwrap();
     mixer.process(1);
 
-    let left = mixer.get_output("left").unwrap();
-    let right = mixer.get_output("right").unwrap();
+    let left = mixer.get_output("audio_left").unwrap();
+    let right = mixer.get_output("audio_right").unwrap();
     let expected = 1.5 * 2.0_f32.sqrt().recip();
 
     approx_eq(left, expected);
@@ -80,13 +80,13 @@ fn test_mixer_level_cv() {
 fn test_mixer_master_cv() {
     let mut mixer = Mixer::new(2);
 
-    mixer.set_input("in1", 1.0).unwrap();
-    mixer.set_input("in2", 1.0).unwrap();
+    mixer.set_input("audio.0", 1.0).unwrap();
+    mixer.set_input("audio.1", 1.0).unwrap();
     mixer.set_input("master", 0.25).unwrap();
     mixer.process(1);
 
-    let left = mixer.get_output("left").unwrap();
-    let right = mixer.get_output("right").unwrap();
+    let left = mixer.get_output("audio_left").unwrap();
+    let right = mixer.get_output("audio_right").unwrap();
     let expected = 0.5 * 2.0_f32.sqrt().recip();
 
     approx_eq(left, expected);
@@ -100,20 +100,20 @@ fn test_mixer_channel_count() {
 
     // Check that only 3 input channels exist
     let inputs = mixer.inputs();
-    assert!(inputs.contains(&"in1"));
-    assert!(inputs.contains(&"in2"));
-    assert!(inputs.contains(&"in3"));
-    assert!(!inputs.contains(&"in4"));
+    assert!(inputs.contains(&"audio.0"));
+    assert!(inputs.contains(&"audio.1"));
+    assert!(inputs.contains(&"audio.2"));
+    assert!(!inputs.contains(&"audio.3"));
 
-    assert!(inputs.contains(&"level1"));
-    assert!(inputs.contains(&"level2"));
-    assert!(inputs.contains(&"level3"));
-    assert!(!inputs.contains(&"level4"));
+    assert!(inputs.contains(&"level.0"));
+    assert!(inputs.contains(&"level.1"));
+    assert!(inputs.contains(&"level.2"));
+    assert!(!inputs.contains(&"level.3"));
 
-    assert!(inputs.contains(&"pan1"));
-    assert!(inputs.contains(&"pan2"));
-    assert!(inputs.contains(&"pan3"));
-    assert!(!inputs.contains(&"pan4"));
+    assert!(inputs.contains(&"pan.0"));
+    assert!(inputs.contains(&"pan.1"));
+    assert!(inputs.contains(&"pan.2"));
+    assert!(!inputs.contains(&"pan.3"));
 }
 
 #[test]
@@ -122,26 +122,26 @@ fn test_mixer_expanded_channel_ports_and_pan() {
     assert_eq!(mixer.channel_count(), 16);
 
     let inputs = mixer.inputs();
-    assert!(inputs.contains(&"in16"));
-    assert!(inputs.contains(&"level16"));
-    assert!(inputs.contains(&"pan16"));
-    assert!(!inputs.contains(&"in17"));
+    assert!(inputs.contains(&"audio.15"));
+    assert!(inputs.contains(&"level.15"));
+    assert!(inputs.contains(&"pan.15"));
+    assert!(!inputs.contains(&"audio.16"));
 
-    mixer.set_input("in16", 1.0).unwrap();
+    mixer.set_input("audio.15", 1.0).unwrap();
     mixer.process(1);
 
-    approx_eq(mixer.get_output("left").unwrap(), 0.0);
-    approx_eq(mixer.get_output("right").unwrap(), 1.0);
+    approx_eq(mixer.get_output("audio_left").unwrap(), 0.0);
+    approx_eq(mixer.get_output("audio_right").unwrap(), 1.0);
 }
 
 #[test]
 fn test_mixer_invalid_port() {
     let mut mixer = Mixer::new(2);
 
-    // in3 doesn't exist on 2-channel mixer
-    assert!(mixer.set_input("in3", 1.0).is_err());
-    assert!(mixer.set_input("level3", 1.0).is_err());
-    assert!(mixer.set_input("pan3", 1.0).is_err());
+    // audio.2 doesn't exist on 2-channel mixer
+    assert!(mixer.set_input("audio.2", 1.0).is_err());
+    assert!(mixer.set_input("level.2", 1.0).is_err());
+    assert!(mixer.set_input("pan.2", 1.0).is_err());
     assert!(mixer.get_output("invalid").is_err());
 }
 
@@ -151,7 +151,7 @@ fn test_mixer_factory() {
     assert_eq!(ModuleFactory::type_id(&factory), "mixer");
 
     let config = serde_json::json!({
-        "channels": 3,
+        "channel_count": 3,
         "levels": [0.8, 0.6, 0.4],
         "pans": [-1.0, 0.0, 1.0],
         "master": 0.9
@@ -162,7 +162,7 @@ fn test_mixer_factory() {
     let module = result.module.module();
     assert_eq!(module.name(), "Mixer");
 
-    // Should have in1-in3, level1-level3, pan1-pan3, and master
+    // Should have audio.0-2, level.0-2, pan.0-2, and master
     let inputs = module.inputs();
     assert_eq!(inputs.len(), 10); // 3 ins + 3 levels + 3 pans + 1 master
 }
@@ -182,12 +182,12 @@ fn test_mixer_clamps_channels() {
 fn test_mixer_negative_input() {
     let mut mixer = Mixer::new(2);
 
-    mixer.set_input("in1", 0.5).unwrap();
-    mixer.set_input("in2", -0.5).unwrap();
+    mixer.set_input("audio.0", 0.5).unwrap();
+    mixer.set_input("audio.1", -0.5).unwrap();
     mixer.process(1);
 
-    let left = mixer.get_output("left").unwrap();
-    let right = mixer.get_output("right").unwrap();
+    let left = mixer.get_output("audio_left").unwrap();
+    let right = mixer.get_output("audio_right").unwrap();
     assert!(left.abs() < 0.001, "Expected ~0 left, got {}", left);
     assert!(right.abs() < 0.001, "Expected ~0 right, got {}", right);
 }
@@ -196,24 +196,24 @@ fn test_mixer_negative_input() {
 fn test_mixer_hard_panning() {
     let mut mixer = Mixer::new(2).with_pan(0, -1.0).with_pan(1, 1.0);
 
-    mixer.set_input("in1", 1.0).unwrap();
-    mixer.set_input("in2", 1.0).unwrap();
+    mixer.set_input("audio.0", 1.0).unwrap();
+    mixer.set_input("audio.1", 1.0).unwrap();
     mixer.process(1);
 
-    approx_eq(mixer.get_output("left").unwrap(), 1.0);
-    approx_eq(mixer.get_output("right").unwrap(), 1.0);
+    approx_eq(mixer.get_output("audio_left").unwrap(), 1.0);
+    approx_eq(mixer.get_output("audio_right").unwrap(), 1.0);
 }
 
 #[test]
 fn test_mixer_pan_modulation_input() {
     let mut mixer = Mixer::new(1);
 
-    mixer.set_input("in1", 1.0).unwrap();
-    mixer.set_input("pan1", 1.0).unwrap();
+    mixer.set_input("audio.0", 1.0).unwrap();
+    mixer.set_input("pan.0", 1.0).unwrap();
     mixer.process(1);
 
-    approx_eq(mixer.get_output("left").unwrap(), 0.0);
-    approx_eq(mixer.get_output("right").unwrap(), 1.0);
+    approx_eq(mixer.get_output("audio_left").unwrap(), 0.0);
+    approx_eq(mixer.get_output("audio_right").unwrap(), 1.0);
 }
 
 #[test]
@@ -248,17 +248,17 @@ fn test_mixer_controls() {
 #[test]
 fn a_whole_float_channel_count_builds_that_many_channels() {
     let built = MixerFactory
-        .build(44_100, &serde_json::json!({ "channels": 2.0 }))
+        .build(44_100, &serde_json::json!({ "channel_count": 2.0 }))
         .unwrap();
-    // in1-in2, level1-level2, pan1-pan2 and master.
+    // audio.0-1, level.0-1, pan.0-1 and master.
     assert_eq!(built.module.module().inputs().len(), 7);
     let error = MixerFactory
-        .build(44_100, &serde_json::json!({ "channels": 2.5 }))
+        .build(44_100, &serde_json::json!({ "channel_count": 2.5 }))
         .err()
         .unwrap()
         .to_string();
     assert!(
-        error.starts_with("mixer config 'channels' expects a whole number"),
+        error.starts_with("mixer config 'channel_count' expects a whole number"),
         "{error}"
     );
 }
@@ -290,4 +290,26 @@ fn levels_and_pans_refuse_a_non_number_rather_than_drop_it() {
             .map(|e| e.to_string());
         assert_eq!(error.as_deref(), Some(refusal), "{config}");
     }
+}
+
+#[test]
+fn ports_count_from_zero_and_the_old_names_are_gone() {
+    let mut mixer = Mixer::new(2);
+    assert_eq!(
+        mixer.inputs(),
+        ["audio.0", "audio.1", "level.0", "level.1", "pan.0", "pan.1", "master"]
+    );
+    assert_eq!(mixer.outputs(), ["audio_left", "audio_right"]);
+    for old in [
+        "in1", "in2", "level1", "pan1", "audio.2", "audio.01", "audio.+1",
+    ] {
+        assert!(mixer.set_input(old, 1.0).is_err(), "{old}");
+    }
+    assert!(mixer.get_output("left").is_err());
+    assert!(mixer.get_output("right").is_err());
+    // `level.0` drives the channel the control `level.0` sets.
+    mixer.set_input("audio.0", 1.0).unwrap();
+    mixer.set_input("level.0", 0.0).unwrap();
+    mixer.process(1);
+    approx_eq(mixer.get_output("audio_left").unwrap(), 0.0);
 }

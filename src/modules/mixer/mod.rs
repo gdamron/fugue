@@ -22,15 +22,15 @@
 //!     {
 //!       "id": "mixer",
 //!       "type": "mixer",
-//!       "config": { "channels": 2, "levels": [0.5, 0.3], "pans": [-0.3, 0.3] }
+//!       "config": { "channel_count": 2, "levels": [0.5, 0.3], "pans": [-0.3, 0.3] }
 //!     },
 //!     { "id": "dac", "type": "dac" }
 //!   ],
 //!   "connections": [
-//!     { "from": "osc1", "from_port": "audio", "to": "mixer", "to_port": "in1" },
-//!     { "from": "osc2", "from_port": "audio", "to": "mixer", "to_port": "in2" },
-//!     { "from": "mixer", "from_port": "left", "to": "dac", "to_port": "audio_left" },
-//!     { "from": "mixer", "from_port": "right", "to": "dac", "to_port": "audio_right" }
+//!     { "from": "osc1", "from_port": "audio", "to": "mixer", "to_port": "audio.0" },
+//!     { "from": "osc2", "from_port": "audio", "to": "mixer", "to_port": "audio.1" },
+//!     { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
+//!     { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
 //!   ]
 //! }
 //! ```
@@ -62,15 +62,15 @@ pub const MAX_CHANNELS: usize = 64;
 ///
 /// # Inputs
 ///
-/// - `in1` through `in64` - Audio inputs (depending on channel count)
-/// - `level1` through `level64` - Level CV inputs (multiplied with base level)
-/// - `pan1` through `pan64` - Pan modulation inputs (added to base pan)
+/// - `audio.0` through `audio.63` - Audio inputs (depending on channel count)
+/// - `level.0` through `level.63` - Level CV inputs (multiplied with base level)
+/// - `pan.0` through `pan.63` - Pan modulation inputs (added to base pan)
 /// - `master` - Master output level CV
 ///
 /// # Outputs
 ///
-/// - `left` - Mixed left-channel output
-/// - `right` - Mixed right-channel output
+/// - `audio_left` - Mixed left-channel output
+/// - `audio_right` - Mixed right-channel output
 ///
 /// # Controls
 ///
@@ -310,7 +310,7 @@ impl Module for Mixer {
 ///
 /// # Configuration Options
 ///
-/// - `channels` (usize): Number of input channels, 1-64 (default: 4)
+/// - `channel_count` (usize): Number of input channels, 1-64 (default: 4)
 /// - `levels` (array of f32): Initial level for each channel (default: all 1.0)
 /// - `pans` (array of f32): Initial pan position for each channel (-1.0 to 1.0, default: all 0.0)
 /// - `master` (f32): Master output level (default: 1.0)
@@ -322,7 +322,7 @@ impl Module for Mixer {
 ///   "id": "main_mixer",
 ///   "type": "mixer",
 ///   "config": {
-///     "channels": 4,
+///     "channel_count": 4,
 ///     "levels": [0.8, 0.6, 0.4, 0.3],
 ///     "pans": [-0.5, -0.15, 0.15, 0.5],
 ///     "master": 0.8
@@ -332,7 +332,7 @@ impl Module for Mixer {
 pub struct MixerFactory;
 
 const TYPE_ID: &str = "mixer";
-const CHANNELS: ConfigKey = ConfigKey::int::<usize>("channels");
+const CHANNEL_COUNT: ConfigKey = ConfigKey::int::<usize>("channel_count");
 const MASTER: ConfigKey = ConfigKey::float("master");
 const LEVELS: ConfigKey = ConfigKey::json("levels");
 const PANS: ConfigKey = ConfigKey::json("pans");
@@ -343,7 +343,7 @@ impl ModuleFactory for MixerFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const { &[CHANNELS, MASTER, LEVELS, PANS] }
+        const { &[CHANNEL_COUNT, MASTER, LEVELS, PANS] }
     }
 
     fn build(
@@ -352,7 +352,7 @@ impl ModuleFactory for MixerFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let reader = ConfigReader::new(TYPE_ID, config);
-        let channels = reader.int::<usize>(&CHANNELS)?.unwrap_or(4);
+        let channels = reader.int::<usize>(&CHANNEL_COUNT)?.unwrap_or(4);
         let master = reader.float(&MASTER)?.unwrap_or(1.0);
         let levels = reader.floats(&LEVELS)?.unwrap_or_default();
         let pans = reader.floats(&PANS)?.unwrap_or_default();

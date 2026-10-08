@@ -29,6 +29,7 @@ pub mod control_scheduler;
 pub mod dac;
 pub mod divisi;
 pub mod filter;
+pub(crate) mod indexed_names;
 pub mod lfo;
 pub mod melody;
 pub mod mixer;

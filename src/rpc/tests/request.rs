@@ -106,7 +106,7 @@ fn rpc_commands_round_trip_json() {
         RpcCommand::DescribeModuleTypes(ModuleTypeQuery::default()),
         RpcCommand::DescribeModule(DescribeModuleQuery {
             module_type: Some("mixer".into()),
-            config: Some(serde_json::json!({"channels":8})),
+            config: Some(serde_json::json!({"channel_count":8})),
             ..Default::default()
         }),
     ];
