@@ -10,6 +10,7 @@ use indexmap::IndexMap;
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::invention::declared::Route;
 use crate::invention::graph::{
     compile_topology, vacant, Publication, RoutingConnection, SurvivorRemap, TopologyFacts,
 };
@@ -322,8 +323,15 @@ impl GraphChange {
         }
         // Attached, so each new instance can do its one-time setup here
         // rather than in its first block on the audio thread.
+        // Writes made while building reach the instance here, while it is
+        // still on this thread; the surface takes requests only once the
+        // change commits (see `LiveGraph::commit_with`), and refuses writes
+        // in between, or forever if the change never commits.
         for module in self.built.values_mut() {
             if let Some(instance) = module.instance.as_mut() {
+                if let Some(surface) = &module.surface {
+                    surface.bind(Route::Prepared, instance.module_mut());
+                }
                 instance.module_mut().prepare_for_publication();
             }
         }

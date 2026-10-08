@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::control_request::{ControlCells, ControlIndex, ControlTable, Refusal, RtValue};
+use crate::invention::declared::Route;
 
 mod control_meta;
 mod control_validation;
@@ -198,6 +199,31 @@ pub trait ControlSurface: Send + Sync {
         let _ = surfaces;
         check_listed_control(&self.controls(), key, value)
     }
+
+    /// Binds a declared module's surface to the `route` its writes take
+    /// from now on, applying to `module` (the instance behind this surface,
+    /// not yet running) the controls written while it was building.
+    /// Called once by whatever is about to run the module; legacy surfaces
+    /// ignore it.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn bind(&self, route: Route, module: &mut dyn Module) {
+        let _ = (route, module);
+    }
+
+    /// Opens a surface [`bound`](Self::bind) to a change still being
+    /// prepared to `route`, once that change has committed. Legacy surfaces
+    /// ignore it.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn activate(&self, route: Route) {
+        let _ = route;
+    }
+
+    /// Refuses every later write: the module behind this surface was
+    /// removed or replaced. Legacy surfaces ignore it.
+    #[doc(hidden)]
+    fn retire(&self) {}
 
     /// Coerces `value` to `key`'s declared [`ControlKind`] via
     /// [`ControlValue::coerced_to`]. Unknown keys pass through untouched so

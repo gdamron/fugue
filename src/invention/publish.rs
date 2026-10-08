@@ -26,6 +26,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use super::declared::RequestPort;
 use super::graph::{RoutingConnection, SignalGraph};
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
@@ -56,9 +57,7 @@ const BUILD_ATTEMPTS: usize = 3;
 pub(crate) struct LiveGraph {
     publisher: Arc<Mutex<Publisher>>,
     reclaimer: Arc<Reclaimer>,
-    /// Kept so the audio thread never holds the queue's last handle; the
-    /// front doors that submit through it arrive with FUG-310's controls.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Where declared surfaces submit their writes (see [`Self::port`]).
     requests: RequestSender,
     /// What became of each request; the front doors that report outcomes
     /// arrive with FUG-317.
@@ -93,7 +92,7 @@ impl LiveGraph {
         registry: Arc<ModuleRegistry>,
     ) -> Self {
         let (publisher, ends) = Publisher::link(graph);
-        Self {
+        let live = Self {
             publisher: Arc::new(Mutex::new(publisher)),
             reclaimer: Arc::new(Reclaimer::new(ends.retired, ends.payloads)),
             requests: ends.requests,
@@ -102,7 +101,15 @@ impl LiveGraph {
             control_surfaces,
             module_ports,
             registry: LiveRegistry::new(registry),
+        };
+        // Every module the graph starts with runs from here on.
+        let port = live.port();
+        for (id, surface) in live.control_surfaces.lock().unwrap().iter() {
+            if let Some(instance) = graph.modules.get_mut(id) {
+                surface.bind(port.to(id), instance.module_mut());
+            }
         }
+        live
     }
 
     /// The registry edits build modules against now: the latest one a
@@ -154,6 +161,15 @@ impl LiveGraph {
             self.control_surfaces.clone(),
             publisher.block_size(),
         )
+    }
+
+    /// The request queue declared surfaces submit to, for any module.
+    fn port(&self) -> RequestPort {
+        RequestPort {
+            publisher: Arc::downgrade(&self.publisher),
+            requests: self.requests.clone(),
+            module_id: String::new(),
+        }
     }
 
     /// Publishes a prepared change and commits the runtime mirrors together.
@@ -282,13 +298,27 @@ impl LiveGraph {
             .collect();
 
         {
+            // Retired under the publisher, so a write racing this commit
+            // never reaches the module that replaces one (see
+            // `invention::declared`).
             let mut surfaces = self.control_surfaces.lock().unwrap();
             for id in &removed {
-                surfaces.shift_remove(*id);
+                if let Some(surface) = surfaces.shift_remove(*id) {
+                    surface.retire();
+                }
             }
+            for id in published.built.keys() {
+                if let Some(surface) = surfaces.get(id) {
+                    surface.retire();
+                }
+            }
+            // Published now, so each built module's writes are requests
+            // resolved against this generation, where it is the module.
+            let port = self.port();
             for (id, module) in &published.built {
                 match &module.surface {
                     Some(surface) => {
+                        surface.activate(port.to(id));
                         surfaces.insert(id.clone(), surface.clone());
                     }
                     None => {

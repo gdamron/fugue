@@ -9,6 +9,7 @@ use crate::{Invention, InventionBuilder};
 mod alloc;
 mod carry;
 mod declared;
+mod declared_routes;
 mod drops;
 mod inputs;
 pub(crate) mod probe;
