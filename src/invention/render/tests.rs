@@ -253,7 +253,7 @@ const ONE_SHOT_INVENTION: &str = r#"{
             "id": "seq",
             "type": "step_sequencer",
             "config": {
-                "steps": 4,
+                "step_count": 4,
                 "mode": "one_shot",
                 "pattern": [ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]
             }
@@ -263,7 +263,7 @@ const ONE_SHOT_INVENTION: &str = r#"{
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
-        { "from": "clock", "from_port": "gate", "to": "seq", "to_port": "gate" },
+        { "from": "clock", "from_port": "gate", "to": "seq", "to_port": "clock" },
         { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
         { "from": "seq", "from_port": "gate", "to": "vca", "to_port": "level" },
         { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
@@ -271,7 +271,7 @@ const ONE_SHOT_INVENTION: &str = r#"{
     ]
 }"#;
 
-/// Renders block-by-block until the end gate fires; returns the absolute end
+/// Renders block-by-block until the ended gate fires; returns the absolute end
 /// frame.
 fn render_until_end(engine: &mut RenderEngine, source: Option<&str>) -> usize {
     let block = engine.block_size();
@@ -316,7 +316,7 @@ fn scan_end_gate_rejects_bad_sources_and_endless_graphs() {
     let err = engine.scan_end_gate(Some("nope"), block).unwrap_err();
     assert!(err.to_string().contains("unknown end source"), "{}", err);
     let err = engine.scan_end_gate(Some("osc"), block).unwrap_err();
-    assert!(err.to_string().contains("has no 'end' output"), "{}", err);
+    assert!(err.to_string().contains("has no 'ended' output"), "{}", err);
 
     // A graph with no end-capable module refuses --to-end semantics.
     let mut endless = RenderEngine::new(48_000);

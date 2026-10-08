@@ -61,7 +61,7 @@ impl GraceChain {
 /// A single step in the sequencer pattern.
 #[derive(Debug, Clone)]
 pub struct Step {
-    /// Note offset from base_note. None = rest (no note).
+    /// Note offset from root_note. None = rest (no note).
     pub note: Option<i8>,
     /// Gate length for this step as ratio of step duration (0.0-1.0).
     /// If None, uses the sequencer's default gate_length.

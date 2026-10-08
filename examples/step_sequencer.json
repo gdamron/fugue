@@ -18,8 +18,8 @@
       "id": "seq",
       "type": "step_sequencer",
       "config": {
-        "base_note": 48,
-        "steps": 16,
+        "root_note": 48,
+        "step_count": 16,
         "gate_length": 0.5,
         "pattern": [
           { "note": 0, "gate": 0.8 },
@@ -72,7 +72,7 @@
       "from": "clock",
       "from_port": "gate",
       "to": "seq",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "seq",
