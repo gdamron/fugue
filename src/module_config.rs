@@ -258,6 +258,37 @@ impl<'a> ConfigReader<'a> {
             .transpose()
     }
 
+    /// Reads array key `key` of finite numbers, or `None` when it is absent or
+    /// `null`.
+    /// A value that is not an array, or an element that is not a number
+    /// finite as an `f32`, is refused by its path (`levels[2]`), never
+    /// dropped: dropping one would shift the rest onto the wrong index.
+    pub fn floats(&self, key: &ConfigKey) -> Result<Option<Vec<f32>>, ConfigError> {
+        debug_assert!(
+            key.kind == ConfigKind::Json,
+            "'{}' is not declared a structured key",
+            key.key
+        );
+        let Some(value) = self.get(key.key) else {
+            return Ok(None);
+        };
+        let Some(values) = value.as_array() else {
+            let refusal = NumberRefusal {
+                expected: "an array of numbers".to_string(),
+                got: value.to_string(),
+            };
+            return Err(self.refuse(key.key, refusal));
+        };
+        values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                finite_f32(value).map_err(|r| self.refuse(&format!("{}[{index}]", key.key), r))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+
     /// The refusal of the value at `key`, which may be a path to an element
     /// read with the value-level helpers (`levels[2]`, `zones[0].root`).
     pub fn refuse(&self, key: &str, refusal: NumberRefusal) -> ConfigError {

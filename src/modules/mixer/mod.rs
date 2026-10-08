@@ -40,7 +40,7 @@ use std::f32::consts::FRAC_PI_4;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
-use crate::module_config::{finite_f32, ConfigError, ConfigKey, ConfigReader, NumberRefusal};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -334,6 +334,8 @@ pub struct MixerFactory;
 const TYPE_ID: &str = "mixer";
 const CHANNELS: ConfigKey = ConfigKey::int::<usize>("channels");
 const MASTER: ConfigKey = ConfigKey::float("master");
+const LEVELS: ConfigKey = ConfigKey::json("levels");
+const PANS: ConfigKey = ConfigKey::json("pans");
 
 impl ModuleFactory for MixerFactory {
     fn type_id(&self) -> &'static str {
@@ -341,14 +343,7 @@ impl ModuleFactory for MixerFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const {
-            &[
-                CHANNELS,
-                MASTER,
-                ConfigKey::json("levels"),
-                ConfigKey::json("pans"),
-            ]
-        }
+        const { &[CHANNELS, MASTER, LEVELS, PANS] }
     }
 
     fn build(
@@ -359,8 +354,8 @@ impl ModuleFactory for MixerFactory {
         let reader = ConfigReader::new(TYPE_ID, config);
         let channels = reader.int::<usize>(&CHANNELS)?.unwrap_or(4);
         let master = reader.float(&MASTER)?.unwrap_or(1.0);
-        let levels = read_floats(&reader, "levels")?;
-        let pans = read_floats(&reader, "pans")?;
+        let levels = reader.floats(&LEVELS)?.unwrap_or_default();
+        let pans = reader.floats(&PANS)?.unwrap_or_default();
 
         let controls = MixerControls::new_with_config(channels, &levels, &pans, master);
         crate::factory::apply_control_keys(&controls, config, |key| {
@@ -378,28 +373,6 @@ impl ModuleFactory for MixerFactory {
             sink: None,
         })
     }
-}
-
-/// Reads array `key` of finite numbers (empty when absent), refusing the
-/// first element that is not one by its path (`levels[2]`).
-fn read_floats(reader: &ConfigReader, key: &str) -> Result<Vec<f32>, ConfigError> {
-    let Some(value) = reader.get(key) else {
-        return Ok(Vec::new());
-    };
-    let Some(values) = value.as_array() else {
-        let refusal = NumberRefusal {
-            expected: "an array of numbers".to_string(),
-            got: value.to_string(),
-        };
-        return Err(reader.refuse(key, refusal));
-    };
-    values
-        .iter()
-        .enumerate()
-        .map(|(index, value)| {
-            finite_f32(value).map_err(|refusal| reader.refuse(&format!("{key}[{index}]"), refusal))
-        })
-        .collect()
 }
 
 #[cfg(test)]
