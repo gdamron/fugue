@@ -4,6 +4,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 use std::f32::consts::PI;
@@ -32,9 +33,18 @@ fn fast_sine(phase: f32) -> f32 {
 /// Factory for constructing Oscillator modules from configuration.
 pub struct OscillatorFactory;
 
+const TYPE_ID: &str = "oscillator";
+const FREQUENCY: ConfigKey = ConfigKey::float("frequency");
+const FM_AMOUNT: ConfigKey = ConfigKey::float("fm_amount");
+const AM_AMOUNT: ConfigKey = ConfigKey::float("am_amount");
+
 impl ModuleFactory for OscillatorFactory {
     fn type_id(&self) -> &'static str {
-        "oscillator"
+        TYPE_ID
+    }
+
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        &[FREQUENCY, FM_AMOUNT, AM_AMOUNT]
     }
 
     fn build(
@@ -49,18 +59,10 @@ impl ModuleFactory for OscillatorFactory {
                 .unwrap_or("sine"),
         )?;
 
-        let frequency = config
-            .get("frequency")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(440.0) as f32;
-        let fm_amount = config
-            .get("fm_amount")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32;
-        let am_amount = config
-            .get("am_amount")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32;
+        let reader = ConfigReader::new(TYPE_ID, config);
+        let frequency = reader.float(&FREQUENCY)?.unwrap_or(440.0);
+        let fm_amount = reader.float(&FM_AMOUNT)?.unwrap_or(0.0);
+        let am_amount = reader.float(&AM_AMOUNT)?.unwrap_or(0.0);
 
         let controls = OscillatorControls::new(frequency, osc_type, fm_amount, am_amount);
         crate::factory::apply_control_keys(&controls, config, |key| key == "type")?;

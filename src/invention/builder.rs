@@ -268,10 +268,12 @@ impl InventionBuilder {
         let mut all_handles: HashMap<String, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
         for spec in &invention.modules {
-            // Build module via factory
+            // Build module via factory; a refusal names the module, and
+            // refuses the whole document before anything plays.
             let result = self
                 .registry
-                .build(&spec.module_type, self.sample_rate, &spec.config)?;
+                .build(&spec.module_type, self.sample_rate, &spec.config)
+                .map_err(|error| format!("module '{}': {error}", spec.id))?;
 
             // If this is a sink, track its module id for output collection.
             if matches!(result.module, GraphModule::Sink(_)) {

@@ -121,7 +121,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 Refusal(
                     EditFailureReason::InvalidConfig,
                     format!(
-                        "module type '{module_type}' refused the config: {}",
+                        "module '{id}' of type '{module_type}' refused the config: {}",
                         bounded(&error, MODULE_ERROR_BYTES)
                     ),
                 )

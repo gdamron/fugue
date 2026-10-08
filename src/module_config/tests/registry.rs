@@ -1,0 +1,245 @@
+//! Every registered module type reads its declared config keys by the
+//! reader's rules, and refuses a non-finite number for each of its number
+//! controls (a module's config must accept each control key, see
+//! `apply_control_keys`).
+
+use super::probe::{LegacyProbeFactory, ProbeFactory};
+use super::*;
+use crate::{ControlKind, ControlValue, GraphModule, ModuleRegistry, DEFAULT_BLOCK_SIZE};
+
+/// Types whose factories still read numbers their own way, exempt from the
+/// control-key and completeness checks. Slices 2 and 3 of FUG-306 migrate
+/// them to [`ConfigReader`] and empty this list: a type leaves it when its
+/// factory declares its keys in `config_keys()`.
+const NOT_YET_MIGRATED: &[&str] = &[
+    "adsr",
+    "agent",
+    "audio_file_sink",
+    "cell_sequencer",
+    "clock",
+    "code",
+    "control_scheduler",
+    "divisi",
+    "filter",
+    "lfo",
+    "melody",
+    "mixer",
+    "reverb",
+    "rtmp_sink",
+    "sample_instrument",
+    "sample_kit",
+    "sample_slicer",
+    "step_sequencer",
+    "vca",
+    "youtube_sink",
+];
+
+/// Types the harness cannot build: they need what a test has not got.
+const UNBUILDABLE: &[(&str, &str)] = &[("wasm_module", "needs a compiled guest module")];
+
+/// The config each type is built from before a key is added: enough for
+/// types whose config is mandatory (assets, say) to build.
+fn base_config(type_id: &str) -> Value {
+    match type_id {
+        "cell_sequencer" => json!({ "sequences": [[60, null], [62]] }),
+        "youtube_sink" => json!({ "stream_key": "test-stream-key" }),
+        _ => json!({}),
+    }
+}
+
+/// `base` (an object) with `key` set to `value`.
+fn with(base: &Value, key: &str, value: Value) -> Value {
+    let mut config = base.clone();
+    config[key] = value;
+    config
+}
+
+/// What a built module shows: its ports, every control's value, and the
+/// samples a few blocks of processing write to each output.
+#[derive(Debug, PartialEq)]
+struct Observed {
+    inputs: Vec<String>,
+    outputs: Vec<String>,
+    controls: Vec<(String, Result<ControlValue, String>)>,
+    samples: Vec<Vec<f32>>,
+}
+
+fn observe(registry: &ModuleRegistry, type_id: &str, config: &Value) -> Result<Observed, String> {
+    let mut built = registry
+        .for_validation()
+        .build(type_id, 48_000, config)
+        .map_err(|error| error.to_string())?;
+    let controls = built
+        .control_surface
+        .map(|surface| {
+            surface
+                .controls()
+                .into_iter()
+                .map(|meta| {
+                    let value = surface.get_control(&meta.key);
+                    (meta.key, value)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let module = built.module.module_mut();
+    let inputs = module
+        .inputs()
+        .iter()
+        .map(|port| port.to_string())
+        .collect();
+    let outputs: Vec<String> = module.outputs().iter().map(|p| p.to_string()).collect();
+    let mut samples = vec![Vec::new(); outputs.len()];
+    if let GraphModule::Module(module) = &mut built.module {
+        for _ in 0..4 {
+            module.process(DEFAULT_BLOCK_SIZE);
+            for (index, samples) in samples.iter_mut().enumerate() {
+                samples.extend_from_slice(&module.output_block(index)[..DEFAULT_BLOCK_SIZE]);
+            }
+        }
+    }
+    Ok(Observed {
+        inputs,
+        outputs,
+        controls,
+        samples,
+    })
+}
+
+/// Checks each declared key of `type_id`, pushing what fails to `misses`.
+fn check_declared_keys(registry: &ModuleRegistry, type_id: &str, misses: &mut Vec<String>) {
+    let base = base_config(type_id);
+    for key in registry.config_keys(type_id) {
+        let name = format!("{type_id}.{}", key.key);
+        match key.kind {
+            ConfigKind::Integer { min, max } => {
+                let n = 3.clamp(min, max);
+                let as_integer = observe(registry, type_id, &with(&base, key.key, json!(n as i64)));
+                let as_float = observe(registry, type_id, &with(&base, key.key, json!(n as f64)));
+                match (&as_integer, &as_float) {
+                    (Ok(integer), Ok(float)) if integer == float => {}
+                    _ => misses.push(format!(
+                        "{name}: {n}.0 builds as {as_float:?}, {n} as {as_integer:?}"
+                    )),
+                }
+                let fraction = json!(n as f64 + 0.5);
+                match observe(registry, type_id, &with(&base, key.key, fraction.clone())) {
+                    Err(error)
+                        if error.contains(&format!("'{}'", key.key))
+                            && error.contains("expects a whole number") => {}
+                    other => misses.push(format!("{name}: {fraction} gave {other:?}")),
+                }
+            }
+            ConfigKind::Float => {
+                expect_not_finite(registry, type_id, &base, key.key, misses);
+                if let Err(error) =
+                    observe(registry, type_id, &with(&base, key.key, json!(f32::MAX)))
+                {
+                    misses.push(format!("{name}: f32::MAX refused: {error}"));
+                }
+            }
+        }
+    }
+}
+
+/// Pushes a miss unless `{key: 1e39}` is refused as not finite.
+fn expect_not_finite(
+    registry: &ModuleRegistry,
+    type_id: &str,
+    base: &Value,
+    key: &str,
+    misses: &mut Vec<String>,
+) {
+    match observe(registry, type_id, &with(base, key, json!(1e39))) {
+        Err(error) if error.contains(&format!("'{key}' expects a finite number, got 1e39")) => {}
+        other => misses.push(format!("{type_id}.{key}: 1e39 gave {other:?}")),
+    }
+}
+
+/// Checks that each number control of `type_id` refuses `1e39` in config.
+fn check_control_keys(registry: &ModuleRegistry, type_id: &str, misses: &mut Vec<String>) {
+    let base = base_config(type_id);
+    let built = match registry.for_validation().build(type_id, 48_000, &base) {
+        Ok(built) => built,
+        Err(error) => return misses.push(format!("{type_id}: base config refused: {error}")),
+    };
+    let Some(surface) = built.control_surface else {
+        return;
+    };
+    for meta in surface.controls() {
+        if matches!(meta.kind, ControlKind::Number { .. }) {
+            expect_not_finite(registry, type_id, &base, &meta.key, misses);
+        }
+    }
+}
+
+/// Runs every check over `registry`, sparing `exempt` the control-key and
+/// completeness checks.
+fn check_registry(registry: &ModuleRegistry, exempt: &[&str]) -> Vec<String> {
+    let mut misses = Vec::new();
+    let mut types: Vec<&str> = registry.types().collect();
+    types.sort_unstable();
+    for type_id in types {
+        if UNBUILDABLE.iter().any(|(id, _)| *id == type_id) {
+            continue;
+        }
+        check_declared_keys(registry, type_id, &mut misses);
+        if exempt.contains(&type_id) {
+            if !registry.config_keys(type_id).is_empty() {
+                misses.push(format!(
+                    "{type_id} declares its config keys: take it off NOT_YET_MIGRATED"
+                ));
+            }
+            continue;
+        }
+        check_control_keys(registry, type_id, &mut misses);
+    }
+    for type_id in exempt {
+        if !registry.has_type(type_id) {
+            misses.push(format!("{type_id} is not a registered type"));
+        }
+    }
+    misses
+}
+
+#[test]
+fn every_module_type_reads_its_config_numbers_by_the_reader() {
+    let registry = ModuleRegistry::default();
+    let misses = check_registry(&registry, NOT_YET_MIGRATED);
+    assert!(misses.is_empty(), "{}", misses.join("\n"));
+    assert!(!registry.config_keys("oscillator").is_empty());
+}
+
+#[test]
+fn the_harness_checks_integer_keys() {
+    let mut registry = ModuleRegistry::new();
+    registry.register(ProbeFactory);
+    assert_eq!(check_registry(&registry, &[]), Vec::<String>::new());
+}
+
+#[test]
+fn the_harness_catches_a_factory_that_reads_numbers_its_own_way() {
+    let mut registry = ModuleRegistry::new();
+    registry.register(LegacyProbeFactory);
+    let misses = check_registry(&registry, &[]);
+    assert!(
+        misses
+            .iter()
+            .any(|miss| miss.starts_with("legacy_probe.hz: 3.0 builds")),
+        "{misses:#?}"
+    );
+    assert!(
+        misses
+            .iter()
+            .any(|miss| miss.starts_with("legacy_probe.hz: 3.5 gave Ok")),
+        "{misses:#?}"
+    );
+    // A migrated type left on the list is flagged.
+    let mut registry = ModuleRegistry::new();
+    registry.register(ProbeFactory);
+    let misses = check_registry(&registry, &["probe"]);
+    assert_eq!(
+        misses,
+        vec!["probe declares its config keys: take it off NOT_YET_MIGRATED"]
+    );
+}

@@ -146,6 +146,15 @@ impl ModuleRegistry {
         self.factories.get(type_id).and_then(|f| f.output_ports())
     }
 
+    /// The numeric config keys a type declares (see
+    /// [`ModuleFactory::config_keys`]); none for an unknown type.
+    pub fn config_keys(&self, type_id: &str) -> &'static [crate::module_config::ConfigKey] {
+        self.factories
+            .get(type_id)
+            .map(|f| f.config_keys())
+            .unwrap_or(&[])
+    }
+
     /// Returns an iterator over registered type identifiers.
     pub fn types(&self) -> impl Iterator<Item = &str> + '_ {
         self.factories.keys().map(String::as_str)
