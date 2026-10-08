@@ -23,8 +23,8 @@ use scripted::{Scripted, SCRIPTED};
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "type": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
         { "id": "spare", "type": "oscillator", "config": { "frequency": 3.0 } },
         { "id": "dac", "type": "dac" }
     ],
@@ -206,7 +206,7 @@ fn a_twenty_edit_batch_commits_as_one_publication_and_untouched_modules_keep_the
         edits.push(add(v, "oscillator", json!({ "frequency": 2.0 })));
     }
     for (from, to) in [("v0", "v1"), ("v1", "v2"), ("v2", "v3"), ("v3", "v4")] {
-        edits.push(connect(from, "audio", to, "fm"));
+        edits.push(connect(from, "audio", to, "frequency_mod"));
     }
     for (index, v) in ["v0", "v1", "v2", "v3", "v4"].iter().enumerate() {
         edits.push(set(v, "frequency", number(100.0 + index as f32)));
@@ -215,7 +215,7 @@ fn a_twenty_edit_batch_commits_as_one_publication_and_untouched_modules_keep_the
     edits.push(add("v5", "oscillator", json!({})));
     edits.push(remove("v5"));
     edits.push(add("v6", "oscillator", json!({})));
-    edits.push(connect("v4", "audio", "v6", "fm"));
+    edits.push(connect("v4", "audio", "v6", "frequency_mod"));
     edits.push(set("v6", "frequency", ControlValue::String("7".into())));
     assert_eq!(edits.len(), 20);
 
@@ -377,7 +377,7 @@ fn removing_and_adding_a_module_again_rebuilds_it_even_when_identical() {
             add(
                 "osc2",
                 "oscillator",
-                json!({ "type": "sine", "frequency": 550.0 }),
+                json!({ "waveform": "sine", "frequency": 550.0 }),
             ),
             connect("osc2", "audio", "dac", "audio"),
         ])
@@ -440,7 +440,7 @@ fn an_earlier_authored_write_does_not_count_as_a_change_of_the_batch() {
         .set_control("spare", "frequency", number(7.0))
         .unwrap();
     let report = running
-        .apply_edits(&[connect("osc1", "audio", "osc2", "fm")])
+        .apply_edits(&[connect("osc1", "audio", "osc2", "frequency_mod")])
         .expect("the batch commits");
     assert_eq!(report.connections_added, 1);
     assert_eq!(report.untouched, 4);

@@ -34,14 +34,14 @@ const ACYCLIC_INVENTION: &str = r#"{
     "modules": [
         { "id": "clock", "type": "clock", "config": { "bpm": 128.0, "gate_duration": 0.4 } },
         { "id": "lfo", "type": "lfo", "config": { "rate": 5.0, "waveform": "triangle" } },
-        { "id": "osc", "type": "oscillator", "config": { "oscillator_type": "sawtooth", "frequency": 220.0, "fm_amount": 40.0 } },
+        { "id": "osc", "type": "oscillator", "config": { "waveform": "sawtooth", "frequency": 220.0, "frequency_mod_depth": 40.0 } },
         { "id": "adsr", "type": "adsr", "config": { "attack": 0.005, "decay": 0.1, "sustain": 0.6, "release": 0.2 } },
         { "id": "filter", "type": "filter", "config": { "filter_type": "lowpass", "cutoff": 1200.0, "resonance": 0.4 } },
         { "id": "vca", "type": "vca", "config": { "cv": 0.0 } },
         { "id": "dac", "type": "dac", "config": { "soft_clip": true } }
     ],
     "connections": [
-        { "from": "lfo", "from_port": "bipolar", "to": "osc", "to_port": "fm" },
+        { "from": "lfo", "from_port": "bipolar", "to": "osc", "to_port": "frequency_mod" },
         { "from": "osc", "from_port": "audio", "to": "filter", "to_port": "audio" },
         { "from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate" },
         { "from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "cv" },
@@ -54,13 +54,13 @@ const ACYCLIC_INVENTION: &str = r#"{
 const FEEDBACK_INVENTION: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 220.0, "fm_amount": 80.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 110.0, "fm_amount": 80.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 220.0, "frequency_mod_depth": 80.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 110.0, "frequency_mod_depth": 80.0 } },
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
-        { "from": "osc1", "from_port": "audio", "to": "osc2", "to_port": "fm" },
-        { "from": "osc2", "from_port": "audio", "to": "osc1", "to_port": "fm" },
+        { "from": "osc1", "from_port": "audio", "to": "osc2", "to_port": "frequency_mod" },
+        { "from": "osc2", "from_port": "audio", "to": "osc1", "to_port": "frequency_mod" },
         { "from": "osc1", "from_port": "audio", "to": "dac", "to_port": "audio" }
     ]
 }"#;
@@ -69,8 +69,8 @@ const FEEDBACK_INVENTION: &str = r#"{
 const MIX_INVENTION: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 330.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 440.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 330.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
@@ -112,7 +112,7 @@ fn multiple_sources_into_one_port_sum() {
     let only1 = render_at(
         r#"{ "version": "1.0.0",
              "modules": [
-                { "id": "osc1", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 330.0 } },
+                { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 330.0 } },
                 { "id": "dac", "type": "dac", "config": { "soft_clip": false } } ],
              "connections": [ { "from": "osc1", "from_port": "audio", "to": "dac", "to_port": "audio" } ] }"#,
         frames,
@@ -121,7 +121,7 @@ fn multiple_sources_into_one_port_sum() {
     let only2 = render_at(
         r#"{ "version": "1.0.0",
              "modules": [
-                { "id": "osc2", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 440.0 } },
+                { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
                 { "id": "dac", "type": "dac", "config": { "soft_clip": false } } ],
              "connections": [ { "from": "osc2", "from_port": "audio", "to": "dac", "to_port": "audio" } ] }"#,
         frames,

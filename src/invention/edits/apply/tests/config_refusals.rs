@@ -118,7 +118,7 @@ fn an_edit_batch_refuses_at_the_add_and_changes_nothing() {
         (
             vec![
                 remove("osc1"),
-                add("osc1", "oscillator", json!({ "fm_amount": 1e39 })),
+                add("osc1", "oscillator", json!({ "frequency_mod_depth": 1e39 })),
             ],
             1,
         ),

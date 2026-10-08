@@ -9,8 +9,8 @@ use crate::ModuleRegistry;
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "type": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [

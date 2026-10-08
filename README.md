@@ -131,7 +131,7 @@ Define your invention in a JSON file:
     {
       "id": "voice",
       "type": "voice",
-      "config": { "oscillator_type": "sine" }
+      "config": { "waveform": "sine" }
     },
     {
       "id": "dac",

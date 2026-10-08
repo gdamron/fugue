@@ -232,28 +232,23 @@ fn reloading_the_document_saved_after_an_apply_edits_batch_changes_nothing() {
 /// BASE with osc1's `frequency` left to the oscillator's default.
 fn base_without_osc1_frequency() -> String {
     BASE.replace(
-        r#""config": { "oscillator_type": "sine", "frequency": 440.0 }"#,
-        r#""config": { "oscillator_type": "sine" }"#,
+        r#""config": { "waveform": "sine", "frequency": 440.0 }"#,
+        r#""config": { "waveform": "sine" }"#,
     )
 }
 
 #[test]
 fn an_authored_write_to_a_key_the_stored_config_lacks_survives_reloading_the_original() {
     // A known limit, pinned here rather than a goal. A control key the
-    // stored config does not contain (a default the file omits, or an alias
-    // such as `type` for `waveform`) is not recorded there: adding it would
-    // make reloading the original see a removed key, which only a rebuild
-    // (a phase reset) can express. So, as before FUG-289, reloading the
+    // stored config does not contain (a default the file omits) is not
+    // recorded there: adding it would make reloading the original see a
+    // removed key, which only a rebuild (a phase reset) can express. So, as before FUG-289, reloading the
     // original leaves the authored value in place. Follow-up: restore such
     // a key with a control write, to the value a fresh build from the file's
     // config would have.
     for (original, key, value) in [
         (base_without_osc1_frequency(), "frequency", number(330.0)),
-        (
-            BASE.to_string(),
-            "type",
-            ControlValue::String("square".into()),
-        ),
+        (BASE.to_string(), "frequency_mod_depth", number(5.0)),
     ] {
         let mut running = start(&original);
         let stored = stored_config(&running, "osc1");
@@ -274,11 +269,7 @@ fn reloading_the_saved_document_after_a_write_to_a_key_the_stored_config_lacks_r
     // it added and writes it again as a control, redundantly.
     for (original, key, value) in [
         (base_without_osc1_frequency(), "frequency", number(330.0)),
-        (
-            BASE.to_string(),
-            "type",
-            ControlValue::String("square".into()),
-        ),
+        (BASE.to_string(), "frequency_mod_depth", number(5.0)),
     ] {
         let mut running = start(&original);
         running.set_control("osc1", key, value.clone()).unwrap();

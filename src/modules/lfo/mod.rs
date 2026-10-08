@@ -18,10 +18,10 @@
 //! {
 //!   "modules": [
 //!     { "id": "lfo", "type": "lfo", "config": { "rate": 5.0, "waveform": "sine" } },
-//!     { "id": "osc", "type": "oscillator", "config": { "frequency": 440.0, "fm_amount": 20.0 } }
+//!     { "id": "osc", "type": "oscillator", "config": { "frequency": 440.0, "frequency_mod_depth": 20.0 } }
 //!   ],
 //!   "connections": [
-//!     { "from": "lfo", "from_port": "bipolar", "to": "osc", "to_port": "fm" }
+//!     { "from": "lfo", "from_port": "bipolar", "to": "osc", "to_port": "frequency_mod" }
 //!   ]
 //! }
 //! ```

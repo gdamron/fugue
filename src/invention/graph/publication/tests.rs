@@ -23,7 +23,7 @@ fn build(module_type: &str, config: serde_json::Value) -> ModuleInstance {
 fn osc(frequency: f32) -> ModuleInstance {
     build(
         "oscillator",
-        serde_json::json!({ "type": "sine", "frequency": frequency }),
+        serde_json::json!({ "waveform": "sine", "frequency": frequency }),
     )
 }
 
@@ -162,7 +162,7 @@ fn mixed_publication() -> Box<Publication> {
         ],
         vec![
             edge("osc3", "dac", "audio"),
-            edge("osc3", "osc1", "fm"),
+            edge("osc3", "osc1", "frequency_mod"),
             edge("osc1", "dac", "audio"),
         ],
     );

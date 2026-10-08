@@ -316,10 +316,10 @@ fn test_runtime_cycle_is_safe() {
 
     // Create a cycle: osc → osc2.fm, osc2 → osc.fm
     running
-        .connect("osc", "audio", "osc2", "fm")
+        .connect("osc", "audio", "osc2", "frequency_mod")
         .expect("Failed to connect osc→osc2");
     running
-        .connect("osc2", "audio", "osc", "fm")
+        .connect("osc2", "audio", "osc", "frequency_mod")
         .expect("Failed to connect osc2→osc");
 
     // Let the audio thread process several samples with the feedback loop
@@ -344,8 +344,8 @@ fn test_list_controls_succeeds() {
         keys
     );
     assert!(
-        keys.contains(&"type"),
-        "Expected 'type' control, got: {:?}",
+        keys.contains(&"waveform"),
+        "Expected 'waveform' control, got: {:?}",
         keys
     );
     running.stop();

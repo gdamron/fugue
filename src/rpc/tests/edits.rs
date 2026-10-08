@@ -44,13 +44,13 @@ fn every_op_has_a_flat_tagged_wire_shape() {
         StructuralEdit::RemoveModule { id: "lfo".into() },
         json!({ "op": "remove_module", "id": "lfo" }),
     );
-    let wire = |op: &str| json!({ "op": op, "from": "lfo", "from_port": "audio", "to": "osc", "to_port": "fm" });
+    let wire = |op: &str| json!({ "op": op, "from": "lfo", "from_port": "audio", "to": "osc", "to_port": "frequency_mod" });
     round_trip(
         StructuralEdit::Connect {
             from: "lfo".into(),
             from_port: "audio".into(),
             to: "osc".into(),
-            to_port: "fm".into(),
+            to_port: "frequency_mod".into(),
         },
         wire("connect"),
     );
@@ -59,17 +59,17 @@ fn every_op_has_a_flat_tagged_wire_shape() {
             from: "lfo".into(),
             from_port: "audio".into(),
             to: "osc".into(),
-            to_port: "fm".into(),
+            to_port: "frequency_mod".into(),
         },
         wire("disconnect"),
     );
     round_trip(
         StructuralEdit::SetControl {
             module_id: "osc".into(),
-            key: "type".into(),
+            key: "waveform".into(),
             value: ControlValue::String("saw".into()),
         },
-        json!({ "op": "set_control", "module_id": "osc", "key": "type", "value": "saw" }),
+        json!({ "op": "set_control", "module_id": "osc", "key": "waveform", "value": "saw" }),
     );
 }
 

@@ -35,8 +35,8 @@
       "id": "osc",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "sawtooth",
-        "fm_amount": 8.0
+        "waveform": "sawtooth",
+        "frequency_mod_depth": 8.0
       }
     },
     {
@@ -75,7 +75,7 @@
       "from": "vibrato_lfo",
       "from_port": "bipolar",
       "to": "osc",
-      "to_port": "fm"
+      "to_port": "frequency_mod"
     },
     {
       "from": "melody",

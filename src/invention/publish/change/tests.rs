@@ -14,8 +14,8 @@ const SAMPLE_RATE: u32 = 48_000;
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "type": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [
@@ -168,14 +168,16 @@ fn a_mixed_change_installs_in_one_block_without_allocating() {
         harness.build(
             "osc1",
             "oscillator",
-            serde_json::json!({ "type": "square" }),
+            serde_json::json!({ "waveform": "square" }),
         ),
     );
     change.disconnect(edge("osc1", "audio", "dac", "audio"));
     change
         .connect(edge("osc3", "audio", "dac", "audio"))
         .unwrap();
-    change.connect(edge("osc3", "audio", "osc1", "fm")).unwrap();
+    change
+        .connect(edge("osc3", "audio", "osc1", "frequency_mod"))
+        .unwrap();
     harness.publish(change);
 
     harness.assert_clean_install("mixed change");
@@ -212,9 +214,9 @@ fn sinks_are_replaced_added_and_removed_cleanly() {
 fn feedback_loops_are_made_and_broken_cleanly() {
     let mut harness = Harness::new();
     let cycle = [
-        edge("osc1", "audio", "osc2", "fm"),
-        edge("osc2", "audio", "osc1", "fm"),
-        edge("osc1", "audio", "osc1", "am"),
+        edge("osc1", "audio", "osc2", "frequency_mod"),
+        edge("osc2", "audio", "osc1", "frequency_mod"),
+        edge("osc1", "audio", "osc1", "amplitude_mod"),
     ];
     let mut change = harness.begin();
     for e in &cycle {
@@ -286,7 +288,7 @@ fn a_scheduler_publishes_cleanly_with_a_target_added_alongside() {
         harness.build(
             "osc3",
             "oscillator",
-            serde_json::json!({ "type": "sawtooth" }),
+            serde_json::json!({ "waveform": "sawtooth" }),
         ),
     );
     harness.publish(change);
@@ -395,7 +397,7 @@ fn a_change_that_edits_nothing_compiles_nothing() {
     let harness = Harness::new();
     let mut change = harness.begin();
     change.remove("missing");
-    change.disconnect(edge("osc1", "audio", "osc2", "fm"));
+    change.disconnect(edge("osc1", "audio", "osc2", "frequency_mod"));
     let prepared = change.prepare().unwrap();
     assert!(prepared.is_empty());
     assert!(prepared.publication.is_none());
@@ -406,7 +408,9 @@ fn a_change_that_edits_nothing_compiles_nothing() {
 fn disconnecting_a_module_drops_every_edge_touching_it() {
     let mut harness = Harness::new();
     let mut change = harness.begin();
-    change.connect(edge("osc2", "audio", "osc1", "fm")).unwrap();
+    change
+        .connect(edge("osc2", "audio", "osc1", "frequency_mod"))
+        .unwrap();
     change.disconnect_module("osc1");
     harness.publish(change);
     harness.assert_clean_install("disconnect a module");

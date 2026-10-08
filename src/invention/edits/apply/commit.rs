@@ -190,7 +190,7 @@ impl RunningInvention {
 /// instance just built, before it is attached and prepared for publication,
 /// so the prepared module already holds every value and the audio thread
 /// adopts nothing new after the swap. A control's key need not be the config
-/// key its module is built from (an oscillator's `type`, say), so the config
+/// key its module is built from (a filter's `type`, say), so the config
 /// alone may not carry the value. A write the module refuses refuses the
 /// batch at its edit, with nothing published.
 fn write_built(

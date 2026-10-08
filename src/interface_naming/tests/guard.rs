@@ -278,9 +278,7 @@ fn the_guard_catches_a_type_that_breaks_the_rules() {
     let mut registry = ModuleRegistry::new();
     registry.register(ProbeFactory);
     let names: BTreeSet<String> = check_registry(&registry).into_iter().map(|v| v.1).collect();
-    // The probe is an oscillator with an `hz` key: `fm`/`am` are fine as
-    // words, but `type` and `hz` are not.
-    for name in ["hz", "type"] {
-        assert!(names.contains(name), "{name} not caught in {names:?}");
-    }
+    // The probe is an oscillator with an `hz` key, which names a unit
+    // rather than the musical quantity.
+    assert!(names.contains("hz"), "hz not caught in {names:?}");
 }

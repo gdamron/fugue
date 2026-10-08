@@ -14,9 +14,7 @@ pub(super) const EXCEPTION_CEILING: usize = 40;
 // One row per line, so a rename deletes whole lines.
 #[rustfmt::skip]
 pub(super) const CONVENTION_EXCEPTIONS: &[(&str, &str, &str)] = &[
-    // oscillator and vca
-    ("oscillator", "type", "control becomes waveform"),
-    ("oscillator", "oscillator_type", "config becomes waveform, the control's name"),
+    // vca
     ("vca", "cv", "input, control and config become level"),
     // filter and reverb
     ("filter", "type", "control becomes filter_type, the config's name"),

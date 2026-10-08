@@ -11,8 +11,8 @@ const DOCUMENTED_REQUEST: &str = r#"{
   "expected_revision": { "session_id": "…", "revision": 12 },
   "edits": [
     { "op": "add_module", "id": "tremolo", "module_type": "lfo", "config": { "rate": 5 } },
-    { "op": "connect", "from": "tremolo", "from_port": "bipolar", "to": "lead", "to_port": "am" },
-    { "op": "set_control", "module_id": "lead", "key": "am_amount", "value": 0.3 }
+    { "op": "connect", "from": "tremolo", "from_port": "bipolar", "to": "lead", "to_port": "amplitude_mod" },
+    { "op": "set_control", "module_id": "lead", "key": "amplitude_mod_depth", "value": 0.3 }
   ]
 }"#;
 
@@ -33,7 +33,7 @@ fn the_documented_request_parses_through_the_envelope() {
         edits[2],
         StructuralEdit::SetControl {
             module_id: "lead".into(),
-            key: "am_amount".into(),
+            key: "amplitude_mod_depth".into(),
             value: ControlValue::Number(0.3),
         }
     );
@@ -42,7 +42,7 @@ fn the_documented_request_parses_through_the_envelope() {
 #[test]
 fn unknown_fields_are_refused_inside_an_edit_but_not_on_the_envelope() {
     let mut inside: serde_json::Value = serde_json::from_str(DOCUMENTED_REQUEST).unwrap();
-    inside["edits"][1]["to_prot"] = json!("am");
+    inside["edits"][1]["to_prot"] = json!("amplitude_mod");
     assert!(serde_json::from_value::<RpcRequest>(inside).is_err());
 
     // Like every other command, the envelope and the command ignore fields

@@ -288,7 +288,7 @@ mod tests {
                 { "name": "audio", "from": "osc", "from_port": "audio" }
             ],
             "controls": [
-                { "key": "type", "module": "osc", "control": "type" }
+                { "key": "waveform", "module": "osc", "control": "waveform" }
             ]
         }
         "#;
@@ -297,6 +297,6 @@ mod tests {
         assert!(invention.is_development());
         assert_eq!(invention.inputs[0].name, "frequency");
         assert_eq!(invention.outputs[0].name, "audio");
-        assert_eq!(invention.controls[0].key, "type");
+        assert_eq!(invention.controls[0].key, "waveform");
     }
 }

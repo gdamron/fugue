@@ -105,7 +105,7 @@ fn running_invention_tracks_runtime_module_mutations() {
             "code1",
             "code",
             &serde_json::json!({
-                "script": "function init() { graph.addModule('osc_live', 'oscillator', { type: 'sine', frequency: 220.0 }) }"
+                "script": "function init() { graph.addModule('osc_live', 'oscillator', { waveform: 'sine', frequency: 220.0 }) }"
             }),
         )
         .unwrap();
@@ -178,7 +178,7 @@ fn running_invention_supports_returned_lifecycle_object() {
                     "id": "code1",
                     "type": "code",
                     "config": {
-                        "script": "(() => ({ init() { graph.addModule('osc_from_object_live', 'oscillator', { type: 'sine', frequency: 330.0 }) } }))()"
+                        "script": "(() => ({ init() { graph.addModule('osc_from_object_live', 'oscillator', { waveform: 'sine', frequency: 330.0 }) } }))()"
                     }
                 },
                 { "id": "dac", "type": "dac" }
@@ -249,7 +249,7 @@ fn installed_sink_observes_control_writes_with_the_applied_value() {
         r#"{
             "version": "1.0.0",
             "modules": [
-                { "id": "osc", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+                { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
@@ -287,7 +287,7 @@ fn installed_sink_observes_control_writes_with_the_applied_value() {
             ),
             crate::ControlWrite::new(
                 "osc".to_string(),
-                "type".to_string(),
+                "waveform".to_string(),
                 ControlValue::String("square".to_string()),
             ),
         ])
@@ -310,7 +310,7 @@ fn installed_sink_observes_control_writes_with_the_applied_value() {
             ),
             (
                 "osc".to_string(),
-                "type".to_string(),
+                "waveform".to_string(),
                 ControlValue::String("square".to_string())
             ),
         ]
@@ -371,7 +371,7 @@ fn master_meter_reports_output_peaks() {
         r#"{
             "version": "1.0.0",
             "modules": [
-                { "id": "osc", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+                { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
@@ -412,7 +412,7 @@ fn running_invention_keeps_legacy_globalthis_hooks_working() {
                     "id": "code1",
                     "type": "code",
                     "config": {
-                        "script": "globalThis.init = function () { graph.addModule('osc_from_legacy_live', 'oscillator', { type: 'sine', frequency: 260.0 }) }"
+                        "script": "globalThis.init = function () { graph.addModule('osc_from_legacy_live', 'oscillator', { waveform: 'sine', frequency: 260.0 }) }"
                     }
                 },
                 { "id": "dac", "type": "dac" }
@@ -438,7 +438,7 @@ fn performed_control_writes_are_announced_but_never_authored() {
         r#"{
             "version": "1.0.0",
             "modules": [
-                { "id": "osc", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+                { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [

@@ -14,7 +14,7 @@
             "type": "oscillator",
             "config": {
               "frequency": 220.0,
-              "type": "square"
+              "waveform": "square"
             }
           },
           {
@@ -69,7 +69,7 @@
           {
             "key": "waveform",
             "module": "osc",
-            "control": "type"
+            "control": "waveform"
           }
         ]
       }

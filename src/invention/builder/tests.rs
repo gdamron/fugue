@@ -41,9 +41,9 @@ fn voice_development() -> Invention {
             from_port: "audio".to_string(),
         }],
         controls: vec![DevelopmentControl {
-            key: "type".to_string(),
+            key: "waveform".to_string(),
             module: "osc".to_string(),
-            control: "type".to_string(),
+            control: "waveform".to_string(),
         }],
         source_path: None,
     }
@@ -100,7 +100,7 @@ fn builds_inline_development_as_module() {
     let surfaces = runtime.control_surfaces.lock().unwrap();
     let controls = surfaces.get("lead").unwrap().controls();
     assert_eq!(controls.len(), 1);
-    assert_eq!(controls[0].key, "type");
+    assert_eq!(controls[0].key, "waveform");
 }
 
 #[test]
@@ -123,10 +123,10 @@ fn development_controls_alias_internal_surface() {
         .unwrap();
 
     surface
-        .set_control("type", ControlValue::String("square".to_string()))
+        .set_control("waveform", ControlValue::String("square".to_string()))
         .unwrap();
     assert_eq!(
-        surface.get_control("type").unwrap(),
+        surface.get_control("waveform").unwrap(),
         ControlValue::String("square".to_string())
     );
 }

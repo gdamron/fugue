@@ -20,7 +20,7 @@ fn test_graph(module_ids: &[&str], connections: &[(&str, &str)]) -> SignalGraph 
             from_module: from.to_string(),
             from_port: "audio".to_string(),
             to_module: to.to_string(),
-            to_port: "fm".to_string(),
+            to_port: "frequency_mod".to_string(),
         })
         .collect();
 

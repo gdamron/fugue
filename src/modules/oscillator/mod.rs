@@ -35,8 +35,8 @@ pub struct OscillatorFactory;
 
 const TYPE_ID: &str = "oscillator";
 const FREQUENCY: ConfigKey = ConfigKey::float("frequency");
-const FM_AMOUNT: ConfigKey = ConfigKey::float("fm_amount");
-const AM_AMOUNT: ConfigKey = ConfigKey::float("am_amount");
+const FREQUENCY_MOD_DEPTH: ConfigKey = ConfigKey::float("frequency_mod_depth");
+const AMPLITUDE_MOD_DEPTH: ConfigKey = ConfigKey::float("amplitude_mod_depth");
 
 impl ModuleFactory for OscillatorFactory {
     fn type_id(&self) -> &'static str {
@@ -44,14 +44,7 @@ impl ModuleFactory for OscillatorFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const {
-            &[
-                FREQUENCY,
-                FM_AMOUNT,
-                AM_AMOUNT,
-                ConfigKey::text("oscillator_type"),
-            ]
-        }
+        &[FREQUENCY, FREQUENCY_MOD_DEPTH, AMPLITUDE_MOD_DEPTH]
     }
 
     fn build(
@@ -59,20 +52,14 @@ impl ModuleFactory for OscillatorFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let osc_type = parse_oscillator_type(
-            config
-                .get("oscillator_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("sine"),
-        )?;
-
         let reader = ConfigReader::new(TYPE_ID, config);
         let frequency = reader.float(&FREQUENCY)?.unwrap_or(440.0);
-        let fm_amount = reader.float(&FM_AMOUNT)?.unwrap_or(0.0);
-        let am_amount = reader.float(&AM_AMOUNT)?.unwrap_or(0.0);
+        let fm_amount = reader.float(&FREQUENCY_MOD_DEPTH)?.unwrap_or(0.0);
+        let am_amount = reader.float(&AMPLITUDE_MOD_DEPTH)?.unwrap_or(0.0);
 
-        let controls = OscillatorControls::new(frequency, osc_type, fm_amount, am_amount);
-        crate::factory::apply_control_keys(&controls, config, |key| key == "type")?;
+        let controls =
+            OscillatorControls::new(frequency, OscillatorType::Sine, fm_amount, am_amount);
+        crate::factory::apply_control_keys(&controls, config, |key| key == "waveform")?;
         let osc = Oscillator::new_with_controls(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
@@ -87,32 +74,21 @@ impl ModuleFactory for OscillatorFactory {
     }
 }
 
-/// Parses an oscillator type string into an OscillatorType enum.
-fn parse_oscillator_type(s: &str) -> Result<OscillatorType, Box<dyn std::error::Error>> {
-    match s.to_lowercase().as_str() {
-        "sine" => Ok(OscillatorType::Sine),
-        "square" => Ok(OscillatorType::Square),
-        "sawtooth" | "saw" => Ok(OscillatorType::Sawtooth),
-        "triangle" | "tri" => Ok(OscillatorType::Triangle),
-        _ => Err(format!("Unknown oscillator type: {}", s).into()),
-    }
-}
-
 /// A waveform generator that produces audio signals.
 ///
 /// # Inputs
 /// - `frequency`: Frequency in Hz (overrides control if connected)
-/// - `fm`: Frequency modulation signal (scaled by fm_amount)
-/// - `am`: Amplitude modulation signal (scaled by am_amount)
+/// - `frequency_mod`: Frequency modulation signal (scaled by frequency_mod_depth)
+/// - `amplitude_mod`: Amplitude modulation signal (scaled by amplitude_mod_depth)
 ///
 /// # Outputs
 /// - `audio`: Generated audio waveform
 ///
 /// # Controls
 /// - `frequency`: Base frequency in Hz (default: 440.0)
-/// - `type`: Waveform type (0=Sine, 1=Square, 2=Sawtooth, 3=Triangle)
-/// - `fm_amount`: FM modulation depth in Hz (default: 0.0)
-/// - `am_amount`: AM modulation depth 0.0-1.0 (default: 0.0)
+/// - `waveform`: Waveform (0=Sine, 1=Square, 2=Sawtooth, 3=Triangle)
+/// - `frequency_mod_depth`: Frequency modulation depth in Hz (default: 0.0)
+/// - `amplitude_mod_depth`: Amplitude modulation depth 0.0-1.0 (default: 0.0)
 pub struct Oscillator {
     phase: f32,
     sample_rate: u32,
@@ -316,7 +292,7 @@ impl Module for Oscillator {
             ControlMeta::new("frequency", "Frequency in Hz")
                 .with_range(20.0, 20000.0)
                 .with_default(440.0),
-            ControlMeta::new("type", "Waveform type")
+            ControlMeta::new("waveform", "Waveform")
                 .with_default(0.0)
                 .with_variants(vec![
                     "Sine".to_string(),
@@ -324,10 +300,10 @@ impl Module for Oscillator {
                     "Sawtooth".to_string(),
                     "Triangle".to_string(),
                 ]),
-            ControlMeta::new("fm_amount", "FM modulation depth in Hz")
+            ControlMeta::new("frequency_mod_depth", "Frequency modulation depth in Hz")
                 .with_range(0.0, 1000.0)
                 .with_default(0.0),
-            ControlMeta::new("am_amount", "AM modulation depth")
+            ControlMeta::new("amplitude_mod_depth", "Amplitude modulation depth, 0 to 1")
                 .with_range(0.0, 1.0)
                 .with_default(0.0),
         ]
@@ -336,9 +312,9 @@ impl Module for Oscillator {
     fn get_control(&self, key: &str) -> Result<f32, String> {
         match key {
             "frequency" => Ok(self.ctrl.frequency()),
-            "type" => Ok(self.ctrl.oscillator_type().to_index()),
-            "fm_amount" => Ok(self.ctrl.fm_amount()),
-            "am_amount" => Ok(self.ctrl.am_amount()),
+            "waveform" => Ok(self.ctrl.oscillator_type().to_index()),
+            "frequency_mod_depth" => Ok(self.ctrl.fm_amount()),
+            "amplitude_mod_depth" => Ok(self.ctrl.am_amount()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -349,16 +325,16 @@ impl Module for Oscillator {
                 self.ctrl.set_frequency(value);
                 Ok(())
             }
-            "type" => {
+            "waveform" => {
                 self.ctrl
                     .set_oscillator_type(OscillatorType::from_index(value));
                 Ok(())
             }
-            "fm_amount" => {
+            "frequency_mod_depth" => {
                 self.ctrl.set_fm_amount(value);
                 Ok(())
             }
-            "am_amount" => {
+            "amplitude_mod_depth" => {
                 self.ctrl.set_am_amount(value);
                 Ok(())
             }
@@ -415,14 +391,14 @@ mod tests {
         let controls = osc.controls();
         assert_eq!(controls.len(), 4);
         assert_eq!(controls[0].key, "frequency");
-        assert_eq!(controls[1].key, "type");
+        assert_eq!(controls[1].key, "waveform");
 
         // Test get/set controls
         osc.set_control("frequency", 880.0).unwrap();
         assert_eq!(osc.get_control("frequency").unwrap(), 880.0);
 
-        osc.set_control("type", 2.0).unwrap(); // Sawtooth
-        assert_eq!(osc.get_control("type").unwrap(), 2.0);
+        osc.set_control("waveform", 2.0).unwrap(); // Sawtooth
+        assert_eq!(osc.get_control("waveform").unwrap(), 2.0);
 
         // Test invalid control
         assert!(osc.get_control("invalid").is_err());

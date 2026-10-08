@@ -92,7 +92,7 @@ impl ControlSurface for OscillatorControls {
             ControlMeta::number("frequency", "Frequency in Hz")
                 .with_range(20.0, 20000.0)
                 .with_default(self.frequency()),
-            ControlMeta::string("type", "Waveform type")
+            ControlMeta::string("waveform", "Waveform")
                 .with_default(self.oscillator_type().as_str())
                 .with_options(vec![
                     "sine".to_string(),
@@ -100,10 +100,10 @@ impl ControlSurface for OscillatorControls {
                     "sawtooth".to_string(),
                     "triangle".to_string(),
                 ]),
-            ControlMeta::number("fm_amount", "FM modulation depth in Hz")
+            ControlMeta::number("frequency_mod_depth", "Frequency modulation depth in Hz")
                 .with_range(0.0, 1000.0)
                 .with_default(self.fm_amount()),
-            ControlMeta::number("am_amount", "AM modulation depth")
+            ControlMeta::number("amplitude_mod_depth", "Amplitude modulation depth, 0 to 1")
                 .with_range(0.0, 1.0)
                 .with_default(self.am_amount()),
         ]
@@ -112,9 +112,9 @@ impl ControlSurface for OscillatorControls {
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
             "frequency" => Ok(self.frequency().into()),
-            "type" => Ok(self.oscillator_type().as_str().into()),
-            "fm_amount" => Ok(self.fm_amount().into()),
-            "am_amount" => Ok(self.am_amount().into()),
+            "waveform" => Ok(self.oscillator_type().as_str().into()),
+            "frequency_mod_depth" => Ok(self.fm_amount().into()),
+            "amplitude_mod_depth" => Ok(self.am_amount().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -122,9 +122,9 @@ impl ControlSurface for OscillatorControls {
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
             "frequency" => self.set_frequency(value.as_number()?),
-            "type" => self.set_oscillator_type(OscillatorType::parse(value.as_string()?)?),
-            "fm_amount" => self.set_fm_amount(value.as_number()?),
-            "am_amount" => self.set_am_amount(value.as_number()?),
+            "waveform" => self.set_oscillator_type(OscillatorType::parse(value.as_string()?)?),
+            "frequency_mod_depth" => self.set_fm_amount(value.as_number()?),
+            "amplitude_mod_depth" => self.set_am_amount(value.as_number()?),
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
@@ -137,7 +137,7 @@ impl ControlSurface for OscillatorControls {
         _surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
         match key {
-            "type" => OscillatorType::parse(value.as_string()?).map(drop),
+            "waveform" => OscillatorType::parse(value.as_string()?).map(drop),
             _ => check_listed_control(&self.controls(), key, value),
         }
     }

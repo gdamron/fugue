@@ -8,7 +8,7 @@ use crate::modules::{Oscillator, OscillatorControls, OscillatorType};
 use std::sync::Arc;
 
 /// An oscillator whose frequency is the whole number `hz`, read by the
-/// reader. Its other number controls are its `fm_amount` key and the
+/// reader. Its other number controls are its `frequency_mod_depth` key and the
 /// control keys it applies.
 pub(crate) struct ProbeFactory;
 
@@ -17,7 +17,7 @@ pub(crate) struct ProbeFactory;
 pub(crate) struct LegacyProbeFactory;
 
 const HZ: ConfigKey = ConfigKey::int::<u16>("hz");
-const FM_AMOUNT: ConfigKey = ConfigKey::float("fm_amount");
+const FREQUENCY_MOD_DEPTH: ConfigKey = ConfigKey::float("frequency_mod_depth");
 
 impl ModuleFactory for ProbeFactory {
     fn type_id(&self) -> &'static str {
@@ -25,7 +25,7 @@ impl ModuleFactory for ProbeFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[HZ, FM_AMOUNT]
+        &[HZ, FREQUENCY_MOD_DEPTH]
     }
 
     fn build(
@@ -45,7 +45,7 @@ impl ModuleFactory for LegacyProbeFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[HZ, FM_AMOUNT]
+        &[HZ, FREQUENCY_MOD_DEPTH]
     }
 
     fn build(
@@ -64,10 +64,10 @@ fn build(
     hz: u16,
 ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
     let reader = ConfigReader::new("probe", config);
-    let fm_amount = reader.float(&FM_AMOUNT)?.unwrap_or(0.0);
+    let fm_amount = reader.float(&FREQUENCY_MOD_DEPTH)?.unwrap_or(0.0);
     let controls = OscillatorControls::new(f32::from(hz), OscillatorType::Sine, fm_amount, 0.0);
     apply_control_keys(&controls, config, |key| {
-        matches!(key, "frequency" | "am_amount" | "type")
+        matches!(key, "frequency" | "amplitude_mod_depth" | "waveform")
     })?;
     let module = Oscillator::new_with_controls(sample_rate, controls.clone());
     Ok(ModuleBuildResult {

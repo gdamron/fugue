@@ -39,21 +39,21 @@
       "id": "osc_saw",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "sawtooth"
+        "waveform": "sawtooth"
       }
     },
     {
       "id": "osc_square",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "square"
+        "waveform": "square"
       }
     },
     {
       "id": "osc_sub",
       "type": "oscillator",
       "config": {
-        "oscillator_type": "sine"
+        "waveform": "sine"
       }
     },
     {

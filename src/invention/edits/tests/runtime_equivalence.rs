@@ -75,9 +75,9 @@ fn retained(running: &crate::RunningInvention) -> Invention {
 fn the_candidate_matches_the_equivalent_runtime_commands() {
     let edits = vec![
         add("lfo", "lfo", json!({ "rate": 2 })),
-        connect("lfo", "bipolar", "osc1", "fm"),
+        connect("lfo", "bipolar", "osc1", "frequency_mod"),
         set("osc2", "frequency", ControlValue::String("330".into())),
-        set("osc2", "type", ControlValue::String("square".into())),
+        set("osc2", "waveform", ControlValue::String("square".into())),
         set("lfo", "rate", ControlValue::Number(0.25)),
         disconnect("osc2", "audio", "dac", "audio"),
         remove("osc1"),
@@ -94,12 +94,14 @@ fn the_candidate_matches_the_equivalent_runtime_commands() {
     running
         .add_module("lfo", "lfo", &json!({ "rate": 2 }))
         .unwrap();
-    running.connect("lfo", "bipolar", "osc1", "fm").unwrap();
+    running
+        .connect("lfo", "bipolar", "osc1", "frequency_mod")
+        .unwrap();
     running
         .set_control("osc2", "frequency", ControlValue::String("330".into()))
         .unwrap();
     running
-        .set_control("osc2", "type", ControlValue::String("square".into()))
+        .set_control("osc2", "waveform", ControlValue::String("square".into()))
         .unwrap();
     running
         .set_control("lfo", "rate", ControlValue::Number(0.25))
@@ -128,13 +130,13 @@ fn registry_facts_read_ports_and_control_kinds() {
     let facts = RegistryFacts::for_document(&base());
     let osc = facts.module("osc1").unwrap();
     assert_eq!(osc.outputs, ["audio"]);
-    assert!(osc.inputs.iter().any(|port| port == "fm"));
+    assert!(osc.inputs.iter().any(|port| port == "frequency_mod"));
     assert!(matches!(
         osc.controls.get("frequency"),
         Some(ControlKind::Number { .. })
     ));
     assert!(matches!(
-        osc.controls.get("type"),
+        osc.controls.get("waveform"),
         Some(ControlKind::String { .. })
     ));
     assert!(facts

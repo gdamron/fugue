@@ -12,8 +12,8 @@ mod registry;
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "type": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
         { "id": "spare", "type": "oscillator", "config": { "frequency": 3.0 } },
         { "id": "dac", "type": "dac" }
     ],
@@ -29,13 +29,13 @@ const BASE: &str = r#"{
 const EDITED: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 220.0 } },
-        { "id": "osc3", "type": "oscillator", "config": { "type": "square", "frequency": 330.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 220.0 } },
+        { "id": "osc3", "type": "oscillator", "config": { "waveform": "square", "frequency": 330.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [
         { "from": "osc3", "from_port": "audio", "to": "dac", "to_port": "audio" },
-        { "from": "osc1", "from_port": "audio", "to": "osc3", "to_port": "fm" }
+        { "from": "osc1", "from_port": "audio", "to": "osc3", "to_port": "frequency_mod" }
     ]
 }"#;
 

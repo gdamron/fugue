@@ -12,13 +12,13 @@ pub(super) const LOOP: &str = r#"{
     "version": "1.0.0",
     "modules": [
         { "id": "lfo", "type": "oscillator", "config": { "frequency": 3.0 } },
-        { "id": "osc1", "type": "oscillator", "config": { "frequency": 220.0, "fm_amount": 300.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "frequency": 331.0, "fm_amount": 500.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "frequency": 220.0, "frequency_mod_depth": 300.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "frequency": 331.0, "frequency_mod_depth": 500.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [
-        { "from": "osc1", "from_port": "audio", "to": "osc2", "to_port": "fm" },
-        { "from": "osc2", "from_port": "audio", "to": "osc1", "to_port": "fm" },
+        { "from": "osc1", "from_port": "audio", "to": "osc2", "to_port": "frequency_mod" },
+        { "from": "osc2", "from_port": "audio", "to": "osc1", "to_port": "frequency_mod" },
         { "from": "osc1", "from_port": "audio", "to": "dac", "to_port": "audio" }
     ]
 }"#;
@@ -65,7 +65,7 @@ fn an_edit_outside_a_feedback_loop_leaves_it_sample_identical() {
     upsert_osc(&edited, "aux", serde_json::json!({ "frequency": 90.0 }));
     edited
         .live
-        .connect(edge("lfo", "audio", "aux", "fm"))
+        .connect(edge("lfo", "audio", "aux", "frequency_mod"))
         .unwrap();
     assert_identical(&edited.render(7), &twin.render(7), "after adding aux");
 
@@ -91,11 +91,11 @@ fn folded_publications_keep_the_loop_sample_identical() {
     edited.live.remove_module("lfo").unwrap();
     edited
         .live
-        .connect(edge("aux", "audio", "osc2", "am"))
+        .connect(edge("aux", "audio", "osc2", "amplitude_mod"))
         .unwrap();
     edited
         .live
-        .disconnect(edge("aux", "audio", "osc2", "am"))
+        .disconnect(edge("aux", "audio", "osc2", "amplitude_mod"))
         .unwrap();
     assert_eq!(edited.generation_and_applied(), (4, 0));
 
@@ -115,12 +115,12 @@ fn a_rebuilt_feedback_loop_starts_from_zero() {
     let osc1 = edited.build(
         "osc1",
         "oscillator",
-        serde_json::json!({ "frequency": 220.0, "fm_amount": 300.0 }),
+        serde_json::json!({ "frequency": 220.0, "frequency_mod_depth": 300.0 }),
     );
     let osc2 = edited.build(
         "osc2",
         "oscillator",
-        serde_json::json!({ "frequency": 331.0, "fm_amount": 500.0 }),
+        serde_json::json!({ "frequency": 331.0, "frequency_mod_depth": 500.0 }),
     );
     edited
         .live
