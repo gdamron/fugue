@@ -52,7 +52,18 @@ impl ModuleFactory for StepSequencerFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[BASE_NOTE, STEPS, GATE_LENGTH, GRACE_DURATION_MS]
+        const {
+            &[
+                BASE_NOTE,
+                STEPS,
+                GATE_LENGTH,
+                GRACE_DURATION_MS,
+                ConfigKey::text("pattern_json"),
+                ConfigKey::json("pattern"),
+                ConfigKey::text("mode"),
+                ConfigKey::text("grace_placement"),
+            ]
+        }
     }
 
     fn build(

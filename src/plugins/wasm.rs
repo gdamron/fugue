@@ -41,6 +41,10 @@ impl ModuleFactory for WasmModuleFactory {
         "wasm_module"
     }
 
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        const { &[crate::module_config::ConfigKey::text("manifest")] }
+    }
+
     fn build(
         &self,
         sample_rate: u32,

@@ -268,7 +268,7 @@ impl ModuleFactory for LfoFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[FREQUENCY]
+        const { &[FREQUENCY, ConfigKey::text("waveform")] }
     }
 
     fn build(

@@ -57,10 +57,25 @@ impl ModuleFactory for AudioFileSinkFactory {
     }
 
     fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        use crate::module_config::ConfigKey;
         #[cfg(not(target_arch = "wasm32"))]
-        return &[native::BUFFER_FRAMES];
+        return const {
+            &[
+                native::BUFFER_FRAMES,
+                ConfigKey::text("path"),
+                ConfigKey::boolean("soft_clip"),
+                ConfigKey::boolean("monitor"),
+            ]
+        };
         #[cfg(target_arch = "wasm32")]
-        return &[wasm::MAX_FRAMES, wasm::MAX_SECONDS];
+        return const {
+            &[
+                wasm::MAX_FRAMES,
+                wasm::MAX_SECONDS,
+                ConfigKey::boolean("soft_clip"),
+                ConfigKey::boolean("monitor"),
+            ]
+        };
     }
 
     fn build(

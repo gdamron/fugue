@@ -48,6 +48,10 @@ impl crate::ModuleFactory for Gate {
         "gate"
     }
 
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        const { &[crate::module_config::ConfigKey::text("tag")] }
+    }
+
     fn build(
         &self,
         _sample_rate: u32,

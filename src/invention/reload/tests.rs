@@ -24,8 +24,8 @@ fn start(json: &str) -> RunningInvention {
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "oscillator_type": "sine", "frequency": 550.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [
@@ -101,8 +101,8 @@ fn reload_adds_removes_and_swaps_modules() {
         .reload(doc(r#"{
             "version": "1.0.0",
             "modules": [
-                { "id": "osc1", "type": "oscillator", "config": { "waveform": "square", "frequency": 440.0 } },
-                { "id": "osc3", "type": "oscillator", "config": { "waveform": "sine", "frequency": 660.0 } },
+                { "id": "osc1", "type": "oscillator", "config": { "oscillator_type": "square", "frequency": 440.0 } },
+                { "id": "osc3", "type": "oscillator", "config": { "type": "sine", "frequency": 660.0 } },
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
@@ -161,7 +161,7 @@ const DEV_BASE: &str = r#"{
             "name": "voice",
             "definition": {
                 "modules": [
-                    { "id": "o", "type": "oscillator", "config": { "waveform": "sine", "frequency": 300.0 } }
+                    { "id": "o", "type": "oscillator", "config": { "type": "sine", "frequency": 300.0 } }
                 ],
                 "connections": [],
                 "outputs": [ { "name": "audio", "from": "o", "from_port": "audio" } ]
@@ -171,7 +171,7 @@ const DEV_BASE: &str = r#"{
     "modules": [
         { "id": "v1", "type": "voice" },
         { "id": "v2", "type": "voice" },
-        { "id": "solo", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "solo", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [

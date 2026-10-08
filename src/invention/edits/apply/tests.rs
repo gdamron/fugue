@@ -23,8 +23,8 @@ use scripted::{Scripted, SCRIPTED};
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "type": "sine", "frequency": 550.0 } },
         { "id": "spare", "type": "oscillator", "config": { "frequency": 3.0 } },
         { "id": "dac", "type": "dac" }
     ],
@@ -377,7 +377,7 @@ fn removing_and_adding_a_module_again_rebuilds_it_even_when_identical() {
             add(
                 "osc2",
                 "oscillator",
-                json!({ "waveform": "sine", "frequency": 550.0 }),
+                json!({ "type": "sine", "frequency": 550.0 }),
             ),
             connect("osc2", "audio", "dac", "audio"),
         ])

@@ -13,6 +13,10 @@ impl ModuleFactory for DacFactory {
         "dac"
     }
 
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        const { &[crate::module_config::ConfigKey::boolean("soft_clip")] }
+    }
+
     fn build(
         &self,
         _sample_rate: u32,

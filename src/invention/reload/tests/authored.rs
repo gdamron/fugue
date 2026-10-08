@@ -232,8 +232,8 @@ fn reloading_the_document_saved_after_an_apply_edits_batch_changes_nothing() {
 /// BASE with osc1's `frequency` left to the oscillator's default.
 fn base_without_osc1_frequency() -> String {
     BASE.replace(
-        r#""config": { "waveform": "sine", "frequency": 440.0 }"#,
-        r#""config": { "waveform": "sine" }"#,
+        r#""config": { "oscillator_type": "sine", "frequency": 440.0 }"#,
+        r#""config": { "oscillator_type": "sine" }"#,
     )
 }
 

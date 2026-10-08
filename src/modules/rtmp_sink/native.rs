@@ -25,8 +25,10 @@ const VIDEO_QUEUE_FRAMES: ConfigKey = ConfigKey::int::<usize>("video_queue_frame
 const VIDEO_BITRATE: ConfigKey = ConfigKey::int::<u64>("video_bitrate");
 const AUDIO_BITRATE: ConfigKey = ConfigKey::int::<u64>("audio_bitrate");
 
-/// The numeric keys of `rtmp_sink` config, which `youtube_sink` passes on.
+/// The keys of `rtmp_sink` config, then `youtube_sink`'s own: `youtube_sink`
+/// takes all but `url` (the first), and `rtmp_sink` all but the last three.
 pub(crate) const CONFIG_KEYS: &[ConfigKey] = &[
+    ConfigKey::text("url"),
     WIDTH,
     HEIGHT,
     FPS,
@@ -35,6 +37,17 @@ pub(crate) const CONFIG_KEYS: &[ConfigKey] = &[
     VIDEO_QUEUE_FRAMES,
     VIDEO_BITRATE,
     AUDIO_BITRATE,
+    ConfigKey::text("resolution"),
+    ConfigKey::text("ffmpeg_path"),
+    ConfigKey::text("tee_to_disk"),
+    ConfigKey::text("video_encoder"),
+    ConfigKey::text("audio_encoder"),
+    ConfigKey::boolean("monitor"),
+    ConfigKey::boolean("soft_clip"),
+    ConfigKey::text("background_video"),
+    ConfigKey::text("stream_key"),
+    ConfigKey::text("stream_key_env"),
+    ConfigKey::text("server_url"),
 ];
 
 #[derive(Clone)]

@@ -21,7 +21,7 @@ fn voice_development() -> Invention {
             crate::ModuleSpec {
                 id: "vca".to_string(),
                 module_type: "vca".to_string(),
-                config: serde_json::json!({"level": 1.0}),
+                config: serde_json::json!({"cv": 1.0}),
             },
         ],
         connections: vec![crate::Connection {
@@ -279,15 +279,24 @@ fn resolves_relative_asset_refs_in_module_configs() {
         description: None,
         developments: vec![],
         assets,
-        modules: vec![crate::ModuleSpec {
-            id: "seq".to_string(),
-            module_type: "cell_sequencer".to_string(),
-            config: serde_json::json!({
-                "base_note": { "$asset": "score", "path": "/base_note_hint" },
-                "sequences": { "$asset": "score", "path": "/cells" },
-                "metadata": [{ "source": { "$asset": "score", "path": "/base_note_hint" } }]
-            }),
-        }],
+        modules: vec![
+            crate::ModuleSpec {
+                id: "seq".to_string(),
+                module_type: "cell_sequencer".to_string(),
+                config: serde_json::json!({
+                    "base_note": { "$asset": "score", "path": "/base_note_hint" },
+                    "sequences": { "$asset": "score", "path": "/cells" },
+                }),
+            },
+            crate::ModuleSpec {
+                // A script's own parameters: an asset nested in an array.
+                id: "notes".to_string(),
+                module_type: "code".to_string(),
+                config: serde_json::json!({
+                    "metadata": [{ "source": { "$asset": "score", "path": "/base_note_hint" } }]
+                }),
+            },
+        ],
         connections: vec![],
         inputs: vec![],
         outputs: vec![],
@@ -304,6 +313,7 @@ fn resolves_relative_asset_refs_in_module_configs() {
 
     assert_eq!(config["base_note"], 48);
     assert_eq!(config["sequences"].as_array().unwrap().len(), 2);
+    let config = &state.modules.get("notes").unwrap().config;
     assert_eq!(config["metadata"][0]["source"], 48);
 
     std::fs::remove_dir_all(&dir).unwrap();

@@ -43,7 +43,27 @@ impl ModuleFactory for AgentFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[COOLDOWN_MS]
+        const {
+            &[
+                COOLDOWN_MS,
+                ConfigKey::boolean("enabled"),
+                ConfigKey::text("prompt"),
+                ConfigKey::text("system"),
+                ConfigKey::text("backend"),
+                // Read by the agent host (src/agents) as it runs.
+                ConfigKey::json("response"),
+                ConfigKey::json("history"),
+                ConfigKey::json("context"),
+                ConfigKey::boolean("include_graph_summary"),
+                ConfigKey::json("apply"),
+                ConfigKey::json("test_response"),
+                ConfigKey::text("command"),
+                ConfigKey::json("args"),
+                ConfigKey::text("provider"),
+                ConfigKey::text("model"),
+                ConfigKey::json("max_tokens"),
+            ]
+        }
     }
 
     fn build(

@@ -9,7 +9,7 @@ fn running_sine() -> RunningInvention {
         r#"{
             "version": "1.0.0",
             "modules": [
-                { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+                { "id": "osc", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [

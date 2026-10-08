@@ -341,7 +341,14 @@ impl ModuleFactory for MixerFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[CHANNELS, MASTER]
+        const {
+            &[
+                CHANNELS,
+                MASTER,
+                ConfigKey::json("levels"),
+                ConfigKey::json("pans"),
+            ]
+        }
     }
 
     fn build(

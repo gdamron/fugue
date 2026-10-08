@@ -36,7 +36,20 @@ impl ModuleFactory for CodeFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[TICK_HZ]
+        const {
+            &[
+                TICK_HZ,
+                ConfigKey::text("script"),
+                ConfigKey::text("entrypoint"),
+                ConfigKey::boolean("enabled"),
+            ]
+        }
+    }
+
+    /// A script reads its own parameters from the top level of its config
+    /// (In C's `mixer_id`, say) until they move under `params`.
+    fn open_config(&self) -> bool {
+        true
     }
 
     fn build(

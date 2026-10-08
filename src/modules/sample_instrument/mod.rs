@@ -90,7 +90,7 @@ impl ModuleFactory for SampleInstrumentFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[VOICES, RELEASE]
+        const { &[VOICES, RELEASE, ConfigKey::json("zones")] }
     }
 
     fn build(
@@ -300,7 +300,9 @@ impl SampleInstrument {
             inputs: inputs::SampleInstrumentInputs::new(),
             outputs: outputs::SampleInstrumentOutputs::new(),
             zones,
-            voices: (0..voices.clamp(1, MAX_VOICES)).map(|_| Voice::new()).collect(),
+            voices: (0..voices.clamp(1, MAX_VOICES))
+                .map(|_| Voice::new())
+                .collect(),
             gains: vec![1.0; zone_count],
             swap_scratch: (0..zone_count).map(|_| None).collect(),
             note_scratch: Vec::with_capacity(MAX_PENDING_NOTES),
@@ -358,7 +360,11 @@ impl SampleInstrument {
             if voice.note == note {
                 return index;
             }
-            if !voice.held && oldest_releasing.map(|(_, s)| voice.started < s).unwrap_or(true) {
+            if !voice.held
+                && oldest_releasing
+                    .map(|(_, s)| voice.started < s)
+                    .unwrap_or(true)
+            {
                 oldest_releasing = Some((index, voice.started));
             }
             if oldest.map(|(_, s)| voice.started < s).unwrap_or(true) {

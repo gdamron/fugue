@@ -393,7 +393,7 @@ impl ModuleFactory for FilterFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[CUTOFF, RESONANCE, CV_AMOUNT]
+        const { &[CUTOFF, RESONANCE, CV_AMOUNT, ConfigKey::text("filter_type")] }
     }
 
     fn build(

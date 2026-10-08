@@ -33,7 +33,17 @@ impl ModuleFactory for MelodyFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[ROOT_NOTE, SEED]
+        const {
+            &[
+                ROOT_NOTE,
+                SEED,
+                ConfigKey::json("scale_degrees"),
+                ConfigKey::json("note_weights"),
+                // Kept past the active count, so declared as families.
+                ConfigKey::json("degree.N"),
+                ConfigKey::json("note_weight.N"),
+            ]
+        }
     }
 
     fn build(

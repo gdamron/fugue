@@ -14,8 +14,8 @@ const SAMPLE_RATE: u32 = 48_000;
 const BASE: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc1", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
-        { "id": "osc2", "type": "oscillator", "config": { "waveform": "sine", "frequency": 550.0 } },
+        { "id": "osc1", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
+        { "id": "osc2", "type": "oscillator", "config": { "type": "sine", "frequency": 550.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [
@@ -168,7 +168,7 @@ fn a_mixed_change_installs_in_one_block_without_allocating() {
         harness.build(
             "osc1",
             "oscillator",
-            serde_json::json!({ "waveform": "square" }),
+            serde_json::json!({ "type": "square" }),
         ),
     );
     change.disconnect(edge("osc1", "audio", "dac", "audio"));
@@ -286,7 +286,7 @@ fn a_scheduler_publishes_cleanly_with_a_target_added_alongside() {
         harness.build(
             "osc3",
             "oscillator",
-            serde_json::json!({ "waveform": "saw" }),
+            serde_json::json!({ "type": "sawtooth" }),
         ),
     );
     harness.publish(change);

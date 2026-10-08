@@ -96,7 +96,7 @@ impl ModuleFactory for DivisiFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[VOICES]
+        const { &[VOICES, ConfigKey::text("steal")] }
     }
 
     fn build(

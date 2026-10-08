@@ -41,11 +41,11 @@ const CONTROLS_NOT_READ_FROM_CONFIG: &[(&str, &str, &str)] = &[
 ];
 
 /// Types the harness cannot build: they need what a test has not got.
-const UNBUILDABLE: &[(&str, &str)] = &[("wasm_module", "needs a compiled guest module")];
+pub(crate) const UNBUILDABLE: &[(&str, &str)] = &[("wasm_module", "needs a compiled guest module")];
 
 /// The config each type is built from before a key is added: enough for
 /// types whose config is mandatory (assets, say) to build.
-fn base_config(type_id: &str) -> Value {
+pub(crate) fn base_config(type_id: &str) -> Value {
     let size = json!({ "width": 640, "height": 360 });
     match type_id {
         "audio_file_sink" => json!({ "path": "never-written.wav" }),
@@ -63,7 +63,7 @@ fn base_config(type_id: &str) -> Value {
 }
 
 /// A silent eight-frame WAV, written once per test process.
-fn eight_frame_wav() -> &'static str {
+pub(crate) fn eight_frame_wav() -> &'static str {
     static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     PATH.get_or_init(|| {
         let name = format!("fugue-module-config-{}.wav", std::process::id());
@@ -165,6 +165,7 @@ fn check_declared_keys(registry: &ModuleRegistry, type_id: &str, misses: &mut Ve
                     other => misses.push(format!("{name}: {fraction} gave {other:?}")),
                 }
             }
+            ConfigKind::Text | ConfigKind::Bool | ConfigKind::Json => {}
             ConfigKind::Float => {
                 expect_not_finite(registry, type_id, &base, key.key, misses);
                 if let Err(error) =

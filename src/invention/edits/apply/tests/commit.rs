@@ -153,7 +153,7 @@ fn a_batch_publication_installs_without_allocating() {
             connect("v", "audio", "osc1", "fm"),
             remove("spare"),
             remove("osc2"),
-            add("osc2", "oscillator", json!({ "waveform": "square" })),
+            add("osc2", "oscillator", json!({ "type": "square" })),
             connect("osc2", "audio", "dac", "audio"),
             set("osc1", "frequency", number(220.0)),
         ])

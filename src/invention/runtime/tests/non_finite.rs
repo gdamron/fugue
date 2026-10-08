@@ -9,7 +9,7 @@ use std::time::Instant;
 const OSC_AND_DAC: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+        { "id": "osc", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
         { "id": "dac", "type": "dac" }
     ],
     "connections": [
@@ -137,7 +137,7 @@ fn a_conducting_script_cannot_write_a_non_finite_number() {
     let invention = r#"{
         "version": "1.0.0",
         "modules": [
-            { "id": "osc", "type": "oscillator", "config": { "waveform": "sine", "frequency": 440.0 } },
+            { "id": "osc", "type": "oscillator", "config": { "type": "sine", "frequency": 440.0 } },
             {
                 "id": "code1",
                 "type": "code",

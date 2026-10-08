@@ -13,10 +13,13 @@
 //! - An absent key, or `null`, reads as absent (the default). A value of
 //!   another JSON type (text, a boolean, an object) is refused.
 //!
-//! A factory declares each key once as a [`ConfigKey`] constant, reads it
-//! through that constant and lists it in
+//! A factory declares each numeric key once as a [`ConfigKey`] constant,
+//! reads it through that constant and lists it in
 //! [`ModuleFactory::config_keys`](crate::ModuleFactory::config_keys), so the
-//! declaration and the read cannot diverge. Array elements and nested
+//! declaration and the read cannot diverge. It lists its text, boolean and
+//! structured keys there too: config is closed, so a build refuses a key
+//! that is neither declared nor one of the module's controls (see
+//! [`ModuleRegistry::build`](crate::ModuleRegistry::build)). Array elements and nested
 //! values are read with [`whole_number`], [`whole_number_in`] and
 //! [`finite_f32`], and refused through [`ConfigReader::refuse`].
 
@@ -36,6 +39,12 @@ pub enum ConfigKind {
     Integer { min: i128, max: i128 },
     /// A number that is finite as an `f32`.
     Float,
+    /// Text, such as an option name or a path.
+    Text,
+    /// A boolean.
+    Bool,
+    /// A structured value: an array or object, or a choice of shapes.
+    Json,
 }
 
 impl ConfigKind {
@@ -44,7 +53,8 @@ impl ConfigKind {
     /// integer. An integer compares exactly, never through a float, and a
     /// float beyond 2^53 never equals an integer (the reader refuses it). A
     /// float compares as the `f32` the reader makes, bit for bit. A value
-    /// the reader refuses is never the same as another.
+    /// the reader refuses is never the same as another. Other kinds compare
+    /// as written.
     pub fn same_value(self, a: &Value, b: &Value) -> bool {
         match self {
             Self::Integer { min, max } => {
@@ -55,11 +65,12 @@ impl ConfigKind {
                 (finite_f32(a), finite_f32(b)),
                 (Ok(a), Ok(b)) if a.to_bits() == b.to_bits()
             ),
+            Self::Text | Self::Bool | Self::Json => a == b,
         }
     }
 }
 
-/// A numeric key a module's config may hold.
+/// A key a module's config may hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConfigKey {
     /// The key, as the config's JSON object names it.
@@ -93,6 +104,30 @@ impl ConfigKey {
         Self {
             key,
             kind: ConfigKind::Float,
+        }
+    }
+
+    /// A text key.
+    pub const fn text(key: &'static str) -> Self {
+        Self {
+            key,
+            kind: ConfigKind::Text,
+        }
+    }
+
+    /// A boolean key.
+    pub const fn boolean(key: &'static str) -> Self {
+        Self {
+            key,
+            kind: ConfigKind::Bool,
+        }
+    }
+
+    /// A structured key: an array, an object, or a choice of shapes.
+    pub const fn json(key: &'static str) -> Self {
+        Self {
+            key,
+            kind: ConfigKind::Json,
         }
     }
 }
@@ -201,8 +236,8 @@ impl<'a> ConfigReader<'a> {
     pub fn int<T: ConfigInt>(&self, key: &ConfigKey) -> Result<Option<T>, ConfigError> {
         let (min, max) = match key.kind {
             ConfigKind::Integer { min, max } => (min, max),
-            ConfigKind::Float => {
-                debug_assert!(false, "'{}' is declared a float key", key.key);
+            _ => {
+                debug_assert!(false, "'{}' is not declared an integer key", key.key);
                 (T::MIN, T::MAX)
             }
         };
@@ -215,7 +250,7 @@ impl<'a> ConfigReader<'a> {
     pub fn float(&self, key: &ConfigKey) -> Result<Option<f32>, ConfigError> {
         debug_assert!(
             key.kind == ConfigKind::Float,
-            "'{}' is declared an integer key",
+            "'{}' is not declared a float key",
             key.key
         );
         self.get(key.key)
