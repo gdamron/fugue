@@ -19,7 +19,7 @@
       "type": "melody",
       "config": {
         "root_note": 48,
-        "scale_degrees": [
+        "degrees": [
           0,
           3,
           5,

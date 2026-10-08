@@ -134,7 +134,7 @@ fn test_diamond_pattern() {
                 "type": "melody",
                 "config": {
                     "root_note": 60,
-                    "scale_degrees": [0, 2, 4, 5, 7]
+                    "degrees": [0, 2, 4, 5, 7]
                 }
             },
             {

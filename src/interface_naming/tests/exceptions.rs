@@ -18,7 +18,6 @@ pub(super) const CONVENTION_EXCEPTIONS: &[(&str, &str, &str)] = &[
     ("step_sequencer", "grace_duration_ms", "becomes grace_duration, in seconds"),
     ("step_sequencer", "pattern_json", "control becomes pattern; the config key goes"),
     ("step_sequencer", "pattern", "matches the control once it is pattern"),
-    ("melody", "scale_degrees", "config becomes degrees"),
     // cell_sequencer
     ("cell_sequencer", "grace_duration_ms", "becomes grace_duration, in seconds"),
     ("cell_sequencer", "sequences_json", "control becomes cells; the config key goes"),

@@ -266,7 +266,7 @@ fn test_factory_seed_config() {
     let build = |seed: u64| {
         let config = serde_json::json!({
             "root_note": 60,
-            "scale_degrees": [0, 2, 4, 5, 7],
+            "degrees": [0, 2, 4, 5, 7],
             "seed": seed
         });
         factory.build(48_000, &config).unwrap()
@@ -437,21 +437,20 @@ fn a_fractional_or_out_of_range_root_note_is_refused() {
 }
 
 #[test]
-fn scale_degrees_and_note_weights_refuse_a_non_number_rather_than_drop_it() {
-    let controls = built_controls(
-        serde_json::json!({ "scale_degrees": [0, 4.0, 7], "note_weights": [1, 0.5] }),
-    )
-    .unwrap();
+fn degrees_and_note_weights_refuse_a_non_number_rather_than_drop_it() {
+    let controls =
+        built_controls(serde_json::json!({ "degrees": [0, 4.0, 7], "note_weights": [1, 0.5] }))
+            .unwrap();
     assert_eq!(controls.allowed_degrees(), [0, 4, 7]);
     assert_eq!(controls.note_weights(), [1.0, 0.5, 1.0]);
     for (config, refusal) in [
         (
-            serde_json::json!({ "scale_degrees": [0, "4", 7] }),
-            "melody config 'scale_degrees[1]' expects a whole number",
+            serde_json::json!({ "degrees": [0, "4", 7] }),
+            "melody config 'degrees[1]' expects a whole number",
         ),
         (
-            serde_json::json!({ "scale_degrees": [0, 4.5] }),
-            "melody config 'scale_degrees[1]' expects a whole number",
+            serde_json::json!({ "degrees": [0, 4.5] }),
+            "melody config 'degrees[1]' expects a whole number",
         ),
         (
             serde_json::json!({ "note_weights": [1, null] }),

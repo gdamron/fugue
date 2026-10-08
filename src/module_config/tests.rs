@@ -192,3 +192,27 @@ fn an_array_key_reads_finite_numbers_and_refuses_the_rest_by_path() {
         Err("mixer config 'levels' expects an array of numbers, got 1e+39".into())
     );
 }
+
+#[test]
+fn an_array_key_reads_whole_numbers_and_refuses_the_rest_by_path() {
+    const DEGREES: ConfigKey = ConfigKey::json("degrees");
+    let ints = |config: Value| {
+        ConfigReader::new("melody", &config)
+            .whole_numbers::<i32>(&DEGREES)
+            .map_err(|error| error.to_string())
+    };
+    assert_eq!(ints(json!({})), Ok(None));
+    assert_eq!(ints(json!({ "degrees": null })), Ok(None));
+    assert_eq!(
+        ints(json!({ "degrees": [0, 4.0, -7] })),
+        Ok(Some(vec![0, 4, -7]))
+    );
+    assert_eq!(
+        ints(json!({ "degrees": [0, 4.5] })),
+        Err("melody config 'degrees[1]' expects a whole number from -2147483648 to 2147483647, got 4.5".into())
+    );
+    assert_eq!(
+        ints(json!({ "degrees": 3 })),
+        Err("melody config 'degrees' expects an array of numbers, got 3".into())
+    );
+}

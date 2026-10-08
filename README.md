@@ -125,7 +125,7 @@ Define your invention in a JSON file:
       "config": {
         "root_note": 60,
         "mode": "dorian",
-        "scale_degrees": [0, 1, 2, 3, 4, 5, 6]
+        "degrees": [0, 1, 2, 3, 4, 5, 6]
       }
     },
     {

@@ -29,7 +29,7 @@
       "type": "melody",
       "config": {
         "root_note": 45,
-        "scale_degrees": [0, 0, 5, 7, 0, 3],
+        "degrees": [0, 0, 5, 7, 0, 3],
         "note_weights": [3.0, 2.5, 1.2, 1.5, 2.0, 1.0]
       }
     },
@@ -38,7 +38,7 @@
       "type": "melody",
       "config": {
         "root_note": 69,
-        "scale_degrees": [0, 2, 3, 5, 7, 10, 12],
+        "degrees": [0, 2, 3, 5, 7, 10, 12],
         "note_weights": [1.5, 1.0, 0.8, 1.2, 1.4, 0.7, 1.0]
       }
     },
@@ -47,7 +47,7 @@
       "type": "melody",
       "config": {
         "root_note": 57,
-        "scale_degrees": [0, 3, 7],
+        "degrees": [0, 3, 7],
         "note_weights": [2.0, 1.2, 1.5]
       }
     },

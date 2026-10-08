@@ -37,7 +37,7 @@ fn an_undeclared_config_key_is_refused_naming_the_module_and_key() {
 
 #[test]
 fn a_declared_indexed_family_takes_every_index() {
-    let config = json!({ "scale_degrees": [], "degree.0": 7, "note_weight.3": 0.5 });
+    let config = json!({ "degrees": [], "degree.0": 7, "note_weight.3": 0.5 });
     assert!(ModuleRegistry::default()
         .build("melody", 48_000, &config)
         .is_ok());

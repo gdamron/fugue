@@ -88,7 +88,7 @@
       "type": "melody",
       "config": {
         "root_note": 50,
-        "scale_degrees": [0, 2, 3, 5, 7],
+        "degrees": [0, 2, 3, 5, 7],
         "note_weights": [1.2, 1.0, 0.8, 1.0, 0.7]
       }
     },

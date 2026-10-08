@@ -264,6 +264,24 @@ impl<'a> ConfigReader<'a> {
     /// finite as an `f32`, is refused by its path (`levels[2]`), never
     /// dropped: dropping one would shift the rest onto the wrong index.
     pub fn floats(&self, key: &ConfigKey) -> Result<Option<Vec<f32>>, ConfigError> {
+        self.array(key, finite_f32)
+    }
+
+    /// Reads array key `key` of whole numbers within `T`, or `None` when it is
+    /// absent or `null`, refusing as [`floats`](Self::floats) does
+    /// (`degrees[2]`). A whole float (`4.0`) reads as the integer.
+    pub fn whole_numbers<T: ConfigInt>(
+        &self,
+        key: &ConfigKey,
+    ) -> Result<Option<Vec<T>>, ConfigError> {
+        self.array(key, whole_number::<T>)
+    }
+
+    fn array<T>(
+        &self,
+        key: &ConfigKey,
+        read: impl Fn(&Value) -> Result<T, NumberRefusal>,
+    ) -> Result<Option<Vec<T>>, ConfigError> {
         debug_assert!(
             key.kind == ConfigKind::Json,
             "'{}' is not declared a structured key",
@@ -283,7 +301,7 @@ impl<'a> ConfigReader<'a> {
             .iter()
             .enumerate()
             .map(|(index, value)| {
-                finite_f32(value).map_err(|r| self.refuse(&format!("{}[{index}]", key.key), r))
+                read(value).map_err(|r| self.refuse(&format!("{}[{index}]", key.key), r))
             })
             .collect::<Result<Vec<_>, _>>()
             .map(Some)

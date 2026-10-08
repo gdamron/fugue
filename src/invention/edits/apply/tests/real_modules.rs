@@ -334,7 +334,7 @@ fn a_saved_melody_rebuilds_what_shrinking_and_growing_left_playing() {
     document.modules.push(crate::ModuleSpec {
         id: "tune".into(),
         module_type: "melody".into(),
-        config: json!({ "scale_degrees": [0, 2, 4, 5, 7, 9, 11], "note_weights": [4, 1, 2] }),
+        config: json!({ "degrees": [0, 2, 4, 5, 7, 9, 11], "note_weights": [4, 1, 2] }),
     });
     let (mut running, _pump) = start_doc(document);
     running
@@ -364,7 +364,7 @@ fn with_melody(scale: serde_json::Value) -> Invention {
     document.modules.push(crate::ModuleSpec {
         id: "tune".into(),
         module_type: "melody".into(),
-        config: json!({ "scale_degrees": scale }),
+        config: json!({ "degrees": scale }),
     });
     document
 }
@@ -427,7 +427,7 @@ fn writes_land_in_batch_order() {
     // A module the batch adds takes its writes in order too.
     running
         .apply_edits(&[
-            add("second", "melody", json!({ "scale_degrees": [0, 1, 2] })),
+            add("second", "melody", json!({ "degrees": [0, 1, 2] })),
             set("second", "degree_count", number(7.0)),
             set("second", "degree.6", number(12.0)),
         ])
@@ -609,7 +609,7 @@ fn a_development_alias_hidden_by_a_later_count_is_not_refused() {
             "name": "tuned",
             "definition": {
                 "version": "1.0.0",
-                "modules": [{ "id": "m", "type": "melody", "config": { "scale_degrees": [0, 1, 2, 3, 4, 5, 6] } }],
+                "modules": [{ "id": "m", "type": "melody", "config": { "degrees": [0, 1, 2, 3, 4, 5, 6] } }],
                 "connections": [],
                 "outputs": [{ "name": "freq", "from": "m", "from_port": "frequency" }],
                 "controls": [
