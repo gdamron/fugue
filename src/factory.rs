@@ -115,7 +115,8 @@ pub trait ModuleFactory: Send + Sync + 'static {
     /// numeric keys read through
     /// [`ConfigReader`](crate::module_config::ConfigReader), each declared
     /// once as a [`ConfigKey`] constant and read through it, and its text,
-    /// boolean and structured keys.
+    /// boolean and structured keys. An indexed family the type takes at any
+    /// index, whatever its current count, is declared once as `stem.N`.
     ///
     /// Config is closed: [`ModuleRegistry::build`](crate::ModuleRegistry::build)
     /// refuses a key that is neither listed here nor one of the module's

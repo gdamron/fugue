@@ -36,6 +36,20 @@ fn an_undeclared_config_key_is_refused_naming_the_module_and_key() {
 }
 
 #[test]
+fn a_declared_indexed_family_takes_every_index() {
+    let config = json!({ "scale_degrees": [], "degree.0": 7, "note_weight.3": 0.5 });
+    assert!(ModuleRegistry::default()
+        .build("melody", 48_000, &config)
+        .is_ok());
+    let config = json!({ "degree.x": 7 });
+    let error = ModuleRegistry::default()
+        .build("melody", 48_000, &config)
+        .err();
+    let error = error.map(|e| e.to_string()).unwrap_or_default();
+    assert!(error.contains("degree.x"), "{error}");
+}
+
+#[test]
 fn a_sink_refuses_an_undeclared_key_before_it_opens_its_file() {
     let path = std::env::temp_dir().join(format!("fugue-closed-config-{}.wav", std::process::id()));
     let config = json!({ "path": path.to_string_lossy(), "max_secs": 1 });

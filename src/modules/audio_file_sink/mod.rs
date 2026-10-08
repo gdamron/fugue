@@ -68,12 +68,14 @@ impl ModuleFactory for AudioFileSinkFactory {
             ]
         };
         #[cfg(target_arch = "wasm32")]
-        return &[
-            wasm::MAX_FRAMES,
-            wasm::MAX_SECONDS,
-            ConfigKey::boolean("soft_clip"),
-            ConfigKey::boolean("monitor"),
-        ];
+        return const {
+            &[
+                wasm::MAX_FRAMES,
+                wasm::MAX_SECONDS,
+                ConfigKey::boolean("soft_clip"),
+                ConfigKey::boolean("monitor"),
+            ]
+        };
     }
 
     fn build(

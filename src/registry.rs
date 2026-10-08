@@ -104,7 +104,7 @@ impl ModuleRegistry {
         let undeclared: Vec<&String> = match config.as_object() {
             Some(entries) if !factory.open_config() => entries
                 .keys()
-                .filter(|key| declared.iter().all(|d| d.key != key.as_str()))
+                .filter(|key| declared.iter().all(|d| !declares(d.key, key)))
                 .collect(),
             _ => Vec::new(),
         };
@@ -126,11 +126,10 @@ impl ModuleRegistry {
                 .unwrap_or_default();
             // An indexed key past the family's current count (`degree.6`
             // written before the count shrank) is still the family's.
-            let family = |key: &str| key.split_once('.').map(|(stem, _)| format!("{stem}."));
             let is_control = |key: &str| {
-                let stem = family(key);
-                controls.iter().any(|meta| {
-                    meta.key == key || stem.as_ref().is_some_and(|s| meta.key.starts_with(s))
+                controls.iter().any(|meta| match meta.key.split_once('.') {
+                    Some((stem, _)) => declares(&format!("{stem}.N"), key),
+                    None => meta.key == key,
                 })
             };
             if let Some(key) = undeclared.into_iter().find(|key| !is_control(key)) {
@@ -197,6 +196,17 @@ impl ModuleRegistry {
     /// Returns an iterator over registered type identifiers.
     pub fn types(&self) -> impl Iterator<Item = &str> + '_ {
         self.factories.keys().map(String::as_str)
+    }
+}
+
+/// True when declared key `declared` names `key`: exactly, or as an indexed
+/// family `stem.N` that takes every `stem.0`, `stem.1`, ….
+fn declares(declared: &str, key: &str) -> bool {
+    match (declared.strip_suffix(".N"), key.split_once('.')) {
+        (Some(stem), Some((key_stem, index))) => {
+            stem == key_stem && !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit())
+        }
+        _ => declared == key,
     }
 }
 

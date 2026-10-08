@@ -39,6 +39,9 @@ impl ModuleFactory for MelodyFactory {
                 SEED,
                 ConfigKey::json("scale_degrees"),
                 ConfigKey::json("note_weights"),
+                // Kept past the active count, so declared as families.
+                ConfigKey::json("degree.N"),
+                ConfigKey::json("note_weight.N"),
             ]
         }
     }
