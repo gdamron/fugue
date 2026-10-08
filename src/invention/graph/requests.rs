@@ -35,12 +35,13 @@
 //!   retired publication's remaps in hand, so a request left in the queue
 //!   with an older generation could never be mapped again.
 //! - **Every other request** (all of them outside an install block) is
-//!   popped only while the store has room, or while
-//!   the request at the head replaces a waiting one (same target and
-//!   sample: it needs no room, and last write wins), and leaves the rest
-//!   in the queue. Producers then get a synchronous `QueueFull`,
-//!   which never marks a generation written, so a fold keeps no remap for
-//!   it. While installs are deferred (the retire ring is full and no
+//!   popped only while the store has room, or while the request at the
+//!   head replaces a waiting one (same target and sample, and not an
+//!   event: it needs no room, and last write wins) or is refused (its
+//!   module gone or its ttl run out: settled at once, it needs no room
+//!   either), and leaves the rest in the queue. Producers then get a
+//!   synchronous `QueueFull`, which never marks a generation written, so a
+//!   fold keeps no remap for it. While installs are deferred (the retire ring is full and no
 //!   publication is taken), every block is of this kind, so the generations
 //!   with requests outstanding, and with them the folded publication's
 //!   `Absorbed` remaps, stay bounded by the store and queue capacity, as
@@ -204,15 +205,17 @@ impl SignalGraph {
                 mapped = !owed;
                 break;
             }
-            // Back-pressure for the rest, except for a request that
-            // replaces a waiting one, which needs no room: last write wins
-            // even when the store is saturated.
-            if !owed
-                && drain.pending.is_full()
-                && !(replaces
-                    && landing
-                        .is_ok_and(|(target, at)| drain.pending.coalesces_with(&target, at, event)))
-            {
+            // Back-pressure for the rest, except for a request that needs
+            // no room: one refused (settled at once, so it never blocks
+            // what follows) or one replacing a waiting request (last write
+            // wins even when the store is saturated). Only an installed or
+            // older generation is refused here, so a request held for a
+            // newer one still needs room and the folded remaps stay bounded.
+            let needs_room = match landing {
+                Ok((target, at)) => !(replaces && drain.pending.coalesces_with(&target, at, event)),
+                Err(_) => false,
+            };
+            if !owed && drain.pending.is_full() && needs_room {
                 break;
             }
             let Some(mut request) = drain.requests.pop() else {

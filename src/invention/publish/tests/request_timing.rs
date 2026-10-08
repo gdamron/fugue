@@ -338,3 +338,39 @@ fn an_install_refuses_expired_held_requests_at_once_and_restores_intake() {
     assert_eq!(frequency(&mut rig, "osc3", port), 0.25);
     assert_eq!(outcomes(&mut rig), [(id, Outcome::Applied { at: start })]);
 }
+
+/// A refused request needs no room in the store, so behind a full store it
+/// is settled at once rather than blocking the queue: a replacement behind
+/// it still lands on its sample.
+#[test]
+fn an_expired_request_never_blocks_a_replacement_behind_a_full_store() {
+    use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
+    let (mut rig, port) = oscillator_rig();
+    let far = rig.graph.current_sample + 1_000_000;
+    let fill = REQUEST_QUEUE_CAPACITY as u64;
+    for n in 0..fill {
+        submit(&rig, "osc1", port, 0.1, When::AtSample(far + n));
+    }
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    for n in fill..PENDING_REQUEST_CAPACITY as u64 - 1 {
+        submit(&rig, "osc1", port, 0.1, When::AtSample(far + n));
+    }
+    let at = rig.graph.current_sample + 64 + 10;
+    let first = submit(&rig, "osc2", port, 0.5, When::AtSample(at));
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert!(rig.graph.requests.as_ref().unwrap().pending.is_full());
+
+    // Expiring before its sample, then a replacement for the same sample.
+    let expired = submit_with_ttl(&rig, "osc2", port, 0.75, When::AtSample(at), 5);
+    let replacement = submit(&rig, "osc2", port, 0.25, When::AtSample(at));
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(frequency(&mut rig, "osc2", port), 0.25);
+    assert_eq!(
+        outcomes(&mut rig),
+        [
+            (expired, Outcome::Refused(Refusal::Expired)),
+            (first, Outcome::Superseded),
+            (replacement, Outcome::Applied { at }),
+        ]
+    );
+}
