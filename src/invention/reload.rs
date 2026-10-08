@@ -22,6 +22,8 @@ use super::builder::{load_development_definition, resolve_invention_assets, Inve
 use super::format::ModuleSpec;
 use super::runtime::{GraphCommandError, RunningInvention};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
+use crate::module_config::ConfigKey;
+use config_diff::{configs_equal, control_updates_for};
 
 /// Development definitions as loaded for a document, by declaration scope
 /// (see [`LoadedDevelopments`]). Path-based definitions are captured at load
@@ -190,13 +192,16 @@ pub(crate) struct ReloadPlan {
 /// when its id, type, and config are unchanged and its type's development
 /// definition did not change. A config-only change becomes `set_control`
 /// updates when every changed top-level key maps to a control the module
-/// exposes; otherwise the module is swapped. `has_control` answers whether a
-/// module exposes a control key at runtime.
+/// exposes; otherwise the module is swapped. A number compares by value
+/// under the key type its module type declares (`config_keys`), so `440`
+/// and `440.0` are no change; see [`ConfigKind::same_value`](crate::module_config::ConfigKind::same_value).
+/// `has_control` answers whether a module exposes a control key at runtime.
 pub(crate) fn plan_reload(
     current_modules: &IndexMap<String, RuntimeModuleInfo>,
     current_connections: &[RuntimeConnectionInfo],
     new: &Invention,
     changed_types: &HashSet<String>,
+    config_keys: impl Fn(&str) -> &'static [ConfigKey],
     mut has_control: impl FnMut(&str, &str) -> bool,
 ) -> Result<ReloadPlan, String> {
     let mut plan = ReloadPlan::default();
@@ -210,10 +215,15 @@ pub(crate) fn plan_reload(
             {
                 plan.swapped.push(spec.clone());
             }
-            Some(info) if !configs_equal(&info.config, &spec.config) => {
-                match control_updates_for(&info.config, &spec.config, |key| {
-                    has_control(&spec.id, key)
-                }) {
+            Some(info)
+                if !configs_equal(&info.config, &spec.config, config_keys(&spec.module_type)) =>
+            {
+                match control_updates_for(
+                    &info.config,
+                    &spec.config,
+                    config_keys(&spec.module_type),
+                    |key| has_control(&spec.id, key),
+                ) {
                     Some(updates) => {
                         plan.unchanged.push(spec.id.clone());
                         plan.refreshed_configs
@@ -274,55 +284,6 @@ pub(crate) fn plan_reload(
         .collect();
 
     Ok(plan)
-}
-
-/// Treats a null config and an empty object as equivalent: omitting `config`
-/// parses as `null`, while an explicit `{}` is an empty object.
-fn configs_equal(previous: &serde_json::Value, new: &serde_json::Value) -> bool {
-    previous == new || (is_empty_config(previous) && is_empty_config(new))
-}
-
-fn is_empty_config(value: &serde_json::Value) -> bool {
-    value.is_null() || value.as_object().is_some_and(|map| map.is_empty())
-}
-
-/// Maps a config delta to control updates, or `None` when the delta cannot be
-/// expressed as controls (a removed key, a non-scalar value, or a key the
-/// module does not expose as a control) and the module must be swapped.
-fn control_updates_for(
-    previous: &serde_json::Value,
-    new: &serde_json::Value,
-    mut has_control: impl FnMut(&str) -> bool,
-) -> Option<Vec<(String, ControlValue)>> {
-    static EMPTY: std::sync::LazyLock<serde_json::Map<String, serde_json::Value>> =
-        std::sync::LazyLock::new(serde_json::Map::new);
-    let previous = match previous {
-        serde_json::Value::Null => &*EMPTY,
-        other => other.as_object()?,
-    };
-    let new = match new {
-        serde_json::Value::Null => &*EMPTY,
-        other => other.as_object()?,
-    };
-
-    // A key that disappeared means "revert to the built-in default", which
-    // only a rebuild of the module can express.
-    if previous.keys().any(|key| !new.contains_key(key)) {
-        return None;
-    }
-
-    let mut updates = Vec::new();
-    for (key, value) in new {
-        if previous.get(key) == Some(value) {
-            continue;
-        }
-        let control_value = scalar_control_value(value)?;
-        if !has_control(key) {
-            return None;
-        }
-        updates.push((key.clone(), control_value));
-    }
-    Some(updates)
 }
 
 pub(crate) fn scalar_control_value(value: &serde_json::Value) -> Option<ControlValue> {
@@ -507,6 +468,7 @@ impl RunningInvention {
             &current_connections,
             &validated.resolved,
             &changed_types,
+            |module_type| validated.registry.config_keys(module_type),
             |module_id, key| self.get_control(module_id, key).is_ok(),
         )
         .map_err(ReloadError::Invalid)
@@ -514,6 +476,7 @@ impl RunningInvention {
 }
 
 pub(crate) mod commit;
+mod config_diff;
 
 #[cfg(test)]
 mod tests;

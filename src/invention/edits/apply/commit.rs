@@ -34,10 +34,11 @@ impl RunningInvention {
         base_generation: u64,
         batch: &Batch,
     ) -> Result<PreparedEdits, Refused> {
-        let plan = super::plan::plan_edits(&self.state.lock().unwrap(), &batch.candidate)?;
         // Only a reload adopts a registry, and it cannot run alongside a
         // batch (both take `&mut self`), so this one stays current.
         let registry = self.registry();
+        let plan =
+            super::plan::plan_edits(&self.state.lock().unwrap(), &batch.candidate, &registry)?;
         let build = |spec: &ModuleSpec| -> Result<BuiltModule, Refused> {
             let config = batch.resolved.get(&spec.id).unwrap_or(&spec.config);
             let module = GraphChange::build(
