@@ -117,3 +117,17 @@ fn a_scheduler_ramps_an_oscillator_without_allocating() {
     };
     assert!(frequency > 440.0 && frequency < 880.0, "{frequency}");
 }
+
+#[test]
+fn a_scheduled_oscillator_write_past_its_range_reads_as_it_will_hold_it() {
+    let built = crate::ModuleRegistry::default()
+        .build("oscillator", 48_000, &serde_json::json!({}))
+        .unwrap();
+    let surface = built.control_surface.unwrap();
+    let depth = surface.automation("amplitude_mod_depth").unwrap();
+    depth.write_number(2.0);
+    assert_eq!(depth.current(), Some(1.0));
+    let frequency = surface.automation("frequency").unwrap();
+    frequency.write_number(-5.0);
+    assert_eq!(frequency.current(), Some(0.0));
+}
