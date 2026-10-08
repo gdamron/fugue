@@ -47,6 +47,7 @@ mod mailbox;
 mod master;
 mod process;
 mod publication;
+mod requests;
 mod scc;
 
 pub(crate) use compile::{compile_topology, TopologyFacts};
@@ -55,6 +56,7 @@ pub(crate) use master::MasterObservers;
 pub(crate) use publication::{
     vacant, AudioLink, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
 };
+pub(crate) use requests::RequestDrain;
 
 /// An incremental mutation applied directly to a graph no audio thread owns
 /// (offline render). A live graph changes only by publication.
@@ -138,6 +140,12 @@ pub(crate) struct SignalGraph {
     pub(crate) current_sample: u64,
     /// The live graph's link to its publisher; `None` for offline render.
     pub(crate) link: Option<AudioLink>,
+    /// The live graph's control requests; `None` for offline render.
+    pub(crate) requests: Option<RequestDrain>,
+    /// Applies requests in tests, in place of the modules (which accept
+    /// none until FUG-310).
+    #[cfg(test)]
+    pub(crate) request_hook: Option<requests::RequestHook>,
     /// Pre-computed topological processing order as module indices. Used for
     /// intra-SCC member ordering and back-edge classification.
     pub(crate) process_order: Vec<usize>,
@@ -191,6 +199,9 @@ impl SignalGraph {
             edges,
             current_sample: 0,
             link: None,
+            requests: None,
+            #[cfg(test)]
+            request_hook: None,
             process_order: Vec::new(),
             compiled_routes: Vec::new(),
             connected_in_ports: Vec::new(),

@@ -32,6 +32,7 @@ use super::graph::{InputWrite, RoutingConnection, SignalGraph};
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
+use crate::control_request::RequestSender;
 use crate::ModuleRegistry;
 
 mod change;
@@ -58,6 +59,10 @@ pub(crate) struct LiveGraph {
     publisher: Arc<Mutex<Publisher>>,
     reclaimer: Arc<Reclaimer>,
     inputs: SyncSender<InputWrite>,
+    /// Kept so the audio thread never holds the queue's last handle; the
+    /// front doors that submit through it arrive with FUG-310's controls.
+    #[cfg_attr(not(test), allow(dead_code))]
+    requests: RequestSender,
     state: Arc<Mutex<RuntimeState>>,
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
@@ -91,6 +96,7 @@ impl LiveGraph {
             publisher: Arc::new(Mutex::new(publisher)),
             reclaimer: Arc::new(Reclaimer::new(ends.retired)),
             inputs: ends.inputs,
+            requests: ends.requests,
             state,
             control_surfaces,
             module_ports,
