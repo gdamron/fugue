@@ -158,7 +158,8 @@ fn an_offline_write_applies_at_once_under_the_render_lock() {
         "dial",
         dial.instance.unwrap(),
         Some(first.clone()),
-    );
+    )
+    .unwrap();
 
     first.set_control("level", 0.75.into()).unwrap();
     assert_eq!(level(&first), 0.75.into(), "applied at once");
@@ -178,7 +179,8 @@ fn an_offline_write_applies_at_once_under_the_render_lock() {
         "dial",
         second.instance.unwrap(),
         Some(surface.clone()),
-    );
+    )
+    .unwrap();
     assert!(first.set_control("level", 0.5.into()).is_err(), "displaced");
     assert!(Arc::ptr_eq(&surfaces.lock().unwrap()["dial"], &surface));
     assert_eq!(
@@ -193,7 +195,7 @@ fn an_offline_write_applies_at_once_under_the_render_lock() {
     drop(graph_lock);
     assert!(first.set_control("level", 0.5.into()).is_err());
 
-    remove_offline(&graph, &surfaces, "dial");
+    remove_offline(&graph, &surfaces, "dial").unwrap();
     assert!(surfaces.lock().unwrap().is_empty());
     assert!(surface.set_control("level", 0.5.into()).is_err());
 }
@@ -224,10 +226,30 @@ fn a_replaced_render_refuses_writes_through_its_old_surfaces() {
         "dial",
         dial.instance.unwrap(),
         Some(surface.clone()),
-    );
-    // A controller may keep the old graph alive past its replacement.
-    let kept = graph.clone();
+    )
+    .unwrap();
+    // A controller may keep the old graph alive past its replacement, and
+    // an edit through it may still be in flight.
+    let late = GraphChange::build(
+        &registry,
+        SAMPLE_RATE,
+        "late",
+        "dial",
+        &serde_json::json!({}),
+    )
+    .unwrap();
     retire_offline(&graph, &surfaces);
     assert!(surface.set_control("level", 0.5.into()).is_err());
-    drop(kept);
+    let late_surface = late.surface.clone().unwrap();
+    assert!(add_offline(
+        &graph,
+        &surfaces,
+        "late",
+        late.instance.unwrap(),
+        late.surface
+    )
+    .is_err());
+    assert!(late_surface.set_control("level", 0.5.into()).is_err());
+    assert!(!graph.lock().unwrap().modules.contains_key("late"));
+    assert!(remove_offline(&graph, &surfaces, "dial").is_err());
 }

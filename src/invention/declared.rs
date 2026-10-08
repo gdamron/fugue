@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use super::graph::{GraphCommand, SignalGraph};
 use super::publish::Publisher;
-use super::runtime::{ControlSurfaceInstance, ModuleInstance};
+use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, ControlCells, ControlIndex, ControlTable, Refusal, Request, RequestSender,
     RequestValue, RtValue,
@@ -266,8 +266,14 @@ pub(crate) fn add_offline(
     module_id: &str,
     mut module: ModuleInstance,
     surface: Option<ControlSurfaceInstance>,
-) {
+) -> Result<(), GraphCommandError> {
     let mut locked = graph.lock().unwrap();
+    if locked.retired {
+        if let Some(surface) = surface {
+            surface.retire();
+        }
+        return Err(GraphCommandError::AudioThreadStopped);
+    }
     let displaced = {
         let mut surfaces = surfaces.lock().unwrap();
         match &surface {
@@ -285,6 +291,7 @@ pub(crate) fn add_offline(
         module_id: module_id.to_string(),
         module,
     });
+    Ok(())
 }
 
 /// Removes `module_id` from an offline render's `graph` and `surfaces` in
@@ -293,8 +300,11 @@ pub(crate) fn remove_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
     module_id: &str,
-) {
+) -> Result<(), GraphCommandError> {
     let mut locked = graph.lock().unwrap();
+    if locked.retired {
+        return Err(GraphCommandError::AudioThreadStopped);
+    }
     let removed = surfaces.lock().unwrap().shift_remove(module_id);
     if let Some(removed) = removed {
         removed.retire();
@@ -302,16 +312,19 @@ pub(crate) fn remove_offline(
     locked.apply_command(GraphCommand::RemoveModule {
         module_id: module_id.to_string(),
     });
+    Ok(())
 }
 
-/// Retires every surface in `surfaces` under `graph`'s lock: the render is
-/// being replaced, and a write through a kept surface must not land in a
-/// graph nobody renders any more.
+/// Retires `graph` and every surface in `surfaces` under its lock: the
+/// render is being replaced, so a write through a kept surface must not
+/// land in a graph nobody renders any more, and an edit still in flight
+/// through a kept controller is refused rather than add a module there.
 pub(crate) fn retire_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
 ) {
-    let _locked = graph.lock().unwrap();
+    let mut locked = graph.lock().unwrap();
+    locked.retired = true;
     for surface in surfaces.lock().unwrap().values() {
         surface.retire();
     }

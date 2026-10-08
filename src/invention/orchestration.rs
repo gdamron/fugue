@@ -420,7 +420,7 @@ impl RuntimeController {
                 module_id,
                 module,
                 surface,
-            );
+            )?;
         }
 
         self.module_ports
@@ -449,7 +449,7 @@ impl RuntimeController {
             .graph
             .as_ref()
             .ok_or(GraphCommandError::AudioThreadStopped)?;
-        remove_offline(graph, &self.snapshot.control_surfaces, module_id);
+        remove_offline(graph, &self.snapshot.control_surfaces, module_id)?;
         self.module_ports.lock().unwrap().shift_remove(module_id);
         let mut state = self.snapshot.state.lock().unwrap();
         state.modules.shift_remove(module_id);

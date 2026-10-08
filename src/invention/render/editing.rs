@@ -81,7 +81,7 @@ impl RenderEngine {
             module_id,
             result.module,
             result.control_surface,
-        );
+        )?;
 
         {
             let mut state = self.state.lock().unwrap();
@@ -132,7 +132,7 @@ impl RenderEngine {
             .unwrap()
             .remove_prefix(&format!("{}.", module_id));
         self.module_ports.lock().unwrap().shift_remove(module_id);
-        remove_offline(graph, &self.control_surfaces, module_id);
+        remove_offline(graph, &self.control_surfaces, module_id)?;
         let mut state = self.state.lock().unwrap();
         state.modules.shift_remove(module_id);
         state
