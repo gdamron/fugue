@@ -5,7 +5,7 @@ use super::declared::{dial_rig, DialFactory};
 use super::requests::{counted_block, outcomes};
 use super::*;
 use crate::control_request::Outcome;
-use crate::invention::declared::{add_offline, remove_offline};
+use crate::invention::declared::{add_offline, remove_offline, retire_offline, Route};
 use crate::ControlValue;
 
 fn surface(rig: &Rig, id: &str) -> ControlSurfaceInstance {
@@ -148,10 +148,17 @@ fn an_offline_write_applies_at_once_under_the_render_lock() {
             &serde_json::json!({}),
         )
     };
+    let surfaces = Mutex::new(IndexMap::new());
     let dial = build().unwrap();
     let first = dial.surface.clone().unwrap();
     first.set_control("level", 0.5.into()).unwrap();
-    add_offline(&graph, "dial", dial.instance.unwrap(), Some(&first), None);
+    add_offline(
+        &graph,
+        &surfaces,
+        "dial",
+        dial.instance.unwrap(),
+        Some(first.clone()),
+    );
 
     first.set_control("level", 0.75.into()).unwrap();
     assert_eq!(level(&first), 0.75.into(), "applied at once");
@@ -164,21 +171,63 @@ fn an_offline_write_applies_at_once_under_the_render_lock() {
     assert_eq!(module(&graph), 0.75);
 
     let second = build().unwrap();
-    let surface = second.surface.clone();
+    let surface = second.surface.clone().unwrap();
     add_offline(
         &graph,
+        &surfaces,
         "dial",
         second.instance.unwrap(),
-        surface.as_ref(),
-        Some(first.clone()),
+        Some(surface.clone()),
     );
-    assert!(first.set_control("level", 0.5.into()).is_err());
+    assert!(first.set_control("level", 0.5.into()).is_err(), "displaced");
+    assert!(Arc::ptr_eq(&surfaces.lock().unwrap()["dial"], &surface));
     assert_eq!(
         module(&graph),
         0.25,
         "the replacement starts from its own state"
     );
 
-    remove_offline(&graph, "dial", surface.clone());
-    assert!(surface.unwrap().set_control("level", 0.5.into()).is_err());
+    // A displaced surface stays retired even if something binds it again.
+    let mut graph_lock = graph.lock().unwrap();
+    first.bind(Route::Retired, graph_lock.modules["dial"].module_mut());
+    drop(graph_lock);
+    assert!(first.set_control("level", 0.5.into()).is_err());
+
+    remove_offline(&graph, &surfaces, "dial");
+    assert!(surfaces.lock().unwrap().is_empty());
+    assert!(surface.set_control("level", 0.5.into()).is_err());
+}
+
+#[test]
+fn a_replaced_render_refuses_writes_through_its_old_surfaces() {
+    let graph = Arc::new(Mutex::new(SignalGraph::new(
+        IndexMap::new(),
+        Vec::new(),
+        Vec::new(),
+        MasterObservers::default(),
+    )));
+    let mut registry = ModuleRegistry::default();
+    registry.register(DialFactory);
+    let surfaces = Mutex::new(IndexMap::new());
+    let dial = GraphChange::build(
+        &registry,
+        SAMPLE_RATE,
+        "dial",
+        "dial",
+        &serde_json::json!({}),
+    )
+    .unwrap();
+    let surface = dial.surface.clone().unwrap();
+    add_offline(
+        &graph,
+        &surfaces,
+        "dial",
+        dial.instance.unwrap(),
+        Some(surface.clone()),
+    );
+    // A controller may keep the old graph alive past its replacement.
+    let kept = graph.clone();
+    retire_offline(&graph, &surfaces);
+    assert!(surface.set_control("level", 0.5.into()).is_err());
+    drop(kept);
 }

@@ -413,18 +413,14 @@ impl RuntimeController {
             .graph
             .as_ref()
             .ok_or(GraphCommandError::AudioThreadStopped)?;
-        let replaced = match &surface {
-            Some(surface) => self
-                .snapshot
-                .control_surfaces
-                .lock()
-                .unwrap()
-                .insert(module_id.to_string(), surface.clone()),
-            None => None,
-        };
-
         if let Some(module) = instance {
-            add_offline(graph, module_id, module, surface.as_ref(), replaced);
+            add_offline(
+                graph,
+                &self.snapshot.control_surfaces,
+                module_id,
+                module,
+                surface,
+            );
         }
 
         self.module_ports
@@ -453,13 +449,7 @@ impl RuntimeController {
             .graph
             .as_ref()
             .ok_or(GraphCommandError::AudioThreadStopped)?;
-        let surface = self
-            .snapshot
-            .control_surfaces
-            .lock()
-            .unwrap()
-            .shift_remove(module_id);
-        remove_offline(graph, module_id, surface);
+        remove_offline(graph, &self.snapshot.control_surfaces, module_id);
         self.module_ports.lock().unwrap().shift_remove(module_id);
         let mut state = self.snapshot.state.lock().unwrap();
         state.modules.shift_remove(module_id);

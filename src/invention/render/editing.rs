@@ -55,15 +55,6 @@ impl RenderEngine {
             .unwrap()
             .merge(InventionHandles::new(new_handles));
 
-        let replaced = match &result.control_surface {
-            Some(surface) => self
-                .control_surfaces
-                .lock()
-                .unwrap()
-                .insert(module_id.to_string(), surface.clone()),
-            None => None,
-        };
-
         self.module_ports.lock().unwrap().insert(
             module_id.to_string(),
             ModulePorts {
@@ -86,10 +77,10 @@ impl RenderEngine {
 
         add_offline(
             &graph,
+            &self.control_surfaces,
             module_id,
             result.module,
-            result.control_surface.as_ref(),
-            replaced,
+            result.control_surface,
         );
 
         {
@@ -136,17 +127,12 @@ impl RenderEngine {
             .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))?;
         self.scripts.stop_module(module_id);
         self.agents.stop_module(module_id);
-        let surface = self
-            .control_surfaces
-            .lock()
-            .unwrap()
-            .shift_remove(module_id);
         self.handles
             .lock()
             .unwrap()
             .remove_prefix(&format!("{}.", module_id));
         self.module_ports.lock().unwrap().shift_remove(module_id);
-        remove_offline(graph, module_id, surface);
+        remove_offline(graph, &self.control_surfaces, module_id);
         let mut state = self.state.lock().unwrap();
         state.modules.shift_remove(module_id);
         state

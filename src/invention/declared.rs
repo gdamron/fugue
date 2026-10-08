@@ -208,6 +208,10 @@ impl ControlSurface for DeclaredSurface {
 
     fn bind(&self, route: Route, module: &mut dyn Module) {
         let mut current = self.route.lock().unwrap();
+        // A retired surface's module was displaced; it never runs again.
+        if matches!(*current, Route::Retired) {
+            return;
+        }
         debug_assert!(
             module
                 .declared()
@@ -250,19 +254,29 @@ pub(crate) fn bind_offline(
     }
 }
 
-/// Adds `module` to an offline render's `graph` as `module_id`, under the
-/// lock its renders take: binds its `surface` there and retires the
-/// surface of the module it replaces, if any.
+/// Adds `module` to an offline render's `graph` as `module_id` in one step
+/// under the lock its renders take: lists its `surface` in `surfaces`,
+/// retires the one it displaces, binds it, and installs the module. So
+/// concurrent edits commit in one order, and a write that checks its
+/// route under the same lock always reaches the module its surface
+/// belongs to.
 pub(crate) fn add_offline(
     graph: &Arc<Mutex<SignalGraph>>,
+    surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
     module_id: &str,
     mut module: ModuleInstance,
-    surface: Option<&ControlSurfaceInstance>,
-    replaced: Option<ControlSurfaceInstance>,
+    surface: Option<ControlSurfaceInstance>,
 ) {
     let mut locked = graph.lock().unwrap();
-    if let Some(replaced) = replaced {
-        replaced.retire();
+    let displaced = {
+        let mut surfaces = surfaces.lock().unwrap();
+        match &surface {
+            Some(surface) => surfaces.insert(module_id.to_string(), surface.clone()),
+            None => surfaces.shift_remove(module_id),
+        }
+    };
+    if let Some(displaced) = displaced {
+        displaced.retire();
     }
     if let Some(surface) = surface {
         surface.bind(offline(graph, module_id), module.module_mut());
@@ -273,20 +287,34 @@ pub(crate) fn add_offline(
     });
 }
 
-/// Removes `module_id` from an offline render's `graph`, retiring its
-/// `surface`, under the lock its renders take.
+/// Removes `module_id` from an offline render's `graph` and `surfaces` in
+/// one step under the lock its renders take, retiring its surface.
 pub(crate) fn remove_offline(
     graph: &Arc<Mutex<SignalGraph>>,
+    surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
     module_id: &str,
-    surface: Option<ControlSurfaceInstance>,
 ) {
     let mut locked = graph.lock().unwrap();
-    if let Some(surface) = surface {
-        surface.retire();
+    let removed = surfaces.lock().unwrap().shift_remove(module_id);
+    if let Some(removed) = removed {
+        removed.retire();
     }
     locked.apply_command(GraphCommand::RemoveModule {
         module_id: module_id.to_string(),
     });
+}
+
+/// Retires every surface in `surfaces` under `graph`'s lock: the render is
+/// being replaced, and a write through a kept surface must not land in a
+/// graph nobody renders any more.
+pub(crate) fn retire_offline(
+    graph: &Arc<Mutex<SignalGraph>>,
+    surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
+) {
+    let _locked = graph.lock().unwrap();
+    for surface in surfaces.lock().unwrap().values() {
+        surface.retire();
+    }
 }
 
 fn offline(graph: &Arc<Mutex<SignalGraph>>, module_id: &str) -> Route {

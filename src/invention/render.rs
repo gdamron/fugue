@@ -322,6 +322,9 @@ impl RenderEngine {
         self.agents.stop_all();
         runtime.state.lock().unwrap().running = true;
 
+        if let Some(previous) = &self.graph {
+            super::declared::retire_offline(previous, &self.control_surfaces);
+        }
         *self.module_ports.lock().unwrap() = module_ports(&runtime.modules);
         let graph = Arc::new(Mutex::new(SignalGraph::new(
             runtime.modules,
