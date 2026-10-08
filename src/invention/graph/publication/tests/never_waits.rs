@@ -99,7 +99,12 @@ fn scan(root: &Path, path: &Path, found: &mut Vec<String>) {
         }
         return;
     }
-    let shown = path.strip_prefix(root).unwrap().to_string_lossy();
+    // `/`-separated on every platform, to match `ALLOWED`.
+    let shown = path
+        .strip_prefix(root)
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
     if name.ends_with("tests.rs")
         || !name.ends_with(".rs")
         || ALLOWED.iter().any(|(file, _)| *file == shown)
