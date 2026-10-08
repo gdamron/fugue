@@ -227,6 +227,15 @@ pub trait ControlSurface: Send + Sync {
     #[doc(hidden)]
     fn retire(&self) {}
 
+    /// Whether `key` is one of this surface's declared controls. Such a
+    /// control is never written through [`Self::set_control`] from the
+    /// audio thread: automation writes it, or it cannot be scheduled.
+    #[doc(hidden)]
+    fn declares(&self, key: &str) -> bool {
+        let _ = key;
+        false
+    }
+
     /// The declared control `key`, as automation on the audio thread writes
     /// it (see [`crate::control_request::Automation`]), or `None` for a
     /// legacy surface, or a control automation cannot write. Control

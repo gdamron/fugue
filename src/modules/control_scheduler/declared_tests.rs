@@ -23,6 +23,7 @@ const DECLS: &[ControlDecl] = &[
         RtValue::F32(1.0),
         "Level",
     ),
+    ControlDecl::new("tap", DeclKind::Bool, RtValue::Bool(false), "Tap").event(),
     ControlDecl::new(
         "voices",
         DeclKind::Integer { min: 0, max: 8 },
@@ -71,8 +72,8 @@ impl Module for Knob {
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         match (control.0, value) {
             (0, RtValue::F32(level)) => self.level = level,
-            (1, RtValue::I32(voices)) if voices <= 4 => self.voices = voices,
-            (1, RtValue::I32(_)) => return Err(Refusal::Invalid),
+            (2, RtValue::I32(voices)) if voices <= 4 => self.voices = voices,
+            (2, RtValue::I32(_)) => return Err(Refusal::Invalid),
             _ => return Err(Refusal::Unsupported),
         }
         Ok(value)
@@ -164,4 +165,18 @@ fn a_ramp_starts_from_the_latest_write_in_the_same_block() {
     step(&mut scheduler, &mut knob, 32);
     step(&mut scheduler, &mut knob, 32);
     assert_eq!(knob.level, 1.0);
+}
+
+#[test]
+fn an_event_control_cannot_be_scheduled() {
+    let cells = Arc::new(ControlCells::new(DECLS.iter().map(|decl| decl.default)));
+    let surface: Arc<dyn ControlSurface + Send + Sync> =
+        Arc::new(DeclaredSurface::new(TABLE.clone(), cells));
+    let mut map: SurfaceMap = IndexMap::new();
+    map.insert("knob".to_string(), surface);
+    let directory: SurfaceDirectory = Arc::new(Mutex::new(map));
+    let schedule = r#"[{ "at": 0, "module": "knob", "control": "tap", "value": true }]"#;
+    let ctrl = ControlSchedulerControls::new(parse_schedule_json(schedule).unwrap());
+    let refused = ctrl.attach("sched", &directory).unwrap_err();
+    assert!(refused.contains("cannot be scheduled"), "{refused}");
 }

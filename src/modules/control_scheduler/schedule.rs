@@ -279,6 +279,16 @@ pub(crate) fn resolve_schedule(
                 ));
             }
         }
+        // A declared control is written by automation or not at all: its
+        // setter takes a lock, which the audio thread must never wait on.
+        let automation = surface.automation(&entry.control);
+        if automation.is_none() && surface.declares(&entry.control) {
+            return Err(format!(
+                "schedule entry at step {}: control '{}.{}' cannot be scheduled \
+                 (an event or read-only control)",
+                entry.at, entry.module, entry.control
+            ));
+        }
         resolved.push(ResolvedEntry {
             at: entry.at,
             module: entry.module.clone(),
@@ -286,7 +296,7 @@ pub(crate) fn resolve_schedule(
             value: entry.value,
             ramp_steps: entry.ramp.unwrap_or(0),
             surface: surface.clone(),
-            automation: surface.automation(&entry.control),
+            automation,
         });
     }
     resolved.sort_by_key(|entry| entry.at);

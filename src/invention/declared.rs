@@ -239,6 +239,10 @@ impl ControlSurface for DeclaredSurface {
         *self.route.lock().unwrap() = Route::Retired;
     }
 
+    fn declares(&self, key: &str) -> bool {
+        self.table.resolve(key).is_some()
+    }
+
     fn automation(&self, key: &str) -> Option<Automation> {
         let index = self.table.resolve(key)?;
         let (decl, _) = self.table.decl(index)?;
