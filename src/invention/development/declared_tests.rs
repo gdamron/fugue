@@ -45,15 +45,12 @@ fn mixed() -> serde_json::Value {
     })
 }
 
-/// Two dials behind one exposed `level` (and `pulse` on the first), each
-/// to its own output.
+/// Two dials behind one exposed `level` (and `pulse` on the first, and
+/// `b_level` on the second alone), each to its own output.
 fn pair() -> DevelopmentFactory {
-    let definition = serde_json::from_value(json!({
+    let definition = json!({
         "version": "1.0.0",
-        "modules": [
-            { "id": "a", "type": "dial" },
-            { "id": "b", "type": "dial" }
-        ],
+        "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
         "connections": [],
         "outputs": [
             { "name": "a", "from": "a", "from_port": "out" },
@@ -62,19 +59,11 @@ fn pair() -> DevelopmentFactory {
         "controls": [
             { "key": "level", "module": "a", "control": "level" },
             { "key": "level", "module": "b", "control": "level" },
-            { "key": "pulse", "module": "a", "control": "pulse" }
+            { "key": "pulse", "module": "a", "control": "pulse" },
+            { "key": "b_level", "module": "b", "control": "level" }
         ]
-    }))
-    .unwrap();
-    let mut registry = ModuleRegistry::default();
-    registry.register(DialFactory);
-    DevelopmentFactory {
-        name: "pair".to_string(),
-        definition,
-        registry,
-        registered: Arc::new(Mutex::new(HashSet::new())),
-        loaded: Arc::new(LoadedDevelopments::default()),
-    }
+    });
+    factory("pair", definition)
 }
 
 /// The development built with `config`, running alone in an offline graph.
@@ -379,4 +368,52 @@ fn a_choice_fans_out_by_option_name_whatever_each_alias_numbers_it() {
     // An option one alias lacks changes neither.
     assert!(surface.set_control("form", "gentle".into()).is_err());
     assert_eq!(surface.get_control("b_slope").unwrap(), "steep".into());
+}
+
+#[test]
+fn keys_sharing_an_inner_control_apply_in_the_order_automation_wrote_them() {
+    let (graph, surface) = running(json!({}));
+    let (level, b_level) = (
+        surface.automation("level").unwrap(),
+        surface.automation("b_level").unwrap(),
+    );
+    b_level.write_number(0.2);
+    level.write_number(0.8);
+    assert_eq!(
+        b_level.current(),
+        Some(0.8),
+        "a ramp starts from the later write"
+    );
+    assert_eq!(outputs(&graph), (0.8, 0.8), "the bank-wide write, last");
+    level.write_number(0.8);
+    b_level.write_number(0.2);
+    assert_eq!(level.current(), Some(0.8), "its first alias");
+    assert_eq!(outputs(&graph), (0.8, 0.2), "the per-voice write, last");
+}
+
+#[test]
+fn nested_keys_sharing_an_inner_control_keep_their_write_order() {
+    let inner = serde_json::to_value(pair().definition).unwrap();
+    let outer = json!({
+        "version": "1.0.0",
+        "developments": [{ "name": "inner", "definition": inner }],
+        "modules": [{ "id": "n", "type": "inner" }],
+        "connections": [],
+        "controls": [
+            { "key": "all", "module": "n", "control": "level" },
+            { "key": "b", "module": "n", "control": "b_level" }
+        ]
+    });
+    let built = factory("outer", outer).build(48_000, &json!({})).unwrap();
+    let surface = built.control_surface.unwrap();
+    let (all, b) = (
+        surface.automation("all").unwrap(),
+        surface.automation("b").unwrap(),
+    );
+    b.write_number(0.2);
+    all.write_number(0.8);
+    assert_eq!(b.current(), Some(0.8));
+    all.write_number(0.6);
+    b.write_number(0.2);
+    assert_eq!((all.current(), b.current()), (Some(0.6), Some(0.2)));
 }

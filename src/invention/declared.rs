@@ -286,7 +286,7 @@ impl ControlSurface for DeclaredSurface {
             index,
             kind: decl.kind,
             clamp: decl.clamp,
-            origin: None,
+            aliases: None,
         })
     }
 }

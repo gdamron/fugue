@@ -191,15 +191,24 @@ impl ControlSurface for DevelopmentControlSurface {
 
     /// Only for a key every alias of which automation can write: a key
     /// still reaching a legacy alias cannot be scheduled (its setter would
-    /// lock on the audio thread). A ramp starts from what the first alias
-    /// holds, which an inner scheduler may have moved since.
+    /// lock on the audio thread). A write lands in every alias's own slot
+    /// (see [`Automation::aliases`]), so keys sharing an inner control
+    /// apply in the order they were written, and a ramp starts from what
+    /// the first alias holds or is about to, whichever key (or inner
+    /// scheduler) moved it.
     fn automation(&self, key: &str) -> Option<Automation> {
         let mut automation = self.declared(key)?.automation(key)?;
-        for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
-            let surface = self.surfaces.get(&control.module_id)?;
-            let alias = surface.automation(&control.key)?;
-            automation.origin.get_or_insert_with(|| Arc::new(alias));
-        }
+        let aliases = self
+            .controls
+            .iter()
+            .filter(|entry| entry.meta.key == key)
+            .map(|control| {
+                self.surfaces
+                    .get(&control.module_id)?
+                    .automation(&control.key)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        automation.aliases = Some(aliases.into());
         Some(automation)
     }
 
