@@ -4,15 +4,19 @@
 //! amplitude control. Common uses include applying envelope shapes to sounds,
 //! tremolo effects, and level control.
 
-use std::any::Any;
 use std::sync::Arc;
 
+use crate::control_request::{
+    apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
+    Refusal, RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
-pub use self::controls::VcaControls;
+use self::controls::{LEVEL, TABLE};
 
 mod controls;
 mod inputs;
@@ -22,7 +26,7 @@ mod outputs;
 pub struct VcaFactory;
 
 const TYPE_ID: &str = "vca";
-const LEVEL: ConfigKey = ConfigKey::float("level");
+const LEVEL_KEY: ConfigKey = ConfigKey::float("level");
 
 impl ModuleFactory for VcaFactory {
     fn type_id(&self) -> &'static str {
@@ -30,7 +34,7 @@ impl ModuleFactory for VcaFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        &[LEVEL]
+        &[LEVEL_KEY]
     }
 
     fn build(
@@ -38,20 +42,16 @@ impl ModuleFactory for VcaFactory {
         _sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let cv = ConfigReader::new(TYPE_ID, config)
-            .float(&LEVEL)?
+        let level = ConfigReader::new(TYPE_ID, config)
+            .float(&LEVEL_KEY)?
             .unwrap_or(1.0);
-
-        let controls = VcaControls::new(cv);
-        let vca = Vca::new_with_controls(controls.clone());
+        let vca = Vca::with_level(level);
+        let surface = DeclaredSurface::new(TABLE.clone(), vca.cells.clone());
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(vca)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
     }
@@ -83,29 +83,29 @@ impl ModuleFactory for VcaFactory {
 /// }
 /// ```
 pub struct Vca {
-    ctrl: VcaControls,
+    /// Amplitude when no level signal is connected, 0 to 1.
+    level: f32,
+    cells: Arc<ControlCells>,
     inputs: inputs::VcaInputs,
     outputs: outputs::VcaOutputs,
 }
 
 impl Vca {
-    /// Creates a new VCA with CV defaulting to 1.0 (unity gain/passthrough).
+    /// Creates a new VCA with level 1.0 (unity gain/passthrough).
     pub fn new() -> Self {
-        Self::new_with_controls(VcaControls::default())
+        Self::with_level(1.0)
     }
 
-    /// Creates a new VCA with the given controls.
-    pub fn new_with_controls(controls: VcaControls) -> Self {
-        Self {
-            ctrl: controls,
+    /// Creates a new VCA at `level` (clamped to 0 to 1).
+    pub fn with_level(level: f32) -> Self {
+        let mut vca = Self {
+            level: 1.0,
+            cells: Arc::new(ControlCells::new([RtValue::F32(1.0)])),
             inputs: inputs::VcaInputs::new(),
             outputs: outputs::VcaOutputs::new(),
-        }
-    }
-
-    /// Returns a reference to the controls.
-    pub fn controls(&self) -> &VcaControls {
-        &self.ctrl
+        };
+        let _ = apply_declared(&mut vca, LEVEL, RtValue::F32(level));
+        vca
     }
 }
 
@@ -121,12 +121,10 @@ impl Module for Vca {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        // Skip the fallback atomic entirely for connected CV, otherwise sample
-        // the scalar control once for this process call.
         let control_cv = if self.inputs.cv_connected() {
             0.0
         } else {
-            self.ctrl.cv()
+            self.level
         };
 
         let mut i = 0;
@@ -166,29 +164,32 @@ impl Module for Vca {
         self.inputs.set_connected(index, connected);
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        match (control, value) {
+            (LEVEL, RtValue::F32(level)) => {
+                self.level = level.clamp(0.0, 1.0);
+                Ok(RtValue::F32(self.level))
+            }
+            _ => Err(Refusal::Unsupported),
+        }
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::new("level", "Default level (when no signal connected)")
-                .with_range(0.0, 1.0)
-                .with_default(1.0),
-        ]
+        local_controls(self)
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
-        match key {
-            "level" => Ok(self.ctrl.cv()),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_get(self, key)
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
-        match key {
-            "level" => {
-                self.ctrl.set_cv(value);
-                Ok(())
-            }
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_set(self, key, value)
     }
 }
 

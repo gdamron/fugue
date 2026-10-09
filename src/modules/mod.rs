@@ -9,7 +9,7 @@
 //! - [`MelodyGenerator`] / [`MelodyControls`] - Algorithmic melody generation
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
 //! - [`Adsr`] / [`AdsrControls`] - Envelope generator
-//! - [`Vca`] / [`VcaControls`] - Voltage controlled amplifier
+//! - [`Vca`] - Voltage controlled amplifier
 //! - [`DacModule`] - Audio output sink module
 //! - [`AudioFileSink`] - Audio file recording sink module
 //! - [`AudioDriver`] / [`AudioBackend`] - Audio output backends
@@ -82,7 +82,7 @@ pub use sample_player::{SamplePlayer, SamplePlayerControls};
 pub use sample_slicer::SampleSlicer;
 pub use step_sequencer::{GraceChain, Step, StepSequencer, MAX_GRACE_NOTES};
 pub use sustain::{Sustain, SustainFactory};
-pub use vca::{Vca, VcaControls};
+pub use vca::Vca;
 #[cfg(not(target_arch = "wasm32"))]
 pub use youtube_sink::{YoutubeSink, YoutubeSinkHandle, YoutubeSinkStats};
 

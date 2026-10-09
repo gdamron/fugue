@@ -76,7 +76,7 @@ pub use modules::{
     Mixer, MixerControls, MixerFactory, NullBackend, Oscillator, OscillatorControls,
     OscillatorFactory, OscillatorType, SampleKit, SampleKitControls, SampleKitFactory,
     SamplePlayer, SamplePlayerControls, SamplePlayerFactory, SampleSlicer, SampleSlicerFactory,
-    StreamErrorKind, Vca, VcaControls, VcaFactory,
+    StreamErrorKind, Vca, VcaFactory,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
