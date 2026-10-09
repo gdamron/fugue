@@ -177,7 +177,16 @@ mod fs_ops {
     /// Open `path` and check its size against `kind`'s limit before reading.
     fn open_bounded(path: &Path, kind: ReadKind) -> Result<(File, u64, u64), ReadError> {
         let file = File::open(path)?;
-        let size = file.metadata()?.len();
+        let metadata = file.metadata()?;
+        // Opening a directory succeeds on Unix; refuse it before any caller
+        // skips the read (package audio relies on integrity, not this read).
+        if !metadata.is_file() {
+            return Err(ReadError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} is not a regular file", path.display()),
+            )));
+        }
+        let size = metadata.len();
         let limit = kind.limit();
         if size > limit {
             return Err(too_large(path, size, limit, kind));
@@ -365,6 +374,16 @@ mod tests {
         assert!(message.contains("hour-long-take.wav"), "{message}");
         assert!(message.contains("1 GiB"), "{message}");
         assert!(message.contains("trim or split the sample"), "{message}");
+    }
+
+    #[test]
+    fn directories_are_refused_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            HashedFile::open(dir.path()),
+            Err(ReadError::Io(e)) if e.kind() == std::io::ErrorKind::InvalidInput
+        ));
+        assert!(read_document(dir.path()).is_err());
     }
 
     #[test]
