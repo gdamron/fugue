@@ -213,6 +213,42 @@ fn local_list_bounds_summaries_and_rejects_bad_queries() {
 }
 
 #[test]
+fn full_pages_stay_within_the_byte_cap_with_their_cursor() {
+    let temp = tempfile::tempdir().unwrap();
+    for minor in 0..100 {
+        let version = format!("1.{minor}.0");
+        install(
+            temp.path(),
+            "fugue.test.voice",
+            &version,
+            "development",
+            &"x".repeat(512),
+        );
+        let manifest = temp
+            .path()
+            .join("fugue.test.voice")
+            .join(&version)
+            .join("fugue.pkg.json");
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+        json["deps"] = (0..60)
+            .map(|i| serde_json::json!(format!("fugue.test.dependency-{i}@^1")))
+            .collect();
+        std::fs::write(&manifest, json.to_string()).unwrap();
+    }
+    let page = list(
+        temp.path(),
+        &PackageListQuery {
+            limit: 100,
+            detail: true,
+            ..Default::default()
+        },
+    );
+    assert!(page.next_cursor.is_some());
+    assert!(serde_json::to_vec(&page).unwrap().len() <= MAX_PACKAGE_LIST_BYTES);
+}
+
+#[test]
 fn installed_entry_and_wire_shapes() {
     let temp = tempfile::tempdir().unwrap();
     install(

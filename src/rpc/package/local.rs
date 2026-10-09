@@ -85,7 +85,9 @@ impl PackageList {
                 .collect(),
             diagnostics_truncated,
         };
-        let mut bytes = encoded_len(&page)?;
+        // Reserve room for the cursor so a full page never outgrows the cap.
+        let cursor_bytes = r#","next_cursor":""#.len() + prefix.len() + 20;
+        let mut bytes = encoded_len(&page)? + cursor_bytes;
         for (index, entry) in matching.iter().enumerate().skip(offset) {
             let entry_bytes = encoded_len(entry)? + 1;
             if page.packages.len() == query.limit || bytes + entry_bytes > MAX_PACKAGE_LIST_BYTES {
@@ -124,6 +126,9 @@ impl PackageInfo {
 }
 
 fn scan(packages_dir: &Path) -> Result<(Vec<PackageInfo>, Vec<ContentError>)> {
+    // Installs commit under the exclusive half of this lock, so the scan
+    // never sees a package before its dependencies and receipt.
+    let _guard = shared_cache_lock(packages_dir)?;
     let mut entries = Vec::new();
     let mut diagnostics = Vec::new();
     let mut candidates = 0usize;
@@ -198,6 +203,26 @@ fn provenance(packages_dir: &Path, id: &str, version: &str) -> PackageSource {
         .and_then(|bytes| serde_json::from_slice::<ContentReceipt>(&bytes).ok())
         .filter(|receipt| receipt.bundled)
         .map_or(PackageSource::Installed, |_| PackageSource::Bundled)
+}
+
+/// The shared half of the cache's `.catalog.lock`, as the content catalog
+/// takes it. A missing cache needs no lock.
+fn shared_cache_lock(packages_dir: &Path) -> Result<Option<std::fs::File>> {
+    if !packages_dir
+        .try_exists()
+        .map_err(|e| unavailable(packages_dir, e))?
+    {
+        return Ok(None);
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(packages_dir.join(".catalog.lock"))
+        .map_err(|e| unavailable(packages_dir, e))?;
+    fs2::FileExt::lock_shared(&lock).map_err(|e| unavailable(packages_dir, e))?;
+    Ok(Some(lock))
 }
 
 fn read_dir(path: &Path) -> Result<Vec<std::fs::DirEntry>> {
