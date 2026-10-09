@@ -4,7 +4,9 @@
 //! cannot submit requests (submitting takes the publisher lock). It writes
 //! its targets' automation slots instead, and the graph takes each
 //! module's slots just before the module processes, applying them through
-//! [`apply_declared`] like any request.
+//! [`apply_declared`] like any request. A development's control has no
+//! slot of its own: its writes land in the slots of the inner controls it
+//! aliases, taken as each inner module processes.
 //!
 //! Both ends run on the audio thread, in one block's process order: the
 //! graph orders a scheduler before its targets, or runs both sample by
@@ -107,6 +109,13 @@ pub(crate) struct Automation {
     /// written, so a ramp starting from a pending write starts where the
     /// module will be.
     pub(crate) clamp: Option<(f32, f32)>,
+    /// A development's control: the inner controls it aliases, in order.
+    /// A write lands in each alias's own slot, never in these cells, so
+    /// every key reaching an inner control writes the same slot, in the
+    /// order the writes are made (a bank-wide key and a per-voice key, last
+    /// write wins), and reads it back from there. `None` for a module's own
+    /// control.
+    pub(crate) aliases: Option<Arc<[Automation]>>,
 }
 
 impl Automation {
@@ -136,16 +145,32 @@ impl Automation {
     }
 
     fn write(&self, value: Option<RtValue>) {
-        match value {
-            Some(value) => self.cells.automation.write(self.index, value),
-            None => self.cells.automation.refused.record(),
+        match (value, &self.aliases) {
+            (None, _) => self.cells.automation.refused.record(),
+            // Checked against the development's own kind first, which every
+            // alias takes all of: each then holds it as its own kind does.
+            (Some(value), Some(aliases)) => {
+                for alias in aliases.iter() {
+                    match value {
+                        RtValue::F32(number) => alias.write_number(number),
+                        RtValue::I32(whole) => alias.write_number(whole as f32),
+                        RtValue::Bool(flag) => alias.write_bool(flag),
+                        _ => alias.write(None),
+                    }
+                }
+            }
+            (Some(value), None) => self.cells.automation.write(self.index, value),
         }
     }
 
     /// The control's value as automation last left it: its latest write
-    /// this block, else what it holds. A ramp starts from here.
+    /// this block, else what it holds. A ramp starts from here. A
+    /// development's control reads its first alias, whichever key wrote it.
     #[inline]
     pub(crate) fn current(&self) -> Option<f32> {
+        if let Some(aliases) = &self.aliases {
+            return aliases.first()?.current();
+        }
         let value = self
             .cells
             .automation

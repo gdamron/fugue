@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::control_request::{
     Automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue,
 };
-use crate::invention::declared::Route;
+use crate::invention::declared::{Declaration, Route};
 
 mod control_meta;
 mod control_validation;
@@ -213,6 +213,14 @@ pub trait ControlSurface: Send + Sync {
         let _ = (route, module);
     }
 
+    /// Writes `key` where it is on the legacy path: the whole of a legacy
+    /// surface's control, nothing of a declared one, and a development's
+    /// legacy aliases. Control thread.
+    #[doc(hidden)]
+    fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        self.set_control(key, value)
+    }
+
     /// Opens a surface [`bound`](Self::bind) to a change still being
     /// prepared to `route`, once that change has committed. Legacy surfaces
     /// ignore it.
@@ -234,6 +242,15 @@ pub trait ControlSurface: Send + Sync {
     fn declares(&self, key: &str) -> bool {
         let _ = key;
         false
+    }
+
+    /// The declared control `key`, for a development aliasing it, or `None`
+    /// for a legacy surface. Control thread.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn declaration(&self, key: &str) -> Option<Declaration> {
+        let _ = key;
+        None
     }
 
     /// The declared control `key`, as automation on the audio thread writes

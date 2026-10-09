@@ -13,6 +13,7 @@
 //!   audio thread at its sample.
 //! - **Offline**: applied at once in an offline render's graph, under the
 //!   lock its renders take.
+//! - **Inner**: inside a development, reached only through the development.
 //! - **Prepared**: bound to a change not yet committed; writes are refused
 //!   until the change publishes the module (then **Live**), or for good if
 //!   it never does.
@@ -37,8 +38,8 @@ use super::graph::{GraphCommand, SignalGraph};
 use super::publish::Publisher;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
-    apply_declared, Automation, ControlCells, ControlIndex, ControlTable, DeclKind, Refusal,
-    Request, RequestSender, RequestValue, RtValue, Writer,
+    apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
+    Refusal, Request, RequestSender, RequestValue, RtValue, Writer,
 };
 use crate::traits::ControlSurfaceMap;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
@@ -53,8 +54,17 @@ pub(crate) enum Route {
         graph: Weak<Mutex<SignalGraph>>,
         module_id: String,
     },
+    Inner,
     Prepared,
     Retired,
+}
+
+/// One declared control as a development aliasing it sees it.
+pub(crate) struct Declaration {
+    pub(crate) index: ControlIndex,
+    pub(crate) decl: ControlDecl,
+    /// What it holds now.
+    pub(crate) current: RtValue,
 }
 
 /// A live graph's request queue, as one module's surface submits to it.
@@ -94,6 +104,12 @@ impl DeclaredSurface {
             cells,
             route: Mutex::new(Route::Building(Vec::new())),
         }
+    }
+
+    /// Whether its module has yet to run: reads then come from its cells
+    /// alone (see the development's surface).
+    pub(crate) fn is_building(&self) -> bool {
+        matches!(*self.route.lock().unwrap(), Route::Building(_))
     }
 
     fn index(&self, key: &str) -> Result<ControlIndex, String> {
@@ -152,6 +168,7 @@ impl DeclaredSurface {
                     .apply_control(&module_id, index, value)
                     .map_err(|refusal| refused(&self.table, index, refusal))
             }
+            Route::Inner => Err("This control is set through its development".into()),
             Route::Prepared => Err("This module is being installed; try again".into()),
             Route::Retired => Err("This module has been removed or replaced".into()),
         }
@@ -243,6 +260,19 @@ impl ControlSurface for DeclaredSurface {
         self.table.resolve(key).is_some()
     }
 
+    fn set_legacy(&self, key: &str, _value: ControlValue) -> Result<(), String> {
+        self.index(key).map(drop)
+    }
+
+    fn declaration(&self, key: &str) -> Option<Declaration> {
+        let index = self.table.resolve(key)?;
+        Some(Declaration {
+            index,
+            decl: self.table.decl(index)?.0.clone(),
+            current: self.cells.load(index)?,
+        })
+    }
+
     fn automation(&self, key: &str) -> Option<Automation> {
         let index = self.table.resolve(key)?;
         let (decl, _) = self.table.decl(index)?;
@@ -256,6 +286,7 @@ impl ControlSurface for DeclaredSurface {
             index,
             kind: decl.kind,
             clamp: decl.clamp,
+            aliases: None,
         })
     }
 }

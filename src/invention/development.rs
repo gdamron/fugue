@@ -1,4 +1,6 @@
-use crate::control_request::take_automation;
+use crate::control_request::{
+    take_automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::graph::RoutingConnection;
 use crate::invention::runtime::{
@@ -17,6 +19,9 @@ use super::reload::LoadedDevelopments;
 
 mod compiled_graph;
 mod control_surface;
+mod declared_controls;
+#[cfg(test)]
+mod declared_tests;
 #[cfg(test)]
 mod tests;
 
@@ -24,6 +29,7 @@ use compiled_graph::{
     unique_port_names, CompiledDevelopmentGraph, ExternalInputRoute, ExternalOutputRoute,
 };
 use control_surface::DevelopmentControlSurface;
+use declared_controls::{enclose, DevelopmentControls};
 
 pub(crate) struct DevelopmentFactory {
     pub(crate) name: String,
@@ -165,6 +171,8 @@ pub(crate) struct DevelopmentModule {
     output_buffers: Vec<[f32; MAX_BLOCK]>,
     outputs: Vec<ExternalOutputRoute>,
     graph: CompiledDevelopmentGraph,
+    /// Exposed controls reaching declared inner controls.
+    controls: Option<DevelopmentControls>,
 }
 
 impl DevelopmentModule {
@@ -189,13 +197,6 @@ impl DevelopmentModule {
             validate_output_port(module, &output.from_port)?;
         }
 
-        // The surface keeps the internal directory alive once `runtime` is
-        // consumed below, so inner schedulers can still resolve schedules.
-        let control_surface = Arc::new(DevelopmentControlSurface::new(
-            definition,
-            runtime.control_surfaces.clone(),
-        )?);
-
         let input_ports = unique_port_names(definition.inputs.iter().map(|entry| &entry.name));
         let output_ports = unique_port_names(definition.outputs.iter().map(|entry| &entry.name));
 
@@ -206,12 +207,27 @@ impl DevelopmentModule {
 
         // Take ownership before building the index map to avoid a borrow
         // of the IndexMap that outlives the consumption point.
-        let module_list: Vec<(String, GraphModule)> = runtime.modules.into_iter().collect();
+        let mut module_list: Vec<(String, GraphModule)> = runtime.modules.into_iter().collect();
         let module_indexes: HashMap<String, usize> = module_list
             .iter()
             .enumerate()
             .map(|(i, (id, _))| (id.clone(), i))
             .collect();
+
+        let surfaces = runtime.control_surfaces.lock().unwrap().clone();
+        enclose(&surfaces, &mut module_list);
+        let (controls, declared) =
+            match DevelopmentControls::new(definition, &surfaces, &module_indexes)? {
+                Some((controls, declared)) => (Some(controls), Some(declared)),
+                None => (None, None),
+            };
+        // The surface keeps the internal directory alive once `runtime` is
+        // consumed, so inner schedulers can still resolve schedules.
+        let control_surface = Arc::new(DevelopmentControlSurface::new(
+            definition,
+            runtime.control_surfaces.clone(),
+            declared,
+        )?);
 
         let mut input_routes: Vec<Vec<ExternalInputRoute>> =
             (0..input_ports.len()).map(|_| Vec::new()).collect();
@@ -299,6 +315,7 @@ impl DevelopmentModule {
                 output_buffers: vec![[0.0; MAX_BLOCK]; output_count],
                 outputs,
                 graph,
+                controls,
             },
             control_surface,
         ))
@@ -416,6 +433,17 @@ impl Module for DevelopmentModule {
             self.process_block(frames);
         }
         true
+    }
+
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        self.controls.as_ref().map(DevelopmentControls::declared)
+    }
+
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        match &self.controls {
+            Some(controls) => controls.apply(&mut self.graph.modules, control, value),
+            None => Err(Refusal::Unsupported),
+        }
     }
 
     /// Prepares every inner module, so a scheduler inside a development
