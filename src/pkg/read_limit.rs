@@ -379,9 +379,11 @@ mod tests {
     #[test]
     fn directories_are_refused_on_open() {
         let dir = tempfile::tempdir().unwrap();
+        // Unix opens directories and the metadata check refuses them; Windows
+        // refuses them at open. Either way it is an I/O error, never a hash.
         assert!(matches!(
             HashedFile::open(dir.path()),
-            Err(ReadError::Io(e)) if e.kind() == std::io::ErrorKind::InvalidInput
+            Err(ReadError::Io(_))
         ));
         assert!(read_document(dir.path()).is_err());
     }
