@@ -318,8 +318,8 @@ mod storage;
 pub use catalog::ContentCatalog;
 use closure::Closure;
 use storage::{
-    canonical, contained, directory, hash, package_read_guard, read_file, read_lock, read_receipt,
-    revision_of, workspace_refs,
+    canonical, contained, directory, hash, hash_audio_asset, open_audio_asset, package_read_guard,
+    read_file, read_lock, read_receipt, revision_of, workspace_refs,
 };
 pub use storage::{receipt_path, ContentReceipt};
 
@@ -400,6 +400,8 @@ fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
 
 #[cfg(test)]
 use std::fs;
+#[cfg(test)]
+mod read_limit_tests;
 #[cfg(test)]
 mod tests;
 

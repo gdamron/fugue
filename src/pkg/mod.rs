@@ -9,6 +9,7 @@ pub mod audio_asset;
 pub mod content;
 pub mod lock;
 pub mod manifest;
+pub mod read_limit;
 pub mod resolve;
 pub mod sample_pack;
 pub mod validate;
