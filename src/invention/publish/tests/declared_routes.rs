@@ -6,6 +6,7 @@ use super::requests::{counted_block, outcomes};
 use super::*;
 use crate::control_request::{Outcome, When};
 use crate::invention::declared::{add_offline, remove_offline, retire_offline, Route};
+use crate::invention::publish::PendingWrite;
 use crate::test_support::dial::DialFactory;
 use crate::ControlValue;
 
@@ -341,4 +342,70 @@ fn a_mixed_development_write_the_queue_cannot_take_changes_no_alias() {
     );
     rig.render(1);
     assert_eq!(dev.get_control("mix").unwrap(), mix, "and so is the dial");
+}
+
+#[test]
+fn a_live_write_is_listed_pending_until_the_audio_thread_applies_it() {
+    let mut rig = dial_rig();
+    let dial = surface(&rig, "dial");
+    dial.set_control("level", 0.5.into()).unwrap();
+    dial.set_control("shape", "steep".into()).unwrap();
+    let pending = |key: &str, value: ControlValue| PendingWrite {
+        module_id: "dial".to_string(),
+        key: key.to_string(),
+        value,
+    };
+    assert_eq!(
+        rig.live.pending_writes(),
+        [
+            pending("level", 0.5.into()),
+            pending("shape", "steep".into())
+        ]
+    );
+    assert_eq!(level(&dial), 0.25.into(), "reads return what was applied");
+
+    rig.render(1);
+    assert_eq!(rig.live.pending_writes(), []);
+    assert_eq!(level(&dial), 0.5.into());
+}
+
+#[test]
+fn outcomes_and_pending_writes_agree_whichever_is_read_first() {
+    let mut rig = dial_rig();
+    let dial = surface(&rig, "dial");
+    dial.set_control("level", 0.5.into()).unwrap();
+    rig.render(1);
+    let (taken, _) = rig.live.take_outcomes();
+    assert_eq!(taken.len(), 1, "{taken:?}");
+    assert_eq!(rig.live.pending_writes(), [], "settled by the same read");
+
+    dial.set_control("level", 0.75.into()).unwrap();
+    rig.render(1);
+    assert_eq!(rig.live.pending_writes(), []);
+    let (taken, _) = rig.live.take_outcomes();
+    assert!(
+        matches!(taken.as_slice(), [(_, Outcome::Applied { .. })]),
+        "{taken:?}"
+    );
+}
+
+#[test]
+fn many_settled_writes_between_reads_leave_nothing_pending() {
+    let mut rig = dial_rig();
+    let dial = surface(&rig, "dial");
+    // More outcomes than the outcome ring holds, never read in between:
+    // each submission settles what arrived before it.
+    for n in 0..1100 {
+        dial.set_control("level", (n as f32 / 1100.0).into())
+            .unwrap();
+        rig.render(1);
+    }
+    assert_eq!(rig.live.pending_writes(), []);
+    let (outcomes, lost) = rig.live.take_outcomes();
+    assert_eq!(
+        outcomes.len() as u64 + lost,
+        1100,
+        "each reported or counted lost"
+    );
+    assert!(lost > 0, "more than are kept");
 }

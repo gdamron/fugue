@@ -59,7 +59,9 @@ pub(super) fn hook(rig: &mut Rig) {
 
 /// Receives the outcomes settled so far, as a front door would.
 pub(super) fn outcomes(rig: &mut Rig) -> Vec<(RequestId, Outcome)> {
-    std::iter::from_fn(|| rig.live.outcomes.try_recv()).collect()
+    let (outcomes, lost) = rig.live.take_outcomes();
+    assert_eq!(lost, 0, "no outcome lost");
+    outcomes
 }
 
 const LEVEL: &str = "level";
