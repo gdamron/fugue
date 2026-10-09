@@ -1,5 +1,7 @@
 //! Helpers shared by tests that wait on background threads.
 
+pub(crate) mod dial;
+
 use std::thread;
 use std::time::{Duration, Instant};
 
