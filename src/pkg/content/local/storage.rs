@@ -4,7 +4,7 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::fs;
 
-const FILE_BYTES: u64 = 16 * 1024 * 1024;
+use crate::pkg::read_limit;
 
 pub(super) fn canonical(path: &Path, code: &str) -> Result<PathBuf> {
     fs::canonicalize(path).map_err(|e| {
@@ -26,11 +26,28 @@ pub(super) fn contained(root: &Path, path: &Path) -> Result<PathBuf> {
     }
     Ok(path)
 }
+/// Read a document (invention, development or JSON asset) for parsing.
 pub(super) fn read_file(path: &Path) -> Result<Vec<u8>> {
-    if fs::metadata(path).map_err(io_error)?.len() > FILE_BYTES {
-        return Err(err("invalid_content", "Content file exceeds 16 MiB"));
+    read_limit::read_document(path).map_err(read_error)
+}
+/// Open an audio asset for hashing, refusing it from metadata if over the cap.
+pub(super) fn open_audio_asset(path: &Path) -> Result<read_limit::HashedFile> {
+    read_limit::HashedFile::open(path).map_err(read_error)
+}
+/// Stream-hash an opened audio asset without reading it into memory.
+///
+/// This is the one place discovery hashes an audio asset, so a hash cache
+/// keyed by (path, size, mtime) belongs here: `file.metadata()` holds the
+/// size and mtime captured at open, before any bytes are read.
+pub(super) fn hash_audio_asset(file: read_limit::HashedFile) -> Result<String> {
+    file.sha256().map_err(read_error)
+}
+/// Over-limit reads surface as `file_too_large`, naming file, limit and remedy.
+pub(super) fn read_error(e: read_limit::ReadError) -> ContentError {
+    match e {
+        read_limit::ReadError::TooLarge(e) => err("file_too_large", e),
+        read_limit::ReadError::Io(e) => io_error(e),
     }
-    fs::read(path).map_err(io_error)
 }
 pub(super) fn read_lock(path: &Path) -> Result<Option<Lockfile>> {
     match fs::read(path) {

@@ -138,6 +138,26 @@ Reject dependency cycles. Revalidate this closure on detail/import; a changed
 dependency must not silently change the sound behind an unchanged reference.
 Only files in the selected closure contribute, so unrelated edits do not expire it.
 
+### File read limits
+
+Every file read while computing a revision or a package integrity is bounded,
+so discovery cannot be made to use unbounded memory or time. The rule depends on
+what the file is read for, never on which path reached it:
+
+- **Documents** (inventions, developments, JSON/text assets) are parsed, so they
+  are read whole and capped at 16 MiB.
+- **Audio assets** are only hashed. They are streamed through SHA-256 in fixed
+  chunks, never held in memory, and capped at 1 GiB per file: about 100 minutes
+  of 44.1 kHz 16-bit stereo, or 30 minutes at 96 kHz/24-bit. Package integrity
+  streams every package file under the same 1 GiB cap.
+
+A workspace audio file referenced by local path and the same bytes inside a
+package referenced by `pkg:` are therefore accepted on both paths or refused on
+both. A file over its cap is refused from its size before any bytes are read and
+reported as `file_too_large`, naming the file, the limit and the remedy (trim or
+split the sample, or re-encode it as FLAC). The limits live in
+`src/pkg/read_limit.rs`. Decision: FUG-280, 2026-10-09.
+
 Package versions are immutable: changed bytes require a new version. Reuse
 package integrity and lockfile machinery to detect a changed installed payload.
 An invention document's top-level `version` is its format version and must never
@@ -368,6 +388,7 @@ how to recover without requiring the client to infer paths. Required codes:
 | `invalid_content` | Parse/schema error, dependency cycle, or unsupported module. |
 | `dependency_not_found` | Missing dependency/asset; include declaring ref and dependency. |
 | `integrity_mismatch` | Package bytes conflict with recorded version/integrity. |
+| `file_too_large` | A document or audio asset exceeds its read limit; the message names file, limit and remedy. |
 | `outside_root` | Catalog content/dependency escapes its owning root. |
 | `catalog_unavailable` | Root unreadable or refresh failed; never report a false empty list. |
 | `stale_cursor` | Snapshot expired; restart list. |
@@ -412,7 +433,8 @@ The MCP tools take the catalog parameters directly. Discovery refreshes from
 disk on each call and expires cursors when the session's catalog changes.
 
 The native catalog additionally bounds traversal to 64 levels, 10,000 candidate
-entries or dependency files, and 16 MiB per document/asset read. Invalid candidates
+entries or dependency files, 16 MiB per document read and 1 GiB per streamed
+audio asset (see "File read limits"). Invalid candidates
 are diagnostic entries rather than usable references. Lookup requires exact
 references; display titles are never accepted as selectors.
 

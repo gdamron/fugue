@@ -28,7 +28,7 @@ impl ContentRoots {
         let mut document: Invention =
             serde_json::from_slice(&bytes).map_err(|e| err("invalid_content", e))?;
         document.source_path = Some(path.clone());
-        self.fingerprint_file(&path, root, &bytes, manifest, closure)?;
+        self.fingerprint_file(&path, root, || Ok(hash(&bytes)), manifest, closure)?;
         if let Some(m) = manifest.filter(|m| match &m.entry {
             pkg::EntrySpec::Development { development } => root.join(development) == path,
             pkg::EntrySpec::Invention { invention } => root.join(invention) == path,
@@ -197,7 +197,7 @@ impl ContentRoots {
             }
         }
         for asset in document.assets.values() {
-            self.local_asset(&asset.path, parent, root, manifest, closure)?;
+            self.local_asset(&asset.path, false, parent, root, manifest, closure)?;
         }
         let mut expanded = document.clone();
         expanded.source_path = Some(path.to_path_buf());
@@ -248,11 +248,11 @@ impl ContentRoots {
                             self.package_integrity(&resolved.install_dir, &m, closure)?;
                             push_unique(&mut closure.assets, text);
                         } else {
-                            self.local_asset(&text, parent, root, manifest, closure)?;
+                            self.local_asset(&text, true, parent, root, manifest, closure)?;
                         }
                     }
                     pkg::AudioAssetRef::Local { path } => {
-                        self.local_asset(&path, parent, root, manifest, closure)?
+                        self.local_asset(&path, true, parent, root, manifest, closure)?
                     }
                 }
             }
@@ -260,17 +260,28 @@ impl ContentRoots {
         Ok(())
     }
 
+    /// Validate and fingerprint a local asset. JSON/text assets are documents
+    /// (read whole, 16 MiB); audio is stream-hashed under the audio cap, the
+    /// same rule `compute_integrity` applies to package files.
     fn local_asset(
         &self,
         relative: &str,
+        audio: bool,
         parent: &Path,
         root: &Path,
         manifest: Option<&PackageManifest>,
         closure: &mut Closure,
     ) -> Result<()> {
         let path = contained(root, &parent.join(relative))?;
-        let bytes = read_file(&path)?;
-        self.fingerprint_file(&path, root, &bytes, manifest, closure)?;
+        if audio {
+            // Opening checks the cap. Inside a package the bytes are covered by
+            // its integrity hash, so only workspace audio is hashed here.
+            let file = open_audio_asset(&path)?;
+            self.fingerprint_file(&path, root, || hash_audio_asset(file), manifest, closure)?;
+        } else {
+            let bytes = read_file(&path)?;
+            self.fingerprint_file(&path, root, || Ok(hash(&bytes)), manifest, closure)?;
+        }
         push_unique(&mut closure.assets, relative.into());
         Ok(())
     }
@@ -279,7 +290,7 @@ impl ContentRoots {
         &self,
         path: &Path,
         root: &Path,
-        bytes: &[u8],
+        digest: impl FnOnce() -> Result<String>,
         manifest: Option<&PackageManifest>,
         closure: &mut Closure,
     ) -> Result<()> {
@@ -295,7 +306,7 @@ impl ContentRoots {
                 .map_err(|e| err("outside_root", e))?;
             closure
                 .fingerprints
-                .insert(format!("file:{}", relative.to_string_lossy()), hash(bytes));
+                .insert(format!("file:{}", relative.to_string_lossy()), digest()?);
         } else if manifest.is_none() {
             // Local files in a package are covered by its complete integrity hash.
             contained(root, path)?;
@@ -316,7 +327,12 @@ impl ContentRoots {
             return Ok(());
         }
         contained(&self.packages, root)?;
-        let integrity = pkg::compute_integrity(root).map_err(|e| err("catalog_unavailable", e))?;
+        let integrity = pkg::compute_integrity(root).map_err(|e| {
+            match pkg::read_limit::find_too_large(e.as_ref()) {
+                Some(too_large) => err("file_too_large", too_large),
+                None => err("catalog_unavailable", e),
+            }
+        })?;
         if let Some(receipt) = read_receipt(&self.packages, &manifest.id, &manifest.version)? {
             if receipt.package.integrity != integrity {
                 return Err(err("integrity_mismatch", "Installed package differs from its install receipt; reinstall the original version"));

@@ -353,11 +353,13 @@ mod fs_ops {
         files.sort();
         let mut hasher = Sha256::new();
         for rel in &files {
-            let bytes = fs::read(dir.join(rel))?;
             hasher.update((rel.len() as u64).to_le_bytes());
             hasher.update(rel.as_bytes());
-            hasher.update((bytes.len() as u64).to_le_bytes());
-            hasher.update(&bytes);
+            // Streamed under the same per-file cap discovery applies to local
+            // audio assets, so a file is accepted on both paths or neither.
+            let file = crate::pkg::read_limit::HashedFile::open(&dir.join(rel))?;
+            hasher.update(file.size().to_le_bytes());
+            file.stream(|chunk| hasher.update(chunk))?;
         }
         Ok(format!(
             "sha256:{}",
