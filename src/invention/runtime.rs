@@ -17,6 +17,7 @@ use super::state::{RuntimeState, RuntimeStatus};
 pub type ModuleInstance = GraphModule;
 pub type ControlSurfaceInstance = Arc<dyn ControlSurface + Send + Sync>;
 
+mod clock;
 mod controls;
 mod describe;
 mod editing;
@@ -100,9 +101,22 @@ impl InventionRuntime {
         // control thread within a few blocks, not at the next edit.
         live.start_reclaimer();
 
+        // Requests timed by wall clock are placed on the transport through
+        // an anchor at each device callback. wasm32 has no `Instant` clock.
+        let mut clock = (!cfg!(target_arch = "wasm32")).then(|| {
+            clock::CallbackClock::start(
+                &graph.transport,
+                backend.sample_rate(),
+                backend.diagnostics(),
+            )
+        });
+
         // The audio callback owns the graph, so processing does not lock it.
         // Each callback fills its buffer in `block_size`-frame blocks.
         backend.start(Box::new(move |left: &mut [f32], right: &mut [f32]| {
+            if let Some(clock) = &mut clock {
+                clock.anchor(&graph.transport, graph.current_sample);
+            }
             let frames = left.len().min(right.len());
             let block = graph.block_size.clamp(1, crate::MAX_BLOCK);
             let mut done = 0;

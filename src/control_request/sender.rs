@@ -54,9 +54,11 @@ impl RequestSender {
     ///
     /// [`When::AfterSamples`] and the `ttl` count from the transport's
     /// published count ([`Transport::rendered`]) as of this call: they
-    /// become [`When::AtSample`] and the request's `expires` sample. They
-    /// are resolved once, so a request handed back in [`QueueFull`] keeps
-    /// its times when submitted again.
+    /// become [`When::AtSample`] and the request's `expires` sample.
+    /// [`When::AtTime`] becomes the sample heard then
+    /// ([`Transport::sample_at`]) once the clock is anchored; before that
+    /// the audio thread places it. They are resolved once, so a request
+    /// handed back in [`QueueFull`] keeps its times when submitted again.
     ///
     /// # Errors
     ///
@@ -66,8 +68,16 @@ impl RequestSender {
         let id = RequestId(self.shared.next_id.fetch_add(1, Ordering::Relaxed));
         request.id = id;
         let now = self.shared.transport.rendered();
-        if let When::AfterSamples(samples) = request.when {
-            request.when = When::AtSample(now.saturating_add(samples));
+        match request.when {
+            When::AfterSamples(samples) => {
+                request.when = When::AtSample(now.saturating_add(samples))
+            }
+            When::AtTime(at) => {
+                if let Some(sample) = self.shared.transport.sample_at(at) {
+                    request.when = When::AtSample(sample);
+                }
+            }
+            _ => {}
         }
         if let Some(ttl) = request.ttl.take() {
             request.expires = Some(now.saturating_add(ttl));

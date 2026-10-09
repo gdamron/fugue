@@ -308,10 +308,13 @@ where
     let mut right = [0.0f32; MAX_BLOCK];
     let stream = device.build_output_stream(
         config,
-        move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+        move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
             let started = Instant::now();
             let diagnostics = &data_shared.diagnostics;
             diagnostics.record_callback_at(started);
+            let timestamp = info.timestamp();
+            diagnostics
+                .record_output_latency(timestamp.playback.duration_since(timestamp.callback));
             match data_shared.render.try_lock() {
                 Ok(mut render) => render_block(
                     data,

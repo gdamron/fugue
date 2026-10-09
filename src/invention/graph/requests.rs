@@ -162,25 +162,32 @@ impl SignalGraph {
         // (`PendingStore::apply_due`): refusing it here would free its room
         // and lift the back-pressure that bounds the folded remaps. Until
         // then it cannot know whether it applies, so with a ttl it replaces
-        // nothing (`PendingStore::insert_beside`).
+        // nothing (`PendingStore::insert_beside`). For the same reason a
+        // wall-clock time nothing can place (no wall clock) stays queued
+        // until its generation installs (`Ok(None)`), and is refused then.
         let resolve = |graph: &Self, request: &Request| {
             let mut target = request.target;
             let at = match request.when {
-                When::Now => now,
-                When::AtSample(sample) => sample,
+                When::Now => Some(now),
+                When::AtSample(sample) => Some(sample),
                 // Resolved by the sender; counted from here only for a
                 // request that never went through it.
-                When::AfterSamples(samples) => now.saturating_add(samples),
+                When::AfterSamples(samples) => Some(now.saturating_add(samples)),
+                // Left for this thread when the clock was not yet anchored
+                // at submission: it is now, unless there is no clock.
+                When::AtTime(time) => graph.transport.sample_at(time),
             };
-            if target.generation <= installed {
-                target.module_idx =
-                    map(graph, target.generation, target.module_idx).ok_or(Refusal::TargetGone)?;
-                target.generation = installed;
-                if expired(request, at.max(now)) {
-                    return Err(Refusal::Expired);
-                }
+            if target.generation > installed {
+                return Ok(at.map(|at| (target, at)));
             }
-            Ok((target, at))
+            target.module_idx =
+                map(graph, target.generation, target.module_idx).ok_or(Refusal::TargetGone)?;
+            target.generation = installed;
+            let at = at.ok_or(Refusal::NoClock)?;
+            if expired(request, at.max(now)) {
+                return Err(Refusal::Expired);
+            }
+            Ok(Some((target, at)))
         };
         let mut mapped = true;
         for _ in 0..drain.pop_limit {
@@ -196,6 +203,11 @@ impl SignalGraph {
                 )
             });
             let Some((payload, event, older, replaces, landing)) = head else {
+                break;
+            };
+            // Unplaced and held: it waits in the queue, and in generation
+            // order so does everything behind it, none owed to this install.
+            let Some(landing) = landing.transpose() else {
                 break;
             };
             // An install must pop every older request while it holds the

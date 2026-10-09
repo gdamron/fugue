@@ -1,5 +1,7 @@
 //! The typed control request.
 
+use std::time::Instant;
+
 use crate::payload::Payload;
 
 /// A real-time control value: `Copy` and small, so carrying, coalescing and
@@ -54,6 +56,13 @@ pub(crate) enum When {
     /// [`RequestSender::submit`](super::RequestSender::submit) resolves it
     /// to [`When::AtSample`].
     AfterSamples(u64),
+    /// The sample heard at this wall-clock time, within the bound
+    /// [`Transport::sample_at`](super::Transport::sample_at) documents.
+    /// [`RequestSender::submit`](super::RequestSender::submit) resolves it
+    /// to [`When::AtSample`], or, before the clock's first anchor, the audio
+    /// thread does as it takes the request. Without a wall clock (offline
+    /// render) it is refused ([`Refusal::NoClock`](super::Refusal::NoClock)).
+    AtTime(Instant),
 }
 
 /// Whether a write changes the composition or performs on it.

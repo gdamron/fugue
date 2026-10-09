@@ -4,6 +4,8 @@
 //! ttl runs out is refused, unapplied. Every block here is allocation- and
 //! free-free.
 
+use std::time::Instant;
+
 use super::requests::{counted_block, frequency, level_rig, oscillator_rig, outcomes, submit};
 use super::*;
 use crate::control_request::{
@@ -372,5 +374,95 @@ fn an_expired_request_never_blocks_a_replacement_behind_a_full_store() {
             (first, Outcome::Superseded),
             (replacement, Outcome::Applied { at }),
         ]
+    );
+}
+
+#[test]
+fn a_wall_clock_request_applies_at_the_sample_heard_then() {
+    let mut rig = level_rig();
+    let start = rig.graph.transport.rendered();
+    // The next sample is heard now, so 20 ms on is 960 samples on.
+    let now = Instant::now();
+    rig.graph.transport.start_clock(now, SAMPLE_RATE);
+    rig.graph.transport.anchor(start, now);
+    let id = submit(
+        &rig,
+        "level",
+        0,
+        1.0,
+        When::AtTime(now + Duration::from_millis(20)),
+    );
+
+    let out = rig.render(16);
+    assert_eq!(out.iter().position(|v| *v == 1.0), Some(960));
+    assert_eq!(
+        outcomes(&mut rig),
+        [(id, Outcome::Applied { at: start + 960 })]
+    );
+}
+
+#[test]
+fn without_a_wall_clock_a_wall_clock_request_is_refused() {
+    let mut rig = level_rig();
+    let id = submit(&rig, "level", 0, 1.0, When::AtTime(Instant::now()));
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(
+        outcomes(&mut rig),
+        [(id, Outcome::Refused(Refusal::NoClock))]
+    );
+}
+
+#[test]
+fn an_unplaced_wall_clock_request_for_a_pending_publication_waits_queued() {
+    let (mut rig, port) = oscillator_rig();
+    rig.hold_a_retirement();
+    let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
+    rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
+    let unplaced = submit(&rig, "osc3", port, 0.5, When::AtTime(Instant::now()));
+    let behind = submit(&rig, "osc3", port, 0.25, When::Now);
+
+    assert_eq!(counted_block(&mut rig), (0, 0), "holding");
+    assert_eq!(rig.graph.requests.as_ref().unwrap().pending.len(), 0);
+    assert_eq!(outcomes(&mut rig), []);
+    rig.live.reclaim();
+    let start = rig.graph.current_sample;
+    assert_eq!(counted_block(&mut rig), (0, 0), "installing");
+    assert_eq!(frequency(&mut rig, "osc3", port), 0.25);
+    assert_eq!(
+        outcomes(&mut rig),
+        [
+            (unplaced, Outcome::Refused(Refusal::NoClock)),
+            (behind, Outcome::Applied { at: start }),
+        ]
+    );
+}
+
+/// Submitted before the first callback anchors the clock, a wall-clock
+/// time is placed by the audio thread once it has: a stream that starts
+/// late, or with more latency, moves it.
+#[test]
+fn a_wall_clock_request_submitted_before_the_first_anchor_waits_for_it() {
+    let mut rig = level_rig();
+    let start = rig.graph.transport.rendered();
+    let now = Instant::now();
+    rig.graph.transport.start_clock(now, SAMPLE_RATE);
+    let id = submit(
+        &rig,
+        "level",
+        0,
+        1.0,
+        When::AtTime(now + Duration::from_millis(20)),
+    );
+    // The first callback: its first sample is heard 5 ms after `now`.
+    rig.graph
+        .transport
+        .anchor(start, now + Duration::from_millis(5));
+
+    // Placed on the audio thread, allocation- and free-free.
+    let out = render_in_blocks(&mut rig, 1024, &[64]);
+    assert_eq!(out.iter().position(|v| *v == 1.0), Some(720));
+    assert_eq!(
+        outcomes(&mut rig),
+        [(id, Outcome::Applied { at: start + 720 })]
     );
 }
