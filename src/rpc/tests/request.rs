@@ -67,7 +67,9 @@ fn rpc_commands_round_trip_json() {
             package: "demo".to_string(),
             version: Some("1.2.3".to_string()),
         }),
-        RpcCommand::ListPackages,
+        RpcCommand::ListPackages {
+            query: Default::default(),
+        },
         RpcCommand::ListDevelopments {
             query: crate::pkg::content::ContentListQuery::default(),
         },
@@ -251,7 +253,10 @@ fn advances_revision_separates_authoring_from_performance() {
         frozen: true,
     }
     .advances_revision());
-    assert!(!RpcCommand::ListPackages.advances_revision());
+    assert!(!RpcCommand::ListPackages {
+        query: Default::default(),
+    }
+    .advances_revision());
     assert!(!RpcCommand::SaveInvention {
         path: "/tmp/x.json".to_string()
     }

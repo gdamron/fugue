@@ -170,7 +170,7 @@ impl RpcCommand {
             | Self::GetInvention { .. }
             // Writes the current document again; the file matches current state.
             | Self::SaveInvention { .. }
-            | Self::ListPackages
+            | Self::ListPackages { .. }
             | Self::ListDevelopments { .. }
             | Self::DescribeDevelopment { .. }
             | Self::ListExamples { .. }

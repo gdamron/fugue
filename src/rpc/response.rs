@@ -65,6 +65,12 @@ pub enum RpcResponsePayload {
         meters: Vec<MeterReading>,
     },
     Packages(PackageList),
+    /// A committed [`RpcCommand::InstallPackage`].
+    ///
+    /// [`RpcCommand::InstallPackage`]: super::RpcCommand::InstallPackage
+    PackageInstalled {
+        installed: super::PackageInstallReport,
+    },
     /// Available development page, independent of the current registry.
     Developments {
         catalog: crate::pkg::content::ContentPage,

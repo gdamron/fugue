@@ -347,8 +347,14 @@ fn apply_edits_advances_the_revision_only_when_it_commits() {
     assert!(single.advances_revision_after(false));
 
     // Reads never advance.
-    assert!(!RpcCommand::ListPackages.advances_revision_after(true));
-    assert!(!RpcCommand::ListPackages.advances_revision_after(false));
+    assert!(!RpcCommand::ListPackages {
+        query: Default::default(),
+    }
+    .advances_revision_after(true));
+    assert!(!RpcCommand::ListPackages {
+        query: Default::default(),
+    }
+    .advances_revision_after(false));
 }
 
 #[test]

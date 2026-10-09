@@ -40,13 +40,17 @@ pub use event::{
     SeqEvent, SinkStatusState,
 };
 pub use identity::{verify_daemon_identity, BuildFingerprint, DaemonIdentity, IdentityMismatch};
-pub use package::{PackageInfo, PackageList, PackageSource};
+pub use package::{
+    PackageInfo, PackageInstallReport, PackageInstallRequest, PackageList, PackageListQuery,
+    PackageSource, MAX_PACKAGE_DIAGNOSTICS, MAX_PACKAGE_LIST_BYTES, MAX_PACKAGE_SUMMARY_BYTES,
+    PACKAGE_SCHEMA_VERSION,
+};
 pub(crate) use recovery::{truncate_on_char_boundary, MODULE_ERROR_BYTES};
 pub use recovery::{
     Admission, MutationLedger, MutationTicket, PendingMutation, ReplayPolicy,
     MAX_MUTATION_ID_BYTES, MAX_RECORDED_MESSAGE_BYTES, MUTATION_LEDGER_CAPACITY,
 };
-pub use request::{ControlWrite, PackageInstallRequest, RpcCommand, RpcRequest, RpcRequestPayload};
+pub use request::{ControlWrite, RpcCommand, RpcRequest, RpcRequestPayload};
 pub use response::{ReloadMode, ReloadOutcome, RpcResponse, RpcResponsePayload, SaveReport};
 pub use revision::{
     ConflictReason, ControlWriteIntent, RevisionConflict, RevisionTracker, RuntimeRevision,
