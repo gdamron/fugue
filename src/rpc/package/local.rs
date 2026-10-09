@@ -77,7 +77,6 @@ impl PackageList {
         };
         let diagnostics_truncated = diagnostics.len() > MAX_PACKAGE_DIAGNOSTICS;
         let mut page = PackageList {
-            schema_version: PACKAGE_SCHEMA_VERSION,
             packages: Vec::new(),
             next_cursor: None,
             diagnostics: diagnostics

@@ -71,12 +71,11 @@ impl Default for PackageListQuery {
     }
 }
 
-/// One page of the package inventory.
+/// One page of the package inventory. Flattened into the response envelope,
+/// whose `schema_version` versions it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct PackageList {
-    #[serde(default = "schema_version")]
-    pub schema_version: u32,
     pub packages: Vec<PackageInfo>,
     /// Present when more entries match; pass it back as `cursor`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -93,7 +92,6 @@ impl PackageList {
     /// The built-in module registry as one package entry, with full detail.
     pub fn built_in(registry: &ModuleRegistry) -> Self {
         Self {
-            schema_version: PACKAGE_SCHEMA_VERSION,
             packages: vec![PackageInfo::built_in(registry)],
             next_cursor: None,
             diagnostics: Vec::new(),

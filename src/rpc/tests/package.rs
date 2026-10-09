@@ -240,6 +240,27 @@ fn installed_entry_and_wire_shapes() {
             query: PackageListQuery::default()
         }
     );
+    // Both payloads survive the response envelope, which flattens `Packages`.
+    let page = list(temp.path(), &PackageListQuery::default());
+    for payload in [
+        RpcResponsePayload::Packages(page),
+        RpcResponsePayload::PackageInstalled {
+            installed: PackageInstallReport {
+                schema_version: 1,
+                package: PackageInfo::installed(temp.path(), "fugue.test.voice", "1.0.0").unwrap(),
+                already_installed: false,
+                installed_from: "local:/tmp/p".into(),
+                dependencies: Vec::new(),
+                generation: Some("s:1".into()),
+            },
+        },
+    ] {
+        let response = RpcResponse::ok(Some("r".into()), payload.clone());
+        let json = serde_json::to_string(&response).unwrap();
+        let decoded: RpcResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.payload, payload);
+    }
+
     let request: PackageInstallRequest =
         serde_json::from_value(serde_json::json!({"package": "local:/tmp/p"})).unwrap();
     assert_eq!(request.version, None);
