@@ -134,7 +134,8 @@ transitive local developments and assets.
 Resolve package dependencies to exact versions and include their manifest IDs,
 versions, and existing package integrity values as additional sorted pairs
 `["package:" + id + "@" + version, integrity]`.
-Reject dependency cycles. Revalidate this closure on detail/import; a changed
+Reject dependency cycles. Revalidate this closure on detail/import (see "Refresh
+cost" for which digests detail may reuse); a changed
 dependency must not silently change the sound behind an unchanged reference.
 Only files in the selected closure contribute, so unrelated edits do not expire it.
 
@@ -157,6 +158,25 @@ both. A file over its cap is refused from its size before any bytes are read and
 reported as `file_too_large`, naming the file, the limit and the remedy (trim or
 split the sample, or re-encode it as FLAC). The limits live in
 `src/pkg/read_limit.rs`. Decision: FUG-280, 2026-10-09.
+
+### Refresh cost
+
+List and detail revalidate every closure on each call, but they reuse a file's
+SHA-256, or a package's integrity, while its metadata stamp is unchanged. The
+stamp is size and mtime, plus inode and ctime on Unix; a package's stamp covers
+every file its integrity hashes, so adding, removing or rewriting any of them
+re-hashes the package. Files modified within the last two seconds are never
+cached, because their timestamps may not have moved yet. So listing costs
+roughly one `stat` per closure file once the library has been hashed, instead
+of hashing every byte on every call. Documents are still read and parsed, and
+receipt and lock integrity are still compared, on every call.
+
+Imports (`load_development`, `load_invention`) never reuse a cached digest:
+they re-hash the complete closure, so a change the stamp cannot see (same size,
+restored mtime) still fails with `stale_reference` or `integrity_mismatch`.
+The cache is process-wide, bounded to 16,384 digests with least-recently-used
+eviction, and shared safely by concurrent calls. It lives in
+`src/pkg/content/local/cache.rs`. Decision: FUG-279.
 
 Package versions are immutable: changed bytes require a new version. Reuse
 package integrity and lockfile machinery to detect a changed installed payload.

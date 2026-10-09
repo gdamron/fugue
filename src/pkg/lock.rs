@@ -348,11 +348,8 @@ mod fs_ops {
     /// order. `.git` is skipped; symlinks are ignored (installs never copy
     /// them).
     pub fn compute_integrity(dir: &Path) -> Result<String, Box<dyn Error>> {
-        let mut files = Vec::new();
-        collect_files(dir, dir, &mut files)?;
-        files.sort();
         let mut hasher = Sha256::new();
-        for rel in &files {
+        for rel in &integrity_files(dir)? {
             hasher.update((rel.len() as u64).to_le_bytes());
             hasher.update(rel.as_bytes());
             // Streamed under the same per-file cap discovery applies to local
@@ -365,6 +362,15 @@ mod fs_ops {
             "sha256:{}",
             crate::hex::lower_hex(&hasher.finalize())
         ))
+    }
+
+    /// The sorted, normalized relative paths [`compute_integrity`] hashes, so
+    /// a cache can key a package's integrity on exactly the same file set.
+    pub fn integrity_files(dir: &Path) -> Result<Vec<String>, Box<dyn Error>> {
+        let mut files = Vec::new();
+        collect_files(dir, dir, &mut files)?;
+        files.sort();
+        Ok(files)
     }
 
     /// Collect normalized (`/`-separated) relative file paths under `root`.
@@ -399,7 +405,7 @@ mod fs_ops {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use fs_ops::compute_integrity;
+pub use fs_ops::{compute_integrity, integrity_files};
 
 #[cfg(test)]
 mod tests {

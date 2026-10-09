@@ -2,7 +2,8 @@
 
 use super::*;
 
-/// Refreshes from disk before every read, detecting external installs without watchers.
+/// Refreshes from disk before every read, detecting external installs without
+/// watchers. Digests of unchanged files come from the verification cache.
 pub struct ContentCatalog {
     roots: ContentRoots,
     session: String,
@@ -72,7 +73,7 @@ impl ContentCatalog {
         let mut diagnostics_truncated = false;
         let mut fingerprints = BTreeMap::new();
         for reference in refs {
-            match self.roots.inspect(&reference) {
+            match self.roots.inspect(&reference, Hashing::Cached) {
                 Ok(resolved) => {
                     fingerprints.extend(resolved.fingerprints);
                     entries.push(resolved.entry);
@@ -178,7 +179,7 @@ impl ContentCatalog {
         validate_reference(&query.reference)?;
         self.refresh()?;
         let _guard = package_read_guard(&self.roots.packages)?;
-        let resolved = self.roots.inspect(&query.reference)?;
+        let resolved = self.roots.inspect(&query.reference, Hashing::Cached)?;
         let interface = resolved
             .document
             .is_development()
