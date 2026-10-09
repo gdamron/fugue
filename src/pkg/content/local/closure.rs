@@ -1,5 +1,6 @@
 //! Validate transitive developments and assets and collect closure fingerprints.
 
+use super::cache::{self, Hashing};
 use super::*;
 use std::collections::BTreeSet;
 
@@ -142,6 +143,7 @@ impl ContentRoots {
                 let mut child_closure = Closure {
                     active: closure.active.clone(),
                     visits: closure.visits.clone(),
+                    hashing: closure.hashing,
                     ..Default::default()
                 };
                 let child_doc = self.walk_document(
@@ -172,6 +174,7 @@ impl ContentRoots {
                 let mut child_closure = Closure {
                     active: closure.active.clone(),
                     visits: closure.visits.clone(),
+                    hashing: closure.hashing,
                     ..Default::default()
                 };
                 let child_doc =
@@ -277,7 +280,11 @@ impl ContentRoots {
             // Opening checks the cap. Inside a package the bytes are covered by
             // its integrity hash, so only workspace audio is hashed here.
             let file = open_audio_asset(&path)?;
-            self.fingerprint_file(&path, root, || hash_audio_asset(file), manifest, closure)?;
+            let metadata = file.metadata().clone();
+            let hashing = closure.hashing;
+            let digest =
+                || cache::file_digest(&path, &metadata, hashing, || hash_audio_asset(file));
+            self.fingerprint_file(&path, root, digest, manifest, closure)?;
         } else {
             let bytes = read_file(&path)?;
             self.fingerprint_file(&path, root, || Ok(hash(&bytes)), manifest, closure)?;
@@ -327,11 +334,13 @@ impl ContentRoots {
             return Ok(());
         }
         contained(&self.packages, root)?;
-        let integrity = pkg::compute_integrity(root).map_err(|e| {
-            match pkg::read_limit::find_too_large(e.as_ref()) {
-                Some(too_large) => err("file_too_large", too_large),
-                None => err("catalog_unavailable", e),
-            }
+        let integrity = cache::package_integrity(root, closure.hashing, || {
+            pkg::compute_integrity(root).map_err(|e| {
+                match pkg::read_limit::find_too_large(e.as_ref()) {
+                    Some(too_large) => err("file_too_large", too_large),
+                    None => err("catalog_unavailable", e),
+                }
+            })
         })?;
         if let Some(receipt) = read_receipt(&self.packages, &manifest.id, &manifest.version)? {
             if receipt.package.integrity != integrity {
@@ -368,6 +377,7 @@ impl ContentRoots {
 #[derive(Default)]
 pub(super) struct Closure {
     pub(super) visits: std::rc::Rc<std::cell::Cell<usize>>,
+    pub(super) hashing: Hashing,
     pub(super) active: BTreeSet<PathBuf>,
     pub(super) fingerprints: BTreeMap<String, String>,
     pub(super) dependencies: Vec<ContentRef>,

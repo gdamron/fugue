@@ -36,9 +36,8 @@ pub(super) fn open_audio_asset(path: &Path) -> Result<read_limit::HashedFile> {
 }
 /// Stream-hash an opened audio asset without reading it into memory.
 ///
-/// This is the one place discovery hashes an audio asset, so a hash cache
-/// keyed by (path, size, mtime) belongs here: `file.metadata()` holds the
-/// size and mtime captured at open, before any bytes are read.
+/// This is the one place discovery hashes an audio asset. Callers wrap it in
+/// `cache::file_digest`, keyed by the metadata captured at open.
 pub(super) fn hash_audio_asset(file: read_limit::HashedFile) -> Result<String> {
     file.sha256().map_err(read_error)
 }

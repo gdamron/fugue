@@ -42,13 +42,13 @@ impl ContentRoots {
     pub fn load_development(&self, reference: &ContentRef) -> Result<Invention> {
         let _guard = package_read_guard(&self.packages)?;
         validate_reference(reference)?;
-        let resolved = self.inspect(reference)?;
+        let resolved = self.inspect(reference, Hashing::Full)?;
         if resolved.entry.kind != ContentKind::Development {
             return Err(err("kind_mismatch", "Select a development reference"));
         }
         let mut document = resolved.document;
         self.prepare_definition(&mut document, 0)?;
-        if self.inspect(reference)?.fingerprints != resolved.fingerprints {
+        if self.inspect(reference, Hashing::Full)?.fingerprints != resolved.fingerprints {
             return Err(err(
                 "stale_reference",
                 "Content changed while importing; inspect and retry",
@@ -61,11 +61,11 @@ impl ContentRoots {
     pub fn load_invention(&self, reference: &ContentRef) -> Result<Invention> {
         let _guard = package_read_guard(&self.packages)?;
         validate_reference(reference)?;
-        let resolved = self.inspect(reference)?;
+        let resolved = self.inspect(reference, Hashing::Full)?;
         if resolved.entry.kind != ContentKind::Invention {
             return Err(err("kind_mismatch", "Select an invention reference"));
         }
-        if self.inspect(reference)?.fingerprints != resolved.fingerprints {
+        if self.inspect(reference, Hashing::Full)?.fingerprints != resolved.fingerprints {
             return Err(err(
                 "stale_reference",
                 "Content changed while loading; inspect and retry",
@@ -89,7 +89,7 @@ impl ContentRoots {
             .to_path_buf();
         for development in &mut document.developments {
             let mut child = if let Some(reference) = &development.reference {
-                self.inspect(reference)?.document
+                self.inspect(reference, Hashing::Full)?.document
             } else if let Some(path) = &development.path {
                 Invention::from_file(
                     parent
@@ -161,8 +161,13 @@ impl ContentRoots {
         Ok(None)
     }
 
-    fn inspect(&self, reference: &ContentRef) -> Result<Resolved> {
-        let mut closure = Closure::default();
+    /// Resolve and verify a reference. `Hashing::Cached` may reuse digests of
+    /// unchanged files; imports pass `Hashing::Full` to re-hash every byte.
+    fn inspect(&self, reference: &ContentRef, hashing: Hashing) -> Result<Resolved> {
+        let mut closure = Closure {
+            hashing,
+            ..Default::default()
+        };
         let (path, root, manifest) = self.reference_path(reference)?;
         let document = self.walk_document(&path, &root, manifest.as_ref(), &mut closure, 0)?;
         let (id, version, source, summary) = match reference {
@@ -311,10 +316,12 @@ struct Resolved {
     fingerprints: BTreeMap<String, String>,
 }
 
+mod cache;
 mod catalog;
 mod closure;
 mod storage;
 
+use cache::Hashing;
 pub use catalog::ContentCatalog;
 use closure::Closure;
 use storage::{
@@ -402,6 +409,8 @@ fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
 use std::fs;
 #[cfg(test)]
 mod read_limit_tests;
+#[cfg(test)]
+mod refresh_cost_tests;
 #[cfg(test)]
 mod tests;
 
