@@ -119,7 +119,7 @@ fn remapping_rewrites_or_refuses_older_entries_only() {
     store.insert(request(3, target(INSTALLED + 1, 4, 0), 3.0), 10);
     store.insert(request(4, target(INSTALLED, 4, 0), 4.0), 10);
     // Module 3 moved to 1; module 4 went away.
-    store.remap(INSTALLED, |target| (target.module_idx == 3).then_some(1));
+    store.remap(INSTALLED, 0, |target| (target.module_idx == 3).then_some(1));
     assert_eq!(log(&outcomes), [(2, Outcome::Refused(Refusal::TargetGone))]);
     assert_eq!(apply_at(&mut store, 10), [(1, 0, 1.0), (4, 0, 4.0)]);
     assert_eq!(store.len(), 1, "the held entry stays");
@@ -158,7 +158,7 @@ fn pending_payloads_reserve_retire_room_until_they_settle() {
     // Superseding one, or refusing one, retires it and releases its room.
     store.insert(request(5, target(INSTALLED, 0, 0), 2.0), 10);
     let gone = |t: &ControlTarget| (t.module_idx != 1).then_some(t.module_idx);
-    store.remap(INSTALLED + 1, gone);
+    store.remap(INSTALLED + 1, 0, gone);
     assert!(store.outcomes.has_room_for_payload());
     take_payload(&mut store, 6, target(INSTALLED + 1, 6, 0), 10);
     assert_eq!(
@@ -168,4 +168,48 @@ fn pending_payloads_reserve_retire_room_until_they_settle() {
             (1, Outcome::Refused(Refusal::TargetGone))
         ]
     );
+}
+
+#[test]
+fn an_entry_applied_past_its_due_sample_is_late_and_past_its_expiry_is_refused() {
+    let (mut store, outcomes) = store_of(8);
+    let mut expiring = request(1, target(INSTALLED, 0, 0), 1.0);
+    expiring.expires = Some(15);
+    store.insert(expiring, 10);
+    let mut lasting = request(2, target(INSTALLED, 0, 1), 2.0);
+    lasting.expires = Some(20);
+    store.insert(lasting, 10);
+    store.insert(request(3, target(INSTALLED, 0, 2), 3.0), 20);
+
+    // Applied at 20: the first expired at 15, the second is late but still
+    // in time, the third is exactly on time.
+    let mut applied = Vec::with_capacity(8);
+    let ((), allocs, frees) = allocator_events(|| {
+        store.apply_due(20, INSTALLED, |target, _, _| {
+            applied.push(target.control.0);
+            Ok(())
+        })
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(applied, [1, 2]);
+    assert_eq!(
+        log(&outcomes),
+        [
+            (1, Outcome::Refused(Refusal::Expired)),
+            (2, Outcome::AppliedLate { at: 20, due: 10 }),
+            (3, Outcome::Applied { at: 20 }),
+        ]
+    );
+    assert_eq!(store.len(), 0);
+}
+
+#[test]
+fn inserting_beside_replaces_nothing_and_both_apply_in_receipt_order() {
+    let (mut store, outcomes) = store_of(8);
+    let a = target(INSTALLED, 0, 0);
+    store.insert(request(1, a, 1.0), 10);
+    store.insert_beside(request(2, a, 2.0), 10);
+    assert_eq!(store.len(), 2);
+    assert_eq!(log(&outcomes), []);
+    assert_eq!(apply_at(&mut store, 10), [(0, 0, 1.0), (0, 0, 2.0)]);
 }

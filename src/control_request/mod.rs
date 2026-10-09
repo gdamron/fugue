@@ -8,7 +8,9 @@
 //! ([`outcome_channel`]). Modules declare their controls in a
 //! [`ControlTable`], which control threads resolve keys and coerce values
 //! against, apply them with [`Module::apply`](crate::Module::apply) and
-//! publish what they hold to [`ControlCells`] for read-back.
+//! publish what they hold to [`ControlCells`] for read-back. Requests are
+//! timed on the engine's sample transport ([`Transport`]): now, at a
+//! sample, or some samples from submission, with an optional ttl.
 //!
 //! Every ordering argument lives in [`queue`](self::queue) and [`EventCounter`],
 //! and the `loom_tests` models check the shipped source files against loom's
@@ -30,6 +32,7 @@ mod pending;
 mod queue;
 mod request;
 mod sender;
+mod transport;
 
 /// The atomics and cell the queue is built on. The loom models compile the
 /// same source files against loom's versions instead.
@@ -68,12 +71,13 @@ pub(crate) use declare::{ControlDecl, ControlTable, DeclKind, Writer};
 pub(crate) use event::{EventCounter, EventCursor};
 pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
 pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
-pub(crate) use pending::{Outcome, Outcomes, PendingStore, Refusal};
+pub(crate) use pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::{bounded, QueueConsumer, QueueProducer};
 pub(crate) use request::{
     ControlIndex, ControlTarget, Intent, Request, RequestId, RequestValue, RtValue, Source, When,
 };
 pub(crate) use sender::{request_channel, QueueFull, RequestSender};
+pub(crate) use transport::Transport;
 
 #[cfg(test)]
 mod loom_tests;

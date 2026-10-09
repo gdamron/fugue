@@ -37,7 +37,9 @@
 //!   tie-breaking (when multiple valid orders exist) is deterministic across runs
 
 use indexmap::IndexMap;
+use std::sync::Arc;
 
+use crate::control_request::Transport;
 use crate::{GraphModule, MAX_BLOCK};
 
 use super::runtime::ModuleInstance;
@@ -136,8 +138,12 @@ pub(crate) struct SignalGraph {
     pub(crate) sinks: Vec<String>,
     /// Authoritative edge list — updated by topology-change commands.
     pub(crate) edges: Vec<RoutingConnection>,
-    /// Current sample number.
+    /// Samples processed since the graph was created: the engine's sample
+    /// transport, which timed requests are scheduled on. Published to
+    /// control threads through [`Self::transport`] after every block.
     pub(crate) current_sample: u64,
+    /// Where the audio thread publishes [`Self::current_sample`].
+    pub(crate) transport: Arc<Transport>,
     /// The live graph's link to its publisher; `None` for offline render.
     pub(crate) link: Option<AudioLink>,
     /// The live graph's control requests; `None` for offline render.
@@ -200,6 +206,7 @@ impl SignalGraph {
             sinks,
             edges,
             current_sample: 0,
+            transport: Arc::new(Transport::new()),
             link: None,
             requests: None,
             #[cfg(test)]

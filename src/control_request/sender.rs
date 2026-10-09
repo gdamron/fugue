@@ -2,18 +2,24 @@
 
 use super::event::EventCounter;
 use super::queue::{bounded, QueueConsumer, QueueProducer};
-use super::request::{Request, RequestId};
+use super::request::{Request, RequestId, When};
 use super::sync::{debug_assert_control_thread, Arc, AtomicU64, Ordering};
+use super::transport::Transport;
 
 /// Creates a request channel holding up to `capacity` requests (rounded as
-/// [`bounded`] rounds it). The consumer goes to the audio thread's drain.
-/// Allocates once: call it on a control thread.
-pub(crate) fn request_channel(capacity: usize) -> (RequestSender, QueueConsumer<Request>) {
+/// [`bounded`] rounds it), timing relative requests against `transport`.
+/// The consumer goes to the audio thread's drain. Allocates once: call it
+/// on a control thread.
+pub(crate) fn request_channel(
+    capacity: usize,
+    transport: Arc<Transport>,
+) -> (RequestSender, QueueConsumer<Request>) {
     debug_assert_control_thread("request_channel");
     let (queue, consumer) = bounded(capacity);
     let shared = Arc::new(SenderShared {
         next_id: AtomicU64::new(1),
         overflows: EventCounter::new(),
+        transport,
     });
     (RequestSender { queue, shared }, consumer)
 }
@@ -38,11 +44,19 @@ struct SenderShared {
     /// hand out distinct values, which RMW atomicity guarantees.
     next_id: AtomicU64,
     overflows: EventCounter,
+    transport: Arc<Transport>,
 }
 
 impl RequestSender {
-    /// Assigns `request` the channel's next id and queues it. Lock-free and
-    /// allocation-free from any thread, including the audio thread.
+    /// Assigns `request` the channel's next id, resolves its relative times
+    /// and queues it. Lock-free and allocation-free from any thread,
+    /// including the audio thread.
+    ///
+    /// [`When::AfterSamples`] and the `ttl` count from the transport's
+    /// published count ([`Transport::rendered`]) as of this call: they
+    /// become [`When::AtSample`] and the request's `expires` sample. They
+    /// are resolved once, so a request handed back in [`QueueFull`] keeps
+    /// its times when submitted again.
     ///
     /// # Errors
     ///
@@ -51,6 +65,13 @@ impl RequestSender {
     pub(crate) fn submit(&self, mut request: Request) -> Result<RequestId, QueueFull> {
         let id = RequestId(self.shared.next_id.fetch_add(1, Ordering::Relaxed));
         request.id = id;
+        let now = self.shared.transport.rendered();
+        if let When::AfterSamples(samples) = request.when {
+            request.when = When::AtSample(now.saturating_add(samples));
+        }
+        if let Some(ttl) = request.ttl.take() {
+            request.expires = Some(now.saturating_add(ttl));
+        }
         match self.queue.try_push(request) {
             Ok(()) => Ok(id),
             Err(request) => {

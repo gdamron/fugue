@@ -17,16 +17,24 @@ pub(crate) enum Refusal {
     Unsupported,
     /// Its value is not one the control holds (a choice past its options).
     Invalid,
+    /// Its `ttl` ran out before it could apply: the sample it would apply
+    /// at is past its `expires` sample.
+    Expired,
 }
 
 /// How a request left the audio thread's hands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Outcome {
-    /// Applied at this sample: its due time, or, when it was already past
-    /// on arrival (or when its generation installed), the first segment
-    /// start after it.
+    /// Applied exactly at its due sample.
     Applied {
         at: u64,
+    },
+    /// Applied at `at`, the first segment start after its due sample `due`,
+    /// which had already passed when it arrived (or when its generation
+    /// installed).
+    AppliedLate {
+        at: u64,
+        due: u64,
     },
     /// Replaced by a later request for the same control and sample.
     Superseded,
@@ -100,6 +108,12 @@ impl Outcomes {
     }
 }
 
+/// Whether `request`, applied at sample `at`, would apply after its
+/// `expires` sample.
+pub(crate) fn expired(request: &Request, at: u64) -> bool {
+    request.expires.is_some_and(|last| at > last)
+}
+
 struct Pending {
     request: Request,
     /// The sample it applies at.
@@ -123,7 +137,9 @@ struct Pending {
 ///
 /// An entry whose target generation is newer than the installed one is
 /// held: it is never due, and never bounds a segment, until its
-/// publication installs.
+/// publication installs. A held request with a ttl replaces nothing (see
+/// [`Self::insert_beside`]): whether it applies is known only at the
+/// install, so it must not erase a request that would.
 pub(crate) struct PendingStore {
     entries: Vec<Pending>,
     limit: usize,
@@ -174,11 +190,23 @@ impl PendingStore {
     /// ([`Refusal::PendingFull`]) when the store is full. Binary search,
     /// then an in-place shift: allocation- and free-free.
     pub(crate) fn insert(&mut self, request: Request, at: u64) {
+        self.place(request, at, true);
+    }
+
+    /// [`Self::insert`] without replacing a waiting request: for a held
+    /// request that may expire before its publication installs. Both then
+    /// apply in receipt order, which leaves the later value, or the earlier
+    /// one when the later expired.
+    pub(crate) fn insert_beside(&mut self, request: Request, at: u64) {
+        self.place(request, at, false);
+    }
+
+    fn place(&mut self, request: Request, at: u64, replace: bool) {
         let first = self.entries.partition_point(|e| e.at < at);
         let mut end = first + self.entries[first..].partition_point(|e| e.at == at);
         let same = self.entries[first..end]
             .iter()
-            .position(|e| !request.event && e.request.target == request.target);
+            .position(|e| replace && !request.event && e.request.target == request.target);
         if let Some(offset) = same {
             let old = self.entries.remove(first + offset);
             self.outcomes.settle(old.request, Outcome::Superseded);
@@ -193,8 +221,9 @@ impl PendingStore {
 
     /// Applies, in order, every entry due at `now` (`at <= now`) whose
     /// target is in the `installed` generation, settling each applied or
-    /// refused as `apply` decides. Held entries stay. Compacts in place:
-    /// allocation- and free-free.
+    /// refused as `apply` decides, or refused [`Refusal::Expired`] without
+    /// calling `apply` when `now` is past its `expires` sample. Held
+    /// entries stay. Compacts in place: allocation- and free-free.
     ///
     /// `apply` owns the value it is handed. A payload it either keeps or
     /// retires, applied or refused, retiring at most
@@ -210,12 +239,18 @@ impl PendingStore {
         let applied = self
             .entries
             .extract_if(..due, |e| e.request.target.generation == installed);
-        for entry in applied {
+        for Pending { request, at: due } in applied {
+            if expired(&request, now) {
+                self.outcomes
+                    .settle(request, Outcome::Refused(Refusal::Expired));
+                continue;
+            }
             let Request {
                 target, value, id, ..
-            } = entry.request;
+            } = request;
             let payload = value.is_payload();
             let outcome = match apply(&target, value, &mut self.outcomes.retirer) {
+                Ok(()) if due < now => Outcome::AppliedLate { at: now, due },
                 Ok(()) => Outcome::Applied { at: now },
                 Err(refusal) => Outcome::Refused(refusal),
             };
@@ -235,30 +270,45 @@ impl PendingStore {
     /// Maps every entry resolved against a generation older than
     /// `installed` into it: `map` gives the module's index in the installed
     /// order, or `None` when its module went away, which settles the entry
-    /// refused ([`Refusal::TargetGone`]). Held entries stay as they are.
-    /// Allocation- and free-free.
+    /// refused ([`Refusal::TargetGone`]). Then settles refused
+    /// ([`Refusal::Expired`]) every entry of the installed generation that
+    /// can no longer apply by its `expires` sample, due or not: a request
+    /// held for this install was never checked, and one far in the future
+    /// would otherwise keep its room until its sample. Held entries stay as
+    /// they are.
+    ///
+    /// Runs in each block with an install's remaps in hand: one pass over
+    /// the store (at most its capacity), compacting in place. Allocation-
+    /// and free-free.
     pub(crate) fn remap(
         &mut self,
         installed: u64,
+        now: u64,
         mut map: impl FnMut(&ControlTarget) -> Option<usize>,
     ) {
         let gone = self.entries.extract_if(.., |e| {
             let target = &mut e.request.target;
-            if target.generation >= installed {
+            if target.generation > installed {
                 return false;
             }
-            match map(target) {
-                Some(module_idx) => {
-                    target.generation = installed;
-                    target.module_idx = module_idx;
-                    false
-                }
-                None => true,
+            if target.generation < installed {
+                let Some(module_idx) = map(target) else {
+                    return true;
+                };
+                target.generation = installed;
+                target.module_idx = module_idx;
             }
+            expired(&e.request, e.at.max(now))
         });
         for entry in gone {
+            // A target left in an older generation went away.
+            let refusal = if entry.request.target.generation < installed {
+                Refusal::TargetGone
+            } else {
+                Refusal::Expired
+            };
             self.outcomes
-                .settle(entry.request, Outcome::Refused(Refusal::TargetGone));
+                .settle(entry.request, Outcome::Refused(refusal));
         }
     }
 }

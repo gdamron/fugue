@@ -31,11 +31,16 @@ pub(crate) struct ControlTarget {
     pub(crate) control: ControlIndex,
 }
 
-/// When a request applies.
+/// When a request applies, on the engine's sample transport (see
+/// [`Transport`](super::Transport)).
 ///
-/// This is the extension point for musical time: `AfterSamples`, beats on a
-/// timeline and conditions arrive with the Musical Time project (B1–B4) as
-/// new variants.
+/// This is the extension point for musical time: beats on a timeline and
+/// conditions arrive with the Musical Time project (B2–B4) as new variants.
+///
+/// A request whose sample has already passed when the audio thread takes
+/// it still applies, at the first segment start after it, and reports
+/// [`Outcome::AppliedLate`](super::Outcome::AppliedLate), unless its `ttl`
+/// has run out.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum When {
@@ -44,6 +49,11 @@ pub(crate) enum When {
     /// At this value of the engine's sample counter
     /// (`SignalGraph::current_sample`).
     AtSample(u64),
+    /// This many samples after the count published when the request is
+    /// submitted ([`Transport::rendered`](super::Transport::rendered)).
+    /// [`RequestSender::submit`](super::RequestSender::submit) resolves it
+    /// to [`When::AtSample`].
+    AfterSamples(u64),
 }
 
 /// Whether a write changes the composition or performs on it.
@@ -104,12 +114,19 @@ pub(crate) struct Request {
     pub(crate) source: Source,
     /// Orders requests within a source's tier (A4); higher wins.
     pub(crate) priority: i16,
-    /// Samples after which an unapplied request is refused (slice 3).
+    /// How many samples after the count published at submission the
+    /// request may still apply; past that it is refused
+    /// ([`Refusal::Expired`](super::Refusal::Expired)).
+    /// [`RequestSender::submit`](super::RequestSender::submit) resolves it
+    /// into [`Self::expires`] and clears it.
     pub(crate) ttl: Option<u64>,
     /// Whether it fires an event (its control is declared an event, see
     /// [`ControlDecl::event`](super::ControlDecl)): never coalesced with
     /// another request for the same control and sample.
     pub(crate) event: bool,
+    /// The last sample the request may apply at. Set from [`Self::ttl`] at
+    /// submission; the audio thread reads only this.
+    pub(crate) expires: Option<u64>,
     /// Assigned by [`RequestSender::submit`](super::RequestSender::submit).
     pub(crate) id: RequestId,
 }
@@ -126,6 +143,7 @@ impl Request {
             priority: 0,
             ttl: None,
             event: false,
+            expires: None,
             id: RequestId(0),
         }
     }

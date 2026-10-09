@@ -119,7 +119,7 @@ fn dropping_the_queue_drops_unpopped_items_once() {
 
 #[test]
 fn a_full_channel_returns_the_request_and_counts_the_overflow() {
-    let (sender, mut consumer) = request_channel(2);
+    let (sender, mut consumer) = request_channel(2, Default::default());
     let mut cursor = EventCursor::new();
     let first = sender.submit(request(1.0)).unwrap();
     let second = sender.clone().submit(request(2.0)).unwrap();
@@ -141,7 +141,7 @@ fn a_full_channel_returns_the_request_and_counts_the_overflow() {
 
 #[test]
 fn request_ids_are_unique_across_threads() {
-    let (sender, mut consumer) = request_channel(256);
+    let (sender, mut consumer) = request_channel(256, Default::default());
     let submitters: Vec<_> = (0..4)
         .map(|_| {
             let sender = sender.clone();
@@ -199,7 +199,7 @@ fn concurrent_producers_keep_their_own_order() {
 fn audio_side_paths_never_allocate_or_free() {
     const N: usize = 64;
     let (producer, mut consumer) = bounded::<Request>(N / 2);
-    let (sender, mut requests) = request_channel(N / 2);
+    let (sender, mut requests) = request_channel(N / 2, Default::default());
     let (sum, allocs, frees) = allocator_events(|| {
         let mut sum = 0.0;
         for i in 0..N {
@@ -279,4 +279,61 @@ fn typed_keys_name_their_index_and_value_type() {
 fn a_key_past_its_table_is_refused() {
     let index = CONTROLS;
     let _ = ControlKey::<f32, CONTROLS>::new(index);
+}
+
+#[test]
+fn submit_resolves_relative_times_once_against_the_published_count() {
+    let transport = Arc::new(Transport::new());
+    let (sender, mut consumer) = request_channel(2, Arc::clone(&transport));
+    transport.publish(1_000);
+    let timed = |when, ttl| {
+        let mut request = request(1.0);
+        request.when = when;
+        request.ttl = ttl;
+        request
+    };
+    sender
+        .submit(timed(When::AfterSamples(64), Some(10)))
+        .unwrap();
+    sender.submit(timed(When::AtSample(5), None)).unwrap();
+    let QueueFull(refused) = sender
+        .submit(timed(When::AfterSamples(7), Some(3)))
+        .unwrap_err();
+
+    let first = consumer.pop().unwrap();
+    assert_eq!(
+        (first.when, first.ttl, first.expires),
+        (When::AtSample(1_064), None, Some(1_010))
+    );
+    let second = consumer.pop().unwrap();
+    assert_eq!((second.when, second.expires), (When::AtSample(5), None));
+
+    // Handed back resolved: submitting again later keeps its times.
+    transport.publish(2_000);
+    assert_eq!(
+        (refused.when, refused.expires),
+        (When::AtSample(1_007), Some(1_003))
+    );
+    sender.submit(refused).unwrap();
+    let again = consumer.pop().unwrap();
+    assert_eq!(
+        (again.when, again.expires),
+        (When::AtSample(1_007), Some(1_003))
+    );
+}
+
+#[test]
+fn submitting_a_timed_request_never_allocates() {
+    let transport = Arc::new(Transport::new());
+    let (sender, mut consumer) = request_channel(4, Arc::clone(&transport));
+    let mut request = request(1.0);
+    request.when = When::AfterSamples(64);
+    request.ttl = Some(128);
+    let (result, allocs, frees) = allocator_events(|| {
+        transport.publish(64);
+        sender.submit(request)
+    });
+    assert!(result.is_ok());
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(consumer.pop().unwrap().when, When::AtSample(128));
 }

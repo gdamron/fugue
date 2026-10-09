@@ -132,7 +132,7 @@ impl Module for Level {
 }
 
 /// A level module alone into an unclipped dac, so the output is the level.
-fn level_rig() -> Rig {
+pub(super) fn level_rig() -> Rig {
     let mut rig = Rig::new(
         r#"{
             "version": "1.0.0",
@@ -196,8 +196,11 @@ fn overdue_requests_keep_their_time_order() {
     let later = submit(&rig, "level", 0, 0.25, When::AtSample(start - 10));
     let earlier = submit(&rig, "level", 0, 0.5, When::AtSample(start - 20));
     assert!(rig.render(1).iter().all(|v| *v == 0.25));
-    let applied = Outcome::Applied { at: start };
-    assert_eq!(outcomes(&mut rig), [(earlier, applied), (later, applied)]);
+    let late = |due| Outcome::AppliedLate { at: start, due };
+    assert_eq!(
+        outcomes(&mut rig),
+        [(earlier, late(start - 20)), (later, late(start - 10))]
+    );
 }
 
 #[test]
@@ -277,8 +280,11 @@ fn overdue_requests_for_different_targets_apply_in_time_order() {
     assert_eq!(counted_block(&mut rig), (0, 0));
     assert_eq!(frequency(&mut rig, "osc1", port), 0.25);
     assert_eq!(frequency(&mut rig, "osc2", port), 0.5);
-    let applied = Outcome::Applied { at: start };
-    assert_eq!(outcomes(&mut rig), [(earlier, applied), (later, applied)]);
+    let late = |due| Outcome::AppliedLate { at: start, due };
+    assert_eq!(
+        outcomes(&mut rig),
+        [(earlier, late(start - 40)), (later, late(start - 5))]
+    );
 }
 
 #[cfg(debug_assertions)]
@@ -288,7 +294,10 @@ fn process_block_refuses_control_only_calls_in_debug() {
     let mut rig = Rig::new(BASE);
     rig.render(1);
     rig.graph.request_hook = Some(|_, _, _, _, _| {
-        drop(crate::control_request::request_channel(4));
+        drop(crate::control_request::request_channel(
+            4,
+            Default::default(),
+        ));
         Ok(())
     });
     submit(&rig, "osc1", 0, 0.5, When::Now);

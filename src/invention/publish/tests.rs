@@ -16,6 +16,7 @@ pub(crate) mod probe;
 mod request_intake;
 mod request_payloads;
 mod request_races;
+mod request_timing;
 mod requests;
 mod writes;
 

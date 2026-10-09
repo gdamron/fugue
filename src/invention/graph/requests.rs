@@ -35,12 +35,13 @@
 //!   retired publication's remaps in hand, so a request left in the queue
 //!   with an older generation could never be mapped again.
 //! - **Every other request** (all of them outside an install block) is
-//!   popped only while the store has room, or while
-//!   the request at the head replaces a waiting one (same target and
-//!   sample: it needs no room, and last write wins), and leaves the rest
-//!   in the queue. Producers then get a synchronous `QueueFull`,
-//!   which never marks a generation written, so a fold keeps no remap for
-//!   it. While installs are deferred (the retire ring is full and no
+//!   popped only while the store has room, or while the request at the
+//!   head replaces a waiting one (same target and sample, and not an
+//!   event: it needs no room, and last write wins) or is refused (its
+//!   module gone or its ttl run out: settled at once, it needs no room
+//!   either), and leaves the rest in the queue. Producers then get a
+//!   synchronous `QueueFull`, which never marks a generation written, so a
+//!   fold keeps no remap for it. While installs are deferred (the retire ring is full and no
 //!   publication is taken), every block is of this kind, so the generations
 //!   with requests outstanding, and with them the folded publication's
 //!   `Absorbed` remaps, stay bounded by the store and queue capacity, as
@@ -81,7 +82,7 @@
 use super::publication::{Disposition, Publication};
 use super::SignalGraph;
 use crate::control_request::{
-    apply_declared, take_automation, ControlIndex, Outcome, OutcomeSender, PendingStore,
+    apply_declared, expired, take_automation, ControlIndex, Outcome, OutcomeSender, PendingStore,
     QueueConsumer, Refusal, Request, RequestValue, RtValue, When,
 };
 use crate::payload::Retirer;
@@ -146,40 +147,55 @@ impl SignalGraph {
             Disposition::Apply(new) => Some(new),
             Disposition::Hold | Disposition::Drop => None,
         };
+        let now = self.current_sample;
         if retired.is_some() {
-            drain.pending.remap(installed, |target| {
+            drain.pending.remap(installed, now, |target| {
                 map(self, target.generation, target.module_idx)
             });
         }
-        let now = self.current_sample;
-        // Where a request lands: its target in the installed order (`None`
-        // when its module went away) and its sample. A time already past
-        // keeps its place in time order and applies late, at the first
-        // segment start.
+        // Where a request lands: its target in the installed order and its
+        // sample, or why it is refused: its module went away, or it could
+        // only apply after its `expires` sample. A time already past keeps
+        // its place in time order and applies late, at the first segment
+        // start. A request for a generation not yet installed is held
+        // whatever its expiry, and refused once due after the install
+        // (`PendingStore::apply_due`): refusing it here would free its room
+        // and lift the back-pressure that bounds the folded remaps. Until
+        // then it cannot know whether it applies, so with a ttl it replaces
+        // nothing (`PendingStore::insert_beside`).
         let resolve = |graph: &Self, request: &Request| {
             let mut target = request.target;
-            if target.generation <= installed {
-                target.module_idx = map(graph, target.generation, target.module_idx)?;
-                target.generation = installed;
-            }
             let at = match request.when {
                 When::Now => now,
                 When::AtSample(sample) => sample,
+                // Resolved by the sender; counted from here only for a
+                // request that never went through it.
+                When::AfterSamples(samples) => now.saturating_add(samples),
             };
-            Some((target, at))
+            if target.generation <= installed {
+                target.module_idx =
+                    map(graph, target.generation, target.module_idx).ok_or(Refusal::TargetGone)?;
+                target.generation = installed;
+                if expired(request, at.max(now)) {
+                    return Err(Refusal::Expired);
+                }
+            }
+            Ok((target, at))
         };
         let mut mapped = true;
         for _ in 0..drain.pop_limit {
             let head = drain.requests.peek(|head| {
                 let older = head.target.generation < installed;
+                let replaces = head.target.generation <= installed || head.expires.is_none();
                 (
                     head.value.is_payload(),
                     head.event,
                     older,
+                    replaces,
                     resolve(self, head),
                 )
             });
-            let Some((payload, event, older, landing)) = head else {
+            let Some((payload, event, older, replaces, landing)) = head else {
                 break;
             };
             // An install must pop every older request while it holds the
@@ -189,14 +205,17 @@ impl SignalGraph {
                 mapped = !owed;
                 break;
             }
-            // Back-pressure for the rest, except for a request that
-            // replaces a waiting one, which needs no room: last write wins
-            // even when the store is saturated.
-            if !owed
-                && drain.pending.is_full()
-                && !landing
-                    .is_some_and(|(target, at)| drain.pending.coalesces_with(&target, at, event))
-            {
+            // Back-pressure for the rest, except for a request that needs
+            // no room: one refused (settled at once, so it never blocks
+            // what follows) or one replacing a waiting request (last write
+            // wins even when the store is saturated). Only an installed or
+            // older generation is refused here, so a request held for a
+            // newer one still needs room and the folded remaps stay bounded.
+            let needs_room = match landing {
+                Ok((target, at)) => !(replaces && drain.pending.coalesces_with(&target, at, event)),
+                Err(_) => false,
+            };
+            if !owed && drain.pending.is_full() && needs_room {
                 break;
             }
             let Some(mut request) = drain.requests.pop() else {
@@ -204,14 +223,18 @@ impl SignalGraph {
             };
             drain.pending.outcomes.reserve(&request);
             match landing {
-                Some((target, at)) => {
+                Ok((target, at)) => {
                     request.target = target;
-                    drain.pending.insert(request, at);
+                    if replaces {
+                        drain.pending.insert(request, at);
+                    } else {
+                        drain.pending.insert_beside(request, at);
+                    }
                 }
-                None => drain
+                Err(refusal) => drain
                     .pending
                     .outcomes
-                    .settle(request, Outcome::Refused(Refusal::TargetGone)),
+                    .settle(request, Outcome::Refused(refusal)),
             }
         }
         self.requests = Some(drain);
