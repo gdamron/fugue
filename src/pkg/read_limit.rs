@@ -357,6 +357,9 @@ mod tests {
         assert!(hash_file(&path).unwrap().starts_with("sha256:"));
     }
 
+    // Unix only: a 1 GiB `set_len` is sparse there, but may allocate on NTFS.
+    // The catalog tests cross the cap on every platform with a lowered limit.
+    #[cfg(unix)]
     #[test]
     fn over_cap_audio_is_refused_before_reading_and_says_what_to_do() {
         let dir = tempfile::tempdir().unwrap();
