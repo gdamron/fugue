@@ -8,6 +8,12 @@
 //! the legacy path are written by the development's surface directly, as
 //! before. The inner declared surfaces are bound to [`Route::Inner`]: their
 //! modules are reached only through the development.
+//!
+//! A declaration states exactly what its module accepts, and a development
+//! is no exception: every later declared alias of a key must take every
+//! value its first one does ([`takes_all`]), or the development fails to
+//! build. So the alias taking the fewest values is listed first (a choice
+//! with the fewest options, the narrowest integer range).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -66,6 +72,28 @@ fn convert(value: RtValue, kind: DeclKind, choices: &[Option<u32>]) -> Option<Rt
     }
 }
 
+/// Whether a control of kind `alias` takes every value one of kind `first`
+/// does, as [`convert`] hands them over: any number (each clamps for
+/// itself) or whole number, a range holding `first`'s, every option by
+/// name.
+fn takes_all(first: DeclKind, alias: DeclKind) -> bool {
+    match (first, alias) {
+        (DeclKind::Number { .. } | DeclKind::Integer { .. }, DeclKind::Number { .. }) => true,
+        (
+            DeclKind::Integer { min, max },
+            DeclKind::Integer {
+                min: low,
+                max: high,
+            },
+        ) => low <= min && max <= high,
+        (DeclKind::Choice(key), DeclKind::Choice(own)) => key
+            .iter()
+            .all(|option| own.iter().any(|o| o.eq_ignore_ascii_case(option))),
+        (DeclKind::Bool, DeclKind::Bool) | (DeclKind::Payload, DeclKind::Payload) => true,
+        _ => false,
+    }
+}
+
 /// How an alias of kind `alias` takes values of the key's kind `first`:
 /// whether it can at all, and for a choice, the key's options by the
 /// alias's positions. Allocates: control thread, as the development builds.
@@ -86,7 +114,8 @@ fn reach(first: DeclKind, alias: DeclKind) -> (Option<DeclKind>, Box<[Option<u32
 impl DevelopmentControls {
     /// Declares every exposed key with a declared alias, or `None` when no
     /// alias is declared. Also returns the development surface's declared
-    /// part, sharing the cells.
+    /// part, sharing the cells. Fails when a later declared alias of a key
+    /// would refuse a value its first takes (see the module docs).
     pub(super) fn new(
         definition: &Invention,
         surfaces: &IndexMap<String, ControlSurfaceInstance>,
@@ -95,6 +124,8 @@ impl DevelopmentControls {
         let mut decls: Vec<ControlDecl> = Vec::new();
         let mut current = Vec::new();
         let mut aliases: Vec<Vec<Alias>> = Vec::new();
+        // Each key's first declared alias, for the build error.
+        let mut firsts: Vec<String> = Vec::new();
         for control in &definition.controls {
             let Some(found) = surfaces
                 .get(&control.module)
@@ -118,9 +149,18 @@ impl DevelopmentControls {
                     });
                     current.push(found.current);
                     aliases.push(Vec::new());
+                    firsts.push(format!("{}.{}", control.module, control.control));
                     decls.len() - 1
                 }
             };
+            let first = &decls[position];
+            if found.decl.writer != first.writer || !takes_all(first.kind, found.decl.kind) {
+                return Err(format!(
+                    "Development control '{}': '{}.{}' does not take every value '{}' does; \
+                     the aliases of one key must, with the one taking the fewest listed first",
+                    control.key, control.module, control.control, firsts[position]
+                ));
+            }
             // One event alias makes the key an event: never coalesced.
             decls[position].event |= found.decl.event;
             let (kind, choices) = reach(decls[position].kind, found.decl.kind);
@@ -152,9 +192,12 @@ impl DevelopmentControls {
 
     /// Applies `value` to every declared alias of `control` in turn, each
     /// as its own kind holds it, publishing each inner control's new value.
-    /// Returns what the first alias then holds, or the first refusal of any
-    /// alias (every other alias still applies). Audio thread: allocation-,
-    /// free- and lock-free as long as the inner modules' `apply` are.
+    /// Returns what the first alias then holds. A value an alias cannot
+    /// hold, or an alias whose module is gone, is refused before any alias
+    /// changes; past that, an alias's own refusal (a module refusing what
+    /// its declaration takes) is returned, and every other alias still
+    /// applies. Audio thread: allocation-, free- and lock-free as long as
+    /// the inner modules' `apply` are.
     pub(super) fn apply(
         &self,
         modules: &mut [GraphModule],
@@ -165,6 +208,18 @@ impl DevelopmentControls {
             .aliases
             .get(usize::from(control.0))
             .ok_or(Refusal::Unsupported)?;
+        for alias in aliases {
+            if alias.module >= modules.len() {
+                return Err(Refusal::TargetGone);
+            }
+            if alias
+                .kind
+                .and_then(|kind| convert(value, kind, &alias.choices))
+                .is_none()
+            {
+                return Err(Refusal::Invalid);
+            }
+        }
         let mut first = None;
         let mut refused = None;
         for alias in aliases {

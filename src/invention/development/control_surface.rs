@@ -136,14 +136,16 @@ impl ControlSurface for DevelopmentControlSurface {
         // them. A key on the legacy path alone keeps its old, unchecked
         // fan-out: a scheduler still writes it from the audio thread, where
         // checking would allocate.
-        if self.declared(key).is_some() {
+        //
+        // The declared part goes first: its delivery can still fail (a full
+        // request queue, a module being installed), and a failed write must
+        // leave the legacy aliases as they were. Once it is on its way the
+        // legacy aliases, already checked, take the value.
+        if let Some(declared) = self.declared(key) {
             self.validate_control(key, &value, &self.surfaces)?;
+            declared.set_control(key, value.clone())?;
         }
-        self.set_legacy(key, value.clone())?;
-        match self.declared(key) {
-            Some(declared) => declared.set_control(key, value),
-            None => Ok(()),
-        }
+        self.set_legacy(key, value)
     }
 
     /// Writes `key`'s aliases still on the legacy path, and theirs in a

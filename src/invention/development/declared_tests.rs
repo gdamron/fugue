@@ -27,8 +27,8 @@ fn factory(name: &str, definition: serde_json::Value) -> DevelopmentFactory {
 }
 
 /// A dial and a (legacy) lfo behind one exposed `mix`, with the lfo's rate
-/// also exposed alone as `rate`, and `odd` reaching a dial's number and
-/// its choice at once.
+/// also exposed alone as `rate`, and `form` reaching the dial's shape and
+/// the lfo's waveform, which share no option.
 fn mixed() -> serde_json::Value {
     json!({
         "version": "1.0.0",
@@ -39,8 +39,8 @@ fn mixed() -> serde_json::Value {
             { "key": "mix", "module": "a", "control": "level" },
             { "key": "mix", "module": "l", "control": "rate" },
             { "key": "rate", "module": "l", "control": "rate" },
-            { "key": "odd", "module": "a", "control": "level" },
-            { "key": "odd", "module": "a", "control": "shape" }
+            { "key": "form", "module": "a", "control": "shape" },
+            { "key": "form", "module": "l", "control": "waveform" }
         ]
     })
 }
@@ -200,16 +200,45 @@ fn a_nested_mixed_key_reaches_both_parts_through_the_outer_development() {
 #[test]
 fn a_value_one_alias_cannot_hold_changes_no_alias_and_fails_a_cold_load() {
     let (graph, surface) = running_from(factory("mixed", mixed()), json!({}));
-    let refused = surface.set_control("odd", 0.5.into()).unwrap_err();
-    assert!(refused.contains("string"), "{refused}");
-    assert_eq!(outputs_a(&graph), 0.25, "the level alias is untouched too");
-    let config = json!({ "odd": 0.5 });
+    assert!(
+        surface.set_control("form", "steep".into()).is_err(),
+        "no lfo waveform"
+    );
+    outputs_a(&graph);
+    assert_eq!(
+        surface.get_control("form").unwrap(),
+        "flat".into(),
+        "the dial is untouched"
+    );
+    let config = json!({ "form": "steep" });
     assert!(factory("mixed", mixed()).build(48_000, &config).is_err());
 }
 
 #[test]
+fn a_key_whose_later_alias_refuses_what_its_first_takes_fails_to_build() {
+    // The development would declare the first alias's values, so every
+    // later alias must take them all: the narrowest goes first.
+    for (first, later) in [("slope", "shape"), ("level", "shape"), ("level", "pulse")] {
+        let definition = json!({
+            "version": "1.0.0",
+            "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
+            "connections": [],
+            "controls": [
+                { "key": "x", "module": "a", "control": first },
+                { "key": "x", "module": "b", "control": later }
+            ]
+        });
+        let refused = match factory("narrow", definition).build(48_000, &json!({})) {
+            Ok(_) => panic!("{first} then {later} built"),
+            Err(refused) => refused.to_string(),
+        };
+        assert!(refused.contains(&format!("'b.{later}'")), "{refused}");
+    }
+}
+
+#[test]
 fn a_key_with_any_event_alias_is_an_event_in_either_order() {
-    for aliases in [["level", "pulse"], ["pulse", "level"]] {
+    for aliases in [["held", "pulse"], ["pulse", "held"]] {
         let definition = json!({
             "version": "1.0.0",
             "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],

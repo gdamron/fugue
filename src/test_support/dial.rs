@@ -16,6 +16,7 @@ pub(crate) const LEVEL: ControlIndex = ControlIndex(0);
 pub(crate) const SHAPE: ControlIndex = ControlIndex(1);
 pub(crate) const PULSE: ControlIndex = ControlIndex(2);
 pub(crate) const SLOPE: ControlIndex = ControlIndex(3);
+pub(crate) const HELD: ControlIndex = ControlIndex(4);
 
 const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
@@ -44,6 +45,7 @@ const DECLS: &[ControlDecl] = &[
         RtValue::U32(0),
         "The shape options, ordered otherwise",
     ),
+    ControlDecl::new("held", DeclKind::Bool, RtValue::Bool(false), "A plain flag"),
 ];
 
 static TABLE: ControlTable = ControlTable::of(DECLS);
@@ -53,6 +55,7 @@ pub(crate) struct Dial {
     level: f32,
     shape: u32,
     slope: u32,
+    held: bool,
     pulses: u32,
     cells: Arc<ControlCells>,
     out: [f32; MAX_BLOCK],
@@ -76,6 +79,7 @@ impl ModuleFactory for DialFactory {
             level: 0.25,
             shape: 0,
             slope: 0,
+            held: false,
             pulses: 0,
             cells,
             out: [0.0; MAX_BLOCK],
@@ -140,6 +144,10 @@ impl Module for Dial {
             (SHAPE, RtValue::U32(_)) => Err(Refusal::Invalid),
             (SLOPE, RtValue::U32(slope)) if slope < 3 => {
                 self.slope = slope;
+                Ok(value)
+            }
+            (HELD, RtValue::Bool(held)) => {
+                self.held = held;
                 Ok(value)
             }
             (PULSE, RtValue::Bool(true)) => {

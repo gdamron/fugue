@@ -4,7 +4,7 @@
 use super::declared::dial_rig;
 use super::requests::{counted_block, outcomes};
 use super::*;
-use crate::control_request::Outcome;
+use crate::control_request::{Outcome, When};
 use crate::invention::declared::{add_offline, remove_offline, retire_offline, Route};
 use crate::test_support::dial::DialFactory;
 use crate::ControlValue;
@@ -293,4 +293,52 @@ fn a_request_applies_after_automation_written_before_its_sample() {
     let out = rig.render(1);
     assert!(out.iter().all(|v| *v == 0.3), "{out:?}");
     assert_eq!(level(&dial), 0.3.into());
+}
+
+#[test]
+fn a_mixed_development_write_the_queue_cannot_take_changes_no_alias() {
+    // A dial and a legacy lfo behind one `mix`, the lfo's rate also alone.
+    let definition = serde_json::json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "lfo" }],
+        "connections": [],
+        "controls": [
+            { "key": "mix", "module": "a", "control": "level" },
+            { "key": "mix", "module": "l", "control": "rate" },
+            { "key": "rate", "module": "l", "control": "rate" }
+        ]
+    });
+    let mut rig = dial_rig();
+    let factory = crate::invention::development::DevelopmentFactory {
+        name: "mixed".to_string(),
+        definition: serde_json::from_value(definition).unwrap(),
+        registry: rig.registry.clone(),
+        registered: Arc::default(),
+        loaded: Arc::default(),
+    };
+    rig.registry
+        .register_boxed("mixed".to_string(), Arc::new(factory));
+    let built = rig.build("dev", "mixed", serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("dev", built);
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    let dev = surface(&rig, "dev");
+    let (mix, rate) = (
+        dev.get_control("mix").unwrap(),
+        dev.get_control("rate").unwrap(),
+    );
+
+    while super::requests::try_submit(&rig, "dial", 0, 0.5, When::Now).is_ok() {}
+    assert!(dev.set_control("mix", 0.75.into()).is_err(), "no room");
+    assert_eq!(
+        dev.get_control("rate").unwrap(),
+        rate,
+        "the lfo is untouched"
+    );
+    rig.render(1);
+    assert_eq!(dev.get_control("mix").unwrap(), mix, "and so is the dial");
 }
