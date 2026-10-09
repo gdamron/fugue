@@ -1,11 +1,12 @@
 //! A declared module's surface: what a write does while the module is
 //! building, running live, running in an offline render, or gone.
 
-use super::declared::{dial_rig, DialFactory};
+use super::declared::dial_rig;
 use super::requests::{counted_block, outcomes};
 use super::*;
 use crate::control_request::Outcome;
 use crate::invention::declared::{add_offline, remove_offline, retire_offline, Route};
+use crate::test_support::dial::DialFactory;
 use crate::ControlValue;
 
 fn surface(rig: &Rig, id: &str) -> ControlSurfaceInstance {
