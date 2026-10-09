@@ -274,7 +274,11 @@ fn reloading_the_saved_document_after_a_write_to_a_key_the_stored_config_lacks_r
         let mut running = start(&original);
         running.set_control("osc1", key, value.clone()).unwrap();
 
-        let report = running.reload(saved(&running)).expect("diff applies");
+        let report = {
+            let saved = saved(&running);
+            running.reload(saved)
+        }
+        .expect("diff applies");
 
         assert_eq!(report.controls_updated, [format!("osc1.{key}")]);
         assert_nothing_rebuilt(&report);

@@ -2,10 +2,8 @@
 //! registry harness and the entry points on an integer key before any
 //! built-in module declares one.
 
-use crate::factory::{apply_control_keys, GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::factory::{ModuleBuildResult, ModuleFactory};
 use crate::module_config::{ConfigKey, ConfigReader};
-use crate::modules::{Oscillator, OscillatorControls, OscillatorType};
-use std::sync::Arc;
 
 /// An oscillator whose frequency is the whole number `hz`, read by the
 /// reader. Its other number controls are its `frequency_mod_depth` key and the
@@ -65,15 +63,10 @@ fn build(
 ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
     let reader = ConfigReader::new("probe", config);
     let fm_amount = reader.float(&FREQUENCY_MOD_DEPTH)?.unwrap_or(0.0);
-    let controls = OscillatorControls::new(f32::from(hz), OscillatorType::Sine, fm_amount, 0.0);
-    apply_control_keys(&controls, config, |key| {
-        matches!(key, "frequency" | "amplitude_mod_depth" | "waveform")
-    })?;
-    let module = Oscillator::new_with_controls(sample_rate, controls.clone());
-    Ok(ModuleBuildResult {
-        module: GraphModule::Module(Box::new(module)),
-        handles: Vec::new(),
-        control_surface: Some(Arc::new(controls)),
-        sink: None,
-    })
+    crate::modules::oscillator::built(
+        sample_rate,
+        [f32::from(hz), fm_amount, 0.0],
+        config,
+        |key| matches!(key, "frequency" | "amplitude_mod_depth" | "waveform"),
+    )
 }

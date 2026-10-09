@@ -6,6 +6,26 @@ use fugue::invention::Invention;
 use fugue::InventionBuilder;
 use support::NullAudioBackend;
 
+/// Reads `key` of `module` until the audio thread has applied `expected`
+/// (on its next block after the write), for up to 5 s.
+fn applied(
+    running: &fugue::RunningInvention,
+    module: &str,
+    key: &str,
+    expected: f32,
+) -> ControlValue {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let value = running
+            .get_control(module, key)
+            .expect("Failed to get control");
+        if value == ControlValue::Number(expected) || std::time::Instant::now() >= deadline {
+            return value;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 fn build_simple_invention() -> (fugue::RunningInvention, fugue::InventionHandles) {
     let json = r#"
     {
@@ -379,9 +399,7 @@ fn test_list_all_controls() {
 #[test]
 fn test_get_control_succeeds() {
     let (running, _handles) = build_simple_invention();
-    let value = running
-        .get_control("osc", "frequency")
-        .expect("Failed to get control");
+    let value = applied(&running, "osc", "frequency", 880.0);
     let value = match value {
         ControlValue::Number(value) => value,
         other => panic!("Expected numeric frequency, got {:?}", other),
@@ -420,9 +438,7 @@ fn test_set_control_succeeds() {
     running
         .set_control("osc", "frequency", ControlValue::Number(880.0))
         .expect("Failed to set control");
-    let value = running
-        .get_control("osc", "frequency")
-        .expect("Failed to get control");
+    let value = applied(&running, "osc", "frequency", 880.0);
     let value = match value {
         ControlValue::Number(value) => value,
         other => panic!("Expected numeric frequency, got {:?}", other),
@@ -471,9 +487,7 @@ fn test_add_module_then_control() {
     running
         .set_control("osc2", "frequency", ControlValue::Number(220.0))
         .expect("Failed to set control");
-    let value = running
-        .get_control("osc2", "frequency")
-        .expect("Failed to get control");
+    let value = applied(&running, "osc2", "frequency", 220.0);
     let value = match value {
         ControlValue::Number(value) => value,
         other => panic!("Expected numeric frequency, got {:?}", other),

@@ -542,7 +542,7 @@ fn a_sample_that_does_not_load_is_reported_when_written_and_the_batch_commits() 
         module_type: "sample_kit".into(),
         config: json!({ "samples": [{ "key": "kick", "asset": sample }] }),
     });
-    let (mut running, _pump) = start_doc(document);
+    let (mut running, pump) = start_doc(document);
     let report = running
         .apply_edits(&[
             set("osc1", "frequency", number(220.0)),
@@ -551,6 +551,7 @@ fn a_sample_that_does_not_load_is_reported_when_written_and_the_batch_commits() 
         .expect("the batch commits");
     assert_eq!(report.controls_failed.len(), 1, "{report:?}");
     assert_eq!(report.controls_failed[0].edit_index, 1);
+    pump.block();
     assert_eq!(
         running.get_control("osc1", "frequency").unwrap(),
         number(220.0)

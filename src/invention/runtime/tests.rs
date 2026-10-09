@@ -475,9 +475,11 @@ fn performed_control_writes_are_announced_but_never_authored() {
             crate::ControlWriteIntent::Perform,
         )
         .unwrap();
-    assert_eq!(
-        running.get_control("osc", "frequency").unwrap(),
-        ControlValue::Number(660.0),
+    // Applied by the audio thread on its next block.
+    assert!(
+        wait_until(
+            || running.get_control("osc", "frequency").unwrap() == ControlValue::Number(660.0)
+        ),
         "perform still coerces and applies"
     );
     assert_eq!(authored_frequency(&running), Some(440.0));
