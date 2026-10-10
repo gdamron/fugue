@@ -291,8 +291,12 @@ impl<T> Drop for QueueConsumer<T> {
     /// queue (an edit's publication holds modules whose control ports
     /// submit here), which would otherwise keep the queue, and everything
     /// in it, alive for good. Runs when the audio side is torn down: a
-    /// control-thread operation.
+    /// control-thread operation. Not while unwinding (a render that
+    /// panicked), where nothing may be freed: the last producer frees it.
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
         debug_assert_control_thread("dropping a request queue's consumer");
         while self.pop().is_some() {}
     }

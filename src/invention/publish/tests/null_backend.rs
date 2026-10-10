@@ -378,3 +378,61 @@ fn a_kept_snapshot_is_refused_once_a_null_backend_stops() {
         .unwrap_err();
     assert!(refused.to_string().contains("stopped"), "{refused}");
 }
+
+/// A settle whose render panics while requests apply (the drain is out of
+/// the graph then) unwinds rather than hanging on the publisher it holds:
+/// the drain dropped while unwinding neither closes the publisher nor
+/// frees what is queued.
+#[test]
+fn a_settle_whose_render_panics_unwinds_rather_than_hangs() {
+    fn panics(
+        _: &mut SignalGraph,
+        _: usize,
+        _: crate::control_request::ControlIndex,
+        _: RequestValue,
+        _: &mut crate::payload::Retirer,
+    ) -> Result<(), crate::control_request::Refusal> {
+        panic!("a module panicked applying a request");
+    }
+    let document = Invention::from_json(OSCILLATOR).unwrap();
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
+    let ports = Arc::new(Mutex::new(module_ports(&runtime.modules)));
+    let mut graph = SignalGraph::new(
+        runtime.modules,
+        runtime.sinks,
+        runtime.routing,
+        MasterObservers::default(),
+    );
+    graph.recompile();
+    graph.request_hook = Some(panics);
+    let mut backend = NullBackend::new(SAMPLE_RATE);
+    let live = LiveGraph::link(
+        &mut graph,
+        runtime.state,
+        runtime.control_surfaces,
+        ports,
+        Arc::new(runtime.registry),
+        Some(backend.settle_handle()),
+    );
+    let block = move |left: &mut [f32], right: &mut [f32]| graph.process_block(left, right);
+    crate::AudioBackend::start(&mut backend, Box::new(block)).unwrap();
+    let surface = live.control_surfaces.lock().unwrap()["osc"].clone();
+    let index = surface.declaration("frequency").unwrap().index;
+    {
+        let publisher = live.publisher().lock().unwrap();
+        let target = publisher.control_target("osc", index).unwrap();
+        let request = Request::new(target, RequestValue::Value(RtValue::F32(220.0)));
+        live.requests.submit(request).unwrap();
+    }
+
+    let settling = std::thread::spawn(move || live.settle());
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !settling.is_finished() {
+        assert!(std::time::Instant::now() < deadline, "the settle hung");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        settling.join().is_err(),
+        "the render's panic reaches the settle"
+    );
+}

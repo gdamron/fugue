@@ -179,11 +179,20 @@ impl RequestDrain {
 
 impl Drop for RequestDrain {
     /// Dropped with the graph, on a control thread once the audio has
-    /// stopped; the queue then drops whatever is left in it.
+    /// stopped; the queue then drops whatever is left in it. A render
+    /// takes the drain out of the graph while requests apply, so a panic
+    /// there drops it while unwinding, on the rendering thread and maybe
+    /// under the publisher (a settle): it then neither locks nor frees, and
+    /// leaks the hook.
     fn drop(&mut self) {
-        if let Some(close) = self.on_drop.take() {
-            close();
+        let Some(close) = self.on_drop.take() else {
+            return;
+        };
+        if std::thread::panicking() {
+            std::mem::forget(close);
+            return;
         }
+        close();
     }
 }
 
