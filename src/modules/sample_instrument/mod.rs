@@ -103,6 +103,11 @@ impl ModuleFactory for SampleInstrumentFactory {
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let (specs, voices, release) = parse_config(config)?;
         let (controls, zone_audio) = SampleInstrumentControls::new(sample_rate, release, specs)?;
+        // A recorded `level.N` write is later than the zone's authored
+        // level, so it wins; a `root_note.N` is refused, as a live write is.
+        crate::factory::apply_control_keys(&controls, config, |key| {
+            key.starts_with("level.") || key.starts_with("root_note.")
+        })?;
         let instrument =
             SampleInstrument::new_with_controls(controls.clone(), zone_audio, voices, sample_rate);
 
@@ -299,6 +304,9 @@ impl SampleInstrument {
             })
             .collect();
 
+        // From the controls, so a level restored at build holds from the
+        // first frame, including a steal fade from a first-block note.
+        let levels = (0..zone_count).map(|zone| controls.level(zone)).collect();
         Self {
             ctrl: controls,
             inputs: inputs::SampleInstrumentInputs::new(),
@@ -307,7 +315,7 @@ impl SampleInstrument {
             voices: (0..voices.clamp(1, MAX_VOICES))
                 .map(|_| Voice::new())
                 .collect(),
-            levels: vec![1.0; zone_count],
+            levels,
             swap_scratch: (0..zone_count).map(|_| None).collect(),
             note_scratch: Vec::with_capacity(MAX_PENDING_NOTES),
             next_started: 0,

@@ -24,8 +24,9 @@ const TELEMETRY: &[&str] = &[
 ];
 
 /// Controls whose value is checked elsewhere: an action rather than a state
-/// (a pad's `trigger`, a note, a cell `next_cell`), an asset load
-/// (`asset`), or a schedule that needs a runtime to resolve against (see
+/// (a kit's `play`, a note, a cell `next_cell`), an asset load
+/// (`asset`; a slot's `asset.N` is not yet rebuilt from its write,
+/// FUG-345), or a schedule that needs a runtime to resolve against (see
 /// the scheduler's own tests).
 const ELSEWHERE: &[&str] = &[
     "sample_kit.play",
@@ -33,6 +34,8 @@ const ELSEWHERE: &[&str] = &[
     "sample_instrument.note_off",
     "cell_sequencer.next_cell",
     "sample_player.asset",
+    "sample_kit.asset.0",
+    "sample_instrument.asset.0",
     "control_scheduler.schedule",
 ];
 
@@ -62,10 +65,16 @@ fn probes(key: &str, meta: &ControlMeta) -> Vec<ControlValue> {
 }
 
 /// The config each type is built from before probing: enough that every
-/// control has a value to change to.
+/// control has a value to change to (a sample slot, so the multi-sample
+/// modules have per-slot controls).
 fn base_config(type_id: &str) -> serde_json::Value {
+    let wav = crate::module_config::tests::registry::eight_frame_wav;
     match type_id {
         "cell_sequencer" => serde_json::json!({ "cells": [[60, null], [62]] }),
+        "sample_kit" => serde_json::json!({ "samples": [{ "key": 36, "asset": wav() }] }),
+        "sample_instrument" => {
+            serde_json::json!({ "zones": [{ "root_note": 60, "asset": wav() }] })
+        }
         _ => serde_json::json!({}),
     }
 }

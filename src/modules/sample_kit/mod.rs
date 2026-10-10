@@ -56,6 +56,11 @@ impl ModuleFactory for SampleKitFactory {
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let specs = parse_config(config)?;
         let (controls, samples) = SampleKitControls::new(sample_rate, specs)?;
+        // A recorded `level.N` write is later than the slot's authored
+        // level, so it wins; a `key.N` is refused, as a live write is.
+        crate::factory::apply_control_keys(&controls, config, |key| {
+            key.starts_with("level.") || key.starts_with("key.")
+        })?;
         let kit = SampleKit::new_with_controls(controls.clone(), samples);
 
         Ok(ModuleBuildResult {
@@ -207,13 +212,16 @@ impl SampleKit {
             })
             .collect();
 
+        // From the controls, so a level written before the build (and
+        // restored by it) holds from the first frame.
+        let levels = (0..slot_count).map(|slot| controls.level(slot)).collect();
         Self {
             ctrl: controls,
             inputs: inputs::SampleKitInputs::new(),
             outputs: outputs::SampleKitOutputs::new(),
             voices,
             numeric_keys,
-            levels: vec![1.0; slot_count],
+            levels,
             swap_scratch: (0..slot_count).map(|_| None).collect(),
             last_play_counts: vec![0; slot_count],
             last_swaps_version: 0,

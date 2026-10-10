@@ -148,7 +148,8 @@ pub trait ModuleFactory: Send + Sync + 'static {
 /// module starts from these values; a control key wins over the config key
 /// it overlaps, since it records a later write. Unindexed keys (a count) are
 /// applied before indexed ones (`degree.3`) so a count sizes what follows.
-/// A number that is not finite as an `f32` (`1e39`) is refused with
+/// A number that is not finite as an `f32` (`1e39`), or text a number
+/// control coerces to one (`"NaN"`, `"inf"`), is refused with
 /// `config '{key}' expects a finite number, got {value}`, as a live control
 /// write is.
 pub(crate) fn apply_control_keys(
@@ -172,6 +173,14 @@ pub(crate) fn apply_control_keys(
             _ => return Err(format!("config '{key}' must be a number, boolean or text").into()),
         };
         let value = surface.coerce_value(key, value);
+        // Text coerced to a number control ("NaN", "inf", "1e39") must
+        // meet the same finite check a JSON number does.
+        if let crate::ControlValue::Number(number) = value {
+            if !number.is_finite() {
+                let raw = &entries[key.as_str()];
+                return Err(format!("config '{key}' expects a finite number, got {raw}").into());
+            }
+        }
         surface
             .set_control(key, value)
             .map_err(|error| format!("config '{key}': {error}"))?;
