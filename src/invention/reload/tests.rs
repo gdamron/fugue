@@ -13,8 +13,8 @@ fn doc(json: &str) -> Invention {
 }
 
 /// No declared numeric keys: every value compares as JSON.
-fn no_keys(_: &str) -> &'static [crate::module_config::ConfigKey] {
-    &[]
+fn no_keys(_: &str) -> TypeKeys {
+    (&[], &[])
 }
 
 fn start(json: &str) -> Settled {
