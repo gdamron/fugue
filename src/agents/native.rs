@@ -101,11 +101,13 @@ fn run_host(
     set_string(&controller, &module_id, "status", "idle");
     set_string(&controller, &module_id, "last_error", "");
 
-    let edges = |controller: &RuntimeController| {
-        agent_controls(controller, &module_id)
-            .map(|controls| (controls.trigger_count(), controls.reset_count()))
-    };
-    let (mut last_trigger, mut last_reset) = edges(&controller).unwrap_or_default();
+    // The module's controls as last seen, and the edges already serviced. A
+    // module replaced under this worker counts its edges from zero.
+    let mut agent = agent_controls(&controller, &module_id);
+    let (mut last_trigger, mut last_reset) = agent
+        .as_ref()
+        .map(|controls| (controls.trigger_count(), controls.reset_count()))
+        .unwrap_or_default();
     let mut last_request_at: Option<Instant> = None;
     let mut history: Vec<Value> = Vec::new();
 
@@ -119,13 +121,18 @@ fn run_host(
             Err(RecvTimeoutError::Timeout) => {}
         }
 
-        let Some((trigger_count, reset_count)) = edges(&controller) else {
+        let Some(current) = agent_controls(&controller, &module_id) else {
             continue;
         };
-        if trigger_count < last_trigger || reset_count < last_reset {
-            // A rebuilt module counts from zero again: not an edge.
-            (last_trigger, last_reset) = (trigger_count, reset_count);
+        if !agent
+            .as_ref()
+            .is_some_and(|seen| seen.same_instance(&current))
+        {
+            // A replacement counts from zero: every edge it holds is new.
+            (last_trigger, last_reset) = (0, 0);
+            agent = Some(current.clone());
         }
+        let (trigger_count, reset_count) = (current.trigger_count(), current.reset_count());
         if reset_count != last_reset {
             last_reset = reset_count;
             history.clear();

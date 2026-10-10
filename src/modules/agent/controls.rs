@@ -116,6 +116,13 @@ impl AgentControls {
         self.edges.reset.load(Ordering::Relaxed)
     }
 
+    /// Whether `other` is a handle on these same controls rather than on a
+    /// replacement module's.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn same_instance(&self, other: &AgentControls) -> bool {
+        Arc::ptr_eq(&self.edges, &other.edges)
+    }
+
     /// Writes a telemetry control: the agent worker's writer, since
     /// [`ControlSurface::set_control`] refuses them. Refuses any other key.
     // The native agent worker reads it; wasm hosts have none yet.
@@ -282,6 +289,8 @@ mod tests {
         controls.increment_trigger();
         controls.increment_reset();
         assert_eq!((controls.trigger_count(), controls.reset_count()), (2, 1));
+        assert!(controls.same_instance(&controls.clone()));
+        assert!(!controls.same_instance(&self::controls()));
         for key in ["trigger_count", "reset_count"] {
             assert!(controls.get_control(key).is_err(), "{key}");
             assert!(controls.controls().iter().all(|meta| meta.key != key));
