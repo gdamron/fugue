@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 
 use crate::invention::{RuntimeController, RuntimeModuleInfo};
+use crate::modules::AgentControls;
 use crate::ControlValue;
 
 mod backends;
@@ -100,8 +101,13 @@ fn run_host(
     set_string(&controller, &module_id, "status", "idle");
     set_string(&controller, &module_id, "last_error", "");
 
-    let mut last_trigger = get_number(&controller, &module_id, "trigger_count") as u64;
-    let mut last_reset = get_number(&controller, &module_id, "reset_count") as u64;
+    // The module's controls as last seen, and the edges already serviced. A
+    // module replaced under this worker counts its edges from zero.
+    let mut agent = agent_controls(&controller, &module_id);
+    let (mut last_trigger, mut last_reset) = agent
+        .as_ref()
+        .map(|controls| (controls.trigger_count(), controls.reset_count()))
+        .unwrap_or_default();
     let mut last_request_at: Option<Instant> = None;
     let mut history: Vec<Value> = Vec::new();
 
@@ -115,11 +121,22 @@ fn run_host(
             Err(RecvTimeoutError::Timeout) => {}
         }
 
-        let reset_count = get_number(&controller, &module_id, "reset_count") as u64;
+        let Some(current) = agent_controls(&controller, &module_id) else {
+            continue;
+        };
+        if !agent
+            .as_ref()
+            .is_some_and(|seen| seen.same_instance(&current))
+        {
+            // A replacement counts from zero: every edge it holds is new.
+            (last_trigger, last_reset) = (0, 0);
+            agent = Some(current.clone());
+        }
+        let (trigger_count, reset_count) = (current.trigger_count(), current.reset_count());
         if reset_count != last_reset {
             last_reset = reset_count;
             history.clear();
-            set_string(&controller, &module_id, "history_json", "[]");
+            set_string(&controller, &module_id, "history", "[]");
             set_string(&controller, &module_id, "last_error", "");
             set_string(&controller, &module_id, "last_apply_error", "");
             set_string(&controller, &module_id, "status", "idle");
@@ -129,15 +146,15 @@ fn run_host(
             continue;
         }
 
-        let trigger_count = get_number(&controller, &module_id, "trigger_count") as u64;
         if trigger_count == last_trigger {
             continue;
         }
         last_trigger = trigger_count;
 
-        let cooldown_ms = get_number(&controller, &module_id, "cooldown_ms").max(0.0);
+        let cooldown = get_number(&controller, &module_id, "cooldown").max(0.0);
+        let cooldown = Duration::try_from_secs_f32(cooldown).unwrap_or(Duration::MAX);
         if let Some(last) = last_request_at {
-            if last.elapsed() < Duration::from_millis(cooldown_ms as u64) {
+            if last.elapsed() < cooldown {
                 continue;
             }
         }
@@ -199,12 +216,12 @@ fn service_request(
         set_string(
             controller,
             module_id,
-            "last_response_json",
+            "last_parsed_response",
             &parsed.to_string(),
         );
         apply_response(module_id, config, controller, parsed)?;
     } else {
-        set_string(controller, module_id, "last_response_json", "");
+        set_string(controller, module_id, "last_parsed_response", "");
     }
 
     let entry = json!({
@@ -222,12 +239,13 @@ fn service_request(
     set_string(
         controller,
         module_id,
-        "history_json",
+        "history",
         &Value::Array(history.clone()).to_string(),
     );
 
     let count = get_number(controller, module_id, "request_count") as u64 + 1;
-    let _ = controller.snapshot.set_control_transient(
+    set_telemetry(
+        controller,
         module_id,
         "request_count",
         ControlValue::Number(count as f32),

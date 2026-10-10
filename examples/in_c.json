@@ -310,8 +310,8 @@
       "config": {
         "enabled": true,
         "backend": "local:codex",
-        "cooldown_ms": 4000,
-        "system": "You are the conductor for a generative performance of Terry Riley's In C.",
+        "cooldown": 4,
+        "system_prompt": "You are the conductor for a generative performance of Terry Riley's In C.",
         "prompt": {
           "$asset": "conductor_prompt"
         },

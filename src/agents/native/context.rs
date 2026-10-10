@@ -21,8 +21,8 @@ pub(super) fn build_request_packet(
     let prompt = get_string(controller, module_id, "prompt")
         .or_else(|| string_config(config, "prompt"))
         .unwrap_or_default();
-    let system = get_string(controller, module_id, "system")
-        .or_else(|| string_config(config, "system"))
+    let system = get_string(controller, module_id, "system_prompt")
+        .or_else(|| string_config(config, "system_prompt"))
         .unwrap_or_default();
 
     let mut packet = json!({

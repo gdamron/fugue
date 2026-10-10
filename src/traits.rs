@@ -264,6 +264,14 @@ pub trait ControlSurface: Send + Sync {
         None
     }
 
+    /// This surface as `Any`, for a runtime host that owns the module behind
+    /// it (the agent worker writes the agent's read-only telemetry through
+    /// its concrete controls). `None` by default. Control thread.
+    #[doc(hidden)]
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
     /// Coerces `value` to `key`'s declared [`ControlKind`] via
     /// [`ControlValue::coerced_to`]. Unknown keys pass through untouched so
     /// [`ControlSurface::set_control`] still owns the "unknown control" error.

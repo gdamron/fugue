@@ -16,9 +16,7 @@ pub(super) const NOT_YET_MIGRATED: &[&str] = &[];
 /// Number controls a factory does not read from config, so a config value
 /// for them is ignored rather than refused: (type, key, why).
 const CONTROLS_NOT_READ_FROM_CONFIG: &[(&str, &str, &str)] = &[
-    ("agent", "request_count", "a counter the runtime keeps"),
-    ("agent", "trigger_count", "a counter the gate input keeps"),
-    ("agent", "reset_count", "a counter the reset input keeps"),
+    ("agent", "request_count", "read-only telemetry"),
     ("cell_sequencer", "loop_count", "read-only telemetry"),
     ("cell_sequencer", "cell", "read-only telemetry"),
     ("cell_sequencer", "cell_count", "read-only telemetry"),

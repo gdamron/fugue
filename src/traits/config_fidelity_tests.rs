@@ -8,20 +8,9 @@
 use super::*;
 use crate::ModuleRegistry;
 
-/// Live telemetry, written by the runtime and never authored.
-const TELEMETRY: &[&str] = &[
-    "agent.history_json",
-    "agent.last_apply_error",
-    "agent.last_error",
-    "agent.last_response",
-    "agent.last_response_json",
-    "agent.request_count",
-    "agent.reset_count",
-    "agent.status",
-    "agent.trigger_count",
-    "code.last_error",
-    "code.status",
-];
+/// Live telemetry the runtime writes through the setter, never authored
+/// (agent telemetry is read-only, so its setter refuses it).
+const TELEMETRY: &[&str] = &["code.last_error", "code.status"];
 
 /// Controls whose value is checked elsewhere: an action rather than a state
 /// (a kit's `play`, a note, a cell `next_cell`), an asset load
