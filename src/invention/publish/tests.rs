@@ -12,6 +12,7 @@ mod declared;
 mod declared_routes;
 mod drops;
 mod inputs;
+mod null_backend;
 mod pilot;
 pub(crate) mod probe;
 mod request_intake;
@@ -64,6 +65,7 @@ impl Rig {
             runtime.control_surfaces,
             ports,
             Arc::new(runtime.registry.clone()),
+            None,
         );
         Self {
             graph,

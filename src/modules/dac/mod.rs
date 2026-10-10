@@ -27,3 +27,4 @@ pub use driver::{default_sample_rate, AudioBackend, AudioDriver, BlockRenderFn};
 pub use driver_wasm::{default_sample_rate, AudioBackend, AudioDriver, BlockRenderFn};
 pub use module::{DacFactory, DacModule};
 pub use null::NullBackend;
+pub(crate) use null::Settle;

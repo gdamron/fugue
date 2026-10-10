@@ -32,6 +32,7 @@ use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
 use crate::control_request::{Outcome, RequestId, RequestSender};
+use crate::modules::dac::Settle;
 use crate::ModuleRegistry;
 
 mod change;
@@ -67,6 +68,9 @@ pub(crate) struct LiveGraph {
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
     registry: LiveRegistry,
+    /// Renders a zero-length block after each change, for a backend that
+    /// never renders on its own (see [`crate::NullBackend`]).
+    settle: Option<Settle>,
 }
 
 /// What a committed change did, for the caller's follow-up work.
@@ -83,13 +87,17 @@ pub(crate) struct Committed {
 impl LiveGraph {
     /// Links `graph`, which is about to move to the audio thread, to a new
     /// publisher keeping the given runtime mirrors, with edits building
-    /// modules against `registry` until a commit adopts another.
+    /// modules against `registry` until a commit adopts another. With
+    /// `settle`, every change (a control request, a publication, an input
+    /// write) is taken up by a zero-length block before the call making it
+    /// returns.
     pub(crate) fn link(
         graph: &mut SignalGraph,
         state: Arc<Mutex<RuntimeState>>,
         control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
         module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
         registry: Arc<ModuleRegistry>,
+        settle: Option<Settle>,
     ) -> Self {
         let (publisher, ends) = Publisher::link(graph);
         let live = Self {
@@ -101,6 +109,7 @@ impl LiveGraph {
             control_surfaces,
             module_ports,
             registry: LiveRegistry::new(registry),
+            settle,
         };
         // Every module the graph starts with runs from here on.
         let port = live.port();
@@ -186,6 +195,15 @@ impl LiveGraph {
             requests: self.requests.clone(),
             pending: self.pending.clone(),
             module_id: String::new(),
+            settle: self.settle.clone(),
+        }
+    }
+
+    /// Takes up every change made so far with a zero-length block, when the
+    /// backend never renders on its own. Call it with no lock held.
+    fn settle(&self) {
+        if let Some(settle) = &self.settle {
+            settle.settle();
         }
     }
 
@@ -378,6 +396,7 @@ impl LiveGraph {
         }
         drop(publisher);
         drop(superseded);
+        self.settle();
         Ok(committed)
     }
 
@@ -403,7 +422,10 @@ impl LiveGraph {
     ) -> Result<(), GraphCommandError> {
         let mut publisher = self.publisher.lock().unwrap();
         let write = publisher.input_write(module_id, port, value)?;
-        publisher.queue_input(write)
+        publisher.queue_input(write)?;
+        drop(publisher);
+        self.settle();
+        Ok(())
     }
 
     /// Adds a module, replacing one with the same id in place. Built

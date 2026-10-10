@@ -15,11 +15,20 @@ impl SignalGraph {
     /// sample (see [`super::requests`]); with none due it is one segment.
     /// All of it runs inside an [`AudioThreadScope`], so debug builds catch
     /// a payload dropped, or control-only code reached, from here.
+    ///
+    /// A zero-length block takes up publications, input writes and requests
+    /// as any block start does and applies the requests due at the current
+    /// sample, but runs no module and advances no time: how a backend with
+    /// no clock settles what was submitted (`NullBackend`). Device streams
+    /// and offline renders never ask for one.
     pub(crate) fn process_block(&mut self, left: &mut [f32], right: &mut [f32]) {
         let _audio_thread = AudioThreadScope::enter();
         self.ensure_process_order();
 
         let frames = left.len().min(right.len()).min(self.block_capacity);
+        if frames == 0 {
+            self.apply_due_requests(0);
+        }
         let mut start = 0;
         while start < frames {
             let end = start + self.apply_due_requests(frames - start);

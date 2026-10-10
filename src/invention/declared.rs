@@ -10,7 +10,8 @@
 //!   cells, and each control written so is applied to the module when it
 //!   is bound to run (what it was built with stands for the rest).
 //! - **Live**: a request through the live graph's queue, applied on the
-//!   audio thread at its sample.
+//!   audio thread at its sample (on a `NullBackend`, by a zero-length
+//!   block before the write returns).
 //! - **Offline**: applied at once in an offline render's graph, under the
 //!   lock its renders take.
 //! - **Inner**: inside a development, reached only through the development.
@@ -41,6 +42,7 @@ use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
     Refusal, Request, RequestSender, RequestValue, RtValue, Writer,
 };
+use crate::modules::dac::Settle;
 use crate::traits::ControlSurfaceMap;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
@@ -74,6 +76,9 @@ pub(crate) struct RequestPort {
     pub(crate) requests: RequestSender,
     pub(crate) pending: Arc<Mutex<PendingLog>>,
     pub(crate) module_id: String,
+    /// Settles each request once submitted, when the backend never renders
+    /// on its own (see `LiveGraph::link`).
+    pub(crate) settle: Option<Settle>,
 }
 
 impl RequestPort {
@@ -174,6 +179,14 @@ impl DeclaredSurface {
                         value,
                     };
                     pending.submitted(id, write);
+                }
+                // Settled with no lock held: other writers carry on, and a
+                // request one of them queues meanwhile applies in the same
+                // block or theirs.
+                drop(pending);
+                drop(publisher);
+                if let Some(settle) = &port.settle {
+                    settle.settle();
                 }
                 Ok(())
             }

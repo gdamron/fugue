@@ -1,7 +1,7 @@
 //! Invention runtime for executing modular synthesis inventions.
 
 use crate::agents::AgentManager;
-use crate::modules::{AudioBackend, AudioDriver};
+use crate::modules::{AudioBackend, AudioDriver, NullBackend};
 use crate::registry::ModuleRegistry;
 use crate::scripting::ScriptManager;
 use crate::{ControlSurface, GraphModule};
@@ -89,6 +89,11 @@ impl InventionRuntime {
         graph.recompile();
 
         let control_surfaces = self.control_surfaces;
+        // A backend that never renders has every change settled as it is
+        // submitted (see `NullBackend`).
+        let settle = (&backend as &dyn std::any::Any)
+            .downcast_ref::<NullBackend>()
+            .map(NullBackend::settle_handle);
         // From here on the publisher is the only way the graph changes.
         let live = LiveGraph::link(
             &mut graph,
@@ -96,6 +101,7 @@ impl InventionRuntime {
             control_surfaces.clone(),
             module_ports.clone(),
             Arc::new(self.registry),
+            settle,
         );
         // Removed modules (a sink finalizing its file, say) are freed on a
         // control thread within a few blocks, not at the next edit.
@@ -118,6 +124,12 @@ impl InventionRuntime {
                 clock.anchor(&graph.transport, graph.current_sample);
             }
             let frames = left.len().min(right.len());
+            if frames == 0 {
+                // A backend with no clock settling a change (see
+                // `NullBackend`); a device stream never asks for this.
+                graph.process_block(left, right);
+                return;
+            }
             let block = graph.block_size.clamp(1, crate::MAX_BLOCK);
             let mut done = 0;
             while done < frames {
