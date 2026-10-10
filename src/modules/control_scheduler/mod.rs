@@ -147,7 +147,7 @@ fn ramp_value(from: f32, to: f32, progress: f32) -> f32 {
 ///
 /// # Inputs
 ///
-/// - `gate` - Clock gate input (rising edge advances the step counter)
+/// - `clock` - Clock input (a rising edge advances the step counter)
 /// - `reset` - Reset input (rising edge restarts the schedule from step 0)
 ///
 /// # Outputs

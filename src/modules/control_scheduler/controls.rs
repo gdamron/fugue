@@ -23,7 +23,7 @@ pub(crate) type SurfaceDirectory = Arc<Mutex<SurfaceMap>>;
 ///
 /// Controls:
 /// - `schedule` - The schedule as JSON (writable during playback)
-/// - `step` - Read-only: current step index (-1 before the first gate)
+/// - `step` - Read-only: current step index (-1 before the first clock edge)
 #[derive(Clone)]
 pub struct ControlSchedulerControls {
     shared: Arc<Shared>,
@@ -190,13 +190,13 @@ impl ControlSurface for ControlSchedulerControls {
         vec![
             ControlMeta::string(
                 "schedule",
-                "Schedule as JSON: [{at, module, control, value, ramp?}] \
-                 (at = gate rising-edge count, first edge = step 0)",
+                "Schedule as JSON: [{at_step, module, control, value, ramp_steps?}] \
+                 (at_step = clock rising-edge count, first edge = step 0)",
             )
             .with_default(self.schedule_json()),
             ControlMeta::number(
                 "step",
-                "Read-only: current step index (-1 before first gate)",
+                "Read-only: current step index (-1 before the first clock edge)",
             )
             .with_range(-1.0, f32::MAX)
             .with_default(self.step() as f32),
