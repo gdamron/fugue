@@ -15,7 +15,9 @@ use crate::Module;
 /// Before the module runs, the control thread building it is the only
 /// writer: its initial state, and writes made before it is bound. Once it
 /// runs, only the thread running it writes, through [`apply_declared`]:
-/// the audio thread, or an offline render under its graph's lock. The
+/// the audio thread, or an offline render under its graph's lock. A
+/// telemetry cell its module never writes may instead have a host thread
+/// as its one writer (the agent's worker, its `request_count`). The
 /// module's publication to the audio thread (the mailbox put and take)
 /// orders every earlier store before the audio thread's first.
 ///

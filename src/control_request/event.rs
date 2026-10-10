@@ -46,6 +46,12 @@ impl EventCounter {
     }
 }
 
+impl Default for EventCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A reader's position in an [`EventCounter`].
 ///
 /// A new cursor starts at zero, so its first [`take`](Self::take) reports

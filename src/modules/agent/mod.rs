@@ -9,9 +9,15 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::control_request::{
+    local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
+    RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{ConfigKey, ConfigReader};
-use crate::{ControlMeta, ControlSurface, Module};
+use crate::{ControlMeta, Module};
+
+use self::controls::{Edges, COOLDOWN as COOLDOWN_CONTROL, ENABLED, TABLE};
 
 pub use self::controls::AgentControls;
 
@@ -83,9 +89,11 @@ impl ModuleFactory for AgentFactory {
             config.cooldown,
         );
 
+        let (cells, edges) = controls.audio_parts();
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(AgentModule {
-                controls: controls.clone(),
+                cells,
+                edges,
                 inputs: inputs::AgentInputs::new(),
                 last_trigger: 0.0,
                 last_reset: 0.0,
@@ -144,9 +152,11 @@ fn parse_config(config: &serde_json::Value) -> Result<AgentConfig, Box<dyn std::
 ///
 /// This module intentionally has no outputs and no heavy processing. Its only
 /// audio-rate behavior is rising-edge detection for `trigger` and `reset`,
-/// counted on lock-free atomics.
+/// counted on lock-free atomics, and applying its declared controls. It
+/// holds no handle on the control-side strings or their lock.
 pub struct AgentModule {
-    controls: AgentControls,
+    cells: Arc<ControlCells>,
+    edges: Arc<Edges>,
     inputs: inputs::AgentInputs,
     last_trigger: f32,
     last_reset: f32,
@@ -162,10 +172,10 @@ impl Module for AgentModule {
             let trigger = self.inputs.trigger(i);
             let reset = self.inputs.reset(i);
             if trigger > 0.5 && self.last_trigger <= 0.5 {
-                self.controls.increment_trigger();
+                self.edges.trigger.record();
             }
             if reset > 0.5 && self.last_reset <= 0.5 {
-                self.controls.increment_reset();
+                self.edges.reset.record();
             }
             self.last_trigger = trigger;
             self.last_reset = reset;
@@ -197,8 +207,31 @@ impl Module for AgentModule {
         Err(format!("Unknown output port: {}", port))
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    /// `enabled` and `cooldown` are held in their cells for the worker.
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        match (control, value) {
+            (ENABLED, RtValue::Bool(_)) => Ok(value),
+            (COOLDOWN_CONTROL, RtValue::F32(seconds)) => Ok(RtValue::F32(seconds.max(0.0))),
+            _ => Err(Refusal::Unsupported),
+        }
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        self.controls.controls()
+        local_controls(self)
+    }
+
+    fn get_control(&self, key: &str) -> Result<f32, String> {
+        local_get(self, key)
+    }
+
+    fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        local_set(self, key, value)
     }
 }
 
@@ -223,7 +256,7 @@ mod tests {
             }
         }
         let frames = crate::MAX_BLOCK;
-        let edges = frames.div_ceil(8) as u64;
+        let edges = frames.div_ceil(8) as u32;
 
         let (_, allocs, frees) = crate::alloc_counter::allocator_events(|| module.process(frames));
         assert_eq!((allocs, frees), (0, 0));
