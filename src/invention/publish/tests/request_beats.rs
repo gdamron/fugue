@@ -259,6 +259,30 @@ fn a_reset_while_counting_beats_counts_as_reaching_the_next_beat() {
 }
 
 #[test]
+fn a_span_counts_from_before_a_reset_at_the_sample_it_arrives() {
+    for reset_first in [false, true] {
+        let mut rig = beat_rig(120.0);
+        rig.render(1);
+        // Half a beat in, once the next block starts.
+        rig.render(186);
+        let now = rig.graph.current_sample;
+        let reset = || submit_clock_at(&rig, RESET, RtValue::Bool(true), now);
+        if reset_first {
+            reset();
+        }
+        let id = submit_level(&rig, 0.5, BeatSpec::After(0.25));
+        if !reset_first {
+            reset();
+        }
+        render_counted(&mut rig, 1);
+        // The reset begins the next whole beat, past the span's end: it
+        // applies at the reset, not a quarter beat after it.
+        let applied = Outcome::Applied { at: now };
+        assert_eq!(outcomes_of(&mut rig, id), [(id, applied)], "{reset_first}");
+    }
+}
+
+#[test]
 fn removing_the_clock_or_the_target_refuses_what_waits_on_it() {
     let mut rig = beat_rig(120.0);
     rig.render(1);

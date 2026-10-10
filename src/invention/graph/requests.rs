@@ -334,6 +334,9 @@ impl SignalGraph {
             return remaining;
         };
         let now = self.current_sample;
+        // New beat spans count from the clocks as they are before a
+        // request timed in samples (a reset) moves them.
+        drain.watches.arm(drain.installed, self);
         drain
             .pending
             .apply_due(now, drain.installed, |target, value, retirer| {
