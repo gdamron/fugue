@@ -1,9 +1,15 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::control_request::{
+    local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
+    RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{ConfigKey, ConfigReader};
-use crate::{ControlMeta, ControlSurface, Module};
+use crate::{ControlMeta, Module};
+
+use self::controls::{ENABLED, TABLE, TICK_RATE as TICK_RATE_CONTROL};
 
 pub use self::controls::CodeControls;
 
@@ -64,7 +70,7 @@ impl ModuleFactory for CodeFactory {
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(CodeModule {
-                controls: controls.clone(),
+                cells: controls.cells(),
             })),
             handles: vec![(
                 "controls".to_string(),
@@ -113,9 +119,10 @@ fn parse_config(config: &serde_json::Value) -> Result<CodeConfig, Box<dyn std::e
 ///
 /// This module intentionally performs no DSP work in `process()`. Script
 /// execution happens on a host-managed thread or in the surrounding JS host for
-/// wasm builds.
+/// wasm builds. It holds its declared controls' cells, which the host reads,
+/// and nothing of the control-side strings or their lock.
 pub struct CodeModule {
-    controls: CodeControls,
+    cells: Arc<ControlCells>,
 }
 
 impl Module for CodeModule {
@@ -124,7 +131,6 @@ impl Module for CodeModule {
     }
 
     fn process(&mut self, _frames: usize) -> bool {
-        let _ = &self.controls;
         true
     }
 
@@ -152,8 +158,31 @@ impl Module for CodeModule {
         Err(format!("Unknown output port: {}", port))
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    /// Both controls are held in their cells for the script host.
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        match (control, value) {
+            (ENABLED, RtValue::Bool(_)) => Ok(value),
+            (TICK_RATE_CONTROL, RtValue::F32(rate)) => Ok(RtValue::F32(rate.max(0.0))),
+            _ => Err(Refusal::Unsupported),
+        }
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        self.controls.controls()
+        local_controls(self)
+    }
+
+    fn get_control(&self, key: &str) -> Result<f32, String> {
+        local_get(self, key)
+    }
+
+    fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        local_set(self, key, value)
     }
 }
 
