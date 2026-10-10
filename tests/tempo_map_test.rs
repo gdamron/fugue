@@ -66,8 +66,8 @@ const TEMPO_MAP_INVENTION: &str = r#"{
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
-        { "from": "clock", "from_port": "gate", "to": "tempo", "to_port": "gate" },
-        { "from": "clock", "from_port": "gate", "to": "dac", "to_port": "audio_left" }
+        { "from": "clock", "from_port": "beat", "to": "tempo", "to_port": "gate" },
+        { "from": "clock", "from_port": "beat", "to": "dac", "to_port": "audio_left" }
     ]
 }"#;
 
@@ -146,7 +146,7 @@ fn tempo_map_ramp_slows_smoothly_ritardando() {
             r#"{
             "version": "1.0.0",
             "modules": [
-                { "id": "clock", "type": "clock", "config": { "bpm": 120.0, "gate_duration": 0.5 } },
+                { "id": "clock", "type": "clock", "config": { "bpm": 120.0, "gate_length": 0.5 } },
                 {
                     "id": "tempo",
                     "type": "control_scheduler",
@@ -160,8 +160,8 @@ fn tempo_map_ramp_slows_smoothly_ritardando() {
                 { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
             ],
             "connections": [
-                { "from": "clock", "from_port": "gate_x4", "to": "tempo", "to_port": "gate" },
-                { "from": "clock", "from_port": "gate_x4", "to": "dac", "to_port": "audio_left" }
+                { "from": "clock", "from_port": "beat_x4", "to": "tempo", "to_port": "gate" },
+                { "from": "clock", "from_port": "beat_x4", "to": "dac", "to_port": "audio_left" }
             ]
         }"#,
         )
@@ -221,7 +221,7 @@ fn tempo_map_scale_multiplies_the_written_bpm() {
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
-                { "from": "clock", "from_port": "gate", "to": "tempo", "to_port": "gate" }
+                { "from": "clock", "from_port": "beat", "to": "tempo", "to_port": "gate" }
             ]
         }"#,
         )

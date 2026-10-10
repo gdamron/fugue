@@ -11,7 +11,7 @@
 //! gate that drives the sequencers — and fires every schedule entry whose
 //! `at` step is reached, on the exact frame of the edge. The first edge is
 //! step 0, matching sequencer numbering. Step granularity is whatever gate
-//! subdivision is patched in (`gate` for beats, `gate_x4` for 16ths, ...).
+//! subdivision is patched in (`beat` for beats, `beat_x4` for quarter beats, ...).
 //!
 //! A target whose module declares its controls is written through its
 //! automation slots, which the graph applies just before the target
@@ -53,7 +53,7 @@
 //!     }
 //!   ],
 //!   "connections": [
-//!     { "from": "clock", "from_port": "gate", "to": "automation", "to_port": "gate" }
+//!     { "from": "clock", "from_port": "beat", "to": "automation", "to_port": "gate" }
 //!   ]
 //! }
 //! ```

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
-use crate::module_config::{whole_number, ConfigError, ConfigKey, ConfigReader};
+use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -18,16 +18,15 @@ pub struct ClockFactory;
 
 const TYPE_ID: &str = "clock";
 const BPM: ConfigKey = ConfigKey::float("bpm");
-const GATE_DURATION: ConfigKey = ConfigKey::float("gate_duration");
+const GATE_LENGTH: ConfigKey = ConfigKey::float("gate_length");
 
 impl ModuleFactory for ClockFactory {
     fn type_id(&self) -> &'static str {
         TYPE_ID
     }
 
-    // `time_signature.beats_per_measure`, nested, is read as a `u32` too.
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const { &[BPM, GATE_DURATION, ConfigKey::json("time_signature")] }
+        const { &[BPM, GATE_LENGTH] }
     }
 
     fn build(
@@ -37,15 +36,10 @@ impl ModuleFactory for ClockFactory {
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let reader = ConfigReader::new(TYPE_ID, config);
         let bpm = reader.float(&BPM)?.map_or(120.0, f64::from);
-        let gate_duration = reader.float(&GATE_DURATION)?.map_or(0.25, f64::from);
+        let gate_length = reader.float(&GATE_LENGTH)?.map_or(0.25, f64::from);
 
-        let controls = ClockControls::new_with_gate_duration(bpm, gate_duration);
-        let mut clock = Clock::new(sample_rate, controls.clone());
-
-        // Apply time signature if specified
-        if let Some(beats) = beats_per_measure(&reader)? {
-            clock = clock.with_time_signature(beats);
-        }
+        let controls = ClockControls::new_with_gate_length(bpm, gate_length);
+        let clock = Clock::new(sample_rate, controls.clone());
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(clock)),
@@ -59,23 +53,11 @@ impl ModuleFactory for ClockFactory {
     }
 }
 
-/// Reads `time_signature.beats_per_measure`, or `None` when it is absent.
-fn beats_per_measure(reader: &ConfigReader) -> Result<Option<u32>, ConfigError> {
-    let Some(beats) = reader
-        .get("time_signature")
-        .and_then(|ts| ts.get("beats_per_measure"))
-        .filter(|beats| !beats.is_null())
-    else {
-        return Ok(None);
-    };
-    whole_number::<u32>(beats)
-        .map(Some)
-        .map_err(|r| reader.refuse("time_signature.beats_per_measure", r))
-}
-
 /// A master clock that generates timing signals for tempo-synchronized modules.
 ///
-/// Outputs timing information via the `gate` port for triggering downstream modules.
+/// Outputs a gate on every beat (`beat`), and at subdivisions and multiples
+/// of it (`beat_x2`, `beat_x4`, `beat_d2`, `beat_d4`), for driving
+/// downstream modules. The engine has no metre: bars are the composer's.
 ///
 /// # Tempo changes are phase-continuous
 ///
@@ -90,7 +72,6 @@ pub struct Clock {
     sample_rate: u32,
     ctrl: ClockControls,
     sample_count: u64,
-    beats_per_measure: u32,
     // Tempo epoch: the (sample, beats) anchor the continuous beat count is
     // measured from. Re-anchored on every bpm change to keep phase continuous.
     epoch_sample: u64,
@@ -99,43 +80,28 @@ pub struct Clock {
     // Timing state derived from the continuous beat count.
     beats: f64,
     phase: f32,
-    measure: u64,
-    beat_in_measure: u32,
     // Cached output for modular routing
     outputs: outputs::ClockOutputs,
 }
 
 impl Clock {
     /// Creates a new clock with the given sample rate and controls.
-    ///
-    /// Defaults to 4 beats per measure (4/4 time).
     pub fn new(sample_rate: u32, controls: ClockControls) -> Self {
         let bpm = controls.bpm();
         let mut clock = Self {
             sample_rate,
             ctrl: controls,
             sample_count: 0,
-            beats_per_measure: 4,
             epoch_sample: 0,
             epoch_beats: 0.0,
             last_bpm: bpm,
             beats: 0.0,
             phase: 0.0,
-            measure: 0,
-            beat_in_measure: 0,
             outputs: outputs::ClockOutputs::new(),
         };
         clock.update_signal();
         clock.update_cached_outputs(0);
         clock
-    }
-
-    /// Sets the time signature by specifying beats per measure.
-    pub fn with_time_signature(mut self, beats_per_measure: u32) -> Self {
-        self.beats_per_measure = beats_per_measure;
-        self.update_signal();
-        self.update_cached_outputs(0);
-        self
     }
 
     fn update_signal(&mut self) {
@@ -155,22 +121,20 @@ impl Clock {
 
         self.beats = beats;
         self.phase = beats.fract() as f32;
-        self.measure = (beats / self.beats_per_measure as f64).floor() as u64;
-        self.beat_in_measure = (beats % self.beats_per_measure as f64).floor() as u32;
     }
 
     fn update_cached_outputs(&mut self, i: usize) {
-        let gate_duration = self.ctrl.gate_duration();
+        let gate_length = self.ctrl.gate_length();
         let beats = self.beats;
 
         // PWM gate at a subdivision of `pulses_per_beat` pulses per beat. The
         // pulse phase is the fractional position within the current pulse;
-        // `gate_duration` is the duty cycle, so a shorter note keeps a
+        // `gate_length` is the duty cycle, so a shorter note keeps a
         // proportional gap. Phase comes from the continuous beat count, so a
         // mid-stream tempo change never clips or doubles a pulse at the seam.
         let pwm = |pulses_per_beat: f64| -> f32 {
             let phase = (beats * pulses_per_beat).fract();
-            if phase < gate_duration {
+            if phase < gate_length {
                 1.0
             } else {
                 0.0
@@ -179,11 +143,11 @@ impl Clock {
 
         self.outputs.set_all(
             i,
-            pwm(1.0),  // gate: beat rate
-            pwm(0.25), // gate_d4: whole note (¼× beat rate)
-            pwm(0.5),  // gate_d2: half note (½× beat rate)
-            pwm(2.0),  // gate_x2: 8th note (2× beat rate)
-            pwm(4.0),  // gate_x4: 16th note (4× beat rate)
+            pwm(1.0),  // beat
+            pwm(0.25), // beat_d4: one pulse every 4 beats
+            pwm(0.5),  // beat_d2: one pulse every 2 beats
+            pwm(2.0),  // beat_x2: 2 pulses per beat
+            pwm(4.0),  // beat_x4: 4 pulses per beat
         );
     }
 
@@ -271,7 +235,7 @@ impl Module for Clock {
             ControlMeta::new("bpm", "Tempo in beats per minute")
                 .with_range(1.0, 300.0)
                 .with_default(120.0),
-            ControlMeta::new("gate_duration", "Gate duration as fraction of beat")
+            ControlMeta::new("gate_length", "Gate length as a fraction of the pulse")
                 .with_range(0.0, 1.0)
                 .with_default(0.25),
         ]
@@ -280,7 +244,7 @@ impl Module for Clock {
     fn get_control(&self, key: &str) -> Result<f32, String> {
         match key {
             "bpm" => Ok(self.ctrl.bpm() as f32),
-            "gate_duration" => Ok(self.ctrl.gate_duration() as f32),
+            "gate_length" => Ok(self.ctrl.gate_length() as f32),
             _ => Err(format!("Unknown control key: {}", key)),
         }
     }
@@ -291,47 +255,11 @@ impl Module for Clock {
                 self.ctrl.set_bpm(value as f64);
                 Ok(())
             }
-            "gate_duration" => {
-                self.ctrl.set_gate_duration(value as f64);
+            "gate_length" => {
+                self.ctrl.set_gate_length(value as f64);
                 Ok(())
             }
             _ => Err(format!("Unknown control key: {}", key)),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn beats(config: serde_json::Value) -> Result<Option<u32>, String> {
-        beats_per_measure(&ConfigReader::new(TYPE_ID, &config)).map_err(|e| e.to_string())
-    }
-
-    #[test]
-    fn beats_per_measure_reads_a_whole_float_and_refuses_a_fraction() {
-        assert_eq!(beats(json!({})), Ok(None));
-        assert_eq!(beats(json!({ "time_signature": {} })), Ok(None));
-        assert_eq!(
-            beats(json!({ "time_signature": { "beats_per_measure": 3 } })),
-            Ok(Some(3))
-        );
-        assert_eq!(
-            beats(json!({ "time_signature": { "beats_per_measure": 4.0 } })),
-            Ok(Some(4))
-        );
-        let fraction = json!({ "time_signature": { "beats_per_measure": 4.5 } });
-        let error = ClockFactory
-            .build(48_000, &fraction)
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(
-            error.starts_with(
-                "clock config 'time_signature.beats_per_measure' expects a whole number"
-            ) && error.ends_with("got 4.5"),
-            "{error}"
-        );
     }
 }

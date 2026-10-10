@@ -38,7 +38,7 @@ fn test_simple_chain() {
             }
         ],
         "connections": [
-            {"from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate"},
+            {"from": "clock", "from_port": "beat", "to": "adsr", "to_port": "gate"},
             {"from": "adsr", "from_port": "envelope", "to": "dac", "to_port": "audio"}
         ]
     }
@@ -95,7 +95,7 @@ fn test_multi_input_vca() {
             }
         ],
         "connections": [
-            {"from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate"},
+            {"from": "clock", "from_port": "beat", "to": "adsr", "to_port": "gate"},
             {"from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level"},
             {"from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio"},
             {"from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio"}
@@ -161,7 +161,7 @@ fn test_diamond_pattern() {
             }
         ],
         "connections": [
-            {"from": "clock", "from_port": "gate", "to": "melody", "to_port": "gate"},
+            {"from": "clock", "from_port": "beat", "to": "melody", "to_port": "gate"},
             {"from": "melody", "from_port": "gate", "to": "adsr", "to_port": "gate"},
             {"from": "melody", "from_port": "frequency", "to": "osc", "to_port": "frequency"},
             {"from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level"},
@@ -321,7 +321,7 @@ fn test_complex_valid_graph() {
             }
         ],
         "connections": [
-            {"from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate"},
+            {"from": "clock", "from_port": "beat", "to": "adsr", "to_port": "gate"},
             {"from": "adsr", "from_port": "envelope", "to": "vca1", "to_port": "level"},
             {"from": "adsr", "from_port": "envelope", "to": "vca2", "to_port": "level"},
             {"from": "osc1", "from_port": "audio", "to": "vca1", "to_port": "audio"},

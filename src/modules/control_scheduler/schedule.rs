@@ -42,7 +42,7 @@ impl ScheduleValue {
 /// `at` counts steps: rising edges of the scheduler's `gate` input, with the
 /// first edge being step 0 — the same numbering the sequencers use. The step
 /// granularity is whatever clock gate the scheduler is patched to (e.g. the
-/// clock's `gate` for beats, `gate_x4` for 16ths). Positions in beats or
+/// clock's `beat` for beats, `beat_x4` for quarter beats). Positions in beats or
 /// measures compile down to steps in whatever produces the schedule.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScheduleEntry {

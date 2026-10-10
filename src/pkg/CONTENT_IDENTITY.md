@@ -297,13 +297,13 @@ clock triggers a sustained A3 pad through the bundled instrument:
     "ref":{"package":"fugue.instruments.pad","version":"2026.9.0"}
   }],
   "modules":[
-    {"id":"clock","type":"clock","config":{"bpm":60,"gate_duration":0.5}},
+    {"id":"clock","type":"clock","config":{"bpm":60,"gate_length":0.5}},
     {"id":"pitch","type":"melody","config":{"root_note":57,"degrees":[0],"note_weights":[1]}},
     {"id":"voice","type":"my_pad"},
     {"id":"out","type":"dac"}
   ],
   "connections":[
-    {"from":"clock","from_port":"gate","to":"pitch","to_port":"gate"},
+    {"from":"clock","from_port":"beat","to":"pitch","to_port":"gate"},
     {"from":"pitch","from_port":"frequency","to":"voice","to_port":"frequency"},
     {"from":"pitch","from_port":"gate","to":"voice","to_port":"gate"},
     {"from":"voice","from_port":"audio","to":"out","to_port":"audio"}

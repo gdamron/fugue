@@ -32,8 +32,8 @@ const SCHEDULED_CUT_INVENTION: &str = r#"{
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
-        { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" },
-        { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "audio.0" },
+        { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "gate" },
+        { "from": "clock", "from_port": "beat", "to": "mixer", "to_port": "audio.0" },
         { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
         { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
     ]
@@ -108,8 +108,8 @@ fn scheduled_renders_are_byte_identical() {
                     { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
                 ],
                 "connections": [
-                    { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" },
-                    { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "audio.0" },
+                    { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "gate" },
+                    { "from": "clock", "from_port": "beat", "to": "mixer", "to_port": "audio.0" },
                     { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
                     { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
                 ]
@@ -148,7 +148,7 @@ fn scheduling_the_driving_clock_changes_tempo() {
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
-                { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" }
+                { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "gate" }
             ]
         }"#,
         )
@@ -247,8 +247,8 @@ fn schedules_splice_in_via_assets() {
                 { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
             ],
             "connections": [
-                { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" },
-                { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "audio.0" },
+                { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "gate" },
+                { "from": "clock", "from_port": "beat", "to": "mixer", "to_port": "audio.0" },
                 { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
                 { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
             ]
@@ -327,7 +327,7 @@ fn unresolvable_schedules_fail_at_load() {
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
-                { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" }
+                { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "gate" }
             ]
         }"#,
         )

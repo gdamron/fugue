@@ -25,7 +25,7 @@ mod tests {
         // Run for 2 beats
         let mut last_gate = 0.0f32;
         for i in 0..(samples_per_beat * 2) {
-            let gate = clock.get_output("gate").unwrap();
+            let gate = clock.get_output("beat").unwrap();
 
             if gate > 0.5 {
                 gate_high_count += 1;

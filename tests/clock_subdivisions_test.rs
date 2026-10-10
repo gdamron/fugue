@@ -1,22 +1,22 @@
 // Verifies the Clock module emits correct gate pulses on its subdivision outputs.
 //
 // At 120 BPM / 44100 Hz, one beat = 22050 samples. Over exactly 4 beats we expect:
-//   gate    — 4 rising edges (beat)
-//   gate_d4 — 1 rising edge  (whole note: ¼× beat rate)
-//   gate_d2 — 2 rising edges (half note: ½× beat rate)
-//   gate_x2 — 8 rising edges (8th note: 2× beat rate)
-//   gate_x4 — 16 rising edges (16th note: 4× beat rate)
+//   beat    — 4 rising edges
+//   beat_d4 — 1 rising edge  (one every 4 beats)
+//   beat_d2 — 2 rising edges (one every 2 beats)
+//   beat_x2 — 8 rising edges (2 per beat)
+//   beat_x4 — 16 rising edges (4 per beat)
 
 #[cfg(test)]
 mod tests {
     use fugue::*;
 
     const SUBDIVISIONS: [(&str, usize); 5] = [
-        ("gate", 4),
-        ("gate_d4", 1),
-        ("gate_d2", 2),
-        ("gate_x2", 8),
-        ("gate_x4", 16),
+        ("beat", 4),
+        ("beat_d4", 1),
+        ("beat_d2", 2),
+        ("beat_x2", 8),
+        ("beat_x4", 16),
     ];
 
     #[test]
@@ -55,21 +55,25 @@ mod tests {
     fn test_clock_subdivision_unknown_port_errors() {
         let sample_rate = 44100;
         let clock = Clock::new(sample_rate, ClockControls::new(120.0));
-        assert!(clock.get_output("gate_x8").is_err());
+        assert!(clock.get_output("beat_x8").is_err());
+        // The pre-convention names are gone (clean break).
+        for old in ["gate", "gate_d4", "gate_d2", "gate_x2", "gate_x4"] {
+            assert!(clock.get_output(old).is_err(), "{old}");
+        }
     }
 
     #[test]
     fn test_clock_subdivision_duty_cycle_scales_with_period() {
-        // With 50% gate_duration, each subdivision port should be HIGH for
+        // With 50% gate_length, each subdivision port should be HIGH for
         // roughly half of its period — not half of a beat.
         let sample_rate = 44100;
-        let tempo = ClockControls::new_with_gate_duration(120.0, 0.5);
+        let tempo = ClockControls::new_with_gate_length(120.0, 0.5);
         let mut clock = Clock::new(sample_rate, tempo.clone());
 
         let samples_per_beat = tempo.samples_per_beat(sample_rate) as usize;
         let total_samples = samples_per_beat * 4;
 
-        let ports = ["gate", "gate_d4", "gate_d2", "gate_x2", "gate_x4"];
+        let ports = ["beat", "beat_d4", "beat_d2", "beat_x2", "beat_x4"];
         let mut high = [0usize; 5];
 
         for _ in 0..total_samples {
@@ -97,4 +101,21 @@ mod tests {
             );
         }
     }
+}
+
+#[test]
+fn the_clock_refuses_its_pre_convention_config_keys() {
+    let registry = fugue::ModuleRegistry::default();
+    let refused = [
+        serde_json::json!({ "gate_duration": 0.5 }),
+        serde_json::json!({ "time_signature": { "beats_per_measure": 4, "beat_unit": 4 } }),
+    ];
+    for config in refused {
+        assert!(
+            registry.build("clock", 48_000, &config).is_err(),
+            "{config}"
+        );
+    }
+    let config = serde_json::json!({ "bpm": 90.0, "gate_length": 0.5 });
+    assert!(registry.build("clock", 48_000, &config).is_ok());
 }
