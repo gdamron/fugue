@@ -497,3 +497,14 @@ fn an_integer_alias_must_take_every_whole_number_its_first_does() {
         assert!(build(first, later).is_ok(), "{first} then {later}");
     }
 }
+
+#[test]
+fn a_clamping_integer_reads_pending_automation_as_its_module_will_hold_it() {
+    let built = DialFactory.build(48_000, &json!({})).unwrap();
+    let steps = built.control_surface.unwrap().automation("steps").unwrap();
+    steps.write_number(200.0);
+    assert_eq!(steps.current(), Some(8.0), "a ramp starts from it");
+    steps.write_number(-16_777_216.0);
+    // Refused: past what a client's f32 carries unambiguously.
+    assert_eq!(steps.current(), Some(8.0));
+}
