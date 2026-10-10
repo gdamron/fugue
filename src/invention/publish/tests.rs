@@ -316,7 +316,16 @@ fn concurrent_writers_all_land() {
     for writer in writers {
         writer.join().unwrap();
     }
-    rig.render(1);
+    // Edits queue rather than fold, and a block installs a bounded number,
+    // so the ones still queued take a few more blocks.
+    loop {
+        rig.live.reclaim();
+        rig.render(1);
+        let (generation, applied) = rig.generation_and_applied();
+        if applied == generation {
+            break;
+        }
+    }
 
     assert_eq!(rig.graph.modules.len(), 23);
     let dac = rig.graph.modules.get_index_of("dac").unwrap();
