@@ -289,6 +289,42 @@ fn removing_the_clock_or_the_target_refuses_what_waits_on_it() {
 }
 
 #[test]
+fn a_tempo_change_on_a_beat_leaves_that_beat_where_it_was() {
+    for new_bpm in [0.0, 60.0, 240.0] {
+        for tempo_first in [true, false] {
+            let mut rig = beat_rig(120.0);
+            let tempo = || {
+                let control = ("clock", BPM);
+                let value = RtValue::F32(new_bpm);
+                submit_on(&rig, control, value, "clock", BeatSpec::After(4.0), None)
+            };
+            let level = || submit_level(&rig, 0.5, BeatSpec::After(4.0));
+            let ids = if tempo_first {
+                [tempo(), level()]
+            } else {
+                [level(), tempo()]
+            };
+            let out = render_counted(&mut rig, blocks_for(120.0, 4.0));
+            let context = format!("{new_bpm} bpm, tempo first: {tempo_first}");
+            // Beat 4 at 120 bpm is sample 95999: its gate rises there, with
+            // the level, and the new tempo runs from the sample after.
+            let applied = Outcome::Applied { at: 95_999 };
+            let got: Vec<_> = outcomes(&mut rig);
+            assert_eq!(got, ids.map(|id| (id, applied)), "{context}");
+            assert_eq!(out[95_999], 1.5, "{context}");
+            assert!(out[95_998] < 1.0, "{context}");
+            let mut twin = Twin::new(120.0);
+            twin.run_to(96_000);
+            let clock = rig.graph.modules["clock"].module().timeline().unwrap();
+            let after =
+                4.0 + (rig.graph.current_sample - 96_000) as f64 * f64::from(new_bpm) / 2_880_000.0;
+            assert_eq!(twin.clock.position(), 4.0, "{context}");
+            assert!((clock.position() - after).abs() < 1e-9, "{context}");
+        }
+    }
+}
+
+#[test]
 fn full_watches_refuse_a_beat_request_without_holding_the_queue() {
     let mut rig = beat_rig(120.0);
     rig.render(1);

@@ -489,6 +489,13 @@ pub trait Module: Send {
         None
     }
 
+    /// [`Module::timeline`], to latch (see `Timeline::latch`).
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn timeline_mut(&mut self) -> Option<&mut dyn Timeline> {
+        None
+    }
+
     /// Legacy module-local control metadata surface.
     fn controls(&self) -> Vec<ControlMeta> {
         vec![]
