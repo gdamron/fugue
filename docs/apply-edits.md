@@ -213,7 +213,7 @@ published, exactly as the module's setter would check it. Every write is
 checked, so a value the module refuses fails the batch even when a later edit
 overwrites it. A value the module
 would refuse is `invalid_control_value` at that edit's index: a read-only
-control (a sequencer's `current_cell`, say), text that does not parse as the
+control (a sequencer's `cell`, say), text that does not parse as the
 JSON a control expects (such as `sequences_json`), or an option the control
 does not offer. Within those rules a module may still clamp a number into its
 range or accept an alias for an option, as it does for a standalone write.

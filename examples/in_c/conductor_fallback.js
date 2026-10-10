@@ -70,8 +70,8 @@ function readBool(moduleId, control) {
 }
 
 function pulseAdvance(sequencerId) {
-  graph.setControl(sequencerId, "advance", 1);
-  graph.setControl(sequencerId, "advance", 0);
+  graph.setControl(sequencerId, "next_cell", 1);
+  graph.setControl(sequencerId, "next_cell", 0);
 }
 
 function syncSteps(index, cell) {
@@ -132,9 +132,9 @@ function tick() {
 
   for (let i = 0; i < cfg.sequencers.length; i++) {
     const id = cfg.sequencers[i];
-    const cell = readNumber(id, "current_cell");
+    const cell = readNumber(id, "cell");
     const loopCount = readNumber(id, "loop_count");
-    const total = readNumber(id, "total_cells");
+    const total = readNumber(id, "cell_count");
     cells.push(cell);
     loops.push(loopCount);
     syncSteps(i, cell);
@@ -162,7 +162,7 @@ function tick() {
 
     if (cell >= totalCells - 1) {
       if (allAtLast && loopCount >= cfg.lastCellHoldLoops) {
-        graph.setControl(id, "selected_sequence", 0);
+        graph.setControl(id, "select_cell", 0);
       }
       continue;
     }
