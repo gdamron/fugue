@@ -32,14 +32,13 @@ pub(super) fn dial_rig() -> Rig {
 
 /// Submits `value` for `control` of the dial as a front door would.
 fn submit(rig: &Rig, control: ControlIndex, value: RtValue, at: u64, event: bool) -> RequestId {
-    let mut publisher = rig.live.publisher().lock().unwrap();
+    let publisher = rig.live.publisher().lock().unwrap();
     let target = publisher.control_target("dial", control).unwrap();
     let mut request = Request::new(target, RequestValue::Value(value));
     request.when = When::AtSample(at);
     request.event = event;
-    let id = rig.live.requests.submit(request).unwrap();
-    publisher.note_written();
-    id
+    // Queued before the publisher is released, so ahead of any later edit.
+    rig.live.requests.submit(request).unwrap()
 }
 
 fn held(rig: &Rig, control: ControlIndex) -> RtValue {

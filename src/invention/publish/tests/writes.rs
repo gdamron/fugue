@@ -157,7 +157,7 @@ fn a_write_follows_its_module_to_a_new_index() {
 fn a_write_for_a_pending_publication_waits_for_its_install() {
     let (mut rig, probes) = rig_with_probes(&["p1", "p2"]);
     rig.hold_a_retirement();
-    // Removes osc1 and adds p3, but stays untaken while a retirement is
+    // Removes osc1 and adds p3, but waits to install while a retirement is
     // held. Against the running graph p2's new index 3 is p1, and p3's
     // new index 4 is p2.
     let p3 = probe(&rig, "p3");

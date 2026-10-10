@@ -146,7 +146,7 @@ fn a_write_held_for_a_pending_publication_is_clean() {
     rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
     rig.live.write_input("osc3", "frequency", 0.5).unwrap();
 
-    // The publication stays untaken, so the write waits in the ring.
+    // The edit waits to install, so the write waits in the ring.
     let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
     assert_eq!((allocs, frees), (0, 0), "holding the write");
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);

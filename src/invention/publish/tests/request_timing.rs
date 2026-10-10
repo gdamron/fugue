@@ -22,7 +22,7 @@ fn try_submit_with_ttl(
     when: When,
     ttl: u64,
 ) -> Option<RequestId> {
-    let mut publisher = rig.live.publisher().lock().unwrap();
+    let publisher = rig.live.publisher().lock().unwrap();
     let target = publisher
         .control_target(module_id, ControlIndex(control))
         .unwrap();
@@ -30,7 +30,6 @@ fn try_submit_with_ttl(
     request.when = when;
     request.ttl = Some(ttl);
     let id = rig.live.requests.submit(request).ok()?;
-    publisher.note_written();
     Some(id)
 }
 

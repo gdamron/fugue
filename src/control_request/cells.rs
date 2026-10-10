@@ -16,8 +16,9 @@ use crate::Module;
 /// writer: its initial state, and writes made before it is bound. Once it
 /// runs, only the thread running it writes, through [`apply_declared`]:
 /// the audio thread, or an offline render under its graph's lock. The
-/// module's publication to the audio thread (the mailbox put and take)
-/// orders every earlier store before the audio thread's first.
+/// module's publication to the audio thread (its edit's push and pop in
+/// the request queue) orders every earlier store before the audio thread's
+/// first.
 ///
 /// # What a reader sees
 ///

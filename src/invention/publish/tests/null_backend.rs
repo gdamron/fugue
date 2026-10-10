@@ -19,13 +19,12 @@ use crate::ControlValue;
 
 /// Queues `value` for the dial's level at `when`, as a front door would.
 fn submit(rig: &Rig, value: f32, when: When) -> crate::control_request::RequestId {
-    let mut publisher = rig.live.publisher().lock().unwrap();
+    let publisher = rig.live.publisher().lock().unwrap();
     let target = publisher.control_target("dial", LEVEL).unwrap();
     let mut request = Request::new(target, RequestValue::Value(RtValue::F32(value)));
     request.when = when;
-    let id = rig.live.requests.submit(request).unwrap();
-    publisher.note_written();
-    id
+    // Queued before the publisher is released, so ahead of any later edit.
+    rig.live.requests.submit(request).unwrap()
 }
 
 fn level(rig: &Rig) -> RtValue {
@@ -297,13 +296,12 @@ fn submit_timed(running: &RunningInvention, id: &str, key: &str, value: f32, whe
     let index: ControlIndex = surface.declaration(key).unwrap().index;
     let live = &running.live;
     {
-        let mut publisher = live.publisher().lock().unwrap();
+        let publisher = live.publisher().lock().unwrap();
         let target = publisher.control_target(id, index).unwrap();
         let mut request = Request::new(target, RequestValue::Value(RtValue::F32(value)));
         request.when = when;
         let mut pending = live.pending.lock().unwrap();
         let request = live.requests.submit(request).unwrap();
-        publisher.note_written();
         let write = PendingWrite {
             module_id: id.to_string(),
             key: key.to_string(),

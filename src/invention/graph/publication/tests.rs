@@ -97,7 +97,6 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         topology,
         remap: SurvivorRemap::default(),
         generation: 0,
-        absorbed: Vec::new(),
     })
 }
 
@@ -421,44 +420,6 @@ fn queued_input_writes_reach_the_module() {
     let port = frequency_port(&graph);
     let osc1 = graph.modules.get_mut("osc1").unwrap().module_mut();
     assert!(osc1.input_block_mut(port).iter().all(|v| *v == 0.25));
-}
-
-#[test]
-fn folding_composes_survivor_remaps_against_the_running_graph() {
-    // The first removes osc1 and rebuilds osc2; the second, prepared on top
-    // of it, keeps both osc2 and dac as survivors and adds osc1 back.
-    let mut first = publication(
-        vec![
-            ("osc2", Next::Prepared(osc(550.0))),
-            ("dac", Next::Survivor("dac")),
-        ],
-        vec![edge("osc2", "dac", "audio")],
-    );
-    first.map_survivors(BASE_IDS);
-    assert_eq!(first.remap.len(), 3);
-    assert_eq!(
-        (first.remap.get(0), first.remap.get(1), first.remap.get(2)),
-        (None, None, Some(1))
-    );
-
-    let mut next = publication(
-        vec![
-            ("dac", Next::Survivor("dac")),
-            ("osc2", Next::Survivor("oscillator")),
-            ("osc1", Next::Prepared(osc(440.0))),
-        ],
-        vec![edge("osc2", "dac", "audio"), edge("osc1", "dac", "audio")],
-    );
-    next.map_survivors(["osc2", "dac"]);
-    assert_eq!((next.remap.get(0), next.remap.get(1)), (Some(1), Some(0)));
-    drop(next.absorb(first, false));
-
-    // Only the running dac survives both: the running osc1 was removed, and
-    // osc2 is the instance the first publication built.
-    assert_eq!(next.remap.len(), 3);
-    let remap: Vec<_> = next.remap.survivors().collect();
-    assert_eq!(remap, [(2, 0)]);
-    assert_eq!(next.survivor_count(), 1);
 }
 
 #[test]

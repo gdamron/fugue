@@ -203,7 +203,7 @@ impl Publisher {
     ///
     /// The caller submits the request before releasing the publisher, so it
     /// is in the queue before any later publication's edit (see
-    /// `graph::requests`), and then calls [`Self::note_written`].
+    /// `graph::requests`).
     // The front doors that submit requests arrive with FUG-310's controls.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn control_target(
@@ -224,14 +224,8 @@ impl Publisher {
         })
     }
 
-    /// Records that a write resolved by [`Self::input_write`], or a request
-    /// resolved by [`Self::control_target`], was queued. Nothing needs the
-    /// record since edits queue in order rather than fold; it goes with
-    /// folding's other remains.
-    pub(crate) fn note_written(&mut self) {}
-
-    /// Queues a write resolved by [`Self::input_write`] for the next block,
-    /// noting it written. Fails with [`GraphCommandError::QueueFull`] when
+    /// Queues a write resolved by [`Self::input_write`] for the next block.
+    /// Fails with [`GraphCommandError::QueueFull`] when
     /// the audio thread has not drained earlier writes, and with
     /// [`GraphCommandError::AudioThreadStopped`] when it is gone.
     pub(crate) fn queue_input(&mut self, write: InputWrite) -> Result<(), GraphCommandError> {
@@ -241,7 +235,6 @@ impl Publisher {
         self.inputs
             .push(write)
             .map_err(|_| GraphCommandError::QueueFull)?;
-        self.note_written();
         Ok(())
     }
 
@@ -303,7 +296,6 @@ impl Publisher {
             return Ok(Published {
                 previous: self.mirror.clone(),
                 built: prepared.built,
-                superseded: None,
             });
         };
         // Edits install in queue order, so the mirror is the order the
@@ -330,7 +322,6 @@ impl Publisher {
         Ok(Published {
             previous,
             built: prepared.built,
-            superseded: None,
         })
     }
 }
@@ -368,7 +359,4 @@ pub(crate) struct Published {
     pub(crate) previous: TopologyMirror,
     /// The modules the change built (instances moved to the audio thread).
     pub(crate) built: IndexMap<String, BuiltModule>,
-    /// A publication the audio thread never took, folded into this one;
-    /// what remains of it is the caller's to drop off the publisher lock.
-    pub(crate) superseded: Option<Box<Publication>>,
 }
