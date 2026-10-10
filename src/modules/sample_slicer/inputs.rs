@@ -2,24 +2,24 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 2] = ["trigger", "slice"];
+pub const INPUTS: [&str; 2] = ["play", "slice"];
 
 pub struct SampleSlicerInputs {
-    trigger: [f32; MAX_BLOCK],
+    play: [f32; MAX_BLOCK],
     slice: [f32; MAX_BLOCK],
 }
 
 impl SampleSlicerInputs {
     pub fn new(initial_slice: usize) -> Self {
         Self {
-            trigger: [0.0; MAX_BLOCK],
+            play: [0.0; MAX_BLOCK],
             slice: [initial_slice as f32; MAX_BLOCK],
         }
     }
 
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
-            "trigger" => self.trigger.fill(value),
+            "play" => self.play.fill(value),
             "slice" => self.slice.fill(value),
             _ => return Err(format!("Unknown input port: {}", port)),
         }
@@ -29,14 +29,14 @@ impl SampleSlicerInputs {
     #[inline]
     pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
         match index {
-            0 => &mut self.trigger,
+            0 => &mut self.play,
             _ => &mut self.slice,
         }
     }
 
     #[inline]
-    pub fn trigger(&self, index: usize) -> f32 {
-        self.trigger[index]
+    pub fn play(&self, index: usize) -> f32 {
+        self.play[index]
     }
 
     #[inline]

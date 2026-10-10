@@ -25,14 +25,14 @@ const TELEMETRY: &[&str] = &[
 
 /// Controls whose value is checked elsewhere: an action rather than a state
 /// (a pad's `trigger`, a note, a cell `next_cell`), an asset load
-/// (`source`), or a schedule that needs a runtime to resolve against (see
+/// (`asset`), or a schedule that needs a runtime to resolve against (see
 /// the scheduler's own tests).
 const ELSEWHERE: &[&str] = &[
     "sample_kit.trigger",
     "sample_instrument.note_on",
     "sample_instrument.note_off",
     "cell_sequencer.next_cell",
-    "sample_player.source",
+    "sample_player.asset",
     "control_scheduler.schedule",
 ];
 

@@ -2,14 +2,14 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 3] = ["play", "loop", "pitch"];
+pub const INPUTS: [&str; 3] = ["play", "loop", "pitch_ratio"];
 
 pub struct SamplePlayerInputs {
     play: [f32; MAX_BLOCK],
     loop_enabled: [f32; MAX_BLOCK],
     loop_connected: bool,
-    pitch: [f32; MAX_BLOCK],
-    pitch_connected: bool,
+    pitch_ratio: [f32; MAX_BLOCK],
+    pitch_ratio_connected: bool,
 }
 
 impl SamplePlayerInputs {
@@ -18,8 +18,8 @@ impl SamplePlayerInputs {
             play: [0.0; MAX_BLOCK],
             loop_enabled: [0.0; MAX_BLOCK],
             loop_connected: false,
-            pitch: [1.0; MAX_BLOCK],
-            pitch_connected: false,
+            pitch_ratio: [1.0; MAX_BLOCK],
+            pitch_ratio_connected: false,
         }
     }
 
@@ -35,9 +35,9 @@ impl SamplePlayerInputs {
                 self.loop_connected = true;
                 Ok(())
             }
-            "pitch" => {
-                self.pitch.fill(value);
-                self.pitch_connected = true;
+            "pitch_ratio" => {
+                self.pitch_ratio.fill(value);
+                self.pitch_ratio_connected = true;
                 Ok(())
             }
             _ => Err(format!("Unknown input port: {}", port)),
@@ -50,7 +50,7 @@ impl SamplePlayerInputs {
         match index {
             0 => &mut self.play,
             1 => &mut self.loop_enabled,
-            _ => &mut self.pitch,
+            _ => &mut self.pitch_ratio,
         }
     }
 
@@ -58,7 +58,7 @@ impl SamplePlayerInputs {
     pub fn set_connected(&mut self, index: usize, connected: bool) {
         match index {
             1 => self.loop_connected = connected,
-            2 => self.pitch_connected = connected,
+            2 => self.pitch_ratio_connected = connected,
             _ => {}
         }
     }
@@ -78,9 +78,9 @@ impl SamplePlayerInputs {
     }
 
     #[inline]
-    pub fn pitch(&self, i: usize, control: f32) -> f32 {
-        if self.pitch_connected {
-            self.pitch[i]
+    pub fn pitch_ratio(&self, i: usize, control: f32) -> f32 {
+        if self.pitch_ratio_connected {
+            self.pitch_ratio[i]
         } else {
             control
         }

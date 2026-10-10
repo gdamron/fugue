@@ -45,22 +45,22 @@ fn plays_selected_slice_to_exclusive_end() {
     let slicer = built.module.module_mut();
 
     slicer.set_input("slice", 1.0).unwrap();
-    slicer.set_input("trigger", 1.0).unwrap();
+    slicer.set_input("play", 1.0).unwrap();
     slicer.process(1);
     assert!(slicer.get_output("audio_left").unwrap() > 0.55);
     assert!(slicer.get_output("audio_right").unwrap() < -0.55);
-    assert_eq!(slicer.get_output("slice_start_gate").unwrap(), 1.0);
-    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 0.0);
+    assert_eq!(slicer.get_output("start").unwrap(), 1.0);
+    assert_eq!(slicer.get_output("end").unwrap(), 0.0);
 
-    slicer.set_input("trigger", 0.0).unwrap();
+    slicer.set_input("play", 0.0).unwrap();
     slicer.process(1);
     assert!(slicer.get_output("audio_left").unwrap() > 0.75);
-    assert_eq!(slicer.get_output("slice_start_gate").unwrap(), 0.0);
-    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 1.0);
+    assert_eq!(slicer.get_output("start").unwrap(), 0.0);
+    assert_eq!(slicer.get_output("end").unwrap(), 1.0);
 
     slicer.process(1);
     assert_eq!(slicer.get_output("audio_left").unwrap(), 0.0);
-    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 0.0);
+    assert_eq!(slicer.get_output("end").unwrap(), 0.0);
 }
 
 #[test]
@@ -77,17 +77,17 @@ fn retrigger_latches_the_new_slice() {
         .unwrap();
     let slicer = built.module.module_mut();
 
-    slicer.set_input("trigger", 1.0).unwrap();
+    slicer.set_input("play", 1.0).unwrap();
     slicer.process(1);
     assert!(slicer.get_output("audio_left").unwrap() < 0.15);
 
-    slicer.set_input("trigger", 0.0).unwrap();
+    slicer.set_input("play", 0.0).unwrap();
     slicer.process(1);
     slicer.set_input("slice", 1.0).unwrap();
-    slicer.set_input("trigger", 1.0).unwrap();
+    slicer.set_input("play", 1.0).unwrap();
     slicer.process(1);
     assert!(slicer.get_output("audio_left").unwrap() > 0.65);
-    assert_eq!(slicer.get_output("slice_start_gate").unwrap(), 1.0);
+    assert_eq!(slicer.get_output("start").unwrap(), 1.0);
 }
 
 #[test]
@@ -100,19 +100,19 @@ fn scales_source_frame_slices_to_the_engine_rate() {
         &[[0.1, 0.0], [0.5, 0.0], [0.9, 0.0], [0.4, 0.0]],
     );
     let config = serde_json::json!({
-        "source": path.to_str().unwrap(),
+        "asset": path.to_str().unwrap(),
         "slices": [{ "start_frames": 1, "end_frames": 2 }]
     });
     let mut built = SampleSlicerFactory.build(44_100, &config).unwrap();
     let slicer = built.module.module_mut();
 
-    slicer.set_input("trigger", 1.0).unwrap();
+    slicer.set_input("play", 1.0).unwrap();
     slicer.process(1);
-    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 0.0);
-    slicer.set_input("trigger", 0.0).unwrap();
+    assert_eq!(slicer.get_output("end").unwrap(), 0.0);
+    slicer.set_input("play", 0.0).unwrap();
     slicer.process(1);
     assert_eq!(
-        slicer.get_output("slice_end_gate").unwrap(),
+        slicer.get_output("end").unwrap(),
         1.0,
         "one source frame becomes two frames at double the sample rate"
     );
@@ -166,11 +166,11 @@ fn loads_slice_points_from_sample_pack_manifest() {
     let config = serde_json::json!({ "asset": path.to_str().unwrap(), "slice": 1 });
     let mut built = SampleSlicerFactory.build(44_100, &config).unwrap();
     let slicer = built.module.module_mut();
-    slicer.set_input("trigger", 1.0).unwrap();
+    slicer.set_input("play", 1.0).unwrap();
     slicer.process(1);
 
     assert!(slicer.get_output("audio_left").unwrap() > 0.65);
-    assert_eq!(slicer.get_output("slice_start_gate").unwrap(), 1.0);
+    assert_eq!(slicer.get_output("start").unwrap(), 1.0);
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn rejects_invalid_or_out_of_bounds_slices() {
     write_test_wav(&path, 44_100, &[[0.1, 0.0], [0.2, 0.0]]);
 
     let invalid_range = serde_json::json!({
-        "source": path.to_str().unwrap(),
+        "asset": path.to_str().unwrap(),
         "slices": [{ "start_frames": 1, "end_frames": 1 }]
     });
     let error = SampleSlicerFactory
@@ -191,7 +191,7 @@ fn rejects_invalid_or_out_of_bounds_slices() {
     assert!(error.contains("end_frames must exceed"), "{error}");
 
     let out_of_bounds = serde_json::json!({
-        "source": path.to_str().unwrap(),
+        "asset": path.to_str().unwrap(),
         "slices": [{ "start_frames": 0, "end_frames": 3 }]
     });
     let error = SampleSlicerFactory
@@ -283,21 +283,21 @@ fn elastic_slice_matches_classic_gate_timing_at_unity() {
     let slicer = built.module.module_mut();
 
     slicer.set_input("slice", 1.0).unwrap();
-    slicer.set_input("trigger", 1.0).unwrap();
+    slicer.set_input("play", 1.0).unwrap();
     slicer.process(1);
     assert!(slicer.get_output("audio_left").unwrap() > 0.55);
     assert!(slicer.get_output("audio_right").unwrap() < -0.55);
-    assert_eq!(slicer.get_output("slice_start_gate").unwrap(), 1.0);
-    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 0.0);
+    assert_eq!(slicer.get_output("start").unwrap(), 1.0);
+    assert_eq!(slicer.get_output("end").unwrap(), 0.0);
 
-    slicer.set_input("trigger", 0.0).unwrap();
+    slicer.set_input("play", 0.0).unwrap();
     slicer.process(1);
     assert!(slicer.get_output("audio_left").unwrap() > 0.75);
-    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 1.0);
+    assert_eq!(slicer.get_output("end").unwrap(), 1.0);
 
     slicer.process(1);
     assert_eq!(slicer.get_output("audio_left").unwrap(), 0.0);
-    assert_eq!(slicer.get_output("slice_end_gate").unwrap(), 0.0);
+    assert_eq!(slicer.get_output("end").unwrap(), 0.0);
 }
 
 #[test]
@@ -309,11 +309,11 @@ fn elastic_time_ratio_scales_slice_length() {
     let slicer = built.module.module_mut();
 
     let frames_to_end = |slicer: &mut dyn Module| {
-        slicer.set_input("trigger", 1.0).unwrap();
+        slicer.set_input("play", 1.0).unwrap();
         for count in 1..100 {
             slicer.process(1);
-            slicer.set_input("trigger", 0.0).unwrap();
-            if slicer.get_output("slice_end_gate").unwrap() > 0.5 {
+            slicer.set_input("play", 0.0).unwrap();
+            if slicer.get_output("end").unwrap() > 0.5 {
                 return count;
             }
         }
@@ -346,7 +346,7 @@ fn elastic_rejects_unknown_mode() {
     let path = temp.path().join("badmode.wav");
     write_test_wav(&path, 44_100, &[[0.1, 0.0], [0.2, 0.0]]);
     let mut config = serde_json::json!({
-        "source": path.to_str().unwrap(),
+        "asset": path.to_str().unwrap(),
         "slices": [{ "start_frames": 0, "end_frames": 2 }]
     });
     config["mode"] = serde_json::json!("granular");
@@ -356,4 +356,53 @@ fn elastic_rejects_unknown_mode() {
         .unwrap()
         .to_string();
     assert!(err.contains("'mode'"), "{err}");
+}
+
+#[test]
+fn slice_frames_read_whole_floats_and_refuse_fractions() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("floats.wav");
+    write_test_wav(&path, 44_100, &[[0.1, 0.0], [0.2, 0.0], [0.3, 0.0]]);
+    let config = |start: serde_json::Value, end: serde_json::Value| {
+        serde_json::json!({
+            "asset": path.to_str().unwrap(),
+            "slices": [{ "start_frames": start, "end_frames": end }]
+        })
+    };
+
+    let mut built = SampleSlicerFactory
+        .build(44_100, &config(1.0.into(), 3.0.into()))
+        .unwrap();
+    let slicer = built.module.module_mut();
+    slicer.set_input("play", 1.0).unwrap();
+    slicer.process(1);
+    assert!((slicer.get_output("audio_left").unwrap() - 0.2).abs() < 1e-3);
+
+    let error = SampleSlicerFactory
+        .build(44_100, &config(1.5.into(), 3.into()))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("whole number") && error.contains("1.5"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_retired_source_key_is_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("source.wav");
+    write_test_wav(&path, 44_100, &[[0.1, 0.0], [0.2, 0.0]]);
+    let config = serde_json::json!({
+        "asset": path.to_str().unwrap(),
+        "source": path.to_str().unwrap(),
+        "slices": [{ "start_frames": 0, "end_frames": 2 }]
+    });
+    let error = crate::ModuleRegistry::default()
+        .build("sample_slicer", 44_100, &config)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("source"), "{error}");
 }

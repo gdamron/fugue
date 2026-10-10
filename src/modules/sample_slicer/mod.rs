@@ -1,7 +1,7 @@
 //! Indexed slice playback for loops, breakbeats, and stem packs.
 //!
 //! `sample_slicer` loads one audio file and a set of frame-addressed slices.
-//! A rising edge on `trigger` latches the zero-based `slice` input and plays
+//! A rising edge on `play` latches the zero-based `slice` input and plays
 //! that region through its exclusive end. Triggering again restarts playback
 //! immediately at the newly selected slice.
 //!
@@ -26,17 +26,17 @@
 //! reader and the module gains a control surface with independent
 //! `time_ratio` (speed) and `pitch_ratio` (pitch) controls, so slices can
 //! be tempo-fit without chipmunking. Under a `time_ratio` a slice occupies
-//! a scaled number of output frames, and `slice_end_gate` still fires when
+//! a scaled number of output frames, and `end` still fires when
 //! the end of the *source* region is reached.
 //!
 //! # Inputs
-//! - `trigger`: Rising edges start or retrigger the selected slice.
+//! - `play`: Rising edges start or retrigger the selected slice.
 //! - `slice`: Zero-based slice index, rounded to the nearest integer.
 //!
 //! # Outputs
 //! - `audio_left`, `audio_right`: Stereo sample playback.
-//! - `slice_start_gate`: One-sample pulse when valid slice playback starts.
-//! - `slice_end_gate`: One-sample pulse on the last frame of a slice.
+//! - `start`: One-sample pulse when valid slice playback starts.
+//! - `end`: One-sample pulse on the last frame of a slice.
 
 use std::sync::Arc;
 
@@ -47,7 +47,7 @@ use crate::Module;
 
 use super::sample_loading::elastic::ElasticReader;
 use super::sample_loading::{elastic_mode_from_config, load_sample_source, SampleData};
-use super::sample_player::source_from_config;
+use super::sample_player::asset_from_config;
 
 pub use self::controls::SampleSlicerControls;
 
@@ -77,7 +77,6 @@ impl ModuleFactory for SampleSlicerFactory {
             &[
                 SLICE,
                 ConfigKey::json("asset"),
-                ConfigKey::text("source"),
                 ConfigKey::json("slices"),
                 ConfigKey::text("mode"),
             ]
@@ -89,8 +88,7 @@ impl ModuleFactory for SampleSlicerFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let source = source_from_config(config)?
-            .ok_or("sample_slicer config requires 'asset' or 'source'")?;
+        let source = asset_from_config(config)?.ok_or("sample_slicer config requires 'asset'")?;
         let (resolved_source, sample) = load_sample_source(&source, sample_rate)?;
 
         let slices = match config.get("slices") {
@@ -178,7 +176,7 @@ pub struct SampleSlicer {
     /// Present iff the module was built in elastic mode.
     elastic: Option<ElasticVoice>,
     playing: bool,
-    last_trigger: f32,
+    last_play: f32,
 }
 
 impl SampleSlicer {
@@ -197,7 +195,7 @@ impl SampleSlicer {
             active_end: 0,
             elastic,
             playing: false,
-            last_trigger: 0.0,
+            last_play: 0.0,
         }
     }
 
@@ -232,8 +230,8 @@ impl Module for SampleSlicer {
 
     fn process(&mut self, frames: usize) -> bool {
         for i in 0..frames {
-            let trigger = self.inputs.trigger(i);
-            let rising = trigger > 0.5 && self.last_trigger <= 0.5;
+            let play = self.inputs.play(i);
+            let rising = play > 0.5 && self.last_play <= 0.5;
             let mut start_gate = 0.0;
             let mut end_gate = 0.0;
 
@@ -280,7 +278,7 @@ impl Module for SampleSlicer {
             };
 
             self.outputs.set(i, left, right, start_gate, end_gate);
-            self.last_trigger = trigger;
+            self.last_play = play;
         }
         true
     }

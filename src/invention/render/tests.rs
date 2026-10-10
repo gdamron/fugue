@@ -347,6 +347,49 @@ fn scan_end_gate_rejects_bad_sources_and_endless_graphs() {
 }
 
 #[test]
+fn a_sample_players_end_pulse_is_not_a_piece_ending_gate() {
+    // `sample_player` and `sample_slicer` name their one-sample pulse `end`;
+    // only a latched `ended` output ends a render.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("kick.wav");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 48_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    (0..8).for_each(|_| writer.write_sample(1000_i16).unwrap());
+    writer.finalize().unwrap();
+    let document = serde_json::json!({
+        "version": "1.0.0",
+        "modules": [
+            { "id": "kick", "type": "sample_player",
+              "config": { "asset": path.to_str().unwrap(), "autoplay": true } },
+            { "id": "slicer", "type": "sample_slicer",
+              "config": { "asset": path.to_str().unwrap(),
+                          "slices": [{ "start_frames": 0, "end_frames": 4 }] } },
+            { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+        ],
+        "connections": [
+            { "from": "kick", "from_port": "audio_left", "to": "dac", "to_port": "audio" }
+        ]
+    });
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_json(&document.to_string()).unwrap();
+    let block = engine.block_size();
+    let mut buffer = vec![0.0f32; block * 2];
+    engine.render_interleaved(&mut buffer).unwrap();
+
+    let err = engine.scan_end_gate(None, block).unwrap_err();
+    assert!(err.to_string().contains("never stop"), "{err}");
+    for id in ["kick", "slicer"] {
+        let err = engine.scan_end_gate(Some(id), block).unwrap_err();
+        assert!(err.to_string().contains("has no 'ended' output"), "{err}");
+    }
+}
+
+#[test]
 fn end_gate_render_is_deterministic() {
     let render_once = || {
         let mut engine = RenderEngine::new(48_000);

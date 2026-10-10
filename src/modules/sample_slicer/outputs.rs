@@ -2,18 +2,13 @@
 
 use crate::MAX_BLOCK;
 
-pub const OUTPUTS: [&str; 4] = [
-    "audio_left",
-    "audio_right",
-    "slice_start_gate",
-    "slice_end_gate",
-];
+pub const OUTPUTS: [&str; 4] = ["audio_left", "audio_right", "start", "end"];
 
 pub struct SampleSlicerOutputs {
     audio_left: [f32; MAX_BLOCK],
     audio_right: [f32; MAX_BLOCK],
-    slice_start_gate: [f32; MAX_BLOCK],
-    slice_end_gate: [f32; MAX_BLOCK],
+    start: [f32; MAX_BLOCK],
+    end: [f32; MAX_BLOCK],
 }
 
 impl SampleSlicerOutputs {
@@ -21,8 +16,8 @@ impl SampleSlicerOutputs {
         Self {
             audio_left: [0.0; MAX_BLOCK],
             audio_right: [0.0; MAX_BLOCK],
-            slice_start_gate: [0.0; MAX_BLOCK],
-            slice_end_gate: [0.0; MAX_BLOCK],
+            start: [0.0; MAX_BLOCK],
+            end: [0.0; MAX_BLOCK],
         }
     }
 
@@ -30,8 +25,8 @@ impl SampleSlicerOutputs {
     pub fn set(&mut self, index: usize, left: f32, right: f32, start_gate: f32, end_gate: f32) {
         self.audio_left[index] = left;
         self.audio_right[index] = right;
-        self.slice_start_gate[index] = start_gate;
-        self.slice_end_gate[index] = end_gate;
+        self.start[index] = start_gate;
+        self.end[index] = end_gate;
     }
 
     #[inline]
@@ -39,8 +34,8 @@ impl SampleSlicerOutputs {
         match index {
             0 => &self.audio_left,
             1 => &self.audio_right,
-            2 => &self.slice_start_gate,
-            _ => &self.slice_end_gate,
+            2 => &self.start,
+            _ => &self.end,
         }
     }
 
@@ -48,8 +43,8 @@ impl SampleSlicerOutputs {
         match port {
             "audio_left" => Ok(self.audio_left[0]),
             "audio_right" => Ok(self.audio_right[0]),
-            "slice_start_gate" => Ok(self.slice_start_gate[0]),
-            "slice_end_gate" => Ok(self.slice_end_gate[0]),
+            "start" => Ok(self.start[0]),
+            "end" => Ok(self.end[0]),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }

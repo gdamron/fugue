@@ -19,7 +19,7 @@ pub struct SamplePlayerControls {
 }
 
 pub(crate) struct SamplePlayerShared {
-    pub(crate) source: String,
+    pub(crate) asset: String,
     pub(crate) play: bool,
     pub(crate) loop_enabled: bool,
     pub(crate) play_trigger: u64,
@@ -29,23 +29,23 @@ pub(crate) struct SamplePlayerShared {
 impl SamplePlayerControls {
     pub fn new(
         sample_rate: u32,
-        source: Option<&str>,
+        asset: Option<&str>,
         play: Option<bool>,
         loop_enabled: Option<bool>,
     ) -> Result<Self, String> {
-        Self::with_mode(sample_rate, source, play, loop_enabled, false)
+        Self::with_mode(sample_rate, asset, play, loop_enabled, false)
     }
 
     pub fn with_mode(
         sample_rate: u32,
-        source: Option<&str>,
+        asset: Option<&str>,
         play: Option<bool>,
         loop_enabled: Option<bool>,
         elastic: bool,
     ) -> Result<Self, String> {
         let controls = Self {
             shared: Arc::new(Mutex::new(SamplePlayerShared {
-                source: String::new(),
+                asset: String::new(),
                 play: false,
                 loop_enabled: false,
                 play_trigger: 0,
@@ -57,9 +57,9 @@ impl SamplePlayerControls {
             elastic,
         };
 
-        if let Some(source) = source {
-            if !source.is_empty() {
-                controls.set_source(source)?;
+        if let Some(asset) = asset {
+            if !asset.is_empty() {
+                controls.set_asset(asset)?;
             }
         }
 
@@ -74,12 +74,12 @@ impl SamplePlayerControls {
         Ok(controls)
     }
 
-    pub fn source(&self) -> String {
-        self.shared.lock().unwrap().source.clone()
+    pub fn asset(&self) -> String {
+        self.shared.lock().unwrap().asset.clone()
     }
 
-    pub fn set_source(&self, source: &str) -> Result<(), String> {
-        let target = resolve_source(source)?;
+    pub fn set_asset(&self, asset: &str) -> Result<(), String> {
+        let target = resolve_source(asset)?;
         let sample = load_cached_sample(&target, self.sample_rate)?;
         if self.elastic {
             // Elastic playback needs the per-asset analysis; computing it
@@ -90,7 +90,7 @@ impl SamplePlayerControls {
         let mut shared = self.shared.lock().unwrap();
         // The authored ref stays the control value, so a saved document keeps
         // the portable form rather than this machine's cache path.
-        shared.source = source.to_string();
+        shared.asset = asset.to_string();
         shared.pending_sample = Some(sample);
         Ok(())
     }
@@ -151,11 +151,11 @@ impl ControlSurface for SamplePlayerControls {
         };
         let mut controls = vec![
             ControlMeta::string(
-                "source",
+                "asset",
                 "Audio sample path, https URL, or package ref like \
                  'fugue.drums.808@1.2.0:kick/long.wav' (WAV or FLAC)",
             )
-            .with_default(self.source()),
+            .with_default(self.asset()),
             ControlMeta::boolean("play", "Start or stop sample playback", self.play()),
             ControlMeta::boolean("loop", "Loop playback when enabled", self.loop_enabled()),
             ControlMeta::number("pitch_ratio", pitch_description)
@@ -178,7 +178,7 @@ impl ControlSurface for SamplePlayerControls {
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
-            "source" => Ok(self.source().into()),
+            "asset" => Ok(self.asset().into()),
             "play" => Ok(self.play().into()),
             "loop" => Ok(self.loop_enabled().into()),
             "pitch_ratio" => Ok(self.pitch_ratio().into()),
@@ -189,7 +189,7 @@ impl ControlSurface for SamplePlayerControls {
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
-            "source" => self.set_source(value.as_string()?)?,
+            "asset" => self.set_asset(value.as_string()?)?,
             "play" => self.set_play(value.as_bool()?),
             "loop" => self.set_loop_enabled(value.as_bool()?),
             "pitch_ratio" => self.set_pitch_ratio(value.as_number()?),
