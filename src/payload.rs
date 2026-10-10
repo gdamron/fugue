@@ -56,8 +56,8 @@
 //! at submit would need a saturation signal that is stale by the time a
 //! submitter reads it.
 
-// The request drain (FUG-308) retires payloads; no module keeps one until
-// FUG-310 and its siblings migrate the first modules.
+// Some of the API (hold sizing, introspection) serves only tests until
+// more modules keep payloads; the step sequencer's pattern is the first.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use std::any::Any;
