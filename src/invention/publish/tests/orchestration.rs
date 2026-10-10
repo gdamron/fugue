@@ -1,6 +1,8 @@
-//! The code module on declared controls: its scalars apply on the audio
-//! thread and read back, and no audio-thread path (scheduler writes
-//! included) takes the lock its control-side strings sit behind.
+//! The orchestration modules, code and agent, on declared controls: their
+//! scalars apply on the audio thread and read back, the agent's edges are
+//! counted exactly, its telemetry is read-only, and no audio-thread path
+//! (scheduler writes included) takes the lock their control-side strings
+//! sit behind.
 
 use super::migrated::{add_locking, block_while_held, read, schedule, write, LockingFactory};
 use super::requests::counted_block;
@@ -151,29 +153,19 @@ fn agent_writes_apply_on_the_audio_thread_and_read_back() {
 }
 
 #[test]
-fn edges_from_inputs_and_requests_are_counted_exactly() {
+fn input_edges_are_counted_exactly() {
     let mut rig = Rig::new(ORCHESTRATION);
     rig.render(1);
     let agent: AgentControls = controls(&rig, "agent");
-    write(&rig, "agent", "trigger", true.into());
-    write(&rig, "agent", "trigger", true.into());
-    write(&rig, "agent", "trigger", false.into());
-    write(&rig, "agent", "reset", true.into());
-    assert_eq!((agent.trigger_count(), agent.reset_count()), (0, 0));
-
-    // Two triggers at one sample are two events: never coalesced.
-    assert_eq!(counted_block(&mut rig), (0, 0));
-    assert_eq!((agent.trigger_count(), agent.reset_count()), (2, 1));
-    // An event holds nothing.
-    assert_eq!(read(&rig, "agent", "trigger"), false.into());
-
     rig.live.write_input("agent", "trigger", 1.0).unwrap();
+    rig.live.write_input("agent", "reset", 1.0).unwrap();
     assert_eq!(counted_block(&mut rig), (0, 0));
     assert_eq!(counted_block(&mut rig), (0, 0), "held high: one edge");
     rig.live.write_input("agent", "trigger", 0.0).unwrap();
-    rig.live.write_input("agent", "reset", 1.0).unwrap();
     assert_eq!(counted_block(&mut rig), (0, 0));
-    assert_eq!((agent.trigger_count(), agent.reset_count()), (3, 2));
+    rig.live.write_input("agent", "trigger", 1.0).unwrap();
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!((agent.trigger_count(), agent.reset_count()), (2, 1));
 }
 
 #[test]
@@ -192,8 +184,6 @@ fn agent_telemetry_and_strings_cannot_be_written_or_scheduled() {
 
     for (key, value) in [
         ("request_count", serde_json::json!(5.0)),
-        ("trigger", serde_json::json!(true)),
-        ("reset", serde_json::json!(true)),
         ("prompt", serde_json::json!(1.0)),
     ] {
         assert!(!schedules(&mut rig, "agent", key, value), "{key}");
@@ -231,7 +221,7 @@ fn a_block_renders_while_the_agent_strings_lock_is_held() {
     );
     let agent: AgentControls = controls(&rig, "agent");
     write(&rig, "agent", "enabled", false.into());
-    write(&rig, "agent", "trigger", true.into());
+    rig.live.write_input("agent", "trigger", 1.0).unwrap();
     rig.live.write_input("sched", "clock", 1.0).unwrap();
     rig.live.write_input("agent", "reset", 1.0).unwrap();
 
@@ -239,6 +229,8 @@ fn a_block_renders_while_the_agent_strings_lock_is_held() {
     assert_eq!(held, Ok((0, 0)));
     assert_eq!(read(&rig, "agent", "enabled"), false.into());
     assert_eq!((agent.trigger_count(), agent.reset_count()), (1, 1));
+    let cooldown = number(&rig, "agent", "cooldown");
+    assert!(cooldown > 1.0, "the ramp wrote under the lock: {cooldown}");
 }
 
 /// The negative control, for the agent's strings.
