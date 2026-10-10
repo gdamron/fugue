@@ -368,6 +368,12 @@ fn a_grid_no_clock_reaches_or_a_repeating_payload_is_refused() {
         );
     }
     assert_eq!(Watches::check(&on_grid(1, 0.25, -3.0, true)), Ok(()));
+    // A repeat finer than a 256th note is refused; once, it is not.
+    let step = MIN_REPEAT_STEP;
+    assert_eq!(Watches::check(&on_grid(1, step, 0.0, true)), Ok(()));
+    let fine = on_grid(1, step / 2.0, 0.0, true);
+    assert_eq!(Watches::check(&fine), Err(Refusal::Invalid));
+    assert_eq!(Watches::check(&on_grid(1, step / 2.0, 0.0, false)), Ok(()));
     let mut payload = on_grid(1, 1.0, 0.0, true);
     payload.value = RequestValue::Payload(crate::payload::Payload::new(vec![0.0f32; 4]));
     assert_eq!(Watches::check(&payload), Err(Refusal::Unsupported));
@@ -386,6 +392,35 @@ fn a_repeating_grid_applies_once_a_sample_and_stays() {
     assert_eq!(pass, (false, Some(1)));
     assert_eq!(log(&outcomes), [(7, Outcome::Applied { at: 10 })]);
     assert_eq!(watches.len(), 1);
+    // It applies again at the next sample, settled already: no outcome.
+    host.play(1);
+    let pass = watches.pass(11, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(pass, (true, None));
+    assert_eq!(host.applied, [1, 1]);
+    assert!(log(&outcomes).is_empty());
+}
+
+#[test]
+fn a_repeat_that_applied_ends_silently_and_one_that_did_not_is_refused() {
+    let (mut store, outcomes) = store();
+    let mut watches = Watches::new(4);
+    for (id, generation) in [(1, INSTALLED), (2, INSTALLED - 1)] {
+        let mut request = on_grid(id, 1.0, 0.0, true);
+        request.expires = Some(50);
+        request.target.generation = generation;
+        watches.insert(request, 0, &mut store.outcomes);
+    }
+    let mut host = Host::at(0.9, 1.0 / 8.0);
+    watches.pass(10, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(log(&outcomes), [(1, Outcome::Applied { at: 10 })]);
+    // Its ttl runs out: it applied, so it ends without another outcome.
+    watches.pass(51, INSTALLED, &mut host, &mut store.outcomes);
+    assert!(log(&outcomes).is_empty());
+    // The other never applied: its clock going away refuses it.
+    watches.remap(INSTALLED, &mut store.outcomes, |_, _| None);
+    let gone = Outcome::Refused(Refusal::TargetGone);
+    assert_eq!(log(&outcomes), [(2, gone)]);
+    assert!(watches.is_empty());
 }
 
 #[test]
