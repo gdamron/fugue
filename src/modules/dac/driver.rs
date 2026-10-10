@@ -92,7 +92,10 @@ pub trait AudioBackend: Send {
     ///
     /// `render` is called from the audio thread to fill planar stereo output:
     /// `render(left, right)` with `left.len() == right.len()`. Backends may call
-    /// it with any block length up to [`MAX_BLOCK`].
+    /// it with any block length up to [`MAX_BLOCK`]. A zero-length call
+    /// renders nothing and advances no time, but takes up the changes made so
+    /// far and applies the control writes due now, as
+    /// [`NullBackend`](super::NullBackend) does after each change.
     fn start(&mut self, render: BlockRenderFn) -> Result<(), Box<dyn std::error::Error>>;
 
     /// Stops audio output.

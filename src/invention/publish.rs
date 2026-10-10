@@ -24,7 +24,7 @@
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use super::declared::RequestPort;
 use super::graph::{RoutingConnection, SignalGraph};
@@ -32,6 +32,7 @@ use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
 use crate::control_request::{Outcome, RequestId, RequestSender};
+use crate::modules::dac::Settle;
 use crate::ModuleRegistry;
 
 mod change;
@@ -67,6 +68,44 @@ pub(crate) struct LiveGraph {
     control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
     registry: LiveRegistry,
+    /// Renders a zero-length block after each change, for a backend that
+    /// never renders on its own (see [`crate::NullBackend`]).
+    settler: Option<Settler>,
+}
+
+/// Settles a live graph whose backend never renders on its own, so that
+/// each settle takes up every change made before it:
+///
+/// - under the publisher, so no publication is out of the mailbox being
+///   folded into the next one: every request submitted so far targets a
+///   generation the block installs, or one already installed;
+/// - then under the backend's render lock, it frees what earlier blocks
+///   retired, leaving the retire ring room to install a waiting
+///   publication and the request drain room for payloads, and renders a
+///   zero-length block.
+///
+/// Lock order: publisher, then render. Nothing holding the render lock
+/// takes the publisher.
+#[derive(Clone)]
+pub(crate) struct Settler {
+    publisher: Weak<Mutex<Publisher>>,
+    render: Settle,
+    reclaimer: Arc<Reclaimer>,
+}
+
+impl Settler {
+    /// Call it with no lock held, never from inside a render.
+    pub(crate) fn settle(&self) {
+        // Most retirements are freed here, off both locks.
+        self.reclaimer.reclaim();
+        let Some(publisher) = self.publisher.upgrade() else {
+            return;
+        };
+        let _publisher = publisher.lock().unwrap();
+        self.render.settle(|| {
+            self.reclaimer.reclaim();
+        });
+    }
 }
 
 /// What a committed change did, for the caller's follow-up work.
@@ -83,24 +122,44 @@ pub(crate) struct Committed {
 impl LiveGraph {
     /// Links `graph`, which is about to move to the audio thread, to a new
     /// publisher keeping the given runtime mirrors, with edits building
-    /// modules against `registry` until a commit adopts another.
+    /// modules against `registry` until a commit adopts another. With
+    /// `settle`, every change (a control request, a publication, an input
+    /// write) is taken up by a zero-length block before the call making it
+    /// returns.
     pub(crate) fn link(
         graph: &mut SignalGraph,
         state: Arc<Mutex<RuntimeState>>,
         control_surfaces: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
         module_ports: Arc<Mutex<IndexMap<String, ModulePorts>>>,
         registry: Arc<ModuleRegistry>,
+        settle: Option<Settle>,
     ) -> Self {
         let (publisher, ends) = Publisher::link(graph);
+        let publisher = Arc::new(Mutex::new(publisher));
+        let reclaimer = Arc::new(Reclaimer::new(ends.retired, ends.payloads));
+        let settler = settle.map(|render| {
+            // No block will free room in a store whose requests wait for
+            // samples that never come, so the drain refuses rather than
+            // leave a request queued (see `graph::requests`).
+            if let Some(drain) = graph.requests.as_mut() {
+                drain.clockless = true;
+            }
+            Settler {
+                publisher: Arc::downgrade(&publisher),
+                render,
+                reclaimer: Arc::clone(&reclaimer),
+            }
+        });
         let live = Self {
-            publisher: Arc::new(Mutex::new(publisher)),
-            reclaimer: Arc::new(Reclaimer::new(ends.retired, ends.payloads)),
+            publisher,
+            reclaimer,
             requests: ends.requests,
             pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes))),
             state,
             control_surfaces,
             module_ports,
             registry: LiveRegistry::new(registry),
+            settler,
         };
         // Every module the graph starts with runs from here on.
         let port = live.port();
@@ -186,6 +245,15 @@ impl LiveGraph {
             requests: self.requests.clone(),
             pending: self.pending.clone(),
             module_id: String::new(),
+            settler: self.settler.clone(),
+        }
+    }
+
+    /// Takes up every change made so far with a zero-length block, when the
+    /// backend never renders on its own. Call it with no lock held.
+    fn settle(&self) {
+        if let Some(settler) = &self.settler {
+            settler.settle();
         }
     }
 
@@ -378,6 +446,7 @@ impl LiveGraph {
         }
         drop(publisher);
         drop(superseded);
+        self.settle();
         Ok(committed)
     }
 
@@ -403,7 +472,10 @@ impl LiveGraph {
     ) -> Result<(), GraphCommandError> {
         let mut publisher = self.publisher.lock().unwrap();
         let write = publisher.input_write(module_id, port, value)?;
-        publisher.queue_input(write)
+        publisher.queue_input(write)?;
+        drop(publisher);
+        self.settle();
+        Ok(())
     }
 
     /// Adds a module, replacing one with the same id in place. Built

@@ -7,7 +7,8 @@ use std::sync::Arc;
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
 use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{
-    outcome_channel, OutcomeReceiver,request_channel, ControlIndex, ControlTarget, RequestSender};
+    outcome_channel, request_channel, ControlIndex, ControlTarget, OutcomeReceiver, RequestSender,
+};
 use crate::invention::graph::{
     AudioLink, InputWrite, Mailbox, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
 };
@@ -237,6 +238,18 @@ impl Publisher {
         let generations = pending.absorbed.iter().map(|a| a.generation).collect();
         drop(self.publications.put(pending));
         Some(generations)
+    }
+
+    /// Runs `f` with the untaken publication out of the mailbox, as a fold
+    /// holds it between taking it and putting the next one.
+    #[cfg(test)]
+    pub(crate) fn folding<R>(&self, f: impl FnOnce() -> R) -> R {
+        let pending = self.publications.take();
+        let result = f();
+        if let Some(pending) = pending {
+            drop(self.publications.put(pending));
+        }
+        result
     }
 
     /// Block size publications are compiled for.
