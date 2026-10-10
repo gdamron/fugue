@@ -150,6 +150,24 @@ pub(crate) fn elastic_mode_from_config(
     }
 }
 
+/// Refuses a field of one multi-sample entry (a kit slot, an instrument
+/// zone) that the entry does not take, so a retired spelling such as `gain`
+/// is refused rather than silently ignored. `path` names the entry
+/// (`samples[0]`).
+pub(crate) fn check_entry_fields(
+    entry: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    fields: &[&str],
+) -> Result<(), String> {
+    match entry.keys().find(|key| !fields.contains(&key.as_str())) {
+        Some(key) => Err(format!(
+            "{path} has no field '{key}'; it takes {}",
+            fields.join(", ")
+        )),
+        None => Ok(()),
+    }
+}
+
 /// Package refs (`id@requirement:file`) resolve through the installed package
 /// cache; any other string loads unchanged as a path or https URL. Note the
 /// resample cache below is keyed by the resolved path, so two spellings of

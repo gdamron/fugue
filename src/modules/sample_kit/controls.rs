@@ -14,8 +14,8 @@ use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleD
 use crate::traits::{check_finite, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
-/// The key a slot answers to: an integer (a trigger's value / MIDI note
-/// number) or a name (triggered from control and script threads).
+/// The key a slot answers to: an integer (a `play` value / MIDI note
+/// number) or a name (played from control and script threads).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlotKey {
     Number(i32),
@@ -35,7 +35,7 @@ impl std::fmt::Display for SlotKey {
 pub struct SlotSpec {
     pub key: SlotKey,
     pub asset: String,
-    pub gain: f32,
+    pub level: f32,
 }
 
 #[derive(Clone)]
@@ -54,10 +54,10 @@ struct KitInner {
 
 struct SlotState {
     key: SlotKey,
-    gain: AtomicF32,
-    /// Trigger requests from control/script threads: incremented here,
+    level: AtomicF32,
+    /// Play requests from control/script threads: incremented here,
     /// observed per block by the audio thread.
-    trigger_count: AtomicU64,
+    play_count: AtomicU64,
     /// Authored asset ref, kept as the control value so saved documents
     /// stay portable instead of carrying this machine's cache path.
     asset: Mutex<String>,
@@ -79,8 +79,8 @@ impl SampleKitControls {
             samples.push(sample);
             slots.push(SlotState {
                 key: spec.key,
-                gain: AtomicF32::new(spec.gain.clamp(0.0, 2.0)),
-                trigger_count: AtomicU64::new(0),
+                level: AtomicF32::new(spec.level.clamp(0.0, 2.0)),
+                play_count: AtomicU64::new(0),
                 asset: Mutex::new(spec.asset),
             });
         }
@@ -106,17 +106,17 @@ impl SampleKitControls {
         self.inner.slots.get(index).map(|slot| slot.key.clone())
     }
 
-    pub fn gain(&self, index: usize) -> f32 {
+    pub fn level(&self, index: usize) -> f32 {
         self.inner
             .slots
             .get(index)
-            .map(|slot| slot.gain.load())
+            .map(|slot| slot.level.load())
             .unwrap_or(0.0)
     }
 
-    pub fn set_gain(&self, index: usize, gain: f32) -> Result<(), String> {
+    pub fn set_level(&self, index: usize, level: f32) -> Result<(), String> {
         let slot = self.slot(index)?;
-        slot.gain.store(gain.clamp(0.0, 2.0));
+        slot.level.store(level.clamp(0.0, 2.0));
         Ok(())
     }
 
@@ -136,17 +136,17 @@ impl SampleKitControls {
         Ok(())
     }
 
-    /// Requests a trigger of the slot matching `value`: a number (or numeric
+    /// Requests a play of the slot matching `value`: a number (or numeric
     /// string) matches an integer key, any other string matches a named key.
-    pub fn trigger(&self, value: &ControlValue) -> Result<(), String> {
+    pub fn play(&self, value: &ControlValue) -> Result<(), String> {
         let index = self.slot_for(value)?;
         self.inner.slots[index]
-            .trigger_count
+            .play_count
             .fetch_add(1, Ordering::Release);
         Ok(())
     }
 
-    /// The slot a trigger value names.
+    /// The slot a `play` value names.
     fn slot_for(&self, value: &ControlValue) -> Result<usize, String> {
         match value {
             ControlValue::Number(number) => {
@@ -179,11 +179,9 @@ impl SampleKitControls {
         }
     }
 
-    /// Audio thread: the trigger-request counter for slot `index`.
-    pub(crate) fn trigger_count(&self, index: usize) -> u64 {
-        self.inner.slots[index]
-            .trigger_count
-            .load(Ordering::Acquire)
+    /// Audio thread: the play-request counter for slot `index`.
+    pub(crate) fn play_count(&self, index: usize) -> u64 {
+        self.inner.slots[index].play_count.load(Ordering::Acquire)
     }
 
     fn slot(&self, index: usize) -> Result<&SlotState, String> {
@@ -220,8 +218,8 @@ fn load_slot_sample(asset: &str, sample_rate: u32) -> Result<Arc<SampleData>, St
 impl ControlSurface for SampleKitControls {
     fn controls(&self) -> Vec<ControlMeta> {
         let mut metas = vec![ControlMeta::string(
-            "trigger",
-            "Trigger a slot by key or name (e.g. '36' or 'kick')",
+            "play",
+            "Play a slot by key or name (e.g. '36' or 'kick')",
         )];
         for (index, slot) in self.inner.slots.iter().enumerate() {
             metas.push(
@@ -237,16 +235,16 @@ impl ControlSurface for SampleKitControls {
                 .with_default(slot.asset.lock().unwrap().clone()),
             );
             metas.push(
-                ControlMeta::number(format!("gain.{}", index), "Slot level (1.0 = unity)")
+                ControlMeta::number(format!("level.{}", index), "Slot level (1.0 = unity)")
                     .with_range(0.0, 2.0)
-                    .with_default(slot.gain.load()),
+                    .with_default(slot.level.load()),
             );
         }
         metas
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
-        if key == "trigger" {
+        if key == "play" {
             return Ok(String::new().into());
         }
         if let Some(index) = indexed_key(key, "key.") {
@@ -255,16 +253,16 @@ impl ControlSurface for SampleKitControls {
         if let Some(index) = indexed_key(key, "asset.") {
             return Ok(self.asset(index)?.into());
         }
-        if let Some(index) = indexed_key(key, "gain.") {
+        if let Some(index) = indexed_key(key, "level.") {
             self.slot(index)?;
-            return Ok(self.gain(index).into());
+            return Ok(self.level(index).into());
         }
         Err(format!("Unknown control: {}", key))
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        if key == "trigger" {
-            return self.trigger(&value);
+        if key == "play" {
+            return self.play(&value);
         }
         if let Some(index) = indexed_key(key, "key.") {
             self.slot(index)?;
@@ -273,8 +271,8 @@ impl ControlSurface for SampleKitControls {
         if let Some(index) = indexed_key(key, "asset.") {
             return self.set_asset(index, value.as_string()?);
         }
-        if let Some(index) = indexed_key(key, "gain.") {
-            return self.set_gain(index, value.as_number()?);
+        if let Some(index) = indexed_key(key, "level.") {
+            return self.set_level(index, value.as_number()?);
         }
         Err(format!("Unknown control: {}", key))
     }
@@ -287,7 +285,7 @@ impl ControlSurface for SampleKitControls {
         value: &ControlValue,
         _surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
-        if key == "trigger" {
+        if key == "play" {
             return self.slot_for(value).map(drop);
         }
         if let Some(index) = indexed_key(key, "key.") {
@@ -298,7 +296,7 @@ impl ControlSurface for SampleKitControls {
             self.slot(index)?;
             return value.as_string().map(drop);
         }
-        if let Some(index) = indexed_key(key, "gain.") {
+        if let Some(index) = indexed_key(key, "level.") {
             self.slot(index)?;
             return check_finite(key, value.as_number()?);
         }
@@ -306,7 +304,7 @@ impl ControlSurface for SampleKitControls {
     }
 }
 
-/// Parses hierarchical control keys like `gain.3` into the slot index.
+/// Parses hierarchical control keys like `level.3` into the slot index.
 fn indexed_key(key: &str, prefix: &str) -> Option<usize> {
     key.strip_prefix(prefix)?.parse().ok()
 }

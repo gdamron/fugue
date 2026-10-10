@@ -25,7 +25,7 @@ pub(crate) struct ZoneRuntime {
     pub audio: ZoneAudio,
     pub key_low: u8,
     pub key_high: u8,
-    pub root: u8,
+    pub root_note: u8,
     pub root_freq: f32,
 }
 
@@ -39,7 +39,7 @@ pub(crate) fn resolve_zone(zones: &[ZoneRuntime], note: u8) -> Option<usize> {
         let low = i32::from(zone.key_low);
         let high = i32::from(zone.key_high);
         let outside = (low - note).max(note - high).max(0);
-        let root_distance = (note - i32::from(zone.root)).abs();
+        let root_distance = (note - i32::from(zone.root_note)).abs();
         if best
             .map(|(_, out, dist)| (outside, root_distance) < (out, dist))
             .unwrap_or(true)

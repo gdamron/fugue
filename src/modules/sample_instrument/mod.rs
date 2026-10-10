@@ -12,13 +12,13 @@
 //! {
 //!   "type": "sample_instrument",
 //!   "config": {
-//!     "voices": 8,
+//!     "voice_count": 8,
 //!     "release": 0.25,
 //!     "zones": [
-//!       { "root": 48, "key_range": [36, 53], "asset": "fugue.keys.grand@1.0.0:c3.wav" },
-//!       { "root": 60, "key_range": [54, 65], "asset": "fugue.keys.grand@1.0.0:c4.wav",
+//!       { "root_note": 48, "key_range": [36, 53], "asset": "fugue.keys.grand@1.0.0:c3.wav" },
+//!       { "root_note": 60, "key_range": [54, 65], "asset": "fugue.keys.grand@1.0.0:c4.wav",
 //!         "loop": { "start_frames": 22050, "end_frames": 66150, "crossfade_frames": 2205 } },
-//!       { "root": 72, "key_range": [66, 84], "asset": "fugue.keys.grand@1.0.0:c5.wav", "gain": 0.9 }
+//!       { "root_note": 72, "key_range": [66, 84], "asset": "fugue.keys.grand@1.0.0:c5.wav", "level": 0.9 }
 //!     ]
 //!   }
 //! }
@@ -61,6 +61,7 @@ use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{finite_f32, whole_number, whole_number_in, ConfigKey, ConfigReader};
+use crate::modules::sample_loading::check_entry_fields;
 use crate::music::Note;
 use crate::Module;
 
@@ -75,14 +76,16 @@ mod inputs;
 mod outputs;
 mod voice;
 
-const DEFAULT_VOICES: usize = 8;
+const DEFAULT_VOICE_COUNT: usize = 8;
 const DEFAULT_RELEASE: f32 = 0.1;
 
 pub struct SampleInstrumentFactory;
 
 const TYPE_ID: &str = "sample_instrument";
-const VOICES: ConfigKey = ConfigKey::integer("voices", 1, MAX_VOICES as i128);
+const VOICE_COUNT: ConfigKey = ConfigKey::integer("voice_count", 1, MAX_VOICES as i128);
 const RELEASE: ConfigKey = ConfigKey::float("release");
+/// The fields a `zones` entry takes.
+const ZONE_FIELDS: &[&str] = &["root_note", "key_range", "asset", "level", "loop"];
 
 impl ModuleFactory for SampleInstrumentFactory {
     fn type_id(&self) -> &'static str {
@@ -90,7 +93,7 @@ impl ModuleFactory for SampleInstrumentFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const { &[VOICES, RELEASE, ConfigKey::json("zones")] }
+        const { &[VOICE_COUNT, RELEASE, ConfigKey::json("zones")] }
     }
 
     fn build(
@@ -121,9 +124,9 @@ impl ModuleFactory for SampleInstrumentFactory {
 fn parse_config(config: &serde_json::Value) -> Result<(Vec<ZoneSpec>, usize, f32), String> {
     let reader = ConfigReader::new(TYPE_ID, config);
     let voices = reader
-        .int::<usize>(&VOICES)
+        .int::<usize>(&VOICE_COUNT)
         .map_err(|error| error.to_string())?
-        .unwrap_or(DEFAULT_VOICES);
+        .unwrap_or(DEFAULT_VOICE_COUNT);
 
     let release = match reader.float(&RELEASE).map_err(|error| error.to_string())? {
         None => DEFAULT_RELEASE,
@@ -153,21 +156,22 @@ fn parse_zone(
     index: usize,
     reader: &ConfigReader,
 ) -> Result<ZoneSpec, String> {
+    check_entry_fields(zone, &format!("zones[{index}]"), ZONE_FIELDS)?;
     let midi_note = |value, path: String| {
         whole_number_in::<u8>(value, 0, 127).map_err(|r| reader.refuse(&path, r).to_string())
     };
-    let root = zone.get("root").ok_or_else(|| {
+    let root_note = zone.get("root_note").ok_or_else(|| {
         format!(
-            "zones[{}]: 'root' must be a MIDI note number 0..=127",
+            "zones[{}]: 'root_note' must be a MIDI note number 0..=127",
             index
         )
     })?;
-    let root = midi_note(root, format!("zones[{index}].root"))?;
+    let root_note = midi_note(root_note, format!("zones[{index}].root_note"))?;
 
     let (key_low, key_high) = match zone.get("key_range") {
-        // A zone without a range covers only its root; other notes reach it
-        // through nearest-zone resolution.
-        None => (root, root),
+        // A zone without a range covers only its root note; other notes reach
+        // it through nearest-zone resolution.
+        None => (root_note, root_note),
         Some(value) => {
             let range = value
                 .as_array()
@@ -192,10 +196,10 @@ fn parse_zone(
         crate::pkg::AudioAssetRef::Local { path } => path,
     };
 
-    let gain = match zone.get("gain") {
+    let level = match zone.get("level") {
         Some(value) => finite_f32(value).map_err(|r| {
             reader
-                .refuse(&format!("zones[{index}].gain"), r)
+                .refuse(&format!("zones[{index}].level"), r)
                 .to_string()
         })?,
         None => 1.0,
@@ -207,11 +211,11 @@ fn parse_zone(
         .transpose()?;
 
     Ok(ZoneSpec {
-        root,
+        root_note,
         key_low,
         key_high,
         asset,
-        gain,
+        level,
         loop_spec,
     })
 }
@@ -257,9 +261,9 @@ pub struct SampleInstrument {
     outputs: outputs::SampleInstrumentOutputs,
     zones: Vec<ZoneRuntime>,
     voices: Vec<Voice>,
-    /// Per-block scratch, sized once at build: zone gains, staged swaps,
+    /// Per-block scratch, sized once at build: zone levels, staged swaps,
     /// and drained control-thread note events.
-    gains: Vec<f32>,
+    levels: Vec<f32>,
     swap_scratch: Vec<Option<ZoneAudio>>,
     note_scratch: Vec<NoteEvent>,
     /// Allocation ordinal handed to the next note-on (steal-oldest order).
@@ -284,13 +288,13 @@ impl SampleInstrument {
             .into_iter()
             .enumerate()
             .map(|(index, audio)| {
-                let (root, key_low, key_high) = controls.zone_key(index).unwrap_or((0, 0, 0));
+                let (root_note, key_low, key_high) = controls.zone_key(index).unwrap_or((0, 0, 0));
                 ZoneRuntime {
                     audio,
                     key_low,
                     key_high,
-                    root,
-                    root_freq: Note::new(root).frequency(),
+                    root_note,
+                    root_freq: Note::new(root_note).frequency(),
                 }
             })
             .collect();
@@ -303,7 +307,7 @@ impl SampleInstrument {
             voices: (0..voices.clamp(1, MAX_VOICES))
                 .map(|_| Voice::new())
                 .collect(),
-            gains: vec![1.0; zone_count],
+            levels: vec![1.0; zone_count],
             swap_scratch: (0..zone_count).map(|_| None).collect(),
             note_scratch: Vec::with_capacity(MAX_PENDING_NOTES),
             next_started: 0,
@@ -330,7 +334,7 @@ impl SampleInstrument {
         // hand the old note to the crossfade slot so it rings out instead.
         if self.voices[slot].active {
             let voice = &self.voices[slot];
-            let amp = voice.velocity * self.gains[voice.zone] * voice.release_gain;
+            let amp = voice.velocity * self.levels[voice.zone] * voice.release_gain;
             self.voices[slot].begin_steal_fade(amp, self.declick_step);
         }
         self.voices[slot].start(
@@ -445,9 +449,9 @@ impl Module for SampleInstrument {
             }
         }
 
-        // Gains are control-rate: read once per block.
+        // Levels are control-rate: read once per block.
         for zone in 0..self.zones.len() {
-            self.gains[zone] = self.ctrl.gain(zone);
+            self.levels[zone] = self.ctrl.level(zone);
         }
 
         for i in 0..frames {
@@ -461,14 +465,14 @@ impl Module for SampleInstrument {
 
             let mut left = 0.0;
             let mut right = 0.0;
-            let gains = &self.gains;
+            let levels = &self.levels;
             for voice in self.voices.iter_mut() {
                 if !voice.audible() {
                     continue;
                 }
                 if voice.active {
                     let (l, r) = voice.sample_frame();
-                    let amp = voice.velocity * gains[voice.zone] * voice.release_gain;
+                    let amp = voice.velocity * levels[voice.zone] * voice.release_gain;
                     left += l * amp;
                     right += r * amp;
                 }

@@ -85,7 +85,7 @@ const TOL: f32 = 2e-3;
 fn test_gate_starts_note_at_zone_root() {
     let path = write_level_wav(0.5, 8);
     let config = serde_json::json!({
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, _controls) = build_instrument(config);
 
@@ -108,8 +108,8 @@ fn test_note_resolves_to_containing_zone() {
     let high = write_level_wav(0.4, 8);
     let config = serde_json::json!({
         "zones": [
-            { "root": 48, "key_range": [36, 59], "asset": low.to_str().unwrap() },
-            { "root": 72, "key_range": [60, 84], "asset": high.to_str().unwrap() }
+            { "root_note": 48, "key_range": [36, 59], "asset": low.to_str().unwrap() },
+            { "root_note": 72, "key_range": [60, 84], "asset": high.to_str().unwrap() }
         ]
     });
     let (mut instrument, _controls) = build_instrument(config);
@@ -131,8 +131,8 @@ fn test_note_outside_all_ranges_resolves_to_nearest_zone() {
     let high = write_level_wav(0.4, 64);
     let config = serde_json::json!({
         "zones": [
-            { "root": 48, "key_range": [40, 56], "asset": low.to_str().unwrap() },
-            { "root": 72, "key_range": [64, 80], "asset": high.to_str().unwrap() }
+            { "root_note": 48, "key_range": [40, 56], "asset": low.to_str().unwrap() },
+            { "root_note": 72, "key_range": [64, 80], "asset": high.to_str().unwrap() }
         ]
     });
     let (mut instrument, _controls) = build_instrument(config);
@@ -164,7 +164,7 @@ fn test_pitch_ratio_derives_from_zone_root() {
     // the root the head advances two frames per output frame.
     let path = write_levels_wav(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
     let config = serde_json::json!({
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, _controls) = build_instrument(config);
 
@@ -187,7 +187,7 @@ fn test_gate_fall_releases_with_fade() {
     let config = serde_json::json!({
         // The 1 ms floor: a ~44-frame release fade at 44.1 kHz.
         "release": 0.001,
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, _controls) = build_instrument(config);
 
@@ -224,7 +224,7 @@ fn test_sustain_loop_holds_past_sample_end_and_releases_through_tail() {
     let config = serde_json::json!({
         "release": 1.0,
         "zones": [ {
-            "root": 60,
+            "root_note": 60,
             "key_range": [0, 127],
             "asset": path.to_str().unwrap(),
             "loop": { "start_frames": 2, "end_frames": 6 }
@@ -262,7 +262,7 @@ fn test_sustain_loop_holds_past_sample_end_and_releases_through_tail() {
 fn test_two_notes_in_same_zone_do_not_choke() {
     let path = write_level_wav(0.3, 44_100);
     let config = serde_json::json!({
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, controls) = build_instrument(config);
 
@@ -295,7 +295,7 @@ fn test_retrigger_same_note_reuses_its_voice() {
     levels.extend(std::iter::repeat_n(0.1, 2000));
     let path = write_levels_wav(&levels);
     let config = serde_json::json!({
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, controls) = build_instrument(config);
 
@@ -331,7 +331,7 @@ fn test_gate_fall_releases_held_note_after_frequency_moves() {
     let path = write_level_wav(0.4, 44_100);
     let config = serde_json::json!({
         "release": 0.001,
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, _controls) = build_instrument(config);
 
@@ -355,7 +355,7 @@ fn test_note_off_control_only_releases_its_own_note() {
     let path = write_level_wav(0.4, 44_100);
     let config = serde_json::json!({
         "release": 0.001,
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, controls) = build_instrument(config);
 
@@ -385,7 +385,7 @@ fn test_note_off_control_only_releases_its_own_note() {
 fn test_velocity_scales_note_level() {
     let path = write_level_wav(0.5, 8);
     let config = serde_json::json!({
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, _controls) = build_instrument(config);
 
@@ -399,10 +399,10 @@ fn test_velocity_scales_note_level() {
 }
 
 #[test]
-fn test_zone_gain_control_scales_level() {
+fn test_zone_level_control_scales_output() {
     let path = write_level_wav(0.5, 8);
     let config = serde_json::json!({
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap(), "gain": 0.5 } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap(), "level": 0.5 } ]
     });
     let (mut instrument, controls) = build_instrument(config);
 
@@ -412,7 +412,7 @@ fn test_zone_gain_control_scales_level() {
     assert!((instrument.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
 
     controls
-        .set_control("gain.0", ControlValue::Number(1.0))
+        .set_control("level.0", ControlValue::Number(1.0))
         .unwrap();
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
@@ -425,7 +425,7 @@ fn test_asset_swap_keeps_sounding_voice_on_old_buffer() {
     let original = write_level_wav(0.5, 44_100);
     let replacement = write_level_wav(0.25, 44_100);
     let config = serde_json::json!({
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": original.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": original.to_str().unwrap() } ]
     });
     let (mut instrument, controls) = build_instrument(config);
 
@@ -464,8 +464,8 @@ fn test_asset_swap_keeps_sounding_voice_on_old_buffer() {
 fn test_voice_pool_steals_oldest_when_exhausted() {
     let path = write_level_wav(0.2, 44_100);
     let config = serde_json::json!({
-        "voices": 2,
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "voice_count": 2,
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, controls) = build_instrument(config);
 
@@ -494,7 +494,11 @@ fn test_null_config_builds_empty_instrument() {
         .build(44_100, &serde_json::Value::Null)
         .unwrap();
     let surface = result.control_surface.unwrap();
-    let keys: Vec<String> = surface.controls().into_iter().map(|meta| meta.key).collect();
+    let keys: Vec<String> = surface
+        .controls()
+        .into_iter()
+        .map(|meta| meta.key)
+        .collect();
     assert_eq!(keys, ["release", "note_on", "note_off"]);
 }
 
@@ -512,9 +516,9 @@ fn test_stealing_a_sounding_voice_does_not_step_the_output() {
     levels.extend(std::iter::repeat_n(0.4, 44_100));
     let path = write_levels_wav(&levels);
     let config = serde_json::json!({
-        "voices": 1,
+        "voice_count": 1,
         "release": 5.0,
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (mut instrument, controls) = build_instrument(config);
 
@@ -576,40 +580,40 @@ fn test_config_validation_errors() {
     let cases = [
         (
             serde_json::json!({ "zones": [{ "asset": wav_str }] }),
-            "'root' must be a MIDI note number",
+            "'root_note' must be a MIDI note number",
         ),
         (
-            serde_json::json!({ "zones": [{ "root": 200, "asset": wav_str }] }),
-            "'zones[0].root' expects a whole number from 0 to 127, got 200",
+            serde_json::json!({ "zones": [{ "root_note": 200, "asset": wav_str }] }),
+            "'zones[0].root_note' expects a whole number from 0 to 127, got 200",
         ),
         (
-            serde_json::json!({ "zones": [{ "root": 60 }] }),
+            serde_json::json!({ "zones": [{ "root_note": 60 }] }),
             "missing 'asset'",
         ),
         (
-            serde_json::json!({ "zones": [{ "root": 60, "key_range": [60], "asset": wav_str }] }),
+            serde_json::json!({ "zones": [{ "root_note": 60, "key_range": [60], "asset": wav_str }] }),
             "'key_range' must be [low, high]",
         ),
         (
-            serde_json::json!({ "zones": [{ "root": 60, "key_range": [70, 60], "asset": wav_str }] }),
+            serde_json::json!({ "zones": [{ "root_note": 60, "key_range": [70, 60], "asset": wav_str }] }),
             "low exceeds high",
         ),
         (
-            serde_json::json!({ "zones": [{ "root": 60, "asset": wav_str, "gain": "loud" }] }),
-            "'zones[0].gain' expects a finite number, got \"loud\"",
+            serde_json::json!({ "zones": [{ "root_note": 60, "asset": wav_str, "level": "loud" }] }),
+            "'zones[0].level' expects a finite number, got \"loud\"",
         ),
         (
-            serde_json::json!({ "zones": [{ "root": 60, "asset": wav_str,
+            serde_json::json!({ "zones": [{ "root_note": 60, "asset": wav_str,
                 "loop": { "start_frames": 6, "end_frames": 2 } }] }),
             "end_frames must be greater than start_frames",
         ),
         (
-            serde_json::json!({ "zones": [{ "root": 60, "asset": wav_str,
+            serde_json::json!({ "zones": [{ "root_note": 60, "asset": wav_str,
                 "loop": { "start_frames": 2, "end_frames": 400 } }] }),
             "past the end of the sample",
         ),
         (
-            serde_json::json!({ "zones": [{ "root": 60, "asset": wav_str,
+            serde_json::json!({ "zones": [{ "root_note": 60, "asset": wav_str,
                 "loop": { "start_frames": 2, "end_frames": 6, "crossfade_frames": 4 } }] }),
             "crossfade_frames must not exceed start_frames",
         ),
@@ -618,12 +622,12 @@ fn test_config_validation_errors() {
             "'zones' must be an array",
         ),
         (
-            serde_json::json!({ "voices": 0 }),
-            "'voices' expects a whole number from 1 to",
+            serde_json::json!({ "voice_count": 0 }),
+            "'voice_count' expects a whole number from 1 to",
         ),
         (
-            serde_json::json!({ "voices": 99 }),
-            "'voices' expects a whole number from 1 to",
+            serde_json::json!({ "voice_count": 99 }),
+            "'voice_count' expects a whole number from 1 to",
         ),
         (
             serde_json::json!({ "release": -1.0 }),
@@ -647,7 +651,7 @@ fn test_config_validation_errors() {
 fn test_note_control_validation() {
     let path = write_level_wav(0.5, 8);
     let config = serde_json::json!({
-        "zones": [ { "root": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
     let (_instrument, controls) = build_instrument(config);
 
@@ -682,30 +686,30 @@ fn zone_numbers_read_whole_floats_and_are_refused_with_their_path() {
             .map_err(|error| error.to_string())
     };
     let surface = zone(serde_json::json!({
-        "root": 60.0, "key_range": [48.0, 72], "gain": 0.5,
+        "root_note": 60.0, "key_range": [48.0, 72], "level": 0.5,
         "loop": { "start_frames": 2.0, "end_frames": 6, "crossfade_frames": 1.0 }
     }))
     .unwrap();
     assert_eq!(
-        surface.get_control("root.0"),
+        surface.get_control("root_note.0"),
         Ok(ControlValue::Number(60.0))
     );
 
     let cases = [
         (
-            serde_json::json!({ "root": 60.5 }),
-            "'zones[0].root' expects a whole",
+            serde_json::json!({ "root_note": 60.5 }),
+            "'zones[0].root_note' expects a whole",
         ),
         (
-            serde_json::json!({ "root": 60, "key_range": [48, 72.5] }),
+            serde_json::json!({ "root_note": 60, "key_range": [48, 72.5] }),
             "'zones[0].key_range[1]' expects a whole number from 0 to 127",
         ),
         (
-            serde_json::json!({ "root": 60, "gain": 1e39 }),
-            "'zones[0].gain' expects a finite number, got 1e39",
+            serde_json::json!({ "root_note": 60, "level": 1e39 }),
+            "'zones[0].level' expects a finite number, got 1e39",
         ),
         (
-            serde_json::json!({ "root": 60, "loop": { "start_frames": 2.5, "end_frames": 6 } }),
+            serde_json::json!({ "root_note": 60, "loop": { "start_frames": 2.5, "end_frames": 6 } }),
             "'zones[0].loop.start_frames' expects a whole number",
         ),
     ];
@@ -716,5 +720,58 @@ fn zone_numbers_read_whole_floats_and_are_refused_with_their_path() {
             "{fields}: {error}"
         );
     }
+    let _ = std::fs::remove_file(wav);
+}
+
+#[test]
+fn the_retired_spellings_are_refused() {
+    let wav = write_level_wav(0.5, 8);
+    let asset = wav.to_str().unwrap();
+    let registry = crate::ModuleRegistry::default();
+    let build = |config: serde_json::Value| {
+        registry
+            .build("sample_instrument", 44_100, &config)
+            .map(|built| built.control_surface.unwrap())
+            .map_err(|error| error.to_string())
+    };
+    let zone = serde_json::json!({ "root_note": 60, "asset": asset });
+
+    for (field, value) in [("root", 60.0), ("gain", 0.5)] {
+        let mut old = zone.clone();
+        old[field] = value.into();
+        let error = build(serde_json::json!({ "zones": [old] })).err().unwrap();
+        assert!(
+            error.contains(&format!(
+                "zones[0] has no field '{field}'; it takes root_note, key_range, asset, level, loop"
+            )),
+            "{error}"
+        );
+    }
+    for key in ["voices", "gain.0", "root.0"] {
+        let error = build(serde_json::json!({ "zones": [zone], key: 2 }))
+            .err()
+            .unwrap();
+        assert!(error.contains(&format!("has no key '{key}'")), "{error}");
+    }
+
+    let surface = build(serde_json::json!({ "zones": [zone], "voice_count": 2 })).unwrap();
+    assert!(surface.set_control("gain.0", 0.5.into()).is_err());
+    assert!(surface.get_control("root.0").is_err());
+    let keys: Vec<String> = surface
+        .controls()
+        .into_iter()
+        .map(|meta| meta.key)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "release",
+            "note_on",
+            "note_off",
+            "root_note.0",
+            "asset.0",
+            "level.0"
+        ]
+    );
     let _ = std::fs::remove_file(wav);
 }
