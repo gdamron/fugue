@@ -401,6 +401,51 @@ fn a_repeating_grid_applies_once_a_sample_and_stays() {
 }
 
 #[test]
+fn a_repeat_applies_once_a_sample_where_its_grid_stands_still() {
+    let (mut store, outcomes) = store();
+    let mut watches = Watches::new(4);
+    watches.insert(on_grid(7, 1.0, 0.0, true), 0, &mut store.outcomes);
+    // Past 2^53 a beat's step rounds away: the next grid beat is the
+    // position itself, every sample.
+    let mut host = Host::at(1.0e17, 1.0);
+    let mut passes = 0;
+    while watches.pass(5, INSTALLED, &mut host, &mut store.outcomes).0 {
+        passes += 1;
+        assert!(passes < 3, "the passes end");
+    }
+    assert_eq!(host.applied, [1]);
+    assert_eq!(log(&outcomes), [(7, Outcome::Applied { at: 5 })]);
+    watches.pass(6, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(host.applied, [1, 1], "and again at the next sample");
+}
+
+#[test]
+fn a_tiny_step_far_along_applies_once_and_a_lost_clock_reaches_nothing() {
+    let (mut store, outcomes) = store();
+    let mut watches = Watches::new(4);
+    watches.insert(on_grid(7, 1.0e-9, 0.0, false), 0, &mut store.outcomes);
+    watches.insert(request(8, 1, 1.0e-9), 0, &mut store.outcomes);
+    let mut host = Host::at(1.0e17, 1.0);
+    let mut passes = 0;
+    while watches.pass(5, INSTALLED, &mut host, &mut store.outcomes).0 {
+        passes += 1;
+        assert!(passes < 3, "the passes end");
+    }
+    assert_eq!(host.applied, [1, 1]);
+    assert!(watches.is_empty());
+    let applied = Outcome::Applied { at: 5 };
+    assert_eq!(log(&outcomes), [(7, applied), (8, applied)]);
+    // A position that is no number is refused rather than waited on.
+    watches.insert(request(9, 1, 1.0), 0, &mut store.outcomes);
+    host.clock.position = f64::NAN;
+    assert_eq!(
+        watches.pass(6, INSTALLED, &mut host, &mut store.outcomes),
+        (false, None)
+    );
+    assert_eq!(log(&outcomes), [(9, Outcome::Refused(Refusal::Invalid))]);
+}
+
+#[test]
 fn a_repeat_that_applied_ends_silently_and_one_that_did_not_is_refused() {
     let (mut store, outcomes) = store();
     let mut watches = Watches::new(4);

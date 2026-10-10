@@ -11,7 +11,7 @@ use super::Rig;
 use crate::control_request::{
     BeatSpec, ControlIndex, Outcome, Refusal, RequestId, RtValue, Timeline,
 };
-use crate::test_support::dial::{LEVEL, PULSE};
+use crate::test_support::dial::{DIAL, LEVEL, PULSE};
 use crate::Module;
 
 /// A grid of `every` beats, offset `offset`.
@@ -231,5 +231,49 @@ fn a_repeating_grid_waits_and_applies_without_allocating() {
     let applied = pulse_samples(&out, 64, 22_500.0, Vec::new());
     assert_eq!(applied, (0..10).map(|n| 128 * n + 127).collect::<Vec<_>>());
     let first = Outcome::Applied { at: applied[0] };
+    assert_eq!(outcomes(&mut rig), [(id, first)]);
+}
+
+#[test]
+fn a_repeating_grid_at_a_vast_tempo_applies_once_a_sample() {
+    // Past f64's integers the next grid beat rounds to the position
+    // itself; the block still ends, a pulse a sample.
+    let bpm = 1.0e24;
+    let mut rig = beat_rig(bpm);
+    rig.render(1);
+    let id = submit_pulse(&rig, grid(1.0, 0.0, true));
+    let out = render_counted(&mut rig, 4);
+    let applied = pulse_samples(&out, 64, bpm, Vec::new());
+    assert_eq!(applied, (64..320).collect::<Vec<_>>());
+    assert_eq!(outcomes(&mut rig), [(id, Outcome::Applied { at: 64 })]);
+}
+
+#[test]
+fn a_repeat_on_the_sample_an_edit_installs_applies_once_and_runs_on() {
+    let mut rig = beat_rig(22_500.0);
+    rig.render(1);
+    // A beat every 128 samples, offset to land on every other block start.
+    let (every, offset) = (1.0f32, 1.0f32 / 128.0);
+    let id = submit_pulse(&rig, grid(every, offset, true));
+    let mut out = render_counted(&mut rig, 3);
+    let install = rig.graph.current_sample;
+    // Installed at the start of the next block, on one of the grid's beats:
+    // the repeat applies before the install, not again after it.
+    let pad = rig.build("pad", DIAL, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("pad", pad);
+            Ok(())
+        })
+        .unwrap();
+    out.extend(render_counted(&mut rig, 6));
+    let end = rig.graph.current_sample;
+
+    let mut twin = Twin::new(22_500.0);
+    twin.run_to(64);
+    let expected = grid_samples(&mut twin, every.into(), offset.into(), end);
+    assert!(expected.contains(&install), "{expected:?}");
+    assert_eq!(pulse_samples(&out, 64, 22_500.0, Vec::new()), expected);
+    let first = Outcome::Applied { at: expected[0] };
     assert_eq!(outcomes(&mut rig), [(id, first)]);
 }
