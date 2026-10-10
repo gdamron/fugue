@@ -46,9 +46,8 @@ pub(crate) const WAITING_CAPACITY: usize = PENDING_REQUEST_CAPACITY + BEAT_WATCH
 
 /// Request outcomes the audio thread may queue before a control thread
 /// receives them; beyond that they are counted dropped. Enough for every
-/// request one block can settle: every waiting one and a full queue. A
-/// repeating request reports each application, so a short beat grid can
-/// settle more; those beyond are counted dropped like any.
+/// request one block can settle: every waiting one and a full queue (a
+/// repeating request settles once, at its first application).
 pub(crate) const OUTCOME_QUEUE_CAPACITY: usize = WAITING_CAPACITY + REQUEST_QUEUE_CAPACITY;
 
 /// Payload retirements the request drain's retirer can hold while the

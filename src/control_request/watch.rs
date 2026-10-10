@@ -157,6 +157,11 @@ fn missed_at(timeline: &dyn Timeline, target: f64, now: u64) -> u64 {
     now.saturating_sub(past.saturating_add(1))
 }
 
+/// The finest repeating grid, in beats (a 256th note): each application
+/// ends a segment, so a finer one would split every block into a few
+/// samples for as long as it runs.
+pub(crate) const MIN_REPEAT_STEP: f32 = 1.0 / 64.0;
+
 /// Requests waiting for a beat, in receipt order. Single-threaded (the
 /// audio thread), allocated once on a control thread and never grown.
 pub(crate) struct Watches {
@@ -187,8 +192,9 @@ impl Watches {
     }
 
     /// Refuses a beat no clock can reach (a span or grid that is not
-    /// finite, a negative span, a grid step that is not positive), and a
-    /// repeating payload, which applies once.
+    /// finite, a negative span, a grid step that is not positive), a
+    /// repeating grid finer than [`MIN_REPEAT_STEP`], and a repeating
+    /// payload, which applies once.
     pub(crate) fn check(request: &Request) -> Result<(), Refusal> {
         let When::Beat(beat) = request.when else {
             return Err(Refusal::Unsupported);
@@ -200,6 +206,11 @@ impl Watches {
             {
                 Err(Refusal::Invalid)
             }
+            BeatSpec::Grid {
+                every,
+                repeat: true,
+                ..
+            } if every < MIN_REPEAT_STEP => Err(Refusal::Invalid),
             BeatSpec::Grid { repeat: true, .. } if request.value.is_payload() => {
                 Err(Refusal::Unsupported)
             }
@@ -279,8 +290,17 @@ impl Watches {
                 (None, _) => Refusal::TargetGone,
                 (_, None) => Refusal::TimelineGone,
             };
-            let watch = self.entries.remove(i);
-            outcomes.settle(watch.request, Outcome::Refused(refusal));
+            self.end(i, outcomes, Outcome::Refused(refusal));
+        }
+    }
+
+    /// Removes watch `i`, settling it with `outcome`, unless it repeats and
+    /// has applied: it settled then, at its first application, and ends
+    /// silently. Allocation- and free-free.
+    fn end(&mut self, i: usize, outcomes: &mut Outcomes, outcome: Outcome) {
+        let watch = self.entries.remove(i);
+        if watch.applied.is_none() {
+            outcomes.settle(watch.request, outcome);
         }
     }
 
@@ -310,7 +330,8 @@ impl Watches {
     /// have moved a clock (a reset or tempo timed on beats), so the caller
     /// passes again until none does, and how many samples until the next
     /// may, as far as the clocks' tempi now say. A repeating watch applies
-    /// at most once per sample. Allocation- and free-free.
+    /// at most once per sample, and settles at its first application only.
+    /// Allocation- and free-free.
     pub(crate) fn pass(
         &mut self,
         now: u64,
@@ -328,13 +349,11 @@ impl Watches {
                 continue;
             }
             if expired(&watch.request, now) {
-                let watch = self.entries.remove(i);
-                outcomes.settle(watch.request, Outcome::Refused(Refusal::Expired));
+                self.end(i, outcomes, Outcome::Refused(Refusal::Expired));
                 continue;
             }
             let Some(timeline) = host.timeline(watch.clock) else {
-                let watch = self.entries.remove(i);
-                outcomes.settle(watch.request, Outcome::Refused(Refusal::NoTimeline));
+                self.end(i, outcomes, Outcome::Refused(Refusal::NoTimeline));
                 continue;
             };
             let (beat, fresh) = watch.target(timeline, now);
@@ -362,17 +381,20 @@ impl Watches {
             if let (true, RequestValue::Value(value)) = (watch.repeats(), &watch.request.value) {
                 let value = RequestValue::Value(*value);
                 let result = host.apply(&watch.request.target, value, &mut outcomes.retirer);
-                if result.is_ok() {
-                    outcomes.record(watch.request.id, false, outcome(result));
-                    watch.applied = Some(now);
-                    if let Goal::Grid { next, .. } = &mut watch.goal {
-                        *next = None;
-                    }
-                    i += 1;
-                } else {
-                    let watch = self.entries.remove(i);
-                    outcomes.settle(watch.request, outcome(result));
+                if result.is_err() {
+                    self.end(i, outcomes, outcome(result));
+                    continue;
                 }
+                // Settled at its first application only: the outcome
+                // queue holds one per request, and a repeat runs on.
+                if watch.applied.is_none() {
+                    outcomes.record(watch.request.id, false, outcome(result));
+                }
+                watch.applied = Some(now);
+                if let Goal::Grid { next, .. } = &mut watch.goal {
+                    *next = None;
+                }
+                i += 1;
                 continue;
             }
             let Request {

@@ -6,9 +6,13 @@ use super::request_beats::{
     beat_rig, blocks_for, level_change, outcomes_of, render_counted, submit_clock_at, submit_level,
     submit_on, Twin, RESET,
 };
-use super::requests::{counted_block, outcomes};
-use crate::control_request::{BeatSpec, Outcome, Refusal, RequestId, RtValue, Timeline};
-use crate::test_support::dial::LEVEL;
+use super::requests::outcomes;
+use super::Rig;
+use crate::control_request::{
+    BeatSpec, ControlIndex, Outcome, Refusal, RequestId, RtValue, Timeline,
+};
+use crate::test_support::dial::{LEVEL, PULSE};
+use crate::Module;
 
 /// A grid of `every` beats, offset `offset`.
 fn grid(every: f32, offset: f32, repeat: bool) -> BeatSpec {
@@ -36,6 +40,43 @@ fn grid_samples(twin: &mut Twin, every: f64, offset: f64, end: u64) -> Vec<u64> 
         };
         if reached.is_some() {
             samples.push(twin.sample - 1);
+        }
+    }
+    samples
+}
+
+/// Pulses the dial at `spec` on the clock: each application adds one to
+/// its output for good, so the output shows every one.
+fn submit_pulse(rig: &Rig, spec: BeatSpec) -> RequestId {
+    submit_on(
+        rig,
+        ("dial", PULSE),
+        RtValue::Bool(true),
+        "clock",
+        spec,
+        None,
+    )
+}
+
+/// The samples, from `start`, at which the dial's pulse count rises in
+/// `out` (the beat gate, by a twin with `writes`, taken away).
+fn pulse_samples(
+    out: &[f32],
+    start: u64,
+    bpm: f64,
+    writes: Vec<(u64, ControlIndex, RtValue)>,
+) -> Vec<u64> {
+    let mut twin = Twin::new(bpm);
+    twin.writes = writes;
+    twin.run_to(start);
+    let (mut count, mut samples) = (0.0, Vec::new());
+    for (i, sample) in out.iter().enumerate() {
+        twin.tick();
+        let pulses = (sample - 0.25 - twin.clock.output_block(0)[0]).round();
+        if pulses > count {
+            assert_eq!(pulses, count + 1.0, "one pulse a sample");
+            samples.push(start + i as u64);
+            count = pulses;
         }
     }
     samples
@@ -80,24 +121,27 @@ fn every_n_beats_repeats_and_follows_a_reset() {
             let mut rig = beat_rig(bpm);
             rig.render(4);
             let start = rig.graph.current_sample;
-            let spec = grid(every, offset, true);
-            let id = submit_level(&rig, 0.5, spec);
+            let id = submit_pulse(&rig, grid(every, offset, true));
             let reset_at = start + 70_001;
             submit_clock_at(&rig, RESET, RtValue::Bool(true), reset_at);
-            render_counted(&mut rig, blocks_for(bpm, 30.0));
+            let out = render_counted(&mut rig, blocks_for(bpm, 30.0));
             let end = rig.graph.current_sample;
 
+            let writes = vec![(reset_at, RESET, RtValue::Bool(true))];
             let mut twin = Twin::new(bpm);
-            twin.writes.push((reset_at, RESET, RtValue::Bool(true)));
+            twin.writes = writes.clone();
             twin.run_to(start);
-            let expected: Vec<(RequestId, Outcome)> =
-                grid_samples(&mut twin, every.into(), offset.into(), end)
-                    .into_iter()
-                    .map(|at| (id, Outcome::Applied { at }))
-                    .collect();
-            let got = outcomes_of(&mut rig, id);
-            assert!(got.len() > 10, "{got:?}");
-            assert_eq!(got, expected, "{bpm} bpm, every {every} offset {offset}");
+            let expected = grid_samples(&mut twin, every.into(), offset.into(), end);
+            let context = format!("{bpm} bpm, every {every} offset {offset}");
+            assert!(expected.len() > 10, "{context}: {expected:?}");
+            assert_eq!(
+                pulse_samples(&out, start, bpm, writes),
+                expected,
+                "{context}"
+            );
+            // One outcome: its first application.
+            let first = Outcome::Applied { at: expected[0] };
+            assert_eq!(outcomes_of(&mut rig, id), [(id, first)], "{context}");
         }
     }
 }
@@ -110,27 +154,18 @@ fn a_reset_timed_on_beats_loops_the_clock() {
         ("clock", RESET),
         RtValue::Bool(true),
         "clock",
-        grid(3.0, 0.0, true),
+        grid(2.5, 0.0, true),
         None,
     );
     let out = render_counted(&mut rig, blocks_for(120.0, 9.0));
-    // Beat 0, then every 3 beats it starts over at beat 0, exactly 3 beats
-    // later: gates every 24000 samples, and one reset at each loop start.
+    // Beat 0, then every 2.5 beats (60000 samples) it starts over at beat
+    // 0: gates at 0, 1 and 2 beats into each loop, to the sample.
     let rises: Vec<usize> = (1..out.len())
         .filter(|&i| out[i] >= 1.0 && out[i - 1] < 1.0)
         .collect();
-    assert!(
-        rises.windows(2).all(|pair| pair[1] - pair[0] == 24_000),
-        "{rises:?}"
-    );
-    let applied: Vec<u64> = outcomes(&mut rig)
-        .into_iter()
-        .map(|(got, outcome)| match outcome {
-            Outcome::Applied { at } if got == id => at,
-            other => panic!("{other:?}"),
-        })
-        .collect();
-    assert_eq!(&applied[..4], [0, 72_000, 144_000, 216_000]);
+    let loops = [24_000, 48_000, 60_000, 84_000, 108_000, 120_000, 144_000];
+    assert_eq!(rises[..7], loops, "{rises:?}");
+    assert_eq!(outcomes(&mut rig), [(id, Outcome::Applied { at: 0 })]);
 }
 
 #[test]
@@ -152,6 +187,8 @@ fn removing_the_clock_ends_a_repeating_grid() {
     rig.render(1);
     let id = submit_level(&rig, 0.5, grid(1.0, 0.0, true));
     render_counted(&mut rig, 4);
+    let watches = |rig: &Rig| rig.graph.requests.as_ref().unwrap().watches.len();
+    assert_eq!(watches(&rig), 1);
     rig.live
         .edit(|change| {
             change.remove("clock");
@@ -159,10 +196,10 @@ fn removing_the_clock_ends_a_repeating_grid() {
         })
         .unwrap();
     render_counted(&mut rig, 1);
+    // It reported its first application, and ends without another outcome.
     let got = outcomes_of(&mut rig, id);
-    let (last, applied) = got.split_last().unwrap();
-    assert_eq!(*last, (id, Outcome::Refused(Refusal::TimelineGone)));
-    assert_eq!(applied.len(), 2, "{applied:?}");
+    assert!(matches!(got[..], [(_, Outcome::Applied { .. })]), "{got:?}");
+    assert_eq!(watches(&rig), 0);
 }
 
 #[test]
@@ -170,29 +207,29 @@ fn a_grid_no_clock_reaches_is_refused() {
     let mut rig = beat_rig(120.0);
     rig.render(1);
     let value = RtValue::F32(0.5);
-    let bad = [grid(0.0, 0.0, true), grid(-4.0, 0.0, false)]
-        .map(|spec| submit_on(&rig, ("dial", LEVEL), value, "clock", spec, None));
+    // A repeating grid finer than a 256th note would split every block.
+    let bad = [
+        grid(0.0, 0.0, true),
+        grid(-4.0, 0.0, false),
+        grid(1.0 / 128.0, 0.0, true),
+    ]
+    .map(|spec| submit_on(&rig, ("dial", LEVEL), value, "clock", spec, None));
     render_counted(&mut rig, 1);
     let refused = Outcome::Refused(Refusal::Invalid);
-    assert_eq!(outcomes(&mut rig), [(bad[0], refused), (bad[1], refused)]);
+    let expected = bad.map(|id| (id, refused));
+    assert_eq!(outcomes(&mut rig), expected);
 }
 
 #[test]
 fn a_repeating_grid_waits_and_applies_without_allocating() {
     let mut rig = beat_rig(22_500.0);
     rig.render(1);
-    let id = submit_level(&rig, 0.5, grid(1.0, 0.0, true));
-    for _ in 0..20 {
-        assert_eq!(counted_block(&mut rig), (0, 0));
-    }
+    let id = submit_pulse(&rig, grid(1.0, 0.0, true));
+    let out = render_counted(&mut rig, 20);
     // A beat every 128 samples, each on the sample ending them: one every
     // other block, never early.
-    let applied = outcomes(&mut rig);
-    assert_eq!(applied.len(), 10, "{applied:?}");
-    for (got, outcome) in applied {
-        let Outcome::Applied { at } = outcome else {
-            panic!("{outcome:?}")
-        };
-        assert_eq!((got, (at + 1) % 128), (id, 0));
-    }
+    let applied = pulse_samples(&out, 64, 22_500.0, Vec::new());
+    assert_eq!(applied, (0..10).map(|n| 128 * n + 127).collect::<Vec<_>>());
+    let first = Outcome::Applied { at: applied[0] };
+    assert_eq!(outcomes(&mut rig), [(id, first)]);
 }

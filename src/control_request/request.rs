@@ -94,9 +94,11 @@ pub(crate) enum BeatSpec {
     /// The next beat `t` past the clock's position with `t` congruent to
     /// `offset` modulo `every` (finite, positive): `offset` 0 is the next
     /// multiple of `every`. Measured from the clock's beat 0, so after a
-    /// reset it follows the new beat 0. With `repeat`, it applies its value
-    /// again at every such beat until its ttl runs out or its target or
-    /// clock goes away, reporting each application.
+    /// reset it follows the new beat 0. With `repeat` (`every` at least
+    /// 1/64 beat), it applies its value again at every such beat until its
+    /// ttl runs out or its target or clock goes away. It reports its first
+    /// application only, as any request reports one outcome, and ends
+    /// silently once it has applied.
     Grid {
         every: f32,
         offset: f32,
