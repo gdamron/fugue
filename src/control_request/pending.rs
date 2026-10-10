@@ -95,7 +95,7 @@ impl Outcomes {
     pub(crate) fn settle(&mut self, request: Request, outcome: Outcome) {
         let Request { value, id, .. } = request;
         let payload = value.is_payload();
-        if let RequestValue::Payload(payload) = value {
+        if let RequestValue::Payload(payload) | RequestValue::Edit(payload) = value {
             self.retirer.retire(payload);
         }
         self.record(id, payload, outcome);

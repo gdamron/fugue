@@ -184,6 +184,52 @@ fn retired_values_drop_on_the_draining_thread() {
         .all(|&(_, dropper)| dropper == control));
 }
 
+/// A value that is `Send` but not `Sync`, as a prepared publication is.
+struct Unshared {
+    value: std::cell::Cell<u32>,
+    _tracked: Tracked,
+}
+
+#[test]
+fn an_owned_payload_is_changed_in_place_and_retired_without_allocating() {
+    let ledger = Ledger::default();
+    let queue = RetireQueue::with_capacity(4);
+    let mut audio = Retirer::new(Arc::clone(&queue), 2);
+    let payload = Payload::owned(Box::new(Unshared {
+        value: 1.into(),
+        _tracked: ledger.value(1),
+    }));
+    let wrong = Payload::owned(Box::new(7u32));
+    let shared = Payload::new(8u32);
+
+    let ((), audio_thread) = on_audio(&mut audio, |retirer| {
+        assert!(payload.is::<Unshared>() && !payload.is::<u32>());
+        // Taken whole, changed in place, then retired like a payload.
+        let owned = payload.take_owned::<Unshared>().unwrap();
+        owned.value.set(2);
+        assert_eq!(owned.value.get(), 2);
+        retirer.retire(owned);
+        // The wrong type, or a shared value, comes back as it was.
+        let Err(wrong) = wrong.take_owned::<Unshared>() else {
+            panic!("took an owned value of the wrong type");
+        };
+        assert!(wrong.is::<u32>());
+        let Err(shared) = shared.take_owned::<u32>() else {
+            panic!("took a shared value as owned");
+        };
+        let Err(wrong) = wrong.downcast::<u32>() else {
+            panic!("shared an owned value");
+        };
+        retirer.retire(wrong);
+        retirer.retire(shared.downcast::<u32>().unwrap());
+    });
+    assert!(ledger.drops().is_empty(), "retired value dropped early");
+    let (freed, control) = drain_on_control(&queue);
+    assert_eq!(freed, 3);
+    assert_ne!(control, audio_thread);
+    assert_eq!(ledger.drops(), [(1, control)]);
+}
+
 #[test]
 fn a_full_retire_path_holds_and_drops_every_value_once_off_the_audio_thread() {
     let ledger = Ledger::default();
@@ -467,6 +513,7 @@ mod debug_checks {
         );
         assert!(drop_on_audio(Shared::new(1u32)).starts_with("a Shared value"));
         assert!(drop_on_audio(Retired::from(Box::new(1u32))).starts_with("a Retired value"));
+        assert!(drop_on_audio(Payload::owned(Box::new(1u32))).starts_with("a Payload"));
 
         // Outside the scope they drop quietly.
         drop(Payload::new(1u32));
