@@ -140,6 +140,32 @@ fn a_full_channel_returns_the_request_and_counts_the_overflow() {
 }
 
 #[test]
+fn a_reserving_sender_leaves_its_slots_to_the_others() {
+    let (sender, mut consumer) = request_channel(8, Default::default());
+    let reserving = sender.reserving(4);
+    let mut cursor = EventCursor::new();
+    let submitted = |sender: &RequestSender| {
+        (0..)
+            .take_while(|&i| sender.submit(request(i as f32)).is_ok())
+            .count()
+    };
+    let (taken, allocs, frees) = allocator_events(|| submitted(&reserving));
+    assert_eq!((taken, allocs, frees), (4, 0, 0));
+    assert_eq!(cursor.take(sender.overflows()), 1);
+    // The reserve is for the others to fill.
+    assert_eq!(submitted(&sender), 4);
+
+    // It takes a slot again only once the reserve is free behind it.
+    for _ in 0..4 {
+        consumer.pop().unwrap();
+    }
+    assert!(reserving.submit(request(0.0)).is_err());
+    consumer.pop().unwrap();
+    assert!(reserving.submit(request(0.0)).is_ok());
+    assert!(reserving.submit(request(0.0)).is_err());
+}
+
+#[test]
 fn request_ids_are_unique_across_threads() {
     let (sender, mut consumer) = request_channel(256, Default::default());
     let submitters: Vec<_> = (0..4)
