@@ -199,6 +199,24 @@ fn a_reset_counts_as_reaching_the_next_whole_beat() {
 }
 
 #[test]
+fn a_reset_past_the_beat_reaches_it_on_time() {
+    let (mut store, outcomes) = store();
+    let mut watches = Watches::new(4);
+    watches.insert(request(1, 1, 0.5), 0, &mut store.outcomes);
+    let mut host = Host::at(2.2, 1.0 / 128.0);
+    watches.pass(0, INSTALLED, &mut host, &mut store.outcomes);
+    // Reset at 2.5, short of beat 2.7: it starts beat 3 of the count.
+    host.clock = Scripted {
+        position: BEFORE_START,
+        rate: 1.0 / 128.0,
+        beats_before: 3,
+    };
+    let pass = watches.pass(38, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(pass, (true, None));
+    assert_eq!(log(&outcomes), [(1, Outcome::Applied { at: 38 })]);
+}
+
+#[test]
 fn a_watch_is_refused_when_its_ttl_runs_out_or_its_clock_keeps_no_timeline() {
     let (mut store, outcomes) = store();
     let mut watches = Watches::new(4);

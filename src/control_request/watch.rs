@@ -71,8 +71,12 @@ impl Watch {
 }
 
 /// The sample a clock now past `target` reached it at, estimated at its
-/// current tempo: before `now`.
+/// current tempo: before `now`, unless a reset at `now` passed it (the
+/// clock has not started since), which is on time.
 fn missed_at(timeline: &dyn Timeline, target: f64, now: u64) -> u64 {
+    if timeline.position() < 0.0 {
+        return now;
+    }
     let rate = timeline.position_after(1) - timeline.position();
     let past = if rate > 0.0 && rate.is_finite() {
         ((timeline.position() - target) / rate).floor() as u64
@@ -86,6 +90,8 @@ fn missed_at(timeline: &dyn Timeline, target: f64, now: u64) -> u64 {
 /// audio thread), allocated once on a control thread and never grown.
 pub(crate) struct Watches {
     entries: Vec<Watch>,
+    /// The watches it holds at most (the Vec may have more room).
+    limit: usize,
 }
 
 impl Watches {
@@ -93,6 +99,7 @@ impl Watches {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
             entries: Vec::with_capacity(capacity),
+            limit: capacity,
         }
     }
 
@@ -105,7 +112,7 @@ impl Watches {
     }
 
     pub(crate) fn is_full(&self) -> bool {
-        self.entries.len() >= self.entries.capacity()
+        self.entries.len() >= self.limit
     }
 
     /// Refuses a beat no clock can reach: a span that is not finite, or
