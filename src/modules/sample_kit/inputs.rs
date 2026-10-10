@@ -2,10 +2,10 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 2] = ["trigger", "key"];
+pub const INPUTS: [&str; 2] = ["play", "key"];
 
 pub struct SampleKitInputs {
-    trigger: [f32; MAX_BLOCK],
+    play: [f32; MAX_BLOCK],
     key: [f32; MAX_BLOCK],
     key_connected: bool,
 }
@@ -13,7 +13,7 @@ pub struct SampleKitInputs {
 impl SampleKitInputs {
     pub fn new() -> Self {
         Self {
-            trigger: [0.0; MAX_BLOCK],
+            play: [0.0; MAX_BLOCK],
             key: [0.0; MAX_BLOCK],
             key_connected: false,
         }
@@ -22,8 +22,8 @@ impl SampleKitInputs {
     /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
-            "trigger" => {
-                self.trigger.fill(value);
+            "play" => {
+                self.play.fill(value);
                 Ok(())
             }
             "key" => {
@@ -39,7 +39,7 @@ impl SampleKitInputs {
     #[inline]
     pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
         match index {
-            0 => &mut self.trigger,
+            0 => &mut self.play,
             _ => &mut self.key,
         }
     }
@@ -52,19 +52,19 @@ impl SampleKitInputs {
     }
 
     #[inline]
-    pub fn trigger(&self, i: usize) -> f32 {
-        self.trigger[i]
+    pub fn play(&self, i: usize) -> f32 {
+        self.play[i]
     }
 
     /// The key selecting a slot at frame `i`: the `key` input when connected,
-    /// otherwise the trigger's own value (so a bare trigger signal can carry
+    /// otherwise the `play` input's own value (so a bare play pulse can carry
     /// the key, e.g. a pulse of height 36 fires slot 36).
     #[inline]
     pub fn key(&self, i: usize) -> f32 {
         if self.key_connected {
             self.key[i]
         } else {
-            self.trigger[i]
+            self.play[i]
         }
     }
 }

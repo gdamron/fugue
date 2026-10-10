@@ -77,13 +77,13 @@ fn two_slot_config(kick: &std::path::Path, snare: &std::path::Path) -> serde_jso
 const TOL: f32 = 2e-3;
 
 #[test]
-fn test_trigger_value_selects_slot() {
+fn test_play_value_selects_slot() {
     let kick = write_level_wav(0.5, 4);
     let snare = write_level_wav(0.25, 4);
     let (mut kit, _controls) = build_kit(two_slot_config(&kick, &snare));
 
-    // No `key` connection: the trigger's own value carries the key.
-    kit.set_input("trigger", 36.0).unwrap();
+    // No `key` connection: the `play` input's own value carries the key.
+    kit.set_input("play", 36.0).unwrap();
     kit.process(2);
     assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
     assert!((kit.get_output("audio_right").unwrap() - 0.5).abs() < TOL);
@@ -99,7 +99,7 @@ fn test_key_input_selects_slot() {
     let (mut kit, _controls) = build_kit(two_slot_config(&kick, &snare));
 
     kit.set_input("key", 38.0).unwrap();
-    kit.set_input("trigger", 1.0).unwrap();
+    kit.set_input("play", 1.0).unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
 
@@ -113,7 +113,7 @@ fn test_unmatched_key_stays_silent() {
     let snare = write_level_wav(0.25, 4);
     let (mut kit, _controls) = build_kit(two_slot_config(&kick, &snare));
 
-    kit.set_input("trigger", 40.0).unwrap();
+    kit.set_input("play", 40.0).unwrap();
     kit.process(1);
     assert_eq!(kit.get_output("audio_left").unwrap(), 0.0);
 
@@ -128,20 +128,20 @@ fn test_slots_overlap_and_voice_ends() {
     let (mut kit, _controls) = build_kit(two_slot_config(&kick, &snare));
 
     kit.set_input("key", 36.0).unwrap();
-    kit.set_input("trigger", 1.0).unwrap();
+    kit.set_input("play", 1.0).unwrap();
     kit.process(1);
-    kit.set_input("trigger", 0.0).unwrap();
+    kit.set_input("play", 0.0).unwrap();
     kit.process(1);
 
     // Snare joins while the kick is still sounding: the mix is their sum.
     kit.set_input("key", 38.0).unwrap();
-    kit.set_input("trigger", 1.0).unwrap();
+    kit.set_input("play", 1.0).unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.75).abs() < TOL);
 
     // One frame later the 2-frame snare plays its last frame while the
     // 4-frame kick plays its own last frame.
-    kit.set_input("trigger", 0.0).unwrap();
+    kit.set_input("play", 0.0).unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.75).abs() < TOL);
 
@@ -154,7 +154,7 @@ fn test_slots_overlap_and_voice_ends() {
 }
 
 #[test]
-fn test_retrigger_restarts_slot() {
+fn test_replay_restarts_slot() {
     // A decaying sample distinguishes a restart from a continuation.
     let path = write_levels_wav(&[0.5, 0.1, 0.1, 0.1]);
     let config = serde_json::json!({
@@ -162,15 +162,15 @@ fn test_retrigger_restarts_slot() {
     });
     let (mut kit, _controls) = build_kit(config);
 
-    kit.set_input("trigger", 36.0).unwrap();
+    kit.set_input("play", 36.0).unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
-    kit.set_input("trigger", 0.0).unwrap();
+    kit.set_input("play", 0.0).unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.1).abs() < TOL);
 
-    // Retrigger: playback restarts from the first frame (per-slot choke).
-    kit.set_input("trigger", 36.0).unwrap();
+    // Replay: playback restarts from the first frame (per-slot choke).
+    kit.set_input("play", 36.0).unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
 
@@ -178,7 +178,7 @@ fn test_retrigger_restarts_slot() {
 }
 
 #[test]
-fn test_control_trigger_by_name_and_numeric_string() {
+fn test_play_control_by_name_and_numeric_string() {
     let kick = write_level_wav(0.5, 4);
     let ride = write_level_wav(0.25, 4);
     let config = serde_json::json!({
@@ -190,20 +190,20 @@ fn test_control_trigger_by_name_and_numeric_string() {
     let (mut kit, controls) = build_kit(config);
 
     controls
-        .set_control("trigger", ControlValue::String("ride".to_string()))
+        .set_control("play", ControlValue::String("ride".to_string()))
         .unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
 
     controls
-        .set_control("trigger", ControlValue::String("36".to_string()))
+        .set_control("play", ControlValue::String("36".to_string()))
         .unwrap();
     kit.process(1);
     // Kick starts while the ride continues.
     assert!((kit.get_output("audio_left").unwrap() - 0.75).abs() < TOL);
 
     let err = controls
-        .set_control("trigger", ControlValue::String("crash".to_string()))
+        .set_control("play", ControlValue::String("crash".to_string()))
         .unwrap_err();
     assert!(err.contains("No sample slot named 'crash'"), "{err}");
 
@@ -212,23 +212,23 @@ fn test_control_trigger_by_name_and_numeric_string() {
 }
 
 #[test]
-fn test_gain_control_scales_slot() {
+fn test_level_control_scales_slot() {
     let kick = write_level_wav(0.5, 4);
     let config = serde_json::json!({
-        "samples": [ { "key": 36, "asset": kick.to_str().unwrap(), "gain": 0.5 } ]
+        "samples": [ { "key": 36, "asset": kick.to_str().unwrap(), "level": 0.5 } ]
     });
     let (mut kit, controls) = build_kit(config);
 
-    kit.set_input("trigger", 36.0).unwrap();
+    kit.set_input("play", 36.0).unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
 
     controls
-        .set_control("gain.0", ControlValue::Number(2.0))
+        .set_control("level.0", ControlValue::Number(2.0))
         .unwrap();
-    kit.set_input("trigger", 0.0).unwrap();
+    kit.set_input("play", 0.0).unwrap();
     kit.process(1);
-    kit.set_input("trigger", 36.0).unwrap();
+    kit.set_input("play", 36.0).unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 1.0).abs() < 2.0 * TOL);
 
@@ -244,11 +244,11 @@ fn test_asset_control_swaps_slot_sample() {
     });
     let (mut kit, controls) = build_kit(config);
 
-    kit.set_input("trigger", 36.0).unwrap();
+    kit.set_input("play", 36.0).unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
 
-    // The swap lands at the next block; the new sample waits for a trigger
+    // The swap lands at the next block; the new sample waits for a play
     // instead of jumping in mid-buffer.
     controls
         .set_control(
@@ -264,7 +264,7 @@ fn test_asset_control_swaps_slot_sample() {
     assert_eq!(kit.get_output("audio_left").unwrap(), 0.0);
 
     controls
-        .set_control("trigger", ControlValue::Number(36.0))
+        .set_control("play", ControlValue::Number(36.0))
         .unwrap();
     kit.process(1);
     assert!((kit.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
@@ -283,7 +283,7 @@ fn test_null_config_builds_empty_kit() {
     let surface = result.control_surface.unwrap();
     let metas = surface.controls();
     assert_eq!(metas.len(), 1);
-    assert_eq!(metas[0].key, "trigger");
+    assert_eq!(metas[0].key, "play");
 }
 
 #[test]
@@ -320,8 +320,8 @@ fn test_config_validation_errors() {
             "must not be empty",
         ),
         (
-            serde_json::json!({ "samples": [{ "key": 36, "asset": kick_str, "gain": "loud" }] }),
-            "'samples[0].gain' expects a finite number",
+            serde_json::json!({ "samples": [{ "key": 36, "asset": kick_str, "level": "loud" }] }),
+            "'samples[0].level' expects a finite number",
         ),
         (serde_json::json!({ "samples": {} }), "must be an array"),
     ];
@@ -370,7 +370,7 @@ fn test_package_ref_slot_resolves_through_cache() {
             controls.get_control("asset.0").unwrap(),
             ControlValue::String("fugue.test.kit@1.0.0:kick.wav".to_string())
         );
-        kit.set_input("trigger", 36.0).unwrap();
+        kit.set_input("play", 36.0).unwrap();
         kit.process(1);
         assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
     });
@@ -379,10 +379,10 @@ fn test_package_ref_slot_resolves_through_cache() {
 #[test]
 fn slot_numbers_read_whole_floats_and_are_refused_with_their_path() {
     let kick = write_level_wav(0.5, 8);
-    let slot = |key: serde_json::Value, gain: serde_json::Value| {
+    let slot = |key: serde_json::Value, level: serde_json::Value| {
         let asset = kick.to_str().unwrap();
         let config =
-            serde_json::json!({ "samples": [{ "key": key, "asset": asset, "gain": gain }] });
+            serde_json::json!({ "samples": [{ "key": key, "asset": asset, "level": level }] });
         SampleKitFactory
             .build(44_100, &config)
             .map(|built| built.control_surface.unwrap())
@@ -392,7 +392,7 @@ fn slot_numbers_read_whole_floats_and_are_refused_with_their_path() {
     assert_eq!(surface.get_control("key.0"), Ok(ControlValue::from("36")));
     assert_eq!(
         slot(serde_json::json!(36), serde_json::json!(1e39)).err(),
-        Some("sample_kit config 'samples[0].gain' expects a finite number, got 1e39".into())
+        Some("sample_kit config 'samples[0].level' expects a finite number, got 1e39".into())
     );
     let error = slot(serde_json::json!(3e9), serde_json::json!(1))
         .err()
@@ -401,5 +401,50 @@ fn slot_numbers_read_whole_floats_and_are_refused_with_their_path() {
         error.contains("'samples[0].key' expects a whole number from -2147483648"),
         "{error}"
     );
+    let _ = std::fs::remove_file(kick);
+}
+
+#[test]
+fn the_retired_spellings_are_refused() {
+    let kick = write_level_wav(0.5, 8);
+    let asset = kick.to_str().unwrap();
+    let registry = crate::ModuleRegistry::default();
+    let build = |config: serde_json::Value| {
+        registry
+            .build("sample_kit", 44_100, &config)
+            .map(|built| built.control_surface.unwrap())
+            .map_err(|error| error.to_string())
+    };
+
+    let error =
+        build(serde_json::json!({ "samples": [{ "key": 36, "asset": asset, "gain": 0.5 }] }))
+            .err()
+            .unwrap();
+    assert!(
+        error.contains("samples[0] has no field 'gain'; it takes key, asset, level"),
+        "{error}"
+    );
+    let slot = serde_json::json!([{ "key": 36, "asset": asset }]);
+    let error = build(serde_json::json!({ "samples": slot, "gain.0": 0.5 }))
+        .err()
+        .unwrap();
+    assert!(error.contains("has no key 'gain.0'"), "{error}");
+
+    let surface = build(serde_json::json!({ "samples": slot })).unwrap();
+    assert!(surface.set_control("trigger", 36.0.into()).is_err());
+    assert!(surface.set_control("gain.0", 0.5.into()).is_err());
+    let keys: Vec<String> = surface
+        .controls()
+        .into_iter()
+        .map(|meta| meta.key)
+        .collect();
+    assert_eq!(keys, ["play", "key.0", "asset.0", "level.0"]);
+
+    let mut kit = SampleKit::new_with_controls(
+        SampleKitControls::new(44_100, Vec::new()).unwrap().0,
+        Vec::new(),
+    );
+    assert!(kit.set_input("trigger", 1.0).is_err());
+    assert_eq!(kit.inputs(), ["play", "key"]);
     let _ = std::fs::remove_file(kick);
 }

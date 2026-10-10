@@ -14,9 +14,6 @@ pub(super) const EXCEPTION_CEILING: usize = 40;
 // One row per line, so a rename deletes whole lines.
 #[rustfmt::skip]
 pub(super) const CONVENTION_EXCEPTIONS: &[(&str, &str, &str)] = &[
-    // sample_kit and sample_instrument
-    ("sample_kit", "gain.N", "controls become level.N"),
-    ("sample_instrument", "gain.N", "controls become level.N"),
     // agent, code and the sinks
     ("agent", "cooldown_ms", "becomes cooldown, in seconds"),
     ("agent", "history_json", "telemetry becomes history"),

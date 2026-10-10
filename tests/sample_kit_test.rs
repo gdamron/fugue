@@ -1,6 +1,6 @@
 //! End-to-end graph test for the sample_kit module: an invention JSON is
-//! loaded through the same builder the live daemon uses, a clock's gate
-//! triggers a kit slot, and the mixed audio reaches the DAC.
+//! loaded through the same builder the live daemon uses, a clock's beat
+//! plays a kit slot, and the mixed audio reaches the DAC.
 
 use fugue::RenderEngine;
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ fn temp_wav(level: f32, frames: usize) -> PathBuf {
 }
 
 #[test]
-fn clock_gate_triggers_kit_slot_through_graph() {
+fn clock_beat_plays_kit_slot_through_graph() {
     let kick = temp_wav(0.5, 256);
     let json = format!(
         r#"{{
@@ -41,7 +41,7 @@ fn clock_gate_triggers_kit_slot_through_graph() {
                 {{ "id": "dac", "type": "dac", "config": {{ "soft_clip": false }} }}
             ],
             "connections": [
-                {{ "from": "clock", "from_port": "beat", "to": "kit", "to_port": "trigger" }},
+                {{ "from": "clock", "from_port": "beat", "to": "kit", "to_port": "play" }},
                 {{ "from": "kit", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" }},
                 {{ "from": "kit", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }}
             ]
@@ -54,7 +54,7 @@ fn clock_gate_triggers_kit_slot_through_graph() {
     let mut out = vec![0.0f32; 1024 * 2];
     engine.render_interleaved(&mut out).unwrap();
 
-    // The clock's first gate rise (value 1.0 = slot key 1) starts the kick:
+    // The clock's first beat (value 1.0 = slot key 1) starts the kick:
     // the render must contain the sample's 0.5 level on both channels.
     let peak = out.iter().fold(0.0f32, |acc, s| acc.max(*s));
     assert!(

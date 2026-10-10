@@ -21,11 +21,11 @@ pub(crate) const MAX_PENDING_NOTES: usize = 64;
 /// One keymap zone as authored in config: a sample, the note it was
 /// recorded at, the key range it covers, and an optional sustain loop.
 pub struct ZoneSpec {
-    pub root: u8,
+    pub root_note: u8,
     pub key_low: u8,
     pub key_high: u8,
     pub asset: String,
-    pub gain: f32,
+    pub level: f32,
     pub loop_spec: Option<LoopSpec>,
 }
 
@@ -79,10 +79,10 @@ struct InstrumentInner {
 }
 
 struct ZoneState {
-    root: u8,
+    root_note: u8,
     key_low: u8,
     key_high: u8,
-    gain: AtomicF32,
+    level: AtomicF32,
     /// Authored loop points, kept in source frames so an asset swap can
     /// re-scale them against the new file's rate.
     loop_spec: Option<LoopSpec>,
@@ -108,10 +108,10 @@ impl SampleInstrumentControls {
                 .map_err(|err| format!("zones[{}]: {}", index, err))?;
             audio.push(zone_audio);
             zones.push(ZoneState {
-                root: spec.root,
+                root_note: spec.root_note,
                 key_low: spec.key_low,
                 key_high: spec.key_high,
-                gain: AtomicF32::new(spec.gain.clamp(0.0, 2.0)),
+                level: AtomicF32::new(spec.level.clamp(0.0, 2.0)),
                 loop_spec: spec.loop_spec,
                 asset: Mutex::new(spec.asset),
             });
@@ -141,20 +141,20 @@ impl SampleInstrumentControls {
         self.inner
             .zones
             .get(index)
-            .map(|zone| (zone.root, zone.key_low, zone.key_high))
+            .map(|zone| (zone.root_note, zone.key_low, zone.key_high))
     }
 
-    pub fn gain(&self, index: usize) -> f32 {
+    pub fn level(&self, index: usize) -> f32 {
         self.inner
             .zones
             .get(index)
-            .map(|zone| zone.gain.load())
+            .map(|zone| zone.level.load())
             .unwrap_or(0.0)
     }
 
-    pub fn set_gain(&self, index: usize, gain: f32) -> Result<(), String> {
+    pub fn set_level(&self, index: usize, level: f32) -> Result<(), String> {
         let zone = self.zone(index)?;
-        zone.gain.store(gain.clamp(0.0, 2.0));
+        zone.level.store(level.clamp(0.0, 2.0));
         Ok(())
     }
 
@@ -335,13 +335,13 @@ impl ControlSurface for SampleInstrumentControls {
         for (index, zone) in self.inner.zones.iter().enumerate() {
             metas.push(
                 ControlMeta::number(
-                    format!("root.{}", index),
+                    format!("root_note.{}", index),
                     format!(
                         "Zone root note, covering keys {}..={} (fixed at build time)",
                         zone.key_low, zone.key_high
                     ),
                 )
-                .with_default(zone.root as f32),
+                .with_default(zone.root_note as f32),
             );
             metas.push(
                 ControlMeta::string(
@@ -352,9 +352,9 @@ impl ControlSurface for SampleInstrumentControls {
                 .with_default(zone.asset.lock().unwrap().clone()),
             );
             metas.push(
-                ControlMeta::number(format!("gain.{}", index), "Zone level (1.0 = unity)")
+                ControlMeta::number(format!("level.{}", index), "Zone level (1.0 = unity)")
                     .with_range(0.0, 2.0)
-                    .with_default(zone.gain.load()),
+                    .with_default(zone.level.load()),
             );
         }
         metas
@@ -366,15 +366,15 @@ impl ControlSurface for SampleInstrumentControls {
             "note_on" | "note_off" => return Ok(0.0.into()),
             _ => {}
         }
-        if let Some(index) = indexed_key(key, "root.") {
-            return Ok((self.zone(index)?.root as f32).into());
+        if let Some(index) = indexed_key(key, "root_note.") {
+            return Ok((self.zone(index)?.root_note as f32).into());
         }
         if let Some(index) = indexed_key(key, "asset.") {
             return Ok(self.asset(index)?.into());
         }
-        if let Some(index) = indexed_key(key, "gain.") {
+        if let Some(index) = indexed_key(key, "level.") {
             self.zone(index)?;
-            return Ok(self.gain(index).into());
+            return Ok(self.level(index).into());
         }
         Err(format!("Unknown control: {}", key))
     }
@@ -386,7 +386,7 @@ impl ControlSurface for SampleInstrumentControls {
             "note_off" => return self.note_off(&value),
             _ => {}
         }
-        if let Some(index) = indexed_key(key, "root.") {
+        if let Some(index) = indexed_key(key, "root_note.") {
             self.zone(index)?;
             return Err(
                 "Zone roots and ranges are fixed at build time; edit the invention config"
@@ -396,8 +396,8 @@ impl ControlSurface for SampleInstrumentControls {
         if let Some(index) = indexed_key(key, "asset.") {
             return self.set_asset(index, value.as_string()?);
         }
-        if let Some(index) = indexed_key(key, "gain.") {
-            return self.set_gain(index, value.as_number()?);
+        if let Some(index) = indexed_key(key, "level.") {
+            return self.set_level(index, value.as_number()?);
         }
         Err(format!("Unknown control: {}", key))
     }
@@ -415,7 +415,7 @@ impl ControlSurface for SampleInstrumentControls {
             "note_on" | "note_off" => return parse_note(value).map(drop),
             _ => {}
         }
-        if let Some(index) = indexed_key(key, "root.") {
+        if let Some(index) = indexed_key(key, "root_note.") {
             self.zone(index)?;
             return Err(
                 "Zone roots and ranges are fixed at build time; edit the invention config"
@@ -426,7 +426,7 @@ impl ControlSurface for SampleInstrumentControls {
             self.zone(index)?;
             return value.as_string().map(drop);
         }
-        if let Some(index) = indexed_key(key, "gain.") {
+        if let Some(index) = indexed_key(key, "level.") {
             self.zone(index)?;
             return check_finite(key, value.as_number()?);
         }
@@ -441,7 +441,7 @@ fn check_release(release: f32) -> Result<(), String> {
     Ok(())
 }
 
-/// Parses hierarchical control keys like `gain.3` into the zone index.
+/// Parses hierarchical control keys like `level.3` into the zone index.
 fn indexed_key(key: &str, prefix: &str) -> Option<usize> {
     key.strip_prefix(prefix)?.parse().ok()
 }

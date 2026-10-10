@@ -28,7 +28,7 @@ const TELEMETRY: &[&str] = &[
 /// (`asset`), or a schedule that needs a runtime to resolve against (see
 /// the scheduler's own tests).
 const ELSEWHERE: &[&str] = &[
-    "sample_kit.trigger",
+    "sample_kit.play",
     "sample_instrument.note_on",
     "sample_instrument.note_off",
     "cell_sequencer.next_cell",

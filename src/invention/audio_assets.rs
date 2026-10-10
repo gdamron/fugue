@@ -530,8 +530,8 @@ mod tests {
             let json = serde_json::json!({
                 "modules": [
                     { "id": "piano", "type": "sample_instrument", "config": { "zones": [
-                        { "root": 60, "asset": "fugue.keys.grand@1.0.0:c4.wav" },
-                        { "root": 72, "asset": { "path": "./local/c5.wav" } }
+                        { "root_note": 60, "asset": "fugue.keys.grand@1.0.0:c4.wav" },
+                        { "root_note": 72, "asset": { "path": "./local/c5.wav" } }
                     ] } }
                 ],
                 "connections": []

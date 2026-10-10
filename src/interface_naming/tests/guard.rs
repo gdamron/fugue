@@ -55,10 +55,10 @@ fn family(name: &str) -> String {
 /// The config `type_id` is built from: the config harness's, with a sample
 /// slot for the sample modules so their indexed controls exist.
 fn base_config(type_id: &str) -> Value {
-    let slot = json!({ "key": 36, "root": 60, "asset": { "path": eight_frame_wav() } });
+    let asset = json!({ "path": eight_frame_wav() });
     match type_id {
-        "sample_kit" => json!({ "samples": [slot] }),
-        "sample_instrument" => json!({ "zones": [slot] }),
+        "sample_kit" => json!({ "samples": [{ "key": 36, "asset": asset }] }),
+        "sample_instrument" => json!({ "zones": [{ "root_note": 60, "asset": asset }] }),
         _ => crate::module_config::tests::registry::base_config(type_id),
     }
 }

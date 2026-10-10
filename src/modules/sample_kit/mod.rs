@@ -1,4 +1,4 @@
-//! Sample kit module: maps a trigger's value (or MIDI note number, or named
+//! Sample kit module: maps a `play` pulse's value (or MIDI note number, or named
 //! index) to one of N preloaded sample slots. The canonical drum kit.
 //!
 //! ```json
@@ -8,7 +8,7 @@
 //!     "samples": [
 //!       { "key": 36, "asset": "fugue.drums.808@1.2.0:kick.wav" },
 //!       { "key": 38, "asset": "fugue.drums.808@1.2.0:snare.wav" },
-//!       { "key": "ride", "asset": { "path": "./samples/ride.wav" }, "gain": 0.8 }
+//!       { "key": "ride", "asset": { "path": "./samples/ride.wav" }, "level": 0.8 }
 //!     ]
 //!   }
 //! }
@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{finite_f32, whole_number, ConfigReader};
-use crate::modules::sample_loading::SampleData;
+use crate::modules::sample_loading::{check_entry_fields, SampleData};
 use crate::Module;
 
 pub use self::controls::{SampleKitControls, SlotKey, SlotSpec};
@@ -36,6 +36,9 @@ mod outputs;
 pub struct SampleKitFactory;
 
 const TYPE_ID: &str = "sample_kit";
+
+/// The fields a `samples` entry takes.
+const SLOT_FIELDS: &[&str] = &["key", "asset", "level"];
 
 impl ModuleFactory for SampleKitFactory {
     fn type_id(&self) -> &'static str {
@@ -84,6 +87,8 @@ fn parse_config(config: &serde_json::Value) -> Result<Vec<SlotSpec>, String> {
             .as_object()
             .ok_or_else(|| format!("samples[{}] must be an object", index))?;
 
+        check_entry_fields(slot, &format!("samples[{index}]"), SLOT_FIELDS)?;
+
         let key = parse_key(slot.get("key"), index, &reader)?;
         if specs.iter().any(|spec| spec.key == key) {
             return Err(format!("samples[{}]: duplicate key '{}'", index, key));
@@ -99,23 +104,23 @@ fn parse_config(config: &serde_json::Value) -> Result<Vec<SlotSpec>, String> {
             crate::pkg::AudioAssetRef::Local { path } => path,
         };
 
-        let gain = match slot.get("gain") {
+        let level = match slot.get("level") {
             Some(value) => finite_f32(value).map_err(|r| {
                 reader
-                    .refuse(&format!("samples[{index}].gain"), r)
+                    .refuse(&format!("samples[{index}].level"), r)
                     .to_string()
             })?,
             None => 1.0,
         };
 
-        specs.push(SlotSpec { key, asset, gain });
+        specs.push(SlotSpec { key, asset, level });
     }
     Ok(specs)
 }
 
-/// A slot key is a JSON integer (trigger value / MIDI note number) or a
+/// A slot key is a JSON integer (`play` value / MIDI note number) or a
 /// non-numeric string name. Numeric strings are rejected so a name can never
-/// shadow an integer key in `trigger` lookups.
+/// shadow an integer key in `play` lookups.
 fn parse_key(
     key: Option<&serde_json::Value>,
     index: usize,
@@ -171,14 +176,14 @@ pub struct SampleKit {
     outputs: outputs::SampleKitOutputs,
     voices: Vec<Voice>,
     /// Slot keys mirrored as plain integers (`None` for named slots) so the
-    /// per-frame trigger path never touches strings.
+    /// per-frame play path never touches strings.
     numeric_keys: Vec<Option<i32>>,
-    /// Per-block scratch, sized once at build: slot gains and staged swaps.
-    gains: Vec<f32>,
+    /// Per-block scratch, sized once at build: slot levels and staged swaps.
+    levels: Vec<f32>,
     swap_scratch: Vec<Option<Arc<SampleData>>>,
-    last_trigger_counts: Vec<u64>,
+    last_play_counts: Vec<u64>,
     last_swaps_version: u64,
-    last_trigger_input: f32,
+    last_play_input: f32,
 }
 
 impl SampleKit {
@@ -208,11 +213,11 @@ impl SampleKit {
             outputs: outputs::SampleKitOutputs::new(),
             voices,
             numeric_keys,
-            gains: vec![1.0; slot_count],
+            levels: vec![1.0; slot_count],
             swap_scratch: (0..slot_count).map(|_| None).collect(),
-            last_trigger_counts: vec![0; slot_count],
+            last_play_counts: vec![0; slot_count],
             last_swaps_version: 0,
-            last_trigger_input: 0.0,
+            last_play_input: 0.0,
         }
     }
 }
@@ -233,7 +238,7 @@ impl Module for SampleKit {
             self.ctrl.take_swaps(&mut self.swap_scratch);
             for (voice, staged) in self.voices.iter_mut().zip(self.swap_scratch.iter_mut()) {
                 if let Some(sample) = staged.take() {
-                    // The new sample waits for its next trigger; cutting to
+                    // The new sample waits for its next play; cutting to
                     // it mid-buffer would click.
                     voice.sample = sample;
                     voice.active = false;
@@ -242,23 +247,23 @@ impl Module for SampleKit {
             }
         }
 
-        // Control-thread trigger requests, observed once per block.
+        // Control-thread play requests, observed once per block.
         for slot in 0..slot_count {
-            let count = self.ctrl.trigger_count(slot);
-            if count != self.last_trigger_counts[slot] {
-                self.last_trigger_counts[slot] = count;
+            let count = self.ctrl.play_count(slot);
+            if count != self.last_play_counts[slot] {
+                self.last_play_counts[slot] = count;
                 self.voices[slot].start();
             }
         }
 
-        // Gains are control-rate: read once per block.
+        // Levels are control-rate: read once per block.
         for slot in 0..slot_count {
-            self.gains[slot] = self.ctrl.gain(slot);
+            self.levels[slot] = self.ctrl.level(slot);
         }
 
         for i in 0..frames {
-            let trigger = self.inputs.trigger(i);
-            if trigger > 0.5 && self.last_trigger_input <= 0.5 {
+            let play = self.inputs.play(i);
+            if play > 0.5 && self.last_play_input <= 0.5 {
                 let key = self.inputs.key(i);
                 if key.is_finite() {
                     let key = key.round();
@@ -270,7 +275,7 @@ impl Module for SampleKit {
                     }
                 }
             }
-            self.last_trigger_input = trigger;
+            self.last_play_input = play;
 
             let mut left = 0.0;
             let mut right = 0.0;
@@ -279,9 +284,9 @@ impl Module for SampleKit {
                     continue;
                 }
                 let (l, r) = voice.sample.frame_at(voice.position);
-                let gain = self.gains[slot];
-                left += l * gain;
-                right += r * gain;
+                let level = self.levels[slot];
+                left += l * level;
+                right += r * level;
                 voice.position += 1;
                 if voice.position >= voice.sample.len() {
                     voice.active = false;
