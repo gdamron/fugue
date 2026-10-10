@@ -111,14 +111,14 @@ fn test_add_module_succeeds() {
 }
 
 #[test]
-fn test_add_module_returns_handles() {
+fn test_add_module_exposes_its_controls() {
     let (running, _handles) = build_simple_invention();
     let config = serde_json::json!({});
-    let handles = running
+    running
         .add_module("clock2", "clock", &config)
         .expect("Failed to add clock module");
-    let controls: Option<fugue::ClockControls> = handles.get("clock2.controls");
-    assert!(controls.is_some(), "Expected clock controls handle");
+    let bpm = running.get_control("clock2", "bpm");
+    assert_eq!(bpm.ok(), Some(fugue::ControlValue::Number(120.0)));
     running.stop();
 }
 
