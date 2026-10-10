@@ -17,6 +17,7 @@ impl Clock {
         self.epoch_sample = self.sample_count + 1;
         self.epoch_beats = 0.0;
         self.started = false;
+        self.latch = None;
         self.beats = 0.0;
         self.phase = 0.0;
     }
@@ -32,13 +33,26 @@ impl Clock {
     }
 
     /// The `(sample, beats)` anchor the next samples' positions are measured
-    /// from: the epoch, or the latest sample when a tempo change is pending
-    /// (the next sample re-anchors there, see `update_signal`).
+    /// from: the epoch, or where the next sample re-anchors when a tempo
+    /// change is pending (see `update_signal`).
     fn anchor(&self) -> (u64, f64) {
-        if self.started && self.bpm() != self.last_bpm {
-            (self.sample_count, self.beats)
-        } else {
-            (self.epoch_sample, self.epoch_beats)
+        let pending = self.bpm() != self.last_bpm;
+        match self.reanchor(self.sample_count + 1) {
+            Some(anchor) if pending => anchor,
+            _ => (self.epoch_sample, self.epoch_beats),
+        }
+    }
+
+    /// Where a tempo change re-anchors as sample `next` plays: `next`
+    /// itself at its latched position when the tempo changed since the
+    /// latch, else the latest sample before it, or nowhere before the first
+    /// sample since the clock was built or reset (the epoch starts the
+    /// count).
+    pub(super) fn reanchor(&self, next: u64) -> Option<(u64, f64)> {
+        match self.latch {
+            Some((at, beats, bpm)) if at == next && self.bpm != bpm => Some((at, beats)),
+            _ if self.started => Some((next.saturating_sub(1), self.beats)),
+            _ => None,
         }
     }
 }
@@ -72,6 +86,13 @@ impl Timeline for Clock {
 
     fn beats_before(&self) -> u64 {
         self.beats_before
+    }
+
+    fn latch(&mut self) {
+        let next = self.sample_count + 1;
+        if self.latch.is_none_or(|(at, ..)| at != next) {
+            self.latch = Some((next, self.position_after(1), self.bpm));
+        }
     }
 }
 

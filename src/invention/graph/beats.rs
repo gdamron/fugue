@@ -14,6 +14,14 @@ impl BeatHost for SignalGraph {
         instance.module().timeline()
     }
 
+    fn latch(&mut self, module_idx: usize) {
+        if let Some((_, instance)) = self.modules.get_index_mut(module_idx) {
+            if let Some(timeline) = instance.module_mut().timeline_mut() {
+                timeline.latch();
+            }
+        }
+    }
+
     fn apply(
         &mut self,
         target: &ControlTarget,
