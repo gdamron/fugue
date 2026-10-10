@@ -164,13 +164,16 @@ fn scheduling_the_driving_clock_changes_tempo() {
 
     render_frames(&mut engine, 1); // frame 255: the step-2 edge
     assert_eq!(
-        engine.get_control("clock", "bpm").unwrap(),
-        ControlValue::Number(45000.0),
-        "tempo changes on the step-2 edge"
-    );
-    assert_eq!(
         engine.get_control("sched", "step").unwrap(),
         ControlValue::Number(2.0)
+    );
+    // The clock declares its controls, so the write waits in its automation
+    // slot and applies as the clock processes its next sample.
+    render_frames(&mut engine, 1);
+    assert_eq!(
+        engine.get_control("clock", "bpm").unwrap(),
+        ControlValue::Number(45000.0),
+        "tempo changes from the sample after the step-2 edge"
     );
 }
 

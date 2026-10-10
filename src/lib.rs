@@ -69,14 +69,13 @@ pub use rpc::{
 pub use modules::{
     default_sample_rate, Adsr, AdsrControls, AdsrFactory, AgentControls, AgentFactory,
     AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver, AudioFileSink,
-    AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats, Clock, ClockControls,
-    ClockFactory, CodeControls, CodeFactory, ControlScheduler, ControlSchedulerControls,
-    ControlSchedulerFactory, DacFactory, DacModule, Filter, FilterControls, FilterFactory,
-    FilterType, Lfo, LfoControls, LfoFactory, MelodyControls, MelodyFactory, MelodyGenerator,
-    Mixer, MixerControls, MixerFactory, NullBackend, Oscillator,
-    OscillatorFactory, OscillatorType, SampleKit, SampleKitControls, SampleKitFactory,
-    SamplePlayer, SamplePlayerControls, SamplePlayerFactory, SampleSlicer, SampleSlicerFactory,
-    StreamErrorKind, Vca, VcaFactory,
+    AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats, Clock, ClockFactory,
+    CodeControls, CodeFactory, ControlScheduler, ControlSchedulerControls, ControlSchedulerFactory,
+    DacFactory, DacModule, Filter, FilterControls, FilterFactory, FilterType, Lfo, LfoControls,
+    LfoFactory, MelodyControls, MelodyFactory, MelodyGenerator, Mixer, MixerControls, MixerFactory,
+    NullBackend, Oscillator, OscillatorFactory, OscillatorType, SampleKit, SampleKitControls,
+    SampleKitFactory, SamplePlayer, SamplePlayerControls, SamplePlayerFactory, SampleSlicer,
+    SampleSlicerFactory, StreamErrorKind, Vca, VcaFactory,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
