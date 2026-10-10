@@ -26,7 +26,7 @@ fn full_metadata_score_validates() {
         "root_note": 48,
         "rhythm_grid": "16th_note",
         "cells": [
-            [ { "note": 0 }, { "held": true }, { "note": 7, "gate": 0.8 }, null ],
+            [ { "note": 0 }, { "held": true }, { "note": 7, "gate_length": 0.8 }, null ],
             [ 4, { "note": null }, { "note": -12 } ]
         ]
     });
@@ -46,7 +46,7 @@ fn round_trips_through_typed_model() {
         "schema": "fugue.score.v1",
         "title": "Round Trip",
         "root_note": 60,
-        "cells": [[ { "note": 0 }, { "note": 7, "gate": 0.5 }, { "held": true }, null ]]
+        "cells": [[ { "note": 0 }, { "note": 7, "gate_length": 0.5 }, { "held": true }, null ]]
     });
     let json = serde_json::to_string(&value).unwrap();
     let score = Score::from_json(&json).expect("typed parse");
@@ -109,9 +109,13 @@ fn rejects_out_of_range_root_note() {
 }
 
 #[test]
-fn rejects_gate_above_one() {
-    let err = validate_score(&json!({ "cells": [[ { "note": 0, "gate": 1.5 } ]] })).unwrap_err();
-    assert!(err.contains("step.gate must be between 0 and 1"), "{err}");
+fn rejects_gate_length_above_one() {
+    let err =
+        validate_score(&json!({ "cells": [[ { "note": 0, "gate_length": 1.5 } ]] })).unwrap_err();
+    assert!(
+        err.contains("step.gate_length must be between 0 and 1"),
+        "{err}"
+    );
 }
 
 #[test]

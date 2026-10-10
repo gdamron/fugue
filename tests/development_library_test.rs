@@ -245,7 +245,7 @@ fn high_polyphony_nested_development_throughput() {
                 "root_note": 60,
                 "step_count": 1,
                 "gate_length": 0.8,
-                "pattern": [{ "note": 0, "gate": 0.8 }]
+                "pattern": [{ "note": 0, "gate_length": 0.8 }]
             }
         }),
     ];

@@ -16,7 +16,7 @@ use crate::module_config::{ConfigKey, ConfigReader};
 /// # Step Object Format
 ///
 /// ```json
-/// { "note": 0, "gate": 0.8 }  // Note with custom gate length
+/// { "note": 0, "gate_length": 0.8 }  // Note with custom gate length
 /// { "note": 7 }               // Note with default gate length
 /// { "note": null }            // Rest (no note)
 /// ```
@@ -32,7 +32,7 @@ use crate::module_config::{ConfigKey, ConfigReader};
 ///     "step_count": 16,
 ///     "gate_length": 0.5,
 ///     "pattern": [
-///       { "note": 0, "gate": 0.8 },
+///       { "note": 0, "gate_length": 0.8 },
 ///       { "note": null },
 ///       { "note": 7 },
 ///       { "note": 5 }
