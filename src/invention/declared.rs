@@ -21,11 +21,17 @@
 //! - **Retired**: the module was removed or replaced; writes are refused.
 //!
 //! Reads come from the cells, which hold what each control was last set
-//! to: applied, never pending.
+//! to: applied, never pending. A payload control is the exception: no cell
+//! holds it, so reads report the last write the surface accepted (built,
+//! staged, submitted or applied offline), held here, as the legacy
+//! setters did: a live write refused after it was submitted (its module
+//! replaced meanwhile, the pending store full at an install) still reads
+//! back until the next write.
 //!
 //! # Locks
 //!
-//! A surface's route lock is the innermost lock: a write never holds it
+//! A surface's route lock is innermost but for its payloads lock, which
+//! is never held while taking another: a write never holds the route lock
 //! while taking the publisher or an offline graph's lock. It peeks at the
 //! route, takes that lock, then checks the route again under it, so a
 //! module retired meanwhile (which happens under that same lock, as its
@@ -40,8 +46,9 @@ use super::publish::{PendingLog, PendingWrite, Publisher, Settler};
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
-    Refusal, Request, RequestSender, RequestValue, RtValue, Writer,
+    PayloadCodec, Refusal, Request, RequestSender, RequestValue, RtValue, Writer,
 };
+use crate::payload::Payload;
 use crate::traits::ControlSurfaceMap;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
@@ -101,6 +108,24 @@ pub(crate) struct DeclaredSurface {
     /// module will hold it; not a development's, whose aliases each clamp
     /// it for themselves.
     clamps: bool,
+    /// Each payload control written so far. The innermost lock: never held
+    /// while taking another.
+    payloads: Mutex<Vec<Written>>,
+}
+
+/// A payload control's last write: what reads report, and while its module
+/// is building, the payload waiting to be handed to it.
+struct Written {
+    index: ControlIndex,
+    shown: ControlValue,
+    staged: Option<Payload>,
+}
+
+/// A write on its way to a module: a value, or a payload and what reads
+/// report for it.
+enum Write {
+    Value(RtValue),
+    Payload(Payload, ControlValue),
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -113,7 +138,58 @@ impl DeclaredSurface {
             cells,
             route: Mutex::new(Route::Building(Vec::new())),
             clamps: true,
+            payloads: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Records `value` as what payload control `key` reads back as, for
+    /// the payload its module was built with. Control thread.
+    pub(crate) fn show_payload(&self, key: &str, value: ControlValue) {
+        if let Some(index) = self.table.resolve(key) {
+            self.show(index, value, None);
+        }
+    }
+
+    fn payload_decl(&self, key: &str) -> Option<(ControlIndex, Option<PayloadCodec>)> {
+        let index = self.table.resolve(key)?;
+        let (decl, _) = self.table.decl(index)?;
+        (decl.kind == DeclKind::Payload).then_some((index, decl.codec))
+    }
+
+    fn shown(&self, index: ControlIndex) -> Option<ControlValue> {
+        let payloads = self.payloads.lock().unwrap();
+        let written = payloads.iter().find(|written| written.index == index)?;
+        Some(written.shown.clone())
+    }
+
+    /// Records a payload control's write; `staged` replaces any payload
+    /// still waiting for the module (dropped here, on a control thread).
+    fn show(&self, index: ControlIndex, shown: ControlValue, staged: Option<Payload>) {
+        let mut payloads = self.payloads.lock().unwrap();
+        match payloads.iter_mut().find(|written| written.index == index) {
+            Some(written) => {
+                written.shown = shown;
+                written.staged = staged;
+            }
+            None => payloads.push(Written {
+                index,
+                shown,
+                staged,
+            }),
+        }
+    }
+
+    /// Builds a payload control's write with its codec, or refuses it.
+    fn prepare(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Option<Result<(ControlIndex, Payload, ControlValue), String>> {
+        let (index, codec) = self.payload_decl(key)?;
+        let Some(codec) = codec else {
+            return Some(Err(format!("Control '{key}' cannot be written")));
+        };
+        Some((codec.prepare)(value).map(|(payload, shown)| (index, payload, shown)))
     }
 
     /// A development's surface over `cells`: a write before it runs is
@@ -137,7 +213,7 @@ impl DeclaredSurface {
             .ok_or_else(|| format!("Unknown control: {key}"))
     }
 
-    fn deliver(&self, index: ControlIndex, value: RtValue) -> Result<(), String> {
+    fn deliver(&self, index: ControlIndex, write: Write) -> Result<(), String> {
         let (event, clamp) = match self.table.decl(index) {
             Some((decl, _)) => (decl.event, decl.clamp.filter(|_| self.clamps)),
             None => (false, None),
@@ -149,6 +225,13 @@ impl DeclaredSurface {
                 if event {
                     return Err("An event fires only once its module runs".into());
                 }
+                let value = match write {
+                    Write::Value(value) => value,
+                    Write::Payload(payload, shown) => {
+                        self.show(index, shown, Some(payload));
+                        return Ok(());
+                    }
+                };
                 // Held as the module will hold it once it applies it.
                 let held = match (value, clamp) {
                     (RtValue::F32(number), Some((min, max))) => {
@@ -184,7 +267,15 @@ impl DeclaredSurface {
                 let target = publisher
                     .control_target(&port.module_id, index)
                     .map_err(|error| error.to_string())?;
-                let mut request = Request::new(target, RequestValue::Value(value));
+                let (value, shown) = match write {
+                    Write::Value(value) => (RequestValue::Value(value), None),
+                    Write::Payload(payload, shown) => (RequestValue::Payload(payload), Some(shown)),
+                };
+                let read = match (&value, &shown) {
+                    (RequestValue::Value(value), _) => self.table.value(index, *value),
+                    (_, shown) => shown.clone(),
+                };
+                let mut request = Request::new(target, value);
                 request.event = event;
                 // The log is locked before the submission, so its outcome
                 // cannot be received before the write is recorded.
@@ -195,9 +286,12 @@ impl DeclaredSurface {
                     .submit(request)
                     .map_err(|_| "The control request queue is full; try again")?;
                 publisher.note_written();
-                if let (Some(key), Some(value)) =
-                    (self.table.key(index), self.table.value(index, value))
-                {
+                // Under the publisher's lock, so reads report the last write
+                // submitted.
+                if let Some(shown) = shown {
+                    self.show(index, shown, None);
+                }
+                if let (Some(key), Some(value)) = (self.table.key(index), read) {
                     let module_id = port.module_id.clone();
                     let write = PendingWrite {
                         module_id,
@@ -220,9 +314,17 @@ impl DeclaredSurface {
                 let graph = graph.upgrade().ok_or("The render has been replaced")?;
                 let mut graph = graph.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Offline { .. }))?;
-                graph
-                    .apply_control(&module_id, index, value)
-                    .map_err(|refusal| refused(&self.table, index, refusal))
+                match write {
+                    Write::Value(value) => graph.apply_control(&module_id, index, value),
+                    Write::Payload(payload, shown) => {
+                        let applied = graph.apply_payload(&module_id, index, payload);
+                        if applied.is_ok() {
+                            self.show(index, shown, None);
+                        }
+                        applied
+                    }
+                }
+                .map_err(|refusal| refused(&self.table, index, refusal))
             }
             Route::Inner => Err("This control is set through its development".into()),
             Route::Prepared => Err("This module is being installed; try again".into()),
@@ -252,11 +354,16 @@ impl ControlSurface for DeclaredSurface {
     fn controls(&self) -> Vec<ControlMeta> {
         self.table.metas(|index| {
             let value = self.cells.load(index)?;
-            self.table.value(index, value)
+            self.table.value(index, value).or_else(|| self.shown(index))
         })
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        if let Some((index, _)) = self.payload_decl(key) {
+            return self
+                .shown(index)
+                .ok_or_else(|| format!("Control '{key}' holds no value yet"));
+        }
         let index = self.index(key)?;
         self.cells
             .load(index)
@@ -265,9 +372,13 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        if let Some(prepared) = self.prepare(key, &value) {
+            let (index, payload, shown) = prepared?;
+            return self.deliver(index, Write::Payload(payload, shown));
+        }
         let index = self.index(key)?;
         let value = self.table.coerce(index, &value)?;
-        self.deliver(index, value)
+        self.deliver(index, Write::Value(value))
     }
 
     fn validate_control(
@@ -276,6 +387,9 @@ impl ControlSurface for DeclaredSurface {
         value: &ControlValue,
         _surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
+        if let Some(prepared) = self.prepare(key, value) {
+            return prepared.map(drop);
+        }
         self.table.coerce(self.index(key)?, value).map(drop)
     }
 
@@ -295,6 +409,14 @@ impl ControlSurface for DeclaredSurface {
             for index in written {
                 if let Some(value) = self.cells.load(*index) {
                     let _ = apply_declared(module, *index, value);
+                }
+            }
+            // Payloads written meanwhile; what they replace, or a refused
+            // one, is dropped here, on this control thread.
+            for written in self.payloads.lock().unwrap().iter_mut() {
+                if let Some(payload) = written.staged.take() {
+                    let applied = module.apply_payload(written.index, payload);
+                    debug_assert!(applied.is_ok(), "a module takes what its codec builds");
                 }
             }
         }
