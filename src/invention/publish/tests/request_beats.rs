@@ -5,12 +5,13 @@
 //! free-free. A twin clock, run sample by sample beside the graph, is the
 //! oracle.
 
-use super::requests::{counted_block, outcomes};
+use super::requests::{counted_block, outcomes, submit};
 use super::*;
 use crate::control_request::{
     BeatSpec, BeatTime, ControlIndex, Outcome, Refusal, Request, RequestId, RequestValue, RtValue,
     Timeline, When,
 };
+use crate::invention::publish::publisher::BEAT_WATCH_CAPACITY;
 use crate::modules::Clock;
 use crate::test_support::dial::{DialFactory, DIAL, LEVEL};
 use crate::Module;
@@ -285,6 +286,27 @@ fn removing_the_clock_or_the_target_refuses_what_waits_on_it() {
             (to_clock, Outcome::Refused(Refusal::TargetGone)),
         ]
     );
+}
+
+#[test]
+fn full_watches_refuse_a_beat_request_without_holding_the_queue() {
+    let mut rig = beat_rig(120.0);
+    rig.render(1);
+    let far = BeatSpec::After(1.0e6);
+    for _ in 0..BEAT_WATCH_CAPACITY {
+        submit_level(&rig, 0.5, far);
+    }
+    let refused = submit_level(&rig, 0.5, far);
+    let now = submit(&rig, "dial", LEVEL.0, 0.75, When::Now);
+    let out = render_counted(&mut rig, 1);
+    assert_eq!(
+        outcomes(&mut rig),
+        [
+            (refused, Outcome::Refused(Refusal::PendingFull)),
+            (now, Outcome::Applied { at: 64 }),
+        ]
+    );
+    assert_eq!(level_change(&out, 0.75), Some(0));
 }
 
 #[test]

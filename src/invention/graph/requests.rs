@@ -48,6 +48,13 @@
 //!   input writes are bounded by their ring (FUG-292). Refusing instead
 //!   would let every fold keep one more remap, without bound.
 //!
+//! A request timed in beats needs room among the watches, which may never
+//! free (a beat far off, a clock stopped): outside an install block, one
+//! of the installed generation finding them full is refused
+//! (`Refusal::PendingFull`) rather than left at the head of the queue, so
+//! it never blocks what follows. One held for a newer generation waits, as
+//! above, until that generation installs.
+//!
 //! A clockless drain (a `NullBackend`'s) applies no back-pressure: what
 //! fills its store (or its watches) waits for samples that never come,
 //! so nothing would ever free the room. Every request it pops is placed
@@ -277,7 +284,14 @@ impl SignalGraph {
                     !(replaces && drain.pending.coalesces_with(&target, at, event)),
                     drain.pending.is_full(),
                 ),
-                Ok(Landing::Watch(..)) => (true, drain.watches.is_full()),
+                // A watch may wait without end (a repeating grid, a far
+                // beat, a stopped clock), so a full store refuses one of
+                // the installed generation rather than hold the queue
+                // behind it; one held for a newer generation waits, until
+                // that install.
+                Ok(Landing::Watch(target, _)) => {
+                    (target.generation > installed, drain.watches.is_full())
+                }
                 Err(_) => (false, false),
             };
             if !owed && !drain.clockless && full && needs_room {
