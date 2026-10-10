@@ -330,7 +330,7 @@ fn test_step_sequencer_controls_metadata() {
     let seq = StepSequencer::new(44100);
     let controls = Module::controls(&seq);
 
-    assert_eq!(controls.len(), 6);
+    assert_eq!(controls.len(), 7);
 
     let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
     assert!(keys.contains(&"root_note"));
@@ -339,6 +339,7 @@ fn test_step_sequencer_controls_metadata() {
     assert!(keys.contains(&"mode"));
     assert!(keys.contains(&"grace_duration"));
     assert!(keys.contains(&"grace_placement"));
+    assert!(keys.contains(&"ended"));
 }
 
 #[test]
@@ -363,27 +364,50 @@ fn test_step_sequencer_controls_affect_processing() {
     assert!((freq - expected).abs() < 0.01);
 }
 
+/// The surface a step sequencer built from `config` has.
+fn surface_of(config: serde_json::Value) -> Arc<dyn crate::ControlSurface> {
+    let built = StepSequencerFactory.build(44100, &config).unwrap();
+    assert!(built.handles.is_empty());
+    built.control_surface.unwrap()
+}
+
+fn number(surface: &Arc<dyn crate::ControlSurface>, key: &str) -> f32 {
+    surface.get_control(key).unwrap().as_number().unwrap()
+}
+
 #[test]
-fn test_step_sequencer_factory_returns_handles() {
-    let factory = StepSequencerFactory;
-    let config = serde_json::json!({
+fn test_step_sequencer_factory_builds_its_surface() {
+    let surface = surface_of(serde_json::json!({
         "root_note": 36,
         "step_count": 8,
         "gate_length": 0.75,
-    });
+    }));
+    assert_eq!(number(&surface, "root_note"), 36.0);
+    assert_eq!(number(&surface, "step_count"), 8.0);
+    assert_eq!(number(&surface, "gate_length"), 0.75);
+    let keys: Vec<_> = surface.controls().into_iter().map(|c| c.key).collect();
+    let listed =
+        "root_note step_count gate_length pattern mode grace_duration grace_placement ended";
+    assert_eq!(keys.join(" "), listed);
+}
 
-    let result = factory.build(44100, &config).unwrap();
-    assert_eq!(result.handles.len(), 1);
-    assert_eq!(result.handles[0].0, "controls");
-
-    // Verify the handle can be downcast
-    let controls = result.handles[0]
-        .1
-        .downcast_ref::<StepSequencerControls>()
-        .unwrap();
-    assert_eq!(controls.root_note(), 36);
-    assert_eq!(controls.step_count(), 8);
-    assert!((controls.gate_length() - 0.75).abs() < f32::EPSILON);
+#[test]
+fn integer_controls_take_whole_numbers_and_clamp_them() {
+    let surface = surface_of(serde_json::json!({ "root_note": 200, "step_count": 99 }));
+    assert_eq!(number(&surface, "root_note"), 127.0);
+    assert_eq!(number(&surface, "step_count"), 64.0);
+    // A write clamps a whole number as config does, and refuses a fraction.
+    for (key, value, held) in [("root_note", 60.0, 60.0), ("root_note", 300.0, 127.0)] {
+        surface.set_control(key, value.into()).unwrap();
+        assert_eq!(number(&surface, key), held, "{key} {value}");
+    }
+    surface.set_control("step_count", 0.0.into()).unwrap();
+    assert_eq!(number(&surface, "step_count"), 1.0);
+    assert!(surface.set_control("root_note", 60.5.into()).is_err());
+    assert!(surface.set_control("ended", true.into()).is_err());
+    let root_note = surface.automation("root_note").unwrap();
+    root_note.write_number(200.0);
+    assert_eq!(root_note.current(), Some(127.0), "a ramp starts from it");
 }
 
 /// Drives one full clock pulse (rising edge + release) through the sequencer.
@@ -514,11 +538,13 @@ fn test_mode_control_round_trips() {
     let meta = Module::controls(&seq);
     assert_eq!(meta.iter().filter(|c| c.key == "mode").count(), 1);
 
-    let controls = seq.controls();
-    assert_eq!(controls.mode(), "loop");
-    controls.set_mode("one_shot").unwrap();
-    assert_eq!(controls.mode(), "one_shot");
-    assert!(controls.set_mode("bounce").is_err());
+    let surface = surface_of(serde_json::json!({}));
+    assert_eq!(surface.get_control("mode").unwrap(), "loop".into());
+    surface.set_control("mode", "one_shot".into()).unwrap();
+    assert_eq!(surface.get_control("mode").unwrap(), "one_shot".into());
+    assert!(surface.set_control("mode", "bounce".into()).is_err());
+    let built = surface_of(serde_json::json!({ "mode": "one_shot" }));
+    assert_eq!(built.get_control("mode").unwrap(), "one_shot".into());
 }
 
 #[test]
@@ -645,8 +671,8 @@ fn pattern_of(config: serde_json::Value) -> Result<Vec<Step>, String> {
     let built = StepSequencerFactory
         .build(44_100, &config)
         .map_err(|error| error.to_string())?;
-    let controls = built.handles[0].1.downcast_ref::<StepSequencerControls>();
-    Ok(controls.unwrap().pattern())
+    let pattern = built.control_surface.unwrap().get_control("pattern")?;
+    controls::parse_pattern_json(pattern.as_string()?)
 }
 
 #[test]
@@ -712,14 +738,7 @@ fn pattern_reads_as_an_array_or_as_the_json_text_of_one() {
 
 #[test]
 fn grace_duration_is_configured_in_seconds_and_clamped() {
-    let build = |config: serde_json::Value| {
-        let result = StepSequencerFactory.build(44100, &config).unwrap();
-        let controls = result.handles[0]
-            .1
-            .downcast_ref::<StepSequencerControls>()
-            .unwrap();
-        controls.grace_duration()
-    };
+    let build = |config: serde_json::Value| number(&surface_of(config), "grace_duration");
     assert_eq!(build(serde_json::json!({})), 0.06);
     assert_eq!(build(serde_json::json!({ "grace_duration": 0.08 })), 0.08);
     assert_eq!(build(serde_json::json!({ "grace_duration": 80.0 })), 0.2);
@@ -731,10 +750,12 @@ fn grace_duration_is_configured_in_seconds_and_clamped() {
 
 #[test]
 fn the_pattern_control_reads_step_numbers_by_the_same_rules() {
-    let controls = StepSequencerControls::new();
-    let write = |json: &str| controls.set_pattern_json(json);
+    let surface = surface_of(serde_json::json!({}));
+    let write = |json: &str| surface.set_control("pattern", json.into());
     write(r#"[{"note": 2.0}, 3.0]"#).unwrap();
-    let notes: Vec<_> = controls.pattern().iter().map(|step| step.note).collect();
+    let pattern = surface.get_control("pattern").unwrap();
+    let pattern = controls::parse_pattern_json(pattern.as_string().unwrap()).unwrap();
+    let notes: Vec<_> = pattern.iter().map(|step| step.note).collect();
     assert_eq!(notes, vec![Some(2), Some(3)]);
     let error = write(r#"[{"note": 2.5}]"#).unwrap_err();
     assert!(error.contains("'note' expects a whole number"), "{error}");
@@ -751,4 +772,30 @@ fn steps_refuse_unknown_fields() {
     );
     let step = parse_step(&serde_json::json!({"note": 0, "velocity": 0.5})).unwrap();
     assert_eq!(step.velocity, Some(0.5));
+}
+
+/// Every control but the pattern applies with no lock and no allocation:
+/// a block without a clock edge renders while another thread holds the
+/// pattern (which a clock edge still reads under its lock, FUG-312).
+#[test]
+fn scalar_controls_apply_and_render_while_the_pattern_is_held() {
+    use crate::control_request::{apply_declared, RtValue};
+
+    let mut seq = StepSequencer::new(44100).with_pattern(vec![Step::note(0)]);
+    seq.set_input("clock", 1.0).unwrap();
+    seq.process(1);
+    let pattern = seq.pattern.clone();
+    let held = pattern.lock().unwrap();
+    let (frequency, allocs, frees) = crate::alloc_counter::allocator_events(|| {
+        apply_declared(&mut seq, controls::ROOT_NOTE, RtValue::I32(60)).unwrap();
+        apply_declared(&mut seq, controls::GATE_LENGTH, RtValue::F32(0.9)).unwrap();
+        apply_declared(&mut seq, controls::MODE, RtValue::U32(1)).unwrap();
+        apply_declared(&mut seq, controls::GRACE_PLACEMENT, RtValue::U32(1)).unwrap();
+        seq.process(64);
+        seq.output_block(0)[63]
+    });
+    drop(held);
+    assert_eq!((allocs, frees), (0, 0));
+    assert!((frequency - Note::new(60).frequency()).abs() < 0.01);
+    assert_eq!(seq.get_control("root_note").unwrap(), 60.0);
 }

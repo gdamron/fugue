@@ -52,14 +52,21 @@
 //! }
 //! ```
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use crate::control_request::{
+    apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
+    Refusal, RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::music::Note;
 use crate::traits::ControlMeta;
 use crate::Module;
 
-pub use self::controls::StepSequencerControls;
+use self::controls::{
+    ENDED, GATE_LENGTH, GRACE_DURATION, GRACE_PLACEMENT, MAX_STEPS, MODE, ROOT_NOTE, STEP_COUNT,
+    TABLE,
+};
 
 mod controls;
 mod factory;
@@ -143,8 +150,21 @@ pub const DEFAULT_ROOT_NOTE: u8 = 48;
 pub struct StepSequencer {
     #[allow(dead_code)] // Reserved for future use (e.g., sample-accurate timing)
     sample_rate: u32,
-    /// Thread-safe controls for root_note, step_count, and gate_length.
-    ctrl: StepSequencerControls,
+    // Controls, applied on the thread running the sequencer.
+    root_note: u8,
+    step_count: usize,
+    gate_length: f32,
+    /// One-shot playback (the `mode` control: loop | one_shot).
+    one_shot: bool,
+    /// Duration of a single grace note in seconds.
+    grace_duration: f32,
+    /// Grace placement (the `grace_placement` control): `false` = before
+    /// the beat, `true` = on the beat.
+    grace_on_beat: bool,
+    cells: Arc<ControlCells>,
+    /// The pattern, shared with the control surface under a lock until it
+    /// is carried as a payload (FUG-312).
+    pattern: Arc<Mutex<Vec<Step>>>,
     // State
     /// Current step index (0 to steps-1).
     current_step: usize,
@@ -201,9 +221,27 @@ pub struct StepSequencer {
 impl StepSequencer {
     /// Creates a new step sequencer with the given sample rate.
     pub fn new(sample_rate: u32) -> Self {
-        Self {
+        let cells = Arc::new(ControlCells::new(controls::defaults()));
+        Self::with_parts(sample_rate, cells, Arc::default())
+    }
+
+    /// A step sequencer holding what `cells` hold, applied (so clamped),
+    /// playing `pattern`.
+    fn with_parts(
+        sample_rate: u32,
+        cells: Arc<ControlCells>,
+        pattern: Arc<Mutex<Vec<Step>>>,
+    ) -> Self {
+        let mut seq = Self {
             sample_rate,
-            ctrl: StepSequencerControls::new(),
+            root_note: DEFAULT_ROOT_NOTE,
+            step_count: DEFAULT_STEPS,
+            gate_length: DEFAULT_GATE_LENGTH,
+            one_shot: false,
+            grace_duration: DEFAULT_GRACE_DURATION,
+            grace_on_beat: false,
+            cells,
+            pattern,
             current_step: 0,
             gate_samples_remaining: 0,
             step_duration_samples: sample_rate / 2, // Default ~120 BPM
@@ -225,86 +263,69 @@ impl StepSequencer {
             last_reset_in: 0.0,
             inputs: inputs::StepSequencerInputs::new(),
             outputs: outputs::StepSequencerOutputs::new(),
+        };
+        for index in 0..TABLE.len() {
+            let index = ControlIndex(index as u16);
+            if let Some(value) = seq.cells.load(index) {
+                let _ = apply_declared(&mut seq, index, value);
+            }
         }
+        seq
     }
 
-    /// Creates a new step sequencer with the given sample rate and controls.
-    pub fn new_with_controls(sample_rate: u32, controls: StepSequencerControls) -> Self {
-        Self {
-            sample_rate,
-            ctrl: controls,
-            current_step: 0,
-            gate_samples_remaining: 0,
-            step_duration_samples: sample_rate / 2,
-            samples_since_gate: 0,
-            first_gate_received: false,
-            active_note: None,
-            finished: false,
-            retrigger_dip: false,
-            grace_player: GracePlayer::idle(),
-            grace_countdown: 0,
-            pending_grace: GraceChain::default(),
-            pending_grace_per: 0,
-            grace_prescheduled: false,
-            deferred_note: None,
-            deferred_gate_samples: 0,
-            grace_samples_cfg: 0,
-            grace_on_beat_cfg: false,
-            last_gate_in: 0.0,
-            last_reset_in: 0.0,
-            inputs: inputs::StepSequencerInputs::new(),
-            outputs: outputs::StepSequencerOutputs::new(),
-        }
+    fn set(&mut self, control: ControlIndex, value: RtValue) {
+        let _ = apply_declared(self, control, value);
     }
 
     /// Sets the base MIDI note.
-    pub fn with_root_note(self, root_note: u8) -> Self {
-        self.ctrl.set_root_note(root_note);
+    pub fn with_root_note(mut self, root_note: u8) -> Self {
+        self.set_root_note(root_note);
         self
     }
 
     /// Sets the number of steps in the pattern.
-    pub fn with_step_count(self, step_count: usize) -> Self {
-        self.ctrl.set_step_count(step_count);
+    pub fn with_step_count(mut self, step_count: usize) -> Self {
+        self.set_step_count(step_count);
         self
     }
 
     /// Sets the default gate length (ratio of step duration, 0.0-1.0).
-    pub fn with_gate_length(self, gate_length: f32) -> Self {
-        self.ctrl.set_gate_length(gate_length);
+    pub fn with_gate_length(mut self, gate_length: f32) -> Self {
+        self.set_gate_length(gate_length);
         self
     }
 
     /// Sets the pattern.
-    pub fn with_pattern(self, pattern: Vec<Step>) -> Self {
-        self.ctrl.set_pattern(pattern);
+    pub fn with_pattern(mut self, pattern: Vec<Step>) -> Self {
+        self.set_pattern(pattern);
         self
     }
 
     /// Enables or disables one-shot playback (the `mode` control).
-    pub fn with_one_shot(self, one_shot: bool) -> Self {
-        self.ctrl.set_one_shot(one_shot);
+    pub fn with_one_shot(mut self, one_shot: bool) -> Self {
+        self.set(MODE, RtValue::U32(u32::from(one_shot)));
         self
     }
 
     /// Sets the base MIDI note.
     pub fn set_root_note(&mut self, root_note: u8) {
-        self.ctrl.set_root_note(root_note);
+        self.set(ROOT_NOTE, RtValue::I32(i32::from(root_note)));
     }
 
     /// Sets the number of steps.
     pub fn set_step_count(&mut self, step_count: usize) {
-        self.ctrl.set_step_count(step_count);
+        let step_count = step_count.min(MAX_STEPS as usize) as i32;
+        self.set(STEP_COUNT, RtValue::I32(step_count));
     }
 
     /// Sets the default gate length.
     pub fn set_gate_length(&mut self, gate_length: f32) {
-        self.ctrl.set_gate_length(gate_length);
+        self.set(GATE_LENGTH, RtValue::F32(gate_length));
     }
 
     /// Sets the pattern.
     pub fn set_pattern(&mut self, pattern: Vec<Step>) {
-        self.ctrl.set_pattern(pattern);
+        *self.pattern.lock().unwrap() = pattern;
     }
 
     /// Returns the current step index.
@@ -314,29 +335,29 @@ impl StepSequencer {
 
     /// Returns the number of steps.
     pub fn step_count(&self) -> usize {
-        self.ctrl.step_count()
-    }
-
-    /// Returns a reference to the step sequencer controls.
-    pub fn controls(&self) -> &StepSequencerControls {
-        &self.ctrl
+        self.step_count
     }
 
     /// Gets the step at the given index, returning a rest if out of bounds.
     fn get_step(&self, index: usize) -> Step {
-        self.ctrl.pattern().get(index).cloned().unwrap_or_default()
+        self.pattern
+            .lock()
+            .unwrap()
+            .get(index)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Calculates the frequency for a note offset.
     fn note_frequency(&self, offset: i8) -> f32 {
-        let base = self.ctrl.root_note();
+        let base = self.root_note;
         let midi_note = (base as i16 + offset as i16).clamp(0, 127) as u8;
         Note::new(midi_note).frequency()
     }
 
     fn next_step_is_held(&self) -> bool {
         let next_step = self.current_step + 1;
-        next_step < self.ctrl.step_count() && self.get_step(next_step).held
+        next_step < self.step_count && self.get_step(next_step).held
     }
 
     /// Calculates the gate duration in samples for the current step.
@@ -344,7 +365,7 @@ impl StepSequencer {
         let gate_length = if step.held || self.next_step_is_held() {
             1.0
         } else {
-            step.gate_length.unwrap_or(self.ctrl.gate_length())
+            step.gate_length.unwrap_or(self.gate_length)
         };
 
         (self.step_duration_samples as f32 * gate_length) as u32
@@ -422,7 +443,7 @@ impl StepSequencer {
             return;
         }
         let next_index = self.current_step + 1;
-        if next_index >= self.ctrl.step_count() {
+        if next_index >= self.step_count {
             return;
         }
         let next = self.get_step(next_index);
@@ -462,7 +483,7 @@ impl StepSequencer {
 
     /// Advances to the next step.
     fn advance_step(&mut self) {
-        self.current_step = (self.current_step + 1) % self.ctrl.step_count();
+        self.current_step = (self.current_step + 1) % self.step_count;
     }
 
     /// Resets to step 0 and re-arms one-shot playback.
@@ -482,11 +503,11 @@ impl StepSequencer {
         self.clear_grace_state();
     }
 
-    /// Updates `finished` and mirrors it into the controls' read-only `ended`
-    /// flag (an event-rate store, not per sample).
+    /// Updates `finished` and publishes it as the read-only `ended` control
+    /// (an event-rate store, not per sample).
     fn set_finished(&mut self, finished: bool) {
         self.finished = finished;
-        self.ctrl.set_ended(finished);
+        self.cells.publish(ENDED, RtValue::Bool(finished));
     }
 
     /// Processes one sample.
@@ -516,7 +537,7 @@ impl StepSequencer {
             // Advance step on every gate EXCEPT the first one
             // First gate plays step 0, subsequent gates advance
             if self.first_gate_received {
-                if one_shot && self.current_step + 1 >= self.ctrl.step_count() {
+                if one_shot && self.current_step + 1 >= self.step_count {
                     // The final step has sounded for its full duration; this
                     // clock edge is the end of the pattern.
                     self.finish();
@@ -623,9 +644,9 @@ impl Module for StepSequencer {
         // Mode is control-plane state: read it once per block so the
         // per-sample loop carries no atomic load for it. Likewise the grace
         // controls, converting seconds to samples once per block.
-        let one_shot = self.ctrl.one_shot();
-        self.grace_samples_cfg = (self.ctrl.grace_duration() * self.sample_rate as f32) as u32;
-        self.grace_on_beat_cfg = self.ctrl.grace_on_beat();
+        let one_shot = self.one_shot;
+        self.grace_samples_cfg = (self.grace_duration * self.sample_rate as f32) as u32;
+        self.grace_on_beat_cfg = self.grace_on_beat;
         for i in 0..frames {
             self.process_sample(i, one_shot);
         }
@@ -656,80 +677,53 @@ impl Module for StepSequencer {
         self.outputs.get(port)
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        Ok(match (control, value) {
+            (ROOT_NOTE, RtValue::I32(note)) => {
+                self.root_note = note.clamp(0, 127) as u8;
+                RtValue::I32(i32::from(self.root_note))
+            }
+            (STEP_COUNT, RtValue::I32(count)) => {
+                self.step_count = count.clamp(1, MAX_STEPS) as usize;
+                RtValue::I32(self.step_count as i32)
+            }
+            (GATE_LENGTH, RtValue::F32(length)) => {
+                self.gate_length = length.clamp(0.0, 1.0);
+                RtValue::F32(self.gate_length)
+            }
+            (MODE, RtValue::U32(mode @ 0..=1)) => {
+                self.one_shot = mode == 1;
+                value
+            }
+            (GRACE_DURATION, RtValue::F32(seconds)) => {
+                self.grace_duration = seconds.clamp(MIN_GRACE_DURATION, MAX_GRACE_DURATION);
+                RtValue::F32(self.grace_duration)
+            }
+            (GRACE_PLACEMENT, RtValue::U32(placement @ 0..=1)) => {
+                self.grace_on_beat = placement == 1;
+                value
+            }
+            (MODE | GRACE_PLACEMENT, RtValue::U32(_)) => return Err(Refusal::Invalid),
+            _ => return Err(Refusal::Unsupported),
+        })
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::new("root_note", "Root MIDI note")
-                .with_range(0.0, 127.0)
-                .with_default(DEFAULT_ROOT_NOTE as f32),
-            ControlMeta::new("step_count", "Number of steps in pattern")
-                .with_range(1.0, 64.0)
-                .with_default(DEFAULT_STEPS as f32),
-            ControlMeta::new("gate_length", "Default gate length ratio")
-                .with_range(0.0, 1.0)
-                .with_default(DEFAULT_GATE_LENGTH),
-            ControlMeta::string(
-                "mode",
-                "Playback mode: loop repeats; one_shot plays once and fires the ended gate",
-            )
-            .with_options(vec!["loop".to_string(), "one_shot".to_string()])
-            .with_default("loop"),
-            ControlMeta::new(
-                "grace_duration",
-                "Duration of a single grace note in seconds",
-            )
-            .with_range(MIN_GRACE_DURATION, MAX_GRACE_DURATION)
-            .with_default(DEFAULT_GRACE_DURATION),
-            ControlMeta::new(
-                "grace_placement",
-                "Grace placement: 0 = before the beat, 1 = on the beat",
-            )
-            .with_range(0.0, 1.0)
-            .with_default(0.0),
-        ]
+        local_controls(self)
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
-        match key {
-            "root_note" => Ok(self.ctrl.root_note() as f32),
-            "step_count" => Ok(self.ctrl.step_count() as f32),
-            "gate_length" => Ok(self.ctrl.gate_length()),
-            // Numeric view of the string `mode` control: 0.0 = loop, 1.0 = one_shot.
-            "mode" => Ok(if self.ctrl.one_shot() { 1.0 } else { 0.0 }),
-            "grace_duration" => Ok(self.ctrl.grace_duration()),
-            // Numeric view of `grace_placement`: 0.0 = before, 1.0 = on_beat.
-            "grace_placement" => Ok(if self.ctrl.grace_on_beat() { 1.0 } else { 0.0 }),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_get(self, key)
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
-        match key {
-            "root_note" => {
-                self.ctrl.set_root_note(value as u8);
-                Ok(())
-            }
-            "step_count" => {
-                self.ctrl.set_step_count(value as usize);
-                Ok(())
-            }
-            "gate_length" => {
-                self.ctrl.set_gate_length(value);
-                Ok(())
-            }
-            "mode" => {
-                self.ctrl.set_one_shot(value > 0.5);
-                Ok(())
-            }
-            "grace_duration" => {
-                self.ctrl.set_grace_duration(value);
-                Ok(())
-            }
-            "grace_placement" => {
-                self.ctrl.set_grace_on_beat(value > 0.5);
-                Ok(())
-            }
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_set(self, key, value)
     }
 }
 

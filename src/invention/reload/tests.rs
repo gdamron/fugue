@@ -570,3 +570,33 @@ fn reload_detects_a_change_to_either_siblings_nested_definition() {
     let report = running.reload(doc(&root)).expect("diff applies");
     assert_eq!(report.swapped, vec!["b"]);
 }
+
+#[test]
+fn a_step_sequencer_reloads_an_out_of_range_whole_number_as_it_loads_it() {
+    let document = |root_note: u32, step_count: u32| {
+        format!(
+            r#"{{"version": "1.0.0", "modules": [
+                {{ "id": "seq", "type": "step_sequencer",
+                   "config": {{ "root_note": {root_note}, "step_count": {step_count} }} }},
+                {{ "id": "dac", "type": "dac" }}
+            ], "connections": [
+                {{ "from": "seq", "from_port": "frequency", "to": "dac", "to_port": "audio" }}
+            ]}}"#
+        )
+    };
+    let mut running = start(&document(48, 16));
+    for (root_note, step_count) in [(200, 0), (12, 99)] {
+        let loaded = start(&document(root_note, step_count));
+        let report = running
+            .reload(doc(&document(root_note, step_count)))
+            .expect("reloads");
+        assert!(report.swapped.is_empty(), "{report:?}");
+        for key in ["root_note", "step_count"] {
+            assert_eq!(
+                running.get_control("seq", key).unwrap(),
+                loaded.get_control("seq", key).unwrap(),
+                "{key}"
+            );
+        }
+    }
+}
