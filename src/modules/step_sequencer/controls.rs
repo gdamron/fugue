@@ -1,15 +1,12 @@
-//! The StepSequencer's controls: its scalars are declared, and its
-//! `pattern` stays on the legacy path, shared under a lock, until it is
-//! carried as a payload (FUG-312).
-
-use std::sync::{Arc, Mutex};
+//! The StepSequencer's controls, all declared: its scalars, and its
+//! `pattern`, a payload built on a control thread and kept whole by the
+//! sequencer; the pattern it replaces is retired off the audio thread.
 
 use crate::control_request::{
-    Automation, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue,
+    ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec, RtValue,
 };
-use crate::invention::declared::{Declaration, DeclaredSurface, Route};
-use crate::traits::ControlSurfaceMap;
-use crate::{ControlMeta, ControlSurface, ControlValue, Module};
+use crate::payload::Payload;
+use crate::ControlValue;
 
 use super::grace::{DEFAULT_GRACE_DURATION, MAX_GRACE_DURATION, MIN_GRACE_DURATION};
 use super::{Step, DEFAULT_GATE_LENGTH, DEFAULT_ROOT_NOTE, DEFAULT_STEPS};
@@ -17,10 +14,11 @@ use super::{Step, DEFAULT_GATE_LENGTH, DEFAULT_ROOT_NOTE, DEFAULT_STEPS};
 pub(super) const ROOT_NOTE: ControlIndex = ControlIndex(0);
 pub(super) const STEP_COUNT: ControlIndex = ControlIndex(1);
 pub(super) const GATE_LENGTH: ControlIndex = ControlIndex(2);
-pub(super) const MODE: ControlIndex = ControlIndex(3);
-pub(super) const GRACE_DURATION: ControlIndex = ControlIndex(4);
-pub(super) const GRACE_PLACEMENT: ControlIndex = ControlIndex(5);
-pub(super) const ENDED: ControlIndex = ControlIndex(6);
+pub(super) const PATTERN: ControlIndex = ControlIndex(3);
+pub(super) const MODE: ControlIndex = ControlIndex(4);
+pub(super) const GRACE_DURATION: ControlIndex = ControlIndex(5);
+pub(super) const GRACE_PLACEMENT: ControlIndex = ControlIndex(6);
+pub(super) const ENDED: ControlIndex = ControlIndex(7);
 
 /// The most steps a pattern holds, and so the most `step_count` takes.
 pub(super) const MAX_STEPS: i32 = 64;
@@ -50,6 +48,7 @@ const DECLS: &[ControlDecl] = &[
         "Default gate length ratio",
     )
     .clamped(0.0, 1.0),
+    ControlDecl::payload("pattern", PatternCodec::CODEC, "Step pattern as JSON"),
     ControlDecl::new(
         "mode",
         DeclKind::Choice(&["loop", "one_shot"]),
@@ -90,26 +89,24 @@ pub(super) fn defaults() -> impl Iterator<Item = RtValue> {
     DECLS.iter().map(|decl| decl.default)
 }
 
-/// Where `pattern` sits among the controls a client lists: after
-/// `gate_length`, as it always has.
-const PATTERN_POSITION: usize = 3;
+/// Builds a written `pattern` into the payload the sequencer keeps.
+struct PatternCodec;
 
-/// The step sequencer's surface: its declared controls, plus `pattern`.
-pub(super) struct StepSequencerSurface {
-    pub(super) declared: DeclaredSurface,
-    pub(super) pattern: Arc<Mutex<Vec<Step>>>,
+impl PatternCodec {
+    const CODEC: PayloadCodec = PayloadCodec {
+        prepare: Self::prepare,
+    };
+
+    fn prepare(value: &ControlValue) -> Result<(Payload, ControlValue), String> {
+        let pattern = parse_pattern_json(value.as_string()?)?;
+        let shown = pattern_json(&pattern).into();
+        Ok((Payload::new(pattern), shown))
+    }
 }
 
-impl StepSequencerSurface {
-    fn pattern_json(&self) -> String {
-        let pattern = self.pattern.lock().unwrap().clone();
-        serde_json::to_string(&pattern).unwrap_or_else(|_| "[]".to_string())
-    }
-
-    fn set_pattern(&self, value: &ControlValue) -> Result<(), String> {
-        *self.pattern.lock().unwrap() = parse_pattern_json(value.as_string()?)?;
-        Ok(())
-    }
+/// `pattern` as the control reads back: JSON text.
+pub(super) fn pattern_json(pattern: &[Step]) -> String {
+    serde_json::to_string(pattern).unwrap_or_else(|_| "[]".to_string())
 }
 
 pub(super) fn parse_pattern_json(value: &str) -> Result<Vec<Step>, String> {
@@ -118,75 +115,4 @@ pub(super) fn parse_pattern_json(value: &str) -> Result<Vec<Step>, String> {
         return Err("pattern may not contain more than 64 steps".to_string());
     }
     Ok(pattern)
-}
-
-impl ControlSurface for StepSequencerSurface {
-    fn controls(&self) -> Vec<ControlMeta> {
-        let mut controls = self.declared.controls();
-        let pattern = ControlMeta::string("pattern", "Step pattern as JSON")
-            .with_default(self.pattern_json());
-        controls.insert(PATTERN_POSITION.min(controls.len()), pattern);
-        controls
-    }
-
-    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
-        match key {
-            "pattern" => Ok(self.pattern_json().into()),
-            _ => self.declared.get_control(key),
-        }
-    }
-
-    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        match key {
-            "pattern" => self.set_pattern(&value),
-            _ => self.declared.set_control(key, value),
-        }
-    }
-
-    fn validate_control(
-        &self,
-        key: &str,
-        value: &ControlValue,
-        surfaces: &ControlSurfaceMap,
-    ) -> Result<(), String> {
-        match key {
-            "pattern" => parse_pattern_json(value.as_string()?).map(drop),
-            _ => self.declared.validate_control(key, value, surfaces),
-        }
-    }
-
-    #[allow(private_interfaces)]
-    fn bind(&self, route: Route, module: &mut dyn Module) {
-        self.declared.bind(route, module);
-    }
-
-    fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        match key {
-            "pattern" => self.set_pattern(&value),
-            _ => self.declared.set_legacy(key, value),
-        }
-    }
-
-    #[allow(private_interfaces)]
-    fn activate(&self, route: Route) {
-        self.declared.activate(route);
-    }
-
-    fn retire(&self) {
-        self.declared.retire();
-    }
-
-    fn declares(&self, key: &str) -> bool {
-        self.declared.declares(key)
-    }
-
-    #[allow(private_interfaces)]
-    fn declaration(&self, key: &str) -> Option<Declaration> {
-        self.declared.declaration(key)
-    }
-
-    #[allow(private_interfaces)]
-    fn automation(&self, key: &str) -> Option<Automation> {
-        self.declared.automation(key)
-    }
 }

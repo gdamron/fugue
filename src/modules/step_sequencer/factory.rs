@@ -1,7 +1,7 @@
-use super::controls::StepSequencerSurface;
 use super::*;
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
+use crate::payload::Shared;
 use crate::ControlSurface;
 
 /// Factory for constructing StepSequencer modules from configuration.
@@ -96,16 +96,14 @@ impl ModuleFactory for StepSequencerFactory {
         if let Some(seconds) = reader.float(&GRACE_DURATION)? {
             cells.publish(controls::GRACE_DURATION, RtValue::F32(seconds));
         }
-        let surface = StepSequencerSurface {
-            declared: DeclaredSurface::new(controls::TABLE.clone(), cells.clone()),
-            pattern: Arc::new(Mutex::new(pattern)),
-        };
+        let surface = DeclaredSurface::new(controls::TABLE.clone(), cells.clone());
+        surface.show_payload("pattern", controls::pattern_json(&pattern).into());
         for key in ["mode", "grace_placement"] {
             if let Some(text) = config.get(key).and_then(|v| v.as_str()) {
                 surface.set_control(key, text.into())?;
             }
         }
-        let seq = StepSequencer::with_parts(sample_rate, cells, surface.pattern.clone());
+        let seq = StepSequencer::with_parts(sample_rate, cells, Shared::new(pattern));
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(seq)),

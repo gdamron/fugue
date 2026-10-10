@@ -239,9 +239,8 @@ fn a_reverb_block_renders_while_the_control_locks_are_held() {
     assert!(decay > 0.5, "{decay}");
 }
 
-/// A step sequencer whose clock the test drives: blocks without an edge
-/// never read its pattern, which stays under a lock until FUG-312.
-const SEQUENCER: &str = r#"{
+/// A step sequencer whose clock the test drives.
+pub(super) const SEQUENCER: &str = r#"{
     "version": "1.0.0",
     "modules": [
         { "id": "seq", "type": "step_sequencer", "config": {
