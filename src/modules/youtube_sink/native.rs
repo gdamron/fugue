@@ -94,7 +94,7 @@ pub(super) fn from_json_with_env(
         .entry("audio_bitrate".to_string())
         .or_insert_with(|| Value::from(128));
     mapped
-        .entry("gop_seconds".to_string())
+        .entry("gop_duration".to_string())
         .or_insert_with(|| Value::from(2));
 
     RtmpSinkConfig::from_json_as("youtube_sink", &Value::Object(mapped), sample_rate)
@@ -138,7 +138,7 @@ mod tests {
         assert_eq!(config.audio_encoder, "aac");
         assert_eq!(config.video_bitrate, "10000k");
         assert_eq!(config.audio_bitrate, "128k");
-        assert_eq!(config.gop_seconds, 2);
+        assert_eq!(config.gop_duration, 2);
     }
 
     #[test]

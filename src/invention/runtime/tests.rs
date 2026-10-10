@@ -145,7 +145,7 @@ fn running_invention_code_tick_updates_controls() {
                     "id": "code1",
                     "type": "code",
                     "config": {
-                        "tick_hz": 20.0,
+                        "tick_rate": 20.0,
                         "script": "function tick() { graph.setControl('code1', 'last_error', 'tick-ran') }"
                     }
                 },
@@ -327,7 +327,7 @@ fn installed_sink_observes_code_module_console_output() {
                     "id": "code1",
                     "type": "code",
                     "config": {
-                        "tick_hz": 20.0,
+                        "tick_rate": 20.0,
                         "script": "function tick() { console.log('conducting', 'section B') }"
                     }
                 },

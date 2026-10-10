@@ -24,11 +24,11 @@ struct CodeConfig {
     script: String,
     entrypoint: Option<String>,
     enabled: bool,
-    tick_hz: f32,
+    tick_rate: f32,
 }
 
 const TYPE_ID: &str = "code";
-const TICK_HZ: ConfigKey = ConfigKey::float("tick_hz");
+const TICK_RATE: ConfigKey = ConfigKey::float("tick_rate");
 
 impl ModuleFactory for CodeFactory {
     fn type_id(&self) -> &'static str {
@@ -38,18 +38,15 @@ impl ModuleFactory for CodeFactory {
     fn config_keys(&self) -> &'static [ConfigKey] {
         const {
             &[
-                TICK_HZ,
+                TICK_RATE,
                 ConfigKey::text("script"),
                 ConfigKey::text("entrypoint"),
                 ConfigKey::boolean("enabled"),
+                // The script's own parameters (In C's `mixer_id`, say), an
+                // object it reads from its module's config.
+                ConfigKey::json("params"),
             ]
         }
-    }
-
-    /// A script reads its own parameters from the top level of its config
-    /// (In C's `mixer_id`, say) until they move under `params`.
-    fn open_config(&self) -> bool {
-        true
     }
 
     fn build(
@@ -60,7 +57,7 @@ impl ModuleFactory for CodeFactory {
         let config = parse_config(config)?;
         let controls = CodeControls::new(
             config.enabled,
-            config.tick_hz,
+            config.tick_rate,
             config.script,
             config.entrypoint,
         );
@@ -81,6 +78,12 @@ impl ModuleFactory for CodeFactory {
 
 /// Parses the minimal v1 config accepted by the `code` module.
 fn parse_config(config: &serde_json::Value) -> Result<CodeConfig, Box<dyn std::error::Error>> {
+    if config
+        .get("params")
+        .is_some_and(|params| !params.is_object())
+    {
+        return Err("code config 'params' must be an object".into());
+    }
     let script = config
         .get("script")
         .and_then(|value| value.as_str())
@@ -94,15 +97,15 @@ fn parse_config(config: &serde_json::Value) -> Result<CodeConfig, Box<dyn std::e
         .get("enabled")
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
-    let tick_hz = ConfigReader::new(TYPE_ID, config)
-        .float(&TICK_HZ)?
+    let tick_rate = ConfigReader::new(TYPE_ID, config)
+        .float(&TICK_RATE)?
         .unwrap_or(0.0);
 
     Ok(CodeConfig {
         script,
         entrypoint,
         enabled,
-        tick_hz,
+        tick_rate,
     })
 }
 
@@ -164,7 +167,7 @@ mod tests {
         let config = serde_json::json!({
             "script": "graph.status()",
             "enabled": true,
-            "tick_hz": 2.0
+            "tick_rate": 2.0
         });
         let built = CodeFactory.build(48_000, &config).unwrap();
         assert!(built.control_surface.is_some());
@@ -172,9 +175,34 @@ mod tests {
     }
 
     #[test]
+    fn code_params_are_an_object_and_top_level_keys_are_refused() {
+        let registry = crate::ModuleRegistry::default();
+        let params = serde_json::json!({ "params": { "mixer_id": "mixer", "sections": [1, 2] } });
+        assert!(registry.build("code", 48_000, &params).is_ok());
+        let error = registry
+            .build("code", 48_000, &serde_json::json!({ "params": [1, 2] }))
+            .err()
+            .unwrap();
+        assert!(
+            error.to_string().contains("'params' must be an object"),
+            "{error}"
+        );
+        let error = registry
+            .build("code", 48_000, &serde_json::json!({ "mixer_id": "mixer" }))
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("code config has no key 'mixer_id'"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn code_config_defaults() {
         let config = parse_config(&serde_json::Value::Null).unwrap();
         assert!(config.enabled);
-        assert_eq!(config.tick_hz, 0.0);
+        assert_eq!(config.tick_rate, 0.0);
     }
 }

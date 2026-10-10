@@ -87,7 +87,7 @@ fn a_script_add_module_refuses_and_changes_nothing() {
         graph.setControl('code1', 'last_error', 'accepted'); } \
         catch (e) { graph.setControl('code1', 'last_error', String(e)); } }";
     let code =
-        json!({ "id": "code1", "type": "code", "config": { "tick_hz": 20.0, "script": script } });
+        json!({ "id": "code1", "type": "code", "config": { "tick_rate": 20.0, "script": script } });
     let (running, _pump) = start(&base_with(&code.to_string()));
     let before = observe(&running);
     let mut report = String::new();

@@ -18,7 +18,7 @@ use crate::module_config::{ConfigKey, ConfigReader};
 const WIDTH: ConfigKey = ConfigKey::int::<u32>("width");
 const HEIGHT: ConfigKey = ConfigKey::int::<u32>("height");
 const FPS: ConfigKey = ConfigKey::int::<u32>("fps");
-const GOP_SECONDS: ConfigKey = ConfigKey::int::<u32>("gop_seconds");
+const GOP_DURATION: ConfigKey = ConfigKey::int::<u32>("gop_duration");
 const BUFFER_FRAMES: ConfigKey = ConfigKey::int::<usize>("buffer_frames");
 const VIDEO_QUEUE_FRAMES: ConfigKey = ConfigKey::int::<usize>("video_queue_frames");
 // Whole kbps, or text such as "2500k".
@@ -32,7 +32,7 @@ pub(crate) const CONFIG_KEYS: &[ConfigKey] = &[
     WIDTH,
     HEIGHT,
     FPS,
-    GOP_SECONDS,
+    GOP_DURATION,
     BUFFER_FRAMES,
     VIDEO_QUEUE_FRAMES,
     VIDEO_BITRATE,
@@ -70,7 +70,7 @@ pub struct RtmpSinkConfig {
     pub audio_encoder: String,
     pub video_bitrate: String,
     pub audio_bitrate: String,
-    pub gop_seconds: u32,
+    pub gop_duration: u32,
     pub buffer_frames: usize,
     pub video_queue_frames: usize,
     pub monitor: bool,
@@ -113,9 +113,9 @@ impl RtmpSinkConfig {
             return Err("rtmp_sink fps must be greater than zero".into());
         }
 
-        let gop_seconds = optional_u32(config, &GOP_SECONDS, 2)?;
-        if gop_seconds == 0 {
-            return Err("rtmp_sink gop_seconds must be greater than zero".into());
+        let gop_duration = optional_u32(config, &GOP_DURATION, 2)?;
+        if gop_duration == 0 {
+            return Err("rtmp_sink gop_duration must be greater than zero".into());
         }
 
         let buffer_frames = optional_usize(config, &BUFFER_FRAMES, DEFAULT_AUDIO_BUFFER_FRAMES)?;
@@ -141,7 +141,7 @@ impl RtmpSinkConfig {
             audio_encoder: optional_string(config, "audio_encoder", "aac"),
             video_bitrate: optional_bitrate(config, &VIDEO_BITRATE, "2500k")?,
             audio_bitrate: optional_bitrate(config, &AUDIO_BITRATE, "128k")?,
-            gop_seconds,
+            gop_duration,
             buffer_frames,
             video_queue_frames,
             monitor: optional_bool(config, "monitor", false),
@@ -163,7 +163,7 @@ impl RtmpSinkConfig {
             audio_encoder: self.audio_encoder.clone(),
             video_bitrate: self.video_bitrate.clone(),
             audio_bitrate: self.audio_bitrate.clone(),
-            gop_seconds: self.gop_seconds,
+            gop_duration: self.gop_duration,
             constant_video_bitrate,
             audio_buffer_frames: self.buffer_frames,
             video_queue_frames: self.video_queue_frames,
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(config.audio_encoder, "aac");
         assert_eq!(config.video_bitrate, "2500k");
         assert_eq!(config.audio_bitrate, "128k");
-        assert_eq!(config.gop_seconds, 2);
+        assert_eq!(config.gop_duration, 2);
         assert_eq!(config.buffer_frames, DEFAULT_AUDIO_BUFFER_FRAMES);
         assert_eq!(config.video_queue_frames, DEFAULT_VIDEO_QUEUE_FRAMES);
         assert!(!config.monitor);

@@ -141,7 +141,7 @@ fn a_conducting_script_cannot_write_a_non_finite_number() {
                 "id": "code1",
                 "type": "code",
                 "config": {
-                    "tick_hz": 20.0,
+                    "tick_rate": 20.0,
                     "script": "function tick() { if (globalThis.done) return; globalThis.done = true; const out = []; for (const v of [1e39, -1e39, 'NaN', 'Infinity', NaN, Infinity, -Infinity]) { try { graph.setControl('osc', 'frequency', v); out.push('accepted ' + v); } catch (e) { out.push(String(e)); } } graph.setControl('code1', 'last_error', out.join('|')); }"
                 }
             },

@@ -240,7 +240,7 @@ sink has the same `audio`, `audio_left`, and `audio_right` inputs and outputs as
 
 Configuration overrides include `server_url`, `resolution` or `width`/`height`,
 `fps`, `video_bitrate`, `audio_bitrate`, `video_encoder`, `audio_encoder`,
-`gop_seconds`, `ffmpeg_path`, `monitor`, `soft_clip`, `buffer_frames`, and
+`gop_duration` (seconds), `ffmpeg_path`, `monitor`, `soft_clip`, `buffer_frames`, and
 `video_queue_frames`. Set `tee_to_disk` to a local media path (for example,
 `./broadcast.mkv`) to archive the encoded broadcast without a second encoding
 pass. An archive write failure does not stop the network stream. Use

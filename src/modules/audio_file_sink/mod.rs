@@ -71,7 +71,7 @@ impl ModuleFactory for AudioFileSinkFactory {
         return const {
             &[
                 wasm::MAX_FRAMES,
-                wasm::MAX_SECONDS,
+                wasm::MAX_DURATION,
                 ConfigKey::boolean("soft_clip"),
                 ConfigKey::boolean("monitor"),
             ]
