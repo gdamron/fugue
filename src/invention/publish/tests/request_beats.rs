@@ -258,6 +258,78 @@ fn a_reset_while_counting_beats_counts_as_reaching_the_next_beat() {
 }
 
 #[test]
+fn a_span_counts_from_before_a_reset_at_the_sample_it_arrives() {
+    for reset_first in [false, true] {
+        let mut rig = beat_rig(120.0);
+        rig.render(1);
+        // Half a beat in, once the next block starts.
+        rig.render(186);
+        let now = rig.graph.current_sample;
+        let reset = || submit_clock_at(&rig, RESET, RtValue::Bool(true), now);
+        if reset_first {
+            reset();
+        }
+        let id = submit_level(&rig, 0.5, BeatSpec::After(0.25));
+        if !reset_first {
+            reset();
+        }
+        render_counted(&mut rig, 1);
+        // The reset begins the next whole beat, past the span's end: it
+        // applies at the reset, not a quarter beat after it.
+        let applied = Outcome::Applied { at: now };
+        assert_eq!(outcomes_of(&mut rig, id), [(id, applied)], "{reset_first}");
+    }
+}
+
+#[test]
+fn a_span_counts_from_before_a_reset_that_applies_ahead_of_an_edit() {
+    let mut rig = beat_rig(120.0);
+    // Half a beat in, once the next block starts.
+    rig.render(187);
+    let now = rig.graph.current_sample;
+    let id = submit_level(&rig, 0.5, BeatSpec::After(0.25));
+    submit_clock_at(&rig, RESET, RtValue::Bool(true), now);
+    // Both apply on the graph this edit replaces, before it installs.
+    let pad = rig.build("pad", DIAL, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("pad", pad);
+            Ok(())
+        })
+        .unwrap();
+    render_counted(&mut rig, 1);
+    let applied = Outcome::Applied { at: now };
+    assert_eq!(outcomes_of(&mut rig, id), [(id, applied)]);
+}
+
+#[test]
+fn an_edit_between_a_reset_and_a_span_lets_the_reset_apply_first() {
+    let mut rig = beat_rig(120.0);
+    // Half a beat in, once the next block starts.
+    rig.render(187);
+    let now = rig.graph.current_sample;
+    submit_clock_at(&rig, RESET, RtValue::Bool(true), now);
+    let pad = rig.build("pad", DIAL, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("pad", pad);
+            Ok(())
+        })
+        .unwrap();
+    // Submitted after the edit, so taken after the reset applied on the
+    // graph the edit replaced: it counts from the clock's new beat 0.
+    let id = submit_level(&rig, 0.5, BeatSpec::After(0.25));
+    render_counted(&mut rig, blocks_for(120.0, 0.5));
+
+    let mut twin = Twin::new(120.0);
+    twin.writes.push((now, RESET, RtValue::Bool(true)));
+    twin.run_to(now);
+    let at = twin.until(|clock| clock.position() >= 0.25);
+    assert!(at > now);
+    assert_eq!(outcomes_of(&mut rig, id), [(id, Outcome::Applied { at })]);
+}
+
+#[test]
 fn removing_the_clock_or_the_target_refuses_what_waits_on_it() {
     let mut rig = beat_rig(120.0);
     rig.render(1);

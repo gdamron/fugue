@@ -441,6 +441,12 @@ impl SignalGraph {
     /// included, and returns how many samples until the next may be due.
     /// Allocation-, free- and lock-free.
     fn apply_due(&mut self, drain: &mut RequestDrain, now: u64) -> Option<u64> {
+        // New beat spans count from the clocks as they are before a
+        // request timed in samples (a reset) moves them. An edit splits
+        // the sample: what was submitted before it applies before it
+        // installs, so a span submitted after the edit counts from after
+        // such a reset.
+        drain.watches.arm(drain.installed, self);
         drain
             .pending
             .apply_due(now, drain.installed, |target, value, retirer| {
