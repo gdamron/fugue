@@ -229,3 +229,53 @@ fn a_restored_level_holds_for_a_first_block_retrigger_tail() {
         assert_eq!(out, 0.0, "frame {frame}");
     }
 }
+
+#[test]
+fn a_level_that_is_not_finite_is_refused_at_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let asset = constant_wav(dir.path(), 0.5, 64);
+    let registry = crate::ModuleRegistry::default();
+    for (type_id, entries, entry) in [
+        (
+            "sample_kit",
+            "samples",
+            json!({ "key": 36, "asset": asset }),
+        ),
+        (
+            "sample_instrument",
+            "zones",
+            json!({ "root_note": 60, "asset": asset }),
+        ),
+    ] {
+        for value in [json!("NaN"), json!("inf"), json!("1e39"), json!(1e39)] {
+            let config = json!({ entries: [entry.clone()], "level.0": value.clone() });
+            let error = registry
+                .build(type_id, SAMPLE_RATE, &config)
+                .err()
+                .unwrap_or_else(|| panic!("{type_id} built with level.0 = {value}"))
+                .to_string();
+            assert!(
+                error.contains("config 'level.0' expects a finite number"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_reload_that_rebuilds_refuses_a_level_that_is_not_finite() {
+    let dir = tempfile::tempdir().unwrap();
+    let asset = constant_wav(dir.path(), 0.5, 64);
+    let module =
+        json!({ "type": "sample_kit", "config": { "samples": [{ "key": 36, "asset": asset }] } });
+    let (mut running, _pump) = start_pumped(document(module));
+    let mut edited = saved(&running);
+    let config = &mut edited.modules[0].config;
+    config["samples"][0]["key"] = json!(38);
+    config["level.0"] = json!("NaN");
+    assert!(running.reload(edited).is_err());
+    assert_eq!(
+        running.get_control("m", "level.0").unwrap(),
+        ControlValue::Number(1.0)
+    );
+}
