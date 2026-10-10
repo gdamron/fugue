@@ -2,7 +2,7 @@
 //!
 //! A score is a declarative, general-purpose container for the musical content
 //! of a piece — a bank of `cells`, each a sequence of steps in the same
-//! `{ note, gate, held, velocity, grace }` shape consumed by [`step_sequencer`] and
+//! `{ note, gate_length, held, velocity, grace }` shape consumed by [`step_sequencer`] and
 //! [`cell_sequencer`], plus light metadata (title, composer, key, tempo, an
 //! optional tempo map for score-scheduled tempo changes, time signature,
 //! root note, rhythm grid).
@@ -66,8 +66,9 @@
 //! # Field names
 //!
 //! The format follows the module interface conventions: a step's level is
-//! `velocity` (the sequencers' output name), the reference pitch is
-//! `root_note` (the sequencers' config key), and a tempo glide is
+//! `velocity` (the sequencers' output name), its own gate length is
+//! `gate_length` (the sequencers' default it overrides), the reference pitch
+//! is `root_note` (the sequencers' config key), and a tempo glide is
 //! `ramp_steps` (the `control_scheduler` entry key). The document, its steps
 //! and its tempo-map points are closed: an unknown key is refused, so a score
 //! written with an old name fails to load instead of losing data.
@@ -108,7 +109,7 @@ pub const SCORE_SCHEMA_V1: &str = "fugue.score.v1";
 /// A `fugue.score.v1` document: a piece's musical content plus light metadata.
 ///
 /// Content is a bank of `cells`, each a sequence of steps in the shared
-/// `{ note, gate, held }` shape; a single-sequence piece is a bank of one cell.
+/// `{ note, gate_length, held }` shape; a single-sequence piece is a bank of one cell.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Score {
@@ -379,7 +380,7 @@ fn validate_time_signature(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Validates a single step against the `{ note, gate, held }` shape shared with
+/// Validates a single step against the `{ note, gate_length, held }` shape shared with
 /// the sequencers. Accepts the three forms their parser accepts: `null` (rest),
 /// a bare integer (note offset), or an object.
 fn validate_step(value: &Value) -> Result<(), String> {
@@ -419,12 +420,12 @@ fn validate_step(value: &Value) -> Result<(), String> {
         Some(_) => return Err("step.note must be an integer or null".to_string()),
     }
 
-    if let Some(gate) = object.get("gate").filter(|v| !v.is_null()) {
+    if let Some(gate) = object.get("gate_length").filter(|v| !v.is_null()) {
         let gate = gate
             .as_f64()
-            .ok_or_else(|| "step.gate must be a number".to_string())?;
+            .ok_or_else(|| "step.gate_length must be a number".to_string())?;
         if !(0.0..=1.0).contains(&gate) {
-            return Err("step.gate must be between 0 and 1".to_string());
+            return Err("step.gate_length must be between 0 and 1".to_string());
         }
     }
 

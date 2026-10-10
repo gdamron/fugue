@@ -9,7 +9,7 @@ pub const MAX_GRACE_NOTES: usize = 4;
 
 /// The keys a step object may carry. A step is closed, so a pattern written
 /// with an old field name is refused instead of silently losing that field.
-pub const STEP_KEYS: &[&str] = &["note", "gate", "held", "velocity", "grace"];
+pub const STEP_KEYS: &[&str] = &["note", "gate_length", "held", "velocity", "grace"];
 
 /// A fixed-capacity chain of grace-note offsets decorating a note step.
 ///
@@ -164,7 +164,7 @@ impl Serialize for Step {
         let mut map = serializer.serialize_map(Some(entries))?;
         map.serialize_entry("note", &self.note)?;
         if let Some(gate_length) = self.gate_length {
-            map.serialize_entry("gate", &gate_length)?;
+            map.serialize_entry("gate_length", &gate_length)?;
         }
         if let Some(velocity) = self.velocity {
             map.serialize_entry("velocity", &velocity)?;

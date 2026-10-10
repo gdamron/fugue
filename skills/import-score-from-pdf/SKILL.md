@@ -6,7 +6,7 @@ description: Transcribe a score PDF into a validated fugue.score.v1 asset. Use w
 # Import score from PDF
 
 Turn a notated score **PDF** into a `fugue.score.v1` asset (a bank of cells in the
-`{ note, gate, held, velocity, grace }` step shape the sequencers consume).
+`{ note, gate_length, held, velocity, grace }` step shape the sequencers consume).
 
 This skill is **cross-platform**: the rendering/anchor step is a plain script
 (`scripts/prep_pdf.sh` for macOS/Linux/WSL, `scripts/prep_pdf.ps1` for Windows).
@@ -90,9 +90,9 @@ Each step is one of:
 
 - `null` — a rest.
 - an integer — a note, as a semitone offset from `root_note`.
-- `{ "note": <int|null>, "gate": <0..1>, "held": <bool>, "velocity": <0..1>, "grace": [<int>, …] }` —
+- `{ "note": <int|null>, "gate_length": <0..1>, "held": <bool>, "velocity": <0..1>, "grace": [<int>, …] }` —
   `held: true` continues the previous note without retriggering (ties / sustains);
-  `note: null` is a rest; `gate` shortens the step's duration; `velocity` is the
+  `note: null` is a rest; `gate_length` shortens the step's duration; `velocity` is the
   dynamic level at this onset; `grace` is the step's grace-note chain.
 
 **Grace notes**: the small slashed or small-head notes (acciaccaturas /
@@ -146,7 +146,7 @@ If the CLI is not available, self-check the same shape the validator enforces
   keys (an unknown key, such as an old `amplitude`, is refused);
 - `cells` is present and non-empty, and every cell is non-empty;
 - every step is `null`, an integer in `-128..=127`, or an object whose `note` is
-  an integer/null and `gate` and `velocity` are in `0..1`; a `held` step carries
+  an integer/null and `gate_length` and `velocity` are in `0..1`; a `held` step carries
   only `{ "held": true }`; `grace` is a non-empty array of at most 4 integers in
   `-128..=127`, only on steps with an integer `note`;
 - `root_note` is `0..=127`; `tempo` > 0; time-signature fields are positive.

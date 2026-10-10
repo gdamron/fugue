@@ -113,7 +113,7 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, StepError> {
         }
 
         let note = number_field(obj, "note", whole_number::<i8>)?;
-        let gate_length = number_field(obj, "gate", finite_f32)?.map(|v| v.clamp(0.0, 1.0));
+        let gate_length = number_field(obj, "gate_length", finite_f32)?.map(|v| v.clamp(0.0, 1.0));
         let velocity = number_field(obj, "velocity", finite_f32)?.map(|v| v.clamp(0.0, 1.0));
 
         let grace = parse_grace(obj.get("grace"), note)?;

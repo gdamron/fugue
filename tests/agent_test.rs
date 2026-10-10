@@ -51,8 +51,8 @@ fn agent_trigger_applies_step_pattern_response() {
                             "summary": "test variation",
                             "payload": {
                                 "pattern": [
-                                    { "note": 0, "gate": 0.75 },
-                                    { "note": 3, "gate": 0.5 },
+                                    { "note": 0, "gate_length": 0.75 },
+                                    { "note": 3, "gate_length": 0.5 },
                                     { "note": null }
                                 ]
                             },
@@ -144,8 +144,8 @@ fn agent_apply_preflights_all_paths_before_writing() {
                             "summary": "test variation",
                             "payload": {
                                 "pattern": [
-                                    { "note": 0, "gate": 0.75 },
-                                    { "note": 3, "gate": 0.5 },
+                                    { "note": 0, "gate_length": 0.75 },
+                                    { "note": 3, "gate_length": 0.5 },
                                     { "note": null }
                                 ]
                             },
@@ -232,7 +232,7 @@ fn step_sequencer_pattern_round_trips() {
         .set_control(
             "seq",
             "pattern",
-            ControlValue::String(r#"[{"note":0,"gate":0.5},{"note":null}]"#.to_string()),
+            ControlValue::String(r#"[{"note":0,"gate_length":0.5},{"note":null}]"#.to_string()),
         )
         .unwrap();
     let value = running.get_control("seq", "pattern").unwrap();

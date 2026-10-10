@@ -359,7 +359,7 @@ fn test_cells_json_round_trip() {
         .set_control(
             "cells",
             ControlValue::String(
-                r#"[[{"note":0},{"note":null}],[{"note":12,"gate":0.5}]]"#.to_string(),
+                r#"[[{"note":0},{"note":null}],[{"note":12,"gate_length":0.5}]]"#.to_string(),
             ),
         )
         .unwrap();
@@ -1100,11 +1100,11 @@ fn bank_numbers_read_whole_floats_and_are_refused_with_their_path() {
         "cell_sequencer config 'cells[1][1].note' expects a whole number from -128 to 127, \
          got 1.5"
     );
-    let error = build(serde_json::json!({ "cells": "[[{\"gate\": 1e39}]]" }));
+    let error = build(serde_json::json!({ "cells": "[[{\"gate_length\": 1e39}]]" }));
     assert!(error
         .err()
         .unwrap()
-        .contains("'cells[0][0].gate' expects a finite number"));
+        .contains("'cells[0][0].gate_length' expects a finite number"));
 
     // The bank control reads by the same rules at runtime.
     let error = surface

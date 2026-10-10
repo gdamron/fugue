@@ -29,10 +29,10 @@
 //!         "pattern": [
 //!           { "note": 0 },
 //!           { "note": null },
-//!           { "note": 7, "gate": 0.8 },
+//!           { "note": 7, "gate_length": 0.8 },
 //!           { "note": 5 },
 //!           { "note": null },
-//!           { "note": 0, "gate": 1.0 },
+//!           { "note": 0, "gate_length": 1.0 },
 //!           { "note": 2 },
 //!           { "note": null }
 //!         ]

@@ -37,7 +37,7 @@ fn probes(key: &str, meta: &ControlMeta) -> Vec<ControlValue> {
             .collect()
     };
     match (&meta.kind, key) {
-        (_, "pattern") => text(&[r#"[{"note": 64, "gate": 1.0}, null]"#, r#"[64, null, 67]"#]),
+        (_, "pattern") => text(&[r#"[{"note": 64, "gate_length": 1.0}, null]"#, r#"[64, null, 67]"#]),
         (_, "cells") => text(&[r#"[[{"note": 64}, null]]"#, r#"[[64, null, 67]]"#]),
         (
             ControlKind::String {

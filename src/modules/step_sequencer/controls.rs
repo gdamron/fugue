@@ -199,7 +199,7 @@ impl StepSequencerControls {
     /// Sets the current pattern from JSON.
     ///
     /// The accepted format is the same step array accepted by the module
-    /// config, for example `[{"note":0,"gate":0.5},{"note":null}]`.
+    /// config, for example `[{"note":0,"gate_length":0.5},{"note":null}]`.
     pub fn set_pattern_json(&self, value: &str) -> Result<(), String> {
         self.set_pattern(parse_pattern_json(value)?);
         Ok(())

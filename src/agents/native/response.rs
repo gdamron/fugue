@@ -65,9 +65,9 @@ pub(super) fn validate_step_pattern(pattern: &Value) -> Result<(), String> {
             Some(Value::Number(number)) if number.as_i64().is_some() => {}
             _ => return Err("step.note must be an integer or null".to_string()),
         }
-        if let Some(gate) = object.get("gate").and_then(Value::as_f64) {
+        if let Some(gate) = object.get("gate_length").and_then(Value::as_f64) {
             if !(0.0..=1.0).contains(&gate) {
-                return Err("step.gate must be between 0 and 1".to_string());
+                return Err("step.gate_length must be between 0 and 1".to_string());
             }
         }
     }

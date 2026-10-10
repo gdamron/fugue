@@ -232,10 +232,10 @@ fn test_step_sequencer_factory() {
         "step_count": 8,
         "gate_length": 0.75,
         "pattern": [
-            { "note": 0, "gate": 0.5 },
+            { "note": 0, "gate_length": 0.5 },
             { "note": null },
             { "note": 7 },
-            { "note": 5, "gate": 1.0 }
+            { "note": 5, "gate_length": 1.0 }
         ]
     });
 
@@ -250,7 +250,7 @@ fn test_step_sequencer_factory() {
 #[test]
 fn test_parse_step_formats() {
     // Object with note and gate
-    let step = parse_step(&serde_json::json!({"note": 5, "gate": 0.8})).unwrap();
+    let step = parse_step(&serde_json::json!({"note": 5, "gate_length": 0.8})).unwrap();
     assert_eq!(step.note, Some(5));
     assert_eq!(step.gate_length, Some(0.8));
     assert!(!step.held);
@@ -274,7 +274,7 @@ fn test_parse_step_formats() {
     assert_eq!(step.note, None);
 
     assert!(parse_step(&serde_json::json!({"held": true, "note": 0})).is_err());
-    assert!(parse_step(&serde_json::json!({"held": true, "gate": 1.0})).is_err());
+    assert!(parse_step(&serde_json::json!({"held": true, "gate_length": 1.0})).is_err());
     assert!(parse_step(&serde_json::json!({"held": "yes"})).is_err());
 }
 
@@ -652,7 +652,7 @@ fn pattern_of(config: serde_json::Value) -> Result<Vec<Step>, String> {
 #[test]
 fn pattern_numbers_read_whole_floats_as_written() {
     let pattern = pattern_of(serde_json::json!({
-        "pattern": [{ "note": 2.0, "grace": [-1.0] }, 4.0, { "note": -3, "gate": 2 }]
+        "pattern": [{ "note": 2.0, "grace": [-1.0] }, 4.0, { "note": -3, "gate_length": 2 }]
     }))
     .unwrap();
     // `{"note": 2.0}` was a rest, and a bare `4.0` was refused.
@@ -688,7 +688,7 @@ fn pattern_numbers_are_refused_with_their_path() {
         refused(serde_json::json!([{ "note": 0, "grace": [1, 1.5] }]))
             .contains("'pattern[0].grace[1]' expects a whole number")
     );
-    for field in ["gate", "velocity"] {
+    for field in ["gate_length", "velocity"] {
         let error = refused(serde_json::json!([{ "note": 0, field: 1e39 }]));
         assert!(
             error.contains(&format!("'pattern[0].{field}' expects a finite number")),
