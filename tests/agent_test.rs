@@ -3,7 +3,7 @@ mod support;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fugue::{ControlValue, Invention, InventionBuilder};
+use fugue::{AgentControls, ControlValue, Invention, InventionBuilder};
 use support::NullAudioBackend;
 
 #[test]
@@ -76,22 +76,16 @@ fn agent_trigger_applies_step_pattern_response() {
     )
     .unwrap();
 
-    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let (runtime, handles) = InventionBuilder::new(48_000).build(invention).unwrap();
     let running = runtime
         .start_with_backend(NullAudioBackend::new(48_000))
         .unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(2);
-    let mut trigger_count = 1.0;
+    let agent: AgentControls = handles.get("agent.controls").unwrap();
     loop {
-        running
-            .set_control(
-                "agent",
-                "trigger_count",
-                ControlValue::Number(trigger_count),
-            )
-            .unwrap();
-        trigger_count += 1.0;
+        // A rising edge on the `trigger` input.
+        agent.increment_trigger();
 
         let count = running.get_control("agent", "request_count").unwrap();
         if let ControlValue::Number(count) = count {
@@ -181,22 +175,16 @@ fn agent_apply_preflights_all_paths_before_writing() {
     )
     .unwrap();
 
-    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let (runtime, handles) = InventionBuilder::new(48_000).build(invention).unwrap();
     let running = runtime
         .start_with_backend(NullAudioBackend::new(48_000))
         .unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(2);
-    let mut trigger_count = 1.0;
+    let agent: AgentControls = handles.get("agent.controls").unwrap();
     loop {
-        running
-            .set_control(
-                "agent",
-                "trigger_count",
-                ControlValue::Number(trigger_count),
-            )
-            .unwrap();
-        trigger_count += 1.0;
+        // A rising edge on the `trigger` input.
+        agent.increment_trigger();
 
         let error = running.get_control("agent", "last_error").unwrap();
         if let ControlValue::String(error) = error {
@@ -277,22 +265,16 @@ fn named_local_harness_reports_missing_command_cleanly() {
         }"#,
     )
     .unwrap();
-    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    let (runtime, handles) = InventionBuilder::new(48_000).build(invention).unwrap();
     let running = runtime
         .start_with_backend(NullAudioBackend::new(48_000))
         .unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(2);
-    let mut trigger_count = 1.0;
+    let agent: AgentControls = handles.get("agent.controls").unwrap();
     loop {
-        running
-            .set_control(
-                "agent",
-                "trigger_count",
-                ControlValue::Number(trigger_count),
-            )
-            .unwrap();
-        trigger_count += 1.0;
+        // A rising edge on the `trigger` input.
+        agent.increment_trigger();
 
         let error = running.get_control("agent", "last_error").unwrap();
         if let ControlValue::String(error) = error {
@@ -307,5 +289,117 @@ fn named_local_harness_reports_missing_command_cleanly() {
         thread::sleep(Duration::from_millis(20));
     }
 
+    running.stop();
+}
+
+/// An agent that answers every trigger with a canned JSON response, keeping
+/// at most `max_turns` of history.
+fn echo_agent(max_turns: u64) -> Invention {
+    Invention::from_json(&format!(
+        r#"{{
+            "version": "1.0.0",
+            "modules": [
+                {{
+                    "id": "agent",
+                    "type": "agent",
+                    "config": {{
+                        "backend": "test:response",
+                        "prompt": "Answer.",
+                        "system_prompt": "You answer.",
+                        "history_limits": {{ "max_turns": {max_turns} }},
+                        "response": {{ "format": "json" }},
+                        "test_response": {{
+                            "kind": "echo",
+                            "summary": "an echo",
+                            "payload": {{}},
+                            "confidence": 1.0,
+                            "warnings": []
+                        }}
+                    }}
+                }},
+                {{ "id": "dac", "type": "dac" }}
+            ],
+            "connections": []
+        }}"#
+    ))
+    .unwrap()
+}
+
+/// Triggers the agent until it has completed `requests` requests.
+fn complete_requests(running: &fugue::RunningInvention, agent: &AgentControls, requests: f32) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let ControlValue::Number(count) = running.get_control("agent", "request_count").unwrap()
+        else {
+            panic!("request_count is a number");
+        };
+        if count >= requests {
+            return;
+        }
+        agent.increment_trigger();
+        assert!(
+            Instant::now() < deadline,
+            "agent completed {count} requests"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn agent_telemetry_is_read_only_through_set_control() {
+    let (runtime, handles) = InventionBuilder::new(48_000).build(echo_agent(6)).unwrap();
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(48_000))
+        .unwrap();
+    let agent: AgentControls = handles.get("agent.controls").unwrap();
+    complete_requests(&running, &agent, 1.0);
+
+    let ControlValue::String(parsed) = running
+        .get_control("agent", "last_parsed_response")
+        .unwrap()
+    else {
+        panic!("last_parsed_response is a string");
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&parsed).unwrap();
+    assert_eq!(parsed["summary"], "an echo");
+    for (key, value) in [
+        ("status", ControlValue::String("written".into())),
+        ("last_error", ControlValue::String("written".into())),
+        ("last_response", ControlValue::String("written".into())),
+        ("last_parsed_response", ControlValue::String("{}".into())),
+        ("history", ControlValue::String("[]".into())),
+        ("last_apply_error", ControlValue::String("written".into())),
+        ("request_count", ControlValue::Number(99.0)),
+    ] {
+        let before = running.get_control("agent", key).unwrap();
+        let refusal = running.set_control("agent", key, value).unwrap_err();
+        assert!(
+            refusal.to_string().contains("is read-only"),
+            "{key}: {refusal}"
+        );
+        assert_eq!(running.get_control("agent", key).unwrap(), before, "{key}");
+    }
+    // Parameters stay writable.
+    running
+        .set_control("agent", "cooldown", ControlValue::Number(0.5))
+        .unwrap();
+    running.stop();
+}
+
+#[test]
+fn history_limits_bound_the_history() {
+    let (runtime, handles) = InventionBuilder::new(48_000).build(echo_agent(1)).unwrap();
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(48_000))
+        .unwrap();
+    let agent: AgentControls = handles.get("agent.controls").unwrap();
+    complete_requests(&running, &agent, 2.0);
+
+    let ControlValue::String(history) = running.get_control("agent", "history").unwrap() else {
+        panic!("history is a string");
+    };
+    let history: serde_json::Value = serde_json::from_str(&history).unwrap();
+    assert_eq!(history.as_array().unwrap().len(), 1, "{history}");
+    assert_eq!(history[0]["request"]["system"], "You answer.");
     running.stop();
 }

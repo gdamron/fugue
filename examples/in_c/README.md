@@ -60,7 +60,7 @@ Edit `examples/in_c.json` directly:
 | --- | --- |
 | `clock.config.bpm` | Tempo. `240` corresponds to 120 BPM at the 8th-note pulse; halve for half-time, double for double-time. |
 | `conductor.config.backend` | LLM/local harness used for primary conducting. |
-| `conductor.config.cooldown_ms` | Minimum spacing between conductor requests. Higher = broader, slower decisions. |
+| `conductor.config.cooldown` | Minimum spacing between conductor requests, in seconds. Higher = broader, slower decisions. |
 | `conductor_fallback.config.params.min_loops_before_advance` | Minimum loops a voice spends on a cell before fallback considers advancing. Higher = slower, more meditative. |
 | `conductor_fallback.config.params.max_cells_ahead_of_slowest` | How far fallback lets a voice run ahead of the slowest peer. Lower = tighter ensemble. |
 | `conductor_fallback.config.params.advance_probability` | Per-tick fallback probability of advancing once min-loops is satisfied and the voice is within range. |

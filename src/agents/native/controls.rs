@@ -25,11 +25,38 @@ pub(super) fn get_string(
     }
 }
 
-/// Writes an agent telemetry control (`status`, `last_error`, history).
-/// Transient: live activity is not authored configuration, so it must not
-/// land in the retained document.
+/// The running `agent` module's controls, looked up afresh so a rebuilt
+/// module's are found.
+pub(super) fn agent_controls(
+    controller: &RuntimeController,
+    module_id: &str,
+) -> Option<AgentControls> {
+    let surfaces = controller.snapshot.control_surfaces.lock().unwrap();
+    surfaces
+        .get(module_id)?
+        .as_any()?
+        .downcast_ref::<AgentControls>()
+        .cloned()
+}
+
+/// Writes an agent telemetry control (`status`, `last_error`, `history`),
+/// which `set_control` refuses: telemetry is read-only to everyone but this
+/// worker. Live activity is not authored configuration, so it never lands in
+/// the retained document either.
+pub(super) fn set_telemetry(
+    controller: &RuntimeController,
+    module_id: &str,
+    key: &str,
+    value: ControlValue,
+) {
+    if let Some(controls) = agent_controls(controller, module_id) {
+        let _ = controls.set_telemetry(key, value);
+    }
+}
+
 pub(super) fn set_string(controller: &RuntimeController, module_id: &str, key: &str, value: &str) {
-    let _ = controller.snapshot.set_control_transient(
+    set_telemetry(
+        controller,
         module_id,
         key,
         ControlValue::String(value.to_string()),
@@ -52,7 +79,7 @@ pub(super) fn string_config(config: &Value, key: &str) -> Option<String> {
 }
 
 pub(super) fn history_limits(config: &Value) -> HistoryLimits {
-    let history = config.get("history").unwrap_or(&Value::Null);
+    let history = config.get("history_limits").unwrap_or(&Value::Null);
     HistoryLimits {
         max_turns: history
             .get("max_turns")
