@@ -26,6 +26,8 @@
 use serde_json::Value;
 use std::fmt;
 
+pub(crate) mod serde_whole;
+
 #[cfg(test)]
 pub(crate) mod tests;
 

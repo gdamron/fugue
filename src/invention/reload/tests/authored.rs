@@ -319,7 +319,8 @@ fn an_authored_write_over_an_array_schedule_survives_reloading_the_original() {
         { "id": "auto", "type": "control_scheduler", "config": { "schedule": [] } }"#,
     );
     let mut running = start(&original);
-    let schedule = r#"[{ "at": 0, "module": "osc2", "control": "frequency", "value": 220.0 }]"#;
+    let schedule =
+        r#"[{ "at_step": 0, "module": "osc2", "control": "frequency", "value": 220.0 }]"#;
     running
         .set_control("auto", "schedule", ControlValue::String(schedule.into()))
         .unwrap();

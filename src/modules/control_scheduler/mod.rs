@@ -7,11 +7,11 @@
 //!
 //! # Timing model
 //!
-//! The scheduler counts rising edges of its `gate` input — the same clock
+//! The scheduler counts rising edges of its `clock` input — the same clock
 //! gate that drives the sequencers — and fires every schedule entry whose
-//! `at` step is reached, on the exact frame of the edge. The first edge is
-//! step 0, matching sequencer numbering. Step granularity is whatever gate
-//! subdivision is patched in (`beat` for beats, `beat_x4` for quarter beats, ...).
+//! `at_step` is reached, on the exact frame of the edge. The first edge is
+//! step 0, matching sequencer numbering. Step granularity is whatever clock
+//! output is patched in (`beat` for beats, `beat_x4` for quarter beats, ...).
 //!
 //! A target whose module declares its controls is written through its
 //! automation slots, which the graph applies just before the target
@@ -24,10 +24,11 @@
 //!
 //! # Ramps
 //!
-//! An entry with `ramp: N` leaves the control's current value at step `at`
-//! and arrives exactly at `value` on the boundary of step `at + N`,
+//! An entry with `ramp_steps: N` leaves the control's current value at step
+//! `at_step` and arrives exactly at `value` on the boundary of step
+//! `at_step + N`,
 //! interpolating linearly in between (hairpin-style automation). Boundary
-//! values are exact: at every intermediate step boundary `at + k` the control
+//! values are exact: at every intermediate step boundary `at_step + k` the control
 //! is exactly `from + (to - from) * k / N`, computed in `f64` and rounded once
 //! to `f32`, whatever the measured step length. The interpolation never
 //! overflows or leaves the range between the endpoints, so a ramp between any
@@ -45,15 +46,15 @@
 //!       "type": "control_scheduler",
 //!       "config": {
 //!         "schedule": [
-//!           { "at": 0, "module": "mixer", "control": "level.0", "value": 0.2 },
-//!           { "at": 8, "module": "mixer", "control": "level.0", "value": 1.0, "ramp": 8 },
-//!           { "at": 16, "module": "clock", "control": "bpm", "value": 90.0 }
+//!           { "at_step": 0, "module": "mixer", "control": "level.0", "value": 0.2 },
+//!           { "at_step": 8, "module": "mixer", "control": "level.0", "value": 1.0, "ramp_steps": 8 },
+//!           { "at_step": 16, "module": "clock", "control": "bpm", "value": 90.0 }
 //!         ]
 //!       }
 //!     }
 //!   ],
 //!   "connections": [
-//!     { "from": "clock", "from_port": "beat", "to": "automation", "to_port": "gate" }
+//!     { "from": "clock", "from_port": "beat", "to": "automation", "to_port": "clock" }
 //!   ]
 //! }
 //! ```
@@ -74,18 +75,18 @@
 //!   "type": "control_scheduler",
 //!   "config": {
 //!     "tempo_map": { "$asset": "score", "path": "/tempo_map" },
-//!     "tempo_target": "clock",
-//!     "bpm_scale": 1.0
+//!     "tempo_module": "clock",
+//!     "tempo_scale": 1.0
 //!   }
 //! }
 //! ```
 //!
-//! `tempo_target` (default `"clock"`) and `tempo_control` (default `"bpm"`)
-//! name the control to write; `bpm_scale` (default `1.0`) is the invention's
+//! `tempo_module` (default `"clock"`) and `tempo_control` (default `"bpm"`)
+//! name the control to write; `tempo_scale` (default `1.0`) is the invention's
 //! interpretation knob, since the score records the notated quarter-note
 //! tempo and the invention decides how its clock realizes it. Compiled tempo
-//! entries merge with any explicit `schedule`. Patch the same clock gate that
-//! drives the sequencers into this module's `gate` input.
+//! entries merge with any explicit `schedule`. Patch the same clock output
+//! that drives the sequencers into this module's `clock` input.
 
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -146,7 +147,7 @@ fn ramp_value(from: f32, to: f32, progress: f32) -> f32 {
 ///
 /// # Inputs
 ///
-/// - `gate` - Clock gate input (rising edge advances the step counter)
+/// - `clock` - Clock input (a rising edge advances the step counter)
 /// - `reset` - Reset input (rising edge restarts the schedule from step 0)
 ///
 /// # Outputs
@@ -231,7 +232,7 @@ impl ControlScheduler {
             0
         } else {
             let step = self.current_step as u64;
-            self.entries.partition_point(|entry| entry.at <= step)
+            self.entries.partition_point(|entry| entry.at_step <= step)
         };
     }
 
@@ -270,7 +271,9 @@ impl ControlScheduler {
                 false
             } else {
                 let progress = ramp.steps_done as f32 / ramp.steps_total as f32;
-                entry.write(ScheduleValue::Number(ramp_value(ramp.from, ramp.to, progress)));
+                entry.write(ScheduleValue::Number(ramp_value(
+                    ramp.from, ramp.to, progress,
+                )));
                 true
             }
         });
@@ -280,7 +283,7 @@ impl ControlScheduler {
     fn fire_due_entries(&mut self) {
         debug_assert!(self.current_step >= 0);
         let step = self.current_step as u64;
-        while self.cursor < self.entries.len() && self.entries[self.cursor].at <= step {
+        while self.cursor < self.entries.len() && self.entries[self.cursor].at_step <= step {
             let entry_idx = self.cursor;
             self.cursor += 1;
             self.cancel_conflicting_ramp(entry_idx);
@@ -329,7 +332,7 @@ impl ControlScheduler {
     /// Processes one sample.
     fn process_sample(&mut self, i: usize) {
         // Detect rising edges
-        let gate_rising = self.inputs.gate(i) > 0.5 && self.last_gate_in <= 0.5;
+        let gate_rising = self.inputs.clock(i) > 0.5 && self.last_gate_in <= 0.5;
         let reset_rising = self.inputs.reset(i) > 0.5 && self.last_reset_in <= 0.5;
 
         // Handle reset (takes priority)
@@ -358,7 +361,7 @@ impl ControlScheduler {
         self.outputs.set(i, self.current_step as f32);
 
         // Store for edge detection
-        self.last_gate_in = self.inputs.gate(i);
+        self.last_gate_in = self.inputs.clock(i);
         self.last_reset_in = self.inputs.reset(i);
     }
 }

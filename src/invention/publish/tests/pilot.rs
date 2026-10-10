@@ -98,7 +98,7 @@ fn oscillator_writes_apply_on_the_audio_thread_and_read_back() {
 fn a_scheduler_ramps_an_oscillator_without_allocating() {
     let mut rig = Rig::new(PATCH);
     let schedule = serde_json::json!({ "schedule": [
-        { "at": 0, "module": "osc", "control": "frequency", "value": 880.0, "ramp": 4 }
+        { "at_step": 0, "module": "osc", "control": "frequency", "value": 880.0, "ramp_steps": 4 }
     ]});
     let scheduler = rig.build("sched", "control_scheduler", schedule);
     rig.live
@@ -109,7 +109,7 @@ fn a_scheduler_ramps_an_oscillator_without_allocating() {
         .unwrap();
     rig.render(1);
     for gate in [1.0, 0.0, 1.0, 0.0] {
-        rig.live.write_input("sched", "gate", gate).unwrap();
+        rig.live.write_input("sched", "clock", gate).unwrap();
         assert_eq!(counted_block(&mut rig), (0, 0));
     }
     let ControlValue::Number(frequency) = read(&rig, "osc", "frequency") else {

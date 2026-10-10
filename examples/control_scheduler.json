@@ -71,9 +71,9 @@
       "type": "control_scheduler",
       "config": {
         "schedule": [
-          { "at": 8, "module": "mixer", "control": "level.0", "value": 1.0, "ramp": 8 },
-          { "at": 24, "module": "clock", "control": "bpm", "value": 90.0 },
-          { "at": 24, "module": "mixer", "control": "level.0", "value": 0.3, "ramp": 8 }
+          { "at_step": 8, "module": "mixer", "control": "level.0", "value": 1.0, "ramp_steps": 8 },
+          { "at_step": 24, "module": "clock", "control": "bpm", "value": 90.0 },
+          { "at_step": 24, "module": "mixer", "control": "level.0", "value": 0.3, "ramp_steps": 8 }
         ]
       }
     },
@@ -93,7 +93,7 @@
       "from": "clock",
       "from_port": "beat",
       "to": "dynamics",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "seq",

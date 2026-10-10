@@ -11,7 +11,7 @@ use crate::module_config::{ConfigKey, ConfigReader};
 /// Factory for constructing ControlScheduler modules from configuration.
 pub struct ControlSchedulerFactory;
 
-const BPM_SCALE: ConfigKey = ConfigKey::float("bpm_scale");
+const TEMPO_SCALE: ConfigKey = ConfigKey::float("tempo_scale");
 
 impl ModuleFactory for ControlSchedulerFactory {
     fn type_id(&self) -> &'static str {
@@ -21,10 +21,10 @@ impl ModuleFactory for ControlSchedulerFactory {
     fn config_keys(&self) -> &'static [ConfigKey] {
         const {
             &[
-                BPM_SCALE,
+                TEMPO_SCALE,
                 ConfigKey::json("schedule"),
                 ConfigKey::json("tempo_map"),
-                ConfigKey::text("tempo_target"),
+                ConfigKey::text("tempo_module"),
                 ConfigKey::text("tempo_control"),
             ]
         }
@@ -36,8 +36,8 @@ impl ModuleFactory for ControlSchedulerFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         // Read even without a tempo map, so a bad value is refused as written.
-        let bpm_scale = ConfigReader::new(CONTROL_SCHEDULER_TYPE_ID, config)
-            .float(&BPM_SCALE)?
+        let tempo_scale = ConfigReader::new(CONTROL_SCHEDULER_TYPE_ID, config)
+            .float(&TEMPO_SCALE)?
             .unwrap_or(1.0);
         let mut spec =
             schedule::parse_schedule(config.get("schedule").unwrap_or(&serde_json::Value::Null))?;
@@ -45,7 +45,7 @@ impl ModuleFactory for ControlSchedulerFactory {
         // entries that write a clock's tempo at each change's step boundary.
         if let Some(tempo_map) = config.get("tempo_map").filter(|value| !value.is_null()) {
             let module = config
-                .get("tempo_target")
+                .get("tempo_module")
                 .and_then(|value| value.as_str())
                 .unwrap_or("clock");
             let control = config
@@ -53,7 +53,10 @@ impl ModuleFactory for ControlSchedulerFactory {
                 .and_then(|value| value.as_str())
                 .unwrap_or("bpm");
             spec.extend(schedule::compile_tempo_map(
-                tempo_map, module, control, bpm_scale,
+                tempo_map,
+                module,
+                control,
+                tempo_scale,
             )?);
         }
         let controls = ControlSchedulerControls::new(spec);

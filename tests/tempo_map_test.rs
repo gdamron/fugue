@@ -66,7 +66,7 @@ const TEMPO_MAP_INVENTION: &str = r#"{
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
-        { "from": "clock", "from_port": "beat", "to": "tempo", "to_port": "gate" },
+        { "from": "clock", "from_port": "beat", "to": "tempo", "to_port": "clock" },
         { "from": "clock", "from_port": "beat", "to": "dac", "to_port": "audio_left" }
     ]
 }"#;
@@ -160,7 +160,7 @@ fn tempo_map_ramp_slows_smoothly_ritardando() {
                 { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
             ],
             "connections": [
-                { "from": "clock", "from_port": "beat_x4", "to": "tempo", "to_port": "gate" },
+                { "from": "clock", "from_port": "beat_x4", "to": "tempo", "to_port": "clock" },
                 { "from": "clock", "from_port": "beat_x4", "to": "dac", "to_port": "audio_left" }
             ]
         }"#,
@@ -200,7 +200,7 @@ fn tempo_map_ramp_slows_smoothly_ritardando() {
 
 #[test]
 fn tempo_map_scale_multiplies_the_written_bpm() {
-    // bpm_scale is the invention's interpretation knob: a notated map (♩=60 →
+    // tempo_scale is the invention's interpretation knob: a notated map (♩=60 →
     // ♩=30) with a x100 scale drives the clock at 6000 → 3000 BPM. (6000 BPM =
     // 480 samples/beat at 48 kHz, so step 2 lands at frame 959.)
     let mut engine = RenderEngine::new(48_000);
@@ -215,13 +215,13 @@ fn tempo_map_scale_multiplies_the_written_bpm() {
                     "type": "control_scheduler",
                     "config": {
                         "tempo_map": [ { "at_step": 0, "bpm": 60.0 }, { "at_step": 2, "bpm": 30.0 } ],
-                        "bpm_scale": 100.0
+                        "tempo_scale": 100.0
                     }
                 },
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
-                { "from": "clock", "from_port": "beat", "to": "tempo", "to_port": "gate" }
+                { "from": "clock", "from_port": "beat", "to": "tempo", "to_port": "clock" }
             ]
         }"#,
         )

@@ -110,9 +110,9 @@ fn setup(
 /// One gate edge and `frames - 1` low frames, then the knob's turn to
 /// process: as the graph runs a scheduler ahead of its target.
 fn step(scheduler: &mut ControlScheduler, knob: &mut Knob, frames: usize) {
-    scheduler.set_input("gate", 1.0).unwrap();
+    scheduler.set_input("clock", 1.0).unwrap();
     scheduler.process(1);
-    scheduler.set_input("gate", 0.0).unwrap();
+    scheduler.set_input("clock", 0.0).unwrap();
     scheduler.process(frames - 1);
     take_automation(knob);
     knob.process(frames);
@@ -121,8 +121,8 @@ fn step(scheduler: &mut ControlScheduler, knob: &mut Knob, frames: usize) {
 #[test]
 fn a_scheduled_write_waits_for_its_target_to_process_then_reads_back() {
     let (mut scheduler, mut knob, surface) =
-        setup(r#"[{ "at": 0, "module": "knob", "control": "level", "value": 0.5 }]"#);
-    scheduler.set_input("gate", 1.0).unwrap();
+        setup(r#"[{ "at_step": 0, "module": "knob", "control": "level", "value": 0.5 }]"#);
+    scheduler.set_input("clock", 1.0).unwrap();
     scheduler.process(1);
     assert_eq!(knob.level, 1.0, "nothing reaches the knob before its turn");
     assert_eq!(surface.get_control("level").unwrap(), 1.0.into());
@@ -136,8 +136,9 @@ fn a_scheduled_write_waits_for_its_target_to_process_then_reads_back() {
 fn a_ramp_into_a_refusing_target_counts_its_failures_without_allocating() {
     // 0 to 8 voices over 4 steps: fractions between edges are refused as
     // values an integer cannot hold, 6 and 8 by the knob itself.
-    let (mut scheduler, mut knob, _) =
-        setup(r#"[{ "at": 0, "module": "knob", "control": "voices", "value": 8.0, "ramp": 4 }]"#);
+    let (mut scheduler, mut knob, _) = setup(
+        r#"[{ "at_step": 0, "module": "knob", "control": "voices", "value": 8.0, "ramp_steps": 4 }]"#,
+    );
     let mut refused = EventCursor::new();
     for _ in 0..6 {
         let ((), allocs, frees) = allocator_events(|| step(&mut scheduler, &mut knob, 64));
@@ -153,8 +154,8 @@ fn a_ramp_into_a_refusing_target_counts_its_failures_without_allocating() {
 fn a_ramp_starts_from_the_latest_write_in_the_same_block() {
     let (mut scheduler, mut knob, _) = setup(
         r#"[
-            { "at": 0, "module": "knob", "control": "level", "value": 0.0 },
-            { "at": 0, "module": "knob", "control": "level", "value": 1.0, "ramp": 2 }
+            { "at_step": 0, "module": "knob", "control": "level", "value": 0.0 },
+            { "at_step": 0, "module": "knob", "control": "level", "value": 1.0, "ramp_steps": 2 }
         ]"#,
     );
     step(&mut scheduler, &mut knob, 32);
@@ -176,7 +177,7 @@ fn an_event_control_cannot_be_scheduled() {
     let mut map: SurfaceMap = IndexMap::new();
     map.insert("knob".to_string(), surface);
     let directory: SurfaceDirectory = Arc::new(Mutex::new(map));
-    let schedule = r#"[{ "at": 0, "module": "knob", "control": "tap", "value": true }]"#;
+    let schedule = r#"[{ "at_step": 0, "module": "knob", "control": "tap", "value": true }]"#;
     let ctrl = ControlSchedulerControls::new(parse_schedule_json(schedule).unwrap());
     let refused = ctrl.attach("sched", &directory).unwrap_err();
     assert!(refused.contains("cannot be scheduled"), "{refused}");
@@ -186,8 +187,8 @@ fn an_event_control_cannot_be_scheduled() {
 fn a_ramp_after_an_out_of_range_jump_starts_where_the_module_clamped_it() {
     let (mut scheduler, mut knob, _) = setup(
         r#"[
-            { "at": 0, "module": "knob", "control": "level", "value": 2.0 },
-            { "at": 0, "module": "knob", "control": "level", "value": 0.0, "ramp": 2 }
+            { "at_step": 0, "module": "knob", "control": "level", "value": 2.0 },
+            { "at_step": 0, "module": "knob", "control": "level", "value": 0.0, "ramp_steps": 2 }
         ]"#,
     );
     knob.level = 0.0;
