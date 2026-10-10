@@ -461,10 +461,11 @@ fn render_engine_set_control_refuses_non_finite_numbers() {
     }
 }
 
-/// A pattern written to an offline render applies at once: the render
-/// matches one built with the new pattern from the step after the write.
+/// A pattern written to an offline render applies at once, even between
+/// blocks: the render matches one built with the new pattern from the
+/// step after the write.
 #[test]
-fn an_offline_pattern_write_applies_from_the_next_block() {
+fn an_offline_pattern_write_applies_at_once() {
     let slow = ONE_SHOT_INVENTION.replace("22500.0", "11250.0");
     let (old, new) = (
         r#"[ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]"#,
@@ -473,10 +474,13 @@ fn an_offline_pattern_write_applies_from_the_next_block() {
     let render = |document: &str, write: Option<&str>| {
         let mut engine = RenderEngine::new(48_000);
         engine.load_json(document).unwrap();
-        let mut first = vec![0.0f32; 128];
+        // 37 frames: the write lands partway through a block.
+        let mut first = vec![0.0f32; 74];
         engine.render_interleaved(&mut first).unwrap();
         if let Some(pattern) = write {
-            engine.set_control("seq", "pattern", pattern.into()).unwrap();
+            engine
+                .set_control("seq", "pattern", pattern.into())
+                .unwrap();
             assert_eq!(
                 engine.get_control("seq", "pattern").unwrap(),
                 r#"[{"note":0},{"note":9},{"note":7}]"#.into()

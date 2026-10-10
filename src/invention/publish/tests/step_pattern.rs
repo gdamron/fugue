@@ -47,6 +47,13 @@ fn a_pattern_written_while_it_plays_applies_from_the_next_block() {
     assert_eq!(read(&rig, "seq", "pattern"), shown.into());
     assert_eq!(clocked_block(&mut rig, 1.0), (0, 0));
     assert_eq!(frequency(&rig), hz(53), "step 1 of the new pattern");
+    let ((), _, frees) = crate::alloc_counter::allocator_events(|| {
+        rig.live.reclaim();
+    });
+    assert!(
+        frees >= 2,
+        "the reclaimer frees the replaced pattern: {frees}"
+    );
     assert_eq!(clocked_block(&mut rig, 0.0), (0, 0));
     assert_eq!(clocked_block(&mut rig, 1.0), (0, 0));
     assert_eq!(frequency(&rig), hz(60));
@@ -97,7 +104,7 @@ fn clock_edges_render_while_a_control_thread_writes_patterns() {
         stop.store(true, Ordering::Relaxed);
         writer.join().unwrap()
     });
-    assert!(written.load(Ordering::Relaxed) > 0);
+    assert!(written.load(Ordering::Relaxed) >= 50);
     rig.render(1);
     let ControlValue::String(shown) = read(&rig, "seq", "pattern") else {
         panic!("text");
