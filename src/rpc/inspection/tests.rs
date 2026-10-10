@@ -33,7 +33,7 @@ fn layered() -> AuthoredSnapshot {
     let mut connections = Vec::new();
     for i in 0..32 {
         modules.push(json!({"id":format!("voice_{i}"),"type":"voice","config":{"attack":0.01}}));
-        modules.push(json!({"id":format!("sequence_{i}"),"type":"cell_sequencer","config":{"sequences":[(0..128).map(|n| json!({"note":n%12,"amplitude":0.75,"gate_length":0.8})).collect::<Vec<_>>()],"base_note":{"$asset":"harmony","path":"/base_note"}}}));
+        modules.push(json!({"id":format!("sequence_{i}"),"type":"cell_sequencer","config":{"cells":[(0..128).map(|n| json!({"note":n%12,"amplitude":0.75,"gate_length":0.8})).collect::<Vec<_>>()],"root_note":{"$asset":"harmony","path":"/base_note"}}}));
         connections.extend([
             json!({"from":"clock","to":format!("sequence_{i}"),"from_port":"beat_x4","to_port":"clock"}),
             json!({"from":format!("sequence_{i}"),"to":format!("voice_{i}"),"from_port":"frequency","to_port":"frequency"}),
@@ -80,7 +80,7 @@ fn layered_arrangement_context_and_call_count() {
             pointer: "/modules/37/config".into(),
         },
         InspectionSelection::Value {
-            pointer: "/modules/37/config/sequences/0".into(),
+            pointer: "/modules/37/config/cells/0".into(),
         },
         InspectionSelection::Module {
             scope: "/developments/0/definition".into(),
@@ -200,10 +200,10 @@ fn oversized_config_drills_down_without_silent_truncation() {
     assert!(config
         .entries
         .iter()
-        .any(|e| e.coverage == InspectionCoverage::Omitted && e.pointer.ends_with("/sequences")));
+        .any(|e| e.coverage == InspectionCoverage::Omitted && e.pointer.ends_with("/cells")));
     let cells = snapshot
         .inspect(&query(InspectionSelection::Value {
-            pointer: format!("{}/config/sequences/0", omitted.pointer),
+            pointer: format!("{}/config/cells/0", omitted.pointer),
         }))
         .unwrap();
     assert!(cells

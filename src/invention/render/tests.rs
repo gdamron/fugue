@@ -309,10 +309,9 @@ fn scan_end_gate_finds_the_exact_end_frame() {
 fn scan_end_gate_finds_a_cell_sequencers_end() {
     let invention = ONE_SHOT_INVENTION
         .replace("step_sequencer", "cell_sequencer")
-        .replace(r#""step_count""#, r#""steps""#)
         .replace(
             r#""pattern": [ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]"#,
-            r#""sequences": [[ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]]"#,
+            r#""cells": [[ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]]"#,
         );
     let mut engine = RenderEngine::new(48_000);
     engine.load_json(&invention).unwrap();
