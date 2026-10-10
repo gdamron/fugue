@@ -188,6 +188,8 @@ impl SignalGraph {
                 // Left for this thread when the clock was not yet anchored
                 // at submission: it is now, unless there is no clock.
                 When::AtTime(time) => graph.transport.sample_at(time),
+                // Placed on its clock's beats with FUG-320's next step.
+                When::Beat(_) => return Err(Refusal::Unsupported),
             };
             if target.generation > installed {
                 return Ok(at.map(|at| (target, at)));
