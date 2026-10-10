@@ -76,17 +76,17 @@ fn an_edit_outside_a_feedback_loop_leaves_it_sample_identical() {
     // Rebuild a module outside the loop.
     upsert_osc(&edited, "aux", serde_json::json!({ "frequency": 45.0 }));
     assert_identical(&edited.render(7), &twin.render(7), "after rebuilding aux");
-    assert_eq!(edited.generation_and_applied(), (4, 3));
+    assert_eq!(edited.generation_and_applied(), (4, 4));
 }
 
 #[test]
-fn folded_publications_keep_the_loop_sample_identical() {
+fn edits_queued_before_a_block_keep_the_loop_sample_identical() {
     let mut edited = Rig::new(LOOP);
     let mut twin = Rig::new(LOOP);
     assert_identical(&edited.render(3), &twin.render(3), "before editing");
 
-    // Four publications before the next block: the audio thread installs
-    // one, folded together, against the order it is still running.
+    // Four edits before the next block: the audio thread installs them in
+    // order at its start, each against the order the one before left.
     upsert_osc(&edited, "aux", serde_json::json!({}));
     edited.live.remove_module("lfo").unwrap();
     edited
@@ -99,8 +99,8 @@ fn folded_publications_keep_the_loop_sample_identical() {
         .unwrap();
     assert_eq!(edited.generation_and_applied(), (4, 0));
 
-    assert_identical(&edited.render(10), &twin.render(10), "after folding");
-    assert_eq!(edited.generation_and_applied(), (4, 1));
+    assert_identical(&edited.render(10), &twin.render(10), "after the edits");
+    assert_eq!(edited.generation_and_applied(), (4, 4));
 }
 
 #[test]
@@ -150,19 +150,19 @@ fn only_the_rebuilt_half_of_a_loop_loses_its_carry() {
 }
 
 #[test]
-fn a_module_rebuilt_by_a_folded_publication_starts_from_zero() {
+fn a_module_rebuilt_by_an_earlier_queued_edit_starts_from_zero() {
     let mut rig = Rig::new(LOOP);
     rig.render(5);
     let osc2_before = carry(&rig, "osc2");
 
-    // The first publication rebuilds osc1; the second, folded into it
-    // before any block, treats that new osc1 as a survivor. Its carry must
-    // still start from zero: the running osc1 never reaches the new graph.
+    // The first edit rebuilds osc1; the second, queued before any block,
+    // treats that new osc1 as a survivor. Its carry must still start from
+    // zero: the running osc1 never reaches the new graph.
     upsert_osc(&rig, "osc1", serde_json::json!({ "frequency": 220.0 }));
     upsert_osc(&rig, "aux", serde_json::json!({}));
     assert_eq!(rig.generation_and_applied(), (2, 0));
     rig.graph.ensure_process_order();
-    assert_eq!(rig.generation_and_applied(), (2, 1));
+    assert_eq!(rig.generation_and_applied(), (2, 2));
     assert!(carry(&rig, "osc1").iter().all(|v| *v == 0.0));
     assert_eq!(carry(&rig, "osc2"), osc2_before);
 }

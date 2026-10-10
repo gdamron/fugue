@@ -184,12 +184,13 @@ fn a_late_request_applies_late_within_its_ttl_and_is_refused_past_it() {
 }
 
 #[test]
-fn a_request_held_for_its_publication_past_its_ttl_is_refused() {
+fn a_request_queued_behind_its_edit_past_its_ttl_is_refused() {
     let (mut rig, port) = oscillator_rig();
     rig.hold_a_retirement();
     let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
     rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
-    // Due now, at the block that holds it, and good for 10 samples only.
+    // Due now, good for 10 samples only, but it waits a block behind the
+    // edit that adds osc3.
     let id = submit_with_ttl(&rig, "osc3", port, 0.5, When::Now, 10);
     let held = submit(&rig, "osc3", port, 0.25, When::AfterSamples(64 + 3));
     let start = rig.graph.current_sample;
@@ -208,63 +209,11 @@ fn a_request_held_for_its_publication_past_its_ttl_is_refused() {
     );
 }
 
-/// The twin of `deferred_installs_bound_the_folded_remaps_by_back_pressure`
-/// with requests that expire while held: they keep their room until the
-/// install, so producers still meet `QueueFull` and the folded remaps stay
-/// bounded by the store and queue capacity.
+/// A request queued behind its edit is placed once the edit installs, and
+/// one expired by then is refused as it is taken, replacing nothing:
+/// whichever it would have replaced still applies.
 #[test]
-fn requests_expiring_while_installs_are_deferred_keep_the_back_pressure() {
-    use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
-    let (mut rig, port) = oscillator_rig();
-    rig.hold_a_retirement();
-    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
-    let (per_round, rounds) = (100, 12);
-    let mut written_rounds = 0;
-    let mut queue_full = 0;
-    for round in 0..rounds {
-        rig.publish_unreclaimed(|change| {
-            if round % 2 == 0 {
-                change.connect(fm.clone()).unwrap();
-            } else {
-                change.disconnect(fm.clone());
-            }
-        });
-        let mut written = false;
-        for n in 0..per_round {
-            let when = When::AfterSamples(64 + n);
-            match try_submit_with_ttl(&rig, "osc1", port, 1.0, when, 0) {
-                Some(_) => written = true,
-                None => queue_full += 1,
-            }
-        }
-        written_rounds += usize::from(written);
-        assert_eq!(counted_block(&mut rig), (0, 0), "round {round}");
-    }
-    let capacity = PENDING_REQUEST_CAPACITY + REQUEST_QUEUE_CAPACITY;
-    assert_eq!(queue_full, rounds * per_round as usize - capacity);
-    assert_eq!(outcomes(&mut rig), [], "nothing was settled while held");
-    let absorbed = {
-        let publisher = rig.live.publisher().lock().unwrap();
-        publisher.pending_absorbed().unwrap()
-    };
-    assert_eq!(absorbed.len(), written_rounds);
-    assert_eq!(written_rounds, capacity.div_ceil(per_round as usize));
-
-    // Once installed, every one of them is refused for its ttl.
-    rig.live.reclaim();
-    assert_eq!(counted_block(&mut rig), (0, 0), "installing");
-    let settled = outcomes(&mut rig);
-    assert_eq!(settled.len(), capacity);
-    assert!(settled
-        .iter()
-        .all(|(_, outcome)| *outcome == Outcome::Refused(Refusal::Expired)));
-}
-
-/// A held request with a ttl cannot know whether it applies until its
-/// publication installs, so it replaces nothing: whichever it would have
-/// replaced still applies when it expires.
-#[test]
-fn a_held_request_that_expires_never_erases_the_one_before_it() {
+fn a_request_expired_behind_its_edit_never_erases_the_one_before_it() {
     let (mut rig, port) = oscillator_rig();
     rig.hold_a_retirement();
     let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
@@ -272,13 +221,13 @@ fn a_held_request_that_expires_never_erases_the_one_before_it() {
     let start = rig.graph.transport.rendered();
     let at = When::AtSample(start + 10);
     // Same control and sample: the second can never apply in time, the
-    // third could have, but its publication installs too late.
+    // third could have, but its edit installs too late.
     let first = submit(&rig, "osc3", port, 0.5, at);
     let never = submit_with_ttl(&rig, "osc3", port, 0.25, at, 5);
     let too_late = submit_with_ttl(&rig, "osc3", port, 0.75, at, 20);
 
     assert_eq!(counted_block(&mut rig), (0, 0), "holding");
-    assert_eq!(outcomes(&mut rig), [], "nothing superseded while held");
+    assert_eq!(outcomes(&mut rig), [], "nothing taken while the edit waits");
     rig.live.reclaim();
     let installed = rig.graph.current_sample;
     assert_eq!(counted_block(&mut rig), (0, 0), "installing");
@@ -286,7 +235,7 @@ fn a_held_request_that_expires_never_erases_the_one_before_it() {
     assert_eq!(
         outcomes(&mut rig),
         [
-            // Refused as the install maps them, before anything applies.
+            // Refused as they are taken, before anything applies.
             (never, Outcome::Refused(Refusal::Expired)),
             (too_late, Outcome::Refused(Refusal::Expired)),
             (
@@ -300,34 +249,40 @@ fn a_held_request_that_expires_never_erases_the_one_before_it() {
     );
 }
 
-/// Requests held for a publication and expired by the time it installs
-/// leave at the install, however far off their sample: otherwise a store
-/// full of them would back-pressure every producer until those samples.
+/// Requests queued behind a deferred edit wait in the queue, not the
+/// store, so a backlog of them back-pressures producers at the door;
+/// once the edit installs, those already expired leave at once, however
+/// far off their sample, and intake is open again.
 #[test]
-fn an_install_refuses_expired_held_requests_at_once_and_restores_intake() {
-    use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
+fn requests_behind_a_deferred_edit_back_pressure_at_the_queue() {
+    use crate::invention::publish::publisher::REQUEST_QUEUE_CAPACITY;
     let (mut rig, port) = oscillator_rig();
     rig.hold_a_retirement();
     let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
     rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
-    // Fill the store, a queue at a time.
-    for batch in 0..(PENDING_REQUEST_CAPACITY / REQUEST_QUEUE_CAPACITY) as u64 {
-        for n in 0..REQUEST_QUEUE_CAPACITY as u64 {
-            let far = When::AfterSamples(1_000_000 + batch * 1_000 + n);
-            submit_with_ttl(&rig, "osc3", port, 0.5, far, 0);
-        }
-        assert_eq!(counted_block(&mut rig), (0, 0), "holding");
+    let mut queued = 0;
+    while try_submit_with_ttl(
+        &rig,
+        "osc3",
+        port,
+        0.5,
+        When::AfterSamples(1_000_000 + queued),
+        0,
+    )
+    .is_some()
+    {
+        queued += 1;
     }
-    assert_eq!(
-        rig.graph.requests.as_ref().unwrap().pending.len(),
-        PENDING_REQUEST_CAPACITY
-    );
+    // The edit holds one of the slots control requests may fill.
+    assert_eq!(queued, REQUEST_QUEUE_CAPACITY as u64 - 1);
+    assert_eq!(counted_block(&mut rig), (0, 0), "waiting to install");
+    assert_eq!(rig.graph.requests.as_ref().unwrap().pending.len(), 0);
     assert_eq!(outcomes(&mut rig), []);
 
     rig.live.reclaim();
     assert_eq!(counted_block(&mut rig), (0, 0), "installing");
     let settled = outcomes(&mut rig);
-    assert_eq!(settled.len(), PENDING_REQUEST_CAPACITY);
+    assert_eq!(settled.len() as u64, queued);
     assert!(settled
         .iter()
         .all(|(_, outcome)| *outcome == Outcome::Refused(Refusal::Expired)));
@@ -413,7 +368,7 @@ fn without_a_wall_clock_a_wall_clock_request_is_refused() {
 }
 
 #[test]
-fn an_unplaced_wall_clock_request_for_a_pending_publication_waits_queued() {
+fn an_unplaced_wall_clock_request_behind_its_edit_waits_queued() {
     let (mut rig, port) = oscillator_rig();
     rig.hold_a_retirement();
     let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));

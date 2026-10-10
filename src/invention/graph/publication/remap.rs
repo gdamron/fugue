@@ -91,6 +91,7 @@ impl SurvivorRemap {
     /// order: every module this one maps that `next` maps too. Unlike
     /// [`Self::compose_after`] it applies no survivor filter. Control thread
     /// only: allocates.
+    #[cfg_attr(not(test), allow(dead_code))] // Folding's; removed with it.
     pub(crate) fn then(&self, next: &SurvivorRemap) -> SurvivorRemap {
         let new_of_old = self
             .new_of_old
@@ -106,6 +107,7 @@ impl SurvivorRemap {
     /// survives only if it survives both; a new index that is no longer a
     /// survivor (per `survivor`, this publication's flags after folding)
     /// maps to `None`. Control thread only.
+    #[cfg_attr(not(test), allow(dead_code))] // Folding's; removed with it.
     pub(crate) fn compose_after(&mut self, earlier: &SurvivorRemap, survivor: &[bool]) {
         self.new_of_old = earlier
             .new_of_old

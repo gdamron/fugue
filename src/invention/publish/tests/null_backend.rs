@@ -180,16 +180,19 @@ fn settling_installs_a_publication_a_full_retire_ring_held_back() {
     assert_eq!(applied(), published);
 }
 
-/// A settle waits for a fold in progress: a request queued for a
-/// publication that a fold has out of the mailbox still applies before the
-/// settle returns, once the fold puts it back.
+/// A settle takes the publisher first, so it waits for a change in
+/// progress and then takes up everything queued under it: a request queued
+/// behind a publication not yet installed applies before the settle
+/// returns.
 #[test]
-fn settling_waits_for_a_publication_being_folded() {
+fn settling_waits_for_the_publisher() {
     let (live, _backend, _render) = null_linked(OSCILLATOR);
     let surface = live.control_surfaces.lock().unwrap()["osc"].clone();
     let index = surface.declaration("frequency").unwrap().index;
-    {
-        // Published, not yet installed, with a write queued for it.
+    let (settled, waiting) = std::sync::mpsc::channel();
+    let live = &live;
+    thread::scope(|scope| {
+        // Published, not yet installed, with a request queued behind it.
         let mut publisher = live.publisher().lock().unwrap();
         let mut change = live.change_on(&publisher);
         change.disconnect(edge("osc", "audio", "dac", "audio"));
@@ -197,23 +200,12 @@ fn settling_waits_for_a_publication_being_folded() {
         let target = publisher.control_target("osc", index).unwrap();
         let request = Request::new(target, RequestValue::Value(RtValue::F32(220.0)));
         live.requests.submit(request).unwrap();
-        publisher.note_written();
-    }
-    let (settled, waiting) = std::sync::mpsc::channel();
-    let live = &live;
-    thread::scope(|scope| {
-        let publisher = live.publisher().lock().unwrap();
-        publisher.folding(|| {
-            scope.spawn(move || {
-                live.settle();
-                settled.send(()).unwrap();
-            });
-            let early = waiting.recv_timeout(Duration::from_millis(200));
-            assert!(
-                early.is_err(),
-                "settled while the fold held the publication"
-            );
+        scope.spawn(move || {
+            live.settle();
+            settled.send(()).unwrap();
         });
+        let early = waiting.recv_timeout(Duration::from_millis(200));
+        assert!(early.is_err(), "settled while the publisher was held");
     });
     assert_eq!(
         surface.get_control("frequency").unwrap(),

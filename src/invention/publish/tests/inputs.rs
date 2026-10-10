@@ -118,18 +118,18 @@ fn written_inputs_hold_across_unrelated_edits() {
 }
 
 #[test]
-fn written_inputs_hold_across_folded_publications() {
+fn written_inputs_hold_across_edits_queued_before_a_block() {
     let mut edited = written();
     let mut twin = written();
 
-    // Three publications before the next block, installed as one.
+    // Three edits before the next block, installed in it in order.
     upsert(&edited, "aux", "oscillator", serde_json::json!({}));
     edited.live.remove_module("lfo").unwrap();
     edited
         .live
         .connect(edge("aux", "audio", "osc1", "amplitude_mod"))
         .unwrap();
-    assert_identical(&edited.render(5), &twin.render(5), "after folding");
+    assert_identical(&edited.render(5), &twin.render(5), "after the edits");
     assert_held(&mut edited);
 }
 

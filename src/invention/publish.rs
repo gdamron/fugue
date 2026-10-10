@@ -76,9 +76,8 @@ pub(crate) struct LiveGraph {
 /// Settles a live graph whose backend never renders on its own, so that
 /// each settle takes up every change made before it:
 ///
-/// - under the publisher, so no publication is out of the mailbox being
-///   folded into the next one: every request submitted so far targets a
-///   generation the block installs, or one already installed;
+/// - under the publisher, so every edit and request submitted so far is
+///   in the queue, in the order they were submitted;
 /// - then under the backend's render lock, it frees what earlier blocks
 ///   retired, leaving the retire ring room to install a waiting
 ///   publication and the request drain room for payloads, and renders a

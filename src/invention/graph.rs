@@ -45,6 +45,8 @@ use crate::{GraphModule, MAX_BLOCK};
 use super::runtime::ModuleInstance;
 
 mod compile;
+// Unused since edits travel as requests; removed with folding's remains.
+#[allow(dead_code)]
 mod mailbox;
 mod master;
 mod process;
@@ -53,11 +55,14 @@ mod requests;
 mod scc;
 
 pub(crate) use compile::{compile_topology, TopologyFacts};
-pub(crate) use mailbox::Mailbox;
 pub(crate) use master::MasterObservers;
+#[cfg(test)]
+pub(crate) use publication::MAX_INSTALLS_PER_BLOCK;
 pub(crate) use publication::{
     vacant, AudioLink, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
 };
+#[cfg(test)]
+pub(crate) use requests::link_requests;
 pub(crate) use requests::RequestDrain;
 
 /// An incremental mutation applied directly to a graph no audio thread owns
