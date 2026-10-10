@@ -105,10 +105,7 @@ fn rejects_out_of_range_note() {
 #[test]
 fn rejects_out_of_range_root_note() {
     let err = validate_score(&json!({ "root_note": 200, "cells": [[ 0 ]] })).unwrap_err();
-    assert!(
-        err.contains("root_note must be between 0 and 127"),
-        "{err}"
-    );
+    assert!(err.contains("root_note must be between 0 and 127"), "{err}");
 }
 
 #[test]
@@ -344,8 +341,14 @@ fn grace_round_trips_through_typed_model() {
 #[test]
 fn refuses_the_old_field_names() {
     for (value, field) in [
-        (json!({ "base_note_hint": 60, "cells": [[ 0 ]] }), "base_note_hint"),
-        (json!({ "cells": [[ { "note": 0, "amplitude": 0.5 } ]] }), "amplitude"),
+        (
+            json!({ "base_note_hint": 60, "cells": [[ 0 ]] }),
+            "base_note_hint",
+        ),
+        (
+            json!({ "cells": [[ { "note": 0, "amplitude": 0.5 } ]] }),
+            "amplitude",
+        ),
         (
             json!({
                 "tempo_map": [ { "at_step": 0, "bpm": 60.0 }, { "at_step": 8, "bpm": 40.0, "ramp": 4 } ],
