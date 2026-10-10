@@ -86,6 +86,8 @@ pub(crate) struct ControlDecl {
     pub(crate) event: bool,
     /// For a number its module clamps to as it applies (`min`, `max`), so
     /// automation can see the value a write will hold before it applies.
+    /// For an integer, its own range: it takes any whole number a client
+    /// can write exactly and clamps it into the range, as its config does.
     pub(crate) clamp: Option<(f32, f32)>,
     /// For a choice, other spellings it has always accepted, each with the
     /// option it means (`("saw", "sawtooth")`).
@@ -149,7 +151,8 @@ impl ControlDecl {
         self
     }
 
-    /// Declares the range its module clamps a number to as it applies.
+    /// Declares the range its module clamps a number to as it applies, or
+    /// for an integer, its own range (see the field).
     pub(crate) const fn clamped(mut self, min: f32, max: f32) -> Self {
         self.clamp = Some((min, max));
         self
@@ -279,8 +282,12 @@ impl ControlTable {
                     .and_then(serde_json::Number::from_f64)
                     .map(Value::Number);
                 let json = json.ok_or("Expected numeric control value")?;
-                whole_number_in::<i32>(&json, i128::from(min), i128::from(max))
-                    .map(RtValue::I32)
+                let (low, high) = match decl.clamp {
+                    Some(_) => (-MAX_EXACT_INTEGER, MAX_EXACT_INTEGER),
+                    None => (min, max),
+                };
+                whole_number_in::<i32>(&json, i128::from(low), i128::from(high))
+                    .map(|whole| RtValue::I32(whole.clamp(min, max)))
                     .map_err(|refusal| format!("Control '{key}' {refusal}"))
             }
             DeclKind::Bool => {
@@ -385,9 +392,16 @@ const fn invalid(decls: &[ControlDecl]) -> Option<&'static str> {
             }
         }
         if let Some((min, max)) = decl.clamp {
-            let number = matches!(decl.kind, DeclKind::Number { .. });
-            if !number || min.is_nan() || max.is_nan() || min > max {
-                return Some("only a number clamps, to a range from min to max");
+            let fits = match decl.kind {
+                DeclKind::Number { .. } => !min.is_nan() && !max.is_nan() && min <= max,
+                DeclKind::Integer {
+                    min: low,
+                    max: high,
+                } => min == low as f32 && max == high as f32,
+                _ => false,
+            };
+            if !fits {
+                return Some("a number clamps to a range from min to max, an integer to its own");
             }
         }
         if !holds_default(decl) {

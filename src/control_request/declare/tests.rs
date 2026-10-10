@@ -277,3 +277,36 @@ fn a_signed_or_padded_suffix_neither_resolves_nor_collides() {
         }
     }
 }
+
+#[test]
+fn a_clamped_integer_takes_any_exact_whole_number_into_its_range() {
+    const CLAMPED: &[ControlDecl] = &[ControlDecl::new(
+        "count",
+        DeclKind::Integer { min: 1, max: 64 },
+        RtValue::I32(16),
+        "Count",
+    )
+    .clamped(1.0, 64.0)];
+    let table = ControlTable::of(CLAMPED);
+    let coerce = |value: f32| table.coerce(ControlIndex(0), &value.into());
+    assert_eq!(coerce(8.0), Ok(RtValue::I32(8)));
+    assert_eq!(coerce(0.0), Ok(RtValue::I32(1)));
+    assert_eq!(coerce(-5.0), Ok(RtValue::I32(1)));
+    assert_eq!(coerce(1000.0), Ok(RtValue::I32(64)));
+    assert!(coerce(8.5).is_err());
+    assert!(coerce(MAX_EXACT_INTEGER as f32 * 2.0).is_err());
+
+    let other_range = [ControlDecl::new(
+        "count",
+        DeclKind::Integer { min: 1, max: 64 },
+        RtValue::I32(16),
+        "Count",
+    )
+    .clamped(0.0, 64.0)];
+    assert!(ControlTable::built(other_range.to_vec()).is_err());
+    let choice = [
+        ControlDecl::new("shape", DeclKind::Choice(SHAPES), RtValue::U32(0), "Shape")
+            .clamped(0.0, 1.0),
+    ];
+    assert!(ControlTable::built(choice.to_vec()).is_err());
+}

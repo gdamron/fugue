@@ -124,7 +124,10 @@ impl DeclaredSurface {
     }
 
     fn deliver(&self, index: ControlIndex, value: RtValue) -> Result<(), String> {
-        let event = matches!(self.table.decl(index), Some((decl, _)) if decl.event);
+        let (event, clamp) = match self.table.decl(index) {
+            Some((decl, _)) => (decl.event, decl.clamp),
+            None => (false, None),
+        };
         let route = {
             let mut route = self.route.lock().unwrap();
             if let Route::Building(written) = &mut *route {
@@ -132,7 +135,14 @@ impl DeclaredSurface {
                 if event {
                     return Err("An event fires only once its module runs".into());
                 }
-                self.cells.publish(index, value);
+                // Held as the module will hold it once it applies it.
+                let held = match (value, clamp) {
+                    (RtValue::F32(number), Some((min, max))) => {
+                        RtValue::F32(number.max(min).min(max))
+                    }
+                    _ => value,
+                };
+                self.cells.publish(index, held);
                 if !written.contains(&index) {
                     written.push(index);
                 }

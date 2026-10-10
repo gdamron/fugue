@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::cells::{apply_declared, decode, encode, ControlCells};
-use super::declare::DeclKind;
+use super::declare::{DeclKind, MAX_EXACT_INTEGER};
 use super::event::EventCounter;
 use super::request::{ControlIndex, RtValue};
 use crate::Module;
@@ -129,8 +129,12 @@ impl Automation {
                 None => value,
             })),
             DeclKind::Integer { min, max } => {
-                let whole = value.fract() == 0.0 && value >= min as f32 && value <= max as f32;
-                whole.then_some(RtValue::I32(value as i32))
+                let (low, high) = match self.clamp {
+                    Some(_) => (-MAX_EXACT_INTEGER, MAX_EXACT_INTEGER),
+                    None => (min, max),
+                };
+                let whole = value.fract() == 0.0 && value >= low as f32 && value <= high as f32;
+                whole.then_some(RtValue::I32((value as i32).clamp(min, max)))
             }
             _ => None,
         };
