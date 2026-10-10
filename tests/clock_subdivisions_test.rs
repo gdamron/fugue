@@ -22,10 +22,9 @@ mod tests {
     #[test]
     fn test_clock_subdivision_edge_counts() {
         let sample_rate = 44100;
-        let tempo = ClockControls::new(120.0);
-        let mut clock = Clock::new(sample_rate, tempo.clone());
+        let mut clock = Clock::new(sample_rate, 120.0);
 
-        let samples_per_beat = tempo.samples_per_beat(sample_rate) as usize;
+        let samples_per_beat = clock.samples_per_beat() as usize;
         let total_samples = samples_per_beat * 4;
 
         let mut prev = [0.0f32; SUBDIVISIONS.len()];
@@ -54,7 +53,7 @@ mod tests {
     #[test]
     fn test_clock_subdivision_unknown_port_errors() {
         let sample_rate = 44100;
-        let clock = Clock::new(sample_rate, ClockControls::new(120.0));
+        let clock = Clock::new(sample_rate, 120.0);
         assert!(clock.get_output("beat_x8").is_err());
         // The pre-convention names are gone (clean break).
         for old in ["gate", "gate_d4", "gate_d2", "gate_x2", "gate_x4"] {
@@ -67,10 +66,9 @@ mod tests {
         // With 50% gate_length, each subdivision port should be HIGH for
         // roughly half of its period — not half of a beat.
         let sample_rate = 44100;
-        let tempo = ClockControls::new_with_gate_length(120.0, 0.5);
-        let mut clock = Clock::new(sample_rate, tempo.clone());
+        let mut clock = Clock::with_gate_length(sample_rate, 120.0, 0.5);
 
-        let samples_per_beat = tempo.samples_per_beat(sample_rate) as usize;
+        let samples_per_beat = clock.samples_per_beat() as usize;
         let total_samples = samples_per_beat * 4;
 
         let ports = ["beat", "beat_d4", "beat_d2", "beat_x2", "beat_x4"];

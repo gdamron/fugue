@@ -7,12 +7,11 @@ mod tests {
     #[test]
     fn test_clock_pwm_gate() {
         let sample_rate = 44100;
-        let tempo = ClockControls::new(120.0);
-        let mut clock = Clock::new(sample_rate, tempo.clone());
+        let mut clock = Clock::new(sample_rate, 120.0);
         let mut adsr = Adsr::new(sample_rate);
 
         // At 120 BPM, one beat = 0.5 seconds = 22050 samples
-        let samples_per_beat = tempo.samples_per_beat(sample_rate) as usize;
+        let samples_per_beat = clock.samples_per_beat() as usize;
 
         println!("Testing Clock PWM Gate → ADSR");
         println!("Tempo: 120 BPM = {} samples/beat", samples_per_beat);

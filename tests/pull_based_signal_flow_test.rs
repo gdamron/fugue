@@ -6,8 +6,7 @@
 mod support;
 
 use fugue::invention::Invention;
-use fugue::modules::ClockControls;
-use fugue::InventionBuilder;
+use fugue::{ControlValue, InventionBuilder};
 use support::NullAudioBackend;
 
 /// Test a simple chain: Clock → ADSR
@@ -46,14 +45,16 @@ fn test_simple_chain() {
 
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
-    let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
+    let (runtime, _handles) = builder.build(invention).expect("Failed to build invention");
     let running = runtime
         .start_with_backend(NullAudioBackend::new(44100))
         .expect("Failed to start invention");
 
     // Should build without errors - actual audio playback not tested here
-    let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
-    assert_eq!(tempo.get_bpm(), 120.0);
+    let bpm = running
+        .get_control("clock", "bpm")
+        .expect("No tempo control");
+    assert_eq!(bpm, ControlValue::Number(120.0));
     running.stop();
 }
 
@@ -105,14 +106,16 @@ fn test_multi_input_vca() {
 
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
-    let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
+    let (runtime, _handles) = builder.build(invention).expect("Failed to build invention");
     let running = runtime
         .start_with_backend(NullAudioBackend::new(44100))
         .expect("Failed to start invention");
 
     // Should build successfully - the pull-based system should handle this correctly
-    let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
-    assert_eq!(tempo.get_bpm(), 120.0);
+    let bpm = running
+        .get_control("clock", "bpm")
+        .expect("No tempo control");
+    assert_eq!(bpm, ControlValue::Number(120.0));
     running.stop();
 }
 
@@ -173,14 +176,16 @@ fn test_diamond_pattern() {
 
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
-    let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
+    let (runtime, _handles) = builder.build(invention).expect("Failed to build invention");
     let running = runtime
         .start_with_backend(NullAudioBackend::new(44100))
         .expect("Failed to start invention");
 
     // Clock feeds melody, which feeds both ADSR (gate) and oscillator (frequency)
-    let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
-    assert_eq!(tempo.get_bpm(), 120.0);
+    let bpm = running
+        .get_control("clock", "bpm")
+        .expect("No tempo control");
+    assert_eq!(bpm, ControlValue::Number(120.0));
     running.stop();
 }
 
@@ -334,13 +339,15 @@ fn test_complex_valid_graph() {
 
     let invention: Invention = serde_json::from_str(json).expect("Failed to parse invention");
     let builder = InventionBuilder::new(44100);
-    let (runtime, handles) = builder.build(invention).expect("Failed to build invention");
+    let (runtime, _handles) = builder.build(invention).expect("Failed to build invention");
     let running = runtime
         .start_with_backend(NullAudioBackend::new(44100))
         .expect("Failed to start invention");
 
     // Two separate voices with shared ADSR should work correctly
-    let tempo: ClockControls = handles.get("clock.controls").expect("No tempo handle");
-    assert_eq!(tempo.get_bpm(), 140.0);
+    let bpm = running
+        .get_control("clock", "bpm")
+        .expect("No tempo control");
+    assert_eq!(bpm, ControlValue::Number(140.0));
     running.stop();
 }

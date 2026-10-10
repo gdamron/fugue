@@ -235,7 +235,9 @@ fn tempo_map_scale_multiplies_the_written_bpm() {
         "before step 2 the clock runs at the scaled initial tempo (60 x 100)"
     );
 
-    render_gate(&mut engine, 1); // frame 959: the step-2 edge
+    // Frame 959 is the step-2 edge; the clock applies the write (from its
+    // automation slot) as it processes the next sample.
+    render_gate(&mut engine, 2);
     assert_eq!(
         engine.get_control("clock", "bpm").unwrap(),
         ControlValue::Number(3000.0),

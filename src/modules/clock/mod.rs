@@ -1,13 +1,17 @@
-use std::any::Any;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::control_request::{
+    apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
+    Refusal, RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
-pub use self::controls::ClockControls;
+use self::controls::{BPM, GATE_LENGTH, TABLE};
 
 mod controls;
 mod inputs;
@@ -17,8 +21,8 @@ mod outputs;
 pub struct ClockFactory;
 
 const TYPE_ID: &str = "clock";
-const BPM: ConfigKey = ConfigKey::float("bpm");
-const GATE_LENGTH: ConfigKey = ConfigKey::float("gate_length");
+const BPM_KEY: ConfigKey = ConfigKey::float("bpm");
+const GATE_LENGTH_KEY: ConfigKey = ConfigKey::float("gate_length");
 
 impl ModuleFactory for ClockFactory {
     fn type_id(&self) -> &'static str {
@@ -26,7 +30,7 @@ impl ModuleFactory for ClockFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const { &[BPM, GATE_LENGTH] }
+        const { &[BPM_KEY, GATE_LENGTH_KEY] }
     }
 
     fn build(
@@ -35,19 +39,16 @@ impl ModuleFactory for ClockFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let reader = ConfigReader::new(TYPE_ID, config);
-        let bpm = reader.float(&BPM)?.map_or(120.0, f64::from);
-        let gate_length = reader.float(&GATE_LENGTH)?.map_or(0.25, f64::from);
+        let bpm = reader.float(&BPM_KEY)?.map_or(120.0, f64::from);
+        let gate_length = reader.float(&GATE_LENGTH_KEY)?.map_or(0.25, f64::from);
 
-        let controls = ClockControls::new_with_gate_length(bpm, gate_length);
-        let clock = Clock::new(sample_rate, controls.clone());
+        let clock = Clock::with_gate_length(sample_rate, bpm, gate_length);
+        let surface = DeclaredSurface::new(TABLE.clone(), clock.cells.clone());
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(clock)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
     }
@@ -70,7 +71,10 @@ impl ModuleFactory for ClockFactory {
 /// epoch stays at `(0, 0)` and the beat count is simply `sample_count / spb`.
 pub struct Clock {
     sample_rate: u32,
-    ctrl: ClockControls,
+    // Controls, applied on the thread running the clock.
+    bpm: f32,
+    gate_length: f32,
+    cells: Arc<ControlCells>,
     sample_count: u64,
     // Tempo epoch: the (sample, beats) anchor the continuous beat count is
     // measured from. Re-anchored on every bpm change to keep phase continuous.
@@ -85,27 +89,47 @@ pub struct Clock {
 }
 
 impl Clock {
-    /// Creates a new clock with the given sample rate and controls.
-    pub fn new(sample_rate: u32, controls: ClockControls) -> Self {
-        let bpm = controls.bpm();
+    /// Creates a clock at `bpm` with gates a quarter of a pulse long.
+    pub fn new(sample_rate: u32, bpm: f64) -> Self {
+        Self::with_gate_length(sample_rate, bpm, 0.25)
+    }
+
+    /// Creates a clock at `bpm` with gates `gate_length` of a pulse long
+    /// (clamped to 0 to 1).
+    pub fn with_gate_length(sample_rate: u32, bpm: f64, gate_length: f64) -> Self {
         let mut clock = Self {
             sample_rate,
-            ctrl: controls,
+            bpm: 120.0,
+            gate_length: 0.25,
+            cells: Arc::new(ControlCells::new(controls::defaults())),
             sample_count: 0,
             epoch_sample: 0,
             epoch_beats: 0.0,
-            last_bpm: bpm,
+            last_bpm: 0.0,
             beats: 0.0,
             phase: 0.0,
             outputs: outputs::ClockOutputs::new(),
         };
+        let _ = apply_declared(&mut clock, BPM, RtValue::F32(bpm as f32));
+        let _ = apply_declared(&mut clock, GATE_LENGTH, RtValue::F32(gate_length as f32));
+        clock.last_bpm = clock.bpm();
         clock.update_signal();
         clock.update_cached_outputs(0);
         clock
     }
 
+    /// The tempo in beats per minute.
+    pub fn bpm(&self) -> f64 {
+        f64::from(self.bpm)
+    }
+
+    /// The number of samples per beat at the current tempo.
+    pub fn samples_per_beat(&self) -> f64 {
+        (self.sample_rate as f64 * 60.0) / self.bpm()
+    }
+
     fn update_signal(&mut self) {
-        let bpm = self.ctrl.bpm();
+        let bpm = self.bpm();
         // Re-anchor the epoch on a tempo change so the beat count stays
         // continuous: beats accrued so far are preserved, and the new tempo
         // takes effect from the previous sample forward.
@@ -115,7 +139,7 @@ impl Clock {
             self.last_bpm = bpm;
         }
 
-        let samples_per_beat = self.ctrl.samples_per_beat(self.sample_rate);
+        let samples_per_beat = self.samples_per_beat();
         let elapsed = self.sample_count.saturating_sub(self.epoch_sample) as f64;
         let beats = self.epoch_beats + elapsed / samples_per_beat;
 
@@ -124,7 +148,7 @@ impl Clock {
     }
 
     fn update_cached_outputs(&mut self, i: usize) {
-        let gate_length = self.ctrl.gate_length();
+        let gate_length = f64::from(self.gate_length);
         let beats = self.beats;
 
         // PWM gate at a subdivision of `pulses_per_beat` pulses per beat. The
@@ -182,11 +206,6 @@ impl Clock {
         self.beats
     }
 
-    /// Returns a reference to the controls.
-    pub fn controls(&self) -> &ClockControls {
-        &self.ctrl
-    }
-
     /// Returns the sample rate this clock was configured with.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
@@ -230,36 +249,33 @@ impl Module for Clock {
         self.outputs.get(port)
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        match (control, value) {
+            (BPM, RtValue::F32(bpm)) => self.bpm = bpm,
+            (GATE_LENGTH, RtValue::F32(length)) => self.gate_length = length.clamp(0.0, 1.0),
+            _ => return Err(Refusal::Unsupported),
+        }
+        Ok(match control {
+            BPM => RtValue::F32(self.bpm),
+            _ => RtValue::F32(self.gate_length),
+        })
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::new("bpm", "Tempo in beats per minute")
-                .with_range(1.0, 300.0)
-                .with_default(120.0),
-            ControlMeta::new("gate_length", "Gate length as a fraction of the pulse")
-                .with_range(0.0, 1.0)
-                .with_default(0.25),
-        ]
+        local_controls(self)
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
-        match key {
-            "bpm" => Ok(self.ctrl.bpm() as f32),
-            "gate_length" => Ok(self.ctrl.gate_length() as f32),
-            _ => Err(format!("Unknown control key: {}", key)),
-        }
+        local_get(self, key)
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
-        match key {
-            "bpm" => {
-                self.ctrl.set_bpm(value as f64);
-                Ok(())
-            }
-            "gate_length" => {
-                self.ctrl.set_gate_length(value as f64);
-                Ok(())
-            }
-            _ => Err(format!("Unknown control key: {}", key)),
-        }
+        local_set(self, key, value)
     }
 }

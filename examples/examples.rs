@@ -5,7 +5,7 @@ use example_catalog::{
     parse_example_command, playable_examples, resolve_example, usage, valid_examples_message,
     ExampleCommand, ExampleDefinition,
 };
-use fugue::{default_sample_rate, ClockControls, Invention, InventionBuilder};
+use fugue::{default_sample_rate, Invention, InventionBuilder};
 use std::error::Error;
 use std::io::{self, Write};
 use std::thread;
@@ -104,7 +104,6 @@ fn run_example(example: ExampleDefinition) -> Result<(), Box<dyn Error>> {
 
     let builder = InventionBuilder::new(sample_rate);
     let (runtime, handles) = builder.build(invention)?;
-    let tempo: Option<ClockControls> = handles.get("clock.controls");
 
     println!("Available handles:");
     for key in handles.keys() {
@@ -115,8 +114,8 @@ fn run_example(example: ExampleDefinition) -> Result<(), Box<dyn Error>> {
     let running = runtime.start()?;
 
     println!("Playback started.");
-    if let Some(tempo) = tempo {
-        println!("Tempo: {:.1} BPM", tempo.get_bpm());
+    if let Ok(fugue::ControlValue::Number(bpm)) = running.get_control("clock", "bpm") {
+        println!("Tempo: {:.1} BPM", bpm);
     }
     println!("Press [Enter] to stop...");
 
