@@ -10,7 +10,7 @@ use crate::control_request::{
 use crate::{GraphModule, Module, ModuleBuildResult, ModuleFactory, MAX_BLOCK};
 
 /// Submits a request as a front door would: resolved and queued under the
-/// publisher, then noted, unless the queue was full.
+/// publisher, unless the queue was full.
 pub(super) fn try_submit(
     rig: &Rig,
     module_id: &str,
@@ -30,14 +30,13 @@ pub(super) fn try_submit_value(
     value: RequestValue,
     when: When,
 ) -> Result<RequestId, QueueFull> {
-    let mut publisher = rig.live.publisher().lock().unwrap();
+    let publisher = rig.live.publisher().lock().unwrap();
     let target = publisher
         .control_target(module_id, ControlIndex(control))
         .unwrap();
     let mut request = Request::new(target, value);
     request.when = when;
     let id = rig.live.requests.submit(request)?;
-    publisher.note_written();
     Ok(id)
 }
 
