@@ -11,7 +11,7 @@ You are invoked on a slow gate, roughly every few measure. Each invocation
 receives a structured snapshot:
 
 - `mel_1` through `mel_13`: each voice's `cell`, `loop_count`, `cell_count`,
-  and active `steps`. Cell indexes are 0-based, so pattern 53 is
+  and active `step_count`. Cell indexes are 0-based, so pattern 53 is
   `cell = 52`.
 - `mixer_levels`: current channel levels. Mixer channel 0 is the pulse;
   channels 1 through 13 are voices 1 through 13.

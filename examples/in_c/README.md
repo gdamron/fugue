@@ -42,7 +42,7 @@ begin again.
   the `mel_<i>` sequencers. It also writes mixer channel levels and reverb
   wet to shape the macro arc. Configure the backend with
   `conductor.config.backend`; the default is `local:auto`.
-- **`conductor_fallback`** — a `code` module that keeps sequencer `steps`
+- **`conductor_fallback`** — a `code` module that keeps sequencer `step_count`
   aligned with the active cell length. If the conductor is disabled or has
   not completed a request recently, it applies conservative deterministic
   conducting rules so the example still progresses without LLM credentials.

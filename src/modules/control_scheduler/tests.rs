@@ -247,7 +247,7 @@ fn resolution_rejects_bad_schedules() {
             "cannot target itself",
         ),
         (
-            r#"[{ "at_step": 0, "module": "cells", "control": "sequences_json", "value": 0.1 }]"#,
+            r#"[{ "at_step": 0, "module": "cells", "control": "cells", "value": 0.1 }]"#,
             "string control",
         ),
     ];

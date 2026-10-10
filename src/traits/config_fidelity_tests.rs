@@ -46,7 +46,7 @@ fn probes(key: &str, meta: &ControlMeta) -> Vec<ControlValue> {
     };
     match (&meta.kind, key) {
         (_, "pattern") => text(&[r#"[{"note": 64, "gate": 1.0}, null]"#, r#"[64, null, 67]"#]),
-        (_, "sequences_json") => text(&[r#"[[{"note": 64}, null]]"#, r#"[[64, null, 67]]"#]),
+        (_, "cells") => text(&[r#"[[{"note": 64}, null]]"#, r#"[[64, null, 67]]"#]),
         (
             ControlKind::String {
                 options: Some(options),
@@ -65,7 +65,7 @@ fn probes(key: &str, meta: &ControlMeta) -> Vec<ControlValue> {
 /// control has a value to change to.
 fn base_config(type_id: &str) -> serde_json::Value {
     match type_id {
-        "cell_sequencer" => serde_json::json!({ "sequences": [[60, null], [62]] }),
+        "cell_sequencer" => serde_json::json!({ "cells": [[60, null], [62]] }),
         _ => serde_json::json!({}),
     }
 }

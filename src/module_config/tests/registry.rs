@@ -49,7 +49,7 @@ pub(crate) fn base_config(type_id: &str) -> Value {
     let size = json!({ "width": 640, "height": 360 });
     match type_id {
         "audio_file_sink" => json!({ "path": "never-written.wav" }),
-        "cell_sequencer" => json!({ "sequences": [[60, null], [62]] }),
+        "cell_sequencer" => json!({ "cells": [[60, null], [62]] }),
         "rtmp_sink" => with(&size, "url", json!("rtmp://example.test/live")),
         "sample_slicer" => json!({
             "asset": { "path": eight_frame_wav() },

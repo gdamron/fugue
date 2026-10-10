@@ -1,7 +1,7 @@
 // Deterministic fallback and sequencer maintenance for In C.
 //
 // The LLM-backed `conductor` agent is the primary conductor. This script keeps
-// each cell_sequencer's `steps` aligned to the active cell length, and only
+// each cell_sequencer's `step_count` aligned to the active cell length, and only
 // makes progression decisions when the conductor is disabled or has not
 // completed a request recently.
 
@@ -46,9 +46,9 @@ function init() {
     throw new Error("conductor_fallback: missing sequencer_ids");
   }
 
-  const sequencesJson = graph.getControl(cfg.sequencers[0], "sequences_json");
+  const cellsJson = graph.getControl(cfg.sequencers[0], "cells");
   try {
-    const cells = JSON.parse(sequencesJson);
+    const cells = JSON.parse(cellsJson);
     cellLengths = Array.isArray(cells)
       ? cells.map((cell) => (Array.isArray(cell) ? cell.length : 0))
       : [];
@@ -79,7 +79,7 @@ function syncSteps(index, cell) {
   if (cellLengths && cell >= 0 && cell < cellLengths.length) {
     const len = cellLengths[cell];
     if (len > 0) {
-      graph.setControl(cfg.sequencers[index], "steps", len);
+      graph.setControl(cfg.sequencers[index], "step_count", len);
     }
   }
   lastCellApplied[index] = cell;
