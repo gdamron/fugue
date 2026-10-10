@@ -24,7 +24,7 @@
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use super::declared::RequestPort;
 use super::graph::{RoutingConnection, SignalGraph};
@@ -73,13 +73,22 @@ pub(crate) struct LiveGraph {
     settler: Option<Settler>,
 }
 
-/// Settles a live graph whose backend never renders on its own: frees what
-/// earlier blocks retired, then renders a zero-length block, under the
-/// backend's render lock. Freeing first leaves the retire ring room, so the
-/// block always installs a waiting publication, and the request drain room
-/// for payloads: each settle takes up every change made before it.
+/// Settles a live graph whose backend never renders on its own, so that
+/// each settle takes up every change made before it:
+///
+/// - under the publisher, so no publication is out of the mailbox being
+///   folded into the next one: every request submitted so far targets a
+///   generation the block installs, or one already installed;
+/// - then under the backend's render lock, it frees what earlier blocks
+///   retired, leaving the retire ring room to install a waiting
+///   publication and the request drain room for payloads, and renders a
+///   zero-length block.
+///
+/// Lock order: publisher, then render. Nothing holding the render lock
+/// takes the publisher.
 #[derive(Clone)]
 pub(crate) struct Settler {
+    publisher: Weak<Mutex<Publisher>>,
     render: Settle,
     reclaimer: Arc<Reclaimer>,
 }
@@ -87,6 +96,12 @@ pub(crate) struct Settler {
 impl Settler {
     /// Call it with no lock held, never from inside a render.
     pub(crate) fn settle(&self) {
+        // Most retirements are freed here, off both locks.
+        self.reclaimer.reclaim();
+        let Some(publisher) = self.publisher.upgrade() else {
+            return;
+        };
+        let _publisher = publisher.lock().unwrap();
         self.render.settle(|| {
             self.reclaimer.reclaim();
         });
@@ -120,6 +135,7 @@ impl LiveGraph {
         settle: Option<Settle>,
     ) -> Self {
         let (publisher, ends) = Publisher::link(graph);
+        let publisher = Arc::new(Mutex::new(publisher));
         let reclaimer = Arc::new(Reclaimer::new(ends.retired, ends.payloads));
         let settler = settle.map(|render| {
             // No block will free room in a store whose requests wait for
@@ -129,12 +145,13 @@ impl LiveGraph {
                 drain.clockless = true;
             }
             Settler {
+                publisher: Arc::downgrade(&publisher),
                 render,
                 reclaimer: Arc::clone(&reclaimer),
             }
         });
         let live = Self {
-            publisher: Arc::new(Mutex::new(publisher)),
+            publisher,
             reclaimer,
             requests: ends.requests,
             pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes))),
