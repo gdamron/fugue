@@ -490,6 +490,11 @@ impl Module for Reverb {
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        // As a number, freeze has always meant on above one half.
+        let value = match key {
+            "freeze" => f32::from(u8::from(value > 0.5)),
+            _ => value,
+        };
         local_set(self, key, value)
     }
 }
