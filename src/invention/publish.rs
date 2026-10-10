@@ -217,6 +217,19 @@ impl LiveGraph {
         self.reclaimer.reclaim()
     }
 
+    /// Whether one more edit could stall without a reclaimer thread. Edits
+    /// queue rather than fold, and each install retires a publication onto
+    /// a ring only a reclaim empties; with no thread, only changes reclaim.
+    /// So a burst of edits beyond what the ring and the audio side's one
+    /// held retirement take would leave the last of them, and every request
+    /// behind it, queued until some later change. Refusing it instead
+    /// (`QueueFull`, to retry) keeps every queued edit installable.
+    fn backlogged(&self, publisher: &Publisher) -> bool {
+        self.reclaimer.reclaim();
+        let unfreed = publisher.generation() - self.reclaimer.freed();
+        unfreed > publisher::RETIRE_CAPACITY as u64
+    }
+
     /// Publications made so far. A change prepared from state read before
     /// this generation moved is refused when it publishes.
     pub(crate) fn generation(&self) -> u64 {
@@ -390,6 +403,11 @@ impl LiveGraph {
             retain(&mut self.state.lock().unwrap());
             drop(publisher);
             return Ok(Committed::default());
+        }
+        if !self.reclaimer.threaded() && self.backlogged(&publisher) {
+            drop(publisher);
+            drop(prepared);
+            return Err(GraphCommandError::QueueFull);
         }
         let mut published = match publisher.publish(prepared) {
             Ok(published) => published,
