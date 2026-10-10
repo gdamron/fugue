@@ -91,6 +91,17 @@ pub(crate) enum BeatSpec {
     /// when the audio thread takes the request. Counted in beats begun, so
     /// a reset while it waits counts as reaching the next whole beat.
     After(f32),
+    /// The next beat `t` past the clock's position with `t` congruent to
+    /// `offset` modulo `every` (finite, positive): `offset` 0 is the next
+    /// multiple of `every`. Measured from the clock's beat 0, so after a
+    /// reset it follows the new beat 0. With `repeat`, it applies its value
+    /// again at every such beat until its ttl runs out or its target or
+    /// clock goes away, reporting each application.
+    Grid {
+        every: f32,
+        offset: f32,
+        repeat: bool,
+    },
 }
 
 /// Whether a write changes the composition or performs on it.
