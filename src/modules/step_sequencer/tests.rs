@@ -754,29 +754,3 @@ fn steps_refuse_unknown_fields() {
     let step = parse_step(&serde_json::json!({"note": 0, "velocity": 0.5})).unwrap();
     assert_eq!(step.velocity, Some(0.5));
 }
-
-/// Every control but the pattern applies with no lock and no allocation:
-/// a block without a clock edge renders while another thread holds the
-/// pattern (which a clock edge still reads under its lock, FUG-312).
-#[test]
-fn scalar_controls_apply_and_render_while_the_pattern_is_held() {
-    use crate::control_request::{apply_declared, RtValue};
-
-    let mut seq = StepSequencer::new(44100).with_pattern(vec![Step::note(0)]);
-    seq.set_input("clock", 1.0).unwrap();
-    seq.process(1);
-    let pattern = seq.pattern.clone();
-    let held = pattern.lock().unwrap();
-    let (frequency, allocs, frees) = crate::alloc_counter::allocator_events(|| {
-        apply_declared(&mut seq, controls::ROOT_NOTE, RtValue::I32(60)).unwrap();
-        apply_declared(&mut seq, controls::GATE_LENGTH, RtValue::F32(0.9)).unwrap();
-        apply_declared(&mut seq, controls::MODE, RtValue::U32(1)).unwrap();
-        apply_declared(&mut seq, controls::GRACE_PLACEMENT, RtValue::U32(1)).unwrap();
-        seq.process(64);
-        seq.output_block(0)[63]
-    });
-    drop(held);
-    assert_eq!((allocs, frees), (0, 0));
-    assert!((frequency - Note::new(60).frequency()).abs() < 0.01);
-    assert_eq!(seq.get_control("root_note").unwrap(), 60.0);
-}

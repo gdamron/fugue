@@ -52,7 +52,7 @@
 //! }
 //! ```
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::control_request::{
     apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
@@ -60,12 +60,13 @@ use crate::control_request::{
 };
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::music::Note;
+use crate::payload::{Payload, Retired, Shared};
 use crate::traits::ControlMeta;
 use crate::Module;
 
 use self::controls::{
-    ENDED, GATE_LENGTH, GRACE_DURATION, GRACE_PLACEMENT, MAX_STEPS, MODE, ROOT_NOTE, STEP_COUNT,
-    TABLE,
+    ENDED, GATE_LENGTH, GRACE_DURATION, GRACE_PLACEMENT, MAX_STEPS, MODE, PATTERN, ROOT_NOTE,
+    STEP_COUNT, TABLE,
 };
 
 mod controls;
@@ -162,9 +163,9 @@ pub struct StepSequencer {
     /// the beat, `true` = on the beat.
     grace_on_beat: bool,
     cells: Arc<ControlCells>,
-    /// The pattern, shared with the control surface under a lock until it
-    /// is carried as a payload (FUG-312).
-    pattern: Arc<Mutex<Vec<Step>>>,
+    /// The pattern, kept whole: a written one arrives as a payload, and
+    /// the one it replaces is retired off the audio thread.
+    pattern: Shared<Vec<Step>>,
     // State
     /// Current step index (0 to steps-1).
     current_step: usize,
@@ -222,16 +223,12 @@ impl StepSequencer {
     /// Creates a new step sequencer with the given sample rate.
     pub fn new(sample_rate: u32) -> Self {
         let cells = Arc::new(ControlCells::new(controls::defaults()));
-        Self::with_parts(sample_rate, cells, Arc::default())
+        Self::with_parts(sample_rate, cells, Shared::new(Vec::new()))
     }
 
     /// A step sequencer holding what `cells` hold, applied (so clamped),
     /// playing `pattern`.
-    fn with_parts(
-        sample_rate: u32,
-        cells: Arc<ControlCells>,
-        pattern: Arc<Mutex<Vec<Step>>>,
-    ) -> Self {
+    fn with_parts(sample_rate: u32, cells: Arc<ControlCells>, pattern: Shared<Vec<Step>>) -> Self {
         let mut seq = Self {
             sample_rate,
             root_note: DEFAULT_ROOT_NOTE,
@@ -323,9 +320,10 @@ impl StepSequencer {
         self.set(GATE_LENGTH, RtValue::F32(gate_length));
     }
 
-    /// Sets the pattern.
+    /// Sets the pattern. Allocates, and frees the one it replaces: never
+    /// call it on the audio thread.
     pub fn set_pattern(&mut self, pattern: Vec<Step>) {
-        *self.pattern.lock().unwrap() = pattern;
+        self.pattern = Shared::new(pattern);
     }
 
     /// Returns the current step index.
@@ -340,12 +338,7 @@ impl StepSequencer {
 
     /// Gets the step at the given index, returning a rest if out of bounds.
     fn get_step(&self, index: usize) -> Step {
-        self.pattern
-            .lock()
-            .unwrap()
-            .get(index)
-            .cloned()
-            .unwrap_or_default()
+        self.pattern.get(index).cloned().unwrap_or_default()
     }
 
     /// Calculates the frequency for a note offset.
@@ -714,6 +707,24 @@ impl Module for StepSequencer {
         })
     }
 
+    /// Takes a written pattern from the next sample: the step playing keeps
+    /// sounding, and the next clock edge reads the new pattern (a rest past
+    /// its end, as ever).
+    #[allow(private_interfaces)]
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        if control != PATTERN {
+            return Err((Refusal::Unsupported, payload));
+        }
+        match payload.downcast::<Vec<Step>>() {
+            Ok(pattern) => Ok(std::mem::replace(&mut self.pattern, pattern).into()),
+            Err(payload) => Err((Refusal::Invalid, payload)),
+        }
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
         local_controls(self)
     }
@@ -727,6 +738,8 @@ impl Module for StepSequencer {
     }
 }
 
+#[cfg(test)]
+mod pattern_tests;
 #[cfg(test)]
 mod tests;
 
