@@ -1,7 +1,7 @@
 //! A test module with declared controls, built by [`DialFactory`] as type
 //! `dial`: it outputs its `level` (clamped to 0..=1 as it applies) plus one
 //! per `pulse` event, and holds a `shape` choice it refuses past its
-//! options.
+//! options, and integers: `steps` and `span` clamp, `index` does not.
 
 use std::sync::Arc;
 
@@ -17,6 +17,9 @@ pub(crate) const SHAPE: ControlIndex = ControlIndex(1);
 pub(crate) const PULSE: ControlIndex = ControlIndex(2);
 pub(crate) const SLOPE: ControlIndex = ControlIndex(3);
 pub(crate) const HELD: ControlIndex = ControlIndex(4);
+pub(crate) const STEPS: ControlIndex = ControlIndex(5);
+pub(crate) const SPAN: ControlIndex = ControlIndex(6);
+pub(crate) const INDEX: ControlIndex = ControlIndex(7);
 
 const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
@@ -46,6 +49,26 @@ const DECLS: &[ControlDecl] = &[
         "The shape options, ordered otherwise",
     ),
     ControlDecl::new("held", DeclKind::Bool, RtValue::Bool(false), "A plain flag"),
+    ControlDecl::new(
+        "steps",
+        DeclKind::Integer { min: 1, max: 8 },
+        RtValue::I32(4),
+        "Clamps any whole number",
+    )
+    .clamped(1.0, 8.0),
+    ControlDecl::new(
+        "span",
+        DeclKind::Integer { min: 1, max: 64 },
+        RtValue::I32(4),
+        "Clamps any whole number, to a wider range",
+    )
+    .clamped(1.0, 64.0),
+    ControlDecl::new(
+        "index",
+        DeclKind::Integer { min: 0, max: 100 },
+        RtValue::I32(0),
+        "Takes only its range",
+    ),
 ];
 
 static TABLE: ControlTable = ControlTable::of(DECLS);
@@ -149,6 +172,14 @@ impl Module for Dial {
             (HELD, RtValue::Bool(held)) => {
                 self.held = held;
                 Ok(value)
+            }
+            (STEPS | SPAN | INDEX, RtValue::I32(whole)) => {
+                let (decl, _) = TABLE.decl(control).ok_or(Refusal::Unsupported)?;
+                let DeclKind::Integer { min, max } = decl.kind else {
+                    return Err(Refusal::Unsupported);
+                };
+                // Held in its cell alone: nothing it outputs reads it.
+                Ok(RtValue::I32(whole.clamp(min, max)))
             }
             (PULSE, RtValue::Bool(true)) => {
                 self.pulses += 1;

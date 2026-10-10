@@ -22,8 +22,8 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use crate::control_request::{
-    apply_declared, take_automation, ControlCells, ControlDecl, ControlIndex, ControlTable,
-    DeclKind, Refusal, RtValue,
+    apply_declared, integer_domain, take_automation, ControlCells, ControlDecl, ControlIndex,
+    ControlTable, DeclKind, Refusal, RtValue,
 };
 use crate::invention::declared::{DeclaredSurface, Route};
 use crate::invention::runtime::ControlSurfaceInstance;
@@ -44,14 +44,24 @@ struct Alias {
     /// Its own kind, so a value converts to what it holds; `None` when the
     /// key's value can never be one (a payload).
     kind: Option<DeclKind>,
+    /// Its own clamp: an integer that clamps takes any whole number in its
+    /// domain ([`integer_domain`]), clamping it as it applies.
+    clamp: Option<(f32, f32)>,
     /// For a choice reached by a choice: each of the key's options as this
     /// alias numbers it, by name (`None` where it has no such option).
     choices: Box<[Option<u32>]>,
 }
 
-/// `value` as a control of `kind` holds it: a number and an integer convert
-/// (a fraction never becomes an integer); anything else must match.
-fn convert(value: RtValue, kind: DeclKind, choices: &[Option<u32>]) -> Option<RtValue> {
+/// `value` as a control of `kind` (clamping to `clamp`) takes it: a number
+/// and an integer convert (a fraction never becomes an integer, and a whole
+/// number must lie in the integer's domain); anything else must match.
+fn convert(
+    value: RtValue,
+    kind: DeclKind,
+    clamp: Option<(f32, f32)>,
+    choices: &[Option<u32>],
+) -> Option<RtValue> {
+    let domain = |min, max| integer_domain(min, max, clamp);
     match (kind, value) {
         (DeclKind::Choice(_), RtValue::U32(position)) => choices
             .get(position as usize)
@@ -61,10 +71,12 @@ fn convert(value: RtValue, kind: DeclKind, choices: &[Option<u32>]) -> Option<Rt
         (DeclKind::Number { .. }, RtValue::F32(_)) => Some(value),
         (DeclKind::Number { .. }, RtValue::I32(whole)) => Some(RtValue::F32(whole as f32)),
         (DeclKind::Integer { min, max }, RtValue::I32(whole)) => {
-            (min..=max).contains(&whole).then_some(value)
+            let (low, high) = domain(min, max);
+            (low..=high).contains(&whole).then_some(value)
         }
         (DeclKind::Integer { min, max }, RtValue::F32(number)) => {
-            let whole = number.fract() == 0.0 && number >= min as f32 && number <= max as f32;
+            let (low, high) = domain(min, max);
+            let whole = number.fract() == 0.0 && number >= low as f32 && number <= high as f32;
             whole.then_some(RtValue::I32(number as i32))
         }
         (DeclKind::Bool, RtValue::Bool(_)) => Some(value),
@@ -72,20 +84,23 @@ fn convert(value: RtValue, kind: DeclKind, choices: &[Option<u32>]) -> Option<Rt
     }
 }
 
-/// Whether a control of kind `alias` takes every value one of kind `first`
-/// does, as [`convert`] hands them over: any number (each clamps for
-/// itself) or whole number, a range holding `first`'s, every option by
-/// name.
-fn takes_all(first: DeclKind, alias: DeclKind) -> bool {
-    match (first, alias) {
+/// Whether control `alias` takes every value control `first` does, as
+/// [`convert`] hands them over: any number (each clamps for itself) or
+/// whole number, an integer domain holding `first`'s, every option by name.
+fn takes_all(first: &ControlDecl, alias: &ControlDecl) -> bool {
+    match (first.kind, alias.kind) {
         (DeclKind::Number { .. } | DeclKind::Integer { .. }, DeclKind::Number { .. }) => true,
         (
             DeclKind::Integer { min, max },
             DeclKind::Integer {
-                min: low,
-                max: high,
+                min: own_min,
+                max: own_max,
             },
-        ) => low <= min && max <= high,
+        ) => {
+            let (min, max) = integer_domain(min, max, first.clamp);
+            let (low, high) = integer_domain(own_min, own_max, alias.clamp);
+            low <= min && max <= high
+        }
         (DeclKind::Choice(key), DeclKind::Choice(own)) => key
             .iter()
             .all(|option| own.iter().any(|o| o.eq_ignore_ascii_case(option))),
@@ -143,8 +158,13 @@ impl DevelopmentControls {
                         key: Cow::Owned(control.name.clone()),
                         indexed: false,
                         count: 1,
-                        // Each alias clamps for itself as it applies.
-                        clamp: None,
+                        // Each alias clamps for itself as it applies; an
+                        // integer keeps its clamp, so the key takes every
+                        // whole number its first alias does.
+                        clamp: match found.decl.kind {
+                            DeclKind::Integer { .. } => found.decl.clamp,
+                            _ => None,
+                        },
                         ..found.decl.clone()
                     });
                     current.push(found.current);
@@ -154,7 +174,7 @@ impl DevelopmentControls {
                 }
             };
             let first = &decls[position];
-            if found.decl.writer != first.writer || !takes_all(first.kind, found.decl.kind) {
+            if found.decl.writer != first.writer || !takes_all(first, &found.decl) {
                 return Err(format!(
                     "Development control '{}': '{}.{}' does not take every value '{}' does; \
                      the aliases of one key must, with the one taking the fewest listed first",
@@ -168,6 +188,7 @@ impl DevelopmentControls {
                 module,
                 index: found.index,
                 kind,
+                clamp: found.decl.clamp,
                 choices,
             });
         }
@@ -177,7 +198,7 @@ impl DevelopmentControls {
         let table =
             ControlTable::built(decls).map_err(|why| format!("Development controls: {why}"))?;
         let cells = Arc::new(ControlCells::new(current));
-        let surface = DeclaredSurface::new(table.clone(), cells.clone());
+        let surface = DeclaredSurface::fanning_out(table.clone(), cells.clone());
         let controls = Self {
             table,
             cells,
@@ -214,7 +235,7 @@ impl DevelopmentControls {
             }
             if alias
                 .kind
-                .and_then(|kind| convert(value, kind, &alias.choices))
+                .and_then(|kind| convert(value, kind, alias.clamp, &alias.choices))
                 .is_none()
             {
                 return Err(Refusal::Invalid);
@@ -232,7 +253,7 @@ impl DevelopmentControls {
             take_automation(module);
             let converted = alias
                 .kind
-                .and_then(|kind| convert(value, kind, &alias.choices));
+                .and_then(|kind| convert(value, kind, alias.clamp, &alias.choices));
             let result = converted.ok_or(Refusal::Invalid).and_then(|value| {
                 apply_declared(module, alias.index, value)?;
                 let (_, cells) = module.declared().ok_or(Refusal::Unsupported)?;

@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::cells::{apply_declared, decode, encode, ControlCells};
-use super::declare::DeclKind;
+use super::declare::{integer_domain, DeclKind};
 use super::event::EventCounter;
 use super::request::{ControlIndex, RtValue};
 use crate::Module;
@@ -120,7 +120,9 @@ pub(crate) struct Automation {
 
 impl Automation {
     /// Writes a number: as is to a number control, to an integer control
-    /// only when whole and in range (otherwise counted refused).
+    /// only when whole and in its domain (otherwise counted refused). A
+    /// clamping control holds it clamped, as its module will; a
+    /// development's hands it to each alias as is, to clamp for itself.
     #[inline]
     pub(crate) fn write_number(&self, value: f32) {
         let value = match self.kind {
@@ -129,8 +131,13 @@ impl Automation {
                 None => value,
             })),
             DeclKind::Integer { min, max } => {
-                let whole = value.fract() == 0.0 && value >= min as f32 && value <= max as f32;
-                whole.then_some(RtValue::I32(value as i32))
+                let (low, high) = integer_domain(min, max, self.clamp);
+                let whole = value.fract() == 0.0 && value >= low as f32 && value <= high as f32;
+                let held = match (self.clamp, &self.aliases) {
+                    (Some(_), None) => (value as i32).clamp(min, max),
+                    _ => value as i32,
+                };
+                whole.then_some(RtValue::I32(held))
             }
             _ => None,
         };

@@ -133,6 +133,22 @@ fn a_scheduled_oscillator_write_past_its_range_reads_as_it_will_hold_it() {
 }
 
 #[test]
+fn a_write_before_the_oscillator_runs_reads_as_it_will_hold_it() {
+    let built = crate::ModuleRegistry::default()
+        .build("oscillator", 48_000, &serde_json::json!({}))
+        .unwrap();
+    let surface = built.control_surface.unwrap();
+    surface
+        .set_control("amplitude_mod_depth", 2.0.into())
+        .unwrap();
+    assert_eq!(
+        surface.get_control("amplitude_mod_depth").unwrap(),
+        1.0.into(),
+        "clamped as the oscillator will apply it"
+    );
+}
+
+#[test]
 fn an_oscillator_takes_the_waveform_spellings_it_always_took() {
     let registry = crate::ModuleRegistry::default();
     for (spelled, read) in [
