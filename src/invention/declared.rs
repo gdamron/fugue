@@ -150,6 +150,11 @@ impl DeclaredSurface {
         }
     }
 
+    /// Whether `key` is a payload control.
+    pub(crate) fn is_payload(&self, key: &str) -> bool {
+        self.payload_decl(key).is_some()
+    }
+
     fn payload_decl(&self, key: &str) -> Option<(ControlIndex, Option<PayloadCodec>)> {
         let index = self.table.resolve(key)?;
         let (decl, _) = self.table.decl(index)?;
