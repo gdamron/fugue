@@ -357,13 +357,29 @@ impl Watches {
                 continue;
             };
             let (beat, fresh) = watch.target(timeline, now);
-            let due = if !fresh && timeline.position() >= beat {
-                missed_at(timeline, beat, now)
+            if beat.is_nan() || timeline.position().is_nan() {
+                // A clock whose position is no number reaches no beat.
+                self.end(i, outcomes, Outcome::Refused(Refusal::Invalid));
+                continue;
+            }
+            // A repeat applies once a sample at most, however its grid's
+            // arithmetic rounds (a position past f64's integers stands
+            // still), so the passes end.
+            let again = watch.applied == Some(now);
+            let due = if again {
+                None
+            } else if !fresh && timeline.position() >= beat {
+                Some(missed_at(timeline, beat, now))
             } else if timeline.position_after(1) >= beat {
-                now
+                Some(now)
             } else {
+                None
+            };
+            let Some(due) = due else {
                 if let Some(samples) = timeline.samples_until(beat) {
-                    let samples = samples - 1;
+                    // Up to the sample before it reaches the beat; a
+                    // repeat that applied now waits a sample at least.
+                    let samples = (samples - 1).max(1);
                     wait = Some(wait.map_or(samples, |wait| wait.min(samples)));
                 }
                 i += 1;
