@@ -310,3 +310,32 @@ fn without_a_reclaimer_thread_a_burst_of_edits_stops_where_all_can_install() {
     }
     toggle(&rig, accepted).unwrap();
 }
+
+/// A backlog left when the audio side goes is not reported as a full queue
+/// to retry: the commit is refused because the audio thread stopped.
+#[test]
+fn a_backlog_left_by_a_stopped_audio_side_refuses_as_stopped() {
+    let rig = Rig::new(BASE);
+    let Rig { graph, live, .. } = rig;
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
+    for n in 0..=publisher::RETIRE_CAPACITY {
+        live.edit(|change| {
+            if n.is_multiple_of(2) {
+                change.connect(fm.clone())
+            } else {
+                change.disconnect(fm.clone());
+                Ok(())
+            }
+        })
+        .unwrap();
+    }
+    drop(graph);
+    let refused = live.edit(|change| {
+        change.disconnect(fm.clone());
+        Ok(())
+    });
+    assert!(matches!(
+        refused,
+        Err(GraphCommandError::AudioThreadStopped)
+    ));
+}

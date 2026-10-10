@@ -45,7 +45,10 @@ impl std::fmt::Display for GraphCommandError {
                 write!(f, "control error: {}", msg)
             }
             GraphCommandError::QueueFull => {
-                write!(f, "input write queue is full; write not delivered")
+                write!(
+                    f,
+                    "the audio thread's queue is full; nothing was delivered, retry"
+                )
             }
             GraphCommandError::TopologyMoved => {
                 write!(

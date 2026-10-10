@@ -56,6 +56,17 @@ impl NullBackend {
     }
 }
 
+impl Drop for NullBackend {
+    /// Takes the graph out under the render lock and drops it off the lock,
+    /// as [`stop`](super::AudioBackend::stop) does. A settle in progress
+    /// on another thread may hold the render's last strong reference
+    /// otherwise, and would then drop the graph while it holds the live
+    /// graph's publisher, which the graph's teardown takes.
+    fn drop(&mut self) {
+        super::AudioBackend::stop(self);
+    }
+}
+
 impl super::AudioBackend for NullBackend {
     fn sample_rate(&self) -> u32 {
         self.sample_rate
@@ -114,4 +125,37 @@ fn lock(render: &Mutex<Option<BlockRenderFn>>) -> std::sync::MutexGuard<'_, Opti
     render
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::AudioBackend;
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Dropping the backend frees its graph itself, on the dropping thread,
+    /// even while a settle elsewhere holds the render slot: that settle
+    /// never ends up dropping the graph.
+    #[test]
+    fn a_dropped_backend_frees_its_graph_while_a_settle_holds_the_slot() {
+        struct Flag(Arc<AtomicBool>);
+        impl Drop for Flag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let flag = Flag(dropped.clone());
+        let mut backend = NullBackend::new(48_000);
+        backend
+            .start(Box::new(move |_: &mut [f32], _: &mut [f32]| {
+                let _ = &flag;
+            }))
+            .unwrap();
+        // A settle in progress elsewhere holds the slot.
+        let settling = backend.settle_handle().0.upgrade().unwrap();
+        drop(backend);
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(lock(&settling).is_none());
+    }
 }

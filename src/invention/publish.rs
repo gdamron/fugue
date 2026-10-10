@@ -234,7 +234,9 @@ impl LiveGraph {
     /// So a burst of edits beyond what the ring and the audio side's one
     /// held retirement take would leave the last of them, and every request
     /// behind it, queued until some later change. Refusing it instead
-    /// (`QueueFull`, to retry) keeps every queued edit installable. Reads
+    /// (`QueueFull`, to retry) keeps every queued edit installable as far
+    /// as publication retirements go; payload retirements ahead of an edit
+    /// still wait for a change's reclaim without a thread. Reads
     /// counters only: every commit reclaims just before it locks the
     /// publisher, since what a reclaim frees must not drop under the lock.
     fn backlogged(&self, publisher: &Publisher) -> bool {
@@ -418,7 +420,9 @@ impl LiveGraph {
             drop(publisher);
             return Ok(Committed::default());
         }
-        if !self.reclaimer.threaded() && self.backlogged(&publisher) {
+        // Once the audio side is gone, `publish` refuses with
+        // `AudioThreadStopped` rather than a `QueueFull` to retry forever.
+        if !self.reclaimer.threaded() && publisher.audio_alive() && self.backlogged(&publisher) {
             drop(publisher);
             drop(prepared);
             return Err(GraphCommandError::QueueFull);

@@ -218,7 +218,8 @@ fn a_peek_sees_nothing_or_the_value_the_next_pop_returns() {
     });
 }
 
-/// Items left in the queue are dropped once, by whichever handle goes last.
+/// Items left in the queue are dropped once: by the consumer as it goes, or
+/// by the last producer for any pushed after that.
 #[test]
 fn the_last_handle_drops_unpopped_items() {
     loom::model(|| {
