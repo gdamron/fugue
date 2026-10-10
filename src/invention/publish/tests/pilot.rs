@@ -152,3 +152,38 @@ fn an_oscillator_takes_the_waveform_spellings_it_always_took() {
     rig.render(1);
     assert_eq!(read(&rig, "osc", "waveform"), "sawtooth".into());
 }
+
+#[test]
+fn clock_writes_apply_on_the_audio_thread_and_retime_its_gates() {
+    // 22500 bpm at 48 kHz is 128 samples a beat; 45000 is 64.
+    let mut rig = Rig::new(
+        r#"{
+        "version": "1.0.0",
+        "modules": [
+            { "id": "clock", "type": "clock", "config": { "bpm": 22500.0, "gate_length": 0.5 } },
+            { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+        ],
+        "connections": [{ "from": "clock", "from_port": "beat", "to": "dac", "to_port": "audio" }]
+    }"#,
+    );
+    rig.render(2);
+    write(&rig, "clock", "bpm", 45_000.0.into());
+    write(&rig, "clock", "gate_length", 2.0.into());
+    assert_eq!(read(&rig, "clock", "bpm"), 22_500.0.into(), "pending");
+
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(read(&rig, "clock", "bpm"), 45_000.0.into());
+    assert_eq!(read(&rig, "clock", "gate_length"), 1.0.into(), "clamped");
+    write(&rig, "clock", "gate_length", 0.5.into());
+    rig.render(1);
+    // Beats now come every 64 samples, high for the first 32 of each.
+    let gate = rig.render(2);
+    let rises: Vec<usize> = (1..gate.len())
+        .filter(|&i| gate[i] > 0.0 && gate[i - 1] == 0.0)
+        .collect();
+    assert!(rises.len() >= 2, "{rises:?}");
+    assert!(
+        rises.windows(2).all(|pair| pair[1] - pair[0] == 64),
+        "{rises:?}"
+    );
+}
