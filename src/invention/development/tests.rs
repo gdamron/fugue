@@ -21,7 +21,7 @@ fn pattern() -> serde_json::Value {
             { "id": "o", "type": "oscillator", "config": { "frequency": 440.0 } }
         ],
         "connections": [
-            { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "gate" }
+            { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "clock" }
         ],
         "outputs": [{ "name": "audio", "from": "o", "from_port": "audio" }],
         "controls": [
@@ -46,7 +46,9 @@ fn document(modules: serde_json::Value) -> Invention {
 
 /// A schedule setting `module`'s `frequency` to `value` at step `at`.
 fn schedule(at: u32, module: &str, value: f32) -> String {
-    format!(r#"[{{ "at": {at}, "module": "{module}", "control": "frequency", "value": {value} }}]"#)
+    format!(
+        r#"[{{ "at_step": {at}, "module": "{module}", "control": "frequency", "value": {value} }}]"#
+    )
 }
 
 fn start(document: Invention) -> (RunningInvention, Pump) {

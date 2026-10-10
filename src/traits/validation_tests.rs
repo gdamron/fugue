@@ -92,7 +92,8 @@ fn a_schedule_validates_against_the_directory_the_write_lands_in() {
     .unwrap();
     let surface = built.control_surface.unwrap();
     let schedule = ControlValue::String(
-        r#"[{ "at": 0, "module": "osc", "control": "frequency", "value": 220.0 }]"#.to_string(),
+        r#"[{ "at_step": 0, "module": "osc", "control": "frequency", "value": 220.0 }]"#
+            .to_string(),
     );
 
     // The target exists only in the candidate directory.
@@ -165,7 +166,7 @@ fn a_development_validates_inner_writes_against_its_own_directory() {
         .unwrap();
     let schedule = |module: &str| {
         ControlValue::String(format!(
-            r#"[{{ "at": 0, "module": "{module}", "control": "frequency", "value": 220.0 }}]"#
+            r#"[{{ "at_step": 0, "module": "{module}", "control": "frequency", "value": 220.0 }}]"#
         ))
     };
 
@@ -204,7 +205,8 @@ fn a_scheduler_not_yet_attached_validates_its_targets() {
         .unwrap();
     let surface = built.control_surface.unwrap();
     let schedule = ControlValue::String(
-        r#"[{ "at": 0, "module": "osc", "control": "frequency", "value": 220.0 }]"#.to_string(),
+        r#"[{ "at_step": 0, "module": "osc", "control": "frequency", "value": 220.0 }]"#
+            .to_string(),
     );
     let mut candidate = ControlSurfaceMap::new();
     let osc = registry.build("oscillator", 48_000, &serde_json::json!({}));

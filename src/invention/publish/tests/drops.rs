@@ -48,7 +48,7 @@ fn a_failed_edit_drops_off_the_publisher_lock() {
         "sched",
         "control_scheduler",
         serde_json::json!({
-            "schedule": [{ "at": 0, "module": "missing", "control": "frequency", "value": 1.0 }]
+            "schedule": [{ "at_step": 0, "module": "missing", "control": "frequency", "value": 1.0 }]
         }),
     );
     let failed = rig.live.edit(|change| {

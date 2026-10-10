@@ -2,17 +2,17 @@
 
 use crate::MAX_BLOCK;
 
-pub const INPUTS: [&str; 2] = ["gate", "reset"];
+pub const INPUTS: [&str; 2] = ["clock", "reset"];
 
 pub struct ControlSchedulerInputs {
-    gate: [f32; MAX_BLOCK],
+    clock: [f32; MAX_BLOCK],
     reset: [f32; MAX_BLOCK],
 }
 
 impl ControlSchedulerInputs {
     pub fn new() -> Self {
         Self {
-            gate: [0.0; MAX_BLOCK],
+            clock: [0.0; MAX_BLOCK],
             reset: [0.0; MAX_BLOCK],
         }
     }
@@ -20,8 +20,8 @@ impl ControlSchedulerInputs {
     /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
-            "gate" => {
-                self.gate.fill(value);
+            "clock" => {
+                self.clock.fill(value);
                 Ok(())
             }
             "reset" => {
@@ -36,14 +36,14 @@ impl ControlSchedulerInputs {
     #[inline]
     pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
         match index {
-            0 => &mut self.gate,
+            0 => &mut self.clock,
             _ => &mut self.reset,
         }
     }
 
     #[inline]
-    pub fn gate(&self, i: usize) -> f32 {
-        self.gate[i]
+    pub fn clock(&self, i: usize) -> f32 {
+        self.clock[i]
     }
 
     #[inline]
