@@ -69,7 +69,9 @@ mod sync {
 
 pub(crate) use automation::{take_automation, Automation};
 pub(crate) use cells::{apply_declared, ControlCells};
-pub(crate) use declare::{integer_domain, ControlDecl, ControlTable, DeclKind, Writer};
+pub(crate) use declare::{
+    integer_domain, ControlDecl, ControlTable, DeclKind, PayloadCodec, Writer,
+};
 pub(crate) use event::{EventCounter, EventCursor};
 pub(crate) use legacy::LEGACY_CONTROLS;
 pub(crate) use local::{local_controls, local_get, local_set};

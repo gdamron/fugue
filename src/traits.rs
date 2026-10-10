@@ -10,6 +10,7 @@ use crate::control_request::{
     Automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue,
 };
 use crate::invention::declared::{Declaration, Route};
+use crate::payload::{Payload, Retired};
 
 mod control_meta;
 mod control_validation;
@@ -478,6 +479,24 @@ pub trait Module: Send {
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         let _ = (control, value);
         Err(Refusal::Unsupported)
+    }
+
+    /// Keeps `payload` as declared payload control `control`'s value and
+    /// returns the value it replaces, or refuses it and hands it back.
+    ///
+    /// As [`Module::apply`]: on the audio thread, between `process` calls,
+    /// allocation-, free- and lock-free. The module never drops either
+    /// value: its caller retires them off the audio thread (see
+    /// `crate::payload`).
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        let _ = control;
+        Err((Refusal::Unsupported, payload))
     }
 
     /// Legacy module-local control metadata surface.

@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use super::request::{ControlIndex, RtValue};
 use crate::module_config::{whole_number_in, ConfigKind};
+use crate::payload::Payload;
 use crate::traits::check_finite;
 use crate::{ControlKind, ControlMeta, ControlValue};
 
@@ -32,9 +33,30 @@ pub(crate) enum DeclKind {
     Bool,
     /// One of `options`, by name, carried as its position ([`RtValue::U32`]).
     Choice(&'static [&'static str]),
-    /// A heavy value carried as a payload; no scalar write reaches it, and
-    /// its module reads it back through its surface, not its cells.
+    /// A heavy value carried as a payload ([`ControlDecl::payload`]): no
+    /// scalar write reaches it, and its surface reads it back from what was
+    /// last written, not from its cells.
     Payload,
+}
+
+/// How a payload control's writes become payloads.
+#[derive(Clone, Copy)]
+pub(crate) struct PayloadCodec {
+    /// Builds, on a control thread, the payload its module keeps from a
+    /// client's value, and the value reads report for it, or refuses it.
+    pub(crate) prepare: fn(&ControlValue) -> Result<(Payload, ControlValue), String>,
+}
+
+impl PartialEq for PayloadCodec {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::fn_addr_eq(self.prepare, other.prepare)
+    }
+}
+
+impl std::fmt::Debug for PayloadCodec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PayloadCodec(..)")
+    }
 }
 
 /// The largest magnitude an integer control may declare: every whole number
@@ -110,6 +132,9 @@ pub(crate) struct ControlDecl {
     pub(crate) default: RtValue,
     pub(crate) writer: Writer,
     pub(crate) description: Cow<'static, str>,
+    /// For a payload, how its writes are built; without one it refuses
+    /// every write.
+    pub(crate) codec: Option<PayloadCodec>,
 }
 
 impl ControlDecl {
@@ -132,7 +157,19 @@ impl ControlDecl {
             default,
             writer: Writer::Parameter,
             description: Cow::Borrowed(description),
+            codec: None,
         }
+    }
+
+    /// A payload written by requests: each write is built by `codec`.
+    pub(crate) const fn payload(
+        key: &'static str,
+        codec: PayloadCodec,
+        description: &'static str,
+    ) -> Self {
+        let mut decl = Self::new(key, DeclKind::Payload, RtValue::Bool(false), description);
+        decl.codec = Some(codec);
+        decl
     }
 
     pub(crate) const fn unit(mut self, unit: &'static str) -> Self {
