@@ -152,7 +152,6 @@ impl Publisher {
     }
 
     /// Publications the audio thread has installed so far.
-    #[cfg(test)]
     pub(crate) fn applied(&self) -> u64 {
         self.applied.load(std::sync::atomic::Ordering::Relaxed)
     }

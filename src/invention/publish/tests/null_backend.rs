@@ -213,6 +213,40 @@ fn settling_waits_for_the_publisher() {
     );
 }
 
+/// A block installs a bounded number of edits, so a settle renders until
+/// every edit published before it has installed: a caller whose edit came
+/// after a burst of others still finds it applied when its settle returns.
+#[test]
+fn a_settle_installs_every_edit_published_before_it() {
+    let (live, _backend, _render) = null_linked(OSCILLATOR);
+    let surface = live.control_surfaces.lock().unwrap()["osc"].clone();
+    let index = surface.declaration("frequency").unwrap().index;
+    let fm = edge("osc", "audio", "dac", "audio");
+    {
+        let mut publisher = live.publisher().lock().unwrap();
+        for n in 0..=2 * crate::invention::graph::MAX_INSTALLS_PER_BLOCK {
+            let mut change = live.change_on(&publisher);
+            if n % 2 == 0 {
+                change.disconnect(fm.clone());
+            } else {
+                change.connect(fm.clone()).unwrap();
+            }
+            publisher.publish(change.prepare().unwrap()).unwrap();
+        }
+        let target = publisher.control_target("osc", index).unwrap();
+        let request = Request::new(target, RequestValue::Value(RtValue::F32(220.0)));
+        live.requests.submit(request).unwrap();
+    }
+    live.settle();
+    let publisher = live.publisher().lock().unwrap();
+    assert_eq!(publisher.applied(), publisher.generation());
+    drop(publisher);
+    assert_eq!(
+        surface.get_control("frequency").unwrap(),
+        ControlValue::Number(220.0)
+    );
+}
+
 const OSCILLATOR: &str = r#"{
     "version": "1.0.0",
     "modules": [

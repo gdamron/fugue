@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use super::declared::RequestPort;
-use super::graph::{RoutingConnection, SignalGraph};
+use super::graph::{RoutingConnection, SignalGraph, MAX_INSTALLS_PER_BLOCK};
 use super::orchestration::ModulePorts;
 use super::runtime::{ControlSurfaceInstance, GraphCommandError};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState};
@@ -92,18 +92,45 @@ pub(crate) struct Settler {
     reclaimer: Arc<Reclaimer>,
 }
 
+/// Zero-length blocks one settle renders at most: enough to install a full
+/// queue of edits, a bounded number a block, and then take up the requests
+/// behind the last of them.
+const MAX_SETTLE_BLOCKS: usize = (publisher::REQUEST_QUEUE_CAPACITY + publisher::EDIT_RESERVE)
+    .div_ceil(MAX_INSTALLS_PER_BLOCK)
+    + 1;
+
 impl Settler {
     /// Call it with no lock held, never from inside a render.
+    ///
+    /// Renders until every edit published so far has installed: a block
+    /// installs a bounded number, so a burst of edits from several threads
+    /// can take a few. One block that installs them all also takes up every
+    /// request queued (they never outnumber its budget); after several, one
+    /// more takes up the requests behind the last install.
     pub(crate) fn settle(&self) {
         // Most retirements are freed here, off both locks.
         self.reclaimer.reclaim();
         let Some(publisher) = self.publisher.upgrade() else {
             return;
         };
-        let _publisher = publisher.lock().unwrap();
-        self.render.settle(|| {
-            self.reclaimer.reclaim();
-        });
+        let publisher = publisher.lock().unwrap();
+        let published = publisher.generation();
+        let block = || {
+            self.render.settle(|| {
+                self.reclaimer.reclaim();
+            })
+        };
+        for blocks in 1..=MAX_SETTLE_BLOCKS {
+            if !block() {
+                return;
+            }
+            if publisher.applied() >= published {
+                if blocks > 1 {
+                    block();
+                }
+                return;
+            }
+        }
     }
 }
 

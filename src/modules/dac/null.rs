@@ -92,17 +92,19 @@ impl Settle {
     /// overlap and the graph passes between threads through this mutex.
     /// Does nothing once the backend has stopped, or after a render
     /// panicked (as a device stream then renders silence).
-    pub(crate) fn settle(&self, first: impl FnOnce()) {
+    pub(crate) fn settle(&self, first: impl FnOnce()) -> bool {
         let Some(render) = self.0.upgrade() else {
-            return;
+            return false;
         };
         let Ok(mut render) = render.lock() else {
-            return;
+            return false;
         };
-        if let Some(render) = render.as_mut() {
-            first();
-            render(&mut [], &mut []);
-        }
+        let Some(render) = render.as_mut() else {
+            return false;
+        };
+        first();
+        render(&mut [], &mut []);
+        true
     }
 }
 
