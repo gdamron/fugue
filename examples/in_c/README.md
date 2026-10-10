@@ -38,7 +38,7 @@ begin again.
     for timbral variety).
 - **`conductor`** — an `agent` module loaded with `conductor.md`. It wakes
   on the clock's every-four-beats gate (`beat_d4`), reads every voice's
-  `current_cell` and `loop_count`, and writes `advance` decisions back to
+  `cell` and `loop_count`, and writes `next_cell` decisions back to
   the `mel_<i>` sequencers. It also writes mixer channel levels and reverb
   wet to shape the macro arc. Configure the backend with
   `conductor.config.backend`; the default is `local:auto`.

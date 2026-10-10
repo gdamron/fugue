@@ -115,8 +115,8 @@ fn invention(pedaled: bool) -> String {
             {{ "id": "dac", "type": "dac", "config": {{ "soft_clip": false }} }}
         ],
         "connections": [
-            {{ "from": "clock", "from_port": "beat", "to": "seq_notes", "to_port": "gate" }},
-            {{ "from": "clock", "from_port": "beat", "to": "seq_pedal", "to_port": "gate" }},
+            {{ "from": "clock", "from_port": "beat", "to": "seq_notes", "to_port": "clock" }},
+            {{ "from": "clock", "from_port": "beat", "to": "seq_pedal", "to_port": "clock" }},
             {{ "from": "seq_notes", "from_port": "frequency", "to": "bank", "to_port": "frequency" }},
             {{ "from": "seq_notes", "from_port": "gate", "to": "bank", "to_port": "gate" }},
             {{ "from": "bank", "from_port": "audio", "to": "reverb", "to_port": "audio_left" }},

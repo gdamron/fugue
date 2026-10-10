@@ -20,10 +20,10 @@ mod editing;
 pub use code_modules::CodeModuleRuntimeInfo;
 
 /// Whether an output port is a one-shot module's latched end-of-playback
-/// gate: `ended` by the convention. The cell sequencer still names it `end`
-/// until its own rename (C2-7), which drops that spelling here.
+/// gate: `ended` by the convention. Not `end`, which the sample modules name
+/// a one-sample pulse at the end of a sample or slice.
 fn is_end_output(port: &str) -> bool {
-    matches!(port, "ended" | "end")
+    port == "ended"
 }
 
 /// Offline renderer for inventions.
@@ -190,7 +190,7 @@ impl RenderEngine {
     /// Scans the most recently rendered block for a rising `ended` gate and
     /// returns the frame index (within that block) where the piece ended.
     ///
-    /// `source` names the module whose `end` output is authoritative; when
+    /// `source` names the module whose `ended` output is authoritative; when
     /// `None`, every module exposing an `ended` output is watched and the
     /// earliest high frame wins ("the piece ends when any end gate fires" —
     /// name a source for multi-lane pieces with uneven lanes). `frames` is

@@ -35,7 +35,7 @@ fn layered() -> AuthoredSnapshot {
         modules.push(json!({"id":format!("voice_{i}"),"type":"voice","config":{"attack":0.01}}));
         modules.push(json!({"id":format!("sequence_{i}"),"type":"cell_sequencer","config":{"sequences":[(0..128).map(|n| json!({"note":n%12,"amplitude":0.75,"gate_length":0.8})).collect::<Vec<_>>()],"base_note":{"$asset":"harmony","path":"/base_note"}}}));
         connections.extend([
-            json!({"from":"clock","to":format!("sequence_{i}"),"from_port":"beat_x4","to_port":"gate"}),
+            json!({"from":"clock","to":format!("sequence_{i}"),"from_port":"beat_x4","to_port":"clock"}),
             json!({"from":format!("sequence_{i}"),"to":format!("voice_{i}"),"from_port":"frequency","to_port":"frequency"}),
             json!({"from":format!("sequence_{i}"),"to":format!("voice_{i}"),"from_port":"gate","to_port":"gate"}),
             json!({"from":format!("voice_{i}"),"to":"mix","from_port":"audio","to_port":format!("audio.{i}")}),

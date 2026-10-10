@@ -306,6 +306,27 @@ fn scan_end_gate_finds_the_exact_end_frame() {
 }
 
 #[test]
+fn scan_end_gate_finds_a_cell_sequencers_end() {
+    let invention = ONE_SHOT_INVENTION
+        .replace("step_sequencer", "cell_sequencer")
+        .replace(r#""step_count""#, r#""steps""#)
+        .replace(
+            r#""pattern": [ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]"#,
+            r#""sequences": [[ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]]"#,
+        );
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_json(&invention).unwrap();
+    assert_eq!(render_until_end(&mut engine, None), 511);
+}
+
+#[test]
+fn only_ended_counts_as_an_end_gate() {
+    assert!(super::is_end_output("ended"));
+    // The sample modules name a one-sample pulse `end`; it is no end of piece.
+    assert!(!super::is_end_output("end"));
+}
+
+#[test]
 fn scan_end_gate_rejects_bad_sources_and_endless_graphs() {
     let mut engine = RenderEngine::new(48_000);
     engine.load_json(ONE_SHOT_INVENTION).unwrap();

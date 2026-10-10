@@ -20,11 +20,11 @@ const CONTROLS_NOT_READ_FROM_CONFIG: &[(&str, &str, &str)] = &[
     ("agent", "trigger_count", "a counter the gate input keeps"),
     ("agent", "reset_count", "a counter the reset input keeps"),
     ("cell_sequencer", "loop_count", "read-only telemetry"),
-    ("cell_sequencer", "current_cell", "read-only telemetry"),
-    ("cell_sequencer", "total_cells", "read-only telemetry"),
+    ("cell_sequencer", "cell", "read-only telemetry"),
+    ("cell_sequencer", "cell_count", "read-only telemetry"),
     (
         "cell_sequencer",
-        "advance",
+        "next_cell",
         "an action: a write advances the bank",
     ),
     (
