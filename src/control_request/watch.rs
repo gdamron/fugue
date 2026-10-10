@@ -22,6 +22,12 @@ use crate::payload::Retirer;
 pub(crate) trait BeatHost {
     fn timeline(&self, module_idx: usize) -> Option<&dyn Timeline>;
 
+    /// Holds the next sample of the clock at `module_idx` at the position
+    /// it now predicts: a tempo change applied before that sample takes
+    /// effect after it, so the beat a request applies on is still reached
+    /// there.
+    fn latch(&mut self, module_idx: usize);
+
     fn apply(
         &mut self,
         target: &ControlTarget,
@@ -33,8 +39,11 @@ pub(crate) trait BeatHost {
 /// The beat a watch waits for, in its clock's positions.
 #[derive(Clone, Copy)]
 enum Goal {
-    /// [`BeatSpec::After`], until the watch is first looked at.
+    /// [`BeatSpec::After`], until the watch is first passed over.
     After(f64),
+    /// [`Self::Count`] set at the start of the pass that first saw it,
+    /// before any request of that pass applied: not yet looked at.
+    Armed { position: f64, beats_before: u64 },
     /// A position, as of when the clock had begun `beats_before` beats
     /// before its latest reset (see [`Timeline::beats_before`]).
     Count { position: f64, beats_before: u64 },
@@ -66,6 +75,16 @@ impl Watch {
                 position,
                 beats_before,
             } => (position - begun.saturating_sub(beats_before) as f64, false),
+            Goal::Armed {
+                position,
+                beats_before,
+            } => {
+                self.goal = Goal::Count {
+                    position,
+                    beats_before,
+                };
+                (position - begun.saturating_sub(beats_before) as f64, true)
+            }
         }
     }
 }
@@ -206,6 +225,19 @@ impl Watches {
         host: &mut impl BeatHost,
         outcomes: &mut Outcomes,
     ) -> (bool, Option<u64>) {
+        // Every new span counts from its clock's position as the pass
+        // begins, before a request applied in it (a reset) can move it.
+        for watch in &mut self.entries {
+            let installed = watch.request.target.generation == installed;
+            if let (true, Goal::After(beats)) = (installed, watch.goal) {
+                if let Some(timeline) = host.timeline(watch.clock) {
+                    watch.goal = Goal::Armed {
+                        position: timeline.position().max(0.0) + beats,
+                        beats_before: timeline.beats_before(),
+                    };
+                }
+            }
+        }
         let (mut applied, mut wait) = (false, None::<u64>);
         let mut i = 0;
         while i < self.entries.len() {
@@ -243,6 +275,9 @@ impl Watches {
                 Ok(()) => Outcome::Applied { at: now },
                 Err(refusal) => Outcome::Refused(refusal),
             };
+            if due == now {
+                host.latch(watch.clock);
+            }
             let Request {
                 target, value, id, ..
             } = self.entries.remove(i).request;

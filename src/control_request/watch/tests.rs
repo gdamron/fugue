@@ -37,10 +37,12 @@ impl Timeline for Scripted {
     }
 }
 
-/// A scripted clock at module 0, recording the targets it applies to.
+/// A scripted clock at module 0, recording the targets it applies to and
+/// the clocks it latches.
 struct Host {
     clock: Scripted,
     applied: Vec<usize>,
+    latched: Vec<usize>,
 }
 
 impl Host {
@@ -52,6 +54,7 @@ impl Host {
                 beats_before: 0,
             },
             applied: Vec::with_capacity(8),
+            latched: Vec::with_capacity(8),
         }
     }
 
@@ -66,6 +69,11 @@ impl BeatHost for Host {
         (module_idx == 0).then_some(&self.clock as &dyn Timeline)
     }
 
+    fn latch(&mut self, module_idx: usize) {
+        self.latched.push(module_idx);
+    }
+
+    /// A request to the clock itself resets it.
     fn apply(
         &mut self,
         target: &ControlTarget,
@@ -73,6 +81,11 @@ impl BeatHost for Host {
         _retirer: &mut Retirer,
     ) -> Result<(), Refusal> {
         self.applied.push(target.module_idx);
+        if target.module_idx == 0 {
+            let begun = (self.clock.position.floor() + 1.0) as u64;
+            self.clock.beats_before += begun;
+            self.clock.position = BEFORE_START;
+        }
         Ok(())
     }
 }
@@ -214,6 +227,32 @@ fn a_reset_past_the_beat_reaches_it_on_time() {
     let pass = watches.pass(38, INSTALLED, &mut host, &mut store.outcomes);
     assert_eq!(pass, (true, None));
     assert_eq!(log(&outcomes), [(1, Outcome::Applied { at: 38 })]);
+}
+
+#[test]
+fn spans_count_from_the_pass_start_whatever_applies_first() {
+    for reset_first in [true, false] {
+        let (mut store, outcomes) = store();
+        let mut watches = Watches::new(4);
+        // A reset now and a level a quarter beat on, from 0.5: the reset
+        // starts beat 1, past 0.75, so the level applies with it.
+        let (reset, level) = (request(1, 0, 0.0), request(2, 1, 0.25));
+        let order = if reset_first {
+            [reset, level]
+        } else {
+            [level, reset]
+        };
+        for request in order {
+            watches.insert(request, 0, &mut store.outcomes);
+        }
+        let mut host = Host::at(0.5, 1.0 / 128.0);
+        while watches.pass(9, INSTALLED, &mut host, &mut store.outcomes).0 {}
+        let mut got = log(&outcomes);
+        got.sort_by_key(|(id, _)| *id);
+        let applied = Outcome::Applied { at: 9 };
+        assert_eq!(got, [(1, applied), (2, applied)], "{reset_first}");
+        assert_eq!(host.latched, [0, 0], "each latches its clock");
+    }
 }
 
 #[test]
