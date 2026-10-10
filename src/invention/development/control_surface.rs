@@ -110,15 +110,27 @@ impl ControlSurface for DevelopmentControlSurface {
         self.controls
             .iter()
             .filter(|entry| seen.insert(entry.meta.key.as_str()))
-            .map(|entry| entry.meta.clone())
+            .map(|entry| {
+                let mut meta = entry.meta.clone();
+                // A payload key lists what it was last written as.
+                if let Some(declared) = self.declared(&meta.key) {
+                    if declared.is_payload(&meta.key) {
+                        if let Ok(shown) = declared.get_control(&meta.key) {
+                            meta.default = shown;
+                        }
+                    }
+                }
+                meta
+            })
             .collect()
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         // Until the development runs, a declared control's writes wait in
         // its own cells; after, its first alias holds what was applied.
+        // A payload key is read back from what it was last written as.
         if let Some(declared) = self.declared(key) {
-            if declared.is_building() {
+            if declared.is_building() || declared.is_payload(key) {
                 return declared.get_control(key);
             }
         }

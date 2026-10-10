@@ -3,6 +3,7 @@ use crate::control_request::{
 };
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::graph::RoutingConnection;
+use crate::payload::{Payload, Retired};
 use crate::invention::runtime::{
     validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
 };
@@ -22,6 +23,8 @@ mod control_surface;
 mod declared_controls;
 #[cfg(test)]
 mod declared_tests;
+#[cfg(test)]
+mod payload_tests;
 #[cfg(test)]
 mod tests;
 
@@ -443,6 +446,17 @@ impl Module for DevelopmentModule {
         match &self.controls {
             Some(controls) => controls.apply(&mut self.graph.modules, control, value),
             None => Err(Refusal::Unsupported),
+        }
+    }
+
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        match &self.controls {
+            Some(controls) => controls.apply_payload(&mut self.graph.modules, control, payload),
+            None => Err((Refusal::Unsupported, payload)),
         }
     }
 
