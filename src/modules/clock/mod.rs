@@ -168,12 +168,10 @@ impl Clock {
         // latched for a request on its beat). Before the first sample since
         // the clock was built or reset there is nothing to keep: the epoch
         // already starts the count.
-        if bpm != self.last_bpm {
-            if let Some(anchor) = self.reanchor(self.sample_count) {
-                (self.epoch_sample, self.epoch_beats) = anchor;
-            }
-            self.last_bpm = bpm;
+        if let Some(anchor) = self.reanchor(self.sample_count) {
+            (self.epoch_sample, self.epoch_beats) = anchor;
         }
+        self.last_bpm = bpm;
 
         let samples_per_beat = self.samples_per_beat();
         let elapsed = self.sample_count.saturating_sub(self.epoch_sample) as f64;
