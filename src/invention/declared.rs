@@ -147,7 +147,7 @@ impl DeclaredSurface {
             if let Route::Building(written) = &mut *route {
                 // Under the route lock, so a bind sees it or it sees the bind.
                 if event {
-                    return Err("An event fires only once its module runs".into());
+                    return Err(EVENT_WHILE_BUILDING.into());
                 }
                 // Held as the module will hold it once it applies it.
                 let held = match (value, clamp) {
@@ -239,6 +239,8 @@ impl DeclaredSurface {
     }
 }
 
+const EVENT_WHILE_BUILDING: &str = "An event fires only once its module runs";
+
 fn refused(table: &ControlTable, index: ControlIndex, refusal: Refusal) -> String {
     let key = table.key(index).unwrap_or_default();
     match refusal {
@@ -275,7 +277,13 @@ impl ControlSurface for DeclaredSurface {
         value: &ControlValue,
         _surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
-        self.table.coerce(self.index(key)?, value).map(drop)
+        let index = self.index(key)?;
+        self.table.coerce(index, value)?;
+        let event = matches!(self.table.decl(index), Some((decl, _)) if decl.event);
+        if event && self.is_building() {
+            return Err(EVENT_WHILE_BUILDING.into());
+        }
+        Ok(())
     }
 
     fn bind(&self, route: Route, module: &mut dyn Module) {

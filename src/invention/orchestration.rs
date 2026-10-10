@@ -228,7 +228,8 @@ impl RuntimeSnapshot {
         value: ControlValue,
         intent: ControlWriteIntent,
     ) -> Result<(), GraphCommandError> {
-        let applied = if intent.is_authoring() {
+        // An event (a clock's reset) fires; there is no state to author.
+        let applied = if intent.is_authoring() && !self.is_event(module_id, key) {
             self.set_control_recorded(module_id, key, value)?
         } else {
             self.set_control_performed(module_id, key, value)?
@@ -278,6 +279,15 @@ impl RuntimeSnapshot {
             .unwrap()
             .record_authored_control(module_id, key, &value);
         Ok(value)
+    }
+
+    /// Whether `key` of `module_id` is a declared event control.
+    pub(crate) fn is_event(&self, module_id: &str, key: &str) -> bool {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        surfaces
+            .get(module_id)
+            .and_then(|surface| surface.declaration(key))
+            .is_some_and(|declaration| declaration.decl.event)
     }
 
     /// Coerces a value to the control's declared kind, leaving it untouched
