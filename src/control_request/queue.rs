@@ -175,6 +175,21 @@ impl<T> Clone for QueueProducer<T> {
 }
 
 impl<T> QueueProducer<T> {
+    /// Whether at least `reserve` slots past the next position are free,
+    /// so a push now leaves them for others. Exact while pushes are
+    /// serialized (a push racing this check can take one of them); the
+    /// consumer only frees slots. `reserve` must be below the capacity.
+    /// Lock-free and allocation-free.
+    pub(crate) fn leaves(&self, reserve: u64) -> bool {
+        let shared = &*self.shared;
+        debug_assert!(reserve <= shared.mask, "a reserve must leave a slot to push");
+        // The consumer frees slots in position order, so the slot `reserve`
+        // ahead being free for its position (seq == position, as for a
+        // push) means every slot up to it is.
+        let ahead = shared.tail.load(Ordering::Relaxed).wrapping_add(reserve);
+        shared.slot(ahead).seq.load(Ordering::Acquire) == ahead
+    }
+
     /// Pushes `value`, or hands it back if the queue is full. Lock-free and
     /// allocation-free from any thread, including the audio thread.
     ///

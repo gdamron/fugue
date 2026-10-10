@@ -103,11 +103,21 @@ pub(crate) enum RequestValue {
     Value(RtValue),
     /// A heavy value prepared on a control thread (FUG-309).
     Payload(Payload),
+    /// A structural edit: a prepared graph publication, owned
+    /// ([`Payload::owned`]). It targets the graph, not a control (see
+    /// [`Request::edit`]).
+    Edit(Payload),
 }
 
 impl RequestValue {
+    /// Whether it carries a payload, which must be kept or retired, never
+    /// dropped, on the audio side: a heavy value or an edit.
     pub(crate) fn is_payload(&self) -> bool {
-        matches!(self, Self::Payload(_))
+        matches!(self, Self::Payload(_) | Self::Edit(_))
+    }
+
+    pub(crate) fn is_edit(&self) -> bool {
+        matches!(self, Self::Edit(_))
     }
 }
 
@@ -154,6 +164,24 @@ impl Request {
             event: false,
             expires: None,
             id: RequestId(0),
+        }
+    }
+
+    /// A structural edit replacing graph generation `generation` with the
+    /// publication `edit` holds, at once. It shares the queue, and so one
+    /// order, with control requests: those submitted before it apply to
+    /// the graph it replaces, those after to the one it installs. Its
+    /// target names only that generation; module and control are unused.
+    /// It is never coalesced (see [`Self::event`]).
+    pub(crate) fn edit(generation: u64, edit: Payload) -> Self {
+        let target = ControlTarget {
+            generation,
+            module_idx: 0,
+            control: ControlIndex(0),
+        };
+        Self {
+            event: true,
+            ..Self::new(target, RequestValue::Edit(edit))
         }
     }
 }

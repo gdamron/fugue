@@ -3,7 +3,9 @@
 
 use super::*;
 use crate::alloc_counter::allocator_events;
-use crate::control_request::{outcome_channel, ControlIndex, OutcomeReceiver, RequestId, RtValue};
+use crate::control_request::{
+    outcome_channel, ControlIndex, OutcomeReceiver, RequestId, RtValue, When,
+};
 
 const INSTALLED: u64 = 2;
 
@@ -131,7 +133,10 @@ fn a_refused_apply_settles_refused() {
     store.insert(request(1, target(INSTALLED, 0, 0), 1.0), 0);
     store.apply_due(0, INSTALLED, |_, _, _| Err(Refusal::Unsupported));
     assert_eq!(store.len(), 0);
-    assert_eq!(log(&outcomes), [(1, Outcome::Refused(Refusal::Unsupported))]);
+    assert_eq!(
+        log(&outcomes),
+        [(1, Outcome::Refused(Refusal::Unsupported))]
+    );
 }
 
 /// A payload request to `target`, taken by the intake (room reserved).
@@ -212,4 +217,36 @@ fn inserting_beside_replaces_nothing_and_both_apply_in_receipt_order() {
     assert_eq!(store.len(), 2);
     assert_eq!(log(&outcomes), []);
     assert_eq!(apply_at(&mut store, 10), [(0, 0, 1.0), (0, 0, 2.0)]);
+}
+
+#[test]
+fn edits_never_coalesce_and_a_refused_one_retires_its_publication() {
+    let (mut store, outcomes) = store_of(8);
+    let edit = |id| {
+        let mut edit = Request::edit(INSTALLED, crate::payload::Payload::owned(Box::new(id)));
+        edit.id = RequestId(id);
+        edit
+    };
+    for id in [1, 2] {
+        let edit = edit(id);
+        assert!(edit.value.is_edit() && edit.value.is_payload());
+        assert_eq!(edit.when, When::Now);
+        assert!(store.outcomes.has_room_for_payload());
+        store.outcomes.reserve(&edit);
+        store.insert(edit, 10);
+    }
+    assert_eq!(store.len(), 2, "two edits at one sample are two edits");
+    // Settled refused (their generation went away), each retires its
+    // publication and releases its room.
+    let ((), allocs, frees) = allocator_events(|| store.remap(INSTALLED + 1, 0, |_| None));
+    assert_eq!((allocs, frees), (0, 0));
+    let gone = Outcome::Refused(Refusal::TargetGone);
+    assert_eq!(log(&outcomes), [(1, gone), (2, gone)]);
+    assert_eq!(store.len(), 0);
+    assert!(store.outcomes.has_room_for_payload());
+    assert_eq!(
+        store.outcomes.retirer.held(),
+        0,
+        "both went to the retire queue"
+    );
 }
