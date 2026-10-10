@@ -77,7 +77,8 @@ impl DeclKind {
 pub(crate) enum Writer {
     /// Written by requests: control threads and automation.
     Parameter,
-    /// Written only by the module's own `process()`; read-only elsewhere.
+    /// Written only by the module's own `process()`, or by the one host
+    /// thread that runs it (the agent's worker); read-only elsewhere.
     Telemetry,
 }
 

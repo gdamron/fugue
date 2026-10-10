@@ -1,17 +1,80 @@
-//! Thread-safe controls for the orchestration-only Agent module.
+//! The agent's controls: its scalars are declared, and its prompts and
+//! telemetry strings stay control-side.
 //!
-//! These controls are the bridge between graph/UI APIs and the background agent
-//! worker. User-facing controls configure prompts; telemetry (`status`,
-//! `last_*`, `history`, `request_count`) is read-only through `set_control`
-//! and written only by the worker. The trigger and reset edge counters are
-//! internal: the audio module bumps them without locking, and the worker
-//! polls them.
+//! `enabled` and `cooldown` are declared parameters, applied by the audio
+//! thread like any declared control and read back from their cells by the
+//! background worker. `trigger` and `reset` are declared events: a write
+//! fires the same edge a rising input does. The edges themselves are
+//! [`EventCounter`]s the audio module records and the worker reads.
+//! `request_count` is declared telemetry, written only by the worker.
+//!
+//! The strings (`prompt`, `system_prompt`, `backend`, and the telemetry
+//! `status`, `last_*` and `history`) sit behind a lock only control threads
+//! take: the audio module holds the cells and the edge counters, never the
+//! lock, so no audio-thread path reaches it.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::control_request::{
+    Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, EventCounter,
+    RtValue,
+};
+use crate::invention::declared::{Declaration, DeclaredSurface, Route};
 use crate::traits::{check_listed_control, read_only, ControlSurfaceMap};
-use crate::{ControlMeta, ControlSurface, ControlValue};
+use crate::{ControlMeta, ControlSurface, ControlValue, Module};
+
+pub(super) const ENABLED: ControlIndex = ControlIndex(0);
+pub(super) const COOLDOWN: ControlIndex = ControlIndex(1);
+pub(super) const REQUEST_COUNT: ControlIndex = ControlIndex(2);
+pub(super) const TRIGGER: ControlIndex = ControlIndex(3);
+pub(super) const RESET: ControlIndex = ControlIndex(4);
+
+const DECLS: &[ControlDecl] = &[
+    ControlDecl::new(
+        "enabled",
+        DeclKind::Bool,
+        RtValue::Bool(true),
+        "Enable or disable agent requests",
+    ),
+    ControlDecl::new(
+        "cooldown",
+        DeclKind::Number {
+            min: 0.0,
+            max: f32::MAX,
+        },
+        RtValue::F32(0.0),
+        "Minimum time between requests in seconds",
+    )
+    .unit("s")
+    .clamped(0.0, f32::MAX),
+    // Written by the agent's worker alone (see `ControlCells`).
+    ControlDecl::new(
+        "request_count",
+        DeclKind::Number {
+            min: 0.0,
+            max: f32::MAX,
+        },
+        RtValue::F32(0.0),
+        "Completed request count (read-only)",
+    )
+    .telemetry(),
+    ControlDecl::new(
+        "trigger",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Requests a response, as a rising edge on the trigger input does",
+    )
+    .event(),
+    ControlDecl::new(
+        "reset",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Clears history and errors, as a rising edge on the reset input does",
+    )
+    .event(),
+];
+
+pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
 
 /// The controls only the agent's worker writes.
 pub(super) const TELEMETRY: &[&str] = &[
@@ -24,27 +87,30 @@ pub(super) const TELEMETRY: &[&str] = &[
     "request_count",
 ];
 
+/// Rising edges on `trigger` and `reset`, from the inputs or from requests.
+/// The audio thread records them; the worker reads them.
+#[derive(Default)]
+pub(super) struct Edges {
+    pub(super) trigger: EventCounter,
+    pub(super) reset: EventCounter,
+}
+
 /// Shared runtime state for an `agent` module.
 ///
 /// The type is cloneable so the audio graph, runtime APIs, and background
-/// worker can all hold handles to the same state. The string state is
-/// mutex-protected because only control-thread code touches it; the audio
-/// module only bumps the atomic edge counters.
+/// worker can all hold handles to the same state. It is the agent's control
+/// surface: declared controls go through [`DeclaredSurface`], the strings
+/// through a lock only control threads take.
 #[derive(Clone)]
 pub struct AgentControls {
+    declared: Arc<DeclaredSurface>,
+    cells: Arc<ControlCells>,
     shared: Arc<Mutex<AgentState>>,
-    edges: Arc<EdgeCounters>,
-}
-
-#[derive(Default)]
-struct EdgeCounters {
-    trigger: AtomicU64,
-    reset: AtomicU64,
+    edges: Arc<Edges>,
 }
 
 #[derive(Clone, Debug)]
 struct AgentState {
-    enabled: bool,
     status: String,
     last_error: String,
     prompt: String,
@@ -54,9 +120,6 @@ struct AgentState {
     last_parsed_response: String,
     history: String,
     last_apply_error: String,
-    request_count: u64,
-    /// Seconds.
-    cooldown: f32,
 }
 
 impl AgentControls {
@@ -67,9 +130,13 @@ impl AgentControls {
         backend: String,
         cooldown: f32,
     ) -> Self {
+        let cells = Arc::new(ControlCells::new(DECLS.iter().map(|decl| decl.default)));
+        cells.publish(ENABLED, RtValue::Bool(enabled));
+        cells.publish(COOLDOWN, RtValue::F32(cooldown.max(0.0)));
         Self {
+            declared: Arc::new(DeclaredSurface::new(TABLE.clone(), cells.clone())),
+            cells,
             shared: Arc::new(Mutex::new(AgentState {
-                enabled,
                 status: "idle".to_string(),
                 last_error: String::new(),
                 prompt,
@@ -79,41 +146,48 @@ impl AgentControls {
                 last_parsed_response: String::new(),
                 history: "[]".to_string(),
                 last_apply_error: String::new(),
-                request_count: 0,
-                cooldown: cooldown.max(0.0),
             })),
             edges: Arc::default(),
         }
     }
 
-    /// Records a rising edge on the `trigger` input. Audio thread: lock-free.
+    /// What the audio module holds: the cells and the edge counters, never
+    /// the strings' lock.
+    pub(super) fn audio_parts(&self) -> (Arc<ControlCells>, Arc<Edges>) {
+        (self.cells.clone(), self.edges.clone())
+    }
+
+    /// Records a rising edge on the `trigger` input, as the audio module
+    /// does. Lock-free.
     ///
     /// The background worker observes this monotonically increasing counter and
     /// services each new value outside the audio thread.
     pub fn increment_trigger(&self) {
-        self.edges.trigger.fetch_add(1, Ordering::Relaxed);
+        self.edges.trigger.record();
     }
 
-    /// Records a rising edge on the `reset` input. Audio thread: lock-free.
+    /// Records a rising edge on the `reset` input, as the audio module does.
+    /// Lock-free.
     ///
     /// The worker uses this counter to clear history and errors without doing
     /// that allocation-heavy work in [`crate::Module::process`].
     pub fn increment_reset(&self) {
-        self.edges.reset.fetch_add(1, Ordering::Relaxed);
+        self.edges.reset.record();
     }
 
-    /// Rising edges seen on the `trigger` input so far.
+    /// Rising edges seen on `trigger` so far, modulo 2^32. Seeing one also
+    /// shows every control the audio thread applied before it.
     // The native agent worker reads it; wasm hosts have none yet.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub(crate) fn trigger_count(&self) -> u64 {
-        self.edges.trigger.load(Ordering::Relaxed)
+    pub(crate) fn trigger_count(&self) -> u32 {
+        self.edges.trigger.count()
     }
 
-    /// Rising edges seen on the `reset` input so far.
+    /// Rising edges seen on `reset` so far, modulo 2^32.
     // The native agent worker reads it; wasm hosts have none yet.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub(crate) fn reset_count(&self) -> u64 {
-        self.edges.reset.load(Ordering::Relaxed)
+    pub(crate) fn reset_count(&self) -> u32 {
+        self.edges.reset.count()
     }
 
     /// Whether `other` is a handle on these same controls rather than on a
@@ -128,6 +202,12 @@ impl AgentControls {
     // The native agent worker reads it; wasm hosts have none yet.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn set_telemetry(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        if key == "request_count" {
+            // The worker is this cell's one writer; the module never writes it.
+            let count = value.as_number()?.max(0.0);
+            self.cells.publish(REQUEST_COUNT, RtValue::F32(count));
+            return Ok(());
+        }
         let mut state = self.shared.lock().unwrap();
         match key {
             "status" => state.status = value.as_string()?.to_string(),
@@ -136,15 +216,15 @@ impl AgentControls {
             "last_parsed_response" => state.last_parsed_response = value.as_string()?.to_string(),
             "history" => state.history = value.as_string()?.to_string(),
             "last_apply_error" => state.last_apply_error = value.as_string()?.to_string(),
-            "request_count" => state.request_count = value.as_number()?.max(0.0) as u64,
             _ => return Err(format!("Not agent telemetry: {}", key)),
         }
         Ok(())
     }
 
-    /// Holds the state lock, for a test proving the audio path never takes it.
+    /// Holds the strings' lock, for a test proving the audio path never
+    /// takes it.
     #[cfg(test)]
-    pub(super) fn hold_state_lock(&self) -> std::sync::MutexGuard<'_, impl Sized> {
+    pub(crate) fn hold_state_lock(&self) -> std::sync::MutexGuard<'_, impl Sized> {
         self.shared.lock().unwrap()
     }
 
@@ -155,9 +235,14 @@ impl AgentControls {
 
 impl ControlSurface for AgentControls {
     fn controls(&self) -> Vec<ControlMeta> {
+        let [enabled, cooldown, request_count, trigger, reset]: [ControlMeta; 5] = self
+            .declared
+            .controls()
+            .try_into()
+            .expect("the agent declares five controls");
         let state = self.snapshot();
         vec![
-            ControlMeta::boolean("enabled", "Enable or disable agent requests", state.enabled),
+            enabled,
             ControlMeta::string("status", "Current agent runtime status (read-only)")
                 .with_default(state.status),
             ControlMeta::string("last_error", "Last agent runtime error (read-only)")
@@ -176,19 +261,19 @@ impl ControlSurface for AgentControls {
                 .with_default(state.history),
             ControlMeta::string("last_apply_error", "Last graph apply error (read-only)")
                 .with_default(state.last_apply_error),
-            ControlMeta::number("request_count", "Completed request count (read-only)")
-                .with_range(0.0, f32::MAX)
-                .with_default(state.request_count as f32),
-            ControlMeta::number("cooldown", "Minimum time between requests in seconds")
-                .with_range(0.0, f32::MAX)
-                .with_default(state.cooldown),
+            request_count,
+            cooldown,
+            trigger,
+            reset,
         ]
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
+        if self.declared.declares(key) {
+            return self.declared.get_control(key);
+        }
         let state = self.shared.lock().unwrap();
         match key {
-            "enabled" => Ok(state.enabled.into()),
             "status" => Ok(state.status.clone().into()),
             "last_error" => Ok(state.last_error.clone().into()),
             "prompt" => Ok(state.prompt.clone().into()),
@@ -198,23 +283,22 @@ impl ControlSurface for AgentControls {
             "last_parsed_response" => Ok(state.last_parsed_response.clone().into()),
             "history" => Ok(state.history.clone().into()),
             "last_apply_error" => Ok(state.last_apply_error.clone().into()),
-            "request_count" => Ok((state.request_count as f32).into()),
-            "cooldown" => Ok(state.cooldown.into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        if self.declared.declares(key) {
+            return self.declared.set_control(key, value);
+        }
         if TELEMETRY.contains(&key) {
             return read_only(key);
         }
         let mut state = self.shared.lock().unwrap();
         match key {
-            "enabled" => state.enabled = value.as_bool()?,
             "prompt" => state.prompt = value.as_string()?.to_string(),
             "system_prompt" => state.system_prompt = value.as_string()?.to_string(),
             "backend" => state.backend = value.as_string()?.to_string(),
-            "cooldown" => state.cooldown = value.as_number()?.max(0.0),
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
@@ -224,12 +308,50 @@ impl ControlSurface for AgentControls {
         &self,
         key: &str,
         value: &ControlValue,
-        _surfaces: &ControlSurfaceMap,
+        surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
+        if self.declared.declares(key) {
+            return self.declared.validate_control(key, value, surfaces);
+        }
         if TELEMETRY.contains(&key) {
             return read_only(key);
         }
         check_listed_control(&self.controls(), key, value)
+    }
+
+    #[allow(private_interfaces)]
+    fn bind(&self, route: Route, module: &mut dyn Module) {
+        self.declared.bind(route, module);
+    }
+
+    fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        match self.declared.declares(key) {
+            true => self.declared.set_legacy(key, value),
+            false => self.set_control(key, value),
+        }
+    }
+
+    #[allow(private_interfaces)]
+    fn activate(&self, route: Route) {
+        self.declared.activate(route);
+    }
+
+    fn retire(&self) {
+        self.declared.retire();
+    }
+
+    fn declares(&self, key: &str) -> bool {
+        self.declared.declares(key)
+    }
+
+    #[allow(private_interfaces)]
+    fn declaration(&self, key: &str) -> Option<Declaration> {
+        self.declared.declaration(key)
+    }
+
+    #[allow(private_interfaces)]
+    fn automation(&self, key: &str) -> Option<Automation> {
+        self.declared.automation(key)
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -274,8 +396,10 @@ mod tests {
     #[test]
     fn telemetry_writer_refuses_parameters() {
         let controls = controls();
-        let refused = controls.set_telemetry("prompt", ControlValue::String("x".into()));
-        assert!(refused.is_err());
+        for key in ["prompt", "enabled", "cooldown", "trigger"] {
+            let refused = controls.set_telemetry(key, ControlValue::String("x".into()));
+            assert!(refused.is_err(), "{key}");
+        }
         assert_eq!(
             controls.get_control("prompt").unwrap(),
             String::new().into()
@@ -295,5 +419,70 @@ mod tests {
             assert!(controls.get_control(key).is_err(), "{key}");
             assert!(controls.controls().iter().all(|meta| meta.key != key));
         }
+    }
+
+    #[test]
+    fn controls_list_in_their_old_order_then_the_events() {
+        let keys: Vec<String> = controls().controls().into_iter().map(|m| m.key).collect();
+        assert_eq!(
+            keys,
+            [
+                "enabled",
+                "status",
+                "last_error",
+                "prompt",
+                "system_prompt",
+                "backend",
+                "last_response",
+                "last_parsed_response",
+                "history",
+                "last_apply_error",
+                "request_count",
+                "cooldown",
+                "trigger",
+                "reset",
+            ]
+        );
+    }
+
+    #[test]
+    fn only_enabled_and_cooldown_can_be_scheduled() {
+        let controls = controls();
+        for key in ["enabled", "cooldown"] {
+            assert!(controls.automation(key).is_some(), "{key}");
+        }
+        // Declared but not automatable: a scheduler refuses them as it loads.
+        for key in ["request_count", "trigger", "reset"] {
+            assert!(controls.declares(key) && controls.automation(key).is_none());
+        }
+        // The strings are never written from the audio thread: a scheduler
+        // refuses string controls as it loads.
+        for key in ["prompt", "status", "history"] {
+            assert!(!controls.declares(key));
+            assert!(matches!(
+                controls.get_control(key),
+                Ok(ControlValue::String(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn writes_before_the_module_runs_are_held_clamped_and_events_wait() {
+        let controls = controls();
+        controls
+            .set_control("cooldown", ControlValue::Number(-2.0))
+            .unwrap();
+        controls
+            .set_control("enabled", ControlValue::Bool(false))
+            .unwrap();
+        assert_eq!(controls.get_control("cooldown"), Ok(0.0.into()));
+        assert_eq!(controls.get_control("enabled"), Ok(false.into()));
+        assert!(controls
+            .set_control("trigger", ControlValue::Bool(true))
+            .is_err());
+        assert_eq!(controls.trigger_count(), 0);
+        assert!(controls
+            .set_control("cooldown", ControlValue::Number(f32::NAN))
+            .is_err());
     }
 }
