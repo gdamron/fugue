@@ -9,7 +9,7 @@ fn in_c_score_asset_validates() {
     validate_score(&value).expect("in_c score.json validates");
 
     let score = Score::from_json(json).expect("in_c score.json deserializes");
-    assert_eq!(score.base_note_hint, Some(60));
+    assert_eq!(score.root_note, Some(60));
     assert_eq!(score.rhythm_grid.as_deref(), Some("32nd_note"));
     assert!(!score.cells.is_empty());
 }
@@ -23,7 +23,7 @@ fn full_metadata_score_validates() {
         "key": "Ab major",
         "tempo": 120.0,
         "time_signature": { "beats_per_measure": 4, "beat_unit": 4 },
-        "base_note_hint": 48,
+        "root_note": 48,
         "rhythm_grid": "16th_note",
         "cells": [
             [ { "note": 0 }, { "held": true }, { "note": 7, "gate": 0.8 }, null ],
@@ -45,7 +45,7 @@ fn round_trips_through_typed_model() {
     let value = json!({
         "schema": "fugue.score.v1",
         "title": "Round Trip",
-        "base_note_hint": 60,
+        "root_note": 60,
         "cells": [[ { "note": 0 }, { "note": 7, "gate": 0.5 }, { "held": true }, null ]]
     });
     let json = serde_json::to_string(&value).unwrap();
@@ -70,7 +70,7 @@ fn rejects_unknown_schema_version() {
 
 #[test]
 fn rejects_missing_cells() {
-    let value = json!({ "title": "Empty", "base_note_hint": 60 });
+    let value = json!({ "title": "Empty", "root_note": 60 });
     let err = validate_score(&value).unwrap_err();
     assert!(err.contains("non-empty 'cells' array"), "{err}");
 }
@@ -103,12 +103,9 @@ fn rejects_out_of_range_note() {
 }
 
 #[test]
-fn rejects_out_of_range_base_note() {
-    let err = validate_score(&json!({ "base_note_hint": 200, "cells": [[ 0 ]] })).unwrap_err();
-    assert!(
-        err.contains("base_note_hint must be between 0 and 127"),
-        "{err}"
-    );
+fn rejects_out_of_range_root_note() {
+    let err = validate_score(&json!({ "root_note": 200, "cells": [[ 0 ]] })).unwrap_err();
+    assert!(err.contains("root_note must be between 0 and 127"), "{err}");
 }
 
 #[test]
@@ -118,26 +115,26 @@ fn rejects_gate_above_one() {
 }
 
 #[test]
-fn rejects_amplitude_above_one() {
+fn rejects_velocity_above_one() {
     let err =
-        validate_score(&json!({ "cells": [[ { "note": 0, "amplitude": 1.5 } ]] })).unwrap_err();
+        validate_score(&json!({ "cells": [[ { "note": 0, "velocity": 1.5 } ]] })).unwrap_err();
     assert!(
-        err.contains("step.amplitude must be between 0 and 1"),
+        err.contains("step.velocity must be between 0 and 1"),
         "{err}"
     );
 }
 
 #[test]
-fn rejects_non_numeric_amplitude() {
+fn rejects_non_numeric_velocity() {
     let err =
-        validate_score(&json!({ "cells": [[ { "note": 0, "amplitude": "f" } ]] })).unwrap_err();
-    assert!(err.contains("step.amplitude must be a number"), "{err}");
+        validate_score(&json!({ "cells": [[ { "note": 0, "velocity": "f" } ]] })).unwrap_err();
+    assert!(err.contains("step.velocity must be a number"), "{err}");
 }
 
 #[test]
-fn accepts_amplitude_on_note_steps() {
-    validate_score(&json!({ "cells": [[ { "note": 0, "amplitude": 0.5 } ]] }))
-        .expect("amplitude in range must validate");
+fn accepts_velocity_on_note_steps() {
+    validate_score(&json!({ "cells": [[ { "note": 0, "velocity": 0.5 } ]] }))
+        .expect("velocity in range must validate");
 }
 
 #[test]
@@ -218,26 +215,26 @@ fn tempo_map_ramp_validates_and_round_trips() {
     let value = json!({
         "tempo_map": [
             { "at_step": 0, "bpm": 60.0 },
-            { "at_step": 100, "bpm": 40.0, "ramp": 32 }
+            { "at_step": 100, "bpm": 40.0, "ramp_steps": 32 }
         ],
         "cells": [[ 0 ]]
     });
     validate_score(&value).expect("ramped tempo_map validates");
     let score = Score::from_json(&value.to_string()).expect("parses");
-    assert_eq!(score.tempo_map[1].ramp, Some(32));
+    assert_eq!(score.tempo_map[1].ramp_steps, Some(32));
     // A no-ramp entry omits the field on re-serialization.
     let reserialized: Value = serde_json::from_str(&score.to_json().unwrap()).unwrap();
-    assert!(reserialized["tempo_map"][0].get("ramp").is_none());
+    assert!(reserialized["tempo_map"][0].get("ramp_steps").is_none());
 }
 
 #[test]
 fn rejects_zero_ramp_in_tempo_map() {
     let value = json!({
-        "tempo_map": [ { "at_step": 0, "bpm": 60.0, "ramp": 0 } ],
+        "tempo_map": [ { "at_step": 0, "bpm": 60.0, "ramp_steps": 0 } ],
         "cells": [[ 0 ]]
     });
     let err = validate_score(&value).unwrap_err();
-    assert!(err.contains("ramp must be at least 1 step"), "{err}");
+    assert!(err.contains("ramp_steps must be at least 1 step"), "{err}");
 }
 
 #[test]
@@ -329,7 +326,7 @@ fn rejects_malformed_grace() {
 fn grace_round_trips_through_typed_model() {
     let value = json!({
         "schema": "fugue.score.v1",
-        "cells": [[ { "note": 34, "grace": [22], "amplitude": 0.5 }, { "held": true } ]]
+        "cells": [[ { "note": 34, "grace": [22], "velocity": 0.5 }, { "held": true } ]]
     });
     let json = serde_json::to_string(&value).unwrap();
     let score = Score::from_json(&json).expect("typed parse");
@@ -339,4 +336,30 @@ fn grace_round_trips_through_typed_model() {
     let reparsed: Value = serde_json::from_str(&reserialized).unwrap();
     validate_score(&reparsed).expect("re-serialized score still validates");
     assert_eq!(reparsed["cells"][0][0]["grace"], json!([22]));
+}
+
+#[test]
+fn refuses_the_old_field_names() {
+    for (value, field) in [
+        (
+            json!({ "base_note_hint": 60, "cells": [[ 0 ]] }),
+            "base_note_hint",
+        ),
+        (
+            json!({ "cells": [[ { "note": 0, "amplitude": 0.5 } ]] }),
+            "amplitude",
+        ),
+        (
+            json!({
+                "tempo_map": [ { "at_step": 0, "bpm": 60.0 }, { "at_step": 8, "bpm": 40.0, "ramp": 4 } ],
+                "cells": [[ 0 ]]
+            }),
+            "ramp",
+        ),
+    ] {
+        let err = validate_score(&value).unwrap_err();
+        assert!(err.contains(&format!("unknown field '{field}'")), "{err}");
+        let err = Score::from_json(&value.to_string()).unwrap_err();
+        assert!(err.contains(field), "{err}");
+    }
 }

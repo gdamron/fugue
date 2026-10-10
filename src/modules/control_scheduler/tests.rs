@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
 
-use super::schedule::{parse_schedule, parse_schedule_json, SurfaceMap};
+use super::schedule::{compile_tempo_map, parse_schedule, parse_schedule_json, SurfaceMap};
 use super::*;
 use crate::modules::cell_sequencer::CellSequencerControls;
 use crate::modules::mixer::MixerControls;
@@ -511,4 +511,16 @@ fn ramp_value_matches_the_f32_formula_for_typical_ranges() {
             );
         }
     }
+}
+
+#[test]
+fn tempo_map_glides_with_ramp_steps_and_refuses_ramp() {
+    let points = serde_json::json!([{ "at_step": 0, "bpm": 60.0 }, { "at_step": 8, "bpm": 40.0, "ramp_steps": 4.0 }]);
+    let entries = compile_tempo_map(&points, "clock", "bpm", 2.0).unwrap();
+    assert_eq!(entries[1].ramp_steps, Some(4));
+    assert_eq!(entries[1].value, ScheduleValue::Number(80.0));
+
+    let old = serde_json::json!([{ "at_step": 8, "bpm": 40.0, "ramp": 4 }]);
+    let err = compile_tempo_map(&old, "clock", "bpm", 1.0).unwrap_err();
+    assert!(err.contains("unknown field `ramp`"), "{err}");
 }

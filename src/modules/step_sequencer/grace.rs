@@ -45,7 +45,7 @@ pub(crate) struct GraceVoice {
     pub offset: i8,
     /// Whether the gate is high this sample (low during the release gap).
     pub gate: bool,
-    /// Velocity for the grace (decorated step's amplitude, scaled).
+    /// Velocity for the grace (decorated step's velocity, scaled).
     pub velocity: f32,
 }
 

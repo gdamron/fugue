@@ -27,7 +27,7 @@ use crate::invention::score::Score;
 use crate::modules::MAX_GRACE_NOTES;
 use crate::music::{note_value_from_name, Rat};
 
-/// Default base note when a score omits `base_note_hint` (middle C, matching
+/// Default base note when a score omits `root_note` (middle C, matching
 /// the sequencers' convention).
 const DEFAULT_BASE_NOTE: i64 = 60;
 
@@ -91,7 +91,7 @@ struct NoteEvent {
 }
 
 /// A step's grace chain as absolute MIDI pitches (each side's
-/// `base_note_hint` already applied), so chains compare across scores with
+/// `root_note` already applied), so chains compare across scores with
 /// different hints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct GracePitches {
@@ -257,7 +257,7 @@ fn score_grid(score: &Score, label: &str) -> Result<Rat, String> {
 
 /// Flattens every cell to absolute-pitch note events on the exact time base.
 fn flatten(score: &Score, grid: Rat) -> Vec<NoteEvent> {
-    let base = score.base_note_hint.unwrap_or(DEFAULT_BASE_NOTE);
+    let base = score.root_note.unwrap_or(DEFAULT_BASE_NOTE);
     let mut events = Vec::new();
     for cell in &score.cells {
         let mut current: Option<(usize, i64)> = None;

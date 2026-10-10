@@ -18,7 +18,7 @@ PDF.
 
 ## Encoding Choices
 
-- `base_note_hint` is `60` (C4).
+- `root_note` is `60` (C4).
 - `cells` are arrays of `cell_sequencer` steps. Each step uses `{ "note": n }`
   for a pitch offset from C4, `{ "held": true }` to continue the previous
   active note without retriggering, or `{ "note": null }` for a rest.

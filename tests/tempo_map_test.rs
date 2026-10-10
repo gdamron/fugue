@@ -153,7 +153,7 @@ fn tempo_map_ramp_slows_smoothly_ritardando() {
                     "config": {
                         "tempo_map": [
                             { "at_step": 0, "bpm": 120.0 },
-                            { "at_step": 4, "bpm": 40.0, "ramp": 8 }
+                            { "at_step": 4, "bpm": 40.0, "ramp_steps": 8 }
                         ]
                     }
                 },

@@ -5,7 +5,7 @@
 //!
 //! # Dynamics
 //!
-//! The `velocity` output carries the most recently struck step's `amplitude`
+//! The `velocity` output carries the most recently struck step's `velocity`
 //! (1.0 when the step has none), updating only at note onsets — holds, rests,
 //! and releases keep the struck level so a ringing tail never jumps. Patch it
 //! into a voice's level/brightness (e.g. a VCA `cv`) to realize the score's
@@ -23,7 +23,7 @@
 //!   chain is clamped to half the measured step duration, shrinking
 //!   proportionally rather than dropping graces.
 //! - `grace_velocity` (default 0.8): velocity scale relative to the
-//!   decorated step's `amplitude`.
+//!   decorated step's `velocity`.
 //! - `grace_placement` (default `before`): `before` steals the tail of the
 //!   previous step so the principal lands on the grid (acciaccatura);
 //!   `on_beat` starts the chain at the step edge and delays the principal
@@ -107,7 +107,7 @@ pub struct CellSequencer {
     /// edge, or a sudden accelerando), so the downstream envelope needs an
     /// explicit release edge to retrigger. Cleared by `update_outputs`.
     retrigger_dip: bool,
-    /// Velocity of the most recently struck note (the step's `amplitude`,
+    /// Velocity of the most recently struck note (the step's `velocity`,
     /// 1.0 when unset). Held on the `velocity` output across holds, rests,
     /// and releases so a ringing tail never sees its level jump; it only
     /// changes when a new note starts.
@@ -381,7 +381,7 @@ impl CellSequencer {
                         self.grace_samples_cfg,
                         self.step_duration_samples / 2,
                     );
-                    let velocity = step.amplitude.unwrap_or(1.0);
+                    let velocity = step.velocity.unwrap_or(1.0);
                     self.grace_player
                         .start(step.grace, velocity * self.grace_velocity_cfg, per);
                     self.deferred_note = Some(offset);
@@ -393,7 +393,7 @@ impl CellSequencer {
                         .saturating_sub(chain_total);
                 } else {
                     self.active_note = Some(offset);
-                    self.active_velocity = step.amplitude.unwrap_or(1.0);
+                    self.active_velocity = step.velocity.unwrap_or(1.0);
                 }
                 true
             }
@@ -457,7 +457,7 @@ impl CellSequencer {
         }
 
         self.pending_grace = next.grace;
-        self.pending_grace_velocity = next.amplitude.unwrap_or(1.0) * self.grace_velocity_cfg;
+        self.pending_grace_velocity = next.velocity.unwrap_or(1.0) * self.grace_velocity_cfg;
         self.pending_grace_per = per;
         self.grace_countdown = start_at;
 

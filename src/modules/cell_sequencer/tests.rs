@@ -682,16 +682,16 @@ fn test_cells_hold_long_sequences() {
 }
 
 #[test]
-fn test_cell_sequencer_velocity_follows_step_amplitude() {
+fn test_cell_sequencer_velocity_follows_step_velocity() {
     let mut soft = Step::note(0);
-    soft.amplitude = Some(0.25);
+    soft.velocity = Some(0.25);
     let mut seq = CellSequencer::new(10)
         .with_step_count(4)
         .with_cells(vec![vec![
             soft,
             Step::held(),
             Step::rest(),
-            Step::note(7), // No amplitude: velocity returns to full.
+            Step::note(7), // No velocity: velocity returns to full.
         ]]);
 
     assert_eq!(seq.get_output("velocity").unwrap(), 1.0);
@@ -906,7 +906,7 @@ fn test_grace_chain_plays_in_order() {
 #[test]
 fn test_grace_velocity_scales_from_decorated_step() {
     let mut decorated = Step::note_with_grace(10, &[8]);
-    decorated.amplitude = Some(0.5);
+    decorated.velocity = Some(0.5);
     let mut seq = CellSequencer::new(1000)
         .with_step_count(4)
         .with_cells(vec![vec![
@@ -920,9 +920,9 @@ fn test_grace_velocity_scales_from_decorated_step() {
 
     let onsets = rising_edges(&stream, 300..600);
     assert_eq!(onsets.len(), 2);
-    // Grace velocity = decorated amplitude (0.5) x grace_velocity (0.8).
+    // Grace velocity = decorated velocity (0.5) x grace_velocity (0.8).
     assert!((stream[onsets[0] + 5].2 - 0.4).abs() < 1e-6);
-    // The principal restores the step's own amplitude.
+    // The principal restores the step's own velocity.
     assert!((stream[onsets[1] + 5].2 - 0.5).abs() < 1e-6);
 }
 
