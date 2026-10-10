@@ -1,7 +1,7 @@
 //! Cell sequencer module for pattern-bank playback.
 //!
 //! The cell sequencer extends the deterministic step sequencer with multiple
-//! stored sequences and controls for selecting or advancing between them.
+//! stored cells and controls for selecting or advancing between them.
 //!
 //! # Dynamics
 //!
@@ -19,7 +19,7 @@
 //! allocators (`divisi`) see distinct rising edges. Realization is a
 //! performance decision, deterministic given three controls:
 //!
-//! - `grace_duration_ms` (default 60): duration of each grace. The whole
+//! - `grace_duration` (default 0.06 s): duration of each grace. The whole
 //!   chain is clamped to half the measured step duration, shrinking
 //!   proportionally rather than dropping graces.
 //! - `grace_velocity` (default 0.8): velocity scale relative to the
@@ -39,10 +39,10 @@
 //! a command switches cells) or `one_shot`: at each cycle end the sequencer
 //! auto-advances to the next cell, playing the bank through once as a single
 //! long sequence; after the final cell's last step completes it falls silent
-//! and latches the `end` output gate high (exactly one rising edge). Explicit
-//! cell commands (`select_sequence`, `next`/`previous`, `advance`) still work
-//! in one_shot and take priority over the auto-advance; `reset_gate` or
-//! selecting a cell re-arms a finished sequencer.
+//! and latches the `ended` output gate high (exactly one rising edge). Explicit
+//! cell commands (`select_cell`, `next_cell`/`previous_cell`) still work in
+//! one_shot and take priority over the auto-advance; `reset` or selecting a
+//! cell re-arms a finished sequencer.
 
 use serde_json::Value;
 use std::sync::Arc;
@@ -54,7 +54,7 @@ use crate::Module;
 
 use super::step_sequencer::grace::{clamp_per_grace, release_gap, GracePlayer, GraceVoice};
 pub(crate) use super::step_sequencer::grace::{
-    DEFAULT_GRACE_DURATION_MS, DEFAULT_GRACE_VELOCITY, MAX_GRACE_DURATION_MS, MIN_GRACE_DURATION_MS,
+    DEFAULT_GRACE_DURATION, DEFAULT_GRACE_VELOCITY, MAX_GRACE_DURATION, MIN_GRACE_DURATION,
 };
 use super::step_sequencer::{parse_pattern, GraceChain, Step, StepError};
 use crate::module_config::{ConfigKey, ConfigReader};
@@ -71,11 +71,11 @@ use parse::{normalize_sequence_index, parse_sequence_bank};
 
 pub const DEFAULT_STEPS: usize = 16;
 pub const DEFAULT_GATE_LENGTH: f32 = 0.5;
-pub const DEFAULT_BASE_NOTE: u8 = 48;
+pub const DEFAULT_ROOT_NOTE: u8 = 48;
 pub const MAX_SEQUENCES: usize = 64;
 /// Upper bound on steps per cell. This exists to bound the bank clone the
 /// audio thread performs when the sequence bank changes (and to sanity-bound
-/// `sequences_json` input), not playback cost — playback is O(1) per sample
+/// `cells` input), not playback cost — playback is O(1) per sample
 /// regardless of length. 1024 keeps the worst-case swap around ~1 MB while
 /// letting a full through-composed lane live in a single cell.
 pub const MAX_STEPS: usize = 1024;
@@ -98,7 +98,7 @@ pub struct CellSequencer {
     samples_since_gate: u32,
     first_gate_received: bool,
     active_note: Option<i8>,
-    /// One-shot playback of the bank has completed; `end` latches high and
+    /// One-shot playback of the bank has completed; `ended` latches high and
     /// clock edges are ignored until reset or an explicit cell selection.
     finished: bool,
     /// Force the output gate low for exactly this sample: a new note is
@@ -138,8 +138,8 @@ pub struct CellSequencer {
     grace_on_beat_cfg: bool,
     last_gate_in: f32,
     last_reset_in: f32,
-    last_next_sequence_in: f32,
-    last_previous_sequence_in: f32,
+    last_next_cell_in: f32,
+    last_previous_cell_in: f32,
     last_control_selected_sequence: usize,
     last_advance_request_count: u64,
     cached_frequency: f32,
@@ -155,9 +155,8 @@ impl CellSequencer {
     }
 
     pub fn new_with_controls(sample_rate: u32, controls: CellSequencerControls) -> Self {
-        let sequences = controls.sequences();
-        let current_sequence =
-            normalize_sequence_index(controls.selected_sequence(), sequences.len());
+        let sequences = controls.cells();
+        let current_sequence = normalize_sequence_index(controls.selected_cell(), sequences.len());
         Self {
             sample_rate,
             ctrl: controls.clone(),
@@ -190,30 +189,30 @@ impl CellSequencer {
             grace_on_beat_cfg: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
-            last_next_sequence_in: 0.0,
-            last_previous_sequence_in: 0.0,
+            last_next_cell_in: 0.0,
+            last_previous_cell_in: 0.0,
             last_control_selected_sequence: current_sequence,
-            last_advance_request_count: controls.advance_request_count(),
+            last_advance_request_count: controls.next_cell_request_count(),
             cached_frequency: 0.0,
             cached_frequency_offset: None,
-            cached_frequency_base: controls.base_note(),
+            cached_frequency_base: controls.root_note(),
             inputs: inputs::CellSequencerInputs::new(),
             outputs: outputs::CellSequencerOutputs::new(),
         }
     }
 
-    pub fn with_base_note(self, base_note: u8) -> Self {
-        self.ctrl.set_base_note(base_note);
+    pub fn with_root_note(self, root_note: u8) -> Self {
+        self.ctrl.set_root_note(root_note);
         self
     }
 
-    pub fn with_steps(self, steps: usize) -> Self {
-        self.ctrl.set_steps(steps);
+    pub fn with_step_count(self, step_count: usize) -> Self {
+        self.ctrl.set_step_count(step_count);
         self
     }
 
-    pub fn with_auto_steps(self, auto_steps: bool) -> Self {
-        self.ctrl.set_auto_steps(auto_steps);
+    pub fn with_follow_cell_length(self, follow_cell_length: bool) -> Self {
+        self.ctrl.set_follow_cell_length(follow_cell_length);
         self
     }
 
@@ -222,8 +221,8 @@ impl CellSequencer {
         self
     }
 
-    pub fn with_selected_sequence(self, selected_sequence: usize) -> Self {
-        self.ctrl.set_selected_sequence(selected_sequence);
+    pub fn with_selected_cell(self, selected_cell: usize) -> Self {
+        self.ctrl.set_selected_cell(selected_cell);
         self
     }
 
@@ -232,8 +231,8 @@ impl CellSequencer {
         self
     }
 
-    pub fn with_sequences(self, sequences: Vec<Vec<Step>>) -> Self {
-        self.ctrl.set_sequences(sequences);
+    pub fn with_cells(self, cells: Vec<Vec<Step>>) -> Self {
+        self.ctrl.set_cells(cells);
         self
     }
 
@@ -247,7 +246,7 @@ impl CellSequencer {
         self.current_step
     }
 
-    pub fn current_sequence(&self) -> usize {
+    pub fn current_cell(&self) -> usize {
         self.current_sequence
     }
 
@@ -257,7 +256,7 @@ impl CellSequencer {
             return;
         }
 
-        self.sequences = self.ctrl.sequences();
+        self.sequences = self.ctrl.cells();
         self.last_sequence_bank_version = version;
 
         if self.sequences.is_empty() {
@@ -269,7 +268,7 @@ impl CellSequencer {
             self.active_note = None;
             self.clear_grace_state();
             self.last_control_selected_sequence = 0;
-            self.ctrl.set_current_cell(0);
+            self.ctrl.set_cell(0);
             self.ctrl.set_loop_count(0);
             return;
         }
@@ -280,11 +279,10 @@ impl CellSequencer {
             .pending_sequence
             .map(|index| normalize_sequence_index(index, self.sequences.len()));
 
-        let selected =
-            normalize_sequence_index(self.ctrl.selected_sequence(), self.sequences.len());
-        self.ctrl.set_selected_sequence(selected);
+        let selected = normalize_sequence_index(self.ctrl.selected_cell(), self.sequences.len());
+        self.ctrl.set_selected_cell(selected);
         self.last_control_selected_sequence = selected;
-        self.ctrl.set_current_cell(self.current_sequence);
+        self.ctrl.set_cell(self.current_sequence);
     }
 
     fn get_step(&self, sequence_index: usize, step_index: usize) -> Step {
@@ -300,7 +298,7 @@ impl CellSequencer {
     }
 
     fn note_frequency(&self, offset: i8) -> f32 {
-        let midi_note = (self.ctrl.base_note() as i16 + offset as i16).clamp(0, 127) as u8;
+        let midi_note = (self.ctrl.root_note() as i16 + offset as i16).clamp(0, 127) as u8;
         Note::new(midi_note).frequency()
     }
 
@@ -486,7 +484,7 @@ impl CellSequencer {
         self.active_note = step.note;
     }
 
-    /// Ends one-shot playback: silence the voice and latch the `end` gate.
+    /// Ends one-shot playback: silence the voice and latch the `ended` gate.
     fn finish(&mut self) {
         self.set_finished(true);
         self.active_note = None;
@@ -503,8 +501,7 @@ impl CellSequencer {
     }
 
     fn effective_selected_sequence(&self, i: usize) -> usize {
-        self.inputs
-            .select_sequence(i, self.ctrl.selected_sequence())
+        self.inputs.select_cell(i, self.ctrl.selected_cell())
     }
 
     fn effective_wait_for_cycle_end(&self, i: usize) -> bool {
@@ -524,9 +521,9 @@ impl CellSequencer {
         self.pending_sequence = None;
         self.clear_grace_state();
         self.prime_current_note();
-        self.ctrl.set_selected_sequence(sequence_index);
+        self.ctrl.set_selected_cell(sequence_index);
         self.last_control_selected_sequence = sequence_index;
-        self.ctrl.set_current_cell(sequence_index);
+        self.ctrl.set_cell(sequence_index);
         self.ctrl.set_loop_count(0);
     }
 
@@ -539,13 +536,13 @@ impl CellSequencer {
             self.gate_continuous = false;
             self.active_note = None;
             self.clear_grace_state();
-            self.ctrl.set_selected_sequence(0);
+            self.ctrl.set_selected_cell(0);
             self.last_control_selected_sequence = 0;
             return;
         }
 
         let sequence_index = normalize_sequence_index(sequence_index, self.sequences.len());
-        self.ctrl.set_selected_sequence(sequence_index);
+        self.ctrl.set_selected_cell(sequence_index);
         self.last_control_selected_sequence = sequence_index;
 
         if self.effective_wait_for_cycle_end(i) && !self.finished {
@@ -561,23 +558,23 @@ impl CellSequencer {
         }
 
         let len = self.sequences.len() as isize;
-        let base = self.ctrl.selected_sequence() as isize;
+        let base = self.ctrl.selected_cell() as isize;
         (base + offset).rem_euclid(len) as usize
     }
 
     fn step_count(&self) -> usize {
-        // In auto-steps mode the cycle spans the playing cell's own length, so a
-        // cell change of a different length needs no accompanying `steps` write
-        // (FUG-239 #10). Reads the audio thread's local bank snapshot — no lock.
-        // An empty or missing cell falls back to the manual `steps` control so
+        // In follow-cell-length mode the cycle spans the playing cell's own length, so a
+        // cell change of a different length needs no accompanying `step_count`
+        // write (FUG-239 #10). Reads the audio thread's local bank snapshot — no lock.
+        // An empty or missing cell falls back to the manual `step_count` control so
         // the cycle length is never zero.
-        if self.ctrl.auto_steps() {
+        if self.ctrl.follow_cell_length() {
             match self.sequences.get(self.current_sequence) {
                 Some(cell) if !cell.is_empty() => return cell.len().min(MAX_STEPS),
                 _ => {}
             }
         }
-        self.ctrl.steps()
+        self.ctrl.step_count()
     }
 
     fn frequency_for_active_note(&mut self) -> f32 {
@@ -585,7 +582,7 @@ impl CellSequencer {
             self.cached_frequency_offset = None;
             return 0.0;
         };
-        let base = self.ctrl.base_note();
+        let base = self.ctrl.root_note();
         if self.cached_frequency_offset == Some(offset) && self.cached_frequency_base == base {
             return self.cached_frequency;
         }
@@ -634,22 +631,22 @@ impl CellSequencer {
     fn process_sample(&mut self, i: usize, one_shot: bool) {
         self.sync_sequences_from_controls();
 
-        let selected_sequence =
+        let selected_cell =
             normalize_sequence_index(self.effective_selected_sequence(i), self.sequences.len());
-        if selected_sequence != self.last_control_selected_sequence {
-            self.request_sequence_change(i, selected_sequence);
+        if selected_cell != self.last_control_selected_sequence {
+            self.request_sequence_change(i, selected_cell);
         }
 
-        let advance_count = self.ctrl.advance_request_count();
+        let advance_count = self.ctrl.next_cell_request_count();
         let advance_rising = advance_count != self.last_advance_request_count;
         self.last_advance_request_count = advance_count;
 
-        let gate_rising = self.inputs.gate(i) > 0.5 && self.last_gate_in <= 0.5;
+        let gate_rising = self.inputs.clock(i) > 0.5 && self.last_gate_in <= 0.5;
         let reset_rising = self.inputs.reset_gate(i) > 0.5 && self.last_reset_in <= 0.5;
-        let next_rising = (self.inputs.next_sequence(i) > 0.5 && self.last_next_sequence_in <= 0.5)
-            || advance_rising;
+        let next_rising =
+            (self.inputs.next_cell(i) > 0.5 && self.last_next_cell_in <= 0.5) || advance_rising;
         let previous_rising =
-            self.inputs.previous_sequence(i) > 0.5 && self.last_previous_sequence_in <= 0.5;
+            self.inputs.previous_cell(i) > 0.5 && self.last_previous_cell_in <= 0.5;
 
         if reset_rising {
             self.current_step = 0;
@@ -690,20 +687,20 @@ impl CellSequencer {
                         // over one_shot auto-advance.
                         self.current_sequence =
                             normalize_sequence_index(sequence_index, self.sequences.len());
-                        self.ctrl.set_selected_sequence(self.current_sequence);
+                        self.ctrl.set_selected_cell(self.current_sequence);
                         self.last_control_selected_sequence = self.current_sequence;
                         self.active_note = None;
-                        self.ctrl.set_current_cell(self.current_sequence);
+                        self.ctrl.set_cell(self.current_sequence);
                         self.ctrl.set_loop_count(0);
                         self.current_step = 0;
                     } else if one_shot {
                         if self.current_sequence + 1 < self.sequences.len() {
                             // Play the bank through: fall into the next cell.
                             self.current_sequence += 1;
-                            self.ctrl.set_selected_sequence(self.current_sequence);
+                            self.ctrl.set_selected_cell(self.current_sequence);
                             self.last_control_selected_sequence = self.current_sequence;
                             self.active_note = None;
-                            self.ctrl.set_current_cell(self.current_sequence);
+                            self.ctrl.set_cell(self.current_sequence);
                             self.ctrl.set_loop_count(0);
                             self.current_step = 0;
                         } else {
@@ -788,10 +785,10 @@ impl CellSequencer {
 
         self.update_outputs(i, grace_voice);
 
-        self.last_gate_in = self.inputs.gate(i);
+        self.last_gate_in = self.inputs.clock(i);
         self.last_reset_in = self.inputs.reset_gate(i);
-        self.last_next_sequence_in = self.inputs.next_sequence(i);
-        self.last_previous_sequence_in = self.inputs.previous_sequence(i);
+        self.last_next_cell_in = self.inputs.next_cell(i);
+        self.last_previous_cell_in = self.inputs.previous_cell(i);
     }
 }
 
@@ -803,10 +800,9 @@ impl Module for CellSequencer {
     fn process(&mut self, frames: usize) -> bool {
         // Mode is control-plane state: read it once per block so the
         // per-sample loop carries no atomic load for it. Likewise the grace
-        // controls, converting ms to samples once per block.
+        // controls, converting seconds to samples once per block.
         let one_shot = self.ctrl.one_shot();
-        self.grace_samples_cfg =
-            (self.ctrl.grace_duration_ms() * self.sample_rate as f32 / 1000.0) as u32;
+        self.grace_samples_cfg = (self.ctrl.grace_duration() * self.sample_rate as f32) as u32;
         self.grace_velocity_cfg = self.ctrl.grace_velocity();
         self.grace_on_beat_cfg = self.ctrl.grace_on_beat();
         for i in 0..frames {
@@ -845,33 +841,33 @@ impl Module for CellSequencer {
 
     fn controls(&self) -> Vec<ControlMeta> {
         vec![
-            ControlMeta::new("base_note", "Base MIDI note")
+            ControlMeta::new("root_note", "Root MIDI note")
                 .with_range(0.0, 127.0)
-                .with_default(DEFAULT_BASE_NOTE as f32),
-            ControlMeta::new("steps", "Number of steps per sequence")
+                .with_default(DEFAULT_ROOT_NOTE as f32),
+            ControlMeta::new("step_count", "Number of steps per cell")
                 .with_range(1.0, MAX_STEPS as f32)
                 .with_default(DEFAULT_STEPS as f32),
             ControlMeta::new(
-                "auto_steps",
-                "1 = cycle length follows the selected cell's own length (ignores steps); 0 = use steps",
+                "follow_cell_length",
+                "1 = cycle length follows the selected cell's own length (ignores step_count); 0 = use step_count",
             )
             .with_range(0.0, 1.0)
             .with_default(0.0),
             ControlMeta::new("gate_length", "Default gate length ratio")
                 .with_range(0.0, 1.0)
                 .with_default(DEFAULT_GATE_LENGTH),
-            ControlMeta::new("selected_sequence", "Active sequence index")
+            ControlMeta::new("select_cell", "Active cell index")
                 .with_range(0.0, MAX_SEQUENCES as f32 - 1.0)
-                .with_default(self.ctrl.selected_sequence() as f32),
+                .with_default(self.ctrl.selected_cell() as f32),
             ControlMeta::string(
                 "mode",
-                "Playback mode: loop repeats the active cell; one_shot plays the bank through once and fires the end gate",
+                "Playback mode: loop repeats the active cell; one_shot plays the bank through once and fires the ended gate",
             )
             .with_options(vec!["loop".to_string(), "one_shot".to_string()])
             .with_default("loop"),
-            ControlMeta::new("grace_duration_ms", "Duration of a single grace note in ms")
-                .with_range(MIN_GRACE_DURATION_MS, MAX_GRACE_DURATION_MS)
-                .with_default(DEFAULT_GRACE_DURATION_MS),
+            ControlMeta::new("grace_duration", "Duration of a single grace note in seconds")
+                .with_range(MIN_GRACE_DURATION, MAX_GRACE_DURATION)
+                .with_default(DEFAULT_GRACE_DURATION),
             ControlMeta::new(
                 "grace_velocity",
                 "Velocity scale for grace notes relative to the decorated step",
@@ -889,14 +885,18 @@ impl Module for CellSequencer {
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
         match key {
-            "base_note" => Ok(self.ctrl.base_note() as f32),
-            "steps" => Ok(self.ctrl.steps() as f32),
-            "auto_steps" => Ok(if self.ctrl.auto_steps() { 1.0 } else { 0.0 }),
+            "root_note" => Ok(self.ctrl.root_note() as f32),
+            "step_count" => Ok(self.ctrl.step_count() as f32),
+            "follow_cell_length" => Ok(if self.ctrl.follow_cell_length() {
+                1.0
+            } else {
+                0.0
+            }),
             "gate_length" => Ok(self.ctrl.gate_length()),
-            "selected_sequence" => Ok(self.ctrl.selected_sequence() as f32),
+            "select_cell" => Ok(self.ctrl.selected_cell() as f32),
             // Numeric view of the string `mode` control: 0.0 = loop, 1.0 = one_shot.
             "mode" => Ok(if self.ctrl.one_shot() { 1.0 } else { 0.0 }),
-            "grace_duration_ms" => Ok(self.ctrl.grace_duration_ms()),
+            "grace_duration" => Ok(self.ctrl.grace_duration()),
             "grace_velocity" => Ok(self.ctrl.grace_velocity()),
             // Numeric view of `grace_placement`: 0.0 = before, 1.0 = on_beat.
             "grace_placement" => Ok(if self.ctrl.grace_on_beat() { 1.0 } else { 0.0 }),
@@ -906,13 +906,13 @@ impl Module for CellSequencer {
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
         match key {
-            "base_note" => self.ctrl.set_base_note(value as u8),
-            "steps" => self.ctrl.set_steps(value as usize),
-            "auto_steps" => self.ctrl.set_auto_steps(value > 0.5),
+            "root_note" => self.ctrl.set_root_note(value as u8),
+            "step_count" => self.ctrl.set_step_count(value as usize),
+            "follow_cell_length" => self.ctrl.set_follow_cell_length(value > 0.5),
             "gate_length" => self.ctrl.set_gate_length(value),
-            "selected_sequence" => self.ctrl.set_selected_sequence(value.max(0.0) as usize),
+            "select_cell" => self.ctrl.set_selected_cell(value.max(0.0) as usize),
             "mode" => self.ctrl.set_one_shot(value > 0.5),
-            "grace_duration_ms" => self.ctrl.set_grace_duration_ms(value),
+            "grace_duration" => self.ctrl.set_grace_duration(value),
             "grace_velocity" => self.ctrl.set_grace_velocity(value),
             "grace_placement" => self.ctrl.set_grace_on_beat(value > 0.5),
             _ => return Err(format!("Unknown control: {}", key)),
@@ -924,11 +924,15 @@ impl Module for CellSequencer {
 pub struct CellSequencerFactory;
 
 const TYPE_ID: &str = "cell_sequencer";
-const BASE_NOTE: ConfigKey = ConfigKey::int::<u8>("base_note");
-const STEPS: ConfigKey = ConfigKey::int::<usize>("steps");
+const ROOT_NOTE: ConfigKey = ConfigKey::int::<u8>("root_note");
+const STEP_COUNT: ConfigKey = ConfigKey::int::<usize>("step_count");
 const GATE_LENGTH: ConfigKey = ConfigKey::float("gate_length");
-const SELECTED_SEQUENCE: ConfigKey = ConfigKey::int::<usize>("selected_sequence");
-const GRACE_DURATION_MS: ConfigKey = ConfigKey::float("grace_duration_ms");
+// `start_cell` is the authored spelling of the initial cell. `select_cell` is
+// the control's key, which an authored write records and which wins as the
+// later write (until FUG-313 makes selecting a request that is never recorded).
+const START_CELL: ConfigKey = ConfigKey::int::<usize>("start_cell");
+const SELECT_CELL: ConfigKey = ConfigKey::int::<usize>("select_cell");
+const GRACE_DURATION: ConfigKey = ConfigKey::float("grace_duration");
 const GRACE_VELOCITY: ConfigKey = ConfigKey::float("grace_velocity");
 
 impl ModuleFactory for CellSequencerFactory {
@@ -939,16 +943,16 @@ impl ModuleFactory for CellSequencerFactory {
     fn config_keys(&self) -> &'static [ConfigKey] {
         const {
             &[
-                BASE_NOTE,
-                STEPS,
+                ROOT_NOTE,
+                STEP_COUNT,
                 GATE_LENGTH,
-                SELECTED_SEQUENCE,
-                GRACE_DURATION_MS,
+                START_CELL,
+                SELECT_CELL,
+                GRACE_DURATION,
                 GRACE_VELOCITY,
                 ConfigKey::boolean("wait_for_cycle_end"),
-                ConfigKey::text("sequences_json"),
-                ConfigKey::json("sequences"),
-                ConfigKey::boolean("auto_steps"),
+                ConfigKey::json("cells"),
+                ConfigKey::boolean("follow_cell_length"),
                 ConfigKey::text("mode"),
                 ConfigKey::text("grace_placement"),
             ]
@@ -961,41 +965,44 @@ impl ModuleFactory for CellSequencerFactory {
         config: &Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let reader = ConfigReader::new(TYPE_ID, config);
-        let base_note = reader.int::<u8>(&BASE_NOTE)?.unwrap_or(DEFAULT_BASE_NOTE);
-        let steps = reader.int::<usize>(&STEPS)?.unwrap_or(DEFAULT_STEPS);
+        let root_note = reader.int::<u8>(&ROOT_NOTE)?.unwrap_or(DEFAULT_ROOT_NOTE);
+        let step_count = reader.int::<usize>(&STEP_COUNT)?.unwrap_or(DEFAULT_STEPS);
         let gate_length = reader.float(&GATE_LENGTH)?.unwrap_or(DEFAULT_GATE_LENGTH);
-        let selected_sequence = reader.int::<usize>(&SELECTED_SEQUENCE)?.unwrap_or(0);
+        let selected_cell = match reader.int::<usize>(&SELECT_CELL)? {
+            Some(cell) => cell,
+            None => reader.int::<usize>(&START_CELL)?.unwrap_or(0),
+        };
         let wait_for_cycle_end = config
             .get("wait_for_cycle_end")
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
-        // `sequences_json` is the bank control's key, which an authored write
-        // records; it wins over `sequences`.
-        let sequences = match config
-            .get("sequences_json")
-            .and_then(|value| value.as_str())
-        {
-            Some(json) => parse_sequence_bank(Some(&serde_json::from_str(json)?), "sequences_json"),
-            None => parse_sequence_bank(config.get("sequences"), "sequences"),
+        // `cells` is also the cells control's key, which an authored write
+        // records as JSON text; the array form is the one people write.
+        let sequences = match config.get("cells").and_then(|value| value.as_str()) {
+            Some(json) => parse_sequence_bank(Some(&serde_json::from_str(json)?), "cells"),
+            None => parse_sequence_bank(config.get("cells"), "cells"),
         }
         .map_err(|error| error.refused_by(&reader))?;
 
         let controls = CellSequencerControls::new_with_values(
-            base_note,
-            steps,
+            root_note,
+            step_count,
             gate_length,
-            selected_sequence,
+            selected_cell,
             wait_for_cycle_end,
             sequences.clone(),
         );
-        if let Some(auto_steps) = config.get("auto_steps").and_then(|value| value.as_bool()) {
-            controls.set_auto_steps(auto_steps);
+        if let Some(follow_cell_length) = config
+            .get("follow_cell_length")
+            .and_then(|value| value.as_bool())
+        {
+            controls.set_follow_cell_length(follow_cell_length);
         }
         if let Some(mode) = config.get("mode").and_then(|value| value.as_str()) {
             controls.set_mode(mode)?;
         }
-        if let Some(ms) = reader.float(&GRACE_DURATION_MS)? {
-            controls.set_grace_duration_ms(ms);
+        if let Some(seconds) = reader.float(&GRACE_DURATION)? {
+            controls.set_grace_duration(seconds);
         }
         if let Some(scale) = reader.float(&GRACE_VELOCITY)? {
             controls.set_grace_velocity(scale);

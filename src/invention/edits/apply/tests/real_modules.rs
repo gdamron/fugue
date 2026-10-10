@@ -137,7 +137,7 @@ fn a_control_written_to_a_replaced_module_is_made_through_its_setter() {
 }
 
 const TARGETS_OSC1: &str =
-    r#"[{ "at": 0, "module": "osc1", "control": "frequency", "value": 220.0 }]"#;
+    r#"[{ "at_step": 0, "module": "osc1", "control": "frequency", "value": 220.0 }]"#;
 
 #[test]
 fn a_scheduler_added_in_a_batch_takes_a_schedule_written_in_it() {
@@ -161,7 +161,7 @@ fn a_scheduler_added_in_a_batch_takes_a_schedule_written_in_it() {
             set(
                 "auto2",
                 "schedule",
-                text(r#"[{ "at": 0, "module": "ghost", "control": "x", "value": 1.0 }]"#),
+                text(r#"[{ "at_step": 0, "module": "ghost", "control": "x", "value": 1.0 }]"#),
             ),
         ])
         .expect_err("the target does not exist");
@@ -460,7 +460,7 @@ fn a_batch_sees_controls_an_earlier_authored_write_added() {
 fn every_schedule_a_batch_writes_is_checked_against_the_graph() {
     // An earlier schedule naming a module that does not exist is refused at
     // its edit, though a later one overwrites it.
-    let ghost = r#"[{ "at": 0, "module": "ghost", "control": "x", "value": 1.0 }]"#;
+    let ghost = r#"[{ "at_step": 0, "module": "ghost", "control": "x", "value": 1.0 }]"#;
     let (mut running, _pump) = start(BASE);
     let error = running
         .apply_edits(&[
@@ -560,7 +560,7 @@ fn a_sample_that_does_not_load_is_reported_when_written_and_the_batch_commits() 
 
 #[test]
 fn a_schedule_targeting_its_own_scheduler_is_refused_though_overwritten() {
-    let own = r#"[{ "at": 0, "module": "auto", "control": "step", "value": 1.0 }]"#;
+    let own = r#"[{ "at_step": 0, "module": "auto", "control": "step", "value": 1.0 }]"#;
     let (mut running, _pump) = start(BASE);
     let error = running
         .apply_edits(&[

@@ -26,10 +26,10 @@ begin again.
 ## Structure
 
 - **`clock`** — master clock at `bpm = 240` so that one beat at the clock's
-  rate is one 8th note in *In C*'s notional 120 BPM tempo, and `gate_x4` is
+  rate is one 8th note in *In C*'s notional 120 BPM tempo, and `beat_x4` is
   the 32nd-note grid the score is encoded against.
 - **`pulse`** — the famous In C pulse: a constant C5 8th-note pluck
-  (`pluck_voice` development), driven directly off the clock's beat gate.
+  (`pluck_voice` development), driven directly off the clock's `beat` output.
 - **13 voices**, each composed of:
   - `mel_<i>` — a `cell_sequencer` loaded with the 53 cells from
     `score.json` (referenced via the shared `score` asset).
@@ -37,12 +37,12 @@ begin again.
     (piano, marimba, vibraphone, pluck, or pad — distributed across voices
     for timbral variety).
 - **`conductor`** — an `agent` module loaded with `conductor.md`. It wakes
-  on the clock's whole-note gate (`gate_d4`), reads every voice's
-  `current_cell` and `loop_count`, and writes `advance` decisions back to
+  on the clock's every-four-beats gate (`beat_d4`), reads every voice's
+  `cell` and `loop_count`, and writes `next_cell` decisions back to
   the `mel_<i>` sequencers. It also writes mixer channel levels and reverb
   wet to shape the macro arc. Configure the backend with
   `conductor.config.backend`; the default is `local:auto`.
-- **`conductor_fallback`** — a `code` module that keeps sequencer `steps`
+- **`conductor_fallback`** — a `code` module that keeps sequencer `step_count`
   aligned with the active cell length. If the conductor is disabled or has
   not completed a request recently, it applies conservative deterministic
   conducting rules so the example still progresses without LLM credentials.

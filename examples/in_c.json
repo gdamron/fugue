@@ -41,7 +41,7 @@
       "type": "clock",
       "config": {
         "bpm": 240,
-        "gate_duration": 0.4
+        "gate_length": 0.4
       }
     },
     {
@@ -61,12 +61,12 @@
       "id": "mel_1",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 72,
-        "steps": 24,
+        "root_note": 72,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -80,12 +80,12 @@
       "id": "mel_2",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
-        "steps": 24,
+        "root_note": 60,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -99,12 +99,12 @@
       "id": "mel_3",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 48,
-        "steps": 24,
+        "root_note": 48,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -118,12 +118,12 @@
       "id": "mel_4",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 72,
-        "steps": 24,
+        "root_note": 72,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -137,12 +137,12 @@
       "id": "mel_5",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 48,
-        "steps": 24,
+        "root_note": 48,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -156,12 +156,12 @@
       "id": "mel_6",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
-        "steps": 24,
+        "root_note": 60,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -175,12 +175,12 @@
       "id": "mel_7",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 48,
-        "steps": 24,
+        "root_note": 48,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -194,12 +194,12 @@
       "id": "mel_8",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 60,
-        "steps": 24,
+        "root_note": 60,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -213,12 +213,12 @@
       "id": "mel_9",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 72,
-        "steps": 24,
+        "root_note": 72,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -232,12 +232,12 @@
       "id": "mel_10",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 36,
-        "steps": 24,
+        "root_note": 36,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -251,12 +251,12 @@
       "id": "mel_11",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 36,
-        "steps": 24,
+        "root_note": 36,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -270,12 +270,12 @@
       "id": "mel_12",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 36,
-        "steps": 24,
+        "root_note": 36,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -289,12 +289,12 @@
       "id": "mel_13",
       "type": "cell_sequencer",
       "config": {
-        "base_note": 72,
-        "steps": 24,
+        "root_note": 72,
+        "step_count": 24,
         "gate_length": 0.85,
-        "selected_sequence": 0,
+        "start_cell": 0,
         "wait_for_cycle_end": true,
-        "sequences": {
+        "cells": {
           "$asset": "score",
           "path": "/cells"
         }
@@ -321,79 +321,79 @@
             "name": "mel_1",
             "from": "mel_1",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_2",
             "from": "mel_2",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_3",
             "from": "mel_3",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_4",
             "from": "mel_4",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_5",
             "from": "mel_5",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_6",
             "from": "mel_6",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_7",
             "from": "mel_7",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_8",
             "from": "mel_8",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_9",
             "from": "mel_9",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_10",
             "from": "mel_10",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_11",
             "from": "mel_11",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_12",
             "from": "mel_12",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mel_13",
             "from": "mel_13",
             "source": "controls",
-            "keys": ["current_cell", "loop_count", "total_cells", "steps"]
+            "keys": ["cell", "loop_count", "cell_count", "step_count"]
           },
           {
             "name": "mixer_levels",
@@ -416,7 +416,7 @@
           {
             "from": "$.payload.advances.mel_1",
             "to": "mel_1",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -424,7 +424,7 @@
           {
             "from": "$.payload.advances.mel_2",
             "to": "mel_2",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -432,7 +432,7 @@
           {
             "from": "$.payload.advances.mel_3",
             "to": "mel_3",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -440,7 +440,7 @@
           {
             "from": "$.payload.advances.mel_4",
             "to": "mel_4",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -448,7 +448,7 @@
           {
             "from": "$.payload.advances.mel_5",
             "to": "mel_5",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -456,7 +456,7 @@
           {
             "from": "$.payload.advances.mel_6",
             "to": "mel_6",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -464,7 +464,7 @@
           {
             "from": "$.payload.advances.mel_7",
             "to": "mel_7",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -472,7 +472,7 @@
           {
             "from": "$.payload.advances.mel_8",
             "to": "mel_8",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -480,7 +480,7 @@
           {
             "from": "$.payload.advances.mel_9",
             "to": "mel_9",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -488,7 +488,7 @@
           {
             "from": "$.payload.advances.mel_10",
             "to": "mel_10",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -496,7 +496,7 @@
           {
             "from": "$.payload.advances.mel_11",
             "to": "mel_11",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -504,7 +504,7 @@
           {
             "from": "$.payload.advances.mel_12",
             "to": "mel_12",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -512,7 +512,7 @@
           {
             "from": "$.payload.advances.mel_13",
             "to": "mel_13",
-            "control": "advance",
+            "control": "next_cell",
             "type": "number",
             "min": 0,
             "max": 1
@@ -700,7 +700,7 @@
   "connections": [
     {
       "from": "clock",
-      "from_port": "gate",
+      "from_port": "beat",
       "to": "pulse_mel",
       "to_port": "gate"
     },
@@ -724,9 +724,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_1",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_1",
@@ -748,9 +748,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_2",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_2",
@@ -772,9 +772,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_3",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_3",
@@ -796,9 +796,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_4",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_4",
@@ -820,9 +820,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_5",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_5",
@@ -844,9 +844,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_6",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_6",
@@ -868,9 +868,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_7",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_7",
@@ -892,9 +892,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_8",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_8",
@@ -916,9 +916,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_9",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_9",
@@ -940,9 +940,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_10",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_10",
@@ -964,9 +964,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_11",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_11",
@@ -988,9 +988,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_12",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_12",
@@ -1012,9 +1012,9 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_13",
-      "to_port": "gate"
+      "to_port": "clock"
     },
     {
       "from": "mel_13",
@@ -1036,7 +1036,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_d4",
+      "from_port": "beat_d4",
       "to": "conductor",
       "to_port": "trigger"
     },

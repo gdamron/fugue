@@ -1,7 +1,7 @@
 // Deterministic fallback and sequencer maintenance for In C.
 //
 // The LLM-backed `conductor` agent is the primary conductor. This script keeps
-// each cell_sequencer's `steps` aligned to the active cell length, and only
+// each cell_sequencer's `step_count` aligned to the active cell length, and only
 // makes progression decisions when the conductor is disabled or has not
 // completed a request recently.
 
@@ -46,9 +46,9 @@ function init() {
     throw new Error("conductor_fallback: missing sequencer_ids");
   }
 
-  const sequencesJson = graph.getControl(cfg.sequencers[0], "sequences_json");
+  const cellsJson = graph.getControl(cfg.sequencers[0], "cells");
   try {
-    const cells = JSON.parse(sequencesJson);
+    const cells = JSON.parse(cellsJson);
     cellLengths = Array.isArray(cells)
       ? cells.map((cell) => (Array.isArray(cell) ? cell.length : 0))
       : [];
@@ -70,8 +70,8 @@ function readBool(moduleId, control) {
 }
 
 function pulseAdvance(sequencerId) {
-  graph.setControl(sequencerId, "advance", 1);
-  graph.setControl(sequencerId, "advance", 0);
+  graph.setControl(sequencerId, "next_cell", 1);
+  graph.setControl(sequencerId, "next_cell", 0);
 }
 
 function syncSteps(index, cell) {
@@ -79,7 +79,7 @@ function syncSteps(index, cell) {
   if (cellLengths && cell >= 0 && cell < cellLengths.length) {
     const len = cellLengths[cell];
     if (len > 0) {
-      graph.setControl(cfg.sequencers[index], "steps", len);
+      graph.setControl(cfg.sequencers[index], "step_count", len);
     }
   }
   lastCellApplied[index] = cell;
@@ -132,9 +132,9 @@ function tick() {
 
   for (let i = 0; i < cfg.sequencers.length; i++) {
     const id = cfg.sequencers[i];
-    const cell = readNumber(id, "current_cell");
+    const cell = readNumber(id, "cell");
     const loopCount = readNumber(id, "loop_count");
-    const total = readNumber(id, "total_cells");
+    const total = readNumber(id, "cell_count");
     cells.push(cell);
     loops.push(loopCount);
     syncSteps(i, cell);
@@ -162,7 +162,7 @@ function tick() {
 
     if (cell >= totalCells - 1) {
       if (allAtLast && loopCount >= cfg.lastCellHoldLoops) {
-        graph.setControl(id, "selected_sequence", 0);
+        graph.setControl(id, "select_cell", 0);
       }
       continue;
     }

@@ -32,7 +32,7 @@ fn assert_identical(a: &[f32], b: &[f32], label: &str) {
 const ACYCLIC_INVENTION: &str = r#"{
     "version": "1.0.0",
     "modules": [
-        { "id": "clock", "type": "clock", "config": { "bpm": 128.0, "gate_duration": 0.4 } },
+        { "id": "clock", "type": "clock", "config": { "bpm": 128.0, "gate_length": 0.4 } },
         { "id": "lfo", "type": "lfo", "config": { "rate": 5.0, "waveform": "triangle" } },
         { "id": "osc", "type": "oscillator", "config": { "waveform": "sawtooth", "frequency": 220.0, "frequency_mod_depth": 40.0 } },
         { "id": "adsr", "type": "adsr", "config": { "attack": 0.005, "decay": 0.1, "sustain": 0.6, "release": 0.2 } },
@@ -43,7 +43,7 @@ const ACYCLIC_INVENTION: &str = r#"{
     "connections": [
         { "from": "lfo", "from_port": "bipolar", "to": "osc", "to_port": "frequency_mod" },
         { "from": "osc", "from_port": "audio", "to": "filter", "to_port": "audio" },
-        { "from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate" },
+        { "from": "clock", "from_port": "beat", "to": "adsr", "to_port": "gate" },
         { "from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level" },
         { "from": "filter", "from_port": "audio", "to": "vca", "to_port": "audio" },
         { "from": "vca", "from_port": "audio", "to": "dac", "to_port": "audio" }

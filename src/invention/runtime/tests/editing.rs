@@ -86,7 +86,7 @@ fn a_failed_live_edit_changes_nothing() {
         .add_module("x", "lfo", &serde_json::json!({ "waveform": "bogus" }))
         .is_err());
     let unresolved = serde_json::json!({
-        "schedule": [{ "at": 0, "module": "missing", "control": "frequency", "value": 1.0 }]
+        "schedule": [{ "at_step": 0, "module": "missing", "control": "frequency", "value": 1.0 }]
     });
     assert!(running
         .add_module("sched", "control_scheduler", &unresolved)

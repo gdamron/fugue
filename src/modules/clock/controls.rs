@@ -15,30 +15,30 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 ///
 /// // Adjust tempo in real-time
 /// controls.set_bpm(140.0);
-/// controls.set_gate_duration(0.5); // 50% duty cycle
+/// controls.set_gate_length(0.5); // 50% duty cycle
 /// ```
 #[derive(Clone)]
 pub struct ClockControls {
     pub(crate) bpm: AtomicF32,
-    pub(crate) gate_duration: AtomicF32,
+    pub(crate) gate_length: AtomicF32,
 }
 
 impl ClockControls {
     /// Creates new clock controls with the given initial BPM.
     ///
-    /// Gate duration defaults to 0.25 (25% duty cycle).
+    /// Gate length defaults to 0.25 (25% duty cycle).
     pub fn new(bpm: f64) -> Self {
         Self {
             bpm: AtomicF32::new(bpm as f32),
-            gate_duration: AtomicF32::new(0.25),
+            gate_length: AtomicF32::new(0.25),
         }
     }
 
-    /// Creates new clock controls with the given BPM and gate duration.
-    pub fn new_with_gate_duration(bpm: f64, gate_duration: f64) -> Self {
+    /// Creates new clock controls with the given BPM and gate length.
+    pub fn new_with_gate_length(bpm: f64, gate_length: f64) -> Self {
         Self {
             bpm: AtomicF32::new(bpm as f32),
-            gate_duration: AtomicF32::new(gate_duration.clamp(0.0, 1.0) as f32),
+            gate_length: AtomicF32::new(gate_length.clamp(0.0, 1.0) as f32),
         }
     }
 
@@ -59,15 +59,15 @@ impl ClockControls {
         self.bpm.store(bpm as f32);
     }
 
-    /// Gets the gate duration as a fraction of the beat (0.0-1.0).
-    pub fn gate_duration(&self) -> f64 {
-        self.gate_duration.load() as f64
+    /// Gets the gate length as a fraction of the pulse (0.0-1.0).
+    pub fn gate_length(&self) -> f64 {
+        self.gate_length.load() as f64
     }
 
-    /// Sets the gate duration as a fraction of the beat (0.0 to 1.0).
+    /// Sets the gate length as a fraction of the pulse (0.0 to 1.0).
     /// For example, 0.5 = gate HIGH for 50% of each beat.
-    pub fn set_gate_duration(&self, duration: f64) {
-        self.gate_duration.store(duration.clamp(0.0, 1.0) as f32);
+    pub fn set_gate_length(&self, length: f64) {
+        self.gate_length.store(length.clamp(0.0, 1.0) as f32);
     }
 
     /// Calculates the number of samples per beat at the given sample rate.
@@ -82,16 +82,16 @@ impl ControlSurface for ClockControls {
             ControlMeta::number("bpm", "Tempo in beats per minute")
                 .with_range(1.0, 300.0)
                 .with_default(self.bpm() as f32),
-            ControlMeta::number("gate_duration", "Gate duration as fraction of beat")
+            ControlMeta::number("gate_length", "Gate length as a fraction of the pulse")
                 .with_range(0.0, 1.0)
-                .with_default(self.gate_duration() as f32),
+                .with_default(self.gate_length() as f32),
         ]
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
             "bpm" => Ok(ControlValue::Number(self.bpm() as f32)),
-            "gate_duration" => Ok(ControlValue::Number(self.gate_duration() as f32)),
+            "gate_length" => Ok(ControlValue::Number(self.gate_length() as f32)),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -103,8 +103,8 @@ impl ControlSurface for ClockControls {
                 self.set_bpm(value as f64);
                 Ok(())
             }
-            "gate_duration" => {
-                self.set_gate_duration(value as f64);
+            "gate_length" => {
+                self.set_gate_length(value as f64);
                 Ok(())
             }
             _ => Err(format!("Unknown control: {}", key)),

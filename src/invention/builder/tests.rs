@@ -284,8 +284,8 @@ fn resolves_relative_asset_refs_in_module_configs() {
                 id: "seq".to_string(),
                 module_type: "cell_sequencer".to_string(),
                 config: serde_json::json!({
-                    "base_note": { "$asset": "score", "path": "/base_note_hint" },
-                    "sequences": { "$asset": "score", "path": "/cells" },
+                    "root_note": { "$asset": "score", "path": "/base_note_hint" },
+                    "cells": { "$asset": "score", "path": "/cells" },
                 }),
             },
             crate::ModuleSpec {
@@ -311,8 +311,8 @@ fn resolves_relative_asset_refs_in_module_configs() {
     let state = runtime.state.lock().unwrap();
     let config = &state.modules.get("seq").unwrap().config;
 
-    assert_eq!(config["base_note"], 48);
-    assert_eq!(config["sequences"].as_array().unwrap().len(), 2);
+    assert_eq!(config["root_note"], 48);
+    assert_eq!(config["cells"].as_array().unwrap().len(), 2);
     let config = &state.modules.get("notes").unwrap().config;
     assert_eq!(config["metadata"][0]["source"], 48);
 

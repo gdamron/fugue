@@ -18,14 +18,14 @@ mod tests {
         println!("  Clock samples_elapsed: {}", clock.samples_elapsed());
         println!(
             "  Clock gate (before first process): {:.2}",
-            clock.get_output("gate").unwrap()
+            clock.get_output("beat").unwrap()
         );
         println!();
 
         // Simulate a few samples
         for i in 0..10 {
             // Get outputs for THIS sample (before processing)
-            let gate = clock.get_output("gate").unwrap();
+            let gate = clock.get_output("beat").unwrap();
             let osc_audio = osc.get_output("audio").unwrap();
 
             // Route signals

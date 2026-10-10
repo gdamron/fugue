@@ -104,7 +104,7 @@
   "connections": [
     {
       "from": "clock",
-      "from_port": "gate",
+      "from_port": "beat",
       "to": "melody",
       "to_port": "gate"
     },

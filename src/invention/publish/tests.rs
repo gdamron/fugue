@@ -354,7 +354,7 @@ fn failed_preparation_leaves_everything_unchanged() {
         "sched",
         "control_scheduler",
         &serde_json::json!({
-            "schedule": [{ "at": 0, "module": "missing", "control": "frequency", "value": 1.0 }]
+            "schedule": [{ "at_step": 0, "module": "missing", "control": "frequency", "value": 1.0 }]
         }),
     );
     assert!(matches!(

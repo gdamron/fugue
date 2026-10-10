@@ -19,22 +19,14 @@ pub(super) fn parse_sequence_bank(
     };
 
     if array.len() > MAX_SEQUENCES {
-        return Err(format!(
-            "sequence bank may not contain more than {} sequences",
-            MAX_SEQUENCES
-        )
-        .into());
+        return Err(format!("cells may not contain more than {} cells", MAX_SEQUENCES).into());
     }
 
     let mut bank = Vec::with_capacity(array.len());
     for (index, sequence) in array.iter().enumerate() {
         let parsed = parse_pattern(Some(sequence), &format!("{name}[{index}]"))?;
         if parsed.len() > MAX_STEPS {
-            return Err(format!(
-                "each sequence may not contain more than {} steps",
-                MAX_STEPS
-            )
-            .into());
+            return Err(format!("each cell may not contain more than {} steps", MAX_STEPS).into());
         }
         bank.push(parsed);
     }
@@ -44,5 +36,5 @@ pub(super) fn parse_sequence_bank(
 
 pub(crate) fn parse_sequence_bank_json(value: &str) -> Result<Vec<Vec<Step>>, String> {
     let value: Value = serde_json::from_str(value).map_err(|err| err.to_string())?;
-    parse_sequence_bank(Some(&value), "sequences_json").map_err(|err| err.to_string())
+    parse_sequence_bank(Some(&value), "cells").map_err(|err| err.to_string())
 }

@@ -3,35 +3,35 @@
 use crate::MAX_BLOCK;
 
 pub const INPUTS: [&str; 6] = [
-    "gate",
+    "clock",
     "reset",
-    "next_sequence",
-    "previous_sequence",
-    "select_sequence",
+    "next_cell",
+    "previous_cell",
+    "select_cell",
     "wait_for_cycle_end",
 ];
 
 pub struct CellSequencerInputs {
-    gate: [f32; MAX_BLOCK],
+    clock: [f32; MAX_BLOCK],
     reset: [f32; MAX_BLOCK],
-    next_sequence: [f32; MAX_BLOCK],
-    previous_sequence: [f32; MAX_BLOCK],
-    select_sequence: [f32; MAX_BLOCK],
+    next_cell: [f32; MAX_BLOCK],
+    previous_cell: [f32; MAX_BLOCK],
+    select_cell: [f32; MAX_BLOCK],
     wait_for_cycle_end: [f32; MAX_BLOCK],
-    select_sequence_connected: bool,
+    select_cell_connected: bool,
     wait_for_cycle_end_connected: bool,
 }
 
 impl CellSequencerInputs {
     pub fn new() -> Self {
         Self {
-            gate: [0.0; MAX_BLOCK],
+            clock: [0.0; MAX_BLOCK],
             reset: [0.0; MAX_BLOCK],
-            next_sequence: [0.0; MAX_BLOCK],
-            previous_sequence: [0.0; MAX_BLOCK],
-            select_sequence: [0.0; MAX_BLOCK],
+            next_cell: [0.0; MAX_BLOCK],
+            previous_cell: [0.0; MAX_BLOCK],
+            select_cell: [0.0; MAX_BLOCK],
             wait_for_cycle_end: [0.0; MAX_BLOCK],
-            select_sequence_connected: false,
+            select_cell_connected: false,
             wait_for_cycle_end_connected: false,
         }
     }
@@ -39,13 +39,13 @@ impl CellSequencerInputs {
     /// Fills an input port's buffer with a constant value (control thread / tests).
     pub fn set(&mut self, port: &str, value: f32) -> Result<(), String> {
         match port {
-            "gate" => self.gate.fill(value),
+            "clock" => self.clock.fill(value),
             "reset" => self.reset.fill(value),
-            "next_sequence" => self.next_sequence.fill(value),
-            "previous_sequence" => self.previous_sequence.fill(value),
-            "select_sequence" => {
-                self.select_sequence.fill(value);
-                self.select_sequence_connected = true;
+            "next_cell" => self.next_cell.fill(value),
+            "previous_cell" => self.previous_cell.fill(value),
+            "select_cell" => {
+                self.select_cell.fill(value);
+                self.select_cell_connected = true;
             }
             "wait_for_cycle_end" => {
                 self.wait_for_cycle_end.fill(value);
@@ -60,11 +60,11 @@ impl CellSequencerInputs {
     #[inline]
     pub fn block_mut(&mut self, index: usize) -> &mut [f32] {
         match index {
-            0 => &mut self.gate,
+            0 => &mut self.clock,
             1 => &mut self.reset,
-            2 => &mut self.next_sequence,
-            3 => &mut self.previous_sequence,
-            4 => &mut self.select_sequence,
+            2 => &mut self.next_cell,
+            3 => &mut self.previous_cell,
+            4 => &mut self.select_cell,
             _ => &mut self.wait_for_cycle_end,
         }
     }
@@ -72,15 +72,15 @@ impl CellSequencerInputs {
     /// Records whether an input port is fed by an upstream connection.
     pub fn set_connected(&mut self, index: usize, connected: bool) {
         match index {
-            4 => self.select_sequence_connected = connected,
+            4 => self.select_cell_connected = connected,
             5 => self.wait_for_cycle_end_connected = connected,
             _ => {}
         }
     }
 
     #[inline]
-    pub fn gate(&self, i: usize) -> f32 {
-        self.gate[i]
+    pub fn clock(&self, i: usize) -> f32 {
+        self.clock[i]
     }
 
     #[inline]
@@ -89,19 +89,19 @@ impl CellSequencerInputs {
     }
 
     #[inline]
-    pub fn next_sequence(&self, i: usize) -> f32 {
-        self.next_sequence[i]
+    pub fn next_cell(&self, i: usize) -> f32 {
+        self.next_cell[i]
     }
 
     #[inline]
-    pub fn previous_sequence(&self, i: usize) -> f32 {
-        self.previous_sequence[i]
+    pub fn previous_cell(&self, i: usize) -> f32 {
+        self.previous_cell[i]
     }
 
     #[inline]
-    pub fn select_sequence(&self, i: usize, control: usize) -> usize {
-        if self.select_sequence_connected {
-            self.select_sequence[i].max(0.0).round() as usize
+    pub fn select_cell(&self, i: usize, control: usize) -> usize {
+        if self.select_cell_connected {
+            self.select_cell[i].max(0.0).round() as usize
         } else {
             control
         }

@@ -20,11 +20,6 @@ pub(crate) const DEFAULT_GRACE_DURATION: f32 = 0.06;
 /// Range of the `grace_duration` control, in seconds.
 pub(crate) const MIN_GRACE_DURATION: f32 = 0.005;
 pub(crate) const MAX_GRACE_DURATION: f32 = 0.2;
-// The cell sequencer still counts grace time in milliseconds (its rename is
-// C2-7), so it keeps these.
-pub(crate) const DEFAULT_GRACE_DURATION_MS: f32 = 60.0;
-pub(crate) const MIN_GRACE_DURATION_MS: f32 = 5.0;
-pub(crate) const MAX_GRACE_DURATION_MS: f32 = 200.0;
 /// Default velocity scale for grace notes relative to the decorated step.
 pub(crate) const DEFAULT_GRACE_VELOCITY: f32 = 0.8;
 

@@ -9,34 +9,34 @@ fn pulse(module: &mut CellSequencer, port: &str) {
 }
 
 fn advance_gate(module: &mut CellSequencer) {
-    pulse(module, "gate");
+    pulse(module, "clock");
 }
 
 #[test]
-fn auto_steps_wraps_the_cycle_at_the_selected_cell_length() {
-    // One 2-step cell, with a deliberately-wrong manual `steps` of 4.
+fn follow_cell_length_wraps_the_cycle_at_the_selected_cell_length() {
+    // One 2-step cell, with a deliberately-wrong manual `step_count` of 4.
     let cell = || vec![vec![Step::note(0), Step::note(2)]];
 
-    // auto_steps OFF (default): manual steps=4 governs, so after three advances
+    // follow_cell_length OFF (default): manual step_count=4 governs, so after three advances
     // the cursor is still climbing (step 2), not wrapped.
     let mut manual = CellSequencer::new(44_100)
-        .with_steps(4)
-        .with_sequences(cell());
+        .with_step_count(4)
+        .with_cells(cell());
     for _ in 0..3 {
         advance_gate(&mut manual);
     }
     assert_eq!(
         manual.current_step(),
         2,
-        "manual steps=4 keeps advancing past the 2-step cell"
+        "manual step_count=4 keeps advancing past the 2-step cell"
     );
 
-    // auto_steps ON: the selected cell's own length (2) governs, so the third
-    // advance wraps back to step 0 with no `steps` write (FUG-239 #10).
+    // follow_cell_length ON: the selected cell's own length (2) governs, so the third
+    // advance wraps back to step 0 with no `step_count` write (FUG-239 #10).
     let mut auto = CellSequencer::new(44_100)
-        .with_steps(4)
-        .with_auto_steps(true)
-        .with_sequences(cell());
+        .with_step_count(4)
+        .with_follow_cell_length(true)
+        .with_cells(cell());
     advance_gate(&mut auto);
     assert_eq!(auto.current_step(), 0);
     advance_gate(&mut auto);
@@ -45,20 +45,20 @@ fn auto_steps_wraps_the_cycle_at_the_selected_cell_length() {
     assert_eq!(
         auto.current_step(),
         0,
-        "cell length 2 wraps the cycle regardless of steps=4"
+        "cell length 2 wraps the cycle regardless of step_count=4"
     );
 }
 
 #[test]
 fn test_cell_sequencer_basic_playback() {
-    let mut seq = CellSequencer::new(44_100).with_sequences(vec![
+    let mut seq = CellSequencer::new(44_100).with_cells(vec![
         vec![Step::note(0), Step::rest(), Step::note(7)],
         vec![Step::note(12)],
     ]);
 
     advance_gate(&mut seq);
     assert!(seq.get_output("frequency").unwrap() > 0.0);
-    assert_eq!(seq.get_output("sequence").unwrap(), 0.0);
+    assert_eq!(seq.get_output("cell").unwrap(), 0.0);
 
     advance_gate(&mut seq);
     assert_eq!(seq.get_output("step").unwrap(), 1.0);
@@ -68,12 +68,12 @@ fn test_cell_sequencer_basic_playback() {
 #[test]
 fn test_cell_sequencer_held_steps_continue_active_note() {
     let mut seq = CellSequencer::new(10)
-        .with_steps(3)
+        .with_step_count(3)
         .with_gate_length(0.4)
-        .with_sequences(vec![vec![Step::note(0), Step::held(), Step::rest()]]);
+        .with_cells(vec![vec![Step::note(0), Step::held(), Step::rest()]]);
 
     advance_gate(&mut seq);
-    let expected = Note::new(DEFAULT_BASE_NOTE).frequency();
+    let expected = Note::new(DEFAULT_ROOT_NOTE).frequency();
     assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
     assert_eq!(seq.get_output("gate").unwrap(), 1.0);
 
@@ -104,8 +104,8 @@ fn test_cell_sequencer_held_chain_keeps_gate_high_across_step_boundaries() {
     // and retriggered. With the fix the gate must stay continuously high
     // through the middle of any held chain.
     let mut seq = CellSequencer::new(48_000)
-        .with_steps(5)
-        .with_sequences(vec![vec![
+        .with_step_count(5)
+        .with_cells(vec![vec![
             Step::note(0),
             Step::held(),
             Step::held(),
@@ -120,11 +120,11 @@ fn test_cell_sequencer_held_chain_keeps_gate_high_across_step_boundaries() {
     // Drive two complete clock periods so step_duration_samples gets
     // calibrated from samples_since_gate.
     for _ in 0..2 {
-        seq.set_input("gate", 1.0).unwrap();
+        seq.set_input("clock", 1.0).unwrap();
         for _ in 0..HIGH {
             seq.process(1);
         }
-        seq.set_input("gate", 0.0).unwrap();
+        seq.set_input("clock", 0.0).unwrap();
         for _ in 0..LOW {
             seq.process(1);
         }
@@ -135,7 +135,7 @@ fn test_cell_sequencer_held_chain_keeps_gate_high_across_step_boundaries() {
     // a *middle* held step — the cell still has more held steps after).
     // The output gate must remain 1.0 every sample.
     for cycle in 0..2 {
-        seq.set_input("gate", 1.0).unwrap();
+        seq.set_input("clock", 1.0).unwrap();
         for sample in 0..HIGH {
             seq.process(1);
             assert_eq!(
@@ -147,7 +147,7 @@ fn test_cell_sequencer_held_chain_keeps_gate_high_across_step_boundaries() {
                 sample
             );
         }
-        seq.set_input("gate", 0.0).unwrap();
+        seq.set_input("clock", 0.0).unwrap();
         for sample in 0..LOW {
             seq.process(1);
             assert_eq!(
@@ -172,9 +172,9 @@ fn test_held_step_before_new_note_releases_so_it_retriggers() {
     // rest or the end of the chain still sustains fully
     // (see the held-chain and held-then-rest tests).
     let mut seq = CellSequencer::new(48_000)
-        .with_steps(4)
+        .with_step_count(4)
         .with_gate_length(0.5)
-        .with_sequences(vec![vec![
+        .with_cells(vec![vec![
             Step::note(0),
             Step::held(),
             Step::note(7),
@@ -185,9 +185,9 @@ fn test_held_step_before_new_note_releases_so_it_retriggers() {
     const LOW: usize = 6;
     const PERIOD: usize = HIGH + LOW;
     let edge = |seq: &mut CellSequencer| {
-        seq.set_input("gate", 1.0).unwrap();
+        seq.set_input("clock", 1.0).unwrap();
         seq.process(HIGH);
-        seq.set_input("gate", 0.0).unwrap();
+        seq.set_input("clock", 0.0).unwrap();
         seq.process(LOW);
     };
 
@@ -201,7 +201,7 @@ fn test_held_step_before_new_note_releases_so_it_retriggers() {
     );
 
     // step 2: note(7) must retrigger — the gate rises again on its edge.
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
     assert_eq!(seq.current_step(), 2);
     assert!(
@@ -213,8 +213,8 @@ fn test_held_step_before_new_note_releases_so_it_retriggers() {
 #[test]
 fn test_cell_sequencer_contextless_held_step_is_rest() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(1)
-        .with_sequences(vec![vec![Step::held()]]);
+        .with_step_count(1)
+        .with_cells(vec![vec![Step::held()]]);
 
     advance_gate(&mut seq);
 
@@ -225,36 +225,36 @@ fn test_cell_sequencer_contextless_held_step_is_rest() {
 #[test]
 fn test_cell_sequencer_sequence_change_clears_held_state() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(2)
-        .with_sequences(vec![
+        .with_step_count(2)
+        .with_cells(vec![
             vec![Step::note(0), Step::held()],
             vec![Step::held(), Step::rest()],
         ]);
 
     advance_gate(&mut seq);
-    pulse(&mut seq, "next_sequence");
+    pulse(&mut seq, "next_cell");
 
-    assert_eq!(seq.current_sequence(), 1);
+    assert_eq!(seq.current_cell(), 1);
     assert_eq!(seq.current_step(), 0);
     assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
     assert_eq!(seq.get_output("gate").unwrap(), 0.0);
 }
 
 #[test]
-fn test_cell_sequencer_next_sequence_switches_immediately() {
+fn test_cell_sequencer_next_cell_switches_immediately() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(3)
-        .with_sequences(vec![
+        .with_step_count(3)
+        .with_cells(vec![
             vec![Step::note(0), Step::note(2), Step::note(4)],
             vec![Step::note(12), Step::note(14), Step::note(16)],
         ]);
 
     advance_gate(&mut seq);
-    pulse(&mut seq, "next_sequence");
+    pulse(&mut seq, "next_cell");
 
-    assert_eq!(seq.current_sequence(), 1);
+    assert_eq!(seq.current_cell(), 1);
     assert_eq!(seq.current_step(), 0);
-    assert_eq!(seq.get_output("sequence").unwrap(), 1.0);
+    assert_eq!(seq.get_output("cell").unwrap(), 1.0);
     let expected = Note::new(60).frequency();
     assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
 
@@ -266,26 +266,26 @@ fn test_cell_sequencer_next_sequence_switches_immediately() {
 #[test]
 fn test_cell_sequencer_waits_for_cycle_end_before_switching() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(3)
+        .with_step_count(3)
         .with_wait_for_cycle_end(true)
-        .with_sequences(vec![
+        .with_cells(vec![
             vec![Step::note(0), Step::note(2), Step::note(4)],
             vec![Step::note(12), Step::note(14), Step::note(16)],
         ]);
 
     advance_gate(&mut seq);
     advance_gate(&mut seq);
-    pulse(&mut seq, "next_sequence");
+    pulse(&mut seq, "next_cell");
 
-    assert_eq!(seq.current_sequence(), 0);
+    assert_eq!(seq.current_cell(), 0);
     assert_eq!(seq.current_step(), 1);
 
     advance_gate(&mut seq);
-    assert_eq!(seq.current_sequence(), 0);
+    assert_eq!(seq.current_cell(), 0);
     assert_eq!(seq.current_step(), 2);
 
     advance_gate(&mut seq);
-    assert_eq!(seq.current_sequence(), 1);
+    assert_eq!(seq.current_cell(), 1);
     assert_eq!(seq.current_step(), 0);
     let expected = Note::new(60).frequency();
     assert!((seq.get_output("frequency").unwrap() - expected).abs() < 0.01);
@@ -294,35 +294,35 @@ fn test_cell_sequencer_waits_for_cycle_end_before_switching() {
 #[test]
 fn test_cell_sequencer_wait_for_cycle_end_input_overrides_control() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(2)
-        .with_sequences(vec![
+        .with_step_count(2)
+        .with_cells(vec![
             vec![Step::note(0), Step::note(2)],
             vec![Step::note(12)],
         ]);
 
     advance_gate(&mut seq);
     seq.set_input("wait_for_cycle_end", 1.0).unwrap();
-    seq.set_input("next_sequence", 1.0).unwrap();
+    seq.set_input("next_cell", 1.0).unwrap();
     seq.process(1);
 
-    assert_eq!(seq.current_sequence(), 0);
+    assert_eq!(seq.current_cell(), 0);
     assert_eq!(seq.pending_sequence, Some(1));
 
-    seq.set_input("gate", 1.0).unwrap();
+    seq.set_input("clock", 1.0).unwrap();
     seq.process(1);
-    seq.set_input("gate", 0.0).unwrap();
+    seq.set_input("clock", 0.0).unwrap();
     seq.process(1);
 
-    assert_eq!(seq.current_sequence(), 0);
+    assert_eq!(seq.current_cell(), 0);
 
     advance_gate(&mut seq);
-    assert_eq!(seq.current_sequence(), 1);
+    assert_eq!(seq.current_cell(), 1);
 }
 
 #[test]
-fn test_cell_sequencer_selected_sequence_control_queues_latest_request() {
+fn test_cell_sequencer_select_cell_control_queues_latest_request() {
     let controls = CellSequencerControls::new_with_values(
-        DEFAULT_BASE_NOTE,
+        DEFAULT_ROOT_NOTE,
         2,
         DEFAULT_GATE_LENGTH,
         0,
@@ -337,11 +337,11 @@ fn test_cell_sequencer_selected_sequence_control_queues_latest_request() {
 
     advance_gate(&mut seq);
     controls
-        .set_control("selected_sequence", ControlValue::Number(1.0))
+        .set_control("select_cell", ControlValue::Number(1.0))
         .unwrap();
     seq.process(1);
     controls
-        .set_control("selected_sequence", ControlValue::Number(2.0))
+        .set_control("select_cell", ControlValue::Number(2.0))
         .unwrap();
     seq.process(1);
 
@@ -349,32 +349,32 @@ fn test_cell_sequencer_selected_sequence_control_queues_latest_request() {
 
     advance_gate(&mut seq);
     advance_gate(&mut seq);
-    assert_eq!(seq.current_sequence(), 2);
+    assert_eq!(seq.current_cell(), 2);
 }
 
 #[test]
-fn test_sequences_json_round_trip() {
+fn test_cells_json_round_trip() {
     let controls = CellSequencerControls::new();
     controls
         .set_control(
-            "sequences_json",
+            "cells",
             ControlValue::String(
                 r#"[[{"note":0},{"note":null}],[{"note":12,"gate":0.5}]]"#.to_string(),
             ),
         )
         .unwrap();
 
-    let ControlValue::String(value) = controls.get_control("sequences_json").unwrap() else {
-        panic!("sequences_json should be a string");
+    let ControlValue::String(value) = controls.get_control("cells").unwrap() else {
+        panic!("cells should be a string");
     };
     let parsed: Value = serde_json::from_str(&value).unwrap();
     assert_eq!(parsed.as_array().unwrap().len(), 2);
 }
 
 #[test]
-fn test_advance_control_advances_cell_and_resets_loop_count() {
+fn test_next_cell_control_advances_cell_and_resets_loop_count() {
     let controls = CellSequencerControls::new_with_values(
-        DEFAULT_BASE_NOTE,
+        DEFAULT_ROOT_NOTE,
         2,
         DEFAULT_GATE_LENGTH,
         0,
@@ -390,24 +390,24 @@ fn test_advance_control_advances_cell_and_resets_loop_count() {
     advance_gate(&mut seq);
     advance_gate(&mut seq); // wraps cell 0 once
     assert_eq!(controls.loop_count(), 1);
-    assert_eq!(controls.current_cell(), 0);
+    assert_eq!(controls.cell(), 0);
 
     controls
-        .set_control("advance", ControlValue::Number(1.0))
+        .set_control("next_cell", ControlValue::Number(1.0))
         .unwrap();
     seq.process(1);
 
-    assert_eq!(seq.current_sequence(), 1);
-    assert_eq!(controls.current_cell(), 1);
+    assert_eq!(seq.current_cell(), 1);
+    assert_eq!(controls.cell(), 1);
     assert_eq!(controls.loop_count(), 0);
-    assert_eq!(controls.total_cells(), 2);
+    assert_eq!(controls.cell_count(), 2);
 }
 
 #[test]
 fn test_loop_count_increments_on_cell_wrap() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(2)
-        .with_sequences(vec![vec![Step::note(0), Step::note(2)]]);
+        .with_step_count(2)
+        .with_cells(vec![vec![Step::note(0), Step::note(2)]]);
 
     advance_gate(&mut seq);
     advance_gate(&mut seq);
@@ -426,10 +426,10 @@ fn test_cell_sequencer_factory_and_registry() {
         .build(
             44_100,
             &serde_json::json!({
-                "steps": 4,
-                "selected_sequence": 1,
+                "step_count": 4,
+                "select_cell": 1,
                 "wait_for_cycle_end": true,
-                "sequences": [
+                "cells": [
                     [{ "note": 0 }],
                     [{ "note": 12 }]
                 ]
@@ -440,7 +440,7 @@ fn test_cell_sequencer_factory_and_registry() {
     assert!(result.control_surface.is_some());
     assert_eq!(
         result.module.module().outputs(),
-        &["frequency", "gate", "velocity", "step", "sequence", "end"]
+        &["frequency", "gate", "velocity", "step", "cell", "ended"]
     );
 
     let registry = ModuleRegistry::default();
@@ -448,11 +448,57 @@ fn test_cell_sequencer_factory_and_registry() {
 }
 
 #[test]
+fn the_initial_cell_is_start_cell_and_a_written_select_cell_wins() {
+    let selected = |extra: serde_json::Value| {
+        let mut config = serde_json::json!({ "cells": [[0], [1], [2]] });
+        config
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let built = CellSequencerFactory.build(44_100, &config).unwrap();
+        built
+            .control_surface
+            .unwrap()
+            .get_control("select_cell")
+            .unwrap()
+    };
+    assert_eq!(selected(serde_json::json!({})), ControlValue::Number(0.0));
+    assert_eq!(
+        selected(serde_json::json!({ "start_cell": 2 })),
+        ControlValue::Number(2.0)
+    );
+    // An authored write of the control records `select_cell`, which is the
+    // later word.
+    let both = serde_json::json!({ "start_cell": 2, "select_cell": 1 });
+    assert_eq!(selected(both), ControlValue::Number(1.0));
+}
+
+#[test]
+fn the_old_cell_names_are_refused() {
+    let registry = ModuleRegistry::default();
+    for key in [
+        "selected_sequence",
+        "base_note",
+        "steps",
+        "auto_steps",
+        "sequences",
+        "sequences_json",
+        "grace_duration_ms",
+        "current_cell",
+    ] {
+        let config = serde_json::json!({ key: 0 });
+        let error = registry.build("cell_sequencer", 44_100, &config).err();
+        let error = error.expect(key).to_string();
+        assert!(error.contains(&format!("has no key '{key}'")), "{error}");
+    }
+}
+
+#[test]
 fn test_one_shot_plays_bank_through_and_fires_end() {
     // Three cells x 2 steps: one_shot concatenates them into one sequence.
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(2)
-        .with_sequences(vec![
+        .with_step_count(2)
+        .with_cells(vec![
             vec![Step::note(0), Step::note(2)],
             vec![Step::note(4), Step::note(5)],
             vec![Step::note(7), Step::note(9)],
@@ -463,13 +509,13 @@ fn test_one_shot_plays_bank_through_and_fires_end() {
     for (i, expected_cell) in expected_cells.iter().enumerate() {
         advance_gate(&mut seq);
         assert_eq!(
-            seq.get_output("sequence").unwrap(),
+            seq.get_output("cell").unwrap(),
             *expected_cell,
             "cell at clock {}",
             i
         );
         assert_eq!(
-            seq.get_output("end").unwrap(),
+            seq.get_output("ended").unwrap(),
             0.0,
             "end low at clock {}",
             i
@@ -480,7 +526,7 @@ fn test_one_shot_plays_bank_through_and_fires_end() {
     // Next clock edge completes the final step of the final cell.
     advance_gate(&mut seq);
     assert_eq!(
-        seq.get_output("end").unwrap(),
+        seq.get_output("ended").unwrap(),
         1.0,
         "end fires at bank completion"
     );
@@ -490,7 +536,7 @@ fn test_one_shot_plays_bank_through_and_fires_end() {
     // Latched; further clocks ignored.
     for _ in 0..3 {
         advance_gate(&mut seq);
-        assert_eq!(seq.get_output("end").unwrap(), 1.0);
+        assert_eq!(seq.get_output("ended").unwrap(), 1.0);
         assert_eq!(seq.get_output("frequency").unwrap(), 0.0);
     }
 }
@@ -498,8 +544,8 @@ fn test_one_shot_plays_bank_through_and_fires_end() {
 #[test]
 fn test_one_shot_reset_rearms_current_cell() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(2)
-        .with_sequences(vec![
+        .with_step_count(2)
+        .with_cells(vec![
             vec![Step::note(0), Step::note(2)],
             vec![Step::note(4), Step::note(5)],
         ])
@@ -508,21 +554,21 @@ fn test_one_shot_reset_rearms_current_cell() {
     for _ in 0..5 {
         advance_gate(&mut seq);
     }
-    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+    assert_eq!(seq.get_output("ended").unwrap(), 1.0);
 
     // Reset clears the latch; playback resumes in the final cell.
     pulse(&mut seq, "reset");
-    assert_eq!(seq.get_output("end").unwrap(), 0.0);
+    assert_eq!(seq.get_output("ended").unwrap(), 0.0);
     advance_gate(&mut seq);
     assert!(seq.get_output("frequency").unwrap() > 0.0);
-    assert_eq!(seq.get_output("sequence").unwrap(), 1.0);
+    assert_eq!(seq.get_output("cell").unwrap(), 1.0);
 }
 
 #[test]
 fn test_one_shot_explicit_selection_rearms_and_restarts() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(2)
-        .with_sequences(vec![
+        .with_step_count(2)
+        .with_cells(vec![
             vec![Step::note(0), Step::note(2)],
             vec![Step::note(4), Step::note(5)],
         ])
@@ -531,24 +577,24 @@ fn test_one_shot_explicit_selection_rearms_and_restarts() {
     for _ in 0..5 {
         advance_gate(&mut seq);
     }
-    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+    assert_eq!(seq.get_output("ended").unwrap(), 1.0);
 
     // Selecting cell 0 re-arms even with wait_for_cycle_end semantics (no
     // cycle is running while finished).
-    seq.set_control("selected_sequence", 0.0).unwrap();
+    seq.set_control("select_cell", 0.0).unwrap();
     seq.process(1);
-    assert_eq!(seq.get_output("end").unwrap(), 0.0, "selection re-arms");
+    assert_eq!(seq.get_output("ended").unwrap(), 0.0, "selection re-arms");
 
     // Selection primes step 0 immediately (as with live cell switches), so
     // the first clock advances to step 1; the bank then plays through and
     // ends again.
     for expected_cell in [0.0, 1.0, 1.0] {
         advance_gate(&mut seq);
-        assert_eq!(seq.get_output("sequence").unwrap(), expected_cell);
+        assert_eq!(seq.get_output("cell").unwrap(), expected_cell);
     }
     advance_gate(&mut seq);
     assert_eq!(
-        seq.get_output("end").unwrap(),
+        seq.get_output("ended").unwrap(),
         1.0,
         "second playthrough ends"
     );
@@ -557,9 +603,9 @@ fn test_one_shot_explicit_selection_rearms_and_restarts() {
 #[test]
 fn test_one_shot_pending_command_overrides_auto_advance() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(2)
+        .with_step_count(2)
         .with_wait_for_cycle_end(true)
-        .with_sequences(vec![
+        .with_cells(vec![
             vec![Step::note(0), Step::note(2)],
             vec![Step::note(4), Step::note(5)],
             vec![Step::note(7), Step::note(9)],
@@ -570,27 +616,27 @@ fn test_one_shot_pending_command_overrides_auto_advance() {
 
     // Request a jump straight to cell 2; it defers to the cycle end and must
     // win over the one_shot auto-advance to cell 1.
-    seq.set_control("selected_sequence", 2.0).unwrap();
+    seq.set_control("select_cell", 2.0).unwrap();
     advance_gate(&mut seq); // cell 0 step 1
     advance_gate(&mut seq); // cycle end: pending jump applies
-    assert_eq!(seq.get_output("sequence").unwrap(), 2.0);
-    assert_eq!(seq.get_output("end").unwrap(), 0.0);
+    assert_eq!(seq.get_output("cell").unwrap(), 2.0);
+    assert_eq!(seq.get_output("ended").unwrap(), 0.0);
 
     // Cell 2 is the last cell; the bank ends after it.
     advance_gate(&mut seq);
     advance_gate(&mut seq);
-    assert_eq!(seq.get_output("end").unwrap(), 1.0);
+    assert_eq!(seq.get_output("ended").unwrap(), 1.0);
 }
 
 #[test]
 fn test_loop_mode_cell_end_never_fires() {
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(2)
-        .with_sequences(vec![vec![Step::note(0), Step::note(2)]]);
+        .with_step_count(2)
+        .with_cells(vec![vec![Step::note(0), Step::note(2)]]);
 
     for _ in 0..8 {
         advance_gate(&mut seq);
-        assert_eq!(seq.get_output("end").unwrap(), 0.0);
+        assert_eq!(seq.get_output("ended").unwrap(), 0.0);
     }
     assert!(seq.ctrl.loop_count() > 0, "the cell keeps looping");
 }
@@ -619,16 +665,20 @@ fn test_cells_hold_long_sequences() {
     // fits in one cell; MAX_STEPS bounds bank-swap cost, not playback.
     let long: Vec<Step> = (0..604).map(|i| Step::note((i % 12) as i8)).collect();
     let mut seq = CellSequencer::new(44_100)
-        .with_steps(604)
-        .with_sequences(vec![long])
+        .with_step_count(604)
+        .with_cells(vec![long])
         .with_one_shot(true);
 
     for _ in 0..604 {
         advance_gate(&mut seq);
-        assert_eq!(seq.get_output("end").unwrap(), 0.0);
+        assert_eq!(seq.get_output("ended").unwrap(), 0.0);
     }
     advance_gate(&mut seq);
-    assert_eq!(seq.get_output("end").unwrap(), 1.0, "ends after 604 steps");
+    assert_eq!(
+        seq.get_output("ended").unwrap(),
+        1.0,
+        "ends after 604 steps"
+    );
 }
 
 #[test]
@@ -636,8 +686,8 @@ fn test_cell_sequencer_velocity_follows_step_amplitude() {
     let mut soft = Step::note(0);
     soft.amplitude = Some(0.25);
     let mut seq = CellSequencer::new(10)
-        .with_steps(4)
-        .with_sequences(vec![vec![
+        .with_step_count(4)
+        .with_cells(vec![vec![
             soft,
             Step::held(),
             Step::rest(),
@@ -671,9 +721,9 @@ fn test_first_step_overrun_still_retriggers_next_note() {
     // clock runs a step every 100 samples, so the first gate (0.95 * 500)
     // would otherwise stay high straight through the second onset.
     let mut seq = CellSequencer::new(1000)
-        .with_steps(4)
+        .with_step_count(4)
         .with_gate_length(0.95)
-        .with_sequences(vec![vec![
+        .with_cells(vec![vec![
             Step::note(0),
             Step::note(5),
             Step::rest(),
@@ -684,7 +734,7 @@ fn test_first_step_overrun_still_retriggers_next_note() {
     let mut last_gate = 0.0;
     for sample in 0..400 {
         let clock = if sample % 100 < 50 { 1.0 } else { 0.0 };
-        seq.set_input("gate", clock).unwrap();
+        seq.set_input("clock", clock).unwrap();
         seq.process(1);
         let gate = seq.get_output("gate").unwrap();
         if gate > 0.5 && last_gate <= 0.5 {
@@ -702,8 +752,8 @@ fn test_first_step_overrun_still_retriggers_next_note() {
 
 // --- Grace-note realization (FUG-190) ---
 //
-// Harness: sample rate 1000 Hz so grace_duration_ms maps 1:1 to samples
-// (default 60 ms = 60 samples), with a synthetic clock driven one sample at
+// Harness: sample rate 1000 Hz so grace_duration maps to samples at 1000 per
+// second (default 0.06 s = 60 samples), with a synthetic clock driven one sample at
 // a time so gate/frequency/velocity streams can be inspected per sample.
 
 /// Runs `edges` clock edges of `period` samples each, recording
@@ -713,7 +763,7 @@ fn run_grace_clock(seq: &mut CellSequencer, period: usize, edges: usize) -> Vec<
     for _ in 0..edges {
         for s in 0..period {
             let gate_in = if s < 2 { 1.0 } else { 0.0 };
-            seq.set_input("gate", gate_in).unwrap();
+            seq.set_input("clock", gate_in).unwrap();
             seq.process(1);
             stream.push((
                 seq.get_output("frequency").unwrap(),
@@ -737,14 +787,14 @@ fn rising_edges(stream: &[(f32, f32, f32)], range: std::ops::Range<usize>) -> Ve
 }
 
 fn freq_of(offset: i8) -> f32 {
-    Note::new((DEFAULT_BASE_NOTE as i16 + offset as i16) as u8).frequency()
+    Note::new((DEFAULT_ROOT_NOTE as i16 + offset as i16) as u8).frequency()
 }
 
 #[test]
 fn test_grace_before_beat_two_attacks_principal_on_grid() {
     let mut seq = CellSequencer::new(1000)
-        .with_steps(4)
-        .with_sequences(vec![vec![
+        .with_step_count(4)
+        .with_cells(vec![vec![
             Step::note(0),
             Step::rest(),
             Step::note_with_grace(10, &[8]),
@@ -788,13 +838,13 @@ fn test_grace_before_beat_two_attacks_principal_on_grid() {
 fn test_grace_on_beat_delays_principal() {
     let seq_ctrl = CellSequencerControls::new();
     seq_ctrl.set_grace_placement("on_beat").unwrap();
-    seq_ctrl.set_sequences(vec![vec![
+    seq_ctrl.set_cells(vec![vec![
         Step::note(0),
         Step::rest(),
         Step::note_with_grace(10, &[8]),
         Step::rest(),
     ]]);
-    seq_ctrl.set_steps(4);
+    seq_ctrl.set_step_count(4);
     let mut seq = CellSequencer::new_with_controls(1000, seq_ctrl);
 
     let stream = run_grace_clock(&mut seq, 200, 4);
@@ -818,8 +868,8 @@ fn test_grace_cold_start_falls_back_to_on_beat() {
     // Step 0 has no previous step to steal from: the chain plays from the
     // first edge and the principal follows (still two attacks).
     let mut seq = CellSequencer::new(1000)
-        .with_steps(2)
-        .with_sequences(vec![vec![Step::note_with_grace(10, &[8]), Step::rest()]]);
+        .with_step_count(2)
+        .with_cells(vec![vec![Step::note_with_grace(10, &[8]), Step::rest()]]);
 
     let stream = run_grace_clock(&mut seq, 200, 2);
 
@@ -833,8 +883,8 @@ fn test_grace_cold_start_falls_back_to_on_beat() {
 #[test]
 fn test_grace_chain_plays_in_order() {
     let mut seq = CellSequencer::new(1000)
-        .with_steps(4)
-        .with_sequences(vec![vec![
+        .with_step_count(4)
+        .with_cells(vec![vec![
             Step::note(0),
             Step::rest(),
             Step::note_with_grace(12, &[-24, -12]),
@@ -858,8 +908,8 @@ fn test_grace_velocity_scales_from_decorated_step() {
     let mut decorated = Step::note_with_grace(10, &[8]);
     decorated.amplitude = Some(0.5);
     let mut seq = CellSequencer::new(1000)
-        .with_steps(4)
-        .with_sequences(vec![vec![
+        .with_step_count(4)
+        .with_cells(vec![vec![
             Step::note(0),
             Step::rest(),
             decorated,
@@ -882,8 +932,8 @@ fn test_grace_truncated_by_early_edge_principal_wins() {
     // the decorated step's edge arrives early (accelerando): the chain is
     // cut short and the principal still retriggers.
     let mut seq = CellSequencer::new(1000)
-        .with_steps(4)
-        .with_sequences(vec![vec![
+        .with_step_count(4)
+        .with_cells(vec![vec![
             Step::note(0),
             Step::rest(),
             Step::note_with_grace(10, &[8]),
@@ -897,7 +947,7 @@ fn test_grace_truncated_by_early_edge_principal_wins() {
     fn drive(seq: &mut CellSequencer, samples: usize, stream: &mut Vec<(f32, f32, f32)>) {
         for s in 0..samples {
             let gate_in = if s < 2 { 1.0 } else { 0.0 };
-            seq.set_input("gate", gate_in).unwrap();
+            seq.set_input("clock", gate_in).unwrap();
             seq.process(1);
             stream.push((
                 seq.get_output("frequency").unwrap(),
@@ -930,8 +980,8 @@ fn test_grace_truncated_by_early_edge_principal_wins() {
 fn test_grace_clamps_to_fast_clock() {
     // 40-sample steps: a 60-sample grace shrinks to half a step (20).
     let mut seq = CellSequencer::new(1000)
-        .with_steps(4)
-        .with_sequences(vec![vec![
+        .with_step_count(4)
+        .with_cells(vec![vec![
             Step::note(0),
             Step::rest(),
             Step::note_with_grace(10, &[8]),
@@ -955,8 +1005,8 @@ fn test_grace_clamps_to_fast_clock() {
 #[test]
 fn test_held_chain_releases_before_grace() {
     let mut seq = CellSequencer::new(1000)
-        .with_steps(4)
-        .with_sequences(vec![vec![
+        .with_step_count(4)
+        .with_cells(vec![vec![
             Step::note(0),
             Step::held(),
             Step::note_with_grace(7, &[5]),
@@ -980,8 +1030,8 @@ fn test_held_chain_releases_before_grace() {
 fn test_grace_realization_is_deterministic() {
     let make = || {
         CellSequencer::new(1000)
-            .with_steps(4)
-            .with_sequences(vec![vec![
+            .with_step_count(4)
+            .with_cells(vec![vec![
                 Step::note(0),
                 Step::rest(),
                 Step::note_with_grace(10, &[8, 3]),
@@ -998,8 +1048,8 @@ fn test_grace_realization_is_deterministic() {
 #[test]
 fn test_grace_controls_round_trip() {
     let mut seq = CellSequencer::new(1000);
-    seq.set_control("grace_duration_ms", 80.0).unwrap();
-    assert_eq!(seq.get_control("grace_duration_ms").unwrap(), 80.0);
+    seq.set_control("grace_duration", 0.08).unwrap();
+    assert_eq!(seq.get_control("grace_duration").unwrap(), 0.08);
     seq.set_control("grace_velocity", 0.5).unwrap();
     assert_eq!(seq.get_control("grace_velocity").unwrap(), 0.5);
     seq.set_control("grace_placement", 1.0).unwrap();
@@ -1020,14 +1070,13 @@ fn test_grace_controls_round_trip() {
         .set_control("grace_placement", "sideways".into())
         .is_err());
     // Duration clamps to its range.
-    ctrl.set_control("grace_duration_ms", 1000.0_f32.into())
-        .unwrap();
+    ctrl.set_control("grace_duration", 10.0_f32.into()).unwrap();
     assert_eq!(
-        ctrl.get_control("grace_duration_ms")
+        ctrl.get_control("grace_duration")
             .unwrap()
             .as_number()
             .unwrap(),
-        200.0
+        0.2
     );
 }
 
@@ -1039,30 +1088,30 @@ fn bank_numbers_read_whole_floats_and_are_refused_with_their_path() {
             .map(|built| built.control_surface.unwrap())
             .map_err(|error| error.to_string())
     };
-    let surface = build(serde_json::json!({ "sequences": [[{ "note": 2.0 }], [4.0]] })).unwrap();
-    let ControlValue::String(bank) = surface.get_control("sequences_json").unwrap() else {
-        panic!("sequences_json should be a string");
+    let surface = build(serde_json::json!({ "cells": [[{ "note": 2.0 }], [4.0]] })).unwrap();
+    let ControlValue::String(bank) = surface.get_control("cells").unwrap() else {
+        panic!("cells should be a string");
     };
     assert_eq!(bank, r#"[[{"note":2}],[{"note":4}]]"#);
 
-    let error = build(serde_json::json!({ "sequences": [[0], [1, { "note": 1.5 }]] }));
+    let error = build(serde_json::json!({ "cells": [[0], [1, { "note": 1.5 }]] }));
     assert_eq!(
         error.err().unwrap(),
-        "cell_sequencer config 'sequences[1][1].note' expects a whole number from -128 to 127, \
+        "cell_sequencer config 'cells[1][1].note' expects a whole number from -128 to 127, \
          got 1.5"
     );
-    let error = build(serde_json::json!({ "sequences_json": "[[{\"gate\": 1e39}]]" }));
+    let error = build(serde_json::json!({ "cells": "[[{\"gate\": 1e39}]]" }));
     assert!(error
         .err()
         .unwrap()
-        .contains("'sequences_json[0][0].gate' expects a finite number"));
+        .contains("'cells[0][0].gate' expects a finite number"));
 
     // The bank control reads by the same rules at runtime.
     let error = surface
-        .set_control("sequences_json", ControlValue::from("[[2.5]]"))
+        .set_control("cells", ControlValue::from("[[2.5]]"))
         .unwrap_err();
     assert!(
-        error.contains("'sequences_json[0][0]' expects a whole number"),
+        error.contains("'cells[0][0]' expects a whole number"),
         "{error}"
     );
 }

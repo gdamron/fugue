@@ -11,6 +11,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::control_request::Automation;
+use crate::module_config::serde_whole;
 use crate::{ControlSurface, ControlValue};
 
 /// Shared control surface map used to resolve schedule targets.
@@ -39,16 +40,20 @@ impl ScheduleValue {
 
 /// One scheduled control change.
 ///
-/// `at` counts steps: rising edges of the scheduler's `gate` input, with the
-/// first edge being step 0 — the same numbering the sequencers use. The step
-/// granularity is whatever clock gate the scheduler is patched to (e.g. the
-/// clock's `gate` for beats, `gate_x4` for 16ths). Positions in beats or
-/// measures compile down to steps in whatever produces the schedule.
+/// `at_step` counts steps: rising edges of the scheduler's `clock` input,
+/// with the first edge being step 0 — the same numbering the sequencers use.
+/// The step granularity is whatever clock output the scheduler is patched to
+/// (e.g. the clock's `beat`, or `beat_x4` for quarter beats). Positions in
+/// beats or bars compile down to steps in whatever produces the schedule.
+/// Step counts accept a JSON integer or a float that is exactly whole, and
+/// an unknown field (such as a misspelt `ramp_steps`) is refused.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScheduleEntry {
-    /// Step boundary at which the change applies (gate rising-edge count,
+    /// Step boundary at which the change applies (clock rising-edge count,
     /// first edge = step 0).
-    pub at: u64,
+    #[serde(deserialize_with = "serde_whole::whole")]
+    pub at_step: u64,
     /// Target module id.
     pub module: String,
     /// Target control key on the module's control surface.
@@ -56,10 +61,14 @@ pub struct ScheduleEntry {
     /// Value to set (or to arrive at, when ramping).
     pub value: ScheduleValue,
     /// Optional linear ramp length in steps. The control leaves its current
-    /// value at step `at` and arrives exactly at `value` on the step boundary
-    /// `at + ramp`. Numeric controls only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ramp: Option<u64>,
+    /// value at step `at_step` and arrives exactly at `value` on the step
+    /// boundary `at_step + ramp_steps`. Numeric controls only.
+    #[serde(
+        default,
+        deserialize_with = "serde_whole::optional_whole",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ramp_steps: Option<u64>,
 }
 
 /// Parses and validates a schedule from its JSON value form: an array of
@@ -84,19 +93,20 @@ pub(crate) fn parse_schedule(value: &serde_json::Value) -> Result<Vec<ScheduleEn
 /// so the module layer stays independent of the score/invention layer.
 #[derive(Debug, Clone, Copy, Deserialize)]
 struct TempoMapPoint {
+    #[serde(deserialize_with = "serde_whole::whole")]
     at_step: u64,
     bpm: f32,
     /// Optional gradual glide to `bpm` over this many steps (ritardando /
     /// accelerando); absent = an instantaneous change.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "serde_whole::optional_whole")]
     ramp: Option<u64>,
 }
 
 /// Compiles a score tempo map into schedule entries that write a clock's tempo
 /// control at each change's step boundary.
 ///
-/// Each `{ at_step, bpm, ramp? }` becomes `{ at: at_step, module, control,
-/// value: bpm * bpm_scale, ramp? }`. `bpm_scale` is the invention's
+/// Each `{ at_step, bpm, ramp? }` becomes `{ at_step, module, control,
+/// value: bpm * tempo_scale, ramp_steps: ramp? }`. `tempo_scale` is the invention's
 /// interpretation knob (default `1.0`): the score records the notated
 /// quarter-note tempo, and the invention decides how its clock realizes it. An
 /// entry's optional `ramp` glides the tempo over that many steps (ritardando /
@@ -106,19 +116,19 @@ pub(crate) fn compile_tempo_map(
     value: &serde_json::Value,
     module: &str,
     control: &str,
-    bpm_scale: f32,
+    tempo_scale: f32,
 ) -> Result<Vec<ScheduleEntry>, String> {
-    if !(bpm_scale.is_finite() && bpm_scale > 0.0) {
+    if !(tempo_scale.is_finite() && tempo_scale > 0.0) {
         return Err(format!(
-            "tempo_map bpm_scale must be a positive number, got {}",
-            bpm_scale
+            "tempo_map tempo_scale must be a positive number, got {}",
+            tempo_scale
         ));
     }
     let points: Vec<TempoMapPoint> = serde_json::from_value(value.clone())
         .map_err(|err| format!("invalid tempo_map: {}", err))?;
     let mut entries = Vec::with_capacity(points.len());
     for point in points {
-        let value = point.bpm * bpm_scale;
+        let value = point.bpm * tempo_scale;
         if !(value.is_finite() && value > 0.0) {
             return Err(format!(
                 "tempo_map entry at step {}: scaled bpm ({}) must be positive",
@@ -134,11 +144,11 @@ pub(crate) fn compile_tempo_map(
             }
         }
         entries.push(ScheduleEntry {
-            at: point.at_step,
+            at_step: point.at_step,
             module: module.to_string(),
             control: control.to_string(),
             value: ScheduleValue::Number(value),
-            ramp: point.ramp,
+            ramp_steps: point.ramp,
         });
     }
     Ok(entries)
@@ -161,21 +171,21 @@ fn validate_entries(entries: &[ScheduleEntry]) -> Result<(), String> {
             if !number.is_finite() {
                 return Err(format!(
                     "schedule entry at step {}: control '{}.{}' expects a finite number, got {}",
-                    entry.at, entry.module, entry.control, number
+                    entry.at_step, entry.module, entry.control, number
                 ));
             }
         }
-        if let Some(ramp) = entry.ramp {
-            if ramp == 0 {
+        if let Some(ramp_steps) = entry.ramp_steps {
+            if ramp_steps == 0 {
                 return Err(format!(
-                    "schedule entry at step {} for '{}.{}': ramp must be at least 1 step",
-                    entry.at, entry.module, entry.control
+                    "schedule entry at step {} for '{}.{}': ramp_steps must be at least 1",
+                    entry.at_step, entry.module, entry.control
                 ));
             }
             if !matches!(entry.value, ScheduleValue::Number(_)) {
                 return Err(format!(
                     "schedule entry at step {} for '{}.{}': ramps require a numeric value",
-                    entry.at, entry.module, entry.control
+                    entry.at_step, entry.module, entry.control
                 ));
             }
         }
@@ -187,7 +197,7 @@ fn validate_entries(entries: &[ScheduleEntry]) -> Result<(), String> {
 /// preloaded for the audio thread.
 #[derive(Clone)]
 pub(crate) struct ResolvedEntry {
-    pub(crate) at: u64,
+    pub(crate) at_step: u64,
     /// Target module id (kept for ordering-dependency discovery).
     pub(crate) module: String,
     pub(crate) control: String,
@@ -235,7 +245,7 @@ impl ResolvedEntry {
 ///
 /// Validates that every target module exists, is not the scheduler itself,
 /// exposes the named control, and that the control's value type matches the
-/// scheduled value. Returns entries stably sorted by `at` (ties keep schedule
+/// scheduled value. Returns entries stably sorted by `at_step` (ties keep schedule
 /// order).
 pub(crate) fn resolve_schedule(
     entries: &[ScheduleEntry],
@@ -247,19 +257,19 @@ pub(crate) fn resolve_schedule(
         if entry.module == own_id {
             return Err(format!(
                 "schedule entry at step {}: a control_scheduler cannot target itself ('{}')",
-                entry.at, own_id
+                entry.at_step, own_id
             ));
         }
         let surface = surfaces.get(&entry.module).ok_or_else(|| {
             format!(
                 "schedule entry at step {}: unknown module '{}' (or module has no controls)",
-                entry.at, entry.module
+                entry.at_step, entry.module
             )
         })?;
         let current = surface.get_control(&entry.control).map_err(|err| {
             format!(
                 "schedule entry at step {}: module '{}': {}",
-                entry.at, entry.module, err
+                entry.at_step, entry.module, err
             )
         })?;
         match (&current, &entry.value) {
@@ -269,13 +279,13 @@ pub(crate) fn resolve_schedule(
                 return Err(format!(
                     "schedule entry at step {}: control '{}.{}' is a string control; \
                      only numeric and boolean controls can be scheduled",
-                    entry.at, entry.module, entry.control
+                    entry.at_step, entry.module, entry.control
                 ));
             }
             _ => {
                 return Err(format!(
                     "schedule entry at step {}: value type does not match control '{}.{}'",
-                    entry.at, entry.module, entry.control
+                    entry.at_step, entry.module, entry.control
                 ));
             }
         }
@@ -286,19 +296,19 @@ pub(crate) fn resolve_schedule(
             return Err(format!(
                 "schedule entry at step {}: control '{}.{}' cannot be scheduled \
                  (an event or read-only control)",
-                entry.at, entry.module, entry.control
+                entry.at_step, entry.module, entry.control
             ));
         }
         resolved.push(ResolvedEntry {
-            at: entry.at,
+            at_step: entry.at_step,
             module: entry.module.clone(),
             control: entry.control.clone(),
             value: entry.value,
-            ramp_steps: entry.ramp.unwrap_or(0),
+            ramp_steps: entry.ramp_steps.unwrap_or(0),
             surface: surface.clone(),
             automation,
         });
     }
-    resolved.sort_by_key(|entry| entry.at);
+    resolved.sort_by_key(|entry| entry.at_step);
     Ok(resolved)
 }

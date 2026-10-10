@@ -302,18 +302,18 @@ fn a_scheduled_ramp_on_a_legacy_only_key_allocates_nothing() {
     map.insert("dev".to_string(), surface.clone());
     let directory = Arc::new(Mutex::new(map));
     let entry = ScheduleEntry {
-        at: 0,
+        at_step: 0,
         module: "dev".into(),
         control: "rate".into(),
         value: ScheduleValue::Number(4.0),
-        ramp: Some(2),
+        ramp_steps: Some(2),
     };
     let controls = ControlSchedulerControls::new(vec![entry]);
     controls.attach("sched", &directory).unwrap();
     let mut scheduler = ControlScheduler::new(48_000, controls);
     scheduler.prepare_for_publication();
     for gate in [1.0, 0.0, 1.0, 0.0] {
-        scheduler.set_input("gate", gate).unwrap();
+        scheduler.set_input("clock", gate).unwrap();
         let (_, allocs, frees) = allocator_events(|| scheduler.process(64));
         assert_eq!((allocs, frees), (0, 0));
     }

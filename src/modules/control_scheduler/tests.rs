@@ -34,9 +34,9 @@ fn setup(schedule_json: &str) -> (ControlScheduler, MixerControls, SurfaceDirect
 /// Sends one gate rising edge (one high frame, then `low_frames` low frames),
 /// processing one frame at a time.
 fn pulse(module: &mut ControlScheduler, low_frames: usize) {
-    module.set_input("gate", 1.0).unwrap();
+    module.set_input("clock", 1.0).unwrap();
     module.process(1);
-    module.set_input("gate", 0.0).unwrap();
+    module.set_input("clock", 0.0).unwrap();
     for _ in 0..low_frames {
         module.process(1);
     }
@@ -45,7 +45,7 @@ fn pulse(module: &mut ControlScheduler, low_frames: usize) {
 #[test]
 fn jump_fires_on_exact_step() {
     let (mut module, mixer, _dir) =
-        setup(r#"[{ "at": 2, "module": "mixer", "control": "level.0", "value": 0.25 }]"#);
+        setup(r#"[{ "at_step": 2, "module": "mixer", "control": "level.0", "value": 0.25 }]"#);
 
     pulse(&mut module, 15); // step 0
     assert_eq!(mixer.level(0), 1.0);
@@ -53,7 +53,7 @@ fn jump_fires_on_exact_step() {
     assert_eq!(mixer.level(0), 1.0);
 
     // The edge frame that begins step 2 applies the change immediately.
-    module.set_input("gate", 1.0).unwrap();
+    module.set_input("clock", 1.0).unwrap();
     module.process(1);
     assert_eq!(mixer.level(0), 0.25);
     assert_eq!(module.get_output("step").unwrap(), 2.0);
@@ -62,7 +62,7 @@ fn jump_fires_on_exact_step() {
 #[test]
 fn first_edge_is_step_zero() {
     let (mut module, mixer, _dir) =
-        setup(r#"[{ "at": 0, "module": "mixer", "control": "level.1", "value": 0.5 }]"#);
+        setup(r#"[{ "at_step": 0, "module": "mixer", "control": "level.1", "value": 0.5 }]"#);
 
     // Nothing fires before any gate arrives.
     for _ in 0..8 {
@@ -70,15 +70,16 @@ fn first_edge_is_step_zero() {
     }
     assert_eq!(mixer.level(1), 1.0);
 
-    module.set_input("gate", 1.0).unwrap();
+    module.set_input("clock", 1.0).unwrap();
     module.process(1);
     assert_eq!(mixer.level(1), 0.5);
 }
 
 #[test]
 fn ramp_hits_exact_boundary_values() {
-    let (mut module, mixer, _dir) =
-        setup(r#"[{ "at": 1, "module": "mixer", "control": "level.0", "value": 0.0, "ramp": 4 }]"#);
+    let (mut module, mixer, _dir) = setup(
+        r#"[{ "at_step": 1, "module": "mixer", "control": "level.0", "value": 0.0, "ramp_steps": 4 }]"#,
+    );
 
     let period = 16;
     pulse(&mut module, period - 1); // step 0
@@ -86,7 +87,7 @@ fn ramp_hits_exact_boundary_values() {
 
     // Each subsequent boundary lands exactly on from + (to - from) * k / N.
     for k in 1..=4_u32 {
-        module.set_input("gate", 1.0).unwrap();
+        module.set_input("clock", 1.0).unwrap();
         module.process(1);
         let expected = 1.0 + (0.0 - 1.0) * (k as f32 / 4.0);
         assert_eq!(
@@ -95,7 +96,7 @@ fn ramp_hits_exact_boundary_values() {
             "boundary {} of the ramp must be exact",
             k
         );
-        module.set_input("gate", 0.0).unwrap();
+        module.set_input("clock", 0.0).unwrap();
         // Between boundaries the ramp interpolates monotonically without
         // overshooting the next boundary value.
         let next = 1.0 + (0.0 - 1.0) * ((k as f32 + 1.0).min(4.0) / 4.0);
@@ -118,8 +119,8 @@ fn ramp_hits_exact_boundary_values() {
 fn jump_cancels_conflicting_ramp() {
     let (mut module, mixer, _dir) = setup(
         r#"[
-            { "at": 0, "module": "mixer", "control": "level.0", "value": 0.0, "ramp": 8 },
-            { "at": 2, "module": "mixer", "control": "level.0", "value": 0.7 }
+            { "at_step": 0, "module": "mixer", "control": "level.0", "value": 0.0, "ramp_steps": 8 },
+            { "at_step": 2, "module": "mixer", "control": "level.0", "value": 0.7 }
         ]"#,
     );
 
@@ -136,7 +137,7 @@ fn jump_cancels_conflicting_ramp() {
 #[test]
 fn reset_rearms_the_schedule() {
     let (mut module, mixer, _dir) =
-        setup(r#"[{ "at": 0, "module": "mixer", "control": "level.0", "value": 0.5 }]"#);
+        setup(r#"[{ "at_step": 0, "module": "mixer", "control": "level.0", "value": 0.5 }]"#);
 
     pulse(&mut module, 3);
     assert_eq!(mixer.level(0), 0.5);
@@ -161,8 +162,8 @@ fn schedule_replaced_during_playback_skips_past_entries() {
 
     ctrl.set_schedule_json(
         r#"[
-            { "at": 1, "module": "mixer", "control": "level.0", "value": 0.1 },
-            { "at": 3, "module": "mixer", "control": "level.1", "value": 0.3 }
+            { "at_step": 1, "module": "mixer", "control": "level.0", "value": 0.1 },
+            { "at_step": 3, "module": "mixer", "control": "level.1", "value": 0.3 }
         ]"#,
     )
     .unwrap();
@@ -176,7 +177,7 @@ fn schedule_replaced_during_playback_skips_past_entries() {
 #[test]
 fn bool_controls_can_be_scheduled() {
     let (mut module, _mixer, dir) = setup(
-        r#"[{ "at": 0, "module": "cells", "control": "wait_for_cycle_end", "value": true }]"#,
+        r#"[{ "at_step": 0, "module": "cells", "control": "wait_for_cycle_end", "value": true }]"#,
     );
 
     pulse(&mut module, 1);
@@ -191,9 +192,9 @@ fn bool_controls_can_be_scheduled() {
 fn control_targets_reports_unique_modules() {
     let (module, _mixer, _dir) = setup(
         r#"[
-            { "at": 0, "module": "mixer", "control": "level.0", "value": 0.1 },
-            { "at": 1, "module": "mixer", "control": "level.1", "value": 0.2 },
-            { "at": 2, "module": "cells", "control": "wait_for_cycle_end", "value": true }
+            { "at_step": 0, "module": "mixer", "control": "level.0", "value": 0.1 },
+            { "at_step": 1, "module": "mixer", "control": "level.1", "value": 0.2 },
+            { "at_step": 2, "module": "cells", "control": "wait_for_cycle_end", "value": true }
         ]"#,
     );
     assert_eq!(module.control_targets(), vec!["mixer", "cells"]);
@@ -207,7 +208,7 @@ fn control_targets_reports_unique_modules() {
 #[test]
 fn attach_resolving_resolves_against_a_pending_directory() {
     let spec = parse_schedule_json(
-        r#"[{ "at": 0, "module": "mixer", "control": "level.0", "value": 0.5 }]"#,
+        r#"[{ "at_step": 0, "module": "mixer", "control": "level.0", "value": 0.5 }]"#,
     )
     .unwrap();
     let ctrl = ControlSchedulerControls::new(spec);
@@ -230,23 +231,23 @@ fn attach_resolving_resolves_against_a_pending_directory() {
 fn resolution_rejects_bad_schedules() {
     let cases = [
         (
-            r#"[{ "at": 0, "module": "nope", "control": "level.0", "value": 0.1 }]"#,
+            r#"[{ "at_step": 0, "module": "nope", "control": "level.0", "value": 0.1 }]"#,
             "unknown module",
         ),
         (
-            r#"[{ "at": 0, "module": "mixer", "control": "nope", "value": 0.1 }]"#,
+            r#"[{ "at_step": 0, "module": "mixer", "control": "nope", "value": 0.1 }]"#,
             "Unknown control",
         ),
         (
-            r#"[{ "at": 0, "module": "mixer", "control": "level.0", "value": true }]"#,
+            r#"[{ "at_step": 0, "module": "mixer", "control": "level.0", "value": true }]"#,
             "does not match",
         ),
         (
-            r#"[{ "at": 0, "module": "sched", "control": "step", "value": 0.0 }]"#,
+            r#"[{ "at_step": 0, "module": "sched", "control": "step", "value": 0.0 }]"#,
             "cannot target itself",
         ),
         (
-            r#"[{ "at": 0, "module": "cells", "control": "sequences_json", "value": 0.1 }]"#,
+            r#"[{ "at_step": 0, "module": "cells", "control": "cells", "value": 0.1 }]"#,
             "string control",
         ),
     ];
@@ -260,24 +261,55 @@ fn resolution_rejects_bad_schedules() {
 #[test]
 fn parsing_rejects_bad_entries() {
     let err = parse_schedule_json(
-        r#"[{ "at": 0, "module": "m", "control": "c", "value": 0.1, "ramp": 0 }]"#,
+        r#"[{ "at_step": 0, "module": "m", "control": "c", "value": 0.1, "ramp_steps": 0 }]"#,
     )
     .unwrap_err();
     assert!(err.contains("at least 1"), "{}", err);
 
     let err = parse_schedule_json(
-        r#"[{ "at": 0, "module": "m", "control": "c", "value": true, "ramp": 2 }]"#,
+        r#"[{ "at_step": 0, "module": "m", "control": "c", "value": true, "ramp_steps": 2 }]"#,
     )
     .unwrap_err();
     assert!(err.contains("numeric"), "{}", err);
 
-    let err = parse_schedule_json(r#"[{ "at": 0, "module": "m", "value": 0.1 }]"#).unwrap_err();
+    let err =
+        parse_schedule_json(r#"[{ "at_step": 0, "module": "m", "value": 0.1 }]"#).unwrap_err();
     assert!(err.contains("invalid schedule"), "{}", err);
 
-    let err =
-        parse_schedule_json(r#"[{ "at": 0, "module": "m", "control": "c", "value": "loud" }]"#)
-            .unwrap_err();
+    let err = parse_schedule_json(
+        r#"[{ "at_step": 0, "module": "m", "control": "c", "value": "loud" }]"#,
+    )
+    .unwrap_err();
     assert!(err.contains("invalid schedule"), "{}", err);
+}
+
+#[test]
+fn step_counts_accept_whole_floats_and_refuse_fractions() {
+    let entries = parse_schedule_json(
+        r#"[{ "at_step": 4.0, "module": "m", "control": "c", "value": 0.5, "ramp_steps": 2.0 }]"#,
+    )
+    .unwrap();
+    assert_eq!((entries[0].at_step, entries[0].ramp_steps), (4, Some(2)));
+
+    for json in [
+        r#"[{ "at_step": 4.5, "module": "m", "control": "c", "value": 0.5 }]"#,
+        r#"[{ "at_step": 4, "module": "m", "control": "c", "value": 0.5, "ramp_steps": 1.5 }]"#,
+        r#"[{ "at_step": -1, "module": "m", "control": "c", "value": 0.5 }]"#,
+    ] {
+        let err = parse_schedule_json(json).unwrap_err();
+        assert!(err.contains("expects a whole number"), "{}", err);
+    }
+}
+
+#[test]
+fn parsing_refuses_the_old_entry_names() {
+    for json in [
+        r#"[{ "at": 0, "module": "m", "control": "c", "value": 0.5 }]"#,
+        r#"[{ "at_step": 0, "module": "m", "control": "c", "value": 0.5, "ramp": 2 }]"#,
+    ] {
+        let err = parse_schedule_json(json).unwrap_err();
+        assert!(err.contains("invalid schedule"), "{}", err);
+    }
 }
 
 #[test]
@@ -285,7 +317,8 @@ fn parsing_refuses_numbers_too_large_for_f32() {
     // JSON has no NaN or infinity, but 1e39 overflows an f32 to infinity,
     // which the audio thread would hand straight to the target's setter.
     for value in ["1e39", "-1e39"] {
-        let json = format!(r#"[{{ "at": 2, "module": "m", "control": "c", "value": {value} }}]"#);
+        let json =
+            format!(r#"[{{ "at_step": 2, "module": "m", "control": "c", "value": {value} }}]"#);
         let err = parse_schedule_json(&json).unwrap_err();
         assert!(
             err.contains("control 'm.c' expects a finite number"),
@@ -301,7 +334,7 @@ fn parsing_refuses_numbers_too_large_for_f32() {
 
     // Finite extremes still parse.
     let json = format!(
-        r#"[{{ "at": 0, "module": "m", "control": "c", "value": {} }}]"#,
+        r#"[{{ "at_step": 0, "module": "m", "control": "c", "value": {} }}]"#,
         f32::MAX
     );
     assert!(parse_schedule_json(&json).is_ok());
@@ -312,7 +345,7 @@ fn a_config_schedule_given_as_json_text_parses_like_the_array() {
     // The `schedule` control takes JSON text, and an authored control write
     // records that text in the config, so the config must build from it.
     let array = serde_json::json!([
-        { "at": 4, "module": "mixer", "control": "level.0", "value": 0.5, "ramp": 2 }
+        { "at_step": 4, "module": "mixer", "control": "level.0", "value": 0.5, "ramp_steps": 2 }
     ]);
     let text = serde_json::Value::String(array.to_string());
     assert_eq!(
@@ -327,20 +360,21 @@ fn a_config_schedule_given_as_json_text_parses_like_the_array() {
 
 #[test]
 fn schedule_control_round_trips_as_json() {
-    let (module, _mixer, _dir) =
-        setup(r#"[{ "at": 4, "module": "mixer", "control": "level.0", "value": 0.5, "ramp": 2 }]"#);
+    let (module, _mixer, _dir) = setup(
+        r#"[{ "at_step": 4, "module": "mixer", "control": "level.0", "value": 0.5, "ramp_steps": 2 }]"#,
+    );
     let json = module.controls().schedule_json();
     let reparsed = parse_schedule_json(&json).unwrap();
     assert_eq!(reparsed.len(), 1);
-    assert_eq!(reparsed[0].at, 4);
-    assert_eq!(reparsed[0].ramp, Some(2));
+    assert_eq!(reparsed[0].at_step, 4);
+    assert_eq!(reparsed[0].ramp_steps, Some(2));
 }
 
 #[test]
 fn a_prepared_scheduler_processes_its_first_block_without_allocating() {
     let schedule = r#"[
-        { "at": 0, "module": "mixer", "control": "level.0", "value": 0.5 },
-        { "at": 1, "module": "mixer", "control": "level.1", "value": 0.0, "ramp": 2 }
+        { "at_step": 0, "module": "mixer", "control": "level.0", "value": 0.5 },
+        { "at_step": 1, "module": "mixer", "control": "level.1", "value": 0.0, "ramp_steps": 2 }
     ]"#;
     // Unprepared, the first block adopts the schedule on the audio thread.
     let (mut module, _mixer, _dir) = setup(schedule);
@@ -403,7 +437,7 @@ fn ramp_between_extreme_values_writes_only_finite_monotonic_values() {
     );
     let directory: SurfaceDirectory = Arc::new(Mutex::new(map));
     let spec = parse_schedule_json(
-        r#"[{ "at": 0, "module": "raw", "control": "value", "value": 3.4e38, "ramp": 4 }]"#,
+        r#"[{ "at_step": 0, "module": "raw", "control": "value", "value": 3.4e38, "ramp_steps": 4 }]"#,
     )
     .unwrap();
     let ctrl = ControlSchedulerControls::new(spec);

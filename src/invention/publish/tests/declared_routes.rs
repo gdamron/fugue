@@ -260,7 +260,7 @@ fn a_replaced_render_refuses_writes_through_its_old_surfaces() {
 fn a_scheduled_write_reaches_a_declared_target_before_it_processes() {
     let mut rig = dial_rig();
     let schedule = serde_json::json!({
-        "schedule": [{ "at": 0, "module": "dial", "control": "level", "value": 0.5 }]
+        "schedule": [{ "at_step": 0, "module": "dial", "control": "level", "value": 0.5 }]
     });
     let scheduler = rig.build("sched", "control_scheduler", schedule);
     let edit = |change: &mut GraphChange| {
@@ -269,7 +269,7 @@ fn a_scheduled_write_reaches_a_declared_target_before_it_processes() {
     };
     rig.live.edit(edit).unwrap();
     rig.render(1);
-    rig.live.write_input("sched", "gate", 1.0).unwrap();
+    rig.live.write_input("sched", "clock", 1.0).unwrap();
 
     let mut left = [0.0f32; 64];
     let mut right = [0.0f32; 64];

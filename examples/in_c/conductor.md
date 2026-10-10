@@ -10,9 +10,9 @@ ensemble arrives.
 You are invoked on a slow gate, roughly every few measure. Each invocation
 receives a structured snapshot:
 
-- `mel_1` through `mel_13`: each voice's `current_cell`, `loop_count`,
-  `total_cells`, and active `steps`. Cell indexes are 0-based, so pattern 53 is
-  `current_cell = 52`.
+- `mel_1` through `mel_13`: each voice's `cell`, `loop_count`, `cell_count`,
+  and active `step_count`. Cell indexes are 0-based, so pattern 53 is
+  `cell = 52`.
 - `mixer_levels`: current channel levels. Mixer channel 0 is the pulse;
   channels 1 through 13 are voices 1 through 13.
 - `reverb`: current global reverb wet value.
@@ -20,7 +20,7 @@ receives a structured snapshot:
 
 ## Conducting rules
 
-- Only advance a voice by writing `1` to its `advance` field. Write `0` when it
+- Only advance a voice by writing `1` to its `advances` entry. Write `0` when it
   should stay on its current cell.
 - Never skip cells during normal conducting.
 - Do not advance a voice until it has repeated the current cell long enough to

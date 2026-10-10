@@ -6,7 +6,7 @@
 //!
 //! The system uses **named ports** for connections:
 //! - Each module declares its inputs/outputs via the `Module` trait
-//! - Connections specify port names: `{"from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate"}`
+//! - Connections specify port names: `{"from": "clock", "from_port": "beat", "to": "adsr", "to_port": "gate"}`
 //! - All signals are f32 values - modules interpret them based on which port receives them
 //!
 //! ## Processing Order

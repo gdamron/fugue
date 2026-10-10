@@ -246,8 +246,8 @@ fn a_scheduler_publishes_cleanly_with_a_target_added_alongside() {
             "control_scheduler",
             serde_json::json!({
                 "schedule": [
-                    { "at": 0, "module": "osc3", "control": "frequency", "value": 330.0 },
-                    { "at": 1, "module": "osc3", "control": "frequency", "value": 660.0, "ramp": 4 }
+                    { "at_step": 0, "module": "osc3", "control": "frequency", "value": 330.0 },
+                    { "at_step": 1, "module": "osc3", "control": "frequency", "value": 660.0, "ramp_steps": 4 }
                 ]
             }),
         ),
@@ -261,7 +261,7 @@ fn a_scheduler_publishes_cleanly_with_a_target_added_alongside() {
         harness.build("clock", "clock", serde_json::json!({ "bpm": 120.0 })),
     );
     change
-        .connect(edge("clock", "gate", "sched", "gate"))
+        .connect(edge("clock", "beat", "sched", "clock"))
         .unwrap();
     change
         .connect(edge("osc3", "audio", "dac", "audio"))
@@ -303,8 +303,8 @@ const WITH_PATTERN: &str = r#"{
         "version": "1.0.0",
         "modules": [
             { "id": "sched", "type": "control_scheduler", "config": { "schedule": [
-                { "at": 0, "module": "o", "control": "frequency", "value": 330.0 },
-                { "at": 1, "module": "o", "control": "frequency", "value": 660.0, "ramp": 4 }
+                { "at_step": 0, "module": "o", "control": "frequency", "value": 330.0 },
+                { "at_step": 1, "module": "o", "control": "frequency", "value": 660.0, "ramp_steps": 4 }
             ] } },
             { "id": "o", "type": "oscillator" }
         ],
@@ -380,7 +380,7 @@ fn a_failed_edit_or_preparation_publishes_nothing() {
             "sched",
             "control_scheduler",
             serde_json::json!({
-                "schedule": [{ "at": 0, "module": "missing", "control": "frequency", "value": 1.0 }]
+                "schedule": [{ "at_step": 0, "module": "missing", "control": "frequency", "value": 1.0 }]
             }),
         ),
     );

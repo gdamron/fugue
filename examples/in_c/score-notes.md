@@ -39,6 +39,6 @@ Each performer should use its own `cell_sequencer` instance. The score data is
 shared as configuration data only; sequencer playback state must not be shared
 between performers.
 
-When auditioning a cell directly, set `cell_sequencer.steps` to that cell's
+When auditioning a cell directly, set `cell_sequencer.step_count` to that cell's
 length. Cell 35 requires 256 steps on the 32nd-note grid, so
 `cell_sequencer` supports cells up to 256 steps.

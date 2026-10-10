@@ -25,15 +25,15 @@ const SCHEDULED_CUT_INVENTION: &str = r#"{
             "type": "control_scheduler",
             "config": {
                 "schedule": [
-                    { "at": 2, "module": "mixer", "control": "level.0", "value": 0.0 }
+                    { "at_step": 2, "module": "mixer", "control": "level.0", "value": 0.0 }
                 ]
             }
         },
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
-        { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" },
-        { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "audio.0" },
+        { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "clock" },
+        { "from": "clock", "from_port": "beat", "to": "mixer", "to_port": "audio.0" },
         { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
         { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
     ]
@@ -99,17 +99,17 @@ fn scheduled_renders_are_byte_identical() {
                         "type": "control_scheduler",
                         "config": {
                             "schedule": [
-                                { "at": 1, "module": "mixer", "control": "level.0", "value": 0.1, "ramp": 4 },
-                                { "at": 6, "module": "mixer", "control": "level.0", "value": 1.0 },
-                                { "at": 8, "module": "clock", "control": "bpm", "value": 11250.0 }
+                                { "at_step": 1, "module": "mixer", "control": "level.0", "value": 0.1, "ramp_steps": 4 },
+                                { "at_step": 6, "module": "mixer", "control": "level.0", "value": 1.0 },
+                                { "at_step": 8, "module": "clock", "control": "bpm", "value": 11250.0 }
                             ]
                         }
                     },
                     { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
                 ],
                 "connections": [
-                    { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" },
-                    { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "audio.0" },
+                    { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "clock" },
+                    { "from": "clock", "from_port": "beat", "to": "mixer", "to_port": "audio.0" },
                     { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
                     { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
                 ]
@@ -141,14 +141,14 @@ fn scheduling_the_driving_clock_changes_tempo() {
                     "type": "control_scheduler",
                     "config": {
                         "schedule": [
-                            { "at": 2, "module": "clock", "control": "bpm", "value": 45000.0 }
+                            { "at_step": 2, "module": "clock", "control": "bpm", "value": 45000.0 }
                         ]
                     }
                 },
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
-                { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" }
+                { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "clock" }
             ]
         }"#,
         )
@@ -187,7 +187,7 @@ fn schedule_can_be_replaced_during_playback() {
             "sched",
             "schedule",
             ControlValue::String(
-                r#"[{ "at": 4, "module": "mixer", "control": "level.0", "value": 0.0 }]"#
+                r#"[{ "at_step": 4, "module": "mixer", "control": "level.0", "value": 0.0 }]"#
                     .to_string(),
             ),
         )
@@ -209,7 +209,7 @@ fn schedule_can_be_replaced_during_playback() {
             "sched",
             "schedule",
             ControlValue::String(
-                r#"[{ "at": 9, "module": "ghost", "control": "level.0", "value": 1.0 }]"#
+                r#"[{ "at_step": 9, "module": "ghost", "control": "level.0", "value": 1.0 }]"#
                     .to_string(),
             ),
         )
@@ -227,7 +227,7 @@ fn schedules_splice_in_via_assets() {
     let schedule_path = dir.join("dynamics.json");
     std::fs::write(
         &schedule_path,
-        r#"[{ "at": 2, "module": "mixer", "control": "level.0", "value": 0.0 }]"#,
+        r#"[{ "at_step": 2, "module": "mixer", "control": "level.0", "value": 0.0 }]"#,
     )
     .unwrap();
     let invention_path = dir.join("invention.json");
@@ -247,8 +247,8 @@ fn schedules_splice_in_via_assets() {
                 { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
             ],
             "connections": [
-                { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" },
-                { "from": "clock", "from_port": "gate", "to": "mixer", "to_port": "audio.0" },
+                { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "clock" },
+                { "from": "clock", "from_port": "beat", "to": "mixer", "to_port": "audio.0" },
                 { "from": "mixer", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" },
                 { "from": "mixer", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }
             ]
@@ -320,17 +320,52 @@ fn unresolvable_schedules_fail_at_load() {
                     "type": "control_scheduler",
                     "config": {
                         "schedule": [
-                            { "at": 0, "module": "ghost", "control": "level.0", "value": 1.0 }
+                            { "at_step": 0, "module": "ghost", "control": "level.0", "value": 1.0 }
                         ]
                     }
                 },
                 { "id": "dac", "type": "dac" }
             ],
             "connections": [
-                { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" }
+                { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "clock" }
             ]
         }"#,
         )
         .unwrap_err();
     assert!(err.to_string().contains("unknown module"), "{}", err);
+}
+
+#[test]
+fn the_scheduler_refuses_its_pre_convention_names() {
+    let registry = fugue::ModuleRegistry::default();
+    for config in [
+        serde_json::json!({ "tempo_target": "clock" }),
+        serde_json::json!({ "bpm_scale": 2.0 }),
+    ] {
+        assert!(
+            registry
+                .build("control_scheduler", 48_000, &config)
+                .is_err(),
+            "{config}"
+        );
+    }
+    let config = serde_json::json!({ "tempo_module": "clock", "tempo_scale": 2.0 });
+    assert!(registry.build("control_scheduler", 48_000, &config).is_ok());
+
+    let mut engine = RenderEngine::new(48_000);
+    let err = engine
+        .load_json(
+            r#"{
+            "version": "1.0.0",
+            "modules": [
+                { "id": "clock", "type": "clock" },
+                { "id": "sched", "type": "control_scheduler" }
+            ],
+            "connections": [
+                { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "gate" }
+            ]
+        }"#,
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("gate"), "{}", err);
 }

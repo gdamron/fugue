@@ -263,7 +263,7 @@ const ONE_SHOT_INVENTION: &str = r#"{
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
-        { "from": "clock", "from_port": "gate", "to": "seq", "to_port": "clock" },
+        { "from": "clock", "from_port": "beat", "to": "seq", "to_port": "clock" },
         { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
         { "from": "seq", "from_port": "gate", "to": "vca", "to_port": "level" },
         { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },
@@ -303,6 +303,26 @@ fn scan_end_gate_finds_the_exact_end_frame() {
     engine.reset().unwrap();
     let end_frame = render_until_end(&mut engine, Some("seq"));
     assert_eq!(end_frame, 511);
+}
+
+#[test]
+fn scan_end_gate_finds_a_cell_sequencers_end() {
+    let invention = ONE_SHOT_INVENTION
+        .replace("step_sequencer", "cell_sequencer")
+        .replace(
+            r#""pattern": [ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]"#,
+            r#""cells": [[ { "note": 0 }, { "note": 2 }, { "note": 4 }, { "note": 5 } ]]"#,
+        );
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_json(&invention).unwrap();
+    assert_eq!(render_until_end(&mut engine, None), 511);
+}
+
+#[test]
+fn only_ended_counts_as_an_end_gate() {
+    assert!(super::is_end_output("ended"));
+    // The sample modules name a one-sample pulse `end`; it is no end of piece.
+    assert!(!super::is_end_output("end"));
 }
 
 #[test]

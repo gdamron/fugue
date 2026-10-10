@@ -90,7 +90,7 @@ fn an_edited_invention_that_does_not_build_is_refused_with_no_edit_to_blame() {
     // the edited invention no longer builds.
     let base = base_with(
         r#"{ "id": "sched", "type": "control_scheduler", "config": {
-            "schedule": [{ "at": 0, "module": "spare", "control": "frequency", "value": 1.0 }]
+            "schedule": [{ "at_step": 0, "module": "spare", "control": "frequency", "value": 1.0 }]
         } }"#,
     );
     let (mut running, pump) = start(&base);
@@ -129,7 +129,7 @@ fn a_schedule_that_fails_to_attach_while_the_change_is_prepared_changes_nothing(
     scripted.then(None).then(None).then(Some(Step::Hide));
     let (mut running, pump) = start_with(scripted.registry(), BASE);
     let schedule = json!({
-        "schedule": [{ "at": 0, "module": "t", "control": "level", "value": 1.0 }]
+        "schedule": [{ "at_step": 0, "module": "t", "control": "level", "value": 1.0 }]
     });
     let error = refused(
         &mut running,

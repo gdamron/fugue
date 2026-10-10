@@ -20,11 +20,11 @@ const CONTROLS_NOT_READ_FROM_CONFIG: &[(&str, &str, &str)] = &[
     ("agent", "trigger_count", "a counter the gate input keeps"),
     ("agent", "reset_count", "a counter the reset input keeps"),
     ("cell_sequencer", "loop_count", "read-only telemetry"),
-    ("cell_sequencer", "current_cell", "read-only telemetry"),
-    ("cell_sequencer", "total_cells", "read-only telemetry"),
+    ("cell_sequencer", "cell", "read-only telemetry"),
+    ("cell_sequencer", "cell_count", "read-only telemetry"),
     (
         "cell_sequencer",
-        "advance",
+        "next_cell",
         "an action: a write advances the bank",
     ),
     (
@@ -49,7 +49,7 @@ pub(crate) fn base_config(type_id: &str) -> Value {
     let size = json!({ "width": 640, "height": 360 });
     match type_id {
         "audio_file_sink" => json!({ "path": "never-written.wav" }),
-        "cell_sequencer" => json!({ "sequences": [[60, null], [62]] }),
+        "cell_sequencer" => json!({ "cells": [[60, null], [62]] }),
         "rtmp_sink" => with(&size, "url", json!("rtmp://example.test/live")),
         "sample_slicer" => json!({
             "asset": { "path": eight_frame_wav() },

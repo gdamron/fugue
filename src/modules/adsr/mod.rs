@@ -87,7 +87,7 @@ impl ModuleFactory for AdsrFactory {
 /// // Route clock gate to ADSR, then to VCA
 /// {
 ///   "connections": [
-///     {"from": "clock", "from_port": "gate", "to": "adsr", "to_port": "gate"},
+///     {"from": "clock", "from_port": "beat", "to": "adsr", "to_port": "gate"},
 ///     {"from": "adsr", "from_port": "envelope", "to": "vca", "to_port": "level"}
 ///   ]
 /// }
