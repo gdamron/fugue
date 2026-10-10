@@ -36,8 +36,9 @@
 //!   the audio thread had to drop, or a write evicted before its outcome
 //!   came): [`RequestLog::full`], [`RequestLog::lost`];
 //! - a write reached the graph without a request (an input write, or a
-//!   control a module has not yet moved onto declared controls):
-//!   [`RequestLog::unlogged`];
+//!   control a module has not yet moved onto declared controls), or applied
+//!   a payload (a step sequencer's `pattern`), which a [`LoggedValue`]
+//!   cannot carry: [`RequestLog::unlogged`];
 //! - the graph was edited, reloaded or given an edit batch during the
 //!   session (a replay runs against the invention as loaded):
 //!   [`RequestLog::edits`];
@@ -150,8 +151,9 @@ pub struct RequestLog {
     /// applications), and applications of writes it no longer remembered.
     #[serde(default)]
     pub lost: u64,
-    /// Writes that reached the graph without a request, so are not logged:
-    /// input writes, and writes to controls not declared.
+    /// Writes that reached the graph without a logged request: input
+    /// writes, writes to controls not declared, and applied payload writes
+    /// (a step sequencer's `pattern`), which a [`LoggedValue`] cannot carry.
     #[serde(default)]
     pub unlogged: u64,
     /// Commits attempted on the graph during the session (structural

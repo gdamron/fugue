@@ -306,7 +306,7 @@ fn submit_timed(running: &RunningInvention, id: &str, key: &str, value: f32, whe
             module_id: id.to_string(),
             key: key.to_string(),
             value: ControlValue::Number(value),
-            raw: RtValue::F32(value),
+            raw: Some(RtValue::F32(value)),
             beat: None,
         };
         pending.submitted(request, write);

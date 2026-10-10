@@ -45,7 +45,7 @@ impl LiveGraph {
             module_id: module_id.to_string(),
             key: key.to_string(),
             value: shown,
-            raw: value,
+            raw: Some(value),
             beat,
         };
         pending.submitted(id, write);

@@ -24,8 +24,9 @@ pub(crate) struct PendingWrite {
     pub(crate) module_id: String,
     pub(crate) key: String,
     pub(crate) value: ControlValue,
-    /// The value exactly as the module will receive it, for the log.
-    pub(crate) raw: RtValue,
+    /// The value exactly as the module will receive it, for the log; none
+    /// for a payload, which the log cannot carry (it counts as unlogged).
+    pub(crate) raw: Option<RtValue>,
     /// Its musical time, when it is timed in beats.
     pub(crate) beat: Option<LoggedBeat>,
 }
@@ -95,11 +96,15 @@ impl PendingLog {
             self.log.lost(1);
             return;
         };
+        let Some(raw) = write.raw else {
+            self.log.unlogged();
+            return;
+        };
         self.log.applied(LoggedRequest {
             sample,
             module_id: write.module_id,
             key: write.key,
-            value: write.raw.into(),
+            value: raw.into(),
             due,
             beat: write.beat,
         });

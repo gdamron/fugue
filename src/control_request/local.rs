@@ -8,18 +8,29 @@ use super::declare::DeclKind;
 use super::request::RtValue;
 use crate::{ControlMeta, Module};
 
-/// The module's declared controls, each with what it holds now.
+/// The module's declared controls, each with what it holds now; not its
+/// payloads, which no number holds.
 pub(crate) fn local_controls<M: Module + ?Sized>(module: &M) -> Vec<ControlMeta> {
     let Some((table, cells)) = module.declared() else {
         return Vec::new();
     };
-    table.metas(|index| table.value(index, cells.load(index)?))
+    let mut metas = table.metas(|index| table.value(index, cells.load(index)?));
+    metas.retain(|meta| !is_payload(table, &meta.key));
+    metas
+}
+
+fn is_payload(table: &super::ControlTable, key: &str) -> bool {
+    let decl = table.resolve(key).and_then(|index| table.decl(index));
+    decl.is_some_and(|(decl, _)| decl.kind == DeclKind::Payload)
 }
 
 /// What `key` holds, as a number.
 pub(crate) fn local_get<M: Module + ?Sized>(module: &M, key: &str) -> Result<f32, String> {
     let unknown = || format!("Unknown control: {key}");
     let (table, cells) = module.declared().ok_or_else(unknown)?;
+    if is_payload(table, key) {
+        return Err(unknown());
+    }
     let index = table.resolve(key).ok_or_else(unknown)?;
     Ok(match cells.load(index).ok_or_else(unknown)? {
         RtValue::F32(value) => value,

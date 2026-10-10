@@ -11,6 +11,7 @@ use crate::control_request::{
 };
 use crate::invention::declared::{Declaration, Route};
 use crate::invention::timelines::Enclosure;
+use crate::payload::{Payload, Retired};
 
 mod control_meta;
 mod control_validation;
@@ -504,6 +505,24 @@ pub trait Module: Send {
     #[allow(private_interfaces)]
     fn enclosure(&self) -> Option<&std::sync::Arc<Enclosure>> {
         None
+    }
+
+    /// Keeps `payload` as declared payload control `control`'s value and
+    /// returns the value it replaces, or refuses it and hands it back.
+    ///
+    /// As [`Module::apply`]: on the audio thread, between `process` calls,
+    /// allocation-, free- and lock-free. The module never drops either
+    /// value: its caller retires them off the audio thread (see
+    /// `crate::payload`).
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        let _ = control;
+        Err((Refusal::Unsupported, payload))
     }
 
     /// Legacy module-local control metadata surface.
