@@ -23,6 +23,12 @@ pub(crate) enum Refusal {
     /// It was timed by wall clock, and the engine has none to place it on
     /// (offline render).
     NoClock,
+    /// It was timed in beats on a module that keeps no beat timeline (not
+    /// a clock).
+    NoTimeline,
+    /// It was timed in beats on a clock that was removed or rebuilt before
+    /// it applied.
+    TimelineGone,
 }
 
 /// How a request left the audio thread's hands.
@@ -103,7 +109,7 @@ impl Outcomes {
 
     /// Records the outcome of a request whose value is already disposed of,
     /// releases its reservation and sends the outcome to the control side.
-    fn record(&mut self, id: super::RequestId, payload: bool, outcome: Outcome) {
+    pub(super) fn record(&mut self, id: super::RequestId, payload: bool, outcome: Outcome) {
         if payload {
             self.reserved -= MAX_RETIRES_PER_REQUEST;
         }
