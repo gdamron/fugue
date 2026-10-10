@@ -213,6 +213,40 @@ fn settling_waits_for_the_publisher() {
     );
 }
 
+/// A block installs a bounded number of edits, so a settle renders until
+/// every edit published before it has installed: a caller whose edit came
+/// after a burst of others still finds it applied when its settle returns.
+#[test]
+fn a_settle_installs_every_edit_published_before_it() {
+    let (live, _backend, _render) = null_linked(OSCILLATOR);
+    let surface = live.control_surfaces.lock().unwrap()["osc"].clone();
+    let index = surface.declaration("frequency").unwrap().index;
+    let fm = edge("osc", "audio", "dac", "audio");
+    {
+        let mut publisher = live.publisher().lock().unwrap();
+        for n in 0..=2 * crate::invention::graph::MAX_INSTALLS_PER_BLOCK {
+            let mut change = live.change_on(&publisher);
+            if n % 2 == 0 {
+                change.disconnect(fm.clone());
+            } else {
+                change.connect(fm.clone()).unwrap();
+            }
+            publisher.publish(change.prepare().unwrap()).unwrap();
+        }
+        let target = publisher.control_target("osc", index).unwrap();
+        let request = Request::new(target, RequestValue::Value(RtValue::F32(220.0)));
+        live.requests.submit(request).unwrap();
+    }
+    live.settle();
+    let publisher = live.publisher().lock().unwrap();
+    assert_eq!(publisher.applied(), publisher.generation());
+    drop(publisher);
+    assert_eq!(
+        surface.get_control("frequency").unwrap(),
+        ControlValue::Number(220.0)
+    );
+}
+
 const OSCILLATOR: &str = r#"{
     "version": "1.0.0",
     "modules": [
@@ -343,4 +377,62 @@ fn a_kept_snapshot_is_refused_once_a_null_backend_stops() {
         .set_control("osc", "frequency", ControlValue::Number(220.0))
         .unwrap_err();
     assert!(refused.to_string().contains("stopped"), "{refused}");
+}
+
+/// A settle whose render panics while requests apply (the drain is out of
+/// the graph then) unwinds rather than hanging on the publisher it holds:
+/// the drain dropped while unwinding neither closes the publisher nor
+/// frees what is queued.
+#[test]
+fn a_settle_whose_render_panics_unwinds_rather_than_hangs() {
+    fn panics(
+        _: &mut SignalGraph,
+        _: usize,
+        _: crate::control_request::ControlIndex,
+        _: RequestValue,
+        _: &mut crate::payload::Retirer,
+    ) -> Result<(), crate::control_request::Refusal> {
+        panic!("a module panicked applying a request");
+    }
+    let document = Invention::from_json(OSCILLATOR).unwrap();
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
+    let ports = Arc::new(Mutex::new(module_ports(&runtime.modules)));
+    let mut graph = SignalGraph::new(
+        runtime.modules,
+        runtime.sinks,
+        runtime.routing,
+        MasterObservers::default(),
+    );
+    graph.recompile();
+    graph.request_hook = Some(panics);
+    let mut backend = NullBackend::new(SAMPLE_RATE);
+    let live = LiveGraph::link(
+        &mut graph,
+        runtime.state,
+        runtime.control_surfaces,
+        ports,
+        Arc::new(runtime.registry),
+        Some(backend.settle_handle()),
+    );
+    let block = move |left: &mut [f32], right: &mut [f32]| graph.process_block(left, right);
+    crate::AudioBackend::start(&mut backend, Box::new(block)).unwrap();
+    let surface = live.control_surfaces.lock().unwrap()["osc"].clone();
+    let index = surface.declaration("frequency").unwrap().index;
+    {
+        let publisher = live.publisher().lock().unwrap();
+        let target = publisher.control_target("osc", index).unwrap();
+        let request = Request::new(target, RequestValue::Value(RtValue::F32(220.0)));
+        live.requests.submit(request).unwrap();
+    }
+
+    let settling = std::thread::spawn(move || live.settle());
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !settling.is_finished() {
+        assert!(std::time::Instant::now() < deadline, "the settle hung");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        settling.join().is_err(),
+        "the render's panic reaches the settle"
+    );
 }
