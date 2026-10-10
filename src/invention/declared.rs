@@ -36,13 +36,12 @@ use indexmap::IndexMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use super::graph::{GraphCommand, SignalGraph};
-use super::publish::{PendingLog, PendingWrite, Publisher};
+use super::publish::{PendingLog, PendingWrite, Publisher, Settler};
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
     Refusal, Request, RequestSender, RequestValue, RtValue, Writer,
 };
-use crate::modules::dac::Settle;
 use crate::traits::ControlSurfaceMap;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
@@ -78,7 +77,7 @@ pub(crate) struct RequestPort {
     pub(crate) module_id: String,
     /// Settles each request once submitted, when the backend never renders
     /// on its own (see `LiveGraph::link`).
-    pub(crate) settle: Option<Settle>,
+    pub(crate) settler: Option<Settler>,
 }
 
 impl RequestPort {
@@ -185,8 +184,8 @@ impl DeclaredSurface {
                 // block or theirs.
                 drop(pending);
                 drop(publisher);
-                if let Some(settle) = &port.settle {
-                    settle.settle();
+                if let Some(settler) = &port.settler {
+                    settler.settle();
                 }
                 Ok(())
             }

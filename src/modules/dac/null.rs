@@ -81,16 +81,18 @@ impl super::AudioBackend for NullBackend {
 pub(crate) struct Settle(Weak<Mutex<Option<BlockRenderFn>>>);
 
 impl Settle {
-    /// Renders one zero-length block, which takes up every change queued
-    /// before this call and applies the requests due now (see
-    /// `SignalGraph::process_block`). Control thread only, and never from
-    /// inside a render. The render itself takes no lock (a zero-length
-    /// block runs no module's `process`), so the caller may hold any other.
-    /// Waits while another thread settles, so renders never overlap and the
-    /// graph passes between threads through this mutex. Does nothing once
-    /// the backend has stopped, or after a render panicked (as a device
-    /// stream then renders silence).
-    pub(crate) fn settle(&self) {
+    /// Runs `first`, then renders one zero-length block, which takes up
+    /// every change queued before this call and applies the requests due
+    /// now (see `SignalGraph::process_block`). Both run under this
+    /// backend's render lock, so `first` can make room the render needs
+    /// (freeing what earlier renders retired) with no render in between.
+    /// Control thread only, and never from inside a render. The render
+    /// itself takes no lock (a zero-length block runs no module's
+    /// `process`). Waits while another thread settles, so renders never
+    /// overlap and the graph passes between threads through this mutex.
+    /// Does nothing once the backend has stopped, or after a render
+    /// panicked (as a device stream then renders silence).
+    pub(crate) fn settle(&self, first: impl FnOnce()) {
         let Some(render) = self.0.upgrade() else {
             return;
         };
@@ -98,6 +100,7 @@ impl Settle {
             return;
         };
         if let Some(render) = render.as_mut() {
+            first();
             render(&mut [], &mut []);
         }
     }

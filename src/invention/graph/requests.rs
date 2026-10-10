@@ -48,6 +48,13 @@
 //!   input writes are bounded by their ring (FUG-292). Refusing instead
 //!   would let every fold keep one more remap, without bound.
 //!
+//! A clockless drain (a `NullBackend`'s) applies no back-pressure: what
+//! fills its store waits for samples that never come, so nothing would
+//! ever free the room. Every request it pops is placed or, when the store
+//! is full, refused (`Refusal::PendingFull`): none is left queued for want
+//! of room. Its blocks install every publication waiting (see
+//! `publish::Settler`), so no remaps accumulate to bound.
+//!
 //! # Retire room: payloads stop the intake
 //!
 //! The drain flushes its retirer at every block start, and takes a request
@@ -101,6 +108,10 @@ pub(crate) struct RequestDrain {
     pub(crate) pending: PendingStore,
     /// The installed publication's generation, as of the last drain.
     installed: u64,
+    /// No time passes (a `NullBackend`): a request that finds the store
+    /// full is refused ([`Refusal::PendingFull`]) rather than left queued,
+    /// since what fills the store waits for samples that never come.
+    pub(crate) clockless: bool,
 }
 
 impl RequestDrain {
@@ -119,6 +130,7 @@ impl RequestDrain {
             pop_limit,
             pending: PendingStore::new(pending, retirer, outcomes),
             installed: 0,
+            clockless: false,
         }
     }
 }
@@ -227,7 +239,7 @@ impl SignalGraph {
                 Ok((target, at)) => !(replaces && drain.pending.coalesces_with(&target, at, event)),
                 Err(_) => false,
             };
-            if !owed && drain.pending.is_full() && needs_room {
+            if !owed && !drain.clockless && drain.pending.is_full() && needs_room {
                 break;
             }
             let Some(mut request) = drain.requests.pop() else {

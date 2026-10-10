@@ -70,7 +70,27 @@ pub(crate) struct LiveGraph {
     registry: LiveRegistry,
     /// Renders a zero-length block after each change, for a backend that
     /// never renders on its own (see [`crate::NullBackend`]).
-    settle: Option<Settle>,
+    settler: Option<Settler>,
+}
+
+/// Settles a live graph whose backend never renders on its own: frees what
+/// earlier blocks retired, then renders a zero-length block, under the
+/// backend's render lock. Freeing first leaves the retire ring room, so the
+/// block always installs a waiting publication, and the request drain room
+/// for payloads: each settle takes up every change made before it.
+#[derive(Clone)]
+pub(crate) struct Settler {
+    render: Settle,
+    reclaimer: Arc<Reclaimer>,
+}
+
+impl Settler {
+    /// Call it with no lock held, never from inside a render.
+    pub(crate) fn settle(&self) {
+        self.render.settle(|| {
+            self.reclaimer.reclaim();
+        });
+    }
 }
 
 /// What a committed change did, for the caller's follow-up work.
@@ -100,16 +120,29 @@ impl LiveGraph {
         settle: Option<Settle>,
     ) -> Self {
         let (publisher, ends) = Publisher::link(graph);
+        let reclaimer = Arc::new(Reclaimer::new(ends.retired, ends.payloads));
+        let settler = settle.map(|render| {
+            // No block will free room in a store whose requests wait for
+            // samples that never come, so the drain refuses rather than
+            // leave a request queued (see `graph::requests`).
+            if let Some(drain) = graph.requests.as_mut() {
+                drain.clockless = true;
+            }
+            Settler {
+                render,
+                reclaimer: Arc::clone(&reclaimer),
+            }
+        });
         let live = Self {
             publisher: Arc::new(Mutex::new(publisher)),
-            reclaimer: Arc::new(Reclaimer::new(ends.retired, ends.payloads)),
+            reclaimer,
             requests: ends.requests,
             pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes))),
             state,
             control_surfaces,
             module_ports,
             registry: LiveRegistry::new(registry),
-            settle,
+            settler,
         };
         // Every module the graph starts with runs from here on.
         let port = live.port();
@@ -195,15 +228,15 @@ impl LiveGraph {
             requests: self.requests.clone(),
             pending: self.pending.clone(),
             module_id: String::new(),
-            settle: self.settle.clone(),
+            settler: self.settler.clone(),
         }
     }
 
     /// Takes up every change made so far with a zero-length block, when the
     /// backend never renders on its own. Call it with no lock held.
     fn settle(&self) {
-        if let Some(settle) = &self.settle {
-            settle.settle();
+        if let Some(settler) = &self.settler {
+            settler.settle();
         }
     }
 

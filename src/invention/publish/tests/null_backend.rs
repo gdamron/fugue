@@ -101,6 +101,85 @@ fn a_zero_length_block_never_waits_for_a_control_thread() {
     assert_eq!(level(&rig), RtValue::F32(0.5));
 }
 
+/// A clockless drain never leaves a request queued for want of room: one
+/// that finds the store full of requests for samples that never come is
+/// refused at once, rather than waiting behind them for ever.
+#[test]
+fn a_clockless_drain_refuses_what_a_full_store_cannot_take() {
+    let mut rig = dial_rig();
+    rig.graph.requests.as_mut().unwrap().clockless = true;
+    let now = rig.graph.current_sample;
+    for batch in 0..2 {
+        for i in 0..publisher::REQUEST_QUEUE_CAPACITY {
+            let at = now + 1 + (batch * publisher::REQUEST_QUEUE_CAPACITY + i) as u64;
+            submit(&rig, 0.75, When::AtSample(at));
+        }
+        settle(&mut rig);
+    }
+    assert!(rig.graph.requests.as_ref().unwrap().pending.is_full());
+    let id = submit(&rig, 0.5, When::Now);
+
+    settle(&mut rig);
+    assert_eq!(level(&rig), RtValue::F32(0.25));
+    let refused = Outcome::Refused(crate::control_request::Refusal::PendingFull);
+    assert_eq!(outcomes(&mut rig), [(id, refused)]);
+}
+
+/// A graph a [`NullBackend`] renders, linked to settle through it, and the
+/// backend's raw render handle. No reclaimer thread runs.
+fn null_linked(json: &str) -> (LiveGraph, NullBackend, crate::modules::dac::Settle) {
+    let document = Invention::from_json(json).unwrap();
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
+    let ports = Arc::new(Mutex::new(module_ports(&runtime.modules)));
+    let mut graph = SignalGraph::new(
+        runtime.modules,
+        runtime.sinks,
+        runtime.routing,
+        MasterObservers::default(),
+    );
+    graph.recompile();
+    let mut backend = NullBackend::new(SAMPLE_RATE);
+    let render = backend.settle_handle();
+    let live = LiveGraph::link(
+        &mut graph,
+        runtime.state,
+        runtime.control_surfaces,
+        ports,
+        Arc::new(runtime.registry),
+        Some(render.clone()),
+    );
+    let block = move |left: &mut [f32], right: &mut [f32]| graph.process_block(left, right);
+    crate::AudioBackend::start(&mut backend, Box::new(block)).unwrap();
+    (live, backend, render)
+}
+
+/// Settling frees what earlier blocks retired first, so a publication
+/// waiting behind a full retire ring installs without another change.
+#[test]
+fn settling_installs_a_publication_a_full_retire_ring_held_back() {
+    let (live, _backend, render) = null_linked(OSCILLATOR);
+    let osc_to_dac = edge("osc", "audio", "dac", "audio");
+    for n in 0..publisher::RETIRE_CAPACITY + 2 {
+        let mut publisher = live.publisher().lock().unwrap();
+        let mut change = live.change_on(&publisher);
+        if n % 2 == 0 {
+            change.disconnect(osc_to_dac.clone());
+        } else {
+            change.connect(osc_to_dac.clone()).unwrap();
+        }
+        publisher.publish(change.prepare().unwrap()).unwrap();
+        drop(publisher);
+        // A block that frees nothing first, as the audio thread renders.
+        render.settle(|| {});
+    }
+    let published = live.generation();
+    let applied = || live.publisher().lock().unwrap().applied();
+    assert!(applied() < published, "the ring held the last one back");
+
+    live.settle();
+    assert_eq!(applied(), published);
+}
+
 const OSCILLATOR: &str = r#"{
     "version": "1.0.0",
     "modules": [
