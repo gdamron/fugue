@@ -103,6 +103,11 @@ impl ModuleFactory for SampleInstrumentFactory {
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let (specs, voices, release) = parse_config(config)?;
         let (controls, zone_audio) = SampleInstrumentControls::new(sample_rate, release, specs)?;
+        // A recorded `level.N` write is later than the zone's authored
+        // level, so it wins; a `root_note.N` is refused, as a live write is.
+        crate::factory::apply_control_keys(&controls, config, |key| {
+            key.starts_with("level.") || key.starts_with("root_note.")
+        })?;
         let instrument =
             SampleInstrument::new_with_controls(controls.clone(), zone_audio, voices, sample_rate);
 

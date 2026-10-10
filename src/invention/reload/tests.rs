@@ -5,6 +5,7 @@ use crate::modules::NullBackend;
 
 mod authored;
 mod numeric;
+mod sample_levels;
 
 fn doc(json: &str) -> Invention {
     Invention::from_json(json).unwrap()
