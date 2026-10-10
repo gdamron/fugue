@@ -4,6 +4,8 @@ use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, 
 
 pub(super) const BPM: ControlIndex = ControlIndex(0);
 pub(super) const GATE_LENGTH: ControlIndex = ControlIndex(1);
+pub(super) const RESET: ControlIndex = ControlIndex(2);
+pub(super) const POSITION: ControlIndex = ControlIndex(3);
 
 const DECLS: &[ControlDecl] = &[
     // Not clamped: tests and fast pulse clocks run far past the range
@@ -24,6 +26,23 @@ const DECLS: &[ControlDecl] = &[
         "Gate length as a fraction of the pulse",
     )
     .clamped(0.0, 1.0),
+    ControlDecl::new(
+        "reset",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Returns the clock to beat 0: its next sample is the first gate again",
+    )
+    .event(),
+    ControlDecl::new(
+        "position",
+        DeclKind::Number {
+            min: 0.0,
+            max: f32::MAX,
+        },
+        RtValue::F32(0.0),
+        "Beats since the first gate or the latest reset, as of the latest block",
+    )
+    .telemetry(),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);

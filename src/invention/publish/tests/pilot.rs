@@ -186,4 +186,10 @@ fn clock_writes_apply_on_the_audio_thread_and_retime_its_gates() {
         rises.windows(2).all(|pair| pair[1] - pair[0] == 64),
         "{rises:?}"
     );
+
+    // A reset, applied at the next block's start, starts beat 0 there.
+    write(&rig, "clock", "reset", true.into());
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(read(&rig, "clock", "position"), (63.0 / 64.0).into());
+    assert_eq!(read(&rig, "clock", "reset"), false.into(), "an event");
 }

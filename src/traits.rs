@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::control_request::{
-    Automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue,
+    Automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue, Timeline,
 };
 use crate::invention::declared::{Declaration, Route};
 
@@ -478,6 +478,15 @@ pub trait Module: Send {
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         let _ = (control, value);
         Err(Refusal::Unsupported)
+    }
+
+    /// This module's beat timeline, when it keeps one (a clock), for the
+    /// audio thread to place requests timed in beats on. Read between
+    /// [`Module::process`] calls only.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn timeline(&self) -> Option<&dyn Timeline> {
+        None
     }
 
     /// Legacy module-local control metadata surface.
