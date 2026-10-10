@@ -7,6 +7,7 @@
 //! The same cadence frees the engine's retired request payloads (see
 //! `crate::payload`).
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,13 +23,34 @@ pub(crate) struct Reclaimer {
     retired: Arc<RetireRing>,
     /// The engine's retired request payloads.
     payloads: Arc<RetireQueue>,
+    /// Publications freed so far.
+    freed: AtomicU64,
+    /// Whether a reclaimer thread runs (see [`Self::spawn`]).
+    threaded: AtomicBool,
 }
 
 impl Reclaimer {
     /// Frees what arrives on `retired` and `payloads` (the queue the
     /// engine's request drain retires payloads to).
     pub(crate) fn new(retired: Arc<RetireRing>, payloads: Arc<RetireQueue>) -> Self {
-        Self { retired, payloads }
+        Self {
+            retired,
+            payloads,
+            freed: AtomicU64::new(0),
+            threaded: AtomicBool::new(false),
+        }
+    }
+
+    /// Publications freed so far. Every publication is freed once the audio
+    /// side has installed it and a later one has replaced it.
+    pub(crate) fn freed(&self) -> u64 {
+        self.freed.load(Ordering::Relaxed)
+    }
+
+    /// Whether a reclaimer thread frees retirements on its own cadence;
+    /// without one, only control-thread changes free them.
+    pub(crate) fn threaded(&self) -> bool {
+        self.threaded.load(Ordering::Relaxed)
     }
 
     /// Frees every publication retired so far and returns how many. Each
@@ -37,6 +59,7 @@ impl Reclaimer {
     /// publisher's lock. Also frees the retired payloads, uncounted.
     pub(crate) fn reclaim(&self) -> usize {
         let freed = self.retired.drain();
+        self.freed.fetch_add(freed as u64, Ordering::Relaxed);
         self.payloads.drain();
         freed
     }
@@ -45,8 +68,9 @@ impl Reclaimer {
     /// `reclaimer` is dropped. Returns false when no thread could start; the
     /// publisher's own changes still reclaim before they prepare.
     pub(crate) fn spawn(reclaimer: &Arc<Self>) -> bool {
+        let threaded = &reclaimer.threaded;
         let reclaimer = Arc::downgrade(reclaimer);
-        std::thread::Builder::new()
+        let started = std::thread::Builder::new()
             .name("fugue-reclaim".to_string())
             .spawn(move || loop {
                 std::thread::sleep(RECLAIM_INTERVAL);
@@ -55,6 +79,8 @@ impl Reclaimer {
                 };
                 reclaimer.reclaim();
             })
-            .is_ok()
+            .is_ok();
+        threaded.store(started, Ordering::Relaxed);
+        started
     }
 }

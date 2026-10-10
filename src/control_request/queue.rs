@@ -284,3 +284,20 @@ impl<T> QueueConsumer<T> {
         Some(value)
     }
 }
+
+impl<T> Drop for QueueConsumer<T> {
+    /// Drops what was pushed and never popped now, rather than when the
+    /// last producer goes: a queued item may hold a producer of this same
+    /// queue (an edit's publication holds modules whose control ports
+    /// submit here), which would otherwise keep the queue, and everything
+    /// in it, alive for good. Runs when the audio side is torn down: a
+    /// control-thread operation. Not while unwinding (a render that
+    /// panicked), where nothing may be freed: the last producer frees it.
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        debug_assert_control_thread("dropping a request queue's consumer");
+        while self.pop().is_some() {}
+    }
+}

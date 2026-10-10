@@ -95,6 +95,8 @@ pub(crate) struct Publisher {
     /// Publications the audio thread has installed. The audio side holds
     /// the other reference, so it also tells whether that side still exists.
     applied: Arc<AtomicU64>,
+    /// Set by [`Self::close`] as the audio side's request drain goes.
+    closed: bool,
 }
 
 impl Publisher {
@@ -131,6 +133,7 @@ impl Publisher {
             published,
             inputs: Producer::claim(inputs),
             applied,
+            closed: false,
         };
         let ends = LinkEnds {
             requests: requests.reserving(EDIT_RESERVE as u64),
@@ -152,7 +155,6 @@ impl Publisher {
     }
 
     /// Publications the audio thread has installed so far.
-    #[cfg(test)]
     pub(crate) fn applied(&self) -> u64 {
         self.applied.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -250,7 +252,17 @@ impl Publisher {
 
     /// Whether the audio side of the link still exists.
     pub(crate) fn audio_alive(&self) -> bool {
-        Arc::strong_count(&self.applied) > 1
+        !self.closed && Arc::strong_count(&self.applied) > 1
+    }
+
+    /// Marks the audio side gone, refusing every later submission. The
+    /// request drain calls it under this lock as it is dropped, before its
+    /// queue drops what is left: every submission checks
+    /// [`Self::audio_alive`] under the same lock, so none can land behind
+    /// that last drain and keep the queue alive (a queued edit holds
+    /// modules whose controls submit to it).
+    pub(crate) fn close(&mut self) {
+        self.closed = true;
     }
 
     /// Publishes a prepared change and returns the mirror it replaced.

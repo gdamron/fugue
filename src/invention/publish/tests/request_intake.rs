@@ -268,3 +268,74 @@ fn a_block_installs_at_most_its_share_of_queued_edits() {
         (generation + edits, applied + edits)
     );
 }
+
+/// With no reclaimer thread only changes free retired publications, so a
+/// burst of edits is refused once more are queued than the audio side can
+/// install without a reclaim; every one accepted installs, and once they
+/// have, edits are taken again.
+#[test]
+fn without_a_reclaimer_thread_a_burst_of_edits_stops_where_all_can_install() {
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    rig.live.reclaim();
+    let (generation, applied) = rig.generation_and_applied();
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
+    let toggle = |rig: &Rig, n: u64| {
+        rig.live.edit(|change| {
+            if n.is_multiple_of(2) {
+                change.connect(fm.clone())
+            } else {
+                change.disconnect(fm.clone());
+                Ok(())
+            }
+        })
+    };
+    let mut accepted = 0;
+    let refused = loop {
+        match toggle(&rig, accepted) {
+            Ok(_) => accepted += 1,
+            Err(error) => break error,
+        }
+    };
+    assert!(matches!(refused, GraphCommandError::QueueFull));
+    let installable = publisher::RETIRE_CAPACITY as u64 + 1;
+    assert_eq!(accepted, installable);
+    assert_eq!(
+        rig.generation_and_applied(),
+        (generation + accepted, applied)
+    );
+
+    while rig.generation_and_applied().1 < applied + accepted {
+        assert_eq!(counted_block(&mut rig), (0, 0), "installing the burst");
+    }
+    toggle(&rig, accepted).unwrap();
+}
+
+/// A backlog left when the audio side goes is not reported as a full queue
+/// to retry: the commit is refused because the audio thread stopped.
+#[test]
+fn a_backlog_left_by_a_stopped_audio_side_refuses_as_stopped() {
+    let rig = Rig::new(BASE);
+    let Rig { graph, live, .. } = rig;
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
+    for n in 0..=publisher::RETIRE_CAPACITY {
+        live.edit(|change| {
+            if n.is_multiple_of(2) {
+                change.connect(fm.clone())
+            } else {
+                change.disconnect(fm.clone());
+                Ok(())
+            }
+        })
+        .unwrap();
+    }
+    drop(graph);
+    let refused = live.edit(|change| {
+        change.disconnect(fm.clone());
+        Ok(())
+    });
+    assert!(matches!(
+        refused,
+        Err(GraphCommandError::AudioThreadStopped)
+    ));
+}

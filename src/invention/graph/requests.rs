@@ -124,6 +124,9 @@ pub(crate) struct RequestDrain {
     /// Only a hint for when to stop holding back, so `Relaxed` is enough:
     /// a stale value holds back one more block.
     published: Arc<AtomicU64>,
+    /// Run as the drain is dropped, before its queue: closes the link to
+    /// further submissions (see `Publisher::close`).
+    pub(crate) on_drop: Option<Box<dyn FnOnce() + Send>>,
 }
 
 /// Gives `graph` a request drain for `capacity` requests, as
@@ -169,7 +172,27 @@ impl RequestDrain {
             installed: 0,
             clockless: false,
             published,
+            on_drop: None,
         }
+    }
+}
+
+impl Drop for RequestDrain {
+    /// Dropped with the graph, on a control thread once the audio has
+    /// stopped; the queue then drops whatever is left in it. A render
+    /// takes the drain out of the graph while requests apply, so a panic
+    /// there drops it while unwinding, on the rendering thread and maybe
+    /// under the publisher (a settle): it then neither locks nor frees, and
+    /// leaks the hook.
+    fn drop(&mut self) {
+        let Some(close) = self.on_drop.take() else {
+            return;
+        };
+        if std::thread::panicking() {
+            std::mem::forget(close);
+            return;
+        }
+        close();
     }
 }
 

@@ -99,6 +99,11 @@ pub trait AudioBackend: Send {
     fn start(&mut self, render: BlockRenderFn) -> Result<(), Box<dyn std::error::Error>>;
 
     /// Stops audio output.
+    ///
+    /// Drop the render function on a control thread, never on the audio
+    /// thread, and never while holding a lock a control thread may hold:
+    /// dropping it tears the graph down, which takes the live graph's
+    /// publisher lock to close it to further changes.
     fn stop(&mut self);
 
     /// Returns live callback diagnostics when the backend can collect them.

@@ -105,15 +105,19 @@ fn dropping_the_queue_drops_unpopped_items_once() {
             drop(consumer);
             assert_eq!(
                 drops.load(Ordering::Relaxed),
-                6,
-                "the producer keeps the queue"
+                8,
+                "the consumer drops what it never popped"
             );
+            // What is pushed after it goes, the queue drops with the last
+            // producer.
+            producer.try_push(Tracked(drops.clone())).ok().unwrap();
             drop(producer);
+            assert_eq!(drops.load(Ordering::Relaxed), 9, "start {start}");
         } else {
             drop(producer);
             drop(consumer);
+            assert_eq!(drops.load(Ordering::Relaxed), 8, "start {start}");
         }
-        assert_eq!(drops.load(Ordering::Relaxed), 8, "start {start}");
     }
 }
 
@@ -163,6 +167,30 @@ fn a_reserving_sender_leaves_its_slots_to_the_others() {
     consumer.pop().unwrap();
     assert!(reserving.submit(request(0.0)).is_ok());
     assert!(reserving.submit(request(0.0)).is_err());
+}
+
+/// A queued item holding a producer of its own queue (an edit whose
+/// modules submit control requests) is dropped with the consumer, so it
+/// never keeps the queue alive through itself.
+#[test]
+fn a_queued_request_holding_its_own_sender_is_dropped_with_the_consumer() {
+    struct Holds {
+        _sender: RequestSender,
+        _tracked: Tracked,
+    }
+    let drops = Arc::new(AtomicUsize::new(0));
+    let (sender, consumer) = request_channel(4, Default::default());
+    let holds = Holds {
+        _sender: sender.clone(),
+        _tracked: Tracked(drops.clone()),
+    };
+    let mut queued = request(0.0);
+    queued.value = RequestValue::Edit(crate::payload::Payload::owned(Box::new(holds)));
+    sender.submit(queued).unwrap();
+    drop(sender);
+    assert_eq!(drops.load(Ordering::Relaxed), 0);
+    drop(consumer);
+    assert_eq!(drops.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -280,8 +308,14 @@ fn a_full_outcome_queue_counts_what_it_drops() {
     for id in 1..=3 {
         sender.send(RequestId(id), Outcome::Superseded);
     }
-    assert_eq!(receiver.try_recv(), Some((RequestId(1), Outcome::Superseded)));
-    assert_eq!(receiver.try_recv(), Some((RequestId(2), Outcome::Superseded)));
+    assert_eq!(
+        receiver.try_recv(),
+        Some((RequestId(1), Outcome::Superseded))
+    );
+    assert_eq!(
+        receiver.try_recv(),
+        Some((RequestId(2), Outcome::Superseded))
+    );
     assert_eq!(receiver.try_recv(), None);
     assert_eq!(cursor.take(receiver.dropped()), 1);
 }

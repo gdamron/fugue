@@ -297,6 +297,9 @@ fn an_empty_change_prepared_before_another_publication_is_refused() {
 #[test]
 fn concurrent_writers_all_land() {
     let mut rig = Rig::new(BASE);
+    // As a runtime does: without a reclaimer thread, writers outpacing the
+    // blocks would be refused (`QueueFull`) until a block catches up.
+    assert!(rig.live.start_reclaimer());
     let writers: Vec<_> = (0..4)
         .map(|writer| {
             let live = rig.live.clone();
