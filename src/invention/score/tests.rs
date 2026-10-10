@@ -110,8 +110,12 @@ fn rejects_out_of_range_root_note() {
 
 #[test]
 fn rejects_gate_length_above_one() {
-    let err = validate_score(&json!({ "cells": [[ { "note": 0, "gate_length": 1.5 } ]] })).unwrap_err();
-    assert!(err.contains("step.gate_length must be between 0 and 1"), "{err}");
+    let err =
+        validate_score(&json!({ "cells": [[ { "note": 0, "gate_length": 1.5 } ]] })).unwrap_err();
+    assert!(
+        err.contains("step.gate_length must be between 0 and 1"),
+        "{err}"
+    );
 }
 
 #[test]
