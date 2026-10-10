@@ -47,8 +47,11 @@
 //! - while an edit waits behind a full store and could install (the
 //!   publisher's `published` generation is ahead of the installed one), the
 //!   requests in front of it are popped anyway and those finding no room
-//!   settled as refused ([`Refusal::PendingFull`]), as an install block
-//!   always did, so it installs this block.
+//!   settled as refused ([`Refusal::PendingFull`]). The first edit waiting
+//!   then installs this block: no more control requests than the block's
+//!   budget can be queued in front of it. One behind it may wait a block
+//!   once the budget is spent; a payload without retire room stops intake
+//!   ahead of any edit (below).
 //!
 //! A clockless drain (a `NullBackend`'s) applies no back-pressure: what
 //! fills its store waits for samples that never come, so nothing would
@@ -230,7 +233,7 @@ impl SignalGraph {
         };
         // An edit waiting behind a full store must not starve: the requests
         // ahead of it are taken, and those finding no room refused
-        // (`Refusal::PendingFull`), so it installs in this block.
+        // (`Refusal::PendingFull`), so the first one installs this block.
         let edit_waiting = can_install && drain.published.load(Ordering::Relaxed) > installed;
         let mut edit = None;
         loop {

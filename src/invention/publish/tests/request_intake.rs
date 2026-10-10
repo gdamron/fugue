@@ -234,3 +234,37 @@ fn a_full_request_queue_refuses_an_edit_and_hands_the_change_back() {
         (generation + queued, applied + queued)
     );
 }
+
+/// However fast the reclaimer makes room, a block installs a bounded
+/// number of edits; the rest wait in the queue for the next.
+#[test]
+fn a_block_installs_at_most_its_share_of_queued_edits() {
+    use crate::invention::graph::MAX_INSTALLS_PER_BLOCK;
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    rig.live.reclaim();
+    let (generation, applied) = rig.generation_and_applied();
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
+    let edits = MAX_INSTALLS_PER_BLOCK as u64 + 2;
+    for n in 0..edits {
+        rig.publish_unreclaimed(|change| {
+            if n % 2 == 0 {
+                change.connect(fm.clone()).unwrap();
+            } else {
+                change.disconnect(fm.clone());
+            }
+        });
+    }
+    assert_eq!(counted_block(&mut rig), (0, 0), "installing its share");
+    let installed = MAX_INSTALLS_PER_BLOCK as u64;
+    assert_eq!(
+        rig.generation_and_applied(),
+        (generation + edits, applied + installed)
+    );
+    rig.live.reclaim();
+    assert_eq!(counted_block(&mut rig), (0, 0), "installing the rest");
+    assert_eq!(
+        rig.generation_and_applied(),
+        (generation + edits, applied + edits)
+    );
+}

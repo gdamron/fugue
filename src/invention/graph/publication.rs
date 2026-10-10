@@ -220,6 +220,11 @@ pub(super) enum Disposition {
     Drop,
 }
 
+/// Edits the audio thread installs in one block at most. Edits queue one
+/// per change and the reclaimer frees retirements on a short cadence, so a
+/// block rarely meets more than one; this only bounds the block's work.
+pub(crate) const MAX_INSTALLS_PER_BLOCK: usize = 8;
+
 /// The audio thread's end of a live graph's link to the control thread.
 ///
 /// It tracks the generation of the installed publication, so each queued
@@ -314,15 +319,18 @@ impl SignalGraph {
     /// runs afterwards; see [`SignalGraph::recompile`]).
     ///
     /// An edit installs only while no retirement is held, so the audio
-    /// thread never holds more than one; the queue behind it waits.
+    /// thread never holds more than one, and at most
+    /// [`MAX_INSTALLS_PER_BLOCK`] install per block, however fast the
+    /// reclaimer makes room; the queue behind them waits.
     /// Allocation-, free-, and lock-free; runs at the start of a block.
     pub(super) fn drain_link(&mut self) {
         let Some(mut link) = self.link.take() else {
             return;
         };
         let mut budget = self.requests.as_ref().map_or(0, |drain| drain.pop_limit);
+        let mut installs = 0;
         loop {
-            let can_install = link.flush_held();
+            let can_install = installs < MAX_INSTALLS_PER_BLOCK && link.flush_held();
             let Some(mut publication) =
                 self.drain_requests(link.installed, can_install, &mut budget)
             else {
@@ -336,6 +344,7 @@ impl SignalGraph {
             self.remap_requests(link.installed, retired);
             self.drain_inputs(&mut link, retired);
             link.retire(publication);
+            installs += 1;
         }
         self.drain_inputs(&mut link, None);
         self.link = Some(link);

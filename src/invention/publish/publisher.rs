@@ -30,11 +30,18 @@ pub(crate) const REQUEST_QUEUE_CAPACITY: usize = 256;
 /// Queue slots beyond [`REQUEST_QUEUE_CAPACITY`] that only edits may take,
 /// so a flood of control requests never shuts out a reload or an edit.
 /// As many again, so the queue is a power of two; edits fill it only while
-/// installs are deferred.
+/// installs are deferred. Each queued edit keeps what its change built
+/// (sample buffers, say) alive until it installs and retires, so an audio
+/// side that is alive but not rendering holds up to this many before
+/// publishing is refused with `QueueFull`.
 pub(crate) const EDIT_RESERVE: usize = REQUEST_QUEUE_CAPACITY;
 
 /// The request queue's size: control requests and the edits' reserve.
 const QUEUE_SLOTS: usize = REQUEST_QUEUE_CAPACITY + EDIT_RESERVE;
+
+// The queue rounds its size up to a power of two, and the reserve and the
+// drain's pop budget both assume it holds exactly these slots.
+const _: () = assert!(QUEUE_SLOTS.is_power_of_two());
 
 /// Popped requests that may wait for their sample. Twice the queue, so a
 /// full queue fits in a store already half full of timed requests. While

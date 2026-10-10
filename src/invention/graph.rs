@@ -56,6 +56,8 @@ mod scc;
 
 pub(crate) use compile::{compile_topology, TopologyFacts};
 pub(crate) use master::MasterObservers;
+#[cfg(test)]
+pub(crate) use publication::MAX_INSTALLS_PER_BLOCK;
 pub(crate) use publication::{
     vacant, AudioLink, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
 };
