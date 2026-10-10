@@ -12,6 +12,7 @@ mod declared;
 mod declared_routes;
 mod drops;
 mod inputs;
+mod migrated;
 mod null_backend;
 mod pilot;
 pub(crate) mod probe;

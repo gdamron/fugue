@@ -29,16 +29,20 @@
 //! }
 //! ```
 
-use std::any::Any;
 use std::sync::Arc;
 
+use crate::control_request::{
+    apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
+    Refusal, RtValue,
+};
 use crate::dsp::{Allpass, Damper, DelayLine};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
-pub use self::controls::ReverbControls;
+use self::controls::{DAMPING, DECAY, DRY, FREEZE, ROOM_SIZE, TABLE, WET, WIDTH};
 
 mod controls;
 mod inputs;
@@ -151,7 +155,19 @@ fn compute_alpha(rt60: f32, sample_rate: u32) -> f32 {
 /// - `freeze` - Infinite hold mode (bool, default false)
 pub struct Reverb {
     sample_rate: u32,
-    ctrl: ReverbControls,
+
+    // Controls, applied on the thread running the reverb.
+    room_size: f32,
+    decay: f32,
+    damping: f32,
+    wet: f32,
+    dry: f32,
+    width: f32,
+    freeze: bool,
+    /// What `room_size`, `decay` and `freeze` make of the delay network,
+    /// recomputed as they change rather than every sample.
+    tuning: Tuning,
+    cells: Arc<ControlCells>,
 
     // Input processing
     input_damper: Damper,
@@ -174,15 +190,27 @@ pub struct Reverb {
     outputs: outputs::ReverbOutputs,
 }
 
+/// The delay network's lengths and gains for one room size, decay and
+/// freeze state.
+#[derive(Clone, Copy, Default)]
+struct Tuning {
+    fdn_lens: [usize; FDN_ORDER],
+    fdn_gains: [f32; FDN_ORDER],
+    tap_positions: [usize; FDN_ORDER],
+    tap_gains: [f32; FDN_ORDER],
+}
+
 impl Reverb {
     /// Creates a new Reverb with default controls.
     pub fn new(sample_rate: u32) -> Self {
-        let controls = ReverbControls::new(0.5, 0.5, 0.5, 0.33, 1.0, 1.0, false);
-        Self::new_with_controls(sample_rate, controls)
+        Self::with_cells(
+            sample_rate,
+            Arc::new(ControlCells::new(controls::defaults())),
+        )
     }
 
-    /// Creates a new Reverb with the given controls.
-    pub fn new_with_controls(sample_rate: u32, controls: ReverbControls) -> Self {
+    /// A reverb holding what `cells` hold, applied (so clamped).
+    fn with_cells(sample_rate: u32, cells: Arc<ControlCells>) -> Self {
         // Allocate at max room size to avoid runtime allocation
         let max_largest_delay =
             (sample_rate as f32 * MAX_ROOM_M / SPEED_OF_SOUND).ceil() as usize + 1;
@@ -212,9 +240,17 @@ impl Reverb {
             Allpass::new(size.max(1), OUTPUT_DIFF_COEFFS[i])
         });
 
-        Self {
+        let mut reverb = Self {
             sample_rate,
-            ctrl: controls,
+            room_size: 0.5,
+            decay: 0.5,
+            damping: 0.5,
+            wet: 0.33,
+            dry: 1.0,
+            width: 1.0,
+            freeze: false,
+            tuning: Tuning::default(),
+            cells,
             input_damper: Damper::new(),
             input_diffuser,
             tap_delay,
@@ -226,32 +262,24 @@ impl Reverb {
             right_diffusers,
             inputs: inputs::ReverbInputs::new(),
             outputs: outputs::ReverbOutputs::new(),
+        };
+        for index in 0..TABLE.len() {
+            let index = ControlIndex(index as u16);
+            if let Some(value) = reverb.cells.load(index) {
+                let _ = apply_declared(&mut reverb, index, value);
+            }
         }
+        reverb.retune();
+        reverb
     }
 
-    /// Processes one stereo sample through the reverb at frame `i`.
-    fn process_sample(&mut self, i: usize) {
-        let frozen = self.ctrl.freeze();
-        let room_size_ctrl = self.ctrl.room_size();
-        let decay_ctrl = self.ctrl.decay();
-        let damping = self.ctrl.damping();
-        let wet_ctrl = self.ctrl.wet();
-        let dry = self.ctrl.dry();
-        let width = self.ctrl.width();
-
-        let input_l = self.inputs.left(i);
-        let input_r = if self.inputs.right_active() {
-            self.inputs.right(i)
-        } else {
-            input_l
-        };
-        let input = (input_l + input_r) * 0.5;
-
-        // Compute room-dependent parameters
-        let room_m = room_size_to_meters(room_size_ctrl);
+    /// Recomputes the delay network's tuning from the controls.
+    fn retune(&mut self) {
+        let frozen = self.freeze;
+        let room_m = room_size_to_meters(self.room_size);
         let largest_delay = ((self.sample_rate as f32 * room_m / SPEED_OF_SOUND) as usize).max(1);
 
-        let rt60 = decay_to_rt60(decay_ctrl);
+        let rt60 = decay_to_rt60(self.decay);
         let alpha = compute_alpha(rt60, self.sample_rate);
 
         // FDN lengths (clamped to allocated max)
@@ -278,6 +306,36 @@ impl Reverb {
         } else {
             std::array::from_fn(|i| alpha.powi(tap_positions[i] as i32))
         };
+
+        self.tuning = Tuning {
+            fdn_lens,
+            fdn_gains,
+            tap_positions,
+            tap_gains,
+        };
+    }
+
+    /// Processes one stereo sample through the reverb at frame `i`.
+    fn process_sample(&mut self, i: usize) {
+        let frozen = self.freeze;
+        let damping = self.damping;
+        let wet_ctrl = self.wet;
+        let dry = self.dry;
+        let width = self.width;
+        let Tuning {
+            fdn_lens,
+            fdn_gains,
+            tap_positions,
+            tap_gains,
+        } = self.tuning;
+
+        let input_l = self.inputs.left(i);
+        let input_r = if self.inputs.right_active() {
+            self.inputs.right(i)
+        } else {
+            input_l
+        };
+        let input = (input_l + input_r) * 0.5;
 
         // Input gain (zero when frozen to prevent new input)
         let input_gain = if frozen { 0.0 } else { 1.0 };
@@ -390,57 +448,54 @@ impl Module for Reverb {
         self.inputs.set_connected(index, connected);
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        let applied = match (control, value) {
+            (FREEZE, RtValue::Bool(freeze)) => {
+                self.freeze = freeze;
+                value
+            }
+            (_, RtValue::F32(value)) => {
+                let held = match control {
+                    ROOM_SIZE => &mut self.room_size,
+                    DECAY => &mut self.decay,
+                    DAMPING => &mut self.damping,
+                    WET => &mut self.wet,
+                    DRY => &mut self.dry,
+                    WIDTH => &mut self.width,
+                    _ => return Err(Refusal::Unsupported),
+                };
+                *held = value.clamp(0.0, 1.0);
+                RtValue::F32(*held)
+            }
+            _ => return Err(Refusal::Unsupported),
+        };
+        if matches!(control, ROOM_SIZE | DECAY | FREEZE) {
+            self.retune();
+        }
+        Ok(applied)
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::new("room_size", "Room size")
-                .with_range(0.0, 1.0)
-                .with_default(0.5),
-            ControlMeta::new("decay", "Reverb decay time")
-                .with_range(0.0, 1.0)
-                .with_default(0.5),
-            ControlMeta::new("damping", "High-frequency damping")
-                .with_range(0.0, 1.0)
-                .with_default(0.5),
-            ControlMeta::new("wet", "Wet signal level")
-                .with_range(0.0, 1.0)
-                .with_default(0.33),
-            ControlMeta::new("dry", "Dry signal level")
-                .with_range(0.0, 1.0)
-                .with_default(1.0),
-            ControlMeta::new("width", "Stereo width")
-                .with_range(0.0, 1.0)
-                .with_default(1.0),
-            ControlMeta::new("freeze", "Infinite hold mode")
-                .with_range(0.0, 1.0)
-                .with_default(0.0),
-        ]
+        local_controls(self)
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
-        match key {
-            "room_size" => Ok(self.ctrl.room_size()),
-            "decay" => Ok(self.ctrl.decay()),
-            "damping" => Ok(self.ctrl.damping()),
-            "wet" => Ok(self.ctrl.wet()),
-            "dry" => Ok(self.ctrl.dry()),
-            "width" => Ok(self.ctrl.width()),
-            "freeze" => Ok(if self.ctrl.freeze() { 1.0 } else { 0.0 }),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_get(self, key)
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
-        match key {
-            "room_size" => self.ctrl.set_room_size(value),
-            "decay" => self.ctrl.set_decay(value),
-            "damping" => self.ctrl.set_damping(value),
-            "wet" => self.ctrl.set_wet(value),
-            "dry" => self.ctrl.set_dry(value),
-            "width" => self.ctrl.set_width(value),
-            "freeze" => self.ctrl.set_freeze(value > 0.5),
-            _ => return Err(format!("Unknown control: {}", key)),
-        }
-        Ok(())
+        // As a number, freeze has always meant on above one half.
+        let value = match key {
+            "freeze" => f32::from(u8::from(value > 0.5)),
+            _ => value,
+        };
+        local_set(self, key, value)
     }
 }
 
@@ -448,12 +503,16 @@ impl Module for Reverb {
 pub struct ReverbFactory;
 
 const TYPE_ID: &str = "reverb";
-const ROOM_SIZE: ConfigKey = ConfigKey::float("room_size");
-const DECAY: ConfigKey = ConfigKey::float("decay");
-const DAMPING: ConfigKey = ConfigKey::float("damping");
-const WET: ConfigKey = ConfigKey::float("wet");
-const DRY: ConfigKey = ConfigKey::float("dry");
-const WIDTH: ConfigKey = ConfigKey::float("width");
+/// The number controls' config keys, in control index order, then `freeze`.
+const CONFIG_KEYS: &[ConfigKey] = &[
+    ConfigKey::float("room_size"),
+    ConfigKey::float("decay"),
+    ConfigKey::float("damping"),
+    ConfigKey::float("wet"),
+    ConfigKey::float("dry"),
+    ConfigKey::float("width"),
+    ConfigKey::boolean("freeze"),
+];
 
 impl ModuleFactory for ReverbFactory {
     fn type_id(&self) -> &'static str {
@@ -461,17 +520,7 @@ impl ModuleFactory for ReverbFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const {
-            &[
-                ROOM_SIZE,
-                DECAY,
-                DAMPING,
-                WET,
-                DRY,
-                WIDTH,
-                ConfigKey::boolean("freeze"),
-            ]
-        }
+        CONFIG_KEYS
     }
 
     fn build(
@@ -480,27 +529,22 @@ impl ModuleFactory for ReverbFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let reader = ConfigReader::new(TYPE_ID, config);
-        let room_size = reader.float(&ROOM_SIZE)?.unwrap_or(0.5);
-        let decay = reader.float(&DECAY)?.unwrap_or(0.5);
-        let damping = reader.float(&DAMPING)?.unwrap_or(0.5);
-        let wet = reader.float(&WET)?.unwrap_or(0.33);
-        let dry = reader.float(&DRY)?.unwrap_or(1.0);
-        let width = reader.float(&WIDTH)?.unwrap_or(1.0);
-        let freeze = config
-            .get("freeze")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        let controls = ReverbControls::new(room_size, decay, damping, wet, dry, width, freeze);
-        let reverb = Reverb::new_with_controls(sample_rate, controls.clone());
+        let cells = Arc::new(ControlCells::new(controls::defaults()));
+        for (index, key) in CONFIG_KEYS[..FREEZE.0 as usize].iter().enumerate() {
+            if let Some(value) = reader.float(key)? {
+                cells.publish(ControlIndex(index as u16), RtValue::F32(value));
+            }
+        }
+        if let Some(freeze) = config.get("freeze").and_then(|v| v.as_bool()) {
+            cells.publish(FREEZE, RtValue::Bool(freeze));
+        }
+        let reverb = Reverb::with_cells(sample_rate, cells.clone());
+        let surface = DeclaredSurface::new(TABLE.clone(), cells);
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(reverb)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
     }

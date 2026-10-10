@@ -143,6 +143,12 @@ fn test_controls() {
 
     reverb.set_control("freeze", 1.0).unwrap();
     assert!((reverb.get_control("freeze").unwrap() - 1.0).abs() < 1e-6);
+
+    // As a number, freeze is on above one half only.
+    for (value, frozen) in [(0.5, 0.0), (-1.0, 0.0), (0.51, 1.0), (0.0, 0.0)] {
+        reverb.set_control("freeze", value).unwrap();
+        assert_eq!(reverb.get_control("freeze").unwrap(), frozen, "{value}");
+    }
 }
 
 #[test]
@@ -163,8 +169,7 @@ fn test_factory() {
 
     let module = result.module.module();
     assert_eq!(module.name(), "Reverb");
-    assert_eq!(result.handles.len(), 1);
-    assert_eq!(result.handles[0].0, "controls");
+    assert!(result.handles.is_empty());
     assert!(result.control_surface.is_some());
     assert!(result.sink.is_none());
 }

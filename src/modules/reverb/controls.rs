@@ -1,152 +1,45 @@
-//! Thread-safe controls for the Reverb module.
+//! The Reverb's declared controls.
 
-use std::sync::{Arc, Mutex};
+use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
 
-use crate::{ControlMeta, ControlSurface, ControlValue};
+pub(super) const ROOM_SIZE: ControlIndex = ControlIndex(0);
+pub(super) const DECAY: ControlIndex = ControlIndex(1);
+pub(super) const DAMPING: ControlIndex = ControlIndex(2);
+pub(super) const WET: ControlIndex = ControlIndex(3);
+pub(super) const DRY: ControlIndex = ControlIndex(4);
+pub(super) const WIDTH: ControlIndex = ControlIndex(5);
+pub(super) const FREEZE: ControlIndex = ControlIndex(6);
 
-/// Thread-safe controls for the Reverb module.
-///
-/// All fields are wrapped in `Arc<Mutex<_>>` for real-time adjustment
-/// from any thread while audio is playing.
-#[derive(Clone)]
-pub struct ReverbControls {
-    pub(crate) room_size: Arc<Mutex<f32>>,
-    pub(crate) decay: Arc<Mutex<f32>>,
-    pub(crate) damping: Arc<Mutex<f32>>,
-    pub(crate) wet: Arc<Mutex<f32>>,
-    pub(crate) dry: Arc<Mutex<f32>>,
-    pub(crate) width: Arc<Mutex<f32>>,
-    pub(crate) freeze: Arc<Mutex<bool>>,
+/// A number from 0 to 1, clamped there as the reverb applies it.
+const fn unit(key: &'static str, default: f32, description: &'static str) -> ControlDecl {
+    ControlDecl::new(
+        key,
+        DeclKind::Number { min: 0.0, max: 1.0 },
+        RtValue::F32(default),
+        description,
+    )
+    .clamped(0.0, 1.0)
 }
 
-impl ReverbControls {
-    /// Creates new reverb controls with the given initial values.
-    pub fn new(
-        room_size: f32,
-        decay: f32,
-        damping: f32,
-        wet: f32,
-        dry: f32,
-        width: f32,
-        freeze: bool,
-    ) -> Self {
-        Self {
-            room_size: Arc::new(Mutex::new(room_size.clamp(0.0, 1.0))),
-            decay: Arc::new(Mutex::new(decay.clamp(0.0, 1.0))),
-            damping: Arc::new(Mutex::new(damping.clamp(0.0, 1.0))),
-            wet: Arc::new(Mutex::new(wet.clamp(0.0, 1.0))),
-            dry: Arc::new(Mutex::new(dry.clamp(0.0, 1.0))),
-            width: Arc::new(Mutex::new(width.clamp(0.0, 1.0))),
-            freeze: Arc::new(Mutex::new(freeze)),
-        }
-    }
+const DECLS: &[ControlDecl] = &[
+    unit("room_size", 0.5, "Room size"),
+    unit("decay", 0.5, "Reverb decay time"),
+    unit("damping", 0.5, "High-frequency damping"),
+    unit("wet", 0.33, "Wet signal level"),
+    unit("dry", 1.0, "Dry signal level"),
+    unit("width", 1.0, "Stereo width"),
+    ControlDecl::new(
+        "freeze",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Infinite hold mode",
+    ),
+];
 
-    pub fn room_size(&self) -> f32 {
-        *self.room_size.lock().unwrap()
-    }
+pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
 
-    pub fn set_room_size(&self, value: f32) {
-        *self.room_size.lock().unwrap() = value.clamp(0.0, 1.0);
-    }
-
-    pub fn decay(&self) -> f32 {
-        *self.decay.lock().unwrap()
-    }
-
-    pub fn set_decay(&self, value: f32) {
-        *self.decay.lock().unwrap() = value.clamp(0.0, 1.0);
-    }
-
-    pub fn damping(&self) -> f32 {
-        *self.damping.lock().unwrap()
-    }
-
-    pub fn set_damping(&self, value: f32) {
-        *self.damping.lock().unwrap() = value.clamp(0.0, 1.0);
-    }
-
-    pub fn wet(&self) -> f32 {
-        *self.wet.lock().unwrap()
-    }
-
-    pub fn set_wet(&self, value: f32) {
-        *self.wet.lock().unwrap() = value.clamp(0.0, 1.0);
-    }
-
-    pub fn dry(&self) -> f32 {
-        *self.dry.lock().unwrap()
-    }
-
-    pub fn set_dry(&self, value: f32) {
-        *self.dry.lock().unwrap() = value.clamp(0.0, 1.0);
-    }
-
-    pub fn width(&self) -> f32 {
-        *self.width.lock().unwrap()
-    }
-
-    pub fn set_width(&self, value: f32) {
-        *self.width.lock().unwrap() = value.clamp(0.0, 1.0);
-    }
-
-    pub fn freeze(&self) -> bool {
-        *self.freeze.lock().unwrap()
-    }
-
-    pub fn set_freeze(&self, value: bool) {
-        *self.freeze.lock().unwrap() = value;
-    }
-}
-
-impl ControlSurface for ReverbControls {
-    fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::number("room_size", "Room size")
-                .with_range(0.0, 1.0)
-                .with_default(self.room_size()),
-            ControlMeta::number("decay", "Reverb decay time")
-                .with_range(0.0, 1.0)
-                .with_default(self.decay()),
-            ControlMeta::number("damping", "High-frequency damping")
-                .with_range(0.0, 1.0)
-                .with_default(self.damping()),
-            ControlMeta::number("wet", "Wet signal level")
-                .with_range(0.0, 1.0)
-                .with_default(self.wet()),
-            ControlMeta::number("dry", "Dry signal level")
-                .with_range(0.0, 1.0)
-                .with_default(self.dry()),
-            ControlMeta::number("width", "Stereo width")
-                .with_range(0.0, 1.0)
-                .with_default(self.width()),
-            ControlMeta::boolean("freeze", "Infinite hold mode", self.freeze()),
-        ]
-    }
-
-    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
-        match key {
-            "room_size" => Ok(self.room_size().into()),
-            "decay" => Ok(self.decay().into()),
-            "damping" => Ok(self.damping().into()),
-            "wet" => Ok(self.wet().into()),
-            "dry" => Ok(self.dry().into()),
-            "width" => Ok(self.width().into()),
-            "freeze" => Ok(self.freeze().into()),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
-    }
-
-    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        match key {
-            "room_size" => self.set_room_size(value.as_number()?),
-            "decay" => self.set_decay(value.as_number()?),
-            "damping" => self.set_damping(value.as_number()?),
-            "wet" => self.set_wet(value.as_number()?),
-            "dry" => self.set_dry(value.as_number()?),
-            "width" => self.set_width(value.as_number()?),
-            "freeze" => self.set_freeze(value.as_bool()?),
-            _ => return Err(format!("Unknown control: {}", key)),
-        }
-        Ok(())
-    }
+/// The table's defaults, in index order: where every reverb's cells start
+/// before it applies its own values.
+pub(super) fn defaults() -> impl Iterator<Item = RtValue> {
+    DECLS.iter().map(|decl| decl.default)
 }
