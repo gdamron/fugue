@@ -1,9 +1,8 @@
 //! Payload requests on a live graph: every payload the audio side does not
 //! keep is retired and freed by the reclaimer, never dropped in
 //! `process_block` (debug builds panic if one is); without retire room the
-//! drain leaves payload requests queued, and an install block keeps its
-//! retired publication until they are mapped. Every block here is
-//! allocation- and free-free.
+//! drain leaves payload requests queued, and the edits behind them wait
+//! too. Every block here is allocation- and free-free.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -160,75 +159,80 @@ fn without_retire_room_payload_requests_wait_in_the_queue() {
 }
 
 #[test]
-fn an_install_without_retire_room_keeps_the_retired_publication() {
+fn an_edit_waits_behind_a_payload_request_without_retire_room() {
     let mut rig = Rig::new(BASE);
     rig.render(1);
     let drops = Drops::default();
-    // Resolved against osc2 at index 1; osc1's removal moves it to 0.
     let payload = submit(&rig, "osc2", drops.payload(), When::Now);
     saturate_retirer(&mut rig);
     rig.publish_unreclaimed(|change| change.remove("osc1"));
-
-    assert_eq!(counted_block(&mut rig), (0, 0), "installing");
-    assert_eq!(rig.module_ids(), ["osc2", "dac"]);
-    assert_eq!(outcomes(&mut rig), [], "the payload request waits");
-    // The retired publication is kept for it, so no new one installs.
     let fm = edge("osc2", "audio", "dac", "audio");
     rig.publish_unreclaimed(|change| change.disconnect(fm));
-    assert_eq!(counted_block(&mut rig), (0, 0), "keeping the remaps");
-    assert_eq!(rig.generation_and_applied(), (2, 1));
+
+    // The request was submitted first, so both edits wait behind it.
+    for _ in 0..2 {
+        assert_eq!(counted_block(&mut rig), (0, 0), "waiting for room");
+        assert_eq!(rig.generation_and_applied(), (2, 0));
+        assert_eq!(outcomes(&mut rig), [], "nothing taken, in order");
+    }
 
     rig.live.reclaim();
-    assert_eq!(counted_block(&mut rig), (0, 0), "mapping the request");
-    // Mapped onto osc2 at its new index, not refused as gone.
+    assert_eq!(
+        counted_block(&mut rig),
+        (0, 0),
+        "taking it, then installing"
+    );
     let refused = Outcome::Refused(Refusal::Unsupported);
     assert_eq!(outcomes(&mut rig), [(payload, refused)]);
-    rig.render(1);
     assert_eq!(rig.generation_and_applied(), (2, 2));
+    assert_eq!(rig.module_ids(), ["osc2", "dac"]);
     reclaim_all(&mut rig);
     assert_eq!(drops.count(), 1);
 }
 
 #[test]
-fn payloads_waiting_for_their_publication_never_keep_it_from_installing() {
-    use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
+fn payloads_queued_behind_a_deferred_edit_settle_after_it_installs() {
+    use crate::invention::publish::publisher::REQUEST_QUEUE_CAPACITY;
 
     let mut rig = Rig::new(BASE);
     rig.render(1);
     rig.hold_a_retirement();
     let (generation, applied) = rig.generation_and_applied();
     let fm = edge("osc1", "audio", "osc2", "frequency_mod");
-    rig.publish_unreclaimed(|change| change.disconnect(fm));
-    // Payload requests for the published, not yet installed generation
-    // fill the store, each reserving retire room, then the queue behind it.
+    rig.publish_unreclaimed(|change| change.disconnect(fm.clone()));
+    // Payload requests behind the edit fill what the queue leaves control
+    // threads: its slots less the edit's.
     let drops = Drops::default();
     let start = rig.graph.current_sample;
-    let mut n = 0;
-    let mut submit_queueful = |rig: &Rig| {
-        for _ in 0..REQUEST_QUEUE_CAPACITY {
-            submit(rig, "osc1", drops.payload(), When::AtSample(start + n));
-            n += 1;
-        }
-    };
-    for _ in 0..PENDING_REQUEST_CAPACITY / REQUEST_QUEUE_CAPACITY {
-        submit_queueful(&rig);
-        assert_eq!(counted_block(&mut rig), (0, 0), "holding");
+    let mut queued = 0;
+    while try_submit_value(
+        &rig,
+        "osc1",
+        0,
+        drops.payload(),
+        When::AtSample(start + queued),
+    )
+    .is_ok()
+    {
+        queued += 1;
     }
-    submit_queueful(&rig);
-    assert_eq!(counted_block(&mut rig), (0, 0), "back-pressure");
-    assert!(rig.graph.requests.as_ref().unwrap().pending.is_full());
-
-    // Their reservations leave room for the install, which completes.
-    rig.live.reclaim();
-    assert_eq!(counted_block(&mut rig), (0, 0), "installing");
-    assert_eq!(rig.generation_and_applied(), (generation + 1, applied + 1));
-    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
+    assert_eq!(queued, REQUEST_QUEUE_CAPACITY as u64 - 1);
+    let refused_at_the_door = drops.count();
+    // Edits still fit, in the slots requests leave them.
     rig.publish_unreclaimed(|change| change.connect(fm).unwrap());
-    // Every request's sample has passed after another 12 blocks.
-    rig.render(12);
+    assert_eq!(rig.generation_and_applied(), (generation + 2, applied));
+
+    for _ in 0..2 {
+        assert_eq!(counted_block(&mut rig), (0, 0), "waiting to install");
+        assert_eq!(outcomes(&mut rig), [], "nothing taken, so nothing reserved");
+    }
+    rig.live.reclaim();
+    assert_eq!(counted_block(&mut rig), (0, 0), "installing both, in order");
     assert_eq!(rig.generation_and_applied(), (generation + 2, applied + 2));
+    // Every request's sample has passed after another 5 blocks.
+    rig.render(5);
     let settled = outcomes(&mut rig).len();
-    assert_eq!(settled, PENDING_REQUEST_CAPACITY + REQUEST_QUEUE_CAPACITY);
+    assert_eq!(settled as u64, queued);
     reclaim_all(&mut rig);
-    assert_eq!(drops.count(), settled);
+    assert_eq!(drops.count() - refused_at_the_door, settled);
 }

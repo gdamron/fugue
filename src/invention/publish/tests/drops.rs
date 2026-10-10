@@ -64,7 +64,7 @@ fn a_failed_edit_drops_off_the_publisher_lock() {
 }
 
 #[test]
-fn a_superseded_publication_drops_off_the_publisher_lock() {
+fn a_module_a_queued_edit_removes_drops_off_the_publisher_lock() {
     let (mut rig, probes) = watched_rig();
     let probe = rig.build("probe", DROP_PROBE, serde_json::json!({}));
     rig.live
@@ -74,12 +74,14 @@ fn a_superseded_publication_drops_off_the_publisher_lock() {
         })
         .unwrap();
 
-    // The audio thread never takes the first publication, so the second
-    // folds it in, and the probe it no longer needs is superseded.
+    // Both edits install at the next block; the probe leaves with the
+    // second's retired publication, freed by the reclaimer.
     rig.live.remove_module("probe").unwrap();
-    assert_eq!(probes.dropped_under_lock(), [false]);
+    assert!(probes.dropped_under_lock().is_empty());
     rig.render(1);
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
+    rig.live.reclaim();
+    assert_eq!(probes.dropped_under_lock(), [false]);
 }
 
 #[test]

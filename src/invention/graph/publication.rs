@@ -1,8 +1,9 @@
 //! Atomic topology publication: the audio thread's side.
 //!
 //! The control thread prepares a complete next topology as a [`Publication`]
-//! (see `crate::invention::publish`) and puts it in a [`Mailbox`]. At the
-//! start of a block the audio thread takes it and installs it in one step:
+//! (see `crate::invention::publish`) and submits it as an edit request, in
+//! the queue control requests share. When the audio thread's request drain
+//! reaches it, at the start of a block, it installs it in one step:
 //! surviving instances move by key into the prepared module map (keeping
 //! their phase and state), the derived structures are swapped in, each
 //! survivor's feedback carry is copied across and only its inputs whose
@@ -17,17 +18,17 @@
 //! thread to module and port indices (see [`InputWrite`]), so applying one
 //! never allocates, frees, or locks either.
 //!
-//! Both travel on [`crate::spsc`] rings, whose audio-side ends (a claimed
-//! [`Consumer`] for writes, the [`Producer`] for retirements) allocate,
-//! lock and wait for nothing, even while the control-side peer is preempted
-//! mid-operation. (std's bounded channel can spin or yield then.)
+//! Writes and retirements travel on [`crate::spsc`] rings, whose
+//! audio-side ends (a claimed [`Consumer`] for writes, the [`Producer`] for
+//! retirements) allocate, lock and wait for nothing, even while the
+//! control-side peer is preempted mid-operation. (std's bounded channel can
+//! spin or yield then.)
 
 use indexmap::IndexMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::compile::CompiledTopology;
-use super::mailbox::Mailbox;
 use super::{RoutingConnection, SignalGraph};
 use crate::invention::runtime::ModuleInstance;
 use crate::spsc::{Consumer, Producer};
@@ -107,6 +108,8 @@ impl Publication {
     /// through it. So entries exist only for generations with writes still
     /// outstanding, which bounds them by the input queue and ring capacity
     /// however many publications fold. Control thread only: allocates.
+    // Unused since edits travel as requests; removed with folding's remains.
+    #[cfg_attr(not(test), allow(dead_code))]
     #[must_use = "the superseded publication should be dropped off the publisher lock"]
     pub(crate) fn absorb(
         &mut self,
@@ -235,23 +238,18 @@ pub(super) enum Disposition {
 ///   [`crate::invention::runtime::GraphCommandError::QueueFull`] rather than
 ///   a write being lost;
 /// - anything else: dropped. The publisher's generations are consecutive
-///   and every one is installed or folded, so this is only a defensive
-///   fallback.
+///   and the writes are mapped through every install, so this is only a
+///   defensive fallback.
 pub(crate) struct AudioLink {
-    publications: Arc<Mailbox<Publication>>,
     inputs: Consumer<InputWrite>,
     retire: Producer<Box<Publication>>,
     /// A retirement the retire ring had no room for. While it is held no
-    /// further publication is taken, so the audio thread never holds more
+    /// further edit is installed, so the audio thread never holds more
     /// than this one; it is sent as soon as the ring has room.
     held: Option<Box<Publication>>,
-    /// A retired publication whose remaps older-generation control
-    /// requests still need, with the generation installed before it: an
-    /// install block that ran out of payload retire room keeps it until
-    /// the drain has popped them (see `graph::requests`). While it is kept
-    /// no further publication is taken.
-    mapping: Option<(u64, Box<Publication>)>,
     /// Publications installed so far, for observation off the audio thread.
+    /// The publisher holds the other reference, and reads its count to tell
+    /// whether this side still exists.
     applied: Arc<AtomicU64>,
     /// The generation of the installed publication; the publisher starts
     /// at 0 with the graph it linked.
@@ -265,20 +263,18 @@ impl AudioLink {
     /// Links a graph to its publisher. `inputs` is the claimed consumer of
     /// a ring of `input_capacity` writes; the ring for writes awaiting a
     /// publication is allocated here at the same size. `retire` hands
-    /// retired publications to the control thread.
+    /// retired publications to the control thread. Publications themselves
+    /// arrive as edits in the graph's request queue.
     pub(crate) fn new(
-        publications: Arc<Mailbox<Publication>>,
         inputs: Consumer<InputWrite>,
         input_capacity: usize,
         retire: Producer<Box<Publication>>,
         applied: Arc<AtomicU64>,
     ) -> Self {
         Self {
-            publications,
             inputs,
             retire,
             held: None,
-            mapping: None,
             applied,
             installed: 0,
             pending: Vec::with_capacity(input_capacity.max(1)),
@@ -306,38 +302,50 @@ impl AudioLink {
 }
 
 impl SignalGraph {
-    /// Installs a pending publication and applies queued input writes (see
-    /// [`AudioLink`] for which instance each write reaches). Writes are
-    /// applied after the install, so its input reset never clears one, and
-    /// before the retired publication goes back, so its remaps are in hand.
-    /// A written port that stays unconnected keeps its value through later
-    /// installs too, including one that falls back to recompiling (which
-    /// `ensure_process_order` runs afterwards; see [`SignalGraph::recompile`]).
-    /// Takes at most the ring's capacity from the queue per block, so a
-    /// sender keeping pace cannot hold the block here.
-    /// Then maps and pops control requests (see `graph::requests`), with the
-    /// retired publication still in hand; when they need it for another
-    /// block, it is kept, and that block maps writes and requests through it
-    /// again instead of taking a new publication.
+    /// Drains the request queue, which installs every edit it reaches in
+    /// queue order, and applies queued input writes (see [`AudioLink`] for
+    /// which instance each write reaches): through each install, with its
+    /// retired publication in hand, then once more for writes to the graph
+    /// as installed. Writes are applied after an install, so its input
+    /// reset never clears one, and before the retired publication goes
+    /// back, so its remaps are in hand. A written port that stays
+    /// unconnected keeps its value through later installs too, including
+    /// one that falls back to recompiling (which `ensure_process_order`
+    /// runs afterwards; see [`SignalGraph::recompile`]).
+    ///
+    /// An edit installs only while no retirement is held, so the audio
+    /// thread never holds more than one; the queue behind it waits.
     /// Allocation-, free-, and lock-free; runs at the start of a block.
     pub(super) fn drain_link(&mut self) {
         let Some(mut link) = self.link.take() else {
             return;
         };
-        let mut previous = link.installed;
-        let mut taken: Option<Box<Publication>> = None;
-        if let Some((before, mapping)) = link.mapping.take() {
-            previous = before;
-            taken = Some(mapping);
-        } else if link.flush_held() {
-            if let Some(mut publication) = link.publications.take() {
-                self.install(&mut publication);
-                link.installed = publication.generation;
-                link.applied.fetch_add(1, Ordering::Relaxed);
-                taken = Some(publication);
-            }
+        let mut budget = self.requests.as_ref().map_or(0, |drain| drain.pop_limit);
+        loop {
+            let can_install = link.flush_held();
+            let Some(mut publication) =
+                self.drain_requests(link.installed, can_install, &mut budget)
+            else {
+                break;
+            };
+            let previous = link.installed;
+            self.install(&mut publication);
+            link.installed = publication.generation;
+            link.applied.fetch_add(1, Ordering::Relaxed);
+            let retired = Some((previous, &*publication));
+            self.remap_requests(link.installed, retired);
+            self.drain_inputs(&mut link, retired);
+            link.retire(publication);
         }
-        let retired = taken.as_deref().map(|retired| (previous, retired));
+        self.drain_inputs(&mut link, None);
+        self.link = Some(link);
+    }
+
+    /// Applies queued input writes for the installed generation, maps those
+    /// for the one `retired` replaced, and holds those for a newer one.
+    /// Takes at most the ring's capacity from the queue per call, so a
+    /// sender keeping pace cannot hold the block here.
+    fn drain_inputs(&mut self, link: &mut AudioLink, retired: Option<(u64, &Publication)>) {
         let installed = link.installed;
         // Held writes came off the queue first, so they go first.
         link.pending.retain(|write| {
@@ -368,15 +376,6 @@ impl SignalGraph {
                 Disposition::Drop => {}
             }
         }
-        let mapped = self.drain_requests(installed, retired);
-        if let Some(publication) = taken {
-            if mapped {
-                link.retire(publication);
-            } else {
-                link.mapping = Some((previous, publication));
-            }
-        }
-        self.link = Some(link);
     }
 
     /// Decides where a write or request resolved against module `old` of

@@ -1,8 +1,9 @@
 //! Control request intake across publications and under pressure: a
-//! request waiting for a publication, or in the pending store when its
-//! module moves or goes, lands on the right instance or is refused; a full
-//! store back-pressures producers outside an install, and an install block
-//! still drains the queue. Every block here is allocation- and free-free.
+//! request queued behind an edit, or in the pending store when its module
+//! moves or goes, lands on the right instance or is refused; a full store
+//! back-pressures producers, except ahead of a queued edit, which the
+//! requests in front of it never starve. Every block here is allocation-
+//! and free-free.
 
 use super::requests::{counted_block, frequency, oscillator_rig, outcomes, submit, try_submit};
 use super::*;
@@ -10,16 +11,17 @@ use crate::control_request::{Outcome, Refusal, When};
 use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
 
 #[test]
-fn holding_a_request_for_a_pending_publication_is_clean() {
+fn a_request_queued_behind_a_deferred_edit_is_clean() {
     let (mut rig, port) = oscillator_rig();
     rig.hold_a_retirement();
     let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
     rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
     let id = submit(&rig, "osc3", port, 0.5, When::Now);
-    // `Now` is due at the block that takes it, which holds it instead.
-    let due = rig.graph.current_sample;
 
+    // It waits in the queue behind the edit, which waits for room to retire
+    // the publication it replaces.
     assert_eq!(counted_block(&mut rig), (0, 0), "holding");
+    assert_eq!(outcomes(&mut rig), []);
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
     rig.live.reclaim();
     let start = rig.graph.current_sample;
@@ -30,10 +32,7 @@ fn holding_a_request_for_a_pending_publication_is_clean() {
     );
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "osc3"]);
     assert_eq!(frequency(&mut rig, "osc3", port), 0.5);
-    assert_eq!(
-        outcomes(&mut rig),
-        [(id, Outcome::AppliedLate { at: start, due })]
-    );
+    assert_eq!(outcomes(&mut rig), [(id, Outcome::Applied { at: start })]);
 }
 
 #[test]
@@ -82,7 +81,7 @@ fn queue_full(rig: &Rig) -> bool {
 }
 
 #[test]
-fn a_full_store_leaves_requests_queued_outside_an_install() {
+fn a_full_store_leaves_requests_queued() {
     let (mut rig, port) = oscillator_rig();
     fill_store_and_queue(&mut rig, port);
     let capacity = rig.graph.requests.as_ref().unwrap().pending.capacity();
@@ -99,13 +98,13 @@ fn a_full_store_leaves_requests_queued_outside_an_install() {
 }
 
 #[test]
-fn an_install_block_drains_the_queue_even_into_a_full_store() {
+fn an_edit_behind_a_full_store_drains_the_queue_ahead_of_it() {
     let (mut rig, port) = oscillator_rig();
     fill_store_and_queue(&mut rig, port);
 
-    // The queued requests were resolved against the generation this install
-    // retires: they are popped and mapped now, and refused for want of room,
-    // never left behind.
+    // The edit takes a slot the requests leave for edits, and the requests
+    // ahead of it are popped and refused for want of room, rather than
+    // keeping it from installing.
     rig.live
         .connect(edge("osc1", "audio", "osc2", "frequency_mod"))
         .unwrap();
@@ -158,5 +157,80 @@ fn a_full_store_still_takes_a_replacement_for_a_waiting_request() {
             (original.unwrap(), Outcome::Superseded),
             (replacement, Outcome::Applied { at: due }),
         ]
+    );
+}
+
+/// Two edits and the requests submitted around them, all in one block:
+/// each request acts on the graph it was submitted against, and nothing
+/// allocates or frees.
+#[test]
+fn requests_and_edits_in_one_block_apply_in_order_cleanly() {
+    let (mut rig, port) = oscillator_rig();
+    let (generation, applied) = rig.generation_and_applied();
+    let start = rig.graph.current_sample;
+    let before = submit(&rig, "osc1", port, 0.5, When::Now);
+    let timed = submit(&rig, "osc1", port, 0.75, When::AtSample(start + 64 + 9));
+    let osc3 = rig.build("osc3", "oscillator", serde_json::json!({}));
+    rig.publish_unreclaimed(|change| change.upsert("osc3", osc3));
+    let between = submit(&rig, "osc3", port, 0.25, When::Now);
+    rig.publish_unreclaimed(|change| change.remove("osc1"));
+    let after = submit(&rig, "osc3", port, 0.125, When::Now);
+
+    assert_eq!(counted_block(&mut rig), (0, 0), "two installs in order");
+    assert_eq!(rig.module_ids(), ["osc2", "dac", "osc3"]);
+    assert_eq!(rig.generation_and_applied(), (generation + 2, applied + 2));
+    assert_eq!(frequency(&mut rig, "osc3", port), 0.125);
+    let applied = Outcome::Applied { at: start };
+    assert_eq!(
+        outcomes(&mut rig),
+        [
+            (before, applied),
+            (between, applied),
+            (timed, Outcome::Refused(Refusal::TargetGone)),
+            (after, applied),
+        ]
+    );
+}
+
+/// Edits have the queue's reserve to themselves, but not without end:
+/// once every slot is taken, an edit is refused whole, nothing published,
+/// and the ones queued install in order once there is room.
+#[test]
+fn a_full_request_queue_refuses_an_edit_and_hands_the_change_back() {
+    use crate::invention::publish::publisher::EDIT_RESERVE;
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    rig.hold_a_retirement();
+    let (generation, applied) = rig.generation_and_applied();
+    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
+    let mut queued = 0;
+    let refused = loop {
+        let mut publisher = rig.live.publisher().lock().unwrap();
+        let mut change = rig.live.change_on(&publisher);
+        if queued % 2 == 0 {
+            change.disconnect(fm.clone());
+        } else {
+            change.connect(fm.clone()).unwrap();
+        }
+        match publisher.publish(change.prepare().unwrap()) {
+            Ok(_) => queued += 1,
+            Err(refused) => break refused,
+        }
+    };
+    assert_eq!(queued, (REQUEST_QUEUE_CAPACITY + EDIT_RESERVE) as u64);
+    assert!(matches!(refused.error, GraphCommandError::QueueFull));
+    assert!(refused.change.publication.is_some(), "handed back whole");
+    assert_eq!(rig.generation_and_applied(), (generation + queued, applied));
+    // Control requests find no room either.
+    assert!(try_submit(&rig, "osc1", 0, 0.5, When::Now).is_err());
+    drop(refused);
+
+    while rig.generation_and_applied().1 < applied + queued {
+        rig.live.reclaim();
+        assert_eq!(counted_block(&mut rig), (0, 0), "installing in order");
+    }
+    assert_eq!(
+        rig.generation_and_applied(),
+        (generation + queued, applied + queued)
     );
 }

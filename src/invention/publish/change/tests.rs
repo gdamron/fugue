@@ -1,11 +1,13 @@
 //! Preparing changes and installing what they compile, with a hand-linked
 //! graph standing in for the publisher.
 
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 use crate::alloc_counter::allocator_events;
-use crate::invention::graph::{AudioLink, InputWrite, Mailbox, MasterObservers, SignalGraph};
+use crate::control_request::{Request, RequestSender};
+use crate::invention::graph::{link_requests, AudioLink, InputWrite, MasterObservers, SignalGraph};
+use crate::payload::Payload;
 use crate::spsc::{Consumer, Producer, Ring};
 use crate::{Invention, InventionBuilder};
 
@@ -40,7 +42,8 @@ struct Harness {
     mirror: TopologyMirror,
     directory: SurfaceDirectory,
     registry: ModuleRegistry,
-    publications: Arc<Mailbox<Publication>>,
+    requests: RequestSender,
+    applied: Arc<AtomicU64>,
     _inputs: Producer<InputWrite>,
     retired: Arc<Ring<Box<Publication>>>,
 }
@@ -60,23 +63,23 @@ impl Harness {
             MasterObservers::default(),
         );
         graph.recompile();
-        let publications = Arc::new(Mailbox::new());
         let inputs = Ring::with_capacity(4);
         let retired = Ring::with_capacity(4);
         let applied = Arc::new(AtomicU64::new(0));
         graph.link = Some(AudioLink::new(
-            publications.clone(),
             Consumer::claim(Arc::clone(&inputs)),
             4,
             Producer::claim(Arc::clone(&retired)),
-            applied,
+            Arc::clone(&applied),
         ));
+        let requests = link_requests(&mut graph, 4);
         Self {
             mirror: TopologyMirror::of(&graph.modules, &graph.edges),
             graph,
             directory: runtime.control_surfaces,
             registry: runtime.registry,
-            publications,
+            requests,
+            applied,
             _inputs: Producer::claim(inputs),
             retired,
         }
@@ -120,7 +123,8 @@ impl Harness {
         }
         self.mirror = prepared.mirror;
         if let Some(publication) = prepared.publication {
-            assert!(self.publications.put(publication).is_none());
+            let edit = Request::edit(publication.generation, Payload::owned(publication));
+            self.requests.submit(edit).unwrap();
         }
     }
 
@@ -352,7 +356,7 @@ fn code_and_agent_modules_come_and_go_cleanly() {
 
 #[test]
 fn a_failed_edit_or_preparation_publishes_nothing() {
-    let harness = Harness::new();
+    let mut harness = Harness::new();
     let build = |module_type: &str, config| {
         GraphChange::build(&harness.registry, SAMPLE_RATE, "x", module_type, &config)
     };
@@ -388,7 +392,12 @@ fn a_failed_edit_or_preparation_publishes_nothing() {
         change.prepare(),
         Err(GraphCommandError::ModuleBuildFailed(_))
     ));
-    assert!(harness.publications.take().is_none());
+    harness.graph.ensure_process_order();
+    assert_eq!(
+        harness.applied.load(Ordering::Relaxed),
+        0,
+        "nothing installed"
+    );
     assert!(!harness.directory.lock().unwrap().contains_key("sched"));
 }
 

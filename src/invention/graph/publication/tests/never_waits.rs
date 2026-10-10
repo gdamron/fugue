@@ -21,13 +21,13 @@ fn a_reclaimer_preempted_mid_pop_never_holds_the_block() {
             vec![edge("osc1", "dac", "audio"), edge("osc2", "dac", "audio")],
         )
     };
-    drop(ends.publications.put(survivors()));
+    ends.publish(survivors());
     assert_eq!(counted_block(&mut graph), (0, 0));
 
     // The reclaimer has taken the first retirement but not released its
     // slot. A block installing the next publication finds the ring full at
     // once: it holds the retirement and finishes, clean.
-    drop(ends.publications.put(survivors()));
+    ends.publish(survivors());
     let reclaimed = ends.retired.pop_paused(|| {
         thread::scope(|scope| {
             scope.spawn(|| assert_eq!(counted_block(&mut graph), (0, 0)));
