@@ -16,20 +16,20 @@ struct CodeState {
     enabled: bool,
     status: String,
     last_error: String,
-    tick_hz: f32,
+    tick_rate: f32,
     script: String,
     entrypoint: String,
 }
 
 impl CodeControls {
     /// Creates a new control surface from static module config.
-    pub fn new(enabled: bool, tick_hz: f32, script: String, entrypoint: Option<String>) -> Self {
+    pub fn new(enabled: bool, tick_rate: f32, script: String, entrypoint: Option<String>) -> Self {
         Self {
             shared: Arc::new(Mutex::new(CodeState {
                 enabled,
                 status: "idle".to_string(),
                 last_error: String::new(),
-                tick_hz,
+                tick_rate,
                 script,
                 entrypoint: entrypoint.unwrap_or_else(|| "init".to_string()),
             })),
@@ -67,13 +67,13 @@ impl CodeControls {
     }
 
     /// Returns the configured periodic tick rate in Hz.
-    pub fn tick_hz(&self) -> f32 {
-        self.shared.lock().unwrap().tick_hz
+    pub fn tick_rate(&self) -> f32 {
+        self.shared.lock().unwrap().tick_rate
     }
 
     /// Updates the periodic tick rate in Hz, clamping it to zero or greater.
-    pub fn set_tick_hz(&self, tick_hz: f32) {
-        self.shared.lock().unwrap().tick_hz = tick_hz.max(0.0);
+    pub fn set_tick_rate(&self, tick_rate: f32) {
+        self.shared.lock().unwrap().tick_rate = tick_rate.max(0.0);
     }
 
     /// Returns the immutable script source captured from module config.
@@ -99,9 +99,9 @@ impl ControlSurface for CodeControls {
                 .with_default(self.status()),
             ControlMeta::string("last_error", "Last script runtime error")
                 .with_default(self.last_error()),
-            ControlMeta::number("tick_hz", "Periodic script tick frequency in Hz")
+            ControlMeta::number("tick_rate", "Periodic script tick frequency in Hz")
                 .with_range(0.0, 1000.0)
-                .with_default(self.tick_hz()),
+                .with_default(self.tick_rate()),
         ]
     }
 
@@ -110,7 +110,7 @@ impl ControlSurface for CodeControls {
             "enabled" => Ok(self.enabled().into()),
             "status" => Ok(self.status().into()),
             "last_error" => Ok(self.last_error().into()),
-            "tick_hz" => Ok(self.tick_hz().into()),
+            "tick_rate" => Ok(self.tick_rate().into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -129,8 +129,8 @@ impl ControlSurface for CodeControls {
                 self.set_last_error(value.as_string()?);
                 Ok(())
             }
-            "tick_hz" => {
-                self.set_tick_hz(value.as_number()?);
+            "tick_rate" => {
+                self.set_tick_rate(value.as_number()?);
                 Ok(())
             }
             _ => Err(format!("Unknown control: {}", key)),
@@ -151,10 +151,10 @@ mod tests {
             ControlValue::Bool(true)
         );
         controls
-            .set_control("tick_hz", ControlValue::Number(8.0))
+            .set_control("tick_rate", ControlValue::Number(8.0))
             .unwrap();
         assert_eq!(
-            controls.get_control("tick_hz").unwrap(),
+            controls.get_control("tick_rate").unwrap(),
             ControlValue::Number(8.0)
         );
     }

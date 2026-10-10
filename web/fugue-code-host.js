@@ -176,7 +176,7 @@ export class WasmCodeHost {
     }
 
     this.engine.setCodeModuleStatus(moduleConfig.id, "running");
-    if (moduleConfig.tick_hz > 0) {
+    if (moduleConfig.tick_rate > 0) {
       session.timer = setInterval(() => {
         const latest = this.getCodeModuleConfig(moduleConfig.id);
         if (!latest.enabled || !session.hooks.tick) {
@@ -187,7 +187,7 @@ export class WasmCodeHost {
         } catch (error) {
           this.handleModuleError(moduleConfig.id, error);
         }
-      }, 1000 / moduleConfig.tick_hz);
+      }, 1000 / moduleConfig.tick_rate);
     }
   }
 

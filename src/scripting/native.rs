@@ -144,12 +144,12 @@ fn run_host(
             controller.snapshot.get_control(&module_id, "enabled"),
             Ok(ControlValue::Bool(true))
         );
-        let tick_hz = match controller.snapshot.get_control(&module_id, "tick_hz") {
+        let tick_rate = match controller.snapshot.get_control(&module_id, "tick_rate") {
             Ok(ControlValue::Number(value)) => value.max(0.0),
             _ => 0.0,
         };
-        let timeout = if enabled && tick_hz > 0.0 {
-            Duration::from_secs_f32(1.0 / tick_hz)
+        let timeout = if enabled && tick_rate > 0.0 {
+            Duration::from_secs_f32(1.0 / tick_rate)
         } else {
             Duration::from_millis(250)
         };
@@ -166,7 +166,7 @@ fn run_host(
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                if enabled && tick_hz > 0.0 {
+                if enabled && tick_rate > 0.0 {
                     if let Err(err) = call_hook("tick", &mut context) {
                         set_error(&controller, &module_id, &err);
                     }

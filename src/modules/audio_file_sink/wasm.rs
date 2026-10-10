@@ -15,7 +15,7 @@ use crate::module_config::{ConfigKey, ConfigReader};
 const WAV_HEADER_LEN: usize = 44;
 const WAV_FRAME_BYTES: usize = 8;
 pub(super) const MAX_FRAMES: ConfigKey = ConfigKey::int::<usize>("max_frames");
-pub(super) const MAX_SECONDS: ConfigKey = ConfigKey::float("max_seconds");
+pub(super) const MAX_DURATION: ConfigKey = ConfigKey::float("max_duration");
 
 /// Shared handle type used by [`AudioFileSink`] on wasm targets.
 pub(super) type SharedHandle = Arc<WasmAudioFileSinkShared>;
@@ -50,14 +50,14 @@ pub(super) fn max_frames(
         return Err("audio_file_sink max_frames must be greater than zero".into());
     }
 
-    if let Some(max_seconds) = reader.float(&MAX_SECONDS)? {
-        if max_seconds > 0.0 {
-            return Ok((f64::from(max_seconds) * f64::from(sample_rate)).ceil() as usize);
+    if let Some(max_duration) = reader.float(&MAX_DURATION)? {
+        if max_duration > 0.0 {
+            return Ok((f64::from(max_duration) * f64::from(sample_rate)).ceil() as usize);
         }
-        return Err("audio_file_sink max_seconds must be greater than zero".into());
+        return Err("audio_file_sink max_duration must be greater than zero".into());
     }
 
-    Err("audio_file_sink on wasm requires config.max_frames or config.max_seconds".into())
+    Err("audio_file_sink on wasm requires config.max_frames or config.max_duration".into())
 }
 
 impl AudioFileSink {

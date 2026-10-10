@@ -11,7 +11,7 @@ pub struct CodeModuleRuntimeInfo {
     pub script: String,
     pub entrypoint: String,
     pub enabled: bool,
-    pub tick_hz: f32,
+    pub tick_rate: f32,
 }
 
 impl RenderEngine {
@@ -40,7 +40,7 @@ impl RenderEngine {
                 ControlValue::Bool(value) => value,
                 _ => true,
             };
-            let tick_hz = match self.snapshot().get_control(&module.id, "tick_hz")? {
+            let tick_rate = match self.snapshot().get_control(&module.id, "tick_rate")? {
                 ControlValue::Number(value) => value,
                 _ => 0.0,
             };
@@ -50,7 +50,7 @@ impl RenderEngine {
                 script,
                 entrypoint,
                 enabled,
-                tick_hz,
+                tick_rate,
             });
         }
 

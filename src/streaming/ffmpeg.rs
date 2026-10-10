@@ -33,7 +33,7 @@ pub(crate) struct FfmpegStreamConfig {
     pub audio_encoder: String,
     pub video_bitrate: String,
     pub audio_bitrate: String,
-    pub gop_seconds: u32,
+    pub gop_duration: u32,
     pub constant_video_bitrate: bool,
     pub audio_buffer_frames: usize,
     pub video_queue_frames: usize,
@@ -63,7 +63,7 @@ struct FfmpegCommandSpec {
 
 impl FfmpegCommandSpec {
     fn for_ports(config: &FfmpegStreamConfig, audio_port: u16, video_port: u16) -> Self {
-        let gop_frames = config.fps.saturating_mul(config.gop_seconds).max(1);
+        let gop_frames = config.fps.saturating_mul(config.gop_duration).max(1);
         let mut args = vec![
             "-hide_banner".to_string(),
             "-loglevel".to_string(),
@@ -723,7 +723,7 @@ mod tests {
             audio_encoder: "aac".to_string(),
             video_bitrate: "2500k".to_string(),
             audio_bitrate: "128k".to_string(),
-            gop_seconds: 2,
+            gop_duration: 2,
             constant_video_bitrate: false,
             audio_buffer_frames: DEFAULT_AUDIO_BUFFER_FRAMES,
             video_queue_frames: DEFAULT_VIDEO_QUEUE_FRAMES,
@@ -736,7 +736,7 @@ mod tests {
         config.sample_rate = 44_100;
         config.video_bitrate = "3000k".to_string();
         config.audio_bitrate = "160k".to_string();
-        config.gop_seconds = 3;
+        config.gop_duration = 3;
         let spec = FfmpegCommandSpec::for_ports(&config, 12_345, 23_456);
 
         assert_eq!(spec.program, "ffmpeg");
@@ -926,7 +926,7 @@ PY
                 audio_encoder: "aac".to_string(),
                 video_bitrate: "2500k".to_string(),
                 audio_bitrate: "128k".to_string(),
-                gop_seconds: 2,
+                gop_duration: 2,
                 constant_video_bitrate: false,
                 audio_buffer_frames: 64,
                 video_queue_frames: 2,
@@ -1030,7 +1030,7 @@ PY
                 audio_encoder: "aac".to_string(),
                 video_bitrate: "200k".to_string(),
                 audio_bitrate: "64k".to_string(),
-                gop_seconds: 2,
+                gop_duration: 2,
                 constant_video_bitrate: false,
                 audio_buffer_frames: 512,
                 video_queue_frames: 8,
@@ -1072,7 +1072,7 @@ PY
                 audio_encoder: "aac".to_string(),
                 video_bitrate: "200k".to_string(),
                 audio_bitrate: "64k".to_string(),
-                gop_seconds: 2,
+                gop_duration: 2,
                 constant_video_bitrate: false,
                 audio_buffer_frames: 512,
                 video_queue_frames: 8,

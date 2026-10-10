@@ -636,34 +636,36 @@
       "id": "conductor_fallback",
       "type": "code",
       "config": {
-        "tick_hz": 4,
+        "tick_rate": 4,
         "enabled": true,
         "script": {
           "$asset": "conductor_fallback"
         },
-        "conductor_id": "conductor",
-        "sequencer_ids": [
-          "mel_1",
-          "mel_2",
-          "mel_3",
-          "mel_4",
-          "mel_5",
-          "mel_6",
-          "mel_7",
-          "mel_8",
-          "mel_9",
-          "mel_10",
-          "mel_11",
-          "mel_12",
-          "mel_13"
-        ],
-        "mixer_id": "mixer",
-        "reverb_id": "reverb",
-        "min_loops_before_advance": 4,
-        "max_cells_ahead_of_slowest": 2,
-        "advance_probability": 0.15,
-        "conductor_timeout_ticks": 24,
-        "last_cell_hold_loops": 4
+        "params": {
+          "conductor_id": "conductor",
+          "sequencer_ids": [
+            "mel_1",
+            "mel_2",
+            "mel_3",
+            "mel_4",
+            "mel_5",
+            "mel_6",
+            "mel_7",
+            "mel_8",
+            "mel_9",
+            "mel_10",
+            "mel_11",
+            "mel_12",
+            "mel_13"
+          ],
+          "mixer_id": "mixer",
+          "reverb_id": "reverb",
+          "min_loops_before_advance": 4,
+          "max_cells_ahead_of_slowest": 2,
+          "advance_probability": 0.15,
+          "conductor_timeout_ticks": 24,
+          "last_cell_hold_loops": 4
+        }
       }
     },
     {

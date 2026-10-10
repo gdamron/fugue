@@ -19,8 +19,4 @@ pub(super) const CONVENTION_EXCEPTIONS: &[(&str, &str, &str)] = &[
     ("agent", "history_json", "telemetry becomes history"),
     ("agent", "history", "config's history settings clash with the history telemetry"),
     ("agent", "last_response_json", "telemetry becomes last_parsed_response"),
-    ("code", "tick_hz", "becomes tick_rate"),
-    ("code", "*", "open until script parameters move under params"),
-    ("rtmp_sink", "gop_seconds", "becomes gop_duration"),
-    ("youtube_sink", "gop_seconds", "becomes gop_duration"),
 ];

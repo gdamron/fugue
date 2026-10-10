@@ -12,14 +12,14 @@ let lastConductorRequestCount = 0;
 let ticksSinceConductor = 0;
 let lastConductorHealthy = null;
 
-function readOwnConfig() {
+function readOwnParams() {
   const modules = graph.listModules();
   const me = modules.find((m) => m.id === graph.moduleId);
-  return (me && me.config) || {};
+  return (me && me.config && me.config.params) || {};
 }
 
 function init() {
-  const c = readOwnConfig();
+  const c = readOwnParams();
   cfg = {
     conductorId: c.conductor_id || "conductor",
     sequencers: Array.isArray(c.sequencer_ids) ? c.sequencer_ids.slice() : [],

@@ -127,13 +127,6 @@ pub trait ModuleFactory: Send + Sync + 'static {
     fn config_keys(&self) -> &'static [ConfigKey] {
         &[]
     }
-
-    /// True when this type's config may hold keys it does not declare, so
-    /// [`ModuleRegistry::build`](crate::ModuleRegistry::build) does not
-    /// refuse them. Default is false: config is closed.
-    fn open_config(&self) -> bool {
-        false
-    }
 }
 
 /// Applies the entries of `config` whose keys `selects` picks to `surface`

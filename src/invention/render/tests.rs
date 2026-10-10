@@ -142,7 +142,7 @@ fn render_engine_lists_code_module_runtime_info() {
                         "script": "function init() {}",
                         "entrypoint": "init",
                         "enabled": true,
-                        "tick_hz": 8.0
+                        "tick_rate": 8.0
                     }
                 },
                 { "id": "dac", "type": "dac" }
@@ -160,9 +160,9 @@ fn render_engine_lists_code_module_runtime_info() {
             id,
             entrypoint,
             enabled,
-            tick_hz,
+            tick_rate,
             ..
-        } if id == "code1" && entrypoint == "init" && *enabled && (*tick_hz - 8.0).abs() < f32::EPSILON
+        } if id == "code1" && entrypoint == "init" && *enabled && (*tick_rate - 8.0).abs() < f32::EPSILON
     ));
 }
 

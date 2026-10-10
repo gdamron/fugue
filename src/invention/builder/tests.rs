@@ -293,7 +293,9 @@ fn resolves_relative_asset_refs_in_module_configs() {
                 id: "notes".to_string(),
                 module_type: "code".to_string(),
                 config: serde_json::json!({
-                    "metadata": [{ "source": { "$asset": "score", "path": "/base_note_hint" } }]
+                    "params": {
+                        "metadata": [{ "source": { "$asset": "score", "path": "/base_note_hint" } }]
+                    }
                 }),
             },
         ],
@@ -314,7 +316,7 @@ fn resolves_relative_asset_refs_in_module_configs() {
     assert_eq!(config["root_note"], 48);
     assert_eq!(config["cells"].as_array().unwrap().len(), 2);
     let config = &state.modules.get("notes").unwrap().config;
-    assert_eq!(config["metadata"][0]["source"], 48);
+    assert_eq!(config["params"]["metadata"][0]["source"], 48);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -427,7 +429,7 @@ fn text_assets_resolve_as_string_values() {
                 module_type: "code".to_string(),
                 config: serde_json::json!({
                     "script": { "$asset": "voice_script" },
-                    "tick_hz": 0.0,
+                    "tick_rate": 0.0,
                     "enabled": false
                 }),
             },

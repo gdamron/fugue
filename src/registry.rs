@@ -102,7 +102,7 @@ impl ModuleRegistry {
             .ok_or_else(|| format!("Unknown module type: {}", type_id))?;
         let declared = factory.config_keys();
         let undeclared: Vec<&String> = match config.as_object() {
-            Some(entries) if !factory.open_config() => entries
+            Some(entries) => entries
                 .keys()
                 .filter(|key| declared.iter().all(|d| !declares(d.key, key)))
                 .collect(),
