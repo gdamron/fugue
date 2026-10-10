@@ -81,19 +81,19 @@
   "connections": [
     {
       "from": "clock",
-      "from_port": "gate",
+      "from_port": "beat",
       "to": "bass_mel",
       "to_port": "gate"
     },
     {
       "from": "clock",
-      "from_port": "gate_x2",
+      "from_port": "beat_x2",
       "to": "melody_mel",
       "to_port": "gate"
     },
     {
       "from": "clock",
-      "from_port": "gate_d2",
+      "from_port": "beat_d2",
       "to": "pad_mel",
       "to_port": "gate"
     },

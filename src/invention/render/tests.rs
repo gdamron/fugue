@@ -263,7 +263,7 @@ const ONE_SHOT_INVENTION: &str = r#"{
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
     "connections": [
-        { "from": "clock", "from_port": "gate", "to": "seq", "to_port": "clock" },
+        { "from": "clock", "from_port": "beat", "to": "seq", "to_port": "clock" },
         { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
         { "from": "seq", "from_port": "gate", "to": "vca", "to_port": "level" },
         { "from": "osc", "from_port": "audio", "to": "vca", "to_port": "audio" },

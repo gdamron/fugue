@@ -41,7 +41,7 @@ fn clock_gate_triggers_kit_slot_through_graph() {
                 {{ "id": "dac", "type": "dac", "config": {{ "soft_clip": false }} }}
             ],
             "connections": [
-                {{ "from": "clock", "from_port": "gate", "to": "kit", "to_port": "trigger" }},
+                {{ "from": "clock", "from_port": "beat", "to": "kit", "to_port": "trigger" }},
                 {{ "from": "kit", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" }},
                 {{ "from": "kit", "from_port": "audio_right", "to": "dac", "to_port": "audio_right" }}
             ]

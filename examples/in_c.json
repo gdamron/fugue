@@ -41,7 +41,7 @@
       "type": "clock",
       "config": {
         "bpm": 240,
-        "gate_duration": 0.4
+        "gate_length": 0.4
       }
     },
     {
@@ -700,7 +700,7 @@
   "connections": [
     {
       "from": "clock",
-      "from_port": "gate",
+      "from_port": "beat",
       "to": "pulse_mel",
       "to_port": "gate"
     },
@@ -724,7 +724,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_1",
       "to_port": "gate"
     },
@@ -748,7 +748,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_2",
       "to_port": "gate"
     },
@@ -772,7 +772,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_3",
       "to_port": "gate"
     },
@@ -796,7 +796,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_4",
       "to_port": "gate"
     },
@@ -820,7 +820,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_5",
       "to_port": "gate"
     },
@@ -844,7 +844,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_6",
       "to_port": "gate"
     },
@@ -868,7 +868,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_7",
       "to_port": "gate"
     },
@@ -892,7 +892,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_8",
       "to_port": "gate"
     },
@@ -916,7 +916,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_9",
       "to_port": "gate"
     },
@@ -940,7 +940,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_10",
       "to_port": "gate"
     },
@@ -964,7 +964,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_11",
       "to_port": "gate"
     },
@@ -988,7 +988,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_12",
       "to_port": "gate"
     },
@@ -1012,7 +1012,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_x4",
+      "from_port": "beat_x4",
       "to": "mel_13",
       "to_port": "gate"
     },
@@ -1036,7 +1036,7 @@
     },
     {
       "from": "clock",
-      "from_port": "gate_d4",
+      "from_port": "beat_d4",
       "to": "conductor",
       "to_port": "trigger"
     },

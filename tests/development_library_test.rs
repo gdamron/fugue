@@ -137,12 +137,12 @@ fn development_voice_block_size_parity() {
             "version": "1.0.0",
             "developments": [ {{ "name": "marimba_voice", "definition": {marimba} }} ],
             "modules": [
-                {{ "id": "clock", "type": "clock", "config": {{ "bpm": 140.0, "gate_duration": 0.5 }} }},
+                {{ "id": "clock", "type": "clock", "config": {{ "bpm": 140.0, "gate_length": 0.5 }} }},
                 {{ "id": "voice", "type": "marimba_voice", "config": {{}} }},
                 {{ "id": "dac", "type": "dac", "config": {{ "soft_clip": false }} }}
             ],
             "connections": [
-                {{ "from": "clock", "from_port": "gate", "to": "voice", "to_port": "gate" }},
+                {{ "from": "clock", "from_port": "beat", "to": "voice", "to_port": "gate" }},
                 {{ "from": "voice", "from_port": "audio", "to": "dac", "to_port": "audio" }}
             ]
         }}"#
@@ -251,7 +251,7 @@ fn high_polyphony_nested_development_throughput() {
     ];
     let mut connections = vec![serde_json::json!({
         "from": "clock",
-        "from_port": "gate_x4",
+        "from_port": "beat_x4",
         "to": "seq",
         "to_port": "clock"
     })];

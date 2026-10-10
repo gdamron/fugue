@@ -21,7 +21,7 @@ fn pattern() -> serde_json::Value {
             { "id": "o", "type": "oscillator", "config": { "frequency": 440.0 } }
         ],
         "connections": [
-            { "from": "clock", "from_port": "gate", "to": "sched", "to_port": "gate" }
+            { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "gate" }
         ],
         "outputs": [{ "name": "audio", "from": "o", "from_port": "audio" }],
         "controls": [

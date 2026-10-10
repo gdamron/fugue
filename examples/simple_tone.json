@@ -8,7 +8,7 @@
       "type": "clock",
       "config": {
         "bpm": 120.0,
-        "gate_duration": 0.5
+        "gate_length": 0.5
       }
     },
     {
@@ -41,7 +41,7 @@
   "connections": [
     {
       "from": "clock",
-      "from_port": "gate",
+      "from_port": "beat",
       "to": "adsr",
       "to_port": "gate"
     },

@@ -7,11 +7,7 @@
       "id": "clock",
       "type": "clock",
       "config": {
-        "bpm": 120.0,
-        "time_signature": {
-          "beats_per_measure": 4,
-          "beat_unit": 4
-        }
+        "bpm": 120.0
       }
     },
     {
@@ -89,13 +85,13 @@
   "connections": [
     {
       "from": "clock",
-      "from_port": "gate",
+      "from_port": "beat",
       "to": "seq",
       "to_port": "clock"
     },
     {
       "from": "clock",
-      "from_port": "gate",
+      "from_port": "beat",
       "to": "dynamics",
       "to_port": "gate"
     },

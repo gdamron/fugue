@@ -261,7 +261,7 @@ fn a_scheduler_publishes_cleanly_with_a_target_added_alongside() {
         harness.build("clock", "clock", serde_json::json!({ "bpm": 120.0 })),
     );
     change
-        .connect(edge("clock", "gate", "sched", "gate"))
+        .connect(edge("clock", "beat", "sched", "gate"))
         .unwrap();
     change
         .connect(edge("osc3", "audio", "dac", "audio"))

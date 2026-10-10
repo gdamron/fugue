@@ -226,11 +226,7 @@ mod tests {
                     "id": "clock1",
                     "type": "clock",
                     "config": {
-                        "bpm": 120.0,
-                        "time_signature": {
-                            "beats_per_measure": 4,
-                            "beat_unit": 4
-                        }
+                        "bpm": 120.0
                     }
                 }
             ],

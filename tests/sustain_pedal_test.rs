@@ -98,7 +98,7 @@ fn invention(pedaled: bool) -> String {
             }}
         ],
         "modules": [
-            {{ "id": "clock", "type": "clock", "config": {{ "bpm": 240.0, "gate_duration": 0.5 }} }},
+            {{ "id": "clock", "type": "clock", "config": {{ "bpm": 240.0, "gate_length": 0.5 }} }},
             {{ "id": "seq_notes", "type": "cell_sequencer",
                "config": {{ "base_note": 60, "steps": 16, "gate_length": 0.5, "mode": "one_shot",
                             "sequences": [[null, 0, 7, null, null, null, null, null,
@@ -115,8 +115,8 @@ fn invention(pedaled: bool) -> String {
             {{ "id": "dac", "type": "dac", "config": {{ "soft_clip": false }} }}
         ],
         "connections": [
-            {{ "from": "clock", "from_port": "gate", "to": "seq_notes", "to_port": "gate" }},
-            {{ "from": "clock", "from_port": "gate", "to": "seq_pedal", "to_port": "gate" }},
+            {{ "from": "clock", "from_port": "beat", "to": "seq_notes", "to_port": "gate" }},
+            {{ "from": "clock", "from_port": "beat", "to": "seq_pedal", "to_port": "gate" }},
             {{ "from": "seq_notes", "from_port": "frequency", "to": "bank", "to_port": "frequency" }},
             {{ "from": "seq_notes", "from_port": "gate", "to": "bank", "to_port": "gate" }},
             {{ "from": "bank", "from_port": "audio", "to": "reverb", "to_port": "audio_left" }},
