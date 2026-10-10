@@ -97,6 +97,10 @@ pub(crate) struct DeclaredSurface {
     table: ControlTable,
     cells: Arc<ControlCells>,
     route: Mutex<Route>,
+    /// Whether a write before its module runs reads back clamped, as the
+    /// module will hold it; not a development's, whose aliases each clamp
+    /// it for themselves.
+    clamps: bool,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -108,6 +112,16 @@ impl DeclaredSurface {
             table,
             cells,
             route: Mutex::new(Route::Building(Vec::new())),
+            clamps: true,
+        }
+    }
+
+    /// A development's surface over `cells`: a write before it runs is
+    /// held as written, for each alias to clamp.
+    pub(crate) fn fanning_out(table: ControlTable, cells: Arc<ControlCells>) -> Self {
+        Self {
+            clamps: false,
+            ..Self::new(table, cells)
         }
     }
 
@@ -125,7 +139,7 @@ impl DeclaredSurface {
 
     fn deliver(&self, index: ControlIndex, value: RtValue) -> Result<(), String> {
         let (event, clamp) = match self.table.decl(index) {
-            Some((decl, _)) => (decl.event, decl.clamp),
+            Some((decl, _)) => (decl.event, decl.clamp.filter(|_| self.clamps)),
             None => (false, None),
         };
         let route = {
@@ -139,6 +153,9 @@ impl DeclaredSurface {
                 let held = match (value, clamp) {
                     (RtValue::F32(number), Some((min, max))) => {
                         RtValue::F32(number.max(min).min(max))
+                    }
+                    (RtValue::I32(whole), Some((min, max))) => {
+                        RtValue::I32(whole.clamp(min as i32, max as i32))
                     }
                     _ => value,
                 };

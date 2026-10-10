@@ -417,3 +417,83 @@ fn nested_keys_sharing_an_inner_control_keep_their_write_order() {
     b.write_number(0.2);
     assert_eq!((all.current(), b.current()), (Some(0.6), Some(0.2)));
 }
+
+/// Two dials: the first's clamping `steps` (1..=8) and the second's wider
+/// clamping `span` (1..=64) behind one `n`, and `b_span` alone.
+fn integers() -> DevelopmentFactory {
+    let definition = json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
+        "connections": [],
+        "outputs": [{ "name": "a", "from": "a", "from_port": "out" }],
+        "controls": [
+            { "name": "n", "module": "a", "control": "steps" },
+            { "name": "n", "module": "b", "control": "span" },
+            { "name": "b_span", "module": "b", "control": "span" }
+        ]
+    });
+    factory("integers", definition)
+}
+
+#[test]
+fn a_clamping_integer_key_takes_any_whole_number_and_each_alias_clamps_it() {
+    let (graph, surface) = running_from(integers(), json!({ "n": 200 }));
+    outputs_a(&graph);
+    let read = |key: &str| surface.get_control(key).unwrap();
+    assert_eq!((read("n"), read("b_span")), (8.0.into(), 64.0.into()));
+    surface.set_control("n", 0.0.into()).unwrap();
+    outputs_a(&graph);
+    assert_eq!((read("n"), read("b_span")), (1.0.into(), 1.0.into()));
+    assert!(surface.set_control("n", 2.5.into()).is_err());
+
+    let n = surface.automation("n").unwrap();
+    n.write_number(40.0);
+    assert_eq!(n.current(), Some(8.0), "as the first alias will hold it");
+    outputs_a(&graph);
+    assert_eq!((read("n"), read("b_span")), (8.0.into(), 40.0.into()));
+    n.write_number(1.5);
+    assert_eq!(n.current(), Some(8.0), "a fraction is refused");
+}
+
+#[test]
+fn a_nested_clamping_integer_takes_any_whole_number_through_the_outer_development() {
+    let leaf = json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "a", "type": "dial" }],
+        "connections": [],
+        "controls": [{ "name": "s", "module": "a", "control": "steps" }]
+    });
+    let outer = json!({
+        "version": "1.0.0",
+        "developments": [{ "name": "inner", "definition": leaf }],
+        "modules": [{ "id": "n", "type": "inner" }],
+        "connections": [],
+        "controls": [{ "name": "s", "module": "n", "control": "s" }]
+    });
+    let built = factory("outer", outer)
+        .build(48_000, &json!({ "s": 200 }))
+        .unwrap();
+    let s = built.control_surface.unwrap().automation("s").unwrap();
+    s.write_number(-3.0);
+    assert_eq!(s.current(), Some(1.0), "as the leaf dial will hold it");
+}
+
+#[test]
+fn an_integer_alias_must_take_every_whole_number_its_first_does() {
+    let build = |first: &str, later: &str| {
+        let definition = json!({
+            "version": "1.0.0",
+            "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
+            "connections": [],
+            "controls": [
+                { "name": "x", "module": "a", "control": first },
+                { "name": "x", "module": "b", "control": later }
+            ]
+        });
+        factory("integers", definition).build(48_000, &json!({}))
+    };
+    assert!(build("steps", "index").is_err(), "index refuses 200");
+    for (first, later) in [("index", "steps"), ("span", "steps"), ("steps", "level")] {
+        assert!(build(first, later).is_ok(), "{first} then {later}");
+    }
+}

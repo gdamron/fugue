@@ -41,6 +41,17 @@ pub(crate) enum DeclKind {
 /// up to 2^24 reads back exactly through a client's `f32`.
 pub(crate) const MAX_EXACT_INTEGER: i32 = 1 << 24;
 
+/// The whole numbers an integer control takes: its own range, or for one
+/// that clamps, any a client's `f32` carries unambiguously (below 2^24 in
+/// magnitude, where a neighbour or a fraction never rounds onto it), each
+/// handed to its module as is to clamp, as a number is.
+pub(crate) const fn integer_domain(min: i32, max: i32, clamp: Option<(f32, f32)>) -> (i32, i32) {
+    match clamp {
+        Some(_) => (-(MAX_EXACT_INTEGER - 1), MAX_EXACT_INTEGER - 1),
+        None => (min, max),
+    }
+}
+
 /// The most indices a table may declare: one per [`ControlIndex`].
 pub(crate) const MAX_CONTROLS: usize = 1 << 16;
 
@@ -87,7 +98,8 @@ pub(crate) struct ControlDecl {
     /// For a number its module clamps to as it applies (`min`, `max`), so
     /// automation can see the value a write will hold before it applies.
     /// For an integer, its own range: it takes any whole number a client
-    /// can write exactly and clamps it into the range, as its config does.
+    /// can write unambiguously ([`integer_domain`]) and its module clamps
+    /// it into the range as it applies, as its config does.
     pub(crate) clamp: Option<(f32, f32)>,
     /// For a choice, other spellings it has always accepted, each with the
     /// option it means (`("saw", "sawtooth")`).
@@ -282,12 +294,9 @@ impl ControlTable {
                     .and_then(serde_json::Number::from_f64)
                     .map(Value::Number);
                 let json = json.ok_or("Expected numeric control value")?;
-                let (low, high) = match decl.clamp {
-                    Some(_) => (-MAX_EXACT_INTEGER, MAX_EXACT_INTEGER),
-                    None => (min, max),
-                };
+                let (low, high) = integer_domain(min, max, decl.clamp);
                 whole_number_in::<i32>(&json, i128::from(low), i128::from(high))
-                    .map(|whole| RtValue::I32(whole.clamp(min, max)))
+                    .map(RtValue::I32)
                     .map_err(|refusal| format!("Control '{key}' {refusal}"))
             }
             DeclKind::Bool => {
