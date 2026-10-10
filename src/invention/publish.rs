@@ -427,7 +427,7 @@ impl LiveGraph {
             drop(prepared);
             return Err(GraphCommandError::QueueFull);
         }
-        let mut published = match publisher.publish(prepared) {
+        let published = match publisher.publish(prepared) {
             Ok(published) => published,
             Err(Refused { error, change }) => {
                 drop(publisher);
@@ -435,7 +435,6 @@ impl LiveGraph {
                 return Err(error);
             }
         };
-        let superseded = published.superseded.take();
         let mirror = publisher.mirror();
         let removed: Vec<&String> = published
             .previous
@@ -507,7 +506,6 @@ impl LiveGraph {
             committed.started.push(module.info);
         }
         drop(publisher);
-        drop(superseded);
         self.settle();
         Ok(committed)
     }

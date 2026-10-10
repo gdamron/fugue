@@ -45,9 +45,6 @@ use crate::{GraphModule, MAX_BLOCK};
 use super::runtime::ModuleInstance;
 
 mod compile;
-// Unused since edits travel as requests; removed with folding's remains.
-#[allow(dead_code)]
-mod mailbox;
 mod master;
 mod process;
 mod publication;

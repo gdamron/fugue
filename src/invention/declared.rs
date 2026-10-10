@@ -174,7 +174,7 @@ impl DeclaredSurface {
                     .publisher
                     .upgrade()
                     .ok_or("The audio thread has stopped")?;
-                let mut publisher = publisher.lock().unwrap();
+                let publisher = publisher.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Live(_)))?;
                 // A kept controller can outlive the audio graph: never queue
                 // a request nothing will drain.
@@ -194,7 +194,6 @@ impl DeclaredSurface {
                     .requests
                     .submit(request)
                     .map_err(|_| "The control request queue is full; try again")?;
-                publisher.note_written();
                 if let (Some(key), Some(value)) =
                     (self.table.key(index), self.table.value(index, value))
                 {

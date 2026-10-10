@@ -29,18 +29,13 @@ use crate::invention::runtime::ModuleInstance;
 /// describes the step at install and nothing else. Anything resolved against
 /// the publisher's mirror refers to that generation's order, so a consumer
 /// must know which generation it was resolved against: queued input writes
-/// carry it, and a write resolved against a generation folded into the
-/// installing publication maps through that publication's
-/// [`super::Absorbed`] remaps instead.
+/// and control requests carry it.
 ///
 /// Old indices are relative to what is actually running at install, not to
 /// what the publication was prepared against: the publisher maps a
 /// publication against its mirror of the running order as it publishes, and
-/// when it folds an untaken publication into a newer one
-/// ([`super::Publication::absorb`]) it composes the two remaps, so the folded
-/// result maps from the graph the audio thread is still running. A module
-/// the folded publication built maps to `None`: the running graph never had
-/// that instance.
+/// edits install in the order they were published, so that is the order
+/// the audio thread is running when it installs this one.
 ///
 /// A remap that does not cover the running graph (a default, unmapped one,
 /// say) carries nothing; install checks its length before using it.
@@ -85,37 +80,5 @@ impl SurvivorRemap {
             .iter()
             .enumerate()
             .filter_map(|(old, new)| new.map(|new| (old, new)))
-    }
-
-    /// This remap followed by `next`, which maps from this one's new
-    /// order: every module this one maps that `next` maps too. Unlike
-    /// [`Self::compose_after`] it applies no survivor filter. Control thread
-    /// only: allocates.
-    #[cfg_attr(not(test), allow(dead_code))] // Folding's; removed with it.
-    pub(crate) fn then(&self, next: &SurvivorRemap) -> SurvivorRemap {
-        let new_of_old = self
-            .new_of_old
-            .iter()
-            .map(|mid| mid.and_then(|mid| next.get(mid)))
-            .collect();
-        Self { new_of_old }
-    }
-
-    /// Composes this remap, made against the graph `earlier` would have
-    /// left running, after `earlier`, made against the graph running now:
-    /// afterwards this remap maps from the graph running now. A module
-    /// survives only if it survives both; a new index that is no longer a
-    /// survivor (per `survivor`, this publication's flags after folding)
-    /// maps to `None`. Control thread only.
-    #[cfg_attr(not(test), allow(dead_code))] // Folding's; removed with it.
-    pub(crate) fn compose_after(&mut self, earlier: &SurvivorRemap, survivor: &[bool]) {
-        self.new_of_old = earlier
-            .new_of_old
-            .iter()
-            .map(|mid| {
-                mid.and_then(|mid| self.get(mid))
-                    .filter(|&new| survivor.get(new).copied().unwrap_or(false))
-            })
-            .collect();
     }
 }

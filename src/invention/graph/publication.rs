@@ -56,27 +56,8 @@ pub(crate) struct Publication {
     /// the publisher as it publishes (see [`Self::map_survivors`]).
     pub(crate) remap: SurvivorRemap,
     /// The publisher generation this publication creates. Set by the
-    /// publisher as it publishes; a folded publication keeps the newer one.
+    /// publisher as it publishes.
     pub(crate) generation: u64,
-    /// For each generation folded into this one that has input writes
-    /// queued against it, a remap from that generation's order into
-    /// `modules` (see [`Self::absorb`]).
-    pub(crate) absorbed: Vec<Absorbed>,
-}
-
-/// A generation folded into a newer publication before the audio thread
-/// took it, kept so input writes resolved against it still find their
-/// instance when the newer one installs. Built and freed on the control
-/// thread; the audio thread only reads it.
-pub(crate) struct Absorbed {
-    pub(crate) generation: u64,
-    /// Module ids in that generation's order, for the same defensive id
-    /// check survivors get.
-    pub(crate) ids: Vec<String>,
-    /// From that generation's order to the folding publication's. Unlike
-    /// the survivor remap it maps modules a folded publication built too:
-    /// those are the instances its writes were resolved against.
-    pub(crate) remap: SurvivorRemap,
 }
 
 impl Publication {
@@ -90,59 +71,6 @@ impl Publication {
     /// publication's survivors. Control thread only: allocates.
     pub(crate) fn map_survivors<'a>(&mut self, running: impl IntoIterator<Item = &'a str>) {
         self.remap = SurvivorRemap::map(running, &self.modules, &self.survivor);
-    }
-
-    /// Folds an earlier publication the audio thread never took into this
-    /// one. Its prepared instances are the newest version of their modules,
-    /// so each fills this publication's survivor placeholder of the same id,
-    /// trading places with it. The survivor remaps compose, so this one
-    /// maps from the graph still running, which never had the instances the
-    /// earlier one built: they start from zero. Returns what is left of the
-    /// earlier publication, including prepared instances this one no longer
-    /// needs, for the caller to drop once it has released the publisher.
-    ///
-    /// Before composing, this remap still maps from the earlier
-    /// publication's order. When input writes were queued against the
-    /// earlier generation (`earlier_written`), it is kept for them as an
-    /// [`Absorbed`] entry; entries the earlier one carried are composed
-    /// through it. So entries exist only for generations with writes still
-    /// outstanding, which bounds them by the input queue and ring capacity
-    /// however many publications fold. Control thread only: allocates.
-    // Unused since edits travel as requests; removed with folding's remains.
-    #[cfg_attr(not(test), allow(dead_code))]
-    #[must_use = "the superseded publication should be dropped off the publisher lock"]
-    pub(crate) fn absorb(
-        &mut self,
-        mut earlier: Box<Publication>,
-        earlier_written: bool,
-    ) -> Box<Publication> {
-        for mut folded in earlier.absorbed.drain(..) {
-            folded.remap = folded.remap.then(&self.remap);
-            self.absorbed.push(folded);
-        }
-        if earlier_written {
-            self.absorbed.push(Absorbed {
-                generation: earlier.generation,
-                ids: earlier.modules.keys().cloned().collect(),
-                remap: self.remap.clone(),
-            });
-        }
-        let Publication {
-            modules, survivor, ..
-        } = &mut *earlier;
-        for ((id, instance), &was_survivor) in modules.iter_mut().zip(survivor.iter()) {
-            if was_survivor {
-                continue;
-            }
-            if let Some((idx, _, slot)) = self.modules.get_full_mut(id.as_str()) {
-                if self.survivor[idx] {
-                    std::mem::swap(slot, instance);
-                    self.survivor[idx] = false;
-                }
-            }
-        }
-        self.remap.compose_after(&earlier.remap, &self.survivor);
-        earlier
     }
 }
 
@@ -232,10 +160,9 @@ pub(crate) const MAX_INSTALLS_PER_BLOCK: usize = 8;
 /// applied to the right instance:
 ///
 /// - tagged with the installed generation: applied at its index;
-/// - tagged with the generation installed just before this block's install,
-///   or one folded into the publication it installs: mapped into the new
-///   order (through the survivor remap or [`Absorbed`]), and dropped when
-///   its module was removed or rebuilt (its target went away);
+/// - tagged with the generation an install just replaced: mapped into the
+///   new order through its survivor remap, and dropped when its module was
+///   removed or rebuilt (its target went away);
 /// - tagged with a newer generation: its publication is published but not
 ///   yet installed (a retirement is held, say), so it waits in a fixed,
 ///   preallocated ring and is applied right after that install. When the
@@ -407,17 +334,12 @@ impl SignalGraph {
         let Some((previous, retired)) = retired else {
             return Disposition::Drop;
         };
-        let target = if generation == previous {
-            // The retired map is the previous generation's order.
-            let old_id = retired.modules.get_index(old).map(|(id, _)| id);
-            retired.remap.get(old).map(|new| (old_id, new))
-        } else {
-            retired
-                .absorbed
-                .iter()
-                .find(|folded| folded.generation == generation)
-                .and_then(|folded| folded.remap.get(old).map(|new| (folded.ids.get(old), new)))
-        };
+        if generation != previous {
+            return Disposition::Drop;
+        }
+        // The retired map is the previous generation's order.
+        let old_id = retired.modules.get_index(old).map(|(id, _)| id);
+        let target = retired.remap.get(old).map(|new| (old_id, new));
         // The same defensive id check as `carry_survivors`.
         match target {
             Some((Some(old_id), new))
