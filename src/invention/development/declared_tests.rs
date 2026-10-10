@@ -36,11 +36,11 @@ fn mixed() -> serde_json::Value {
         "connections": [],
         "outputs": [{ "name": "a", "from": "a", "from_port": "out" }],
         "controls": [
-            { "key": "mix", "module": "a", "control": "level" },
-            { "key": "mix", "module": "l", "control": "rate" },
-            { "key": "rate", "module": "l", "control": "rate" },
-            { "key": "form", "module": "a", "control": "shape" },
-            { "key": "form", "module": "l", "control": "waveform" }
+            { "name": "mix", "module": "a", "control": "level" },
+            { "name": "mix", "module": "l", "control": "rate" },
+            { "name": "rate", "module": "l", "control": "rate" },
+            { "name": "form", "module": "a", "control": "shape" },
+            { "name": "form", "module": "l", "control": "waveform" }
         ]
     })
 }
@@ -57,10 +57,10 @@ fn pair() -> DevelopmentFactory {
             { "name": "b", "from": "b", "from_port": "out" }
         ],
         "controls": [
-            { "key": "level", "module": "a", "control": "level" },
-            { "key": "level", "module": "b", "control": "level" },
-            { "key": "pulse", "module": "a", "control": "pulse" },
-            { "key": "b_level", "module": "b", "control": "level" }
+            { "name": "level", "module": "a", "control": "level" },
+            { "name": "level", "module": "b", "control": "level" },
+            { "name": "pulse", "module": "a", "control": "pulse" },
+            { "name": "b_level", "module": "b", "control": "level" }
         ]
     });
     factory("pair", definition)
@@ -174,8 +174,8 @@ fn a_nested_mixed_key_reaches_both_parts_through_the_outer_development() {
         "connections": [],
         "outputs": [{ "name": "a", "from": "n", "from_port": "a" }],
         "controls": [
-            { "key": "mix", "module": "n", "control": "mix" },
-            { "key": "rate", "module": "n", "control": "rate" }
+            { "name": "mix", "module": "n", "control": "mix" },
+            { "name": "rate", "module": "n", "control": "rate" }
         ]
     });
     let (graph, surface) = running_from(factory("outer", outer), json!({ "mix": 0.5 }));
@@ -213,8 +213,8 @@ fn a_key_whose_later_alias_refuses_what_its_first_takes_fails_to_build() {
             "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
             "connections": [],
             "controls": [
-                { "key": "x", "module": "a", "control": first },
-                { "key": "x", "module": "b", "control": later }
+                { "name": "x", "module": "a", "control": first },
+                { "name": "x", "module": "b", "control": later }
             ]
         });
         let refused = match factory("narrow", definition).build(48_000, &json!({})) {
@@ -233,8 +233,8 @@ fn a_key_with_any_event_alias_is_an_event_in_either_order() {
             "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
             "connections": [],
             "controls": [
-                { "key": "x", "module": "a", "control": aliases[0] },
-                { "key": "x", "module": "b", "control": aliases[1] }
+                { "name": "x", "module": "a", "control": aliases[0] },
+                { "name": "x", "module": "b", "control": aliases[1] }
             ]
         });
         let built = factory("events", definition)
@@ -259,7 +259,7 @@ fn a_ramp_starts_from_what_the_first_alias_holds() {
         "modules": [{ "id": "a", "type": "dial" }],
         "connections": [],
         "outputs": [{ "name": "a", "from": "a", "from_port": "out" }],
-        "controls": [{ "key": "level", "module": "a", "control": "level" }]
+        "controls": [{ "name": "level", "module": "a", "control": "level" }]
     }))
     .unwrap();
     let mut registry = ModuleRegistry::default();
@@ -292,7 +292,7 @@ fn a_scheduled_ramp_on_a_legacy_only_key_allocates_nothing() {
         "version": "1.0.0",
         "modules": [{ "id": "l", "type": "lfo" }],
         "connections": [],
-        "controls": [{ "key": "rate", "module": "l", "control": "rate" }]
+        "controls": [{ "name": "rate", "module": "l", "control": "rate" }]
     });
     let built = factory("legacy", definition)
         .build(48_000, &json!({}))
@@ -330,14 +330,14 @@ fn a_pending_jump_reads_clamped_through_nested_developments() {
         "version": "1.0.0",
         "modules": [{ "id": "a", "type": "dial" }],
         "connections": [],
-        "controls": [{ "key": "lvl", "module": "a", "control": "level" }]
+        "controls": [{ "name": "lvl", "module": "a", "control": "level" }]
     });
     let outer = json!({
         "version": "1.0.0",
         "developments": [{ "name": "inner", "definition": leaf }],
         "modules": [{ "id": "n", "type": "inner" }],
         "connections": [],
-        "controls": [{ "key": "lvl", "module": "n", "control": "lvl" }]
+        "controls": [{ "name": "lvl", "module": "n", "control": "lvl" }]
     });
     let built = factory("outer", outer).build(48_000, &json!({})).unwrap();
     let lvl = built.control_surface.unwrap().automation("lvl").unwrap();
@@ -352,9 +352,9 @@ fn a_choice_fans_out_by_option_name_whatever_each_alias_numbers_it() {
         "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
         "connections": [],
         "controls": [
-            { "key": "form", "module": "a", "control": "shape" },
-            { "key": "form", "module": "b", "control": "slope" },
-            { "key": "b_slope", "module": "b", "control": "slope" }
+            { "name": "form", "module": "a", "control": "shape" },
+            { "name": "form", "module": "b", "control": "slope" },
+            { "name": "b_slope", "module": "b", "control": "slope" }
         ]
     });
     let (_graph, surface) = running_from(
@@ -400,8 +400,8 @@ fn nested_keys_sharing_an_inner_control_keep_their_write_order() {
         "modules": [{ "id": "n", "type": "inner" }],
         "connections": [],
         "controls": [
-            { "key": "all", "module": "n", "control": "level" },
-            { "key": "b", "module": "n", "control": "b_level" }
+            { "name": "all", "module": "n", "control": "level" },
+            { "name": "b", "module": "n", "control": "b_level" }
         ]
     });
     let built = factory("outer", outer).build(48_000, &json!({})).unwrap();

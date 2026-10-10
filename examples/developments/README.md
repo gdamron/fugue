@@ -18,6 +18,14 @@ oldest voice when full), a mixer sums them, and the bank's `pedal` input fans
 out to every voice by ordinary connections — so a development can just as
 well contain two instruments with independent pedals.
 
+Each exposed control is named and mapped to an inner module's control:
+
+```json
+"controls": [
+  { "name": "brightness", "module": "filter", "control": "cutoff" }
+]
+```
+
 ## Presets
 
 | File | Character | Exposed controls |

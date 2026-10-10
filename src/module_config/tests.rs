@@ -3,7 +3,7 @@
 use super::*;
 use serde_json::json;
 
-mod closed;
+pub(crate) mod closed;
 mod guard;
 pub(crate) mod probe;
 pub(crate) mod registry;

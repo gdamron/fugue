@@ -97,17 +97,17 @@
   ],
   "controls": [
     {
-      "key": "decay",
+      "name": "decay",
       "module": "env",
       "control": "decay"
     },
     {
-      "key": "brightness",
+      "name": "brightness",
       "module": "filter",
       "control": "cutoff"
     },
     {
-      "key": "bite",
+      "name": "bite",
       "module": "filter",
       "control": "resonance"
     }

@@ -97,22 +97,22 @@
   ],
   "controls": [
     {
-      "key": "decay",
+      "name": "decay",
       "module": "env",
       "control": "decay"
     },
     {
-      "key": "sustain",
+      "name": "sustain",
       "module": "env",
       "control": "sustain"
     },
     {
-      "key": "release",
+      "name": "release",
       "module": "env",
       "control": "release"
     },
     {
-      "key": "brightness_peak",
+      "name": "brightness_peak",
       "module": "filter",
       "control": "cutoff_mod_depth"
     }

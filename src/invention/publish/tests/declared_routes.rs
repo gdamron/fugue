@@ -304,9 +304,9 @@ fn a_mixed_development_write_the_queue_cannot_take_changes_no_alias() {
         "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "lfo" }],
         "connections": [],
         "controls": [
-            { "key": "mix", "module": "a", "control": "level" },
-            { "key": "mix", "module": "l", "control": "rate" },
-            { "key": "rate", "module": "l", "control": "rate" }
+            { "name": "mix", "module": "a", "control": "level" },
+            { "name": "mix", "module": "l", "control": "rate" },
+            { "name": "rate", "module": "l", "control": "rate" }
         ]
     });
     let mut rig = dial_rig();

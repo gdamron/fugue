@@ -133,10 +133,13 @@ pub struct DevelopmentOutput {
 }
 
 /// Maps an exposed development control to an internal module control.
+///
+/// Like the exposed inputs and outputs, an exposed control is called by its
+/// `name`; listing one name more than once fans it out to every target.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct DevelopmentControl {
-    pub key: String,
+    pub name: String,
     pub module: String,
     pub control: String,
 }
@@ -284,7 +287,7 @@ mod tests {
                 { "name": "audio", "from": "osc", "from_port": "audio" }
             ],
             "controls": [
-                { "key": "waveform", "module": "osc", "control": "waveform" }
+                { "name": "waveform", "module": "osc", "control": "waveform" }
             ]
         }
         "#;
@@ -293,6 +296,6 @@ mod tests {
         assert!(invention.is_development());
         assert_eq!(invention.inputs[0].name, "frequency");
         assert_eq!(invention.outputs[0].name, "audio");
-        assert_eq!(invention.controls[0].key, "waveform");
+        assert_eq!(invention.controls[0].name, "waveform");
     }
 }

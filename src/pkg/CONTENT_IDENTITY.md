@@ -271,10 +271,10 @@ definition, preserving alias targets and duplicate fan-out declarations:
   ],
   "outputs": [{"name":"audio","from":"vca","from_port":"audio"}],
   "controls": [
-    {"key":"attack","module":"env","control":"attack"},
-    {"key":"release","module":"env","control":"release"},
-    {"key":"warmth","module":"filter","control":"cutoff"},
-    {"key":"motion","module":"motion_lfo","control":"rate"}
+    {"name":"attack","module":"env","control":"attack"},
+    {"name":"release","module":"env","control":"release"},
+    {"name":"warmth","module":"filter","control":"cutoff"},
+    {"name":"motion","module":"motion_lfo","control":"rate"}
   ]
 }
 ```

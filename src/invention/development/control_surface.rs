@@ -64,7 +64,7 @@ impl DevelopmentControlSurface {
 
             controls.push(AliasedControl {
                 meta: ControlMeta {
-                    key: control.key.clone(),
+                    key: control.name.clone(),
                     description: source.description,
                     default: source.default,
                     kind: source.kind,

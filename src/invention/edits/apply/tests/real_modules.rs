@@ -614,8 +614,8 @@ fn a_development_alias_hidden_by_a_later_count_is_not_refused() {
                 "connections": [],
                 "outputs": [{ "name": "freq", "from": "m", "from_port": "frequency" }],
                 "controls": [
-                    { "key": "deg6", "module": "m", "control": "degree.6" },
-                    { "key": "count", "module": "m", "control": "degree_count" }
+                    { "name": "deg6", "module": "m", "control": "degree.6" },
+                    { "name": "count", "module": "m", "control": "degree_count" }
                 ]
             }
         }],

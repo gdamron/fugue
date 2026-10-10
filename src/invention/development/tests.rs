@@ -25,8 +25,8 @@ fn pattern() -> serde_json::Value {
         ],
         "outputs": [{ "name": "audio", "from": "o", "from_port": "audio" }],
         "controls": [
-            { "key": "schedule", "module": "sched", "control": "schedule" },
-            { "key": "freq", "module": "o", "control": "frequency" }
+            { "name": "schedule", "module": "sched", "control": "schedule" },
+            { "name": "freq", "module": "o", "control": "frequency" }
         ]
     })
 }

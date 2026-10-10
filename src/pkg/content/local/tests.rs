@@ -178,7 +178,7 @@ fn detail_preserves_pad_aliases_and_can_build_without_checkout_paths() {
             .unwrap()
             .controls
             .iter()
-            .map(|c| c.key.as_str())
+            .map(|c| c.name.as_str())
             .collect::<Vec<_>>(),
         vec!["attack", "release", "warmth", "motion"]
     );
@@ -497,7 +497,7 @@ fn oversized_interfaces_fail_instead_of_truncating_aliases() {
     let (_temp, roots) = roots();
     let mut large = voice();
     large["controls"] = json!((0..6000)
-        .map(|i| json!({"key":format!("control{i}"),"module":"osc","control":"frequency"}))
+        .map(|i| json!({"name":format!("control{i}"),"module":"osc","control":"frequency"}))
         .collect::<Vec<_>>());
     let reference = package(&roots, "fugue.test.large", "1.0.0", &large);
     let mut catalog = ContentCatalog::new(roots, "session");

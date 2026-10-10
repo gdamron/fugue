@@ -136,11 +136,11 @@ impl DevelopmentControls {
             let module = *module_indexes
                 .get(&control.module)
                 .ok_or_else(|| format!("Unknown control module: {}", control.module))?;
-            let position = match decls.iter().position(|decl| decl.key == control.key) {
+            let position = match decls.iter().position(|decl| decl.key == control.name) {
                 Some(position) => position,
                 None => {
                     decls.push(ControlDecl {
-                        key: Cow::Owned(control.key.clone()),
+                        key: Cow::Owned(control.name.clone()),
                         indexed: false,
                         count: 1,
                         // Each alias clamps for itself as it applies.
@@ -158,7 +158,7 @@ impl DevelopmentControls {
                 return Err(format!(
                     "Development control '{}': '{}.{}' does not take every value '{}' does; \
                      the aliases of one key must, with the one taking the fewest listed first",
-                    control.key, control.module, control.control, firsts[position]
+                    control.name, control.module, control.control, firsts[position]
                 ));
             }
             // One event alias makes the key an event: never coalesced.
