@@ -32,9 +32,8 @@ impl ModuleFactory for SamplePlayerFactory {
         const {
             &[
                 ConfigKey::json("asset"),
-                ConfigKey::text("source"),
-                ConfigKey::boolean("play"),
-                ConfigKey::boolean("loop_enabled"),
+                ConfigKey::boolean("autoplay"),
+                ConfigKey::boolean("loop"),
                 ConfigKey::text("mode"),
             ]
         }
@@ -45,19 +44,22 @@ impl ModuleFactory for SamplePlayerFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let source = source_from_config(config)?;
-        let play = config.get("play").and_then(|value| value.as_bool());
-        let loop_enabled = config.get("loop_enabled").and_then(|value| value.as_bool());
+        let asset = asset_from_config(config)?;
+        let autoplay = config.get("autoplay").and_then(|value| value.as_bool());
         let elastic = elastic_mode_from_config("sample_player", config)?;
         let controls = SamplePlayerControls::with_mode(
             sample_rate,
-            source.as_deref(),
-            play,
-            loop_enabled,
+            asset.as_deref(),
+            autoplay,
+            // `loop` is applied below, with the other control keys.
+            None,
             elastic,
         )?;
         crate::factory::apply_control_keys(&controls, config, |key| {
-            key == "loop" || key == "pitch_ratio"
+            // `play` is the control's key, which a written control records
+            // under; `autoplay` is the authored start state. The two
+            // become one split in the request model (FUG-314).
+            matches!(key, "play" | "loop" | "pitch_ratio")
         })?;
         let player = SamplePlayer::new_with_controls(controls.clone());
 
@@ -73,27 +75,23 @@ impl ModuleFactory for SamplePlayerFactory {
     }
 }
 
-/// Reads the shared `asset` / legacy `source` config convention used by
-/// sample-backed modules. Invention loads resolve `asset` before factories
-/// run; live module additions may still supply a package ref here.
-pub(crate) fn source_from_config(config: &serde_json::Value) -> Result<Option<String>, String> {
-    let asset = config
+/// Reads the shared `asset` config key used by sample-backed modules.
+/// Invention loads resolve `asset` before factories run; live module
+/// additions may still supply a package ref here.
+pub(crate) fn asset_from_config(config: &serde_json::Value) -> Result<Option<String>, String> {
+    config
         .get("asset")
         .map(|value| {
             serde_json::from_value::<crate::pkg::AudioAssetRef>(value.clone())
                 .map_err(|err| format!("invalid asset reference {}: {}", value, err))
         })
-        .transpose()?;
-    let source = config.get("source").and_then(|value| value.as_str());
-    if asset.is_some() && source.is_some() {
-        return Err("config accepts either 'asset' or 'source', not both".to_string());
-    }
-    Ok(asset
-        .map(|asset| match asset {
-            crate::pkg::AudioAssetRef::Text(text) => text,
-            crate::pkg::AudioAssetRef::Local { path } => path,
+        .transpose()
+        .map(|asset| {
+            asset.map(|asset| match asset {
+                crate::pkg::AudioAssetRef::Text(text) => text,
+                crate::pkg::AudioAssetRef::Local { path } => path,
+            })
         })
-        .or_else(|| source.map(str::to_string)))
 }
 
 pub struct SamplePlayer {
@@ -209,7 +207,10 @@ impl Module for SamplePlayer {
             if let Some(sample) = &self.sample {
                 let len = sample.len();
                 if self.playing && len > 0 {
-                    let pitch = self.inputs.pitch(i, self.ctrl.pitch_ratio()).max(1e-4);
+                    let pitch = self
+                        .inputs
+                        .pitch_ratio(i, self.ctrl.pitch_ratio())
+                        .max(1e-4);
 
                     if let Some(reader) = self.reader.as_mut() {
                         // Elastic: the reader decouples time (nominal head

@@ -585,17 +585,17 @@ fn a_sample_can_be_replaced_when_the_one_it_loaded_no_longer_builds() {
     document.modules.push(crate::ModuleSpec {
         id: "smp".into(),
         module_type: "sample_player".into(),
-        config: json!({ "source": old }),
+        config: json!({ "asset": old }),
     });
     let (mut running, _pump) = start_doc(document);
     running.state.lock().unwrap().document_write_control(
         "smp",
-        "source",
+        "asset",
         &text(&dir.path().join("gone.wav").to_string_lossy()),
     );
 
     let report = running
-        .apply_edits(&[set("smp", "source", text(&new.to_string_lossy()))])
+        .apply_edits(&[set("smp", "asset", text(&new.to_string_lossy()))])
         .expect("the new sample is valid");
     assert!(report.controls_failed.is_empty(), "{report:?}");
 }

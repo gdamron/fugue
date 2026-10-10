@@ -14,12 +14,6 @@ pub(super) const EXCEPTION_CEILING: usize = 40;
 // One row per line, so a rename deletes whole lines.
 #[rustfmt::skip]
 pub(super) const CONVENTION_EXCEPTIONS: &[(&str, &str, &str)] = &[
-    // sample_player and sample_slicer
-    ("sample_player", "loop_enabled", "config becomes loop, the control's name"),
-    ("sample_player", "sample_start_gate", "output becomes start"),
-    ("sample_player", "sample_end_gate", "output becomes end"),
-    ("sample_slicer", "slice_start_gate", "output becomes start"),
-    ("sample_slicer", "slice_end_gate", "output becomes end"),
     // sample_kit and sample_instrument
     ("sample_kit", "gain.N", "controls become level.N"),
     ("sample_instrument", "gain.N", "controls become level.N"),

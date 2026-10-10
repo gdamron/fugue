@@ -76,11 +76,14 @@ pub struct SampleFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct SampleSlice {
-    /// First frame of the slice (inclusive).
+    /// First frame of the slice (inclusive). A whole float (`22050.0`)
+    /// reads as the integer.
+    #[serde(deserialize_with = "crate::module_config::serde_whole::whole")]
     pub start_frames: u64,
 
     /// End frame of the slice (exclusive). Must be greater than
-    /// `start_frames`.
+    /// `start_frames`. A whole float reads as the integer.
+    #[serde(deserialize_with = "crate::module_config::serde_whole::whole")]
     pub end_frames: u64,
 
     /// Optional name for addressing the slice (`"kick"`, `"snare"`).
@@ -393,4 +396,31 @@ pub(crate) fn is_valid_relative_path(path: &str) -> bool {
     }
     path.split('/')
         .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SampleSlice;
+    use serde_json::json;
+
+    #[test]
+    fn slice_frames_read_whole_floats_as_the_integer() {
+        let slice: SampleSlice =
+            serde_json::from_value(json!({ "start_frames": 0.0, "end_frames": 22050.0 })).unwrap();
+        assert_eq!((slice.start_frames, slice.end_frames), (0, 22_050));
+        let slice: SampleSlice =
+            serde_json::from_str(r#"{"start_frames": 1e3, "end_frames": 2000}"#).unwrap();
+        assert_eq!((slice.start_frames, slice.end_frames), (1_000, 2_000));
+    }
+
+    #[test]
+    fn slice_frames_refuse_fractions_negatives_and_text() {
+        for bad in [json!(1.5), json!(-1), json!(-1.0), json!("10"), json!(null)] {
+            let error = serde_json::from_value::<SampleSlice>(
+                json!({ "start_frames": bad, "end_frames": 9 }),
+            )
+            .expect_err("not a frame address");
+            assert!(error.to_string().contains("whole number"), "{bad}: {error}");
+        }
+    }
 }

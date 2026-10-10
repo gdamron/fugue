@@ -90,15 +90,15 @@ fn test_sample_player_load_and_playback() {
         .set_control("play", ControlValue::Bool(true))
         .unwrap();
     player.process(1);
-    assert_eq!(player.get_output("sample_start_gate").unwrap(), 1.0);
+    assert_eq!(player.get_output("start").unwrap(), 1.0);
     assert!(player.get_output("audio_left").unwrap() > 0.2);
     assert!(player.get_output("audio_right").unwrap() < -0.2);
 
     player.process(1);
-    assert_eq!(player.get_output("sample_start_gate").unwrap(), 0.0);
+    assert_eq!(player.get_output("start").unwrap(), 0.0);
 
     player.process(1);
-    assert_eq!(player.get_output("sample_end_gate").unwrap(), 1.0);
+    assert_eq!(player.get_output("end").unwrap(), 1.0);
     assert!(!controls.play());
 
     let _ = std::fs::remove_file(path);
@@ -121,9 +121,9 @@ fn test_sample_player_loop_input_overrides_control() {
 
     player.process(1);
     player.process(1);
-    assert_eq!(player.get_output("sample_end_gate").unwrap(), 1.0);
+    assert_eq!(player.get_output("end").unwrap(), 1.0);
     player.process(1);
-    assert_eq!(player.get_output("sample_start_gate").unwrap(), 1.0);
+    assert_eq!(player.get_output("start").unwrap(), 1.0);
     assert!(controls.play());
 
     let _ = std::fs::remove_file(path);
@@ -141,9 +141,9 @@ fn test_sample_player_failed_reload_keeps_previous_sample() {
     .unwrap();
     let mut player = SamplePlayer::new_with_controls(controls.clone());
 
-    let bad = controls.set_source("/definitely/missing.wav");
+    let bad = controls.set_asset("/definitely/missing.wav");
     assert!(bad.is_err());
-    assert_eq!(controls.source(), path.to_string_lossy());
+    assert_eq!(controls.asset(), path.to_string_lossy());
 
     controls.set_play(true);
     player.process(1);
@@ -196,7 +196,7 @@ fn frames_to_end(path: &std::path::Path, pitch_ratio: f32) -> usize {
 
     for count in 1..1000 {
         player.process(1);
-        if player.get_output("sample_end_gate").unwrap() > 0.5 {
+        if player.get_output("end").unwrap() > 0.5 {
             return count;
         }
     }
@@ -244,10 +244,10 @@ fn test_sample_player_pitch_input_overrides_control() {
 
     let mut count = 0;
     for _ in 0..1000 {
-        player.set_input("pitch", 2.0).unwrap();
+        player.set_input("pitch_ratio", 2.0).unwrap();
         player.process(1);
         count += 1;
-        if player.get_output("sample_end_gate").unwrap() > 0.5 {
+        if player.get_output("end").unwrap() > 0.5 {
             break;
         }
     }
@@ -304,31 +304,61 @@ fn test_factory_accepts_asset_path_object() {
             .unwrap()
             .clone()
     };
-    assert_eq!(controls.source(), path.to_string_lossy());
+    assert_eq!(controls.asset(), path.to_string_lossy());
     assert!(controls.shared.lock().unwrap().pending_sample.is_some());
 
     let _ = std::fs::remove_file(path);
 }
 
 #[test]
-fn test_factory_rejects_asset_and_source_together() {
-    use crate::factory::ModuleFactory;
+fn the_retired_config_spellings_are_refused() {
+    let registry = crate::ModuleRegistry::default();
+    for key in ["source", "loop_enabled"] {
+        let config = serde_json::json!({ key: true });
+        let error = registry
+            .build("sample_player", 44_100, &config)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains(key), "{key}: {error}");
+    }
+}
 
+#[test]
+fn the_interface_is_named_by_the_convention() {
+    let path = write_test_wav(44_100, 1, &[[0.5, 0.5], [0.25, 0.25]]);
     let config = serde_json::json!({
-        "asset": { "path": "/a.wav" },
-        "source": "/b.wav"
+        "asset": path.to_str().unwrap(),
+        "autoplay": true,
+        "loop": true,
+        "pitch_ratio": 2.0,
     });
-    let err = SamplePlayerFactory
-        .build(44_100, &config)
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(err.contains("either 'asset' or 'source'"), "{err}");
+    let mut built = SamplePlayerFactory.build(44_100, &config).unwrap();
+    let surface = built.control_surface.clone().unwrap();
+    assert_eq!(
+        surface.get_control("asset").unwrap(),
+        path.to_string_lossy().as_ref().into()
+    );
+    assert_eq!(surface.get_control("play").unwrap(), true.into());
+    assert_eq!(surface.get_control("loop").unwrap(), true.into());
+    assert_eq!(surface.get_control("pitch_ratio").unwrap(), 2.0f32.into());
+    assert!(surface.get_control("source").is_err());
+
+    let player = built.module.module_mut();
+    assert_eq!(player.inputs(), ["play", "loop", "pitch_ratio"]);
+    assert_eq!(
+        player.outputs(),
+        ["audio_left", "audio_right", "start", "end"]
+    );
+    player.set_input("pitch_ratio", 1.0).unwrap();
+    player.process(1);
+    assert_eq!(player.get_output("start").unwrap(), 1.0);
+    let _ = std::fs::remove_file(path);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn test_set_source_resolves_package_ref() {
+fn test_set_asset_resolves_package_ref() {
     // A package ref set live (set_control / add_module path) resolves through
     // the cache dir; the authored ref stays the control value.
     let tmp = tempfile::tempdir().unwrap();
@@ -340,12 +370,10 @@ fn test_set_source_resolves_package_ref() {
     // Route the default cache lookup at the temp dir for this call only.
     let controls = SamplePlayerControls::new(44_100, None, None, None).unwrap();
     crate::pkg::audio_asset::with_packs_dir(tmp.path(), || {
-        controls
-            .set_source("fugue.test.kit@1.0.0:kick.wav")
-            .unwrap();
+        controls.set_asset("fugue.test.kit@1.0.0:kick.wav").unwrap();
     });
 
-    assert_eq!(controls.source(), "fugue.test.kit@1.0.0:kick.wav");
+    assert_eq!(controls.asset(), "fugue.test.kit@1.0.0:kick.wav");
     assert!(controls.shared.lock().unwrap().pending_sample.is_some());
 }
 
@@ -430,7 +458,7 @@ fn elastic_frames_to_end(path: &std::path::Path, time_ratio: f32, pitch_ratio: f
 
     for count in 1..1000 {
         player.process(1);
-        if player.get_output("sample_end_gate").unwrap() > 0.5 {
+        if player.get_output("end").unwrap() > 0.5 {
             return count;
         }
     }
@@ -487,7 +515,7 @@ fn test_factory_parses_elastic_mode() {
 
     let path = write_test_wav(44_100, 1, &[[0.4, 0.0], [0.2, 0.0]]);
     let config = serde_json::json!({
-        "source": path.to_str().unwrap(),
+        "asset": path.to_str().unwrap(),
         "mode": "elastic"
     });
     let result = SamplePlayerFactory.build(44_100, &config).unwrap();
@@ -508,7 +536,7 @@ fn test_factory_parses_elastic_mode() {
 }
 
 #[test]
-fn test_elastic_set_source_precomputes_analysis() {
+fn test_elastic_set_asset_precomputes_analysis() {
     let path = write_test_wav(44_100, 1, &[[0.5, 0.0], [0.25, 0.0]]);
     let controls =
         SamplePlayerControls::with_mode(44_100, Some(path.to_str().unwrap()), None, None, true)
@@ -518,7 +546,7 @@ fn test_elastic_set_source_precomputes_analysis() {
     let sample = shared.pending_sample.as_ref().unwrap();
     assert!(
         sample.cached_elastic_analysis().is_some(),
-        "elastic set_source must leave the analysis ready for the audio thread"
+        "elastic set_asset must leave the analysis ready for the audio thread"
     );
     drop(shared);
 

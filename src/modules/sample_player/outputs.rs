@@ -2,18 +2,13 @@
 
 use crate::MAX_BLOCK;
 
-pub const OUTPUTS: [&str; 4] = [
-    "audio_left",
-    "audio_right",
-    "sample_start_gate",
-    "sample_end_gate",
-];
+pub const OUTPUTS: [&str; 4] = ["audio_left", "audio_right", "start", "end"];
 
 pub struct SamplePlayerOutputs {
     audio_left: [f32; MAX_BLOCK],
     audio_right: [f32; MAX_BLOCK],
-    sample_start_gate: [f32; MAX_BLOCK],
-    sample_end_gate: [f32; MAX_BLOCK],
+    start: [f32; MAX_BLOCK],
+    end: [f32; MAX_BLOCK],
 }
 
 impl SamplePlayerOutputs {
@@ -21,8 +16,8 @@ impl SamplePlayerOutputs {
         Self {
             audio_left: [0.0; MAX_BLOCK],
             audio_right: [0.0; MAX_BLOCK],
-            sample_start_gate: [0.0; MAX_BLOCK],
-            sample_end_gate: [0.0; MAX_BLOCK],
+            start: [0.0; MAX_BLOCK],
+            end: [0.0; MAX_BLOCK],
         }
     }
 
@@ -37,8 +32,8 @@ impl SamplePlayerOutputs {
     ) {
         self.audio_left[i] = audio_left;
         self.audio_right[i] = audio_right;
-        self.sample_start_gate[i] = start_gate;
-        self.sample_end_gate[i] = end_gate;
+        self.start[i] = start_gate;
+        self.end[i] = end_gate;
     }
 
     /// Block buffer for the indexed output port. Index matches `OUTPUTS`.
@@ -47,8 +42,8 @@ impl SamplePlayerOutputs {
         match index {
             0 => &self.audio_left,
             1 => &self.audio_right,
-            2 => &self.sample_start_gate,
-            _ => &self.sample_end_gate,
+            2 => &self.start,
+            _ => &self.end,
         }
     }
 
@@ -56,8 +51,8 @@ impl SamplePlayerOutputs {
         match port {
             "audio_left" => Ok(self.audio_left[0]),
             "audio_right" => Ok(self.audio_right[0]),
-            "sample_start_gate" => Ok(self.sample_start_gate[0]),
-            "sample_end_gate" => Ok(self.sample_end_gate[0]),
+            "start" => Ok(self.start[0]),
+            "end" => Ok(self.end[0]),
             _ => Err(format!("Unknown output port: {}", port)),
         }
     }

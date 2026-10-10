@@ -54,7 +54,7 @@ fn validation_refuses_exactly_what_setters_refuse() {
         metas.push(ControlMeta::number("no_such_control", ""));
         for meta in metas {
             let key = meta.key.as_str();
-            if key == "source" || key.starts_with("asset.") {
+            if key == "asset" || key.starts_with("asset.") {
                 continue;
             }
             for value in probes(&meta) {
