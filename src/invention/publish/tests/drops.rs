@@ -124,3 +124,56 @@ fn a_module_an_edit_displaces_drops_off_the_publisher_lock() {
         .unwrap();
     assert_eq!(probes.dropped_under_lock(), [false, false]);
 }
+
+/// A commit frees what the audio side retired since the change began
+/// before it takes the publisher, not under it.
+#[test]
+fn a_commit_frees_what_the_audio_side_retired_off_the_publisher_lock() {
+    let (mut rig, probes) = watched_rig();
+    let probe = rig.build("probe", DROP_PROBE, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("probe", probe);
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    rig.live.remove_module("probe").unwrap();
+    let mut change = rig.live.begin();
+    change
+        .connect(edge("osc1", "audio", "osc2", "frequency_mod"))
+        .unwrap();
+    let change = change.prepare().unwrap();
+    // The removal installs after `begin` reclaimed: its retired
+    // publication, holding the probe, waits for the commit's reclaim.
+    rig.render(1);
+    assert!(probes.dropped_under_lock().is_empty());
+
+    rig.live.commit(change).unwrap();
+    assert_eq!(probes.dropped_under_lock(), [false]);
+}
+
+/// The audio side's teardown waits for a submission in flight under the
+/// publisher, then frees it with everything else queued, off the lock; no
+/// submission lands after it.
+#[test]
+fn an_edit_in_flight_as_the_audio_side_goes_is_freed_with_the_queue() {
+    use crate::control_request::Request;
+    use crate::payload::Payload;
+    let (rig, probes) = watched_rig();
+    let probe = rig.build("probe", DROP_PROBE, serde_json::json!({}));
+    let Rig { graph, live, .. } = rig;
+    let publisher = live.publisher().lock().unwrap();
+    // The submission has checked that the audio side is there...
+    assert!(publisher.audio_alive());
+    let teardown = std::thread::spawn(move || drop(graph));
+    std::thread::sleep(Duration::from_millis(50));
+    // ... and pushes only now, as the teardown waits for the publisher.
+    let edit = Request::edit(publisher.generation(), Payload::owned(Box::new(probe)));
+    live.requests.submit(edit).ok().unwrap();
+    drop(publisher);
+    teardown.join().unwrap();
+
+    assert_eq!(probes.dropped_under_lock(), [false]);
+    assert!(!live.publisher().lock().unwrap().audio_alive());
+}

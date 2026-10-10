@@ -24,7 +24,7 @@
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use super::declared::RequestPort;
 use super::graph::{RoutingConnection, SignalGraph, MAX_INSTALLS_PER_BLOCK};
@@ -163,6 +163,17 @@ impl LiveGraph {
         let (publisher, ends) = Publisher::link(graph);
         let publisher = Arc::new(Mutex::new(publisher));
         let reclaimer = Arc::new(Reclaimer::new(ends.retired, ends.payloads));
+        // Whoever drops the graph closes the publisher to submissions first
+        // (see `Publisher::close`).
+        if let Some(drain) = graph.requests.as_mut() {
+            let publisher = Arc::downgrade(&publisher);
+            drain.on_drop = Some(Box::new(move || {
+                if let Some(publisher) = publisher.upgrade() {
+                    let mut publisher = publisher.lock().unwrap_or_else(PoisonError::into_inner);
+                    publisher.close();
+                }
+            }));
+        }
         let settler = settle.map(|render| {
             // No block will free room in a store whose requests wait for
             // samples that never come, so the drain refuses rather than
@@ -223,9 +234,10 @@ impl LiveGraph {
     /// So a burst of edits beyond what the ring and the audio side's one
     /// held retirement take would leave the last of them, and every request
     /// behind it, queued until some later change. Refusing it instead
-    /// (`QueueFull`, to retry) keeps every queued edit installable.
+    /// (`QueueFull`, to retry) keeps every queued edit installable. Reads
+    /// counters only: every commit reclaims just before it locks the
+    /// publisher, since what a reclaim frees must not drop under the lock.
     fn backlogged(&self, publisher: &Publisher) -> bool {
-        self.reclaimer.reclaim();
         let unfreed = publisher.generation() - self.reclaimer.freed();
         unfreed > publisher::RETIRE_CAPACITY as u64
     }
@@ -317,6 +329,7 @@ impl LiveGraph {
         prepared: PreparedChange,
         retain: impl FnOnce(&mut RuntimeState),
     ) -> Result<Committed, GraphCommandError> {
+        self.reclaim();
         self.commit_locked(self.publisher.lock().unwrap(), prepared, retain)
     }
 
@@ -333,6 +346,7 @@ impl LiveGraph {
         retain: impl FnOnce(&mut RuntimeState),
     ) -> Result<Committed, GraphCommandError> {
         let mut superseded = None;
+        self.reclaim();
         let publisher = self.publisher.lock().unwrap();
         // `retain` runs only when the change commits, under the publisher.
         let result = self.commit_locked(publisher, prepared, |state| {
