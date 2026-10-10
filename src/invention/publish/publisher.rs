@@ -36,17 +36,27 @@ pub(crate) const REQUEST_QUEUE_CAPACITY: usize = 256;
 /// `graph::requests`.
 pub(crate) const PENDING_REQUEST_CAPACITY: usize = 512;
 
+/// Popped requests timed in beats that may wait for their clock (see
+/// `graph::beats`), apart from the pending store. One finding it full is
+/// refused, as it may never free (see `graph::requests`).
+pub(crate) const BEAT_WATCH_CAPACITY: usize = 64;
+
+/// Popped requests waiting on the audio thread, timed or watching a clock.
+pub(crate) const WAITING_CAPACITY: usize = PENDING_REQUEST_CAPACITY + BEAT_WATCH_CAPACITY;
+
 /// Request outcomes the audio thread may queue before a control thread
 /// receives them; beyond that they are counted dropped. Enough for every
-/// request one block can settle: a full store and a full queue.
-pub(crate) const OUTCOME_QUEUE_CAPACITY: usize = PENDING_REQUEST_CAPACITY + REQUEST_QUEUE_CAPACITY;
+/// request one block can settle: every waiting one and a full queue. A
+/// repeating request reports each application, so a short beat grid can
+/// settle more; those beyond are counted dropped like any.
+pub(crate) const OUTCOME_QUEUE_CAPACITY: usize = WAITING_CAPACITY + REQUEST_QUEUE_CAPACITY;
 
 /// Payload retirements the request drain's retirer can hold while the
 /// reclaimer is behind: enough for every pending request and a full queue,
 /// so pending requests' reservations can never use it all and room runs out
 /// only while retirements wait for the reclaimer (see `graph::requests`).
 pub(crate) const PAYLOAD_RETIRE_HOLD: usize =
-    (PENDING_REQUEST_CAPACITY + REQUEST_QUEUE_CAPACITY) * MAX_RETIRES_PER_REQUEST;
+    (WAITING_CAPACITY + REQUEST_QUEUE_CAPACITY) * MAX_RETIRES_PER_REQUEST;
 
 /// Retired publications the audio thread may hand back before the control
 /// thread frees them. The audio thread takes at most one publication per
@@ -97,6 +107,7 @@ impl Publisher {
             request_rx,
             REQUEST_QUEUE_CAPACITY,
             PENDING_REQUEST_CAPACITY,
+            BEAT_WATCH_CAPACITY,
             Retirer::new(Arc::clone(&payloads), PAYLOAD_RETIRE_HOLD),
             outcome_tx,
         ));

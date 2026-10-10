@@ -206,3 +206,52 @@ fn reset_on_reload_is_off_unless_the_config_sets_it() {
     );
     assert!(reset_on_reload(&json!({ "reset_on_reload": 1 })).is_err());
 }
+
+#[test]
+fn a_tempo_change_after_a_latch_takes_effect_from_the_sample_after() {
+    for &(rate, bpm) in CASES {
+        for warmup in [0u64, 1, 211, 30_000] {
+            for (pending, new_bpm) in [
+                (None, bpm * 0.5),
+                (Some(bpm * 3.0), 0.0),
+                // A pending change, then the tempo before it restored.
+                (Some(bpm * 2.0), bpm),
+            ] {
+                let mut clock = run(rate, bpm, warmup, pending);
+                let context = format!("{rate} Hz {bpm} bpm {warmup}, {pending:?} then {new_bpm}");
+                let next = clock.position_after(1);
+                clock.latch();
+                set(&mut clock, BPM, RtValue::F32(new_bpm as f32));
+                // The next sample keeps the position predicted before the
+                // change, and the predictions made now hold.
+                assert_eq!(
+                    clock.position_after(1).to_bits(),
+                    next.to_bits(),
+                    "{context}"
+                );
+                let predicted: Vec<u64> =
+                    (1..=4).map(|k| clock.position_after(k).to_bits()).collect();
+                let mut played = Vec::new();
+                for _ in 0..4 {
+                    clock.tick();
+                    played.push(clock.position().to_bits());
+                }
+                assert_eq!(played, predicted, "{context}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_latch_changes_nothing_without_a_tempo_change() {
+    for &(rate, bpm) in CASES {
+        let mut clock = run(rate, bpm, 1_000, None);
+        let mut twin = run(rate, bpm, 1_000, None);
+        clock.latch();
+        for _ in 0..500 {
+            clock.tick();
+            twin.tick();
+            assert_eq!(clock.position().to_bits(), twin.position().to_bits());
+        }
+    }
+}

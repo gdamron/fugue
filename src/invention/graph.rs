@@ -44,6 +44,7 @@ use crate::{GraphModule, MAX_BLOCK};
 
 use super::runtime::ModuleInstance;
 
+mod beats;
 mod compile;
 mod mailbox;
 mod master;

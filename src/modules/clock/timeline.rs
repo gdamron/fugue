@@ -17,6 +17,7 @@ impl Clock {
         self.epoch_sample = self.sample_count + 1;
         self.epoch_beats = 0.0;
         self.started = false;
+        self.latch = None;
         self.beats = 0.0;
         self.phase = 0.0;
     }
@@ -32,13 +33,26 @@ impl Clock {
     }
 
     /// The `(sample, beats)` anchor the next samples' positions are measured
-    /// from: the epoch, or the latest sample when a tempo change is pending
-    /// (the next sample re-anchors there, see `update_signal`).
+    /// from: the epoch, or where the next sample re-anchors when a tempo
+    /// change is pending (see `update_signal`).
     fn anchor(&self) -> (u64, f64) {
-        if self.started && self.bpm() != self.last_bpm {
-            (self.sample_count, self.beats)
-        } else {
-            (self.epoch_sample, self.epoch_beats)
+        self.reanchor(self.sample_count + 1)
+            .unwrap_or((self.epoch_sample, self.epoch_beats))
+    }
+
+    /// Where the epoch re-anchors as sample `next` plays, if it does: at
+    /// `next` itself, at its latched position, when the tempo changed since
+    /// the latch (even back to the tempo before a change pending then);
+    /// else at the latest sample before it when the tempo changed since
+    /// that sample, unless none has played since the clock was built or
+    /// reset (the epoch then starts the count).
+    pub(super) fn reanchor(&self, next: u64) -> Option<(u64, f64)> {
+        match self.latch {
+            Some((at, beats, bpm)) if at == next && self.bpm != bpm => Some((at, beats)),
+            _ if self.started && self.bpm() != self.last_bpm => {
+                Some((next.saturating_sub(1), self.beats))
+            }
+            _ => None,
         }
     }
 }
@@ -72,6 +86,13 @@ impl Timeline for Clock {
 
     fn beats_before(&self) -> u64 {
         self.beats_before
+    }
+
+    fn latch(&mut self) {
+        let next = self.sample_count + 1;
+        if self.latch.is_none_or(|(at, ..)| at != next) {
+            self.latch = Some((next, self.position_after(1), self.bpm));
+        }
     }
 }
 

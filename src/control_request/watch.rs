@@ -211,6 +211,25 @@ impl Watches {
         }
     }
 
+    /// Starts every new span in the `installed` generation counting from
+    /// its clock's position now. Called before anything at this sample can
+    /// move a clock (a reset, timed in samples or in beats), so a span
+    /// counts from where the clock was when the audio thread took it,
+    /// whatever applies with it. Allocation- and free-free.
+    pub(crate) fn arm(&mut self, installed: u64, host: &impl BeatHost) {
+        for watch in &mut self.entries {
+            let installed = watch.request.target.generation == installed;
+            if let (true, Goal::After(beats)) = (installed, watch.goal) {
+                if let Some(timeline) = host.timeline(watch.clock) {
+                    watch.goal = Goal::Armed {
+                        position: timeline.position().max(0.0) + beats,
+                        beats_before: timeline.beats_before(),
+                    };
+                }
+            }
+        }
+    }
+
     /// One pass at sample `now` over the watches in the `installed`
     /// generation: applies each whose clock's next sample reaches its beat
     /// (or, late, has passed it), and refuses each whose ttl ran out or
@@ -225,19 +244,7 @@ impl Watches {
         host: &mut impl BeatHost,
         outcomes: &mut Outcomes,
     ) -> (bool, Option<u64>) {
-        // Every new span counts from its clock's position as the pass
-        // begins, before a request applied in it (a reset) can move it.
-        for watch in &mut self.entries {
-            let installed = watch.request.target.generation == installed;
-            if let (true, Goal::After(beats)) = (installed, watch.goal) {
-                if let Some(timeline) = host.timeline(watch.clock) {
-                    watch.goal = Goal::Armed {
-                        position: timeline.position().max(0.0) + beats,
-                        beats_before: timeline.beats_before(),
-                    };
-                }
-            }
-        }
+        self.arm(installed, host);
         let (mut applied, mut wait) = (false, None::<u64>);
         let mut i = 0;
         while i < self.entries.len() {
