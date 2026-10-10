@@ -10,8 +10,8 @@ fn notes(offsets: &[i8]) -> Vec<Step> {
     offsets.iter().map(|&offset| Step::note(offset)).collect()
 }
 
-/// Feeds `frames` samples of a clock with an edge every `period`, one
-/// block at a time, returning the frequency at each edge.
+/// Feeds `edges` clock periods of `period` samples, one sample at a time,
+/// returning the frequency at each edge.
 fn clocked(seq: &mut StepSequencer, edges: usize, period: usize) -> Vec<f32> {
     let mut heard = Vec::with_capacity(edges);
     for edge in 0..edges * period {
@@ -147,8 +147,46 @@ fn the_pattern_reads_back_where_and_as_it_always_has() {
     );
     let shown = r#"[{"note":0,"gate_length":0.8},{"note":null}]"#;
     assert_eq!(surface.get_control("pattern").unwrap(), shown.into());
-    assert_eq!(surface.controls()[3].default, shown.into());
+    let listed = ControlMeta::string("pattern", "Step pattern as JSON")
+        .with_default(crate::ControlValue::from(shown));
+    assert_eq!(surface.controls()[3], listed);
     let module = built.module.module();
     assert!(module.controls().iter().all(|meta| meta.key != "pattern"));
     assert!(module.get_control("pattern").is_err());
+}
+
+/// The hand-numbered indices name the controls the table declares.
+#[test]
+fn control_indices_follow_the_table() {
+    let named = [
+        ("root_note", controls::ROOT_NOTE),
+        ("step_count", controls::STEP_COUNT),
+        ("gate_length", controls::GATE_LENGTH),
+        ("pattern", controls::PATTERN),
+        ("mode", controls::MODE),
+        ("grace_duration", controls::GRACE_DURATION),
+        ("grace_placement", controls::GRACE_PLACEMENT),
+        ("ended", controls::ENDED),
+    ];
+    for (key, index) in named {
+        assert_eq!(TABLE.resolve(key), Some(index), "{key}");
+    }
+    assert_eq!(TABLE.len(), named.len());
+}
+
+/// One development key cannot fan a pattern out to two sequencers: each
+/// would retire a pattern for one request.
+#[test]
+fn a_development_key_reaching_two_patterns_is_refused() {
+    let document = serde_json::json!({ "version": "1.0.0",
+        "developments": [{ "name": "pair", "definition": { "version": "1.0.0",
+            "modules": [{ "id": "a", "type": "step_sequencer" }, { "id": "b", "type": "step_sequencer" }],
+            "connections": [],
+            "controls": [{ "name": "notes", "module": "a", "control": "pattern" },
+                         { "name": "notes", "module": "b", "control": "pattern" }] } }],
+        "modules": [{ "id": "p", "type": "pair" }], "connections": [] });
+    let document = crate::Invention::from_json(&document.to_string()).unwrap();
+    let built = crate::InventionBuilder::new(1000).build(document);
+    let error = built.err().unwrap().to_string();
+    assert!(error.contains("exactly one"), "{error}");
 }
