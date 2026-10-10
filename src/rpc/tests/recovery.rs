@@ -171,7 +171,12 @@ fn malformed_tickets_are_refused() {
         RpcErrorCode::InvalidRequest
     );
     assert_eq!(
-        refuse(&ticket("a-1", revision("s1", 0)), &RpcCommand::ListPackages),
+        refuse(
+            &ticket("a-1", revision("s1", 0)),
+            &RpcCommand::ListPackages {
+                query: Default::default(),
+            }
+        ),
         RpcErrorCode::InvalidRequest
     );
 }
@@ -330,7 +335,12 @@ fn replay_policy_separates_reads_authoring_and_gestures() {
 
     assert_eq!(RpcRequestPayload::GetSnapshot.replay_policy(), Resend);
     assert_eq!(RpcRequestPayload::Hello.replay_policy(), Resend);
-    assert_eq!(command(RpcCommand::ListPackages), Resend);
+    assert_eq!(
+        command(RpcCommand::ListPackages {
+            query: Default::default(),
+        }),
+        Resend
+    );
     assert_eq!(
         command(RpcCommand::SaveInvention {
             path: "/tmp/x.json".into()

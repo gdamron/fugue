@@ -2,7 +2,8 @@
 
 use super::{
     ControlWriteIntent, DescribeModuleQuery, InspectionQuery, ModuleTypeQuery, MutationTicket,
-    RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, StructuralEdit, RPC_SCHEMA_VERSION,
+    PackageInstallRequest, RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, StructuralEdit,
+    RPC_SCHEMA_VERSION,
 };
 use crate::{ControlValue, Invention};
 use serde::{Deserialize, Serialize};
@@ -264,8 +265,16 @@ pub enum RpcCommand {
         /// relative path resolves against the daemon's working directory.
         path: String,
     },
+    /// Install a package into the daemon's package cache. Answers
+    /// [`RpcResponsePayload::PackageInstalled`] or `ContentError`.
+    ///
+    /// [`RpcResponsePayload::PackageInstalled`]: super::RpcResponsePayload::PackageInstalled
     InstallPackage(PackageInstallRequest),
-    ListPackages,
+    /// One bounded page of built-in and installed packages. Local only.
+    ListPackages {
+        #[serde(default)]
+        query: super::PackageListQuery,
+    },
     /// Discover available developments without registering or playing them.
     ListDevelopments {
         query: crate::pkg::content::ContentListQuery,
@@ -301,13 +310,4 @@ pub enum RpcCommand {
     /// deliberately stops it — there is no owning terminal to Ctrl+C when the
     /// daemon was spawned detached.
     Shutdown,
-}
-
-/// Package installation request placeholder for future package discovery work.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
-pub struct PackageInstallRequest {
-    pub package: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
 }

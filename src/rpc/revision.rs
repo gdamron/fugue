@@ -240,7 +240,7 @@ impl RpcCommand {
             | Self::GetInvention { .. }
             | Self::SaveInvention { .. }
             | Self::InstallPackage(_)
-            | Self::ListPackages
+            | Self::ListPackages { .. }
             | Self::ListDevelopments { .. }
             | Self::DescribeDevelopment { .. }
             | Self::ListExamples { .. }
