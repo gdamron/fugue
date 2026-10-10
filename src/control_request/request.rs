@@ -36,15 +36,16 @@ pub(crate) struct ControlTarget {
 /// When a request applies, on the engine's sample transport (see
 /// [`Transport`](super::Transport)).
 ///
-/// This is the extension point for musical time: beats on a timeline and
-/// conditions arrive with the Musical Time project (B2–B4) as new variants.
+/// This is the extension point for musical time: [`When::Beat`] places a
+/// request on a clock's beats (B2); conditions arrive with B4 as new
+/// variants.
 ///
 /// A request whose sample has already passed when the audio thread takes
 /// it still applies, at the first segment start after it, and reports
 /// [`Outcome::AppliedLate`](super::Outcome::AppliedLate), unless its `ttl`
 /// has run out.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum When {
     /// At the start of the next block the audio thread drains.
     Now,
@@ -63,6 +64,33 @@ pub(crate) enum When {
     /// thread does as it takes the request. Without a wall clock (offline
     /// render) it is refused ([`Refusal::NoClock`](super::Refusal::NoClock)).
     AtTime(Instant),
+    /// When a clock's beat position reaches a beat (see
+    /// [`BeatTime`]): resolved as the clock plays, so a tempo change made
+    /// while the request waits is honoured.
+    Beat(BeatTime),
+}
+
+/// A beat on a clock's timeline (see
+/// [`Timeline`](super::Timeline)): a condition on the clock's count of
+/// beats begun and its phase within the beat, met at the first sample whose
+/// position reaches the beat, the sample its `beat` gate rises on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BeatTime {
+    /// The clock, as the module's position in the order of the request's
+    /// target generation (mapped across generations with the target).
+    /// Narrow, as are the spans below, so a [`Request`] (which every queue
+    /// slot holds) stays small.
+    pub(crate) clock: u32,
+    pub(crate) spec: BeatSpec,
+}
+
+/// Which beat a [`BeatTime`] waits for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum BeatSpec {
+    /// This many beats (finite, not negative) after the clock's position
+    /// when the audio thread takes the request. Counted in beats begun, so
+    /// a reset while it waits counts as reaching the next whole beat.
+    After(f32),
 }
 
 /// Whether a write changes the composition or performs on it.

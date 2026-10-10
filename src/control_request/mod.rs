@@ -36,6 +36,7 @@ mod request;
 mod sender;
 mod timeline;
 mod transport;
+mod watch;
 
 /// The atomics and cell the queue is built on. The loom models compile the
 /// same source files against loom's versions instead.
@@ -79,11 +80,13 @@ pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
 pub(crate) use pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::{bounded, QueueConsumer, QueueProducer};
 pub(crate) use request::{
-    ControlIndex, ControlTarget, Intent, Request, RequestId, RequestValue, RtValue, Source, When,
+    BeatSpec, BeatTime, ControlIndex, ControlTarget, Intent, Request, RequestId, RequestValue,
+    RtValue, Source, When,
 };
 pub(crate) use sender::{request_channel, QueueFull, RequestSender};
 pub(crate) use timeline::{first_sample_reaching, Timeline, BEFORE_START};
 pub(crate) use transport::Transport;
+pub(crate) use watch::{BeatHost, Watches};
 
 #[cfg(test)]
 mod loom_tests;
