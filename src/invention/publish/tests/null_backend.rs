@@ -281,7 +281,7 @@ fn submit_timed(running: &RunningInvention, id: &str, key: &str, value: f32, whe
         let write = PendingWrite {
             module_id: id.to_string(),
             key: key.to_string(),
-            value: ControlValue::Number(value.into()),
+            value: ControlValue::Number(value),
         };
         pending.submitted(request, write);
     }
