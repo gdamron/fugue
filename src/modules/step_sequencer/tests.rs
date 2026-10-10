@@ -391,25 +391,6 @@ fn test_step_sequencer_factory_builds_its_surface() {
     assert_eq!(keys.join(" "), listed);
 }
 
-#[test]
-fn integer_controls_take_whole_numbers_and_clamp_them() {
-    let surface = surface_of(serde_json::json!({ "root_note": 200, "step_count": 99 }));
-    assert_eq!(number(&surface, "root_note"), 127.0);
-    assert_eq!(number(&surface, "step_count"), 64.0);
-    // A write clamps a whole number as config does, and refuses a fraction.
-    for (key, value, held) in [("root_note", 60.0, 60.0), ("root_note", 300.0, 127.0)] {
-        surface.set_control(key, value.into()).unwrap();
-        assert_eq!(number(&surface, key), held, "{key} {value}");
-    }
-    surface.set_control("step_count", 0.0.into()).unwrap();
-    assert_eq!(number(&surface, "step_count"), 1.0);
-    assert!(surface.set_control("root_note", 60.5.into()).is_err());
-    assert!(surface.set_control("ended", true.into()).is_err());
-    let root_note = surface.automation("root_note").unwrap();
-    root_note.write_number(200.0);
-    assert_eq!(root_note.current(), Some(127.0), "a ramp starts from it");
-}
-
 /// Drives one full clock pulse (rising edge + release) through the sequencer.
 fn pulse(seq: &mut StepSequencer) {
     seq.set_input("clock", 1.0).unwrap();

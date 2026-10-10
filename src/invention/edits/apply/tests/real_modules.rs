@@ -722,9 +722,6 @@ fn a_batch_clamps_a_step_sequencers_whole_numbers_and_refuses_fractions() {
     ]);
     assert!(refused.is_err());
     pump.block();
-    assert_eq!(
-        read(&running, "seq", "root_note"),
-        number(127.0),
-        "nothing applied"
-    );
+    // Nothing applied.
+    assert_eq!(read(&running, "seq", "root_note"), number(127.0));
 }

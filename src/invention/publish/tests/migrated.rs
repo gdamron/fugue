@@ -331,3 +331,24 @@ fn a_step_sequencer_block_renders_while_the_control_locks_are_held() {
     assert_eq!(block_with_locks_held(&mut rig, &[]), Ok((0, 0)));
     assert_eq!(read(&rig, "seq", "root_note"), 50.0.into());
 }
+
+#[test]
+fn a_development_takes_any_whole_number_its_step_sequencer_clamps() {
+    let mut rig = Rig::new(
+        r#"{ "version": "1.0.0",
+        "developments": [{ "name": "phrase", "definition": { "version": "1.0.0",
+            "modules": [{ "id": "seq", "type": "step_sequencer" }], "connections": [],
+            "controls": [{ "name": "root", "module": "seq", "control": "root_note" },
+                         { "name": "steps", "module": "seq", "control": "step_count" }] } }],
+        "modules": [{ "id": "p", "type": "phrase", "config": { "root": 200, "steps": 0 } }],
+        "connections": [] }"#,
+    );
+    let both = |rig: &Rig| (read(rig, "p", "root"), read(rig, "p", "steps"));
+    rig.render(1);
+    assert_eq!(both(&rig), (127.0.into(), 1.0.into()));
+    write(&rig, "p", "steps", 99.0.into());
+    write(&rig, "p", "root", (-4.0).into());
+    rig.render(1);
+    assert_eq!(both(&rig), (0.0.into(), 64.0.into()));
+    assert!(write_refused(&rig, "p", "steps", 2.5.into()));
+}
