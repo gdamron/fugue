@@ -54,6 +54,12 @@
 //!   once the budget is spent; a payload without retire room stops intake
 //!   ahead of any edit (below).
 //!
+//! A request timed in beats needs room among the watches, which may never
+//! free (a beat far off, a clock stopped): one of the installed generation
+//! finding them full is refused (`Refusal::PendingFull`) rather than left
+//! at the head of the queue, so it never blocks what follows, edits
+//! included. One held for a newer generation needs room, as in the store.
+//!
 //! A clockless drain (a `NullBackend`'s) applies no back-pressure: what
 //! fills its store (or its watches) waits for samples that never come,
 //! so nothing would ever free the room. Every request it pops is placed
@@ -334,7 +340,14 @@ impl SignalGraph {
                     !(replaces && drain.pending.coalesces_with(&target, at, event)),
                     drain.pending.is_full(),
                 ),
-                Ok(Landing::Watch(..)) => (true, drain.watches.is_full()),
+                // A watch may wait without end (a repeating grid, a far
+                // beat, a stopped clock), so a full store refuses one of
+                // the installed generation rather than hold the queue
+                // behind it; one held for a newer generation waits, until
+                // that install.
+                Ok(Landing::Watch(target, _)) => {
+                    (target.generation > installed, drain.watches.is_full())
+                }
                 Err(_) => (false, false),
             };
             if !drain.clockless && full && needs_room && !edit_waiting {

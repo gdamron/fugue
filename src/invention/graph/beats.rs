@@ -39,6 +39,9 @@ impl SignalGraph {
         }
         // A clock's position counts its automation from here, as its
         // requests do (written before this sample, taken before it plays).
+        // So a request timed in beats applies after automation written for
+        // the same sample, and wins; one timed in samples applies before
+        // it, and the automation wins.
         for clock in watches.clocks(installed) {
             if let Some((_, instance)) = self.modules.get_index_mut(clock) {
                 take_automation(instance.module_mut());

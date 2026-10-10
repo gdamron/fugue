@@ -50,7 +50,8 @@ const _: () = assert!(QUEUE_SLOTS.is_power_of_two());
 pub(crate) const PENDING_REQUEST_CAPACITY: usize = 512;
 
 /// Popped requests timed in beats that may wait for their clock (see
-/// `graph::beats`), apart from the pending store. Back-pressure as for it.
+/// `graph::beats`), apart from the pending store. One finding it full is
+/// refused, as it may never free (see `graph::requests`).
 pub(crate) const BEAT_WATCH_CAPACITY: usize = 64;
 
 /// Popped requests waiting on the audio thread, timed or watching a clock.
