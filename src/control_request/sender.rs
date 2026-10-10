@@ -84,6 +84,9 @@ impl RequestSender {
     ///
     /// [`QueueFull`] with the request (id assigned) when the queue has no
     /// room; the overflow is also counted in [`overflows`](Self::overflows).
+    // The request comes back by value, as large as it is (a beat grid makes
+    // it 128 bytes), so a full queue never allocates.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn submit(&self, mut request: Request) -> Result<RequestId, QueueFull> {
         let id = RequestId(self.shared.next_id.fetch_add(1, Ordering::Relaxed));
         request.id = id;

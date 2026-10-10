@@ -321,3 +321,110 @@ fn an_install_maps_target_and_clock_or_refuses_what_went_away() {
     assert_eq!(watches.clocks(INSTALLED).collect::<Vec<_>>(), [1]);
     assert_eq!(watches.clocks(INSTALLED + 1).collect::<Vec<_>>(), [0]);
 }
+
+/// Request `id` to module 1 at a grid on clock 0.
+fn on_grid(id: u64, every: f32, offset: f32, repeat: bool) -> Request {
+    let mut request = request(id, 1, 0.0);
+    request.when = When::Beat(BeatTime {
+        clock: 0,
+        spec: BeatSpec::Grid {
+            every,
+            offset,
+            repeat,
+        },
+    });
+    request
+}
+
+#[test]
+fn the_next_grid_beat_is_strictly_past_the_position() {
+    assert_eq!(grid_after(BEFORE_START, 4.0, 0.0), 0.0);
+    assert_eq!(grid_after(0.0, 4.0, 0.0), 4.0);
+    assert_eq!(grid_after(3.99, 4.0, 0.0), 4.0);
+    assert_eq!(grid_after(4.0, 4.0, 1.5), 5.5);
+    assert_eq!(grid_after(6.0, 4.0, 1.5), 9.5);
+    assert_eq!(grid_after(6.0, 2.0, -0.5), 7.5);
+    assert_eq!(grid_after(0.1, 0.75, 0.0), 0.75);
+    for from in (0..2_000).map(|n| n as f64 * 0.0371) {
+        let next = grid_after(from, 0.3, 0.1);
+        assert!(next > from && next - 0.3 <= from, "{from} -> {next}");
+    }
+}
+
+#[test]
+fn a_grid_no_clock_reaches_or_a_repeating_payload_is_refused() {
+    let invalid = [
+        (0.0, 0.0),
+        (-1.0, 0.0),
+        (f32::INFINITY, 0.0),
+        (1.0, f32::NAN),
+    ];
+    for (every, offset) in invalid {
+        let request = on_grid(1, every, offset, false);
+        assert_eq!(
+            Watches::check(&request),
+            Err(Refusal::Invalid),
+            "{every} {offset}"
+        );
+    }
+    assert_eq!(Watches::check(&on_grid(1, 0.25, -3.0, true)), Ok(()));
+    let mut payload = on_grid(1, 1.0, 0.0, true);
+    payload.value = RequestValue::Payload(crate::payload::Payload::new(vec![0.0f32; 4]));
+    assert_eq!(Watches::check(&payload), Err(Refusal::Unsupported));
+}
+
+#[test]
+fn a_repeating_grid_applies_once_a_sample_and_stays() {
+    let (mut store, outcomes) = store();
+    let mut watches = Watches::new(4);
+    watches.insert(on_grid(7, 1.0, 0.0, true), 0, &mut store.outcomes);
+    // A clock covering two beats a sample still applies once a sample.
+    let mut host = Host::at(0.5, 2.0);
+    let pass = watches.pass(10, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(pass, (true, None));
+    let pass = watches.pass(10, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(pass, (false, Some(1)));
+    assert_eq!(log(&outcomes), [(7, Outcome::Applied { at: 10 })]);
+    assert_eq!(watches.len(), 1);
+}
+
+#[test]
+fn a_grid_beat_passed_inside_a_segment_applies_late_once() {
+    let (mut store, outcomes) = store();
+    let mut watches = Watches::new(4);
+    watches.insert(on_grid(7, 2.0, 1.0, true), 0, &mut store.outcomes);
+    let mut host = Host::at(0.0, 1.0 / 128.0);
+    // Beat 1 is 128 samples away.
+    let pass = watches.pass(0, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(pass, (false, Some(127)));
+    // The clock raced past beats 1 and 3 inside the segment: beat 1
+    // applies late, once, and the grid goes on from beat 5.
+    host.clock.position = 3.5;
+    let pass = watches.pass(127, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(pass, (true, None));
+    let pass = watches.pass(127, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(pass, (false, Some(191)));
+    let [(7, Outcome::AppliedLate { at: 127, due })] = log(&outcomes)[..] else {
+        panic!("not applied late once");
+    };
+    assert!(due < 127);
+}
+
+#[test]
+fn a_grid_follows_the_clock_s_new_beat_0_after_a_reset() {
+    let (mut store, outcomes) = store();
+    let mut watches = Watches::new(4);
+    watches.insert(on_grid(7, 4.0, 0.0, false), 0, &mut store.outcomes);
+    let mut host = Host::at(2.0, 1.0 / 128.0);
+    let pass = watches.pass(0, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(pass, (false, Some(255)));
+    // Reset at 3: the next multiple of 4 is the new beat 0, at once.
+    host.clock = Scripted {
+        position: BEFORE_START,
+        rate: 1.0 / 128.0,
+        beats_before: 4,
+    };
+    let pass = watches.pass(128, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!(pass, (true, None));
+    assert_eq!(log(&outcomes), [(7, Outcome::Applied { at: 128 })]);
+}

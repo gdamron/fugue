@@ -383,6 +383,7 @@ fn submit_resolves_relative_times_once_against_the_published_count() {
 }
 
 #[test]
+#[allow(clippy::result_large_err)] // `submit`'s result, by value
 fn submitting_a_timed_request_never_allocates() {
     let transport = Arc::new(Transport::new());
     let (sender, mut consumer) = request_channel(4, Arc::clone(&transport));
