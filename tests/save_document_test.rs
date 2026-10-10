@@ -22,7 +22,7 @@ const VOICE_DEVELOPMENT: &str = r#"{
     ],
     "inputs": [ { "name": "frequency", "to": "osc", "to_port": "frequency" } ],
     "outputs": [ { "name": "audio", "from": "amp", "from_port": "audio" } ],
-    "controls": [ { "key": "level", "module": "amp", "control": "level" } ]
+    "controls": [ { "name": "level", "module": "amp", "control": "level" } ]
 }"#;
 
 fn invention_with_path_development(dir: &Path) -> PathBuf {

@@ -105,6 +105,13 @@ JSON examples for the new development format live in `examples/`:
 - `examples/development_inline_patch.json`: registers a development inline
 - `examples/development_file_patch.json`: registers a development from a file path
 
+A development exposes its interface by `name`: each `inputs` entry routes a
+name `to` an inner module's `to_port`, each `outputs` entry `from` an inner
+`from_port`, and each `controls` entry to an inner `module`'s `control`.
+Listing one control name more than once fans it out to every target.
+Exposed names follow the interface conventions: the musical name of the
+gesture (`brightness`), not the inner module's key (`cutoff`).
+
 ### Run an Invention
 
 Define your invention in a JSON file:

@@ -191,7 +191,7 @@ fn voiced(freq: &str) -> String {
                 "modules": [{{ "id": "o", "type": "oscillator" }}],
                 "connections": [],
                 "outputs": [{{ "name": "audio", "from": "o", "from_port": "audio" }}],
-                "controls": [{{ "key": "freq", "module": "o", "control": "frequency" }}]
+                "controls": [{{ "name": "freq", "module": "o", "control": "frequency" }}]
             }}
         }}],
         "modules": [

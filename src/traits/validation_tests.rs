@@ -138,7 +138,7 @@ fn development_with_inner_scheduler() -> crate::Invention {
         module("o", "oscillator"),
     ]);
     pattern.controls.push(DevelopmentControl {
-        key: "schedule".to_string(),
+        name: "schedule".to_string(),
         module: "sched".to_string(),
         control: "schedule".to_string(),
     });

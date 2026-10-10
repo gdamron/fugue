@@ -37,7 +37,7 @@ fn dependency_context_matches_builder_precedence_for_local_alias_collisions() {
     for ancestor_visible in [true, false] {
         let ancestor = json!({"name":"tone","definition":{
             "modules":[{"id":"osc","type":"oscillator"}],"connections":[],
-            "controls":[{"key":"pitch","module":"osc","control":"frequency"}]
+            "controls":[{"name":"pitch","module":"osc","control":"frequency"}]
         }});
         let key = if ancestor_visible {
             "pitch"
@@ -47,7 +47,7 @@ fn dependency_context_matches_builder_precedence_for_local_alias_collisions() {
         let layer = json!({"name":"layer","definition":{
             "developments":[{"name":"tone","definition":{
                 "modules":[{"id":"local_osc","type":"oscillator"}],"connections":[],
-                "controls":[{"key":"local_pitch","module":"local_osc","control":"frequency"}]
+                "controls":[{"name":"local_pitch","module":"local_osc","control":"frequency"}]
             }}],
             "modules":[{"id":"voice","type":"tone","config":{(key):220}}],"connections":[]
         }});

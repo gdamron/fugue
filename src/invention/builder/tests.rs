@@ -41,7 +41,7 @@ fn voice_development() -> Invention {
             from_port: "audio".to_string(),
         }],
         controls: vec![DevelopmentControl {
-            key: "waveform".to_string(),
+            name: "waveform".to_string(),
             module: "osc".to_string(),
             control: "waveform".to_string(),
         }],
@@ -583,12 +583,12 @@ fn duplicate_development_control_keys_fan_out_writes() {
         }],
         controls: vec![
             DevelopmentControl {
-                key: "decay".to_string(),
+                name: "decay".to_string(),
                 module: "env_a".to_string(),
                 control: "decay".to_string(),
             },
             DevelopmentControl {
-                key: "decay".to_string(),
+                name: "decay".to_string(),
                 module: "env_b".to_string(),
                 control: "decay".to_string(),
             },

@@ -53,7 +53,7 @@ fn a_declared_indexed_family_takes_every_index() {
 fn a_dotted_control_that_is_not_indexed_is_taken_exactly() {
     let voice = r#"{"version": "1.0.0", "connections": [],
         "modules": [{"id": "osc", "type": "oscillator"}],
-        "controls": [{"key": "osc.frequency", "module": "osc", "control": "frequency"}]}"#;
+        "controls": [{"name": "osc.frequency", "module": "osc", "control": "frequency"}]}"#;
     let document = format!(
         r#"{{"version": "1.0.0", "connections": [],
             "developments": [{{"name": "voice", "definition": {voice}}}],
@@ -81,6 +81,32 @@ fn a_sink_refuses_an_undeclared_key_before_it_opens_its_file() {
     assert!(!path.exists(), "the sink opened its file");
 }
 
+/// The first-party documents: `examples/` and every `FUGUE_DOCUMENT_DIRS`
+/// entry, searched recursively.
+pub(crate) fn first_party_documents() -> Vec<PathBuf> {
+    let mut dirs = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("examples")];
+    if let Ok(extra) = std::env::var("FUGUE_DOCUMENT_DIRS") {
+        dirs.extend(extra.split(':').map(PathBuf::from));
+    }
+    let mut found = Vec::new();
+    dirs.iter().for_each(|dir| documents(dir, &mut found));
+    assert!(found.len() > 10, "found only {found:?}");
+    found
+}
+
+/// The invention at `path`, or why it does not parse. `None` for a file
+/// that is not an invention (a manifest, a fixture of another format): one
+/// without a `modules` list.
+pub(crate) fn parse(path: &Path) -> Option<Result<Invention, String>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    value.get("modules")?.as_array()?;
+    Some(
+        Invention::from_file(path.to_str()?)
+            .map_err(|error| format!("{}: does not parse: {error}", path.display())),
+    )
+}
+
 /// The `.json` documents under `dir`, recursively, skipping score files
 /// (`fugue.score.v1` is notation, not an invention).
 fn documents(dir: &Path, found: &mut Vec<PathBuf>) {
@@ -97,10 +123,14 @@ fn documents(dir: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-/// Why the invention at `path` does not build, if it doesn't. Files that
-/// are not inventions (manifests, fixtures of other formats) are skipped.
+/// Why the invention at `path` does not parse or build, if it doesn't.
+/// Files that are not inventions are skipped; one that looks like an
+/// invention but no longer parses (a renamed field) is a refusal.
 fn refusal(path: &Path) -> Option<String> {
-    let invention = Invention::from_file(path.to_str()?).ok()?;
+    let invention = match parse(path)? {
+        Ok(invention) => invention,
+        Err(error) => return Some(error),
+    };
     if invention.modules.is_empty() {
         return None;
     }
@@ -113,13 +143,7 @@ fn refusal(path: &Path) -> Option<String> {
 
 #[test]
 fn every_example_document_builds() {
-    let mut dirs = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("examples")];
-    if let Ok(extra) = std::env::var("FUGUE_DOCUMENT_DIRS") {
-        dirs.extend(extra.split(':').map(PathBuf::from));
-    }
-    let mut found = Vec::new();
-    dirs.iter().for_each(|dir| documents(dir, &mut found));
-    assert!(found.len() > 10, "found only {found:?}");
+    let found = first_party_documents();
     let refused: Vec<String> = found.iter().filter_map(|path| refusal(path)).collect();
     assert!(refused.is_empty(), "{}", refused.join("\n"));
 }

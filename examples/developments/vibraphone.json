@@ -105,27 +105,27 @@
   ],
   "controls": [
     {
-      "key": "attack",
+      "name": "attack",
       "module": "env",
       "control": "attack"
     },
     {
-      "key": "release",
+      "name": "release",
       "module": "env",
       "control": "release"
     },
     {
-      "key": "tremolo_depth",
+      "name": "tremolo_depth",
       "module": "osc",
       "control": "amplitude_mod_depth"
     },
     {
-      "key": "tremolo_rate",
+      "name": "tremolo_rate",
       "module": "tremolo_lfo",
       "control": "rate"
     },
     {
-      "key": "brightness",
+      "name": "brightness",
       "module": "filter",
       "control": "cutoff"
     }

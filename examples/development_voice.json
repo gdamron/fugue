@@ -61,12 +61,12 @@
   ],
   "controls": [
     {
-      "key": "waveform",
+      "name": "waveform",
       "module": "osc",
       "control": "waveform"
     },
     {
-      "key": "attack",
+      "name": "attack",
       "module": "env",
       "control": "attack"
     }

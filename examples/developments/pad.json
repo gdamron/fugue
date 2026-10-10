@@ -105,22 +105,22 @@
   ],
   "controls": [
     {
-      "key": "attack",
+      "name": "attack",
       "module": "env",
       "control": "attack"
     },
     {
-      "key": "release",
+      "name": "release",
       "module": "env",
       "control": "release"
     },
     {
-      "key": "warmth",
+      "name": "warmth",
       "module": "filter",
       "control": "cutoff"
     },
     {
-      "key": "motion",
+      "name": "motion",
       "module": "motion_lfo",
       "control": "rate"
     }
