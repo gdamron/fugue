@@ -204,7 +204,10 @@ impl RunningInvention {
                 // previous value rather than failing a change that landed.
                 let label = format!("{module_id}.{key}");
                 report.controls_updated.retain(|updated| *updated != label);
-                if let Ok(actual) = self.get_control(&module_id, &key) {
+                // An event (a clock's reset on reload) fires; it holds no
+                // value for the document to keep.
+                let event = snapshot.is_event(&module_id, &key);
+                if let (false, Ok(actual)) = (event, self.get_control(&module_id, &key)) {
                     kept.push((module_id.clone(), key.clone(), actual));
                 }
                 let mut error = match error {

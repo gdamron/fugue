@@ -20,6 +20,21 @@ use super::scalar_control_value;
 /// Whether the two configs build the same module. A null config and an
 /// empty object are equivalent: omitting `config` parses as `null`, while
 /// an explicit `{}` is an empty object.
+/// `config` without `keys`, which a reload reads but a running module does
+/// not hold (see [`crate::ModuleFactory::reload_keys`]).
+pub(super) fn without<'a>(config: &'a Value, keys: &[&str]) -> std::borrow::Cow<'a, Value> {
+    match config.as_object() {
+        Some(map) if keys.iter().any(|key| map.contains_key(*key)) => {
+            let mut map = map.clone();
+            keys.iter().for_each(|key| {
+                map.remove(*key);
+            });
+            std::borrow::Cow::Owned(Value::Object(map))
+        }
+        _ => std::borrow::Cow::Borrowed(config),
+    }
+}
+
 pub(super) fn configs_equal(
     previous: &Value,
     new: &Value,

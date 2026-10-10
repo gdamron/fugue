@@ -194,3 +194,15 @@ fn processing_publishes_the_position() {
     assert_eq!(clock.cells.load(POSITION), Some(RtValue::F32(0.5)));
     assert!(clock.set_control("position", 3.0).is_err(), "read-only");
 }
+
+#[test]
+fn reset_on_reload_is_off_unless_the_config_sets_it() {
+    use serde_json::json;
+    assert!(writes_on_reload(&json!({})).is_empty());
+    assert!(writes_on_reload(&json!({ "reset_on_reload": false })).is_empty());
+    assert_eq!(
+        writes_on_reload(&json!({ "bpm": 90, "reset_on_reload": true })),
+        [("reset", ControlValue::Bool(true))]
+    );
+    assert!(reset_on_reload(&json!({ "reset_on_reload": 1 })).is_err());
+}
