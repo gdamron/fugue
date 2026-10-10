@@ -138,10 +138,6 @@ impl CodeControls {
         self.shared.lock().unwrap().entrypoint.clone()
     }
 
-    fn snapshot(&self) -> CodeState {
-        self.shared.lock().unwrap().clone()
-    }
-
     /// Holds the strings' lock, for a test proving the audio path never
     /// takes it.
     #[cfg(test)]
@@ -157,13 +153,12 @@ impl ControlSurface for CodeControls {
             .controls()
             .try_into()
             .expect("the code module declares two controls");
-        let state = self.snapshot();
         vec![
             enabled,
             ControlMeta::string("status", "Current orchestration runtime status")
-                .with_default(state.status),
+                .with_default(self.status()),
             ControlMeta::string("last_error", "Last script runtime error")
-                .with_default(state.last_error),
+                .with_default(self.last_error()),
             tick_rate,
         ]
     }

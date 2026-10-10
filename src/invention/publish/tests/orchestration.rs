@@ -1,7 +1,6 @@
-//! The orchestration modules, code and agent, on declared controls: their
-//! scalars apply on the audio thread and read back, and no audio-thread
-//! path (scheduler writes included) takes the lock their control-side
-//! strings sit behind.
+//! The code module on declared controls: its scalars apply on the audio
+//! thread and read back, and no audio-thread path (scheduler writes
+//! included) takes the lock its control-side strings sit behind.
 
 use super::migrated::{add_locking, block_while_held, read, schedule, write, LockingFactory};
 use super::requests::counted_block;
@@ -112,6 +111,11 @@ fn a_block_renders_while_the_code_strings_lock_is_held() {
     let held = block_while_held(&mut rig, || code.hold_state_lock());
     assert_eq!(held, Ok((0, 0)));
     assert_eq!(read(&rig, "code", "enabled"), false.into());
+    let tick_rate = number(&rig, "code", "tick_rate");
+    assert!(
+        tick_rate > 4.0,
+        "the ramp wrote under the lock: {tick_rate}"
+    );
 }
 
 /// The negative control: a module reading the code module's strings each
