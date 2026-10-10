@@ -1,5 +1,8 @@
+use super::controls::StepSequencerSurface;
 use super::*;
+use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
+use crate::ControlSurface;
 
 /// Factory for constructing StepSequencer modules from configuration.
 ///
@@ -85,27 +88,29 @@ impl ModuleFactory for StepSequencerFactory {
         }
         .map_err(|error| error.refused_by(&reader))?;
 
-        let controls = StepSequencerControls::new_with_values(root_note, step_count, gate_length);
-        if let Some(mode) = config.get("mode").and_then(|v| v.as_str()) {
-            controls.set_mode(mode)?;
-        }
+        let cells = Arc::new(ControlCells::new(controls::defaults()));
+        cells.publish(controls::ROOT_NOTE, RtValue::I32(i32::from(root_note)));
+        let step_count = step_count.min(controls::MAX_STEPS as usize) as i32;
+        cells.publish(controls::STEP_COUNT, RtValue::I32(step_count));
+        cells.publish(controls::GATE_LENGTH, RtValue::F32(gate_length));
         if let Some(seconds) = reader.float(&GRACE_DURATION)? {
-            controls.set_grace_duration(seconds);
+            cells.publish(controls::GRACE_DURATION, RtValue::F32(seconds));
         }
-        if let Some(placement) = config.get("grace_placement").and_then(|v| v.as_str()) {
-            controls.set_grace_placement(placement)?;
+        let surface = StepSequencerSurface {
+            declared: DeclaredSurface::new(controls::TABLE.clone(), cells.clone()),
+            pattern: Arc::new(Mutex::new(pattern)),
+        };
+        for key in ["mode", "grace_placement"] {
+            if let Some(text) = config.get(key).and_then(|v| v.as_str()) {
+                surface.set_control(key, text.into())?;
+            }
         }
-
-        let seq =
-            StepSequencer::new_with_controls(sample_rate, controls.clone()).with_pattern(pattern);
+        let seq = StepSequencer::with_parts(sample_rate, cells, surface.pattern.clone());
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(seq)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn std::any::Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
     }

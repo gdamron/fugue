@@ -1,327 +1,192 @@
-//! Thread-safe controls for the StepSequencer module.
+//! The StepSequencer's controls: its scalars are declared, and its
+//! `pattern` stays on the legacy path, shared under a lock, until it is
+//! carried as a payload (FUG-312).
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::atomic::AtomicF32;
-use crate::traits::{check_listed_control, ControlSurfaceMap};
-use crate::{ControlMeta, ControlSurface, ControlValue};
+use crate::control_request::{
+    Automation, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue,
+};
+use crate::invention::declared::{Declaration, DeclaredSurface, Route};
+use crate::traits::ControlSurfaceMap;
+use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
 use super::grace::{DEFAULT_GRACE_DURATION, MAX_GRACE_DURATION, MIN_GRACE_DURATION};
 use super::{Step, DEFAULT_GATE_LENGTH, DEFAULT_ROOT_NOTE, DEFAULT_STEPS};
 
-/// Thread-safe controls for the StepSequencer module.
-///
-/// Controls use the uniform f32 get/set API:
-/// - `root_note` - Root MIDI note (0-127)
-/// - `step_count` - Number of steps in pattern (1-64)
-/// - `gate_length` - Default gate length ratio (0.0-1.0)
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let controls: StepSequencerControls = handles.get("step_sequencer.controls").unwrap();
-///
-/// // Adjust parameters in real-time
-/// controls.set_root_note(36);
-/// controls.set_step_count(8);
-/// controls.set_gate_length(0.75);
-/// ```
-#[derive(Clone)]
-pub struct StepSequencerControls {
-    pub(crate) root_note: Arc<Mutex<u8>>,
-    pub(crate) step_count: Arc<Mutex<usize>>,
-    pub(crate) gate_length: Arc<Mutex<f32>>,
-    pub(crate) pattern: Arc<Mutex<Vec<Step>>>,
-    /// One-shot playback flag; an atomic because the audio thread reads it
-    /// at sample rate (exposed as the `mode` control: loop | one_shot).
-    pub(crate) one_shot: Arc<AtomicBool>,
-    /// Written by the audio thread when a one-shot pattern completes (and
-    /// cleared on re-arm), so live surfaces can observe the end without
-    /// touching the graph. Exposed as the read-only `ended` control.
-    pub(crate) ended: Arc<AtomicBool>,
-    /// Duration of a single grace note in seconds; read once per block by
-    /// the audio thread.
-    pub(crate) grace_duration: Arc<AtomicF32>,
-    /// Grace placement (the `grace_placement` control): `false` = before the
-    /// beat, `true` = on the beat.
-    pub(crate) grace_on_beat: Arc<AtomicBool>,
+pub(super) const ROOT_NOTE: ControlIndex = ControlIndex(0);
+pub(super) const STEP_COUNT: ControlIndex = ControlIndex(1);
+pub(super) const GATE_LENGTH: ControlIndex = ControlIndex(2);
+pub(super) const MODE: ControlIndex = ControlIndex(3);
+pub(super) const GRACE_DURATION: ControlIndex = ControlIndex(4);
+pub(super) const GRACE_PLACEMENT: ControlIndex = ControlIndex(5);
+pub(super) const ENDED: ControlIndex = ControlIndex(6);
+
+/// The most steps a pattern holds, and so the most `step_count` takes.
+pub(super) const MAX_STEPS: i32 = 64;
+
+const DECLS: &[ControlDecl] = &[
+    ControlDecl::new(
+        "root_note",
+        DeclKind::Integer { min: 0, max: 127 },
+        RtValue::I32(DEFAULT_ROOT_NOTE as i32),
+        "Root MIDI note",
+    )
+    .clamped(0.0, 127.0),
+    ControlDecl::new(
+        "step_count",
+        DeclKind::Integer {
+            min: 1,
+            max: MAX_STEPS,
+        },
+        RtValue::I32(DEFAULT_STEPS as i32),
+        "Number of steps in pattern",
+    )
+    .clamped(1.0, MAX_STEPS as f32),
+    ControlDecl::new(
+        "gate_length",
+        DeclKind::Number { min: 0.0, max: 1.0 },
+        RtValue::F32(DEFAULT_GATE_LENGTH),
+        "Default gate length ratio",
+    )
+    .clamped(0.0, 1.0),
+    ControlDecl::new(
+        "mode",
+        DeclKind::Choice(&["loop", "one_shot"]),
+        RtValue::U32(0),
+        "Playback mode: loop repeats; one_shot plays once and fires the ended gate",
+    ),
+    ControlDecl::new(
+        "grace_duration",
+        DeclKind::Number {
+            min: MIN_GRACE_DURATION,
+            max: MAX_GRACE_DURATION,
+        },
+        RtValue::F32(DEFAULT_GRACE_DURATION),
+        "Duration of a single grace note in seconds",
+    )
+    .unit("s")
+    .clamped(MIN_GRACE_DURATION, MAX_GRACE_DURATION),
+    ControlDecl::new(
+        "grace_placement",
+        DeclKind::Choice(&["before", "on_beat"]),
+        RtValue::U32(0),
+        "Grace placement: before steals the previous step's tail; on_beat delays the principal",
+    ),
+    ControlDecl::new(
+        "ended",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Read-only: a one_shot pattern has played through",
+    )
+    .telemetry(),
+];
+
+pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
+
+/// The table's defaults, in index order: where every step sequencer's cells
+/// start before it applies its own values.
+pub(super) fn defaults() -> impl Iterator<Item = RtValue> {
+    DECLS.iter().map(|decl| decl.default)
 }
 
-impl StepSequencerControls {
-    /// Creates new step sequencer controls with default values.
-    pub fn new() -> Self {
-        Self {
-            root_note: Arc::new(Mutex::new(DEFAULT_ROOT_NOTE)),
-            step_count: Arc::new(Mutex::new(DEFAULT_STEPS)),
-            gate_length: Arc::new(Mutex::new(DEFAULT_GATE_LENGTH)),
-            pattern: Arc::new(Mutex::new(Vec::new())),
-            one_shot: Arc::new(AtomicBool::new(false)),
-            ended: Arc::new(AtomicBool::new(false)),
-            grace_duration: Arc::new(AtomicF32::new(DEFAULT_GRACE_DURATION)),
-            grace_on_beat: Arc::new(AtomicBool::new(false)),
-        }
+/// Where `pattern` sits among the controls a client lists: after
+/// `gate_length`, as it always has.
+const PATTERN_POSITION: usize = 3;
+
+/// The step sequencer's surface: its declared controls, plus `pattern`.
+pub(super) struct StepSequencerSurface {
+    pub(super) declared: DeclaredSurface,
+    pub(super) pattern: Arc<Mutex<Vec<Step>>>,
+}
+
+impl StepSequencerSurface {
+    fn pattern_json(&self) -> String {
+        let pattern = self.pattern.lock().unwrap().clone();
+        serde_json::to_string(&pattern).unwrap_or_else(|_| "[]".to_string())
     }
 
-    /// Creates new step sequencer controls with specified values.
-    pub fn new_with_values(root_note: u8, step_count: usize, gate_length: f32) -> Self {
-        Self {
-            root_note: Arc::new(Mutex::new(root_note.min(127))),
-            step_count: Arc::new(Mutex::new(step_count.clamp(1, 64))),
-            gate_length: Arc::new(Mutex::new(gate_length.clamp(0.0, 1.0))),
-            pattern: Arc::new(Mutex::new(Vec::new())),
-            one_shot: Arc::new(AtomicBool::new(false)),
-            ended: Arc::new(AtomicBool::new(false)),
-            grace_duration: Arc::new(AtomicF32::new(DEFAULT_GRACE_DURATION)),
-            grace_on_beat: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Gets the base MIDI note.
-    pub fn root_note(&self) -> u8 {
-        *self.root_note.lock().unwrap()
-    }
-
-    /// Sets the base MIDI note (0-127).
-    pub fn set_root_note(&self, note: u8) {
-        *self.root_note.lock().unwrap() = note.min(127);
-    }
-
-    /// Gets the number of steps.
-    pub fn step_count(&self) -> usize {
-        *self.step_count.lock().unwrap()
-    }
-
-    /// Sets the number of steps (1-64).
-    pub fn set_step_count(&self, step_count: usize) {
-        *self.step_count.lock().unwrap() = step_count.clamp(1, 64);
-    }
-
-    /// Gets the default gate length ratio.
-    pub fn gate_length(&self) -> f32 {
-        *self.gate_length.lock().unwrap()
-    }
-
-    /// Sets the default gate length ratio (0.0-1.0).
-    pub fn set_gate_length(&self, length: f32) {
-        *self.gate_length.lock().unwrap() = length.clamp(0.0, 1.0);
-    }
-
-    /// Returns whether one-shot playback is enabled.
-    pub fn one_shot(&self) -> bool {
-        self.one_shot.load(Ordering::Relaxed)
-    }
-
-    /// Enables or disables one-shot playback.
-    pub fn set_one_shot(&self, one_shot: bool) {
-        self.one_shot.store(one_shot, Ordering::Relaxed);
-    }
-
-    /// Gets the playback mode as its control string (`loop` or `one_shot`).
-    pub fn mode(&self) -> &'static str {
-        if self.one_shot() {
-            "one_shot"
-        } else {
-            "loop"
-        }
-    }
-
-    /// Sets the playback mode from its control string.
-    pub fn set_mode(&self, mode: &str) -> Result<(), String> {
-        self.set_one_shot(mode_is_one_shot(mode)?);
-        Ok(())
-    }
-
-    /// Duration of a single grace note in seconds.
-    pub fn grace_duration(&self) -> f32 {
-        self.grace_duration.load()
-    }
-
-    pub fn set_grace_duration(&self, seconds: f32) {
-        self.grace_duration
-            .store(seconds.clamp(MIN_GRACE_DURATION, MAX_GRACE_DURATION));
-    }
-
-    /// Whether grace chains play on the beat (delaying the principal) rather
-    /// than before it.
-    pub fn grace_on_beat(&self) -> bool {
-        self.grace_on_beat.load(Ordering::Relaxed)
-    }
-
-    pub fn set_grace_on_beat(&self, on_beat: bool) {
-        self.grace_on_beat.store(on_beat, Ordering::Relaxed);
-    }
-
-    /// Gets the grace placement as its control string (`before` or `on_beat`).
-    pub fn grace_placement(&self) -> &'static str {
-        if self.grace_on_beat() {
-            "on_beat"
-        } else {
-            "before"
-        }
-    }
-
-    /// Sets the grace placement from its control string.
-    pub fn set_grace_placement(&self, placement: &str) -> Result<(), String> {
-        self.set_grace_on_beat(grace_is_on_beat(placement)?);
-        Ok(())
-    }
-
-    /// Whether a one-shot playthrough has completed (read-only; the audio
-    /// thread maintains it).
-    pub fn ended(&self) -> bool {
-        self.ended.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn set_ended(&self, ended: bool) {
-        self.ended.store(ended, Ordering::Relaxed);
-    }
-
-    /// Gets the current pattern.
-    pub fn pattern(&self) -> Vec<Step> {
-        self.pattern.lock().unwrap().clone()
-    }
-
-    /// Sets the current pattern.
-    pub fn set_pattern(&self, pattern: Vec<Step>) {
-        *self.pattern.lock().unwrap() = pattern;
-    }
-
-    /// Gets the current pattern as JSON.
-    ///
-    /// This is primarily used by orchestration surfaces such as `agent`, MCP,
-    /// and scripts. Fugue's generic control value type does not currently have
-    /// a JSON variant, so rich pattern data is exposed as a string control.
-    pub fn pattern_json(&self) -> String {
-        serde_json::to_string(&self.pattern()).unwrap_or_else(|_| "[]".to_string())
-    }
-
-    /// Sets the current pattern from JSON.
-    ///
-    /// The accepted format is the same step array accepted by the module
-    /// config, for example `[{"note":0,"gate_length":0.5},{"note":null}]`.
-    pub fn set_pattern_json(&self, value: &str) -> Result<(), String> {
-        self.set_pattern(parse_pattern_json(value)?);
+    fn set_pattern(&self, value: &ControlValue) -> Result<(), String> {
+        *self.pattern.lock().unwrap() = parse_pattern_json(value.as_string()?)?;
         Ok(())
     }
 }
 
-/// Parses a `mode` value: true for `one_shot`, false for `loop`.
-fn mode_is_one_shot(mode: &str) -> Result<bool, String> {
-    match mode {
-        "loop" => Ok(false),
-        "one_shot" => Ok(true),
-        other => Err(format!(
-            "Unknown mode '{}' (expected loop | one_shot)",
-            other
-        )),
-    }
-}
-
-/// Parses a `grace_placement` value: true for `on_beat`, false for `before`.
-fn grace_is_on_beat(placement: &str) -> Result<bool, String> {
-    match placement {
-        "before" => Ok(false),
-        "on_beat" => Ok(true),
-        other => Err(format!(
-            "Unknown grace_placement '{}' (expected before | on_beat)",
-            other
-        )),
-    }
-}
-
-fn parse_pattern_json(value: &str) -> Result<Vec<Step>, String> {
+pub(super) fn parse_pattern_json(value: &str) -> Result<Vec<Step>, String> {
     let pattern: Vec<Step> = serde_json::from_str(value).map_err(|err| err.to_string())?;
-    if pattern.len() > 64 {
+    if pattern.len() > MAX_STEPS as usize {
         return Err("pattern may not contain more than 64 steps".to_string());
     }
     Ok(pattern)
 }
 
-impl Default for StepSequencerControls {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ControlSurface for StepSequencerControls {
+impl ControlSurface for StepSequencerSurface {
     fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::number("root_note", "Root MIDI note")
-                .with_range(0.0, 127.0)
-                .with_default(self.root_note() as f32),
-            ControlMeta::number("step_count", "Number of steps in pattern")
-                .with_range(1.0, 64.0)
-                .with_default(self.step_count() as f32),
-            ControlMeta::number("gate_length", "Default gate length ratio")
-                .with_range(0.0, 1.0)
-                .with_default(self.gate_length()),
-            ControlMeta::string("pattern", "Step pattern as JSON")
-                .with_default(self.pattern_json()),
-            ControlMeta::string(
-                "mode",
-                "Playback mode: loop repeats; one_shot plays once and fires the ended gate",
-            )
-            .with_options(vec!["loop".to_string(), "one_shot".to_string()])
-            .with_default(self.mode()),
-            ControlMeta::number("grace_duration", "Duration of a single grace note in seconds")
-                .with_range(MIN_GRACE_DURATION, MAX_GRACE_DURATION)
-                .with_default(self.grace_duration()),
-            ControlMeta::string(
-                "grace_placement",
-                "Grace placement: before steals the previous step's tail; on_beat delays the principal",
-            )
-            .with_options(vec!["before".to_string(), "on_beat".to_string()])
-            .with_default(self.grace_placement()),
-            ControlMeta::boolean(
-                "ended",
-                "Read-only: a one_shot pattern has played through",
-                self.ended(),
-            ),
-        ]
+        let mut controls = self.declared.controls();
+        let pattern = ControlMeta::string("pattern", "Step pattern as JSON")
+            .with_default(self.pattern_json());
+        controls.insert(PATTERN_POSITION.min(controls.len()), pattern);
+        controls
     }
 
     fn get_control(&self, key: &str) -> Result<ControlValue, String> {
         match key {
-            "root_note" => Ok((self.root_note() as f32).into()),
-            "step_count" => Ok((self.step_count() as f32).into()),
-            "gate_length" => Ok(self.gate_length().into()),
             "pattern" => Ok(self.pattern_json().into()),
-            "mode" => Ok(self.mode().into()),
-            "grace_duration" => Ok(self.grace_duration().into()),
-            "grace_placement" => Ok(self.grace_placement().into()),
-            "ended" => Ok(self.ended().into()),
-            _ => Err(format!("Unknown control: {}", key)),
+            _ => self.declared.get_control(key),
         }
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
-            "root_note" => self.set_root_note(value.as_number()? as u8),
-            "step_count" => self.set_step_count(value.as_number()? as usize),
-            "gate_length" => self.set_gate_length(value.as_number()?),
-            "pattern" => self.set_pattern_json(value.as_string()?)?,
-            "mode" => self.set_mode(value.as_string()?)?,
-            "grace_duration" => self.set_grace_duration(value.as_number()?),
-            "grace_placement" => self.set_grace_placement(value.as_string()?)?,
-            "ended" => return Err("Control 'ended' is read-only".to_string()),
-            _ => return Err(format!("Unknown control: {}", key)),
+            "pattern" => self.set_pattern(&value),
+            _ => self.declared.set_control(key, value),
         }
-        Ok(())
     }
 
     fn validate_control(
         &self,
         key: &str,
         value: &ControlValue,
-        _surfaces: &ControlSurfaceMap,
+        surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
         match key {
             "pattern" => parse_pattern_json(value.as_string()?).map(drop),
-            "mode" => mode_is_one_shot(value.as_string()?).map(drop),
-            "grace_placement" => grace_is_on_beat(value.as_string()?).map(drop),
-            "ended" => crate::traits::read_only(key),
-            _ => check_listed_control(&self.controls(), key, value),
+            _ => self.declared.validate_control(key, value, surfaces),
         }
+    }
+
+    #[allow(private_interfaces)]
+    fn bind(&self, route: Route, module: &mut dyn Module) {
+        self.declared.bind(route, module);
+    }
+
+    fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        match key {
+            "pattern" => self.set_pattern(&value),
+            _ => self.declared.set_legacy(key, value),
+        }
+    }
+
+    #[allow(private_interfaces)]
+    fn activate(&self, route: Route) {
+        self.declared.activate(route);
+    }
+
+    fn retire(&self) {
+        self.declared.retire();
+    }
+
+    fn declares(&self, key: &str) -> bool {
+        self.declared.declares(key)
+    }
+
+    #[allow(private_interfaces)]
+    fn declaration(&self, key: &str) -> Option<Declaration> {
+        self.declared.declaration(key)
+    }
+
+    #[allow(private_interfaces)]
+    fn automation(&self, key: &str) -> Option<Automation> {
+        self.declared.automation(key)
     }
 }

@@ -20,7 +20,6 @@ pub(crate) const LEGACY_CONTROLS: &[&str] = &[
     "sample_kit",
     "sample_player",
     "sample_slicer",
-    "step_sequencer",
 ];
 
 #[cfg(test)]

@@ -238,3 +238,117 @@ fn a_reverb_block_renders_while_the_control_locks_are_held() {
     };
     assert!(decay > 0.5, "{decay}");
 }
+
+/// A step sequencer whose clock the test drives: blocks without an edge
+/// never read its pattern, which stays under a lock until FUG-312.
+const SEQUENCER: &str = r#"{
+    "version": "1.0.0",
+    "modules": [
+        { "id": "seq", "type": "step_sequencer", "config": {
+            "step_count": 2, "pattern": [{ "note": 0 }, { "note": 7, "grace": [2] }] } },
+        { "id": "osc", "type": "oscillator" },
+        { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+    ],
+    "connections": [
+        { "from": "seq", "from_port": "frequency", "to": "osc", "to_port": "frequency" },
+        { "from": "osc", "from_port": "audio", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+#[test]
+fn step_sequencer_writes_apply_on_the_audio_thread_and_read_back() {
+    let mut rig = Rig::new(SEQUENCER);
+    rig.render(1);
+    write(&rig, "seq", "root_note", 60.0.into());
+    write(&rig, "seq", "step_count", 5.0.into());
+    write(&rig, "seq", "gate_length", 2.0.into());
+    write(&rig, "seq", "mode", "one_shot".into());
+    write(&rig, "seq", "grace_duration", 0.1.into());
+    write(&rig, "seq", "grace_placement", "on_beat".into());
+    assert_eq!(read(&rig, "seq", "root_note"), 48.0.into(), "pending");
+
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(read(&rig, "seq", "root_note"), 60.0.into());
+    assert_eq!(read(&rig, "seq", "step_count"), 5.0.into());
+    assert_eq!(read(&rig, "seq", "gate_length"), 1.0.into(), "clamped");
+    assert_eq!(read(&rig, "seq", "mode"), "one_shot".into());
+    assert_eq!(read(&rig, "seq", "grace_duration"), 0.1.into());
+    assert_eq!(read(&rig, "seq", "grace_placement"), "on_beat".into());
+    assert!(write_refused(&rig, "seq", "root_note", 60.5.into()));
+    assert!(write_refused(&rig, "seq", "ended", true.into()));
+}
+
+#[test]
+fn a_one_shot_step_sequencer_reports_ended() {
+    let mut rig = Rig::new(SEQUENCER);
+    write(&rig, "seq", "mode", "one_shot".into());
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        assert_eq!(read(&rig, "seq", "ended"), false.into());
+        rig.live.write_input("seq", "clock", gate).unwrap();
+        rig.render(1);
+    }
+    rig.live.write_input("seq", "clock", 1.0).unwrap();
+    rig.render(1);
+    assert_eq!(read(&rig, "seq", "ended"), true.into());
+}
+
+#[test]
+fn a_scheduler_ramps_a_step_sequencer_without_allocating() {
+    let mut rig = Rig::new(SEQUENCER);
+    schedule(
+        &mut rig,
+        serde_json::json!({ "schedule": [
+            { "at_step": 0, "module": "seq", "control": "gate_length", "value": 1.0, "ramp_steps": 4 },
+            { "at_step": 0, "module": "seq", "control": "grace_duration", "value": 0.01, "ramp_steps": 4 },
+            { "at_step": 1, "module": "seq", "control": "root_note", "value": 55 },
+            { "at_step": 1, "module": "seq", "control": "step_count", "value": 3 }
+        ]}),
+    );
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        rig.live.write_input("sched", "clock", gate).unwrap();
+        assert_eq!(counted_block(&mut rig), (0, 0));
+    }
+    let ControlValue::Number(gate_length) = read(&rig, "seq", "gate_length") else {
+        panic!("a number");
+    };
+    assert!(gate_length > 0.5 && gate_length < 1.0, "{gate_length}");
+    assert_eq!(read(&rig, "seq", "root_note"), 55.0.into());
+    assert_eq!(read(&rig, "seq", "step_count"), 3.0.into());
+}
+
+#[test]
+fn a_step_sequencer_block_renders_while_the_control_locks_are_held() {
+    let mut rig = Rig::new(SEQUENCER);
+    schedule(
+        &mut rig,
+        serde_json::json!({ "schedule": [
+            { "at_step": 0, "module": "seq", "control": "gate_length", "value": 1.0, "ramp_steps": 4 }
+        ]}),
+    );
+    write(&rig, "seq", "root_note", 50.0.into());
+    rig.live.write_input("sched", "clock", 1.0).unwrap();
+
+    assert_eq!(block_with_locks_held(&mut rig, &[]), Ok((0, 0)));
+    assert_eq!(read(&rig, "seq", "root_note"), 50.0.into());
+}
+
+#[test]
+fn a_development_takes_any_whole_number_its_step_sequencer_clamps() {
+    let mut rig = Rig::new(
+        r#"{ "version": "1.0.0",
+        "developments": [{ "name": "phrase", "definition": { "version": "1.0.0",
+            "modules": [{ "id": "seq", "type": "step_sequencer" }], "connections": [],
+            "controls": [{ "name": "root", "module": "seq", "control": "root_note" },
+                         { "name": "steps", "module": "seq", "control": "step_count" }] } }],
+        "modules": [{ "id": "p", "type": "phrase", "config": { "root": 200, "steps": 0 } }],
+        "connections": [] }"#,
+    );
+    let both = |rig: &Rig| (read(rig, "p", "root"), read(rig, "p", "steps"));
+    rig.render(1);
+    assert_eq!(both(&rig), (127.0.into(), 1.0.into()));
+    write(&rig, "p", "steps", 99.0.into());
+    write(&rig, "p", "root", (-4.0).into());
+    rig.render(1);
+    assert_eq!(both(&rig), (0.0.into(), 64.0.into()));
+    assert!(write_refused(&rig, "p", "steps", 2.5.into()));
+}

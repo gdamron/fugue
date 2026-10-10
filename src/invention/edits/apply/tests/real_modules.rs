@@ -691,3 +691,37 @@ fn the_document_and_events_carry_what_a_write_left_after_later_writes() {
         .map(|(_, _, value)| value);
     assert_eq!(announced, Some(live));
 }
+
+#[test]
+fn a_batch_clamps_a_step_sequencers_whole_numbers_and_refuses_fractions() {
+    let mut document = doc(BASE);
+    document.modules.push(crate::ModuleSpec {
+        id: "seq".into(),
+        module_type: "step_sequencer".into(),
+        config: json!({}),
+    });
+    let (mut running, pump) = start_doc(document);
+    running
+        .apply_edits(&[
+            set("seq", "root_note", number(200.0)),
+            set("seq", "step_count", number(0.0)),
+            add("seq2", "step_sequencer", json!({})),
+            set("seq2", "step_count", number(99.0)),
+        ])
+        .expect("the batch commits");
+    pump.block();
+    let read =
+        |running: &RunningInvention, id: &str, key: &str| running.get_control(id, key).unwrap();
+    assert_eq!(read(&running, "seq", "root_note"), number(127.0));
+    assert_eq!(read(&running, "seq", "step_count"), number(1.0));
+    assert_eq!(read(&running, "seq2", "step_count"), number(64.0));
+
+    let refused = running.apply_edits(&[
+        set("seq", "root_note", number(60.0)),
+        set("seq", "step_count", number(2.5)),
+    ]);
+    assert!(refused.is_err());
+    pump.block();
+    // Nothing applied.
+    assert_eq!(read(&running, "seq", "root_note"), number(127.0));
+}
