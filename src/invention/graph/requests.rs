@@ -311,7 +311,7 @@ impl SignalGraph {
                 take_automation(instance.module_mut());
                 apply_declared(instance.module_mut(), control, value)
             }
-            RequestValue::Payload(payload) => {
+            RequestValue::Payload(payload) | RequestValue::Edit(payload) => {
                 retirer.retire(payload);
                 Err(Refusal::Unsupported)
             }
@@ -345,7 +345,7 @@ impl SignalGraph {
         let value = match value {
             RequestValue::Value(RtValue::F32(value)) => value,
             RequestValue::Value(_) => return Err(Refusal::Unsupported),
-            RequestValue::Payload(payload) => {
+            RequestValue::Payload(payload) | RequestValue::Edit(payload) => {
                 retirer.retire(payload);
                 return Err(Refusal::Unsupported);
             }

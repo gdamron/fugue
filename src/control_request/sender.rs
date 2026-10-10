@@ -21,7 +21,12 @@ pub(crate) fn request_channel(
         overflows: EventCounter::new(),
         transport,
     });
-    (RequestSender { queue, shared }, consumer)
+    let sender = RequestSender {
+        queue,
+        shared,
+        reserve: 0,
+    };
+    (sender, consumer)
 }
 
 /// The queue had no room: the request comes back unsent, so a payload it
@@ -37,6 +42,9 @@ pub(crate) struct QueueFull(pub(crate) Request);
 pub(crate) struct RequestSender {
     queue: QueueProducer<Request>,
     shared: Arc<SenderShared>,
+    /// Slots this handle leaves free for handles that may use them (see
+    /// [`Self::reserving`]).
+    reserve: u64,
 }
 
 struct SenderShared {
@@ -48,6 +56,18 @@ struct SenderShared {
 }
 
 impl RequestSender {
+    /// A handle to the same channel that refuses a request ([`QueueFull`])
+    /// unless `reserve` more slots stay free after it, for handles without
+    /// one: a live graph keeps them for structural edits, so a flood of
+    /// control requests never shuts an edit out. Exact while submissions
+    /// are serialized, as a live graph's are (under its publisher).
+    pub(crate) fn reserving(&self, reserve: u64) -> Self {
+        Self {
+            reserve,
+            ..self.clone()
+        }
+    }
+
     /// Assigns `request` the channel's next id, resolves its relative times
     /// and queues it. Lock-free and allocation-free from any thread,
     /// including the audio thread.
@@ -82,7 +102,12 @@ impl RequestSender {
         if let Some(ttl) = request.ttl.take() {
             request.expires = Some(now.saturating_add(ttl));
         }
-        match self.queue.try_push(request) {
+        let pushed = if self.reserve == 0 || self.queue.leaves(self.reserve) {
+            self.queue.try_push(request)
+        } else {
+            Err(request)
+        };
+        match pushed {
             Ok(()) => Ok(id),
             Err(request) => {
                 self.shared.overflows.record();

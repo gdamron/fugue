@@ -3,7 +3,11 @@
 //!
 //! A schedule, pattern, sequence bank, sample or prepared edit is too big to
 //! copy into a request, so a request carries it as a [`Payload`], an erased
-//! shared pointer. The module that applies it keeps it as a [`Shared<T>`].
+//! pointer. Usually it is shared, and the module that applies it keeps it as
+//! a [`Shared<T>`]. A value the audio side must change in place, such as a
+//! prepared graph publication (which is `Send` but not `Sync`), travels
+//! owned instead ([`Payload::owned`]) and is taken out whole
+//! ([`Payload::take_owned`]).
 //!
 //! # Ownership
 //!
@@ -13,8 +17,10 @@
 //!    queue's release/acquire handoff publishes the finished value to the
 //!    audio thread.
 //! 3. On the audio side every `Payload` leaves by exactly one of two
-//!    routes: [`Payload::downcast`] into the `Shared<T>` a module keeps, or
-//!    [`Retirer::retire`] (superseded, wrong type, target gone, ...). The
+//!    routes: [`Payload::downcast`] into the `Shared<T>` a module keeps (or
+//!    [`Payload::take_owned`] into the box its taker owns, which then
+//!    leaves by retirement too), or [`Retirer::retire`] (superseded, wrong
+//!    type, target gone, ...). The
 //!    value a module replaces is retired too, and so is every audio-side
 //!    clone of a `Shared<T>`. No accessor hands out the raw [`Arc`], so a
 //!    clone cannot escape this rule.
@@ -83,26 +89,60 @@ pub(crate) const MAX_RETIRES_PER_REQUEST: usize = 2;
 
 /// The erased, single-owner handle a request carries. Not `Clone`: it is
 /// moved through the request queue and leaves the audio side by
-/// [`Self::downcast`] or [`Retirer::retire`].
-pub(crate) struct Payload(Option<Arc<dyn Any + Send + Sync>>);
+/// [`Self::downcast`], [`Self::take_owned`] or [`Retirer::retire`].
+pub(crate) struct Payload(Option<Erased>);
+
+/// What a [`Payload`] points to.
+enum Erased {
+    /// A value a module keeps as a [`Shared<T>`].
+    Shared(Arc<dyn Any + Send + Sync>),
+    /// A value its taker owns outright and may change in place.
+    Owned(Box<dyn Any + Send>),
+}
 
 impl Payload {
-    /// Wraps `value`. Control thread only: allocates.
+    /// Wraps `value` to share. Control thread only: allocates.
     pub(crate) fn new<T: Send + Sync + 'static>(value: T) -> Self {
-        Self(Some(Arc::new(value)))
+        Self(Some(Erased::Shared(Arc::new(value))))
+    }
+
+    /// Wraps a boxed `value` to hand over whole. Converting the box never
+    /// allocates; the box itself was built on a control thread.
+    pub(crate) fn owned<T: Send + 'static>(value: Box<T>) -> Self {
+        Self(Some(Erased::Owned(value)))
     }
 
     /// Whether the payload holds a `T`.
     pub(crate) fn is<T: 'static>(&self) -> bool {
-        self.0.as_deref().is_some_and(|value| value.is::<T>())
+        match &self.0 {
+            Some(Erased::Shared(value)) => value.is::<T>(),
+            Some(Erased::Owned(value)) => value.is::<T>(),
+            None => false,
+        }
     }
 
     /// The payload as the typed handle a module keeps, or the payload back
-    /// when it holds another type. Allocation- and free-free.
+    /// when it holds another type or an owned value. Allocation- and
+    /// free-free.
     pub(crate) fn downcast<T: Send + Sync + 'static>(mut self) -> Result<Shared<T>, Payload> {
-        match take(&mut self.0).downcast::<T>() {
-            Ok(value) => Ok(Shared(Some(value))),
-            Err(value) => Err(Self(Some(value))),
+        match take(&mut self.0) {
+            Erased::Shared(value) => match value.downcast::<T>() {
+                Ok(value) => Ok(Shared(Some(value))),
+                Err(value) => Err(Self(Some(Erased::Shared(value)))),
+            },
+            owned => Err(Self(Some(owned))),
+        }
+    }
+
+    /// The owned value, or the payload back when it holds another type or
+    /// a shared value. The box leaves the audio side by retirement
+    /// ([`Retired::from`]), like a payload. Allocation- and free-free.
+    pub(crate) fn take_owned<T: Send + 'static>(mut self) -> Result<Box<T>, Payload> {
+        match take(&mut self.0) {
+            Erased::Owned(value) => value
+                .downcast::<T>()
+                .map_err(|value| Self(Some(Erased::Owned(value)))),
+            shared => Err(Self(Some(shared))),
         }
     }
 }
@@ -111,7 +151,7 @@ impl<T: Send + Sync + 'static> From<Shared<T>> for Payload {
     /// Sends a value the control side keeps a handle on.
     fn from(mut shared: Shared<T>) -> Self {
         let value = take(&mut shared.0);
-        Self(Some(value))
+        Self(Some(Erased::Shared(value)))
     }
 }
 
@@ -188,7 +228,10 @@ impl<T: Send + Sync + 'static> From<Arc<T>> for Retired {
 
 impl From<Payload> for Retired {
     fn from(mut payload: Payload) -> Self {
-        Self::Shared(take(&mut payload.0))
+        match take(&mut payload.0) {
+            Erased::Shared(value) => Self::Shared(value),
+            Erased::Owned(value) => Self::Owned(value),
+        }
     }
 }
 
