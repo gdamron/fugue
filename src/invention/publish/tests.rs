@@ -16,6 +16,7 @@ mod migrated;
 mod null_backend;
 mod pilot;
 pub(crate) mod probe;
+mod request_beats;
 mod request_intake;
 mod request_payloads;
 mod request_races;
