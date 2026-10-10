@@ -34,6 +34,7 @@ mod pending;
 mod queue;
 mod request;
 mod sender;
+mod timeline;
 mod transport;
 
 /// The atomics and cell the queue is built on. The loom models compile the
@@ -71,9 +72,9 @@ pub(crate) use automation::{take_automation, Automation};
 pub(crate) use cells::{apply_declared, ControlCells};
 pub(crate) use declare::{ControlDecl, ControlTable, DeclKind, Writer};
 pub(crate) use event::{EventCounter, EventCursor};
+pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
 pub(crate) use legacy::LEGACY_CONTROLS;
 pub(crate) use local::{local_controls, local_get, local_set};
-pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
 pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
 pub(crate) use pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::{bounded, QueueConsumer, QueueProducer};
@@ -81,6 +82,7 @@ pub(crate) use request::{
     ControlIndex, ControlTarget, Intent, Request, RequestId, RequestValue, RtValue, Source, When,
 };
 pub(crate) use sender::{request_channel, QueueFull, RequestSender};
+pub(crate) use timeline::{first_sample_reaching, Timeline, BEFORE_START};
 pub(crate) use transport::Transport;
 
 #[cfg(test)]
