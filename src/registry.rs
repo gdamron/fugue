@@ -193,6 +193,28 @@ impl ModuleRegistry {
             .unwrap_or(&[])
     }
 
+    /// The config keys only a reload reads for `type_id` (see
+    /// [`ModuleFactory::reload_keys`]); none for an unknown type.
+    pub fn reload_keys(&self, type_id: &str) -> &'static [&'static str] {
+        self.factories
+            .get(type_id)
+            .map(|f| f.reload_keys())
+            .unwrap_or(&[])
+    }
+
+    /// The control writes a reload makes to a kept module of `type_id` (see
+    /// [`ModuleFactory::writes_on_reload`]); none for an unknown type.
+    pub fn writes_on_reload(
+        &self,
+        type_id: &str,
+        config: &serde_json::Value,
+    ) -> Vec<(&'static str, crate::ControlValue)> {
+        self.factories
+            .get(type_id)
+            .map(|f| f.writes_on_reload(config))
+            .unwrap_or_default()
+    }
+
     /// Returns an iterator over registered type identifiers.
     pub fn types(&self) -> impl Iterator<Item = &str> + '_ {
         self.factories.keys().map(String::as_str)

@@ -9,7 +9,7 @@ use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
-use crate::Module;
+use crate::{ControlValue, Module};
 
 use self::controls::{BPM, GATE_LENGTH, POSITION, RESET, TABLE};
 
@@ -24,6 +24,7 @@ pub struct ClockFactory;
 const TYPE_ID: &str = "clock";
 const BPM_KEY: ConfigKey = ConfigKey::float("bpm");
 const GATE_LENGTH_KEY: ConfigKey = ConfigKey::float("gate_length");
+const RESET_ON_RELOAD_KEY: ConfigKey = ConfigKey::boolean("reset_on_reload");
 
 impl ModuleFactory for ClockFactory {
     fn type_id(&self) -> &'static str {
@@ -31,7 +32,15 @@ impl ModuleFactory for ClockFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const { &[BPM_KEY, GATE_LENGTH_KEY] }
+        const { &[BPM_KEY, GATE_LENGTH_KEY, RESET_ON_RELOAD_KEY] }
+    }
+
+    fn writes_on_reload(&self, config: &serde_json::Value) -> Vec<(&'static str, ControlValue)> {
+        timeline::writes_on_reload(config)
+    }
+
+    fn reload_keys(&self) -> &'static [&'static str] {
+        const { &[RESET_ON_RELOAD_KEY.key] }
     }
 
     fn build(
@@ -42,6 +51,7 @@ impl ModuleFactory for ClockFactory {
         let reader = ConfigReader::new(TYPE_ID, config);
         let bpm = reader.float(&BPM_KEY)?.map_or(120.0, f64::from);
         let gate_length = reader.float(&GATE_LENGTH_KEY)?.map_or(0.25, f64::from);
+        timeline::reset_on_reload(config)?;
 
         let clock = Clock::with_gate_length(sample_rate, bpm, gate_length);
         let surface = DeclaredSurface::new(TABLE.clone(), clock.cells.clone());
@@ -79,7 +89,8 @@ impl ModuleFactory for ClockFactory {
 /// next sample is at position 0 exactly, so a reset every `N` beats loops
 /// them `N` beats long to the sample. (A new clock's first sample is one
 /// sample past 0, as it has always been.) The read-only
-/// `position` control reports it.
+/// `position` control reports it. A reload keeps the position of a clock it
+/// keeps, unless the clock's config sets `reset_on_reload`.
 pub struct Clock {
     sample_rate: u32,
     // Controls, applied on the thread running the clock.

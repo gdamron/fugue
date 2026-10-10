@@ -1,8 +1,10 @@
-//! The clock's beat timeline: its position and its reset.
+//! The clock's beat timeline: its position, its reset, and what a reload
+//! does to it.
 
 use crate::control_request::{first_sample_reaching, Timeline, BEFORE_START};
+use crate::ControlValue;
 
-use super::Clock;
+use super::{Clock, RESET_ON_RELOAD_KEY, TYPE_ID};
 
 impl Clock {
     /// Returns the clock to beat 0: its next sample is at position 0, the
@@ -70,6 +72,29 @@ impl Timeline for Clock {
 
     fn beats_before(&self) -> u64 {
         self.beats_before
+    }
+}
+
+/// Whether a reload resets a clock it keeps (config `reset_on_reload`,
+/// default false: a reload keeps the beat position, so an edit lands
+/// without a jump in the pulse).
+pub(super) fn reset_on_reload(config: &serde_json::Value) -> Result<bool, String> {
+    match config.get(RESET_ON_RELOAD_KEY.key) {
+        None | Some(serde_json::Value::Null) => Ok(false),
+        Some(serde_json::Value::Bool(reset)) => Ok(*reset),
+        Some(other) => Err(format!(
+            "{TYPE_ID} config '{}' must be true or false, not {other}",
+            RESET_ON_RELOAD_KEY.key
+        )),
+    }
+}
+
+/// The writes a reload makes to a clock it keeps: a reset when its config
+/// asks for one.
+pub(super) fn writes_on_reload(config: &serde_json::Value) -> Vec<(&'static str, ControlValue)> {
+    match reset_on_reload(config) {
+        Ok(true) => vec![("reset", ControlValue::Bool(true))],
+        _ => Vec::new(),
     }
 }
 

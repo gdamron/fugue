@@ -65,7 +65,10 @@ pub(super) fn plan_edits(
         &state.connections,
         &candidate.document,
         &HashSet::new(),
-        |module_type| registry.config_keys(module_type),
+        |module_type| {
+            let keys = registry.config_keys(module_type);
+            (keys, registry.reload_keys(module_type))
+        },
         |_, _| None,
         |module_id, key| written.contains(&(module_id, key)),
     )
