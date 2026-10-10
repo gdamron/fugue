@@ -47,6 +47,14 @@ enum Goal {
     /// A position, as of when the clock had begun `beats_before` beats
     /// before its latest reset (see [`Timeline::beats_before`]).
     Count { position: f64, beats_before: u64 },
+    /// [`BeatSpec::Grid`], and the beat it waits for next as of
+    /// `beats_before`, once looked for.
+    Grid {
+        every: f64,
+        offset: f64,
+        repeat: bool,
+        next: Option<(f64, u64)>,
+    },
 }
 
 struct Watch {
@@ -54,12 +62,14 @@ struct Watch {
     /// Its clock, in the order of its target's generation.
     clock: usize,
     goal: Goal,
+    /// The sample it last applied at, if it repeats.
+    applied: Option<u64>,
 }
 
 impl Watch {
     /// The position it waits for, and whether it was set just now (so a
     /// clock already past it has not missed it).
-    fn target(&mut self, timeline: &dyn Timeline) -> (f64, bool) {
+    fn target(&mut self, timeline: &dyn Timeline, now: u64) -> (f64, bool) {
         let begun = timeline.beats_before();
         match self.goal {
             Goal::After(beats) => {
@@ -85,8 +95,50 @@ impl Watch {
                 };
                 (position - begun.saturating_sub(beats_before) as f64, true)
             }
+            Goal::Grid {
+                next: Some((next, beats_before)),
+                ..
+            } if beats_before == begun => (next, false),
+            // Set again after a reset, from the new beat 0.
+            Goal::Grid {
+                every,
+                offset,
+                repeat,
+                ..
+            } => {
+                let from = if self.applied == Some(now) {
+                    timeline.position_after(1)
+                } else {
+                    timeline.position()
+                };
+                let next = grid_after(from, every, offset);
+                self.goal = Goal::Grid {
+                    every,
+                    offset,
+                    repeat,
+                    next: Some((next, begun)),
+                };
+                (next, true)
+            }
         }
     }
+
+    fn repeats(&self) -> bool {
+        matches!(self.goal, Goal::Grid { repeat: true, .. })
+    }
+}
+
+/// The least `offset + m * every` past `from`.
+fn grid_after(from: f64, every: f64, offset: f64) -> f64 {
+    let offset = offset.rem_euclid(every);
+    let mut m = ((from - offset) / every).floor() + 1.0;
+    if offset + (m - 1.0) * every > from {
+        m -= 1.0;
+    }
+    if offset + m * every <= from {
+        m += 1.0;
+    }
+    offset + m * every
 }
 
 /// The sample a clock now past `target` reached it at, estimated at its
@@ -104,6 +156,11 @@ fn missed_at(timeline: &dyn Timeline, target: f64, now: u64) -> u64 {
     };
     now.saturating_sub(past.saturating_add(1))
 }
+
+/// The finest repeating grid, in beats (a 256th note): each application
+/// ends a segment, so a finer one would split every block into a few
+/// samples for as long as it runs.
+pub(crate) const MIN_REPEAT_STEP: f32 = 1.0 / 64.0;
 
 /// Requests waiting for a beat, in receipt order. Single-threaded (the
 /// audio thread), allocated once on a control thread and never grown.
@@ -134,15 +191,31 @@ impl Watches {
         self.entries.len() >= self.limit
     }
 
-    /// Refuses a beat no clock can reach: a span that is not finite, or
-    /// negative.
+    /// Refuses a beat no clock can reach (a span or grid that is not
+    /// finite, a negative span, a grid step that is not positive), a
+    /// repeating grid finer than [`MIN_REPEAT_STEP`], and a repeating
+    /// payload, which applies once.
     pub(crate) fn check(request: &Request) -> Result<(), Refusal> {
-        match request.when {
-            When::Beat(beat) => match beat.spec {
-                BeatSpec::After(beats) if beats.is_finite() && beats >= 0.0 => Ok(()),
-                BeatSpec::After(_) => Err(Refusal::Invalid),
-            },
-            _ => Err(Refusal::Unsupported),
+        let When::Beat(beat) = request.when else {
+            return Err(Refusal::Unsupported);
+        };
+        match beat.spec {
+            BeatSpec::After(beats) if beats.is_finite() && beats >= 0.0 => Ok(()),
+            BeatSpec::Grid { every, offset, .. }
+                if !(every.is_finite() && every > 0.0 && offset.is_finite()) =>
+            {
+                Err(Refusal::Invalid)
+            }
+            BeatSpec::Grid {
+                every,
+                repeat: true,
+                ..
+            } if every < MIN_REPEAT_STEP => Err(Refusal::Invalid),
+            BeatSpec::Grid { repeat: true, .. } if request.value.is_payload() => {
+                Err(Refusal::Unsupported)
+            }
+            BeatSpec::Grid { .. } => Ok(()),
+            BeatSpec::After(_) => Err(Refusal::Invalid),
         }
     }
 
@@ -158,11 +231,22 @@ impl Watches {
         }
         let goal = match beat.spec {
             BeatSpec::After(beats) => Goal::After(f64::from(beats)),
+            BeatSpec::Grid {
+                every,
+                offset,
+                repeat,
+            } => Goal::Grid {
+                every: f64::from(every),
+                offset: f64::from(offset),
+                repeat,
+                next: None,
+            },
         };
         self.entries.push(Watch {
             request,
             clock,
             goal,
+            applied: None,
         });
     }
 
@@ -206,8 +290,17 @@ impl Watches {
                 (None, _) => Refusal::TargetGone,
                 (_, None) => Refusal::TimelineGone,
             };
-            let watch = self.entries.remove(i);
-            outcomes.settle(watch.request, Outcome::Refused(refusal));
+            self.end(i, outcomes, Outcome::Refused(refusal));
+        }
+    }
+
+    /// Removes watch `i`, settling it with `outcome`, unless it repeats and
+    /// has applied: it settled then, at its first application, and ends
+    /// silently. Allocation- and free-free.
+    fn end(&mut self, i: usize, outcomes: &mut Outcomes, outcome: Outcome) {
+        let watch = self.entries.remove(i);
+        if watch.applied.is_none() {
+            outcomes.settle(watch.request, outcome);
         }
     }
 
@@ -236,7 +329,9 @@ impl Watches {
     /// whose clock has no timeline. Returns whether any applied, which may
     /// have moved a clock (a reset or tempo timed on beats), so the caller
     /// passes again until none does, and how many samples until the next
-    /// may, as far as the clocks' tempi now say. Allocation- and free-free.
+    /// may, as far as the clocks' tempi now say. A repeating watch applies
+    /// at most once per sample, and settles at its first application only.
+    /// Allocation- and free-free.
     pub(crate) fn pass(
         &mut self,
         now: u64,
@@ -254,23 +349,37 @@ impl Watches {
                 continue;
             }
             if expired(&watch.request, now) {
-                let watch = self.entries.remove(i);
-                outcomes.settle(watch.request, Outcome::Refused(Refusal::Expired));
+                self.end(i, outcomes, Outcome::Refused(Refusal::Expired));
                 continue;
             }
             let Some(timeline) = host.timeline(watch.clock) else {
-                let watch = self.entries.remove(i);
-                outcomes.settle(watch.request, Outcome::Refused(Refusal::NoTimeline));
+                self.end(i, outcomes, Outcome::Refused(Refusal::NoTimeline));
                 continue;
             };
-            let (beat, fresh) = watch.target(timeline);
-            let due = if !fresh && timeline.position() >= beat {
-                missed_at(timeline, beat, now)
+            let (beat, fresh) = watch.target(timeline, now);
+            if beat.is_nan() || timeline.position().is_nan() {
+                // A clock whose position is no number reaches no beat.
+                self.end(i, outcomes, Outcome::Refused(Refusal::Invalid));
+                continue;
+            }
+            // A repeat applies once a sample at most, however its grid's
+            // arithmetic rounds (a position past f64's integers stands
+            // still), so the passes end.
+            let again = watch.applied == Some(now);
+            let due = if again {
+                None
+            } else if !fresh && timeline.position() >= beat {
+                Some(missed_at(timeline, beat, now))
             } else if timeline.position_after(1) >= beat {
-                now
+                Some(now)
             } else {
+                None
+            };
+            let Some(due) = due else {
                 if let Some(samples) = timeline.samples_until(beat) {
-                    let samples = samples - 1;
+                    // Up to the sample before it reaches the beat; a
+                    // repeat that applied now waits a sample at least.
+                    let samples = (samples - 1).max(1);
                     wait = Some(wait.map_or(samples, |wait| wait.min(samples)));
                 }
                 i += 1;
@@ -284,6 +393,25 @@ impl Watches {
             };
             if due == now {
                 host.latch(watch.clock);
+            }
+            if let (true, RequestValue::Value(value)) = (watch.repeats(), &watch.request.value) {
+                let value = RequestValue::Value(*value);
+                let result = host.apply(&watch.request.target, value, &mut outcomes.retirer);
+                if result.is_err() {
+                    self.end(i, outcomes, outcome(result));
+                    continue;
+                }
+                // Settled at its first application only: the outcome
+                // queue holds one per request, and a repeat runs on.
+                if watch.applied.is_none() {
+                    outcomes.record(watch.request.id, false, outcome(result));
+                }
+                watch.applied = Some(now);
+                if let Goal::Grid { next, .. } = &mut watch.goal {
+                    *next = None;
+                }
+                i += 1;
+                continue;
             }
             let Request {
                 target, value, id, ..
