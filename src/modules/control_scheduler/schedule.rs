@@ -88,10 +88,12 @@ pub(crate) fn parse_schedule(value: &serde_json::Value) -> Result<Vec<ScheduleEn
     Ok(entries)
 }
 
-/// One `{ at_step, bpm }` entry of a score tempo map, as spliced in from a
-/// `fugue.score.v1` asset. Kept local (rather than importing the score type)
-/// so the module layer stays independent of the score/invention layer.
+/// One `{ at_step, bpm, ramp_steps? }` entry of a score tempo map, as spliced
+/// in from a `fugue.score.v1` asset. Kept local (rather than importing the
+/// score type) so the module layer stays independent of the score/invention
+/// layer. Closed like the score's own point, so an old key is refused.
 #[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TempoMapPoint {
     #[serde(deserialize_with = "serde_whole::whole")]
     at_step: u64,
@@ -99,17 +101,17 @@ struct TempoMapPoint {
     /// Optional gradual glide to `bpm` over this many steps (ritardando /
     /// accelerando); absent = an instantaneous change.
     #[serde(default, deserialize_with = "serde_whole::optional_whole")]
-    ramp: Option<u64>,
+    ramp_steps: Option<u64>,
 }
 
 /// Compiles a score tempo map into schedule entries that write a clock's tempo
 /// control at each change's step boundary.
 ///
-/// Each `{ at_step, bpm, ramp? }` becomes `{ at_step, module, control,
-/// value: bpm * tempo_scale, ramp_steps: ramp? }`. `tempo_scale` is the invention's
+/// Each `{ at_step, bpm, ramp_steps? }` becomes `{ at_step, module, control,
+/// value: bpm * tempo_scale, ramp_steps? }`. `tempo_scale` is the invention's
 /// interpretation knob (default `1.0`): the score records the notated
 /// quarter-note tempo, and the invention decides how its clock realizes it. An
-/// entry's optional `ramp` glides the tempo over that many steps (ritardando /
+/// entry's optional `ramp_steps` glides the tempo over that many steps (ritardando /
 /// accelerando); without it the change is an instantaneous step at its
 /// boundary.
 pub(crate) fn compile_tempo_map(
@@ -135,10 +137,10 @@ pub(crate) fn compile_tempo_map(
                 point.at_step, value
             ));
         }
-        if let Some(ramp) = point.ramp {
+        if let Some(ramp) = point.ramp_steps {
             if ramp < 1 {
                 return Err(format!(
-                    "tempo_map entry at step {}: ramp must be at least 1 step",
+                    "tempo_map entry at step {}: ramp_steps must be at least 1 step",
                     point.at_step
                 ));
             }
@@ -148,7 +150,7 @@ pub(crate) fn compile_tempo_map(
             module: module.to_string(),
             control: control.to_string(),
             value: ScheduleValue::Number(value),
-            ramp_steps: point.ramp,
+            ramp_steps: point.ramp_steps,
         });
     }
     Ok(entries)

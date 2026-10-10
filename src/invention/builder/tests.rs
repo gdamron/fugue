@@ -262,7 +262,7 @@ fn resolves_relative_asset_refs_in_module_configs() {
 
     std::fs::write(
         dir.join("score.json"),
-        r#"{"base_note_hint":48,"cells":[[{"note":0},{"note":null}],[{"note":12}]]}"#,
+        r#"{"root_note":48,"cells":[[{"note":0},{"note":null}],[{"note":12}]]}"#,
     )
     .unwrap();
 
@@ -284,7 +284,7 @@ fn resolves_relative_asset_refs_in_module_configs() {
                 id: "seq".to_string(),
                 module_type: "cell_sequencer".to_string(),
                 config: serde_json::json!({
-                    "root_note": { "$asset": "score", "path": "/base_note_hint" },
+                    "root_note": { "$asset": "score", "path": "/root_note" },
                     "cells": { "$asset": "score", "path": "/cells" },
                 }),
             },
@@ -294,7 +294,7 @@ fn resolves_relative_asset_refs_in_module_configs() {
                 module_type: "code".to_string(),
                 config: serde_json::json!({
                     "params": {
-                        "metadata": [{ "source": { "$asset": "score", "path": "/base_note_hint" } }]
+                        "metadata": [{ "source": { "$asset": "score", "path": "/root_note" } }]
                     }
                 }),
             },

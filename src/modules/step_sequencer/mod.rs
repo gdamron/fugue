@@ -75,7 +75,7 @@ use grace::{
     MIN_GRACE_DURATION,
 };
 pub(crate) use parse::{parse_pattern, parse_step, StepError};
-pub use step::{GraceChain, Step, MAX_GRACE_NOTES};
+pub use step::{GraceChain, Step, MAX_GRACE_NOTES, STEP_KEYS};
 
 /// Default number of steps in a pattern.
 pub const DEFAULT_STEPS: usize = 16;

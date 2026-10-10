@@ -7,6 +7,10 @@ use super::*;
 /// trills/mordents territory, out of scope for the grace field.
 pub const MAX_GRACE_NOTES: usize = 4;
 
+/// The keys a step object may carry. A step is closed, so a pattern written
+/// with an old field name is refused instead of silently losing that field.
+pub const STEP_KEYS: &[&str] = &["note", "gate", "held", "velocity", "grace"];
+
 /// A fixed-capacity chain of grace-note offsets decorating a note step.
 ///
 /// Offsets are semitones from the sequencer's base note (same convention as
@@ -68,10 +72,10 @@ pub struct Step {
     pub gate_length: Option<f32>,
     /// Continue the previous active note without retriggering.
     pub held: bool,
-    /// Optional amplitude for this step (0.0-1.0), from the score's
+    /// Optional velocity for this step (0.0-1.0), from the score's
     /// dynamics. If None, the sequencer's velocity output stays at full
     /// (1.0).
-    pub amplitude: Option<f32>,
+    pub velocity: Option<f32>,
     /// Grace notes decorating this step, empty for most steps. Only
     /// meaningful on note steps; how the chain is realized (timing,
     /// velocity) is the sequencer's interpretation, not the pattern's.
@@ -85,7 +89,7 @@ impl Step {
             note: Some(offset),
             gate_length: None,
             held: false,
-            amplitude: None,
+            velocity: None,
             grace: GraceChain::default(),
         }
     }
@@ -112,7 +116,7 @@ impl Step {
             note: None,
             gate_length: None,
             held: false,
-            amplitude: None,
+            velocity: None,
             grace: GraceChain::default(),
         }
     }
@@ -155,15 +159,15 @@ impl Serialize for Step {
 
         let entries = 1
             + usize::from(self.gate_length.is_some())
-            + usize::from(self.amplitude.is_some())
+            + usize::from(self.velocity.is_some())
             + usize::from(!self.grace.is_empty());
         let mut map = serializer.serialize_map(Some(entries))?;
         map.serialize_entry("note", &self.note)?;
         if let Some(gate_length) = self.gate_length {
             map.serialize_entry("gate", &gate_length)?;
         }
-        if let Some(amplitude) = self.amplitude {
-            map.serialize_entry("amplitude", &amplitude)?;
+        if let Some(velocity) = self.velocity {
+            map.serialize_entry("velocity", &velocity)?;
         }
         if !self.grace.is_empty() {
             let offsets: Vec<i8> = self.grace.iter().collect();

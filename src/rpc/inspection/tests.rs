@@ -33,7 +33,7 @@ fn layered() -> AuthoredSnapshot {
     let mut connections = Vec::new();
     for i in 0..32 {
         modules.push(json!({"id":format!("voice_{i}"),"type":"voice","config":{"attack":0.01}}));
-        modules.push(json!({"id":format!("sequence_{i}"),"type":"cell_sequencer","config":{"cells":[(0..128).map(|n| json!({"note":n%12,"amplitude":0.75,"gate_length":0.8})).collect::<Vec<_>>()],"root_note":{"$asset":"harmony","path":"/base_note"}}}));
+        modules.push(json!({"id":format!("sequence_{i}"),"type":"cell_sequencer","config":{"cells":[(0..128).map(|n| json!({"note":n%12,"velocity":0.75})).collect::<Vec<_>>()],"root_note":{"$asset":"harmony","path":"/base_note"}}}));
         connections.extend([
             json!({"from":"clock","to":format!("sequence_{i}"),"from_port":"beat_x4","to_port":"clock"}),
             json!({"from":format!("sequence_{i}"),"to":format!("voice_{i}"),"from_port":"frequency","to_port":"frequency"}),

@@ -6,7 +6,7 @@ description: Transcribe a score PDF into a validated fugue.score.v1 asset. Use w
 # Import score from PDF
 
 Turn a notated score **PDF** into a `fugue.score.v1` asset (a bank of cells in the
-`{ note, gate, held, amplitude, grace }` step shape the sequencers consume).
+`{ note, gate, held, velocity, grace }` step shape the sequencers consume).
 
 This skill is **cross-platform**: the rendering/anchor step is a plain script
 (`scripts/prep_pdf.sh` for macOS/Linux/WSL, `scripts/prep_pdf.ps1` for Windows).
@@ -73,7 +73,7 @@ Read `info.txt` and `text.txt` to populate the score's metadata:
 - `tempo` — from a marking like "♩ = 120" / "ca. 120".
 - `time_signature` — `{ beats_per_measure, beat_unit }`.
 - `key` — free-form (e.g. "Ab major").
-- `base_note_hint` — a MIDI note the step offsets are relative to (pick a register
+- `root_note` — a MIDI note the step offsets are relative to (pick a register
   anchor, e.g. 48/60).
 - `rhythm_grid` — the smallest subdivision you will quantize to (e.g. "16th_note").
 
@@ -89,29 +89,29 @@ cells aligned to the `rhythm_grid`.
 Each step is one of:
 
 - `null` — a rest.
-- an integer — a note, as a semitone offset from `base_note_hint`.
-- `{ "note": <int|null>, "gate": <0..1>, "held": <bool>, "amplitude": <0..1>, "grace": [<int>, …] }` —
+- an integer — a note, as a semitone offset from `root_note`.
+- `{ "note": <int|null>, "gate": <0..1>, "held": <bool>, "velocity": <0..1>, "grace": [<int>, …] }` —
   `held: true` continues the previous note without retriggering (ties / sustains);
-  `note: null` is a rest; `gate` shortens the step's duration; `amplitude` is the
+  `note: null` is a rest; `gate` shortens the step's duration; `velocity` is the
   dynamic level at this onset; `grace` is the step's grace-note chain.
 
 **Grace notes**: the small slashed or small-head notes (acciaccaturas /
 appoggiaturas) attach to the note step they decorate as a `grace` array of
-semitone offsets from `base_note_hint`, in played order (the last grace
+semitone offsets from `root_note`, in played order (the last grace
 resolves into the principal). They are off the grid by definition: never give
 a grace its own step or grid time, and never widen the `rhythm_grid` to fit
 one. At most four per step; only note steps may carry `grace`. How a chain
 sounds — timing, whether it steals from the previous beat, velocity — is the
 sequencer's interpretation, not the score's.
 
-**Dynamics**: capture dynamic marks (pp…fff) and hairpins as per-step `amplitude`
-on note onsets, using the canonical mark → amplitude table in the score module
+**Dynamics**: capture dynamic marks (pp…fff) and hairpins as per-step `velocity`
+on note onsets, using the canonical mark → velocity table in the score module
 docs (`src/invention/score.rs`, "Dynamics") — each mark's conventional MIDI
 velocity / 127 (p = 49/127 ≈ 0.386, mf = 80/127 ≈ 0.630, fff = 126/127 ≈ 0.992, …).
 A mark holds until the next dynamic event; a hairpin interpolates linearly from
 its start level to the next mark (one mark level up/down when no target follows).
 Dynamics are part-level: a piano `p` governs both staves. Only note onsets carry
-`amplitude` — held continuations and rests never do; notes before the first mark
+`velocity` — held continuations and rests never do; notes before the first mark
 carry none.
 
 Assemble the `fugue.score.v1` document:
@@ -121,7 +121,7 @@ Assemble the `fugue.score.v1` document:
   "schema": "fugue.score.v1",
   "title": "…", "composer": "…", "key": "…",
   "tempo": 120, "time_signature": { "beats_per_measure": 4, "beat_unit": 4 },
-  "base_note_hint": 48, "rhythm_grid": "16th_note",
+  "root_note": 48, "rhythm_grid": "16th_note",
   "cells": [ [ 0, { "held": true }, 7, null ], [ … ] ]
 }
 ```
@@ -142,12 +142,14 @@ If the CLI is not available, self-check the same shape the validator enforces
 (`src/invention/score.rs::validate_score` in the `fugue` crate):
 
 - top-level is an object; if `schema` is present it must be `"fugue.score.v1"`;
+- the document, its steps and its `tempo_map` points carry only the documented
+  keys (an unknown key, such as an old `amplitude`, is refused);
 - `cells` is present and non-empty, and every cell is non-empty;
 - every step is `null`, an integer in `-128..=127`, or an object whose `note` is
-  an integer/null and `gate` and `amplitude` are in `0..1`; a `held` step carries
+  an integer/null and `gate` and `velocity` are in `0..1`; a `held` step carries
   only `{ "held": true }`; `grace` is a non-empty array of at most 4 integers in
   `-128..=127`, only on steps with an integer `note`;
-- `base_note_hint` is `0..=127`; `tempo` > 0; time-signature fields are positive.
+- `root_note` is `0..=127`; `tempo` > 0; time-signature fields are positive.
 
 ## 5 — Self-verify (numeric guards) and iterate
 
@@ -158,7 +160,7 @@ Before declaring done, cross-check the transcription against what the page shows
 - **Note density** — steps-per-system is plausible (no silently empty or overfull
   cells).
 - **Dynamics coverage** — every dynamic mark and hairpin on the page appears in
-  the amplitude sequence (spot-check section boundaries and climaxes).
+  the velocity sequence (spot-check section boundaries and climaxes).
 
 Fix mismatches and repeat from step 3 until the guards pass.
 

@@ -29,7 +29,7 @@ fn score(cells: Vec<Vec<(Option<i8>, usize)>>) -> Score {
         .collect();
     Score {
         schema: Some(crate::invention::score::SCORE_SCHEMA_V1.to_string()),
-        base_note_hint: Some(60),
+        root_note: Some(60),
         rhythm_grid: Some("16th_note".to_string()),
         time_signature: Some(TimeSignature {
             beats_per_measure: 4,
@@ -154,12 +154,12 @@ fn total_duration_mismatch_is_reported() {
 }
 
 #[test]
-fn base_note_hints_normalize_to_absolute_pitch() {
+fn root_notes_normalize_to_absolute_pitch() {
     // Same sounding note written relative to different base notes.
     let mut reference = score(vec![vec![(Some(0), 4)]]);
-    reference.base_note_hint = Some(60);
+    reference.root_note = Some(60);
     let mut candidate = score(vec![vec![(Some(-12), 4)]]);
-    candidate.base_note_hint = Some(72);
+    candidate.root_note = Some(72);
     let report = compare_scores(&candidate, &reference).expect("comparable");
     assert!(report.exact, "{:?}", report);
 }
@@ -241,11 +241,11 @@ fn grace_chain_order_matters() {
 
 #[test]
 fn grace_chains_compare_as_absolute_pitches_across_base_hints() {
-    // Same sounding music, different base_note_hint: offsets differ but the
+    // Same sounding music, different root_note: offsets differ but the
     // absolute grace pitches agree.
     let reference = with_grace(score(vec![vec![(Some(12), 8)]]), 0, 0, &[10]);
     let mut candidate = with_grace(score(vec![vec![(Some(0), 8)]]), 0, 0, &[-2]);
-    candidate.base_note_hint = Some(72);
+    candidate.root_note = Some(72);
     let report = compare_scores(&candidate, &reference).expect("comparable");
     assert_eq!(report.matched, 1);
     assert_eq!(report.grace_matches, 1);

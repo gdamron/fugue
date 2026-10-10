@@ -659,7 +659,7 @@ fn pattern_numbers_read_whole_floats_as_written() {
     assert_eq!(pattern[0].note, Some(2));
     assert_eq!(pattern[0].grace.iter().collect::<Vec<_>>(), vec![-1]);
     assert_eq!(pattern[1].note, Some(4));
-    // Gate and amplitude stay clamped to 0..=1.
+    // Gate and velocity stay clamped to 0..=1.
     assert_eq!(
         (pattern[2].note, pattern[2].gate_length),
         (Some(-3), Some(1.0))
@@ -688,7 +688,7 @@ fn pattern_numbers_are_refused_with_their_path() {
         refused(serde_json::json!([{ "note": 0, "grace": [1, 1.5] }]))
             .contains("'pattern[0].grace[1]' expects a whole number")
     );
-    for field in ["gate", "amplitude"] {
+    for field in ["gate", "velocity"] {
         let error = refused(serde_json::json!([{ "note": 0, field: 1e39 }]));
         assert!(
             error.contains(&format!("'pattern[0].{field}' expects a finite number")),
@@ -738,4 +738,17 @@ fn the_pattern_control_reads_step_numbers_by_the_same_rules() {
     assert_eq!(notes, vec![Some(2), Some(3)]);
     let error = write(r#"[{"note": 2.5}]"#).unwrap_err();
     assert!(error.contains("'note' expects a whole number"), "{error}");
+}
+
+#[test]
+fn steps_refuse_unknown_fields() {
+    // A step is closed: the score format's old `amplitude` is refused rather
+    // than silently dropping the step's level.
+    let error = parse_step(&serde_json::json!({"note": 0, "amplitude": 0.5})).unwrap_err();
+    assert!(
+        error.to_string().contains("unknown step field 'amplitude'"),
+        "{error}"
+    );
+    let step = parse_step(&serde_json::json!({"note": 0, "velocity": 0.5})).unwrap();
+    assert_eq!(step.velocity, Some(0.5));
 }

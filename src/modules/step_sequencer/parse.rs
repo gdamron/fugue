@@ -91,6 +91,14 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, StepError> {
 
     // Handle object format
     if let Some(obj) = value.as_object() {
+        if let Some(key) = obj.keys().find(|key| !STEP_KEYS.contains(&key.as_str())) {
+            return Err(format!(
+                "unknown step field '{}' (expected one of: {})",
+                key,
+                STEP_KEYS.join(", ")
+            )
+            .into());
+        }
         let held = match obj.get("held") {
             Some(serde_json::Value::Bool(value)) => *value,
             Some(_) => return Err("held must be a boolean".into()),
@@ -106,7 +114,7 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, StepError> {
 
         let note = number_field(obj, "note", whole_number::<i8>)?;
         let gate_length = number_field(obj, "gate", finite_f32)?.map(|v| v.clamp(0.0, 1.0));
-        let amplitude = number_field(obj, "amplitude", finite_f32)?.map(|v| v.clamp(0.0, 1.0));
+        let velocity = number_field(obj, "velocity", finite_f32)?.map(|v| v.clamp(0.0, 1.0));
 
         let grace = parse_grace(obj.get("grace"), note)?;
 
@@ -114,7 +122,7 @@ pub(crate) fn parse_step(value: &serde_json::Value) -> Result<Step, StepError> {
             note,
             gate_length,
             held: false,
-            amplitude,
+            velocity,
             grace,
         });
     }

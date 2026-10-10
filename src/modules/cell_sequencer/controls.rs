@@ -47,7 +47,7 @@ pub(crate) struct CellSequencerShared {
     /// tempo-independent. Read once per block by the audio thread.
     pub(crate) grace_duration: AtomicF32,
     /// Velocity scale applied to grace notes relative to the decorated
-    /// step's amplitude.
+    /// step's velocity.
     pub(crate) grace_velocity: AtomicF32,
     /// Grace placement (the `grace_placement` control): `false` = before the
     /// beat (steal the previous step's tail; the principal stays on the
@@ -203,7 +203,7 @@ impl CellSequencerControls {
     }
 
     /// Velocity scale applied to grace notes (relative to the decorated
-    /// step's amplitude).
+    /// step's velocity).
     pub fn grace_velocity(&self) -> f32 {
         self.shared.grace_velocity.load()
     }

@@ -2,10 +2,10 @@
 //!
 //! A score is a declarative, general-purpose container for the musical content
 //! of a piece — a bank of `cells`, each a sequence of steps in the same
-//! `{ note, gate, held, amplitude, grace }` shape consumed by [`step_sequencer`] and
+//! `{ note, gate, held, velocity, grace }` shape consumed by [`step_sequencer`] and
 //! [`cell_sequencer`], plus light metadata (title, composer, key, tempo, an
 //! optional tempo map for score-scheduled tempo changes, time signature,
-//! base-note hint, rhythm grid).
+//! root note, rhythm grid).
 //!
 //! A through-composed piece that is a single sequence is just a bank of one
 //! cell (`cells: [[ ...steps... ]]`); a flat-sequence consumer can pull it via
@@ -21,30 +21,29 @@
 //!
 //! # Dynamics
 //!
-//! Notated dynamics are recorded per step as an optional `amplitude` in
-//! `0.0..=1.0` on note steps (the field has always existed in the sequencer
-//! step shape, so this is a v1-compatible extension — scores without dynamics
-//! stay valid and unchanged). The canonical mark → amplitude mapping is the
+//! Notated dynamics are recorded per step as an optional `velocity` in
+//! `0.0..=1.0` on note steps (the same field the sequencers read; scores
+//! without dynamics stay valid). The canonical mark → velocity mapping is the
 //! conventional MIDI velocity for each mark, normalized by 127:
 //!
-//! | mark | velocity | amplitude |
-//! |------|----------|-----------|
-//! | pppp | 10       | 0.079     |
-//! | ppp  | 16       | 0.126     |
-//! | pp   | 33       | 0.260     |
-//! | p    | 49       | 0.386     |
-//! | mp   | 64       | 0.504     |
-//! | mf   | 80       | 0.630     |
-//! | f    | 96       | 0.756     |
-//! | ff   | 112      | 0.882     |
-//! | fff  | 126      | 0.992     |
-//! | ffff | 127      | 1.000     |
+//! | mark | MIDI velocity | velocity |
+//! |------|---------------|----------|
+//! | pppp | 10            | 0.079    |
+//! | ppp  | 16            | 0.126    |
+//! | pp   | 33            | 0.260    |
+//! | p    | 49            | 0.386    |
+//! | mp   | 64            | 0.504    |
+//! | mf   | 80            | 0.630    |
+//! | f    | 96            | 0.756    |
+//! | ff   | 112           | 0.882    |
+//! | fff  | 126           | 0.992    |
+//! | ffff | 127           | 1.000    |
 //!
 //! A mark holds until the next dynamic event. Hairpins (cresc./dim. wedges)
 //! interpolate linearly across their span from the level at the wedge start
 //! to the next explicit mark after the wedge; a hairpin with no following
 //! mark (or one that contradicts its direction) moves one mark level. Only
-//! note onsets carry `amplitude` — held continuations and rests never do; how
+//! note onsets carry `velocity` — held continuations and rests never do; how
 //! a voice realizes the value (level, brightness) is an interpretation
 //! concern, not the score's.
 //!
@@ -64,11 +63,20 @@
 //! spans and are not encoded — realizing them is interpretation, which lives
 //! in the invention.
 //!
+//! # Field names
+//!
+//! The format follows the module interface conventions: a step's level is
+//! `velocity` (the sequencers' output name), the reference pitch is
+//! `root_note` (the sequencers' config key), and a tempo glide is
+//! `ramp_steps` (the `control_scheduler` entry key). The document, its steps
+//! and its tempo-map points are closed: an unknown key is refused, so a score
+//! written with an old name fails to load instead of losing data.
+//!
 //! # Grace notes
 //!
 //! Notated grace notes (acciaccaturas/appoggiaturas — the small slashed or
 //! small-head notes) are recorded per step as an optional `grace` array on the
-//! note step they decorate: integer offsets from the base note, in played
+//! note step they decorate: integer offsets from the root note, in played
 //! order, the last resolving into the step's principal note (a v1-compatible
 //! extension — scores without graces stay valid and unchanged). Graces are off
 //! the grid by definition: they never occupy a step of their own and never
@@ -90,7 +98,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::invention::format::TimeSignature;
-use crate::modules::{Step, MAX_GRACE_NOTES};
+use crate::modules::{Step, MAX_GRACE_NOTES, STEP_KEYS};
 
 /// Current score schema identifier. A score document may carry this as its
 /// `schema` field to opt into load-time validation; when absent, the document
@@ -102,6 +110,7 @@ pub const SCORE_SCHEMA_V1: &str = "fugue.score.v1";
 /// Content is a bank of `cells`, each a sequence of steps in the shared
 /// `{ note, gate, held }` shape; a single-sequence piece is a bank of one cell.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Score {
     /// Schema id; when present, must equal [`SCORE_SCHEMA_V1`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -141,9 +150,9 @@ pub struct Score {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_signature: Option<TimeSignature>,
 
-    /// Base MIDI note (0..=127) that step offsets are relative to.
+    /// Root MIDI note (0..=127) that step offsets are relative to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_note_hint: Option<i64>,
+    pub root_note: Option<i64>,
 
     /// Rhythmic grid the steps sit on (e.g. "16th_note"); a hint for consumers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -162,6 +171,7 @@ pub struct Score {
 /// One entry in a score's [`tempo_map`](Score::tempo_map): the notated tempo
 /// that takes effect at a given step and holds until the next entry.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TempoPoint {
     /// Step index at which this tempo takes effect (0 = the first step).
     pub at_step: u64,
@@ -169,10 +179,10 @@ pub struct TempoPoint {
     pub bpm: f32,
     /// Optional gradual change (ritardando / accelerando): the number of steps
     /// over which the tempo glides from the previous entry's value to this
-    /// `bpm`, reaching it at `at_step + ramp`. Absent = an instantaneous change
-    /// at `at_step`. Must be at least 1 when present.
+    /// `bpm`, reaching it at `at_step + ramp_steps`. Absent = an instantaneous
+    /// change at `at_step`. Must be at least 1 when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ramp: Option<u64>,
+    pub ramp_steps: Option<u64>,
 }
 
 impl Score {
@@ -199,6 +209,7 @@ pub fn validate_score(value: &Value) -> Result<(), String> {
     let object = value
         .as_object()
         .ok_or_else(|| "score must be a JSON object".to_string())?;
+    refuse_unknown(object, SCORE_KEYS).map_err(|err| format!("score: {}", err))?;
 
     if let Some(schema) = object.get("schema") {
         match schema.as_str() {
@@ -234,12 +245,12 @@ pub fn validate_score(value: &Value) -> Result<(), String> {
         validate_tempo_map(tempo_map)?;
     }
 
-    if let Some(base) = object.get("base_note_hint").filter(|v| !v.is_null()) {
-        let base = base
+    if let Some(root) = object.get("root_note").filter(|v| !v.is_null()) {
+        let root = root
             .as_i64()
-            .ok_or_else(|| "score.base_note_hint must be an integer".to_string())?;
-        if !(0..=127).contains(&base) {
-            return Err("score.base_note_hint must be between 0 and 127".to_string());
+            .ok_or_else(|| "score.root_note must be an integer".to_string())?;
+        if !(0..=127).contains(&root) {
+            return Err("score.root_note must be between 0 and 127".to_string());
         }
     }
 
@@ -326,16 +337,18 @@ fn validate_tempo_map(value: &Value) -> Result<(), String> {
                 ));
             }
         }
-        if let Some(ramp) = object.get("ramp").filter(|v| !v.is_null()) {
+        refuse_unknown(object, TEMPO_POINT_KEYS)
+            .map_err(|err| format!("score.tempo_map[{}]: {}", index, err))?;
+        if let Some(ramp) = object.get("ramp_steps").filter(|v| !v.is_null()) {
             let ramp = ramp.as_u64().ok_or_else(|| {
                 format!(
-                    "score.tempo_map[{}].ramp must be a non-negative integer",
+                    "score.tempo_map[{}].ramp_steps must be a non-negative integer",
                     index
                 )
             })?;
             if ramp < 1 {
                 return Err(format!(
-                    "score.tempo_map[{}].ramp must be at least 1 step",
+                    "score.tempo_map[{}].ramp_steps must be at least 1 step",
                     index
                 ));
             }
@@ -381,6 +394,7 @@ fn validate_step(value: &Value) -> Result<(), String> {
     let object = value
         .as_object()
         .ok_or_else(|| "each step must be null, an integer, or an object".to_string())?;
+    refuse_unknown(object, STEP_KEYS)?;
 
     // A held step continues the previous note and may carry nothing else.
     match object.get("held") {
@@ -414,12 +428,12 @@ fn validate_step(value: &Value) -> Result<(), String> {
         }
     }
 
-    if let Some(amplitude) = object.get("amplitude").filter(|v| !v.is_null()) {
-        let amplitude = amplitude
+    if let Some(velocity) = object.get("velocity").filter(|v| !v.is_null()) {
+        let velocity = velocity
             .as_f64()
-            .ok_or_else(|| "step.amplitude must be a number".to_string())?;
-        if !(0.0..=1.0).contains(&amplitude) {
-            return Err("step.amplitude must be between 0 and 1".to_string());
+            .ok_or_else(|| "step.velocity must be a number".to_string())?;
+        if !(0.0..=1.0).contains(&velocity) {
+            return Err("step.velocity must be between 0 and 1".to_string());
         }
     }
 
@@ -472,6 +486,36 @@ fn validate_grace(value: &Value, step: &serde_json::Map<String, Value>) -> Resul
         }
     }
     Ok(())
+}
+
+/// The keys a score document may carry.
+const SCORE_KEYS: &[&str] = &[
+    "schema",
+    "title",
+    "composer",
+    "key",
+    "tempo",
+    "tempo_map",
+    "time_signature",
+    "root_note",
+    "rhythm_grid",
+    "cells",
+    "pedal",
+];
+
+/// The keys a tempo-map point may carry.
+const TEMPO_POINT_KEYS: &[&str] = &["at_step", "bpm", "ramp_steps"];
+
+/// Refuses the first key of `object` that is not in `known`.
+fn refuse_unknown(object: &serde_json::Map<String, Value>, known: &[&str]) -> Result<(), String> {
+    match object.keys().find(|key| !known.contains(&key.as_str())) {
+        Some(key) => Err(format!(
+            "unknown field '{}' (expected one of: {})",
+            key,
+            known.join(", ")
+        )),
+        None => Ok(()),
+    }
 }
 
 /// Step note offsets are stored as `i8` by the sequencers, so they must fit.

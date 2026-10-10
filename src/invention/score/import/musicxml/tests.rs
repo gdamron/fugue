@@ -61,7 +61,7 @@ fn maps_pitch_step_alter_octave_to_midi_offsets() {
         note("E", 4, Some(-1), 1, ""),
         note("F", 5, Some(1), 1, "")
     ));
-    assert_eq!(score.base_note_hint, Some(60));
+    assert_eq!(score.root_note, Some(60));
     assert_eq!(score.cells.len(), 1);
     assert_eq!(shape(&score.cells[0]), "0 3 18");
     assert_eq!(score.rhythm_grid.as_deref(), Some("quarter_note"));
@@ -454,12 +454,12 @@ fn tempo_changes_compile_into_a_tempo_map() {
             TempoPoint {
                 at_step: 0,
                 bpm: 60.0,
-                ramp: None
+                ramp_steps: None
             },
             TempoPoint {
                 at_step: 1,
                 bpm: 124.0,
-                ramp: None
+                ramp_steps: None
             },
         ]
     );
@@ -611,9 +611,9 @@ fn output_validates_and_is_deterministic() {
     crate::invention::score::validate_score(&value).expect("output must validate");
 }
 
-/// Amplitudes of a cell's steps: `Some` only on note onsets that carry one.
-fn amplitudes(steps: &[Step]) -> Vec<Option<f32>> {
-    steps.iter().map(|step| step.amplitude).collect()
+/// Velocities of a cell's steps: `Some` only on note onsets that carry one.
+fn velocities(steps: &[Step]) -> Vec<Option<f32>> {
+    steps.iter().map(|step| step.velocity).collect()
 }
 
 fn dynamic(mark: &str) -> String {
@@ -631,7 +631,7 @@ fn wedge(kind: &str) -> String {
 }
 
 #[test]
-fn dynamic_marks_set_step_amplitude_at_onsets() {
+fn dynamic_marks_set_step_velocity_at_onsets() {
     let (score, report) = convert(&format!(
         r#"<measure number="1">
           <attributes><divisions>1</divisions>
@@ -645,13 +645,13 @@ fn dynamic_marks_set_step_amplitude_at_onsets() {
     ));
     assert_eq!(report.dynamic_marks, 2);
     assert_eq!(
-        amplitudes(&score.cells[0]),
+        velocities(&score.cells[0]),
         vec![Some(49.0 / 127.0), Some(96.0 / 127.0)]
     );
 }
 
 #[test]
-fn notes_before_the_first_mark_carry_no_amplitude() {
+fn notes_before_the_first_mark_carry_no_velocity() {
     let (score, _) = convert(&format!(
         r#"<measure number="1">
           <attributes><divisions>1</divisions>
@@ -662,7 +662,7 @@ fn notes_before_the_first_mark_carry_no_amplitude() {
         dynamic("mf"),
         note("D", 4, None, 1, "")
     ));
-    assert_eq!(amplitudes(&score.cells[0]), vec![None, Some(80.0 / 127.0)]);
+    assert_eq!(velocities(&score.cells[0]), vec![None, Some(80.0 / 127.0)]);
 }
 
 #[test]
@@ -687,7 +687,7 @@ fn hairpin_interpolates_to_the_next_mark_across_its_span() {
     let p = 49.0 / 127.0;
     let f = 96.0 / 127.0;
     assert_eq!(
-        amplitudes(&score.cells[0]),
+        velocities(&score.cells[0]),
         vec![Some(p), Some(p + (f - p) * 0.5), Some(f), Some(f)]
     );
 }
@@ -711,7 +711,7 @@ fn hairpin_without_target_moves_one_mark_level() {
     let p = 49.0 / 127.0;
     let pp = 33.0 / 127.0;
     assert_eq!(
-        amplitudes(&score.cells[0]),
+        velocities(&score.cells[0]),
         vec![Some(p), Some(p), Some(pp)]
     );
 }
@@ -737,15 +737,15 @@ fn hairpin_target_contradicting_direction_falls_back_one_level() {
     let pp = 33.0 / 127.0;
     let ff = 112.0 / 127.0;
     assert_eq!(
-        amplitudes(&score.cells[0]),
+        velocities(&score.cells[0]),
         vec![Some(p), Some(pp), Some(ff)]
     );
 }
 
 #[test]
-fn tied_notes_keep_the_amplitude_struck_at_their_first_onset() {
+fn tied_notes_keep_the_velocity_struck_at_their_first_onset() {
     // The tie starts under p; the mark changes mid-tie but the held chain
-    // keeps its struck level (held steps never carry amplitude).
+    // keeps its struck level (held steps never carry velocity).
     let (score, _) = convert(&format!(
         r#"<measure number="1">
           <attributes><divisions>1</divisions>
@@ -758,7 +758,7 @@ fn tied_notes_keep_the_amplitude_struck_at_their_first_onset() {
         tie_stop = note("C", 4, None, 1, r#"<tie type="stop"/>"#)
     ));
     assert_eq!(shape(&score.cells[0]), "0 H");
-    assert_eq!(amplitudes(&score.cells[0]), vec![Some(49.0 / 127.0), None]);
+    assert_eq!(velocities(&score.cells[0]), vec![Some(49.0 / 127.0), None]);
 }
 
 #[test]
@@ -785,7 +785,7 @@ fn accent_marks_warn_and_use_sound_dynamics_fallback() {
         report.warnings
     );
     let sfz = 0.9 * 100.0 / 127.0;
-    assert_eq!(amplitudes(&score.cells[0]), vec![Some(sfz), Some(sfz)]);
+    assert_eq!(velocities(&score.cells[0]), vec![Some(sfz), Some(sfz)]);
 }
 
 #[test]
@@ -801,9 +801,9 @@ fn dynamics_serialize_and_validate_as_score_v1() {
         note("D", 4, None, 1, "")
     ));
     let json = score.to_json().expect("serializes");
-    assert!(json.contains("\"amplitude\""), "{}", json);
+    assert!(json.contains("\"velocity\""), "{}", json);
     let reparsed = Score::from_json(&json).expect("round-trips through validation");
-    assert_eq!(amplitudes(&reparsed.cells[0]), amplitudes(&score.cells[0]));
+    assert_eq!(velocities(&reparsed.cells[0]), velocities(&score.cells[0]));
 }
 
 /// A `<direction>` carrying one `<pedal>` element of the given type.
