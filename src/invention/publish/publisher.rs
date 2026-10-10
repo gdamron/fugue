@@ -1,39 +1,52 @@
 //! The single control-thread publisher of a live graph's topology.
 
 use indexmap::IndexMap;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
 use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{
-    outcome_channel, request_channel, ControlIndex, ControlTarget, OutcomeReceiver, RequestSender,
+    outcome_channel, request_channel, ControlIndex, ControlTarget, OutcomeReceiver, QueueFull,
+    Request, RequestSender, RequestValue,
 };
 use crate::invention::graph::{
-    AudioLink, InputWrite, Mailbox, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
+    AudioLink, InputWrite, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
 };
 use crate::invention::runtime::GraphCommandError;
-use crate::payload::{self, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
+use crate::payload::{self, Payload, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
 use crate::spsc::{Consumer, Producer, Ring};
 
 /// Input writes that may wait for the audio thread before a write is
 /// refused with [`GraphCommandError::QueueFull`].
 pub(crate) const INPUT_QUEUE_CAPACITY: usize = 256;
 
-/// Control requests that may wait in the queue before a submission is
-/// refused with `QueueFull`. The audio thread pops the queue at every block
-/// start while the pending store has room, and all of it in a block that
-/// installs a publication.
+/// Control requests that may wait in the queue, counting any edits queued
+/// among them, before one is refused with `QueueFull`. The audio thread
+/// pops the queue, in order, at every block start while the pending store
+/// has room and the link can retire the publication an edit replaces.
 pub(crate) const REQUEST_QUEUE_CAPACITY: usize = 256;
 
-/// Popped requests that may wait for their sample (or for their
-/// publication to install). Twice the queue, so a full queue fits in a
-/// store already half full of timed requests. While the store is full the
-/// audio thread leaves requests in the queue (back-pressure), except in a
-/// block that installs a publication: that one must pop every request
-/// resolved against an older generation, while it can still map them, so
-/// what does not fit is refused (`Refusal::PendingFull`). See
-/// `graph::requests`.
+/// Queue slots beyond [`REQUEST_QUEUE_CAPACITY`] that only edits may take,
+/// so a flood of control requests never shuts out a reload or an edit.
+/// As many again, so the queue is a power of two; edits fill it only while
+/// installs are deferred. Each queued edit keeps what its change built
+/// (sample buffers, say) alive until it installs and retires, so an audio
+/// side that is alive but not rendering holds up to this many before
+/// publishing is refused with `QueueFull`.
+pub(crate) const EDIT_RESERVE: usize = REQUEST_QUEUE_CAPACITY;
+
+/// The request queue's size: control requests and the edits' reserve.
+const QUEUE_SLOTS: usize = REQUEST_QUEUE_CAPACITY + EDIT_RESERVE;
+
+// The queue rounds its size up to a power of two, and the reserve and the
+// drain's pop budget both assume it holds exactly these slots.
+const _: () = assert!(QUEUE_SLOTS.is_power_of_two());
+
+/// Popped requests that may wait for their sample. Twice the queue, so a
+/// full queue fits in a store already half full of timed requests. While
+/// the store is full the audio thread leaves requests, and the edits behind
+/// them, in the queue (back-pressure). See `graph::requests`.
 pub(crate) const PENDING_REQUEST_CAPACITY: usize = 512;
 
 /// Request outcomes the audio thread may queue before a control thread
@@ -49,11 +62,11 @@ pub(crate) const PAYLOAD_RETIRE_HOLD: usize =
     (PENDING_REQUEST_CAPACITY + REQUEST_QUEUE_CAPACITY) * MAX_RETIRES_PER_REQUEST;
 
 /// Retired publications the audio thread may hand back before the control
-/// thread frees them. The audio thread takes at most one publication per
-/// block and the reclaimer drains the channel on a short cadence and before
-/// every change, so this is rarely more than one deep; beyond it the audio
-/// thread holds one more retirement and stops taking publications until
-/// there is room.
+/// thread frees them. The audio thread installs the edits queued since its
+/// last block and the reclaimer drains the channel on a short cadence and
+/// before every change, so this is rarely more than one deep; beyond it the
+/// audio thread holds one more retirement and installs no further edit
+/// until there is room.
 pub(crate) const RETIRE_CAPACITY: usize = 8;
 
 /// Retired publications on their way to the control thread to be freed.
@@ -68,16 +81,19 @@ pub(crate) struct Publisher {
     /// Publications made so far; a prepared change records the generation
     /// it was prepared against.
     generation: u64,
-    /// Whether an input write tagged with the current generation was
-    /// queued: only then does folding that generation keep a remap from it.
-    written: bool,
     block_size: usize,
-    publications: Arc<Mailbox<Publication>>,
+    /// Submits each publication as an edit request, into the queue control
+    /// requests share, so the audio thread meets them in one order. It may
+    /// use the slots other senders leave free ([`EDIT_RESERVE`]).
+    requests: RequestSender,
+    /// The newest generation queued as an edit, for the audio thread: an
+    /// edit waiting there is never starved by a full pending store.
+    published: Arc<AtomicU64>,
     /// Queues direct input writes for the next block. Only the publisher
     /// pushes, under its lock, so writes and publications stay in order.
     inputs: Producer<InputWrite>,
-    /// Publications the audio thread has installed (observed by tests).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Publications the audio thread has installed. The audio side holds
+    /// the other reference, so it also tells whether that side still exists.
     applied: Arc<AtomicU64>,
 }
 
@@ -86,23 +102,22 @@ impl Publisher {
     /// its current modules and edges. Also returns the control side's ends
     /// of the link's channels, which need no publisher lock.
     pub(crate) fn link(graph: &mut SignalGraph) -> (Self, LinkEnds) {
-        let publications = Arc::new(Mailbox::new());
         let inputs = Ring::with_capacity(INPUT_QUEUE_CAPACITY);
         let retired = RetireRing::with_capacity(RETIRE_CAPACITY);
-        let (requests, request_rx) =
-            request_channel(REQUEST_QUEUE_CAPACITY, Arc::clone(&graph.transport));
+        let (requests, request_rx) = request_channel(QUEUE_SLOTS, Arc::clone(&graph.transport));
         let payloads = RetireQueue::with_capacity(payload::RETIRE_CAPACITY);
         let (outcome_tx, outcomes) = outcome_channel(OUTCOME_QUEUE_CAPACITY);
+        let published = Arc::new(AtomicU64::new(0));
         graph.requests = Some(RequestDrain::new(
             request_rx,
             REQUEST_QUEUE_CAPACITY,
             PENDING_REQUEST_CAPACITY,
             Retirer::new(Arc::clone(&payloads), PAYLOAD_RETIRE_HOLD),
             outcome_tx,
+            Arc::clone(&published),
         ));
         let applied = Arc::new(AtomicU64::new(0));
         graph.link = Some(AudioLink::new(
-            publications.clone(),
             Consumer::claim(Arc::clone(&inputs)),
             INPUT_QUEUE_CAPACITY,
             Producer::claim(Arc::clone(&retired)),
@@ -111,14 +126,14 @@ impl Publisher {
         let publisher = Self {
             mirror: TopologyMirror::of(&graph.modules, &graph.edges),
             generation: 0,
-            written: false,
             block_size: graph.block_size,
-            publications,
+            requests: requests.clone(),
+            published,
             inputs: Producer::claim(inputs),
             applied,
         };
         let ends = LinkEnds {
-            requests,
+            requests: requests.reserving(EDIT_RESERVE as u64),
             retired,
             payloads,
             outcomes,
@@ -184,11 +199,9 @@ impl Publisher {
     /// [`GraphCommandError::UnknownModule`]; whether the module has the
     /// control is checked by its declared control table.
     ///
-    /// The caller submits the request before releasing the publisher and
-    /// then calls [`Self::note_written`], exactly as for an input write: so
-    /// the request is in the queue before any later publication, and a fold
-    /// of this generation keeps the remap it needs (see
-    /// `graph::requests`).
+    /// The caller submits the request before releasing the publisher, so it
+    /// is in the queue before any later publication's edit (see
+    /// `graph::requests`), and then calls [`Self::note_written`].
     // The front doors that submit requests arrive with FUG-310's controls.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn control_target(
@@ -210,10 +223,10 @@ impl Publisher {
     }
 
     /// Records that a write resolved by [`Self::input_write`], or a request
-    /// resolved by [`Self::control_target`], was queued.
-    pub(crate) fn note_written(&mut self) {
-        self.written = true;
-    }
+    /// resolved by [`Self::control_target`], was queued. Nothing needs the
+    /// record since edits queue in order rather than fold; it goes with
+    /// folding's other remains.
+    pub(crate) fn note_written(&mut self) {}
 
     /// Queues a write resolved by [`Self::input_write`] for the next block,
     /// noting it written. Fails with [`GraphCommandError::QueueFull`] when
@@ -230,28 +243,6 @@ impl Publisher {
         Ok(())
     }
 
-    /// Generations folded into the untaken publication that keep a remap
-    /// for queued writes, if one is waiting.
-    #[cfg(test)]
-    pub(crate) fn pending_absorbed(&self) -> Option<Vec<u64>> {
-        let pending = self.publications.take()?;
-        let generations = pending.absorbed.iter().map(|a| a.generation).collect();
-        drop(self.publications.put(pending));
-        Some(generations)
-    }
-
-    /// Runs `f` with the untaken publication out of the mailbox, as a fold
-    /// holds it between taking it and putting the next one.
-    #[cfg(test)]
-    pub(crate) fn folding<R>(&self, f: impl FnOnce() -> R) -> R {
-        let pending = self.publications.take();
-        let result = f();
-        if let Some(pending) = pending {
-            drop(self.publications.put(pending));
-        }
-        result
-    }
-
     /// Block size publications are compiled for.
     pub(crate) fn block_size(&self) -> usize {
         self.block_size
@@ -259,26 +250,30 @@ impl Publisher {
 
     /// Whether the audio side of the link still exists.
     pub(crate) fn audio_alive(&self) -> bool {
-        Arc::strong_count(&self.publications) > 1
+        Arc::strong_count(&self.applied) > 1
     }
 
     /// Publishes a prepared change and returns the mirror it replaced.
     ///
+    /// The publication goes to the audio thread as an edit request
+    /// ([`Request::edit`]), at once, in the queue control requests share:
+    /// requests submitted before it apply to the graph it replaces, those
+    /// after it (resolved against the new mirror) to the graph it installs.
+    ///
     /// A change prepared before another publication is refused with
     /// [`GraphCommandError::TopologyMoved`]: it was validated against a
     /// topology that no longer exists, so it is never replayed onto the
-    /// current one. A publication the audio thread has not taken yet is
-    /// folded into this one, so a stalled stream holds at most one. Either
-    /// error returns before the mailbox is touched, with nothing published.
+    /// current one. A full queue refuses it with
+    /// [`GraphCommandError::QueueFull`]. Every error returns with nothing
+    /// published.
     ///
     /// Nothing the change built is dropped here: a refused change comes back
-    /// in [`Refused`], and a superseded publication in
-    /// [`Published::superseded`], so the caller can drop them (a sink
-    /// finalizing a file, say) after releasing the publisher.
+    /// in [`Refused`], so the caller can drop it (a sink finalizing a file,
+    /// say) after releasing the publisher.
     // A refusal is rare and on the control thread; handing the change back
     // whole is the point, so it is not boxed.
     #[allow(clippy::result_large_err)]
-    pub(crate) fn publish(&mut self, prepared: PreparedChange) -> Result<Published, Refused> {
+    pub(crate) fn publish(&mut self, mut prepared: PreparedChange) -> Result<Published, Refused> {
         if prepared.base_generation != self.generation {
             return Err(Refused {
                 error: GraphCommandError::TopologyMoved,
@@ -291,41 +286,39 @@ impl Publisher {
                 change: prepared,
             });
         }
-        let PreparedChange {
-            mirror,
-            built,
-            publication,
-            ..
-        } = prepared;
-        let Some(mut publication) = publication else {
+        let Some(mut publication) = prepared.publication.take() else {
             // An empty change publishes nothing.
             return Ok(Published {
                 previous: self.mirror.clone(),
-                built,
+                built: prepared.built,
                 superseded: None,
             });
         };
-        // The mirror is the order the audio thread will be running when
-        // it installs this, unless an untaken publication is folded in,
-        // whose remap then composes in front of this one.
+        // Edits install in queue order, so the mirror is the order the
+        // audio thread will be running when it installs this one.
         publication.map_survivors(self.mirror.modules.keys().map(String::as_str));
         publication.generation = self.generation + 1;
-        let superseded = self
-            .publications
-            .take()
-            .map(|pending| publication.absorb(pending, self.written));
-        // Only this publisher puts, under its lock, so the slot is empty.
-        // Input writes are queued under the same lock, so every write tagged
-        // with the previous generation is in the ring before this put,
-        // whose release the audio thread's take acquires.
-        drop(self.publications.put(publication));
+        // Every request and input write tagged with the current generation
+        // was queued under this lock, so before this push, whose release
+        // the audio thread's pop acquires.
+        let edit = Request::edit(self.generation, Payload::owned(publication));
+        if let Err(QueueFull(edit)) = self.requests.submit(edit) {
+            let RequestValue::Edit(payload) = edit.value else {
+                unreachable!("the queue hands back the request it was given");
+            };
+            prepared.publication = payload.take_owned().ok();
+            return Err(Refused {
+                error: GraphCommandError::QueueFull,
+                change: prepared,
+            });
+        }
         self.generation += 1;
-        self.written = false;
-        let previous = std::mem::replace(&mut self.mirror, mirror);
+        self.published.store(self.generation, Ordering::Relaxed);
+        let previous = std::mem::replace(&mut self.mirror, prepared.mirror);
         Ok(Published {
             previous,
-            built,
-            superseded,
+            built: prepared.built,
+            superseded: None,
         })
     }
 }
@@ -347,7 +340,7 @@ impl std::fmt::Debug for Refused {
 /// lock. (Input writes are queued by the publisher itself.)
 pub(crate) struct LinkEnds {
     /// Submits control requests. Submit only under the publisher (see
-    /// [`Publisher::control_target`]).
+    /// [`Publisher::control_target`]), which submits edits to it too.
     pub(crate) requests: RequestSender,
     /// Retired publications, to free off the audio thread.
     pub(crate) retired: Arc<RetireRing>,

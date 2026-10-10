@@ -1,4 +1,4 @@
-//! Allocation-counted publishing: folded publications, a full retire
+//! Allocation-counted publishing: edits queued before a block, a full retire
 //! channel, and input writes beside, across, and waiting for a publication.
 //! Each counts the install (`ensure_process_order`) and the blocks after it.
 //! The shapes a single change can take are counted where changes are
@@ -33,7 +33,7 @@ fn upsert(rig: &Rig, id: &str, module_type: &str, config: serde_json::Value) {
 }
 
 #[test]
-fn folded_publications_install_once_without_recompiling() {
+fn edits_queued_before_a_block_install_in_it_without_recompiling() {
     let mut rig = Rig::new(BASE);
     rig.render(1);
     upsert(&rig, "osc3", "oscillator", serde_json::json!({}));
@@ -42,8 +42,8 @@ fn folded_publications_install_once_without_recompiling() {
         .unwrap();
     assert_eq!(rig.generation_and_applied(), (2, 0));
 
-    assert_clean_install(&mut rig, "two folded publications");
-    assert_eq!(rig.generation_and_applied(), (2, 1));
+    assert_clean_install(&mut rig, "two queued edits");
+    assert_eq!(rig.generation_and_applied(), (2, 2));
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "osc3"]);
     let dac = rig.graph.modules.get_index_of("dac").unwrap();
     assert_eq!(rig.graph.compiled_routes[dac].len(), 3);
@@ -122,12 +122,12 @@ fn a_write_remapped_across_an_install_is_clean() {
 }
 
 #[test]
-fn a_write_for_a_folded_publication_is_clean() {
+fn a_write_between_two_queued_edits_is_clean() {
     let mut rig = Rig::new(BASE);
     rig.render(1);
     upsert(&rig, "osc3", "oscillator", serde_json::json!({}));
     rig.live.write_input("osc3", "frequency", 0.5).unwrap();
-    // Folds the untaken publication that added osc3 into this one.
+    // Queued behind the edit that adds osc3, before the block installs both.
     rig.live.remove_module("osc1").unwrap();
 
     let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
@@ -219,14 +219,14 @@ fn an_install_that_carries_feedback_state_stays_clean() {
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
     assert_eq!(carries(&rig), before);
 
-    // Folded publications compose their remaps on the control thread; the
-    // install that carries through them is just as clean.
+    // Two edits queued before a block install in order, each carrying the
+    // loop through its remap, just as cleanly.
     upsert(&rig, "aux", "oscillator", serde_json::json!({}));
     rig.live
         .connect(edge("aux", "audio", "osc2", "amplitude_mod"))
         .unwrap();
     let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
-    assert_eq!((allocs, frees), (0, 0), "folded install that carries");
+    assert_eq!((allocs, frees), (0, 0), "two installs that carry");
     assert!(!rig.graph.topo_dirty);
     assert_eq!(carries(&rig), before);
 }

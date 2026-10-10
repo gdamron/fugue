@@ -5,8 +5,10 @@ use std::sync::atomic::AtomicU64;
 
 use super::*;
 use crate::alloc_counter::allocator_events;
+use crate::control_request::{Request, RequestSender};
 use crate::invention::graph::compile::compile_topology;
-use crate::invention::graph::MasterObservers;
+use crate::invention::graph::{link_requests, MasterObservers};
+use crate::payload::Payload;
 use crate::spsc::Ring;
 use crate::ModuleRegistry;
 
@@ -104,26 +106,32 @@ const BASE_IDS: [&str; 3] = ["osc1", "osc2", "dac"];
 
 /// The control thread's ends of a graph's link.
 struct ControlEnds {
-    publications: Arc<Mailbox<Publication>>,
+    requests: RequestSender,
     inputs: Producer<InputWrite>,
     retired: Arc<Ring<Box<Publication>>>,
     applied: Arc<AtomicU64>,
 }
 
+impl ControlEnds {
+    /// Queues `publication` as an edit, as the publisher does.
+    fn publish(&self, publication: Box<Publication>) {
+        let edit = Request::edit(publication.generation, Payload::owned(publication));
+        self.requests.submit(edit).unwrap();
+    }
+}
+
 fn link(graph: &mut SignalGraph, retire_capacity: usize) -> ControlEnds {
-    let publications = Arc::new(Mailbox::new());
     let inputs = Ring::with_capacity(16);
     let retired = Ring::with_capacity(retire_capacity);
     let applied = Arc::new(AtomicU64::new(0));
     graph.link = Some(AudioLink::new(
-        publications.clone(),
         Consumer::claim(Arc::clone(&inputs)),
         16,
         Producer::claim(Arc::clone(&retired)),
         applied.clone(),
     ));
     ControlEnds {
-        publications,
+        requests: link_requests(graph, 16),
         inputs: Producer::claim(inputs),
         retired,
         applied,
@@ -184,7 +192,7 @@ fn installing_a_publication_neither_allocates_nor_frees() {
     render(&mut graph, 2);
     let dac_carry = carry(&graph, "dac");
     assert!(dac_carry.iter().any(|v| *v != 0.0));
-    drop(ends.publications.put(mixed_publication()));
+    ends.publish(mixed_publication());
 
     let ((), allocs, frees) = allocator_events(|| graph.ensure_process_order());
     assert_eq!((allocs, frees), (0, 0), "installing touched the allocator");
@@ -218,14 +226,14 @@ fn survivors_keep_their_state_across_a_publication() {
     assert_eq!(render(&mut edited, 5), render(&mut untouched, 5));
 
     // Every module survives and the edges are unchanged.
-    drop(ends.publications.put(publication(
+    ends.publish(publication(
         vec![
             ("osc1", Next::Survivor("oscillator")),
             ("osc2", Next::Survivor("oscillator")),
             ("dac", Next::Survivor("dac")),
         ],
         vec![edge("osc1", "dac", "audio"), edge("osc2", "dac", "audio")],
-    )));
+    ));
 
     // Same output sample for sample as a graph that never published.
     assert_eq!(render(&mut edited, 20), render(&mut untouched, 20));
@@ -248,14 +256,14 @@ fn a_full_retire_channel_holds_one_retirement_and_takes_nothing_more() {
     };
 
     // The first retirement fills the channel; the second is held.
-    drop(ends.publications.put(survivors()));
+    ends.publish(survivors());
     assert_eq!(counted_block(&mut graph), (0, 0));
-    drop(ends.publications.put(survivors()));
+    ends.publish(survivors());
     assert_eq!(counted_block(&mut graph), (0, 0));
     assert_eq!(ends.applied.load(Ordering::Relaxed), 2);
 
     // While one is held, nothing more is taken, and blocks stay clean.
-    drop(ends.publications.put(mixed_publication()));
+    ends.publish(mixed_publication());
     for _ in 0..3 {
         assert_eq!(counted_block(&mut graph), (0, 0));
     }
@@ -271,7 +279,7 @@ fn a_full_retire_channel_holds_one_retirement_and_takes_nothing_more() {
 }
 
 #[test]
-fn an_untaken_publication_folds_into_the_next() {
+fn edits_queued_before_a_block_install_in_order_within_it() {
     let mut graph = base_graph();
     let ends = link(&mut graph, 4);
 
@@ -287,7 +295,7 @@ fn an_untaken_publication_folds_into_the_next() {
         vec![edge("osc3", "dac", "audio")],
     );
     first.map_survivors(BASE_IDS);
-    drop(ends.publications.put(first));
+    ends.publish(first);
     let mut next = publication(
         vec![
             ("osc1", Next::Survivor("oscillator")),
@@ -299,32 +307,31 @@ fn an_untaken_publication_folds_into_the_next() {
         vec![edge("osc3", "dac", "audio"), edge("osc4", "dac", "audio")],
     );
     next.map_survivors(["osc1", "osc2", "dac", "osc3"]);
-    drop(next.absorb(ends.publications.take().unwrap(), false));
-    assert_eq!(next.survivor_count(), 3);
-    // The folded remap maps from the graph still running, which has no osc3.
-    let remap: Vec<_> = next.remap.survivors().collect();
-    assert_eq!(remap, [(0, 0), (1, 1), (2, 2)]);
-    drop(ends.publications.put(next));
+    ends.publish(next);
 
     assert_eq!(counted_block(&mut graph), (0, 0));
     assert!(!graph.topo_dirty);
-    assert_eq!(ends.applied.load(Ordering::Relaxed), 1);
+    assert_eq!(ends.applied.load(Ordering::Relaxed), 2);
     assert_eq!(ids(&graph), ["osc1", "osc2", "dac", "osc3", "osc4"]);
+    // The first install's osc3 survived the second.
     assert_eq!(graph.modules["osc3"].module().name(), "Oscillator");
+    let retired: Vec<_> = std::iter::from_fn(|| ends.retired.pop()).collect();
+    assert_eq!(retired.len(), 2);
+    assert_eq!(retired[1].modules["osc3"].module().name(), "vacant");
 }
 
 #[test]
 fn a_survivor_missing_from_the_running_graph_falls_back_to_recompiling() {
     let mut graph = base_graph();
     let ends = link(&mut graph, 4);
-    drop(ends.publications.put(publication(
+    ends.publish(publication(
         vec![
             ("osc1", Next::Survivor("oscillator")),
             ("ghost", Next::Survivor("oscillator")),
             ("dac", Next::Survivor("dac")),
         ],
         vec![edge("ghost", "dac", "audio")],
-    )));
+    ));
     render(&mut graph, 1);
     // The fallback compiled from the instances, so the placeholder's
     // missing ports route nothing instead of being indexed.
@@ -383,7 +390,7 @@ fn a_fallback_install_keeps_inputs_only_when_its_remap_vouches_for_them() {
         if mapped {
             next.map_survivors(BASE_IDS);
         }
-        drop(ends.publications.put(next));
+        ends.publish(next);
         render(&mut graph, 1);
         assert_eq!(ends.applied.load(Ordering::Relaxed), 1);
         // osc1's frequency stayed unconnected: it keeps the written value
@@ -461,7 +468,7 @@ fn an_unmapped_publication_carries_nothing() {
     render(&mut graph, 2);
     let mut unmapped = mixed_publication();
     unmapped.remap = SurvivorRemap::default();
-    drop(ends.publications.put(unmapped));
+    ends.publish(unmapped);
 
     // A remap that does not cover the running graph is not trusted: the
     // install stays clean and every carry starts from zero.

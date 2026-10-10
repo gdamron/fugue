@@ -220,7 +220,7 @@ pub(super) fn edit(rig: &Rig, apply: impl FnOnce(&mut GraphChange)) {
 }
 
 #[test]
-fn a_write_for_a_folded_publication_reaches_its_instance() {
+fn writes_between_queued_edits_reach_their_instances() {
     let (mut rig, probes) = rig_with_probes(&["p1"]);
     // Against the running graph (generation 1).
     rig.live.write_input("p1", "a", 1.0).unwrap();
@@ -229,7 +229,7 @@ fn a_write_for_a_folded_publication_reaches_its_instance() {
     edit(&rig, |change| change.upsert("p2", p2));
     rig.live.write_input("p2", "a", 2.0).unwrap();
     rig.live.write_input("p1", "a", 3.0).unwrap();
-    // Generation 3 removes osc1 and absorbs the untaken generation 2.
+    // Generation 3 removes osc1, queued before generation 2 installs.
     edit(&rig, |change| change.remove("osc1"));
     rig.live.write_input("p2", "a", 4.0).unwrap();
     rig.render(1);
@@ -250,13 +250,13 @@ fn a_write_for_a_folded_publication_reaches_its_instance() {
 }
 
 #[test]
-fn writes_follow_their_modules_through_two_folds() {
+fn writes_follow_their_modules_through_three_queued_edits() {
     let (mut rig, probes) = rig_with_probes(&["p1"]);
     rig.live.write_input("p1", "a", 1.0).unwrap();
     let p2 = probe(&rig, "p2");
     edit(&rig, |change| change.upsert("p2", p2));
     rig.live.write_input("p2", "a", 2.0).unwrap();
-    // Generation 3 folds 2 in; generation 4 folds 3 (carrying 2) in.
+    // Generations 3 and 4 queue behind 2; all three install in one block.
     let p3 = probe(&rig, "p3");
     edit(&rig, |change| change.upsert("p3", p3));
     rig.live.write_input("p3", "b", 3.0).unwrap();
@@ -279,55 +279,20 @@ fn writes_follow_their_modules_through_two_folds() {
 }
 
 #[test]
-fn folding_keeps_a_remap_only_for_generations_with_writes() {
-    let (mut rig, probes) = rig_with_probes(&["p1"]);
-    let fm = || edge("osc1", "audio", "osc2", "frequency_mod");
-    let toggle = |rig: &Rig, n: usize| {
-        if n.is_multiple_of(2) {
-            rig.live.connect(fm()).unwrap();
-        } else {
-            rig.live.disconnect(fm()).unwrap();
-        }
-    };
-    let pending_absorbed = |rig: &Rig| {
-        let publisher = rig.live.publisher().lock().unwrap();
-        publisher.pending_absorbed().unwrap()
-    };
-
-    // Many folds with no writes keep nothing.
-    for n in 0..6 {
-        toggle(&rig, n);
-    }
-    assert_eq!(pending_absorbed(&rig), Vec::<u64>::new());
-
-    // Writes at one generation keep exactly its remap through later folds.
-    let written = rig.live.generation();
-    rig.live.write_input("p1", "a", 1.0).unwrap();
-    rig.live.write_input("p1", "b", 2.0).unwrap();
-    for n in 6..9 {
-        toggle(&rig, n);
-    }
-    assert_eq!(pending_absorbed(&rig), [written]);
-    rig.render(1);
-    assert_eq!(
-        probes.take(),
-        [got("p1", 0, "a", 1.0), got("p1", 0, "b", 2.0)]
-    );
-}
-
-#[test]
-fn a_folded_write_to_a_module_rebuilt_by_the_fold_is_dropped() {
+fn a_write_between_two_edits_reaches_the_instance_the_first_built() {
     let (mut rig, probes) = rig_with_probes(&["p1"]);
     let p2 = probe(&rig, "p2");
     edit(&rig, |change| change.upsert("p2", p2));
     rig.live.write_input("p2", "a", 1.0).unwrap();
-    // Generation 3 replaces the p2 generation 2 built, before either runs.
+    // Generation 3 replaces the p2 generation 2 built, before either runs:
+    // both install in the next block, in order, and the write lands
+    // between them.
     let rebuilt = probe(&rig, "p2");
     edit(&rig, |change| change.upsert("p2", rebuilt));
     rig.render(1);
 
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "p1", "p2"]);
-    assert_eq!(probes.take(), []);
+    assert_eq!(probes.take(), [got("p2", 1, "a", 1.0)]);
 }
 
 #[test]

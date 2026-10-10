@@ -1,9 +1,10 @@
-//! Requests that race a publication, the twins of `writes.rs`: each lands
-//! on the instance it was resolved against, waits for a publication not
-//! yet installed, or is refused when its target went away, whether it is
-//! still in the queue or waiting for its sample.
+//! Requests that race a publication, the twins of `writes.rs`: requests and
+//! edits apply in one order, the order they were submitted in, so each
+//! request lands on the instance it was resolved against, waiting in the
+//! queue behind an edit not yet installed, or is refused when an edit took
+//! its target away while it waited for its sample.
 
-use super::requests::{hook, outcomes, submit, try_submit};
+use super::requests::{hook, outcomes, submit};
 use super::writes::{edit, got, probe, rig_with_probes, WriteProbeFactory};
 use super::*;
 use crate::control_request::{Outcome, Refusal, When};
@@ -40,8 +41,8 @@ fn a_request_for_a_pending_publication_waits_for_its_install() {
     submit(&rig, "p2", 0, 2.0, When::Now);
     submit(&rig, "p3", 1, 3.0, When::Now);
 
-    // Blocks run on the old graph; the requests are held, not applied to
-    // whatever holds their indices there.
+    // Blocks run on the old graph; the requests wait in the queue behind
+    // the edit, not applied to whatever holds their indices there.
     rig.render(2);
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "p1", "p2"]);
     assert_eq!(probes.take(), []);
@@ -57,10 +58,11 @@ fn a_request_for_a_pending_publication_waits_for_its_install() {
 }
 
 #[test]
-fn a_request_to_a_removed_or_rebuilt_module_is_refused() {
+fn an_immediate_request_before_an_edit_acts_on_the_instances_it_replaces() {
     let (mut rig, probes) = probes(&["p1", "p2"]);
-    let rebuilt_target = submit(&rig, "p1", 0, 1.0, When::Now);
-    let removed_target = submit(&rig, "p2", 0, 2.0, When::Now);
+    let start = rig.graph.current_sample;
+    let to_rebuilt = submit(&rig, "p1", 0, 1.0, When::Now);
+    let to_removed = submit(&rig, "p2", 0, 2.0, When::Now);
     let rebuilt = probe(&rig, "p1");
     edit(&rig, |change| {
         change.upsert("p1", rebuilt);
@@ -68,62 +70,90 @@ fn a_request_to_a_removed_or_rebuilt_module_is_refused() {
     });
     rig.render(1);
 
+    // Submitted before the edit, so applied before it installs.
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "p1"]);
-    assert_eq!(probes.take(), []);
-    let gone = Outcome::Refused(Refusal::TargetGone);
+    assert_eq!(
+        probes.take(),
+        [got("p1", 0, "a", 1.0), got("p2", 1, "a", 2.0)]
+    );
+    let applied = Outcome::Applied { at: start };
     assert_eq!(
         outcomes(&mut rig),
-        [(rebuilt_target, gone), (removed_target, gone)]
+        [(to_rebuilt, applied), (to_removed, applied)]
     );
     submit(&rig, "p1", 0, 3.0, When::Now);
     rig.render(1);
     assert_eq!(probes.take(), [got("p1", 2, "a", 3.0)]);
 }
 
+/// The acceptance test for one serial order: control requests and edits
+/// apply in the order they were submitted, however many edits are queued
+/// before a block, and a waiting request whose module an edit rebuilds is
+/// refused.
 #[test]
-fn a_request_for_a_folded_publication_reaches_its_instance() {
+fn control_requests_and_edits_apply_in_submit_order() {
     let (mut rig, probes) = probes(&["p1"]);
-    // Against the running graph (generation 1).
-    submit(&rig, "p1", 0, 1.0, When::Now);
-    // Generation 2 adds p2; these resolve against it.
+    let start = rig.graph.current_sample;
+    // Generation 1: p1 (serial 0).
+    let r1 = submit(&rig, "p1", 0, 1.0, When::Now);
+    let timed = submit(&rig, "p1", 1, 9.0, When::AtSample(start + 64 + 7));
+    // Generation 2 adds p2 (serial 1).
     let p2 = probe(&rig, "p2");
     edit(&rig, |change| change.upsert("p2", p2));
-    submit(&rig, "p2", 0, 2.0, When::Now);
-    submit(&rig, "p1", 0, 3.0, When::Now);
-    // Generation 3 removes osc1 and absorbs the untaken generation 2.
-    edit(&rig, |change| change.remove("osc1"));
-    submit(&rig, "p2", 0, 4.0, When::Now);
+    let r2 = submit(&rig, "p1", 0, 2.0, When::Now);
+    let r3 = submit(&rig, "p2", 0, 3.0, When::Now);
+    // Generation 3 rebuilds p1 (serial 2) and removes osc1.
+    let rebuilt = probe(&rig, "p1");
+    edit(&rig, |change| {
+        change.upsert("p1", rebuilt);
+        change.remove("osc1");
+    });
+    let r4 = submit(&rig, "p1", 0, 4.0, When::Now);
     rig.render(1);
 
-    // Every request follows its module into the installed order; requests
-    // for the same control at the same sample coalesce, last wins.
+    // Each request lands on the graph it was submitted against: r1 and r2
+    // on the first p1 (never coalesced, an edit lies between them), r4 on
+    // its replacement. The timed request waited for the first p1, which
+    // the second edit rebuilt.
     assert_eq!(rig.module_ids(), ["osc2", "dac", "p1", "p2"]);
     assert_eq!(
         probes.take(),
-        [got("p1", 0, "a", 3.0), got("p2", 1, "a", 4.0)]
+        [
+            got("p1", 0, "a", 1.0),
+            got("p1", 0, "a", 2.0),
+            got("p2", 1, "a", 3.0),
+            got("p1", 2, "a", 4.0),
+        ]
     );
-    let superseded = outcomes(&mut rig)
-        .iter()
-        .filter(|(_, outcome)| *outcome == Outcome::Superseded)
-        .count();
-    assert_eq!(superseded, 2);
+    let applied = Outcome::Applied { at: start };
+    assert_eq!(
+        outcomes(&mut rig),
+        [
+            (r1, applied),
+            (r2, applied),
+            (r3, applied),
+            (timed, Outcome::Refused(Refusal::TargetGone)),
+            (r4, applied),
+        ]
+    );
+    assert_eq!(rig.generation_and_applied(), (3, 3));
+    rig.render(2);
+    assert_eq!(probes.take(), []);
 }
 
 #[test]
-fn a_folded_request_to_a_module_rebuilt_by_the_fold_is_refused() {
+fn a_request_between_two_edits_reaches_the_instance_the_first_built() {
     let (mut rig, probes) = probes(&["p1"]);
     let p2 = probe(&rig, "p2");
     edit(&rig, |change| change.upsert("p2", p2));
     let id = submit(&rig, "p2", 0, 1.0, When::Now);
     let rebuilt = probe(&rig, "p2");
     edit(&rig, |change| change.upsert("p2", rebuilt));
+    let start = rig.graph.current_sample;
     rig.render(1);
 
-    assert_eq!(probes.take(), []);
-    assert_eq!(
-        outcomes(&mut rig),
-        [(id, Outcome::Refused(Refusal::TargetGone))]
-    );
+    assert_eq!(probes.take(), [got("p2", 1, "a", 1.0)]);
+    assert_eq!(outcomes(&mut rig), [(id, Outcome::Applied { at: start })]);
 }
 
 #[test]
@@ -152,11 +182,11 @@ fn waiting_requests_follow_their_modules_across_an_install() {
 }
 
 #[test]
-fn a_held_request_waits_and_then_lands_through_a_fold() {
+fn a_request_behind_deferred_edits_lands_between_them() {
     let (mut rig, probes) = probes(&["p1"]);
     rig.hold_a_retirement();
-    // Generation g + 1 adds p2 and stays untaken; a request for it is
-    // held. Generation g + 2 folds it in and moves p2.
+    // Generation g + 1 adds p2 and waits to install; a request for it
+    // waits in the queue behind it. Generation g + 2 moves p2.
     let p2 = probe(&rig, "p2");
     rig.publish_unreclaimed(|change| change.upsert("p2", p2));
     submit(&rig, "p2", 1, 1.0, When::Now);
@@ -170,62 +200,4 @@ fn a_held_request_waits_and_then_lands_through_a_fold() {
     rig.render(1);
     assert_eq!(rig.module_ids(), ["osc2", "dac", "p1", "p2"]);
     assert_eq!(probes.take(), [got("p2", 1, "b", 1.0)]);
-}
-
-#[test]
-fn deferred_installs_bound_the_folded_remaps_by_back_pressure() {
-    use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
-    let (mut rig, probes) = probes(&["p1"]);
-    rig.hold_a_retirement();
-    let fm = edge("osc1", "audio", "osc2", "frequency_mod");
-    let far = rig.graph.current_sample + 1_000_000;
-    let (per_round, rounds) = (100, 12);
-    let mut next = 0;
-    let mut written_rounds = 0;
-    let mut queue_full = 0;
-    // Each round publishes a generation that folds into the untaken one,
-    // then submits against it, beyond what the store and queue can hold.
-    for round in 0..rounds {
-        rig.publish_unreclaimed(|change| {
-            if round % 2 == 0 {
-                change.connect(fm.clone()).unwrap();
-            } else {
-                change.disconnect(fm.clone());
-            }
-        });
-        let mut written = false;
-        for _ in 0..per_round {
-            match try_submit(&rig, "p1", 0, 1.0, When::AtSample(far + next)) {
-                Ok(_) => written = true,
-                Err(_) => queue_full += 1,
-            }
-            next += 1;
-        }
-        written_rounds += usize::from(written);
-        rig.render(1);
-    }
-    let capacity = PENDING_REQUEST_CAPACITY + REQUEST_QUEUE_CAPACITY;
-    assert_eq!(queue_full, rounds * per_round - capacity);
-    assert_eq!(outcomes(&mut rig), [], "nothing was refused");
-    // Only generations with requests outstanding keep a remap: the later
-    // rounds were all refused at the queue and keep none.
-    let absorbed = {
-        let publisher = rig.live.publisher().lock().unwrap();
-        publisher.pending_absorbed().unwrap()
-    };
-    assert_eq!(absorbed.len(), written_rounds);
-    assert_eq!(written_rounds, capacity.div_ceil(per_round));
-    assert!(written_rounds < rounds);
-
-    // The install maps every held request onto p1; the store's worth stays
-    // pending and the queue's worth is refused for want of room.
-    rig.live.reclaim();
-    rig.render(1);
-    assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac", "p1"]);
-    let settled = outcomes(&mut rig);
-    assert_eq!(settled.len(), REQUEST_QUEUE_CAPACITY);
-    assert!(settled
-        .iter()
-        .all(|(_, outcome)| *outcome == Outcome::Refused(Refusal::PendingFull)));
-    assert_eq!(probes.take(), []);
 }
