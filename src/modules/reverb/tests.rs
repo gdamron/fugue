@@ -163,8 +163,7 @@ fn test_factory() {
 
     let module = result.module.module();
     assert_eq!(module.name(), "Reverb");
-    assert_eq!(result.handles.len(), 1);
-    assert_eq!(result.handles[0].0, "controls");
+    assert!(result.handles.is_empty());
     assert!(result.control_surface.is_some());
     assert!(result.sink.is_none());
 }
