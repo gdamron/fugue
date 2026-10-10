@@ -203,3 +203,29 @@ fn a_module_built_with_a_written_level_plays_without_allocating_or_freeing() {
         assert_eq!((allocs, frees), (0, 0), "{type_id}");
     }
 }
+
+#[test]
+fn a_restored_level_holds_for_a_first_block_retrigger_tail() {
+    // Two queued notes on one key: the second steals the first, whose
+    // fade must ring at the restored level (here silent), not at unity.
+    let dir = tempfile::tempdir().unwrap();
+    let asset = constant_wav(dir.path(), 0.5, 4_800);
+    let config = json!({ "zones": [{ "root_note": 60, "asset": asset }], "level.0": 0.0 });
+    let built = crate::ModuleRegistry::default()
+        .build("sample_instrument", SAMPLE_RATE, &config)
+        .unwrap();
+    let surface = built.control_surface.unwrap();
+    let crate::factory::GraphModule::Module(mut module) = built.module else {
+        unreachable!("a sampler is not a sink")
+    };
+    for _ in 0..2 {
+        surface
+            .set_control("note_on", ControlValue::Number(60.0))
+            .unwrap();
+    }
+    for frame in 0..1_000 {
+        module.process(1);
+        let out = module.get_output("audio_left").unwrap();
+        assert_eq!(out, 0.0, "frame {frame}");
+    }
+}

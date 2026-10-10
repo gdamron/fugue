@@ -212,13 +212,16 @@ impl SampleKit {
             })
             .collect();
 
+        // From the controls, so a level written before the build (and
+        // restored by it) holds from the first frame.
+        let levels = (0..slot_count).map(|slot| controls.level(slot)).collect();
         Self {
             ctrl: controls,
             inputs: inputs::SampleKitInputs::new(),
             outputs: outputs::SampleKitOutputs::new(),
             voices,
             numeric_keys,
-            levels: vec![1.0; slot_count],
+            levels,
             swap_scratch: (0..slot_count).map(|_| None).collect(),
             last_play_counts: vec![0; slot_count],
             last_swaps_version: 0,

@@ -304,6 +304,9 @@ impl SampleInstrument {
             })
             .collect();
 
+        // From the controls, so a level restored at build holds from the
+        // first frame, including a steal fade from a first-block note.
+        let levels = (0..zone_count).map(|zone| controls.level(zone)).collect();
         Self {
             ctrl: controls,
             inputs: inputs::SampleInstrumentInputs::new(),
@@ -312,7 +315,7 @@ impl SampleInstrument {
             voices: (0..voices.clamp(1, MAX_VOICES))
                 .map(|_| Voice::new())
                 .collect(),
-            levels: vec![1.0; zone_count],
+            levels,
             swap_scratch: (0..zone_count).map(|_| None).collect(),
             note_scratch: Vec::with_capacity(MAX_PENDING_NOTES),
             next_started: 0,
