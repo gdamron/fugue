@@ -211,7 +211,12 @@ fn reset_on_reload_is_off_unless_the_config_sets_it() {
 fn a_tempo_change_after_a_latch_takes_effect_from_the_sample_after() {
     for &(rate, bpm) in CASES {
         for warmup in [0u64, 1, 211, 30_000] {
-            for (pending, new_bpm) in [(None, bpm * 0.5), (Some(bpm * 3.0), 0.0)] {
+            for (pending, new_bpm) in [
+                (None, bpm * 0.5),
+                (Some(bpm * 3.0), 0.0),
+                // A pending change, then the tempo before it restored.
+                (Some(bpm * 2.0), bpm),
+            ] {
                 let mut clock = run(rate, bpm, warmup, pending);
                 let context = format!("{rate} Hz {bpm} bpm {warmup}, {pending:?} then {new_bpm}");
                 let next = clock.position_after(1);

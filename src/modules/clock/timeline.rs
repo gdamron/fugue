@@ -36,22 +36,22 @@ impl Clock {
     /// from: the epoch, or where the next sample re-anchors when a tempo
     /// change is pending (see `update_signal`).
     fn anchor(&self) -> (u64, f64) {
-        let pending = self.bpm() != self.last_bpm;
-        match self.reanchor(self.sample_count + 1) {
-            Some(anchor) if pending => anchor,
-            _ => (self.epoch_sample, self.epoch_beats),
-        }
+        self.reanchor(self.sample_count + 1)
+            .unwrap_or((self.epoch_sample, self.epoch_beats))
     }
 
-    /// Where a tempo change re-anchors as sample `next` plays: `next`
-    /// itself at its latched position when the tempo changed since the
-    /// latch, else the latest sample before it, or nowhere before the first
-    /// sample since the clock was built or reset (the epoch starts the
-    /// count).
+    /// Where the epoch re-anchors as sample `next` plays, if it does: at
+    /// `next` itself, at its latched position, when the tempo changed since
+    /// the latch (even back to the tempo before a change pending then);
+    /// else at the latest sample before it when the tempo changed since
+    /// that sample, unless none has played since the clock was built or
+    /// reset (the epoch then starts the count).
     pub(super) fn reanchor(&self, next: u64) -> Option<(u64, f64)> {
         match self.latch {
             Some((at, beats, bpm)) if at == next && self.bpm != bpm => Some((at, beats)),
-            _ if self.started => Some((next.saturating_sub(1), self.beats)),
+            _ if self.started && self.bpm() != self.last_bpm => {
+                Some((next.saturating_sub(1), self.beats))
+            }
             _ => None,
         }
     }
