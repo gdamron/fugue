@@ -11,6 +11,7 @@ use crate::{GraphModule, Module, ModuleBuildResult, ModuleFactory, MAX_BLOCK};
 
 /// Submits a request as a front door would: resolved and queued under the
 /// publisher, unless the queue was full.
+#[allow(clippy::result_large_err)] // `submit`'s result, by value
 pub(super) fn try_submit(
     rig: &Rig,
     module_id: &str,
@@ -23,6 +24,7 @@ pub(super) fn try_submit(
 }
 
 /// [`try_submit`] for any value, a payload included.
+#[allow(clippy::result_large_err)] // `submit`'s result, by value
 pub(super) fn try_submit_value(
     rig: &Rig,
     module_id: &str,
