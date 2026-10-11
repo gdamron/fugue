@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use super::builder::InventionBuilder;
 use super::reload::LoadedDevelopments;
+use super::timelines::Enclosure;
 
 mod compiled_graph;
 mod control_surface;
@@ -26,7 +27,8 @@ mod declared_tests;
 mod tests;
 
 use compiled_graph::{
-    unique_port_names, CompiledDevelopmentGraph, ExternalInputRoute, ExternalOutputRoute,
+    enclosure_of, unique_port_names, CompiledDevelopmentGraph, ExternalInputRoute,
+    ExternalOutputRoute,
 };
 use control_surface::DevelopmentControlSurface;
 use declared_controls::{enclose, DevelopmentControls};
@@ -173,6 +175,8 @@ pub(crate) struct DevelopmentModule {
     graph: CompiledDevelopmentGraph,
     /// Exposed controls reaching declared inner controls.
     controls: Option<DevelopmentControls>,
+    /// Its signal flow seen from outside (see `crate::invention::timelines`).
+    enclosure: Arc<Enclosure>,
 }
 
 impl DevelopmentModule {
@@ -278,6 +282,13 @@ impl DevelopmentModule {
             })
             .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
 
+        let enclosure = Arc::new(enclosure_of(
+            &module_list,
+            &runtime.routing,
+            &input_routes,
+            &output_ports,
+            &outputs,
+        ));
         let mut graph = CompiledDevelopmentGraph::from_modules(module_list, &runtime.routing)?;
 
         // Mark every sub-module input port that receives a signal (from an
@@ -316,6 +327,7 @@ impl DevelopmentModule {
                 outputs,
                 graph,
                 controls,
+                enclosure,
             },
             control_surface,
         ))
@@ -444,6 +456,10 @@ impl Module for DevelopmentModule {
             Some(controls) => controls.apply(&mut self.graph.modules, control, value),
             None => Err(Refusal::Unsupported),
         }
+    }
+
+    fn enclosure(&self) -> Option<&Arc<Enclosure>> {
+        Some(&self.enclosure)
     }
 
     /// Prepares every inner module, so a scheduler inside a development

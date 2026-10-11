@@ -137,6 +137,102 @@ fn with_no_clock_at_all_an_unnamed_request_is_refused() {
     ));
 }
 
+/// `thru` passes its `in` through a vca (its `side` reaches no output).
+/// `outer` routes its `gate` input through a `thru` to its output, its
+/// `near` input to that `thru`'s `side`, and its `other` input to a vca
+/// that reaches no output. `drummer` holds its own clock.
+const NESTED: &str = r#"{
+    "version": "1.0.0",
+    "developments": [
+        { "name": "outer", "definition": {
+            "version": "1.0.0",
+            "developments": [
+                { "name": "thru", "definition": {
+                    "version": "1.0.0",
+                    "modules": [{ "id": "v", "type": "vca" }, { "id": "w", "type": "vca" }],
+                    "connections": [],
+                    "inputs": [
+                        { "name": "in", "to": "v", "to_port": "audio" },
+                        { "name": "side", "to": "w", "to_port": "audio" }
+                    ],
+                    "outputs": [{ "name": "out", "from": "v", "from_port": "audio" }]
+                } }
+            ],
+            "modules": [
+                { "id": "t", "type": "thru" },
+                { "id": "g", "type": "vca" },
+                { "id": "x", "type": "vca" }
+            ],
+            "connections": [{ "from": "t", "from_port": "out", "to": "g", "to_port": "audio" }],
+            "inputs": [
+                { "name": "gate", "to": "t", "to_port": "in" },
+                { "name": "near", "to": "t", "to_port": "side" },
+                { "name": "other", "to": "x", "to_port": "audio" }
+            ],
+            "outputs": [{ "name": "out", "from": "g", "from_port": "audio" }]
+        } },
+        { "name": "drummer", "definition": {
+            "version": "1.0.0",
+            "modules": [
+                { "id": "c", "type": "clock", "config": { "bpm": 140.0 } },
+                { "id": "e", "type": "vca" }
+            ],
+            "connections": [{ "from": "c", "from_port": "beat", "to": "e", "to_port": "audio" }],
+            "outputs": [{ "name": "out", "from": "e", "from_port": "audio" }]
+        } }
+    ],
+    "modules": [
+        { "id": "a", "type": "clock", "config": { "bpm": 120.0 } },
+        { "id": "b", "type": "clock", "config": { "bpm": 97.0 } },
+        { "id": "dev", "type": "outer" },
+        { "id": "voice", "type": "vca" },
+        { "id": "drums", "type": "drummer" },
+        { "id": "kick", "type": "vca" },
+        { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+    ],
+    "connections": [
+        { "from": "a", "from_port": "beat", "to": "dev", "to_port": "other" },
+        { "from": "a", "from_port": "beat_d2", "to": "dev", "to_port": "near" },
+        { "from": "b", "from_port": "beat", "to": "dev", "to_port": "gate" },
+        { "from": "dev", "from_port": "out", "to": "voice", "to_port": "audio" },
+        { "from": "drums", "from_port": "out", "to": "kick", "to_port": "audio" },
+        { "from": "voice", "from_port": "audio", "to": "dac", "to_port": "audio" },
+        { "from": "kick", "from_port": "audio", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+#[test]
+fn the_walk_crosses_nested_developments_by_the_ports_that_connect() {
+    let rig = Rig::new(NESTED);
+    // b -> thru's v -> g -> voice, as if laid out flat; `a` reaches only
+    // inner modules no output comes from, in both developments (crossing
+    // either by module rather than port would tie `a` at 3, and `a` wins).
+    assert_eq!(timeline(&rig, "voice"), connected(&rig, "b", 3));
+    assert_eq!(resolves_to(&rig, "voice").unwrap(), "b");
+    // The development itself hears both clocks at 1: the tie goes to the
+    // one first in module order.
+    assert_eq!(timeline(&rig, "dev"), connected(&rig, "a", 1));
+}
+
+#[test]
+fn a_clock_inside_a_development_is_reported_but_not_resolved() {
+    let rig = Rig::new(NESTED);
+    let enclosed = Context::Enclosed {
+        development: index(&rig, "drums"),
+    };
+    assert_eq!(timeline(&rig, "kick"), enclosed);
+    assert_eq!(timeline(&rig, "drums"), enclosed);
+    assert!(matches!(
+        resolves_to(&rig, "kick"),
+        Err(GraphCommandError::ControlError(_))
+    ));
+    // The dac hears `b` (distance 4) and the drummer's clock (3): the
+    // nearer, enclosed, one drives it.
+    assert_eq!(timeline(&rig, "dac"), enclosed);
+    let publisher = rig.live.publisher().lock().unwrap();
+    assert_eq!(publisher.beat_clock("kick", Some("b")).unwrap(), 1);
+}
+
 #[test]
 fn a_repatch_moves_the_module_but_not_what_already_waits() {
     let mut rig = Rig::new(TWO_CLOCKS);
@@ -187,4 +283,53 @@ fn a_waiting_request_whose_resolved_clock_goes_is_refused() {
         outcomes(&mut rig),
         [(id, Outcome::Refused(Refusal::TimelineGone))]
     );
+}
+
+/// A development holding a development that holds a clock, two levels
+/// down, and nothing else that keeps time.
+const DEEP: &str = r#"{
+    "version": "1.0.0",
+    "developments": [
+        { "name": "band", "definition": {
+            "version": "1.0.0",
+            "developments": [
+                { "name": "drummer", "definition": {
+                    "version": "1.0.0",
+                    "modules": [{ "id": "c", "type": "clock", "config": { "bpm": 140.0 } }],
+                    "connections": [],
+                    "outputs": [{ "name": "out", "from": "c", "from_port": "beat" }]
+                } }
+            ],
+            "modules": [{ "id": "d", "type": "drummer" }],
+            "connections": [],
+            "outputs": [{ "name": "out", "from": "d", "from_port": "out" }]
+        } }
+    ],
+    "modules": [
+        { "id": "lone", "type": "vca" },
+        { "id": "band", "type": "band" },
+        { "id": "snare", "type": "vca" },
+        { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+    ],
+    "connections": [
+        { "from": "band", "from_port": "out", "to": "snare", "to_port": "audio" },
+        { "from": "snare", "from_port": "audio", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+#[test]
+fn a_clock_two_developments_down_is_reported_and_so_is_one_with_no_other_clock() {
+    let rig = Rig::new(DEEP);
+    let enclosed = Context::Enclosed {
+        development: index(&rig, "band"),
+    };
+    assert_eq!(timeline(&rig, "snare"), enclosed);
+    // `lone` hears nothing, and the only clock is the band's.
+    assert_eq!(timeline(&rig, "lone"), enclosed);
+    for id in ["snare", "lone"] {
+        assert!(matches!(
+            resolves_to(&rig, id),
+            Err(GraphCommandError::ControlError(_))
+        ));
+    }
 }

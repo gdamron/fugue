@@ -245,8 +245,9 @@ impl Publisher {
     ///
     /// Fails with [`GraphCommandError::UnknownModule`], or with
     /// [`GraphCommandError::ControlError`] when the named module is not a
-    /// clock, or an unnamed clock cannot be
-    /// resolved: the invention has no clock.
+    /// clock, or an unnamed clock cannot be resolved: the invention has no
+    /// clock a request can name, or the module is driven by a clock inside a
+    /// development, which a request cannot name yet.
     // The front doors that submit beat-timed requests arrive with FUG-317.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn beat_clock(
@@ -273,9 +274,17 @@ impl Publisher {
             },
             None => match self.mirror.timelines.get(module) {
                 Some(Context::Connected { clock, .. } | Context::Fallback { clock }) => *clock,
+                Some(Context::Enclosed { development }) => {
+                    let development = modules.get_index(*development).map_or("?", |(id, _)| id);
+                    return Err(GraphCommandError::ControlError(format!(
+                        "module '{module_id}' counts on a clock inside development \
+                         '{development}', which a request cannot name yet; name a clock"
+                    )));
+                }
                 Some(Context::None) | None => {
                     return Err(GraphCommandError::ControlError(format!(
-                        "module '{module_id}' has no timeline: the invention has no clock"
+                        "module '{module_id}' has no timeline: the invention has no clock \
+                         a request can name"
                     )));
                 }
             },

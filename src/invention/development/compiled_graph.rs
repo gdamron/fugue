@@ -1,4 +1,5 @@
 use super::*;
+use crate::invention::timelines::{self, Flow, Link};
 
 pub(super) struct ExternalInputRoute {
     pub(super) module_index: usize,
@@ -180,4 +181,47 @@ pub(super) fn compute_process_order_slice(
 
     order.reverse();
     (order, has_cycle)
+}
+
+/// A development's signal flow seen from outside: what reaches each output
+/// port (by index) from its inner modules and input ports.
+pub(super) fn enclosure_of(
+    modules: &[(String, GraphModule)],
+    routing: &[RoutingConnection],
+    input_routes: &[Vec<ExternalInputRoute>],
+    output_ports: &[&'static str],
+    outputs: &[ExternalOutputRoute],
+) -> Enclosure {
+    let flows: Vec<Flow> = modules.iter().map(|(_, m)| Flow::of(m.module())).collect();
+    let index = |id: &str| modules.iter().position(|(other, _)| other == id);
+    let links: Vec<Link> = routing
+        .iter()
+        .filter_map(|conn| {
+            let from = index(&conn.from_module)?;
+            let to = index(&conn.to_module)?;
+            Some(Link {
+                from,
+                from_port: modules[from]
+                    .1
+                    .module()
+                    .output_port_index(&conn.from_port)?,
+                to,
+                to_port: modules[to].1.module().input_port_index(&conn.to_port)?,
+            })
+        })
+        .collect();
+    let boundary: Vec<_> = input_routes
+        .iter()
+        .enumerate()
+        .flat_map(|(input, routes)| {
+            routes
+                .iter()
+                .map(move |route| (route.module_index, route.port_index, input))
+        })
+        .collect();
+    let sources = output_ports.iter().map(|name| {
+        let route = outputs.iter().find(|route| route.name == *name)?;
+        Some((route.module_index, route.port_index))
+    });
+    timelines::enclosure(&flows, &links, &boundary, sources)
 }
