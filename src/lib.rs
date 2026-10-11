@@ -89,9 +89,10 @@ pub use invention::{
     validate_score, AssetSpec, CodeModuleRuntimeInfo, Connection, ControlOverride,
     DevelopmentControl, DevelopmentDefinitions, DevelopmentInput, DevelopmentOutput,
     DevelopmentSpec, GraphCommandError, Invention, InventionBuilder, InventionHandles,
-    InventionRuntime, ModuleSpec, OrchestrationRuntime, ReloadError, ReloadReport, RenderEngine,
-    RunningInvention, RuntimeConnectionInfo, RuntimeController, RuntimeModuleInfo, RuntimeSnapshot,
-    RuntimeState, RuntimeStatus, Score, TimeSignature, SCORE_SCHEMA_V1,
+    InventionRuntime, LoggedBeat, LoggedRequest, LoggedValue, ModuleSpec, OrchestrationRuntime,
+    ReloadError, ReloadReport, RenderEngine, RequestLog, RunningInvention, RuntimeConnectionInfo,
+    RuntimeController, RuntimeModuleInfo, RuntimeSnapshot, RuntimeState, RuntimeStatus, Score,
+    TimeSignature, REQUEST_LOG_CAPACITY, SCORE_SCHEMA_V1,
 };
 
 // Re-export music theory

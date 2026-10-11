@@ -308,6 +308,12 @@ impl LiveGraph {
         self.pending.lock().unwrap().take_outcomes()
     }
 
+    /// The session's log of applied control requests (see
+    /// [`crate::invention::request_log`]).
+    pub(crate) fn request_log(&self) -> crate::RequestLog {
+        self.pending.lock().unwrap().request_log()
+    }
+
     /// The request queue declared surfaces submit to, for any module.
     fn port(&self) -> RequestPort {
         RequestPort {
@@ -452,6 +458,9 @@ impl LiveGraph {
                 return Err(error);
             }
         };
+        // Under the publisher, as a write records itself (publisher, then
+        // the log).
+        self.pending.lock().unwrap().edited();
         let mirror = publisher.mirror();
         let removed: Vec<&String> = published
             .previous

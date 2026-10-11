@@ -112,6 +112,13 @@ pub enum RpcResponsePayload {
     AuthoredSnapshot {
         snapshot: Box<AuthoredSnapshot>,
     },
+    /// The running session's request log, in reply to
+    /// [`RpcCommand::ExportRequestLog`].
+    ///
+    /// [`RpcCommand::ExportRequestLog`]: super::RpcCommand::ExportRequestLog
+    RequestLog {
+        log: crate::RequestLog,
+    },
     /// The daemon's identity, in reply to [`RpcRequestPayload::Hello`]. Nested
     /// (not flattened) so `DaemonIdentity::schema_version` does not collide with
     /// the response envelope's own `schema_version`.

@@ -1,0 +1,304 @@
+//! The session's request log: every applied request with the sample it
+//! applied at, in apply order, recorded on a control thread from the
+//! outcomes the audio thread already sends.
+
+use super::declared::dial_rig;
+use super::migrated::block_with_locks_held;
+use super::request_beats::beat_rig;
+use super::requests::counted_block;
+use super::*;
+use crate::control_request::{
+    BeatSpec, BeatTime, ControlIndex, Request, RequestId, RequestValue, RtValue, When,
+};
+use crate::invention::publish::PendingWrite;
+use crate::{LoggedBeat, LoggedRequest, LoggedValue, RequestLog};
+
+/// Submits `value` for `key` of `module_id` at `when` as a front door
+/// would, recording the write in the pending log first, with `beat` as its
+/// musical time.
+fn submit_logged(
+    rig: &Rig,
+    (module_id, key): (&str, &str),
+    value: RtValue,
+    when: When,
+    beat: Option<LoggedBeat>,
+) -> RequestId {
+    let surface = rig.live.control_surfaces.lock().unwrap()[module_id].clone();
+    let declaration = surface.declaration(key).unwrap();
+    let publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher
+        .control_target(module_id, declaration.index)
+        .unwrap();
+    let mut request = Request::new(target, RequestValue::Value(value));
+    request.when = when;
+    request.event = declaration.decl.event;
+    let mut pending = rig.live.pending.lock().unwrap();
+    let id = rig.live.requests.submit(request).unwrap();
+    let write = PendingWrite {
+        module_id: module_id.to_string(),
+        key: key.to_string(),
+        value: crate::ControlValue::Number(0.0),
+        raw: value,
+        beat,
+    };
+    pending.submitted(id, write);
+    id
+}
+
+/// The clock's position in the installed order, for a beat request.
+fn clock_idx(rig: &Rig) -> u32 {
+    let publisher = rig.live.publisher().lock().unwrap();
+    publisher
+        .control_target("clock", ControlIndex(0))
+        .unwrap()
+        .module_idx as u32
+}
+
+fn logged(sample: u64, key: &str, value: LoggedValue) -> LoggedRequest {
+    LoggedRequest {
+        sample,
+        module_id: "dial".to_string(),
+        key: key.to_string(),
+        value,
+        due: None,
+        beat: None,
+    }
+}
+
+#[test]
+fn applied_writes_are_logged_with_their_sample_in_apply_order() {
+    let mut rig = dial_rig();
+    let dial = rig.live.control_surfaces.lock().unwrap()["dial"].clone();
+    // Applied at the next block start: sample 64.
+    dial.set_control("level", 0.5.into()).unwrap();
+    dial.set_control("shape", "steep".into()).unwrap();
+    rig.render(1);
+    // Later in the block it is submitted for, then before an earlier one.
+    submit_logged(
+        &rig,
+        ("dial", "level"),
+        RtValue::F32(0.75),
+        When::AtSample(200),
+        None,
+    );
+    submit_logged(
+        &rig,
+        ("dial", "level"),
+        RtValue::F32(0.125),
+        When::AtSample(150),
+        None,
+    );
+    // Superseded before it applies: never heard, never logged.
+    submit_logged(
+        &rig,
+        ("dial", "pulse"),
+        RtValue::Bool(true),
+        When::AtSample(300),
+        None,
+    );
+    submit_logged(
+        &rig,
+        ("dial", "level"),
+        RtValue::F32(0.9),
+        When::AtSample(300),
+        None,
+    );
+    submit_logged(
+        &rig,
+        ("dial", "level"),
+        RtValue::F32(0.3),
+        When::AtSample(300),
+        None,
+    );
+    rig.render(4);
+
+    let log = rig.live.request_log();
+    assert_eq!(
+        log.requests,
+        [
+            logged(64, "level", LoggedValue::Number(0.5)),
+            logged(64, "shape", LoggedValue::Index(1)),
+            logged(150, "level", LoggedValue::Number(0.125)),
+            logged(200, "level", LoggedValue::Number(0.75)),
+            logged(300, "pulse", LoggedValue::Bool(true)),
+            logged(300, "level", LoggedValue::Number(0.3)),
+        ]
+    );
+    assert_eq!((log.full, log.lost), (false, 0));
+    assert_eq!(log.edits, 1, "the rig's own edit, adding the dial");
+    assert!(!log.is_exact(), "an edited session replays inexactly");
+}
+
+#[test]
+fn a_late_request_logs_where_it_applied_and_when_it_was_due() {
+    let mut rig = dial_rig();
+    rig.render(4);
+    submit_logged(
+        &rig,
+        ("dial", "level"),
+        RtValue::F32(0.5),
+        When::AtSample(10),
+        None,
+    );
+    rig.render(1);
+    let log = rig.live.request_log();
+    assert_eq!(
+        log.requests,
+        [LoggedRequest {
+            due: Some(10),
+            ..logged(320, "level", LoggedValue::Number(0.5))
+        }]
+    );
+}
+
+#[test]
+fn a_beat_request_logs_its_sample_and_musical_time() {
+    let mut rig = beat_rig(120.0);
+    rig.render(1);
+    let clock = clock_idx(&rig);
+    let beat = LoggedBeat::After {
+        clock: "clock".to_string(),
+        beats: 1.0,
+    };
+    let when = When::Beat(BeatTime {
+        clock,
+        spec: BeatSpec::After(1.0),
+    });
+    submit_logged(
+        &rig,
+        ("dial", "level"),
+        RtValue::F32(0.5),
+        when,
+        Some(beat.clone()),
+    );
+    // A beat at 120 bpm is 24000 samples.
+    rig.render(24_000 / 64 + 2);
+    let log = rig.live.request_log();
+    assert_eq!(log.requests.len(), 1, "{log:?}");
+    let applied = &log.requests[0];
+    assert_eq!(applied.beat, Some(beat));
+    assert!(
+        (24_000..=24_064 + 64).contains(&applied.sample),
+        "one beat after it was taken: {}",
+        applied.sample
+    );
+}
+
+#[test]
+fn a_repeating_grid_makes_the_log_inexact() {
+    let mut rig = beat_rig(120.0);
+    rig.render(1);
+    let clock = clock_idx(&rig);
+    let spec = BeatSpec::Grid {
+        every: 1.0,
+        offset: 0.0,
+        repeat: true,
+    };
+    let beat = LoggedBeat::Grid {
+        clock: "clock".to_string(),
+        every: 1.0,
+        offset: 0.0,
+        repeat: true,
+    };
+    let when = When::Beat(BeatTime { clock, spec });
+    submit_logged(&rig, ("dial", "level"), RtValue::F32(0.5), when, Some(beat));
+    rig.render(24_000 / 64 * 3);
+    let log = rig.live.request_log();
+    assert_eq!(log.requests.len(), 1, "its first application only");
+    assert!(!RequestLog { edits: 0, ..log }.is_exact());
+}
+
+#[test]
+fn outcomes_the_audio_thread_dropped_are_counted_lost() {
+    let mut rig = dial_rig();
+    // More applications than the outcome ring holds, with no control
+    // thread receiving in between. Events, so none coalesce.
+    for _ in 0..6 {
+        for _ in 0..200 {
+            submit_logged(
+                &rig,
+                ("dial", "pulse"),
+                RtValue::Bool(true),
+                When::Now,
+                None,
+            );
+        }
+        rig.render(1);
+    }
+    let log = rig.live.request_log();
+    assert!(log.lost > 0, "{} recorded", log.requests.len());
+    assert_eq!(log.requests.len() as u64 + log.lost, 1200);
+    assert!(!log.is_exact());
+}
+
+#[test]
+fn a_write_the_log_no_longer_remembers_is_counted_lost() {
+    let mut rig = dial_rig();
+    let publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher.control_target("dial", ControlIndex(0)).unwrap();
+    rig.live
+        .requests
+        .submit(Request::new(target, RequestValue::Value(RtValue::F32(0.5))))
+        .unwrap();
+    drop(publisher);
+    rig.render(1);
+    let log = rig.live.request_log();
+    assert_eq!((log.requests.len(), log.lost), (0, 1));
+}
+
+#[test]
+fn blocks_applying_logged_requests_neither_allocate_nor_lock() {
+    let mut rig = dial_rig();
+    for n in 0..32 {
+        let at = When::AtSample(64 * 2 + n * 3);
+        submit_logged(&rig, ("dial", "level"), RtValue::F32(0.5), at, None);
+    }
+    rig.render(1);
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    // With the pending log's lock held too (the negative control, a block
+    // that does take a held lock, is `migrated`'s).
+    assert_eq!(block_with_locks_held(&mut rig, &[]), Ok((0, 0)));
+    assert_eq!(rig.live.request_log().requests.len(), 32);
+}
+
+#[test]
+fn the_log_stops_when_full_and_says_so() {
+    let mut recorder = crate::invention::request_log::Recorder::default();
+    for sample in 0..=crate::REQUEST_LOG_CAPACITY as u64 {
+        recorder.applied(LoggedRequest {
+            sample,
+            ..logged(0, "level", LoggedValue::Number(0.5))
+        });
+    }
+    let log = recorder.export();
+    assert!(log.full);
+    assert_eq!(log.requests.len(), crate::REQUEST_LOG_CAPACITY);
+    assert_eq!(log.requests[0].sample, 0, "the oldest are kept");
+    assert!(!log.is_exact());
+}
+
+#[test]
+fn the_exported_log_round_trips_through_json() {
+    let log = RequestLog {
+        requests: vec![
+            LoggedRequest {
+                due: Some(3),
+                ..logged(64, "level", LoggedValue::Number(0.1))
+            },
+            LoggedRequest {
+                beat: Some(LoggedBeat::Grid {
+                    clock: "clock".into(),
+                    every: 0.5,
+                    offset: 0.25,
+                    repeat: false,
+                }),
+                ..logged(96, "shape", LoggedValue::Index(1))
+            },
+            logged(97, "seed", LoggedValue::Integer(-(1 << 30) - 1)),
+        ],
+        ..RequestLog::default()
+    };
+    let json = serde_json::to_string(&log).unwrap();
+    assert_eq!(serde_json::from_str::<RequestLog>(&json).unwrap(), log);
+    assert!(log.is_exact());
+}

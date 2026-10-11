@@ -3,13 +3,15 @@
 //! is listed here.
 //!
 //! The log is the outcome channel's one consumer: it settles its own
-//! writes and keeps every outcome it receives for whoever reports them
-//! (see [`PendingLog::take_outcomes`]).
+//! writes, keeps every outcome it receives for whoever reports them (see
+//! [`PendingLog::take_outcomes`]), and records each applied write in the
+//! session's request log (see [`crate::invention::request_log`]).
 
 use std::collections::VecDeque;
 
 use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
-use crate::control_request::{EventCursor, Outcome, OutcomeReceiver, RequestId};
+use crate::control_request::{EventCursor, Outcome, OutcomeReceiver, RequestId, RtValue};
+use crate::invention::request_log::{LoggedBeat, LoggedRequest, Recorder, RequestLog};
 use crate::ControlValue;
 
 /// The most writes the log remembers: every request the queue, the
@@ -22,6 +24,10 @@ pub(crate) struct PendingWrite {
     pub(crate) module_id: String,
     pub(crate) key: String,
     pub(crate) value: ControlValue,
+    /// The value exactly as the module will receive it, for the log.
+    pub(crate) raw: RtValue,
+    /// Its musical time, when it is timed in beats.
+    pub(crate) beat: Option<LoggedBeat>,
 }
 
 /// Submitted writes, oldest first, until their outcome arrives, and the
@@ -36,6 +42,8 @@ pub(crate) struct PendingLog {
     /// Outcomes lost since they were last taken: dropped by the audio
     /// thread for want of room, or evicted here unreported.
     lost: u64,
+    /// The session's applied writes.
+    log: Recorder,
 }
 
 impl PendingLog {
@@ -46,6 +54,7 @@ impl PendingLog {
             receiver,
             dropped: EventCursor::new(),
             lost: 0,
+            log: Recorder::default(),
         }
     }
 
@@ -55,7 +64,11 @@ impl PendingLog {
     /// rather than list one as pending for ever.
     pub(crate) fn settle(&mut self) {
         while let Some((id, outcome)) = self.receiver.try_recv() {
-            self.writes.retain(|(pending, _)| *pending != id);
+            let write = self.writes.iter().position(|(pending, _)| *pending == id);
+            let write = write
+                .and_then(|at| self.writes.remove(at))
+                .map(|(_, write)| write);
+            self.record(write, outcome);
             if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
                 self.outcomes.pop_front();
                 self.lost += 1;
@@ -65,8 +78,44 @@ impl PendingLog {
         let dropped = self.dropped.take(self.receiver.dropped());
         if dropped > 0 {
             self.lost += u64::from(dropped);
+            self.log.lost(u64::from(dropped));
             self.writes.clear();
         }
+    }
+
+    /// Records `write` in the session log when `outcome` applied it, or
+    /// counts it lost when the write is no longer remembered.
+    fn record(&mut self, write: Option<PendingWrite>, outcome: Outcome) {
+        let (sample, due) = match outcome {
+            Outcome::Applied { at } => (at, None),
+            Outcome::AppliedLate { at, due } => (at, Some(due)),
+            Outcome::Superseded | Outcome::Refused(_) => return,
+        };
+        let Some(write) = write else {
+            self.log.lost(1);
+            return;
+        };
+        self.log.applied(LoggedRequest {
+            sample,
+            module_id: write.module_id,
+            key: write.key,
+            value: write.raw.into(),
+            due,
+            beat: write.beat,
+        });
+    }
+
+    /// Counts a structural edit published, which a replay of the log does
+    /// not reproduce.
+    pub(crate) fn edited(&mut self) {
+        self.log.edited();
+    }
+
+    /// The session's request log as recorded so far, every outcome
+    /// received first.
+    pub(crate) fn request_log(&mut self) -> RequestLog {
+        self.settle();
+        self.log.export()
     }
 
     /// Records a write just submitted as request `id`. Call it under the

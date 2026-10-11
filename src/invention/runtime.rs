@@ -343,6 +343,13 @@ impl RunningInvention {
     pub fn document(&self) -> Option<crate::Invention> {
         self.state.lock().unwrap().document()
     }
+
+    /// Exports the session's log of applied control requests, each with
+    /// the sample it applied at, for an offline render of the invention as
+    /// loaded to replay (see [`crate::invention::request_log`]).
+    pub fn request_log(&self) -> crate::RequestLog {
+        self.live.request_log()
+    }
 }
 
 #[cfg(test)]

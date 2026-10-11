@@ -20,6 +20,7 @@ pub(crate) mod probe;
 mod request_beat_grids;
 mod request_beats;
 mod request_intake;
+mod request_log;
 mod request_payloads;
 mod request_races;
 mod request_timing;

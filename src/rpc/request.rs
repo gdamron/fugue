@@ -299,6 +299,12 @@ pub enum RpcCommand {
         #[serde(default)]
         end_source: Option<String>,
     },
+    /// Export the running session's log of applied control requests, each
+    /// with the sample it applied at, for an offline render to replay.
+    /// Answers [`RpcResponsePayload::RequestLog`].
+    ///
+    /// [`RpcResponsePayload::RequestLog`]: super::RpcResponsePayload::RequestLog
+    ExportRequestLog,
     /// Discover registered types; defaults to a terse index.
     DescribeModuleTypes(ModuleTypeQuery),
     /// Inspect type defaults, supplied config, or an existing module instance.
