@@ -354,7 +354,7 @@ fn a_live_write_is_listed_pending_until_the_audio_thread_applies_it() {
         module_id: "dial".to_string(),
         key: key.to_string(),
         value,
-        raw,
+        raw: Some(raw),
         beat: None,
     };
     assert_eq!(

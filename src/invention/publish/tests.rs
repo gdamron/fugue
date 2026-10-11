@@ -15,6 +15,7 @@ mod inputs;
 mod migrated;
 mod null_backend;
 mod orchestration;
+mod payload_controls;
 mod pilot;
 pub(crate) mod probe;
 mod request_beat_grids;

@@ -297,7 +297,7 @@ pub(crate) fn resolve_schedule(
         if automation.is_none() && surface.declares(&entry.control) {
             return Err(format!(
                 "schedule entry at step {}: control '{}.{}' cannot be scheduled \
-                 (an event or read-only control)",
+                 (an event, read-only or payload control)",
                 entry.at_step, entry.module, entry.control
             ));
         }

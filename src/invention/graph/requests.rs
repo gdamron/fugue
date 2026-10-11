@@ -103,7 +103,7 @@ use crate::control_request::{
     apply_declared, expired, take_automation, ControlIndex, ControlTarget, Outcome, OutcomeSender,
     PendingStore, QueueConsumer, Refusal, Request, RequestValue, RtValue, Watches, When,
 };
-use crate::payload::Retirer;
+use crate::payload::{Payload, Retirer};
 
 /// Applies a request's value in tests (see [`SignalGraph::request_hook`]),
 /// under [`PendingStore::apply_due`]'s contract.
@@ -477,9 +477,9 @@ impl SignalGraph {
     /// Applies `value` to `control` of the module at `module_idx`, under
     /// [`PendingStore::apply_due`]'s contract: a value through the module's
     /// [`apply`](crate::Module::apply), publishing what the control then
-    /// holds (see [`apply_declared`]). No module takes a payload yet, so one
-    /// is retired and refused with [`Refusal::Unsupported`]. A test's hook
-    /// replaces all of it.
+    /// holds (see [`apply_declared`]); a payload through its
+    /// [`apply_payload`](crate::Module::apply_payload), retiring whichever
+    /// value it does not keep. A test's hook replaces all of it.
     pub(super) fn apply_request(
         &mut self,
         module_idx: usize,
@@ -501,7 +501,24 @@ impl SignalGraph {
                 take_automation(instance.module_mut());
                 apply_declared(instance.module_mut(), control, value)
             }
-            RequestValue::Payload(payload) | RequestValue::Edit(payload) => {
+            RequestValue::Payload(payload) => {
+                let Some((_, instance)) = self.modules.get_index_mut(module_idx) else {
+                    retirer.retire(payload);
+                    return Err(Refusal::TargetGone);
+                };
+                match instance.module_mut().apply_payload(control, payload) {
+                    Ok(replaced) => {
+                        retirer.retire(replaced);
+                        Ok(())
+                    }
+                    Err((refusal, payload)) => {
+                        retirer.retire(payload);
+                        Err(refusal)
+                    }
+                }
+            }
+            // An edit is installed by the drain, never applied.
+            RequestValue::Edit(payload) => {
                 retirer.retire(payload);
                 Err(Refusal::Unsupported)
             }
@@ -520,6 +537,24 @@ impl SignalGraph {
         let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
         take_automation(instance.module_mut());
         apply_declared(instance.module_mut(), control, value)
+    }
+
+    /// Keeps `payload` as declared payload control `control` of module
+    /// `module_id` at once, as [`Self::apply_control`] applies a value.
+    /// Control thread: the value it replaces, or a refused payload, is
+    /// dropped here.
+    pub(crate) fn apply_payload(
+        &mut self,
+        module_id: &str,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<(), Refusal> {
+        let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
+        instance
+            .module_mut()
+            .apply_payload(control, payload)
+            .map(drop)
+            .map_err(|(refusal, _)| refusal)
     }
 
     /// A [`RequestHook`] applying an `F32` request as an input write, with
