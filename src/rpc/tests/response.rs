@@ -1,5 +1,15 @@
 use super::*;
 
+fn status(module_count: usize, connection_count: usize) -> crate::RuntimeStatus {
+    crate::RuntimeStatus {
+        running: true,
+        sample_rate: 48_000,
+        module_count,
+        connection_count,
+        diagnostics: None,
+    }
+}
+
 #[test]
 fn reload_command_defaults_and_outcome_round_trip() {
     // A client omitting the optional fields still decodes (wire back-compat).
@@ -29,17 +39,11 @@ fn reload_command_defaults_and_outcome_round_trip() {
             unchanged: 2,
             ..Default::default()
         }),
-        snapshot: RuntimeFullSnapshot {
-            status: crate::RuntimeStatus {
-                running: true,
-                sample_rate: 48_000,
-                module_count: 3,
-                connection_count: 2,
-                diagnostics: None,
-            },
+        snapshot: Some(RuntimeFullSnapshot {
+            status: status(3, 2),
             modules: Vec::new(),
             connections: Vec::new(),
-        },
+        }),
     };
     let response = RpcResponse::ok(
         Some("req-1".to_string()),
@@ -74,4 +78,82 @@ fn identity_response_round_trips_without_schema_version_collision() {
     let decoded: RpcResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded.payload, RpcResponsePayload::Identity { identity });
     assert_eq!(decoded.schema_version, RPC_SCHEMA_VERSION);
+}
+
+#[test]
+fn a_receipt_request_names_its_reply_and_a_default_one_does_not() {
+    let command = RpcCommand::SetControl {
+        module_id: "osc".to_string(),
+        key: "frequency".to_string(),
+        value: crate::ControlValue::Number(440.0),
+        intent: ControlWriteIntent::Author,
+    };
+
+    // A default request is byte-for-byte what a client before receipts sent.
+    let json = serde_json::to_value(RpcRequest::new(command.clone())).unwrap();
+    assert!(json.get("reply").is_none(), "{json}");
+    let decoded: RpcRequest = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.reply, MutationReply::Snapshot);
+
+    let json =
+        serde_json::to_value(RpcRequest::new(command).with_reply(MutationReply::Receipt)).unwrap();
+    assert_eq!(json["reply"], "receipt");
+    let decoded: RpcRequest = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.reply, MutationReply::Receipt);
+}
+
+#[test]
+fn a_receipt_carries_status_and_written_controls_only() {
+    let receipt = MutationReceipt {
+        status: status(40, 60),
+        controls: vec![
+            AppliedControl {
+                module_id: "osc".to_string(),
+                key: "frequency".to_string(),
+                value: Some(crate::ControlValue::Number(440.0)),
+            },
+            AppliedControl {
+                module_id: "gone".to_string(),
+                key: "level".to_string(),
+                value: None,
+            },
+        ],
+    };
+    let response = RpcResponse::ok(None, RpcResponsePayload::Receipt(receipt.clone()));
+    let json = serde_json::to_value(&response).unwrap();
+    assert_eq!(json["kind"], "receipt");
+    assert_eq!(json["status"]["module_count"], 40);
+    assert_eq!(json["controls"][0]["value"], 440.0);
+    assert!(json["controls"][1].get("value").is_none(), "{json}");
+    assert!(json.get("modules").is_none() && json.get("connections").is_none());
+    let decoded: RpcResponse = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.payload, RpcResponsePayload::Receipt(receipt));
+
+    // A command that wrote no control leaves the list off the wire.
+    let structural = RpcResponsePayload::Receipt(MutationReceipt {
+        status: status(1, 0),
+        controls: Vec::new(),
+    });
+    let json = serde_json::to_value(RpcResponse::ok(None, structural.clone())).unwrap();
+    assert!(json.get("controls").is_none(), "{json}");
+    let decoded: RpcResponse = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.payload, structural);
+}
+
+#[test]
+fn a_reload_answered_with_a_receipt_omits_the_snapshot() {
+    let outcome = ReloadOutcome {
+        mode: ReloadMode::Diff,
+        reason: None,
+        report: Some(crate::ReloadReport::default()),
+        snapshot: None,
+    };
+    let json = serde_json::to_value(RpcResponse::ok(
+        None,
+        RpcResponsePayload::Reload(outcome.clone()),
+    ))
+    .unwrap();
+    assert!(json.get("snapshot").is_none(), "{json}");
+    let decoded: RpcResponse = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.payload, RpcResponsePayload::Reload(outcome));
 }

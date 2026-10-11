@@ -15,6 +15,7 @@ mod error;
 mod event;
 mod identity;
 mod package;
+mod receipt;
 mod recovery;
 mod request;
 mod response;
@@ -45,6 +46,7 @@ pub use package::{
     PackageSource, MAX_PACKAGE_DIAGNOSTICS, MAX_PACKAGE_LIST_BYTES, MAX_PACKAGE_SUMMARY_BYTES,
     PACKAGE_SCHEMA_VERSION,
 };
+pub use receipt::{AppliedControl, MutationReceipt, MutationReply};
 pub(crate) use recovery::{truncate_on_char_boundary, MODULE_ERROR_BYTES};
 pub use recovery::{
     Admission, MutationLedger, MutationTicket, PendingMutation, ReplayPolicy,

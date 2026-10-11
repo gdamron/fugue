@@ -1,9 +1,9 @@
 //! Client request envelopes and the commands a daemon accepts.
 
 use super::{
-    ControlWriteIntent, DescribeModuleQuery, InspectionQuery, ModuleTypeQuery, MutationTicket,
-    PackageInstallRequest, RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, StructuralEdit,
-    RPC_SCHEMA_VERSION,
+    ControlWriteIntent, DescribeModuleQuery, InspectionQuery, ModuleTypeQuery, MutationReply,
+    MutationTicket, PackageInstallRequest, RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery,
+    StructuralEdit, RPC_SCHEMA_VERSION,
 };
 use crate::{ControlValue, Invention};
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,14 @@ pub struct RpcRequest {
     /// [`MutationLedger`]: super::MutationLedger
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutation: Option<MutationTicket>,
+    /// How a mutating command should be acknowledged: a full snapshot (the
+    /// default, and what an omitted field means) or a compact
+    /// [`MutationReceipt`]. Commands that answer with their own payload, such
+    /// as reads and `ApplyEdits`, ignore it.
+    ///
+    /// [`MutationReceipt`]: super::MutationReceipt
+    #[serde(default, skip_serializing_if = "MutationReply::is_snapshot")]
+    pub reply: MutationReply,
     #[serde(flatten)]
     pub payload: RpcRequestPayload,
 }
@@ -51,6 +59,7 @@ impl RpcRequest {
             request_id: None,
             expected_revision: None,
             mutation: None,
+            reply: MutationReply::Snapshot,
             payload: RpcRequestPayload::Command(command),
         }
     }
@@ -69,6 +78,12 @@ impl RpcRequest {
     /// Attaches the recovery ticket this command keeps across retries.
     pub fn with_mutation(mut self, ticket: MutationTicket) -> Self {
         self.mutation = Some(ticket);
+        self
+    }
+
+    /// Asks for this mutation to be acknowledged in the given shape.
+    pub fn with_reply(mut self, reply: MutationReply) -> Self {
+        self.reply = reply;
         self
     }
 }

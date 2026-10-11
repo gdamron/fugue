@@ -2,8 +2,8 @@
 
 use super::{
     ApplyEditsReport, AuthoredSnapshot, DaemonIdentity, EventPage, InspectionPage, MeterReading,
-    ModuleDescription, ModuleTypeList, PackageList, RpcError, RuntimeFullSnapshot, RuntimeRevision,
-    RPC_SCHEMA_VERSION,
+    ModuleDescription, ModuleTypeList, MutationReceipt, PackageList, RpcError, RuntimeFullSnapshot,
+    RuntimeRevision, RPC_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +54,11 @@ impl RpcResponse {
 pub enum RpcResponsePayload {
     Ack,
     Snapshot(RuntimeFullSnapshot),
+    /// A mutation that committed, acknowledged compactly because the request
+    /// asked for [`MutationReply::Receipt`]. Takes the place of `Snapshot`.
+    ///
+    /// [`MutationReply::Receipt`]: super::MutationReply::Receipt
+    Receipt(MutationReceipt),
     Events(EventPage),
     /// The latest sampled output levels, in reply to
     /// [`RpcRequestPayload::GetMeters`]. Empty when nothing is playing. A struct
@@ -180,5 +185,11 @@ pub struct ReloadOutcome {
     /// What the diff changed; present only for [`ReloadMode::Diff`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report: Option<crate::ReloadReport>,
-    pub snapshot: RuntimeFullSnapshot,
+    /// The runtime after the reload. Omitted when the request asked for
+    /// [`MutationReply::Receipt`]; the envelope's revision still says where the
+    /// reload landed.
+    ///
+    /// [`MutationReply::Receipt`]: super::MutationReply::Receipt
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<RuntimeFullSnapshot>,
 }
