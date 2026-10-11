@@ -197,3 +197,23 @@ fn a_ramp_after_an_out_of_range_jump_starts_where_the_module_clamped_it() {
     // (which the knob would hold at 1 for the first half of the ramp).
     assert!(knob.level > 0.99 && knob.level < 1.0, "{}", knob.level);
 }
+
+#[test]
+fn an_entry_after_a_held_writes_sample_takes_the_control_whatever_the_block() {
+    use crate::control_request::{take_hold, FrameScope, Standing};
+    // A user's write due at sample 64, then an entry firing on frame
+    // `edge` of a 16-frame block starting there.
+    for (edge, level) in [(0, 1.0), (5, 0.5)] {
+        let (mut scheduler, mut knob, _) =
+            setup(r#"[{ "at_step": 0, "module": "knob", "control": "level", "value": 0.5 }]"#);
+        take_hold(&knob, ControlIndex(0), Standing::user(64));
+        let clock = scheduler.inputs().iter().position(|port| *port == "clock");
+        let gate = scheduler.input_block_mut(clock.unwrap());
+        gate[..16].fill(0.0);
+        gate[edge] = 1.0;
+        let _frame_zero = FrameScope::enter(64);
+        let (_, allocs, frees) = allocator_events(|| scheduler.process(16));
+        take_automation(&mut knob);
+        assert_eq!((allocs, frees, knob.level), (0, 0, level), "edge on {edge}");
+    }
+}

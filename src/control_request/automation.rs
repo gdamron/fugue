@@ -16,6 +16,12 @@
 //! a feedback group), last one wins, exactly as the scheduler's writes to
 //! shared controls did before. A refused write is counted, never
 //! formatted.
+//!
+//! A write to a control a higher tier holds (see [`super::hold`]) is
+//! dropped and counted, never stored, and its writer told, so a ramp is
+//! abandoned and a ramp's next start reads the held value. A schedule entry firing is
+//! automation's next event on its control ([`Automation::begin`]): it
+//! frees the control first.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -34,6 +40,7 @@ pub(crate) struct AutomationSlots {
     slots: Box<[AtomicU64]>,
     pending: AtomicBool,
     refused: EventCounter,
+    overridden: EventCounter,
 }
 
 impl AutomationSlots {
@@ -42,6 +49,7 @@ impl AutomationSlots {
             slots: (0..len).map(|_| AtomicU64::new(EMPTY)).collect(),
             pending: AtomicBool::new(false),
             refused: EventCounter::new(),
+            overridden: EventCounter::new(),
         }
     }
 
@@ -64,6 +72,12 @@ impl AutomationSlots {
     /// control cannot hold (a fraction for an integer).
     pub(crate) fn refused(&self) -> &EventCounter {
         &self.refused
+    }
+
+    /// Automation writes dropped so far because a higher tier held their
+    /// control.
+    pub(crate) fn overridden(&self) -> &EventCounter {
+        &self.overridden
     }
 }
 
@@ -123,8 +137,10 @@ impl Automation {
     /// only when whole and in its domain (otherwise counted refused). A
     /// clamping control holds it clamped, as its module will; a
     /// development's hands it to each alias as is, to clamp for itself.
+    /// Returns whether it was let through: false when a higher tier holds
+    /// the control (every alias, for a development), and it was dropped.
     #[inline]
-    pub(crate) fn write_number(&self, value: f32) {
+    pub(crate) fn write_number(&self, value: f32) -> bool {
         let value = match self.kind {
             DeclKind::Number { .. } => Some(RtValue::F32(match self.clamp {
                 Some((min, max)) => value.max(min).min(max),
@@ -141,32 +157,56 @@ impl Automation {
             }
             _ => None,
         };
-        self.write(value);
+        self.write(value)
     }
 
     /// Writes a boolean to a boolean control (otherwise counted refused).
+    /// Returns whether it was let through, as [`Self::write_number`] does.
     #[inline]
-    pub(crate) fn write_bool(&self, value: bool) {
+    pub(crate) fn write_bool(&self, value: bool) -> bool {
         let value = (self.kind == DeclKind::Bool).then_some(RtValue::Bool(value));
-        self.write(value);
+        self.write(value)
     }
 
-    fn write(&self, value: Option<RtValue>) {
+    /// Automation's next scheduled event on this control (a schedule entry
+    /// firing on frame `frame` of its module's processing): frees it from
+    /// any hold a higher tier took, unless that write was due at the
+    /// entry's sample or after it (see `Holds::release`), so the writes
+    /// that follow apply. Call it before the entry's first write, or
+    /// before reading where its ramp starts.
+    #[inline]
+    pub(crate) fn begin(&self, frame: usize) {
+        self.cells.holds.release(self.index, frame);
+        for alias in self.aliases.iter().flat_map(|aliases| aliases.iter()) {
+            alias.begin(frame);
+        }
+    }
+
+    fn write(&self, value: Option<RtValue>) -> bool {
         match (value, &self.aliases) {
-            (None, _) => self.cells.automation.refused.record(),
+            (None, _) => {
+                self.cells.automation.refused.record();
+                true
+            }
             // Checked against the development's own kind first, which every
             // alias takes all of: each then holds it as its own kind does.
-            (Some(value), Some(aliases)) => {
-                for alias in aliases.iter() {
-                    match value {
-                        RtValue::F32(number) => alias.write_number(number),
-                        RtValue::I32(whole) => alias.write_number(whole as f32),
-                        RtValue::Bool(flag) => alias.write_bool(flag),
-                        _ => alias.write(None),
-                    }
-                }
+            (Some(value), Some(aliases)) => aliases.iter().fold(false, |through, alias| {
+                let alias_through = match value {
+                    RtValue::F32(number) => alias.write_number(number),
+                    RtValue::I32(whole) => alias.write_number(whole as f32),
+                    RtValue::Bool(flag) => alias.write_bool(flag),
+                    _ => alias.write(None),
+                };
+                through | alias_through
+            }),
+            (Some(_), None) if self.cells.holds.holds_off_automation(self.index) => {
+                self.cells.automation.overridden.record();
+                false
             }
-            (Some(value), None) => self.cells.automation.write(self.index, value),
+            (Some(value), None) => {
+                self.cells.automation.write(self.index, value);
+                true
+            }
         }
     }
 

@@ -100,9 +100,44 @@ fn the_higher_rank_wins_at_or_after_its_due_sample_and_past_it_the_lower_tier_ta
 }
 
 #[test]
+fn a_hold_keeps_automation_off_until_its_next_event() {
+    let holds = Holds::new(TABLE.len());
+    assert!(!holds.holds_off_automation(OTHER));
+    holds.take(OTHER, at(SCRIPT, 1));
+    assert!(holds.holds_off_automation(OTHER));
+    holds.release(OTHER, 0);
+    assert!(!holds.holds_off_automation(OTHER));
+
+    // An automation-tier request is automation's next event too.
+    holds.take(OTHER, at(USER, 2));
+    holds.take(OTHER, at(AUTOMATED, 3));
+    assert!(!holds.holds_off_automation(OTHER));
+}
+
+#[test]
+fn an_entry_at_or_before_a_holds_sample_loses_to_it() {
+    let holds = Holds::new(TABLE.len());
+    holds.take(OTHER, at(USER, 64));
+    {
+        let _zero = FrameScope::enter(60);
+        holds.release(OTHER, 4);
+        assert!(holds.holds_off_automation(OTHER), "at the write's sample");
+        let _per_sample = FrameScope::frame(4);
+        holds.release(OTHER, 0);
+        assert!(holds.holds_off_automation(OTHER), "a sample at a time");
+        holds.release(OTHER, 1);
+        assert!(!holds.holds_off_automation(OTHER), "a sample after it");
+    }
+    holds.take(OTHER, at(USER, 64));
+    holds.release(OTHER, 0);
+    assert!(!holds.holds_off_automation(OTHER), "outside processing");
+}
+
+#[test]
 fn an_index_past_the_table_holds_nothing() {
     let holds = Holds::new(TABLE.len());
     let past = ControlIndex(TABLE.len() as u16);
     holds.take(past, at(USER, 1));
+    assert!(!holds.holds_off_automation(past));
     assert_eq!(holds.admits(past, at(AUTOMATED, 1)), Ok(()));
 }

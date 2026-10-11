@@ -34,6 +34,16 @@
 //! overflows or leaves the range between the endpoints, so a ramp between any
 //! two finite values writes only finite values.
 //!
+//! # Holds
+//!
+//! The scheduler is the automation tier. A user's, an agent's or a script's
+//! write to a declared control it targets holds the control until the
+//! scheduler's next entry on it: the ramp then running is abandoned at its
+//! first write the hold drops, and the next entry takes the control back,
+//! a ramp starting from the held value. An entry firing at the sample such
+//! a write was due at loses to it, and the control stays held until the
+//! entry after it.
+//!
 //! # Example Invention
 //!
 //! ```json
@@ -271,16 +281,17 @@ impl ControlScheduler {
                 false
             } else {
                 let progress = ramp.steps_done as f32 / ramp.steps_total as f32;
+                // A ramp held off by a higher tier is abandoned.
                 entry.write(ScheduleValue::Number(ramp_value(
                     ramp.from, ramp.to, progress,
-                )));
-                true
+                )))
             }
         });
     }
 
-    /// Fires every schedule entry due at the current step, in schedule order.
-    fn fire_due_entries(&mut self) {
+    /// Fires every schedule entry due at the current step, in schedule
+    /// order, on frame `frame` of this block.
+    fn fire_due_entries(&mut self, frame: usize) {
         debug_assert!(self.current_step >= 0);
         let step = self.current_step as u64;
         while self.cursor < self.entries.len() && self.entries[self.cursor].at_step <= step {
@@ -288,6 +299,8 @@ impl ControlScheduler {
             self.cursor += 1;
             self.cancel_conflicting_ramp(entry_idx);
             let entry = &self.entries[entry_idx];
+            // The next event on its control takes it back from a hold.
+            entry.begin(frame);
             if entry.ramp_steps == 0 {
                 entry.write(entry.value);
                 continue;
@@ -322,11 +335,12 @@ impl ControlScheduler {
         let duration = self.step_duration_samples.max(1) as f32;
         let frac = (self.samples_since_gate as f32 / duration).min(1.0);
         let entries = &self.entries;
-        for ramp in &self.ramps {
+        // A ramp held off by a higher tier is abandoned.
+        self.ramps.retain(|ramp| {
             let progress = ((ramp.steps_done as f32 + frac) / ramp.steps_total as f32).min(1.0);
             let value = ramp_value(ramp.from, ramp.to, progress);
-            entries[ramp.entry_idx].write(ScheduleValue::Number(value));
-        }
+            entries[ramp.entry_idx].write(ScheduleValue::Number(value))
+        });
     }
 
     /// Processes one sample.
@@ -350,7 +364,7 @@ impl ControlScheduler {
 
             self.current_step += 1;
             self.advance_ramps_on_edge();
-            self.fire_due_entries();
+            self.fire_due_entries(i);
         } else {
             self.update_ramps_between_edges();
         }

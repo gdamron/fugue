@@ -580,14 +580,22 @@ impl SignalGraph {
         control: ControlIndex,
         value: RtValue,
     ) -> Result<(), Refusal> {
+        self.apply_control_due(module_id, control, value, self.current_sample)
+    }
+
+    /// [`Self::apply_control`] for a write due at sample `due`, which it
+    /// holds from, as a request applied late does: a replayed request.
+    pub(crate) fn apply_control_due(
+        &mut self,
+        module_id: &str,
+        control: ControlIndex,
+        value: RtValue,
+        due: u64,
+    ) -> Result<(), Refusal> {
         let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
         take_automation(instance.module_mut());
         apply_declared(instance.module_mut(), control, value)?;
-        take_hold(
-            instance.module(),
-            control,
-            Standing::user(self.current_sample),
-        );
+        take_hold(instance.module(), control, Standing::user(due));
         Ok(())
     }
 

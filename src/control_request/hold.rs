@@ -17,6 +17,19 @@
 //!   due at or before its due sample. A lower-tier request due after it is
 //!   that tier's next scheduled event on the control (a repeating grid's
 //!   every beat included), and applies, taking the control back.
+//! - A write above the automation tier holds its control against
+//!   automation until automation's next scheduled event on it, a
+//!   scheduler's entry: between entries its ramp writes are dropped
+//!   ([`Holds::holds_off_automation`]), so a running ramp is abandoned,
+//!   and its next entry resumes ([`Holds::release`]), ramping on from
+//!   where the hold left the control. An entry firing at the sample the
+//!   write was due at loses to it, and the control stays held until the
+//!   entry after it; whatever the block size, since an entry's sample is
+//!   the processing frame it fires on ([`FrameScope`]). A development ramp
+//!   runs on while any alias takes its writes; a held alias drops them
+//!   until automation's next event on it, and an inner entry frees the
+//!   alias it writes, not the development's own word (which only weighs
+//!   requests due at or before it).
 //! - Events (triggers) are never held: two are two events.
 //! - A payload control ranks and holds as a value does. No automation
 //!   writes one, so its hold only weighs requests. A payload that loses is
@@ -33,6 +46,7 @@
 //! reads or writes it (the audio thread, or an offline render under its
 //! graph's lock), so `Relaxed` is enough, as for automation slots.
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::pending::Outcome;
@@ -76,6 +90,52 @@ impl Rank {
         } else {
             Outcome::Superseded
         }
+    }
+}
+
+thread_local! {
+    /// The sample frame 0 of the modules processing on this thread falls
+    /// on, or `NOWHERE` outside processing (see [`Holds::release`]).
+    static FRAME_ZERO: Cell<u64> = const { Cell::new(NOWHERE) };
+}
+
+/// Outside processing.
+const NOWHERE: u64 = u64::MAX;
+
+/// Marks frame 0 of the modules about to process on this thread as sample
+/// `sample` until dropped, restoring the previous mark, so scopes nest: a
+/// graph enters one per segment, and per sample where it processes a
+/// feedback group (or a development its inner graph) a sample at a time.
+/// Allocation-, free- and lock-free.
+#[must_use = "the mark ends when this value is dropped"]
+pub(crate) struct FrameScope {
+    outer: u64,
+}
+
+impl FrameScope {
+    #[inline]
+    pub(crate) fn enter(sample: u64) -> Self {
+        Self {
+            outer: FRAME_ZERO.with(|zero| zero.replace(sample)),
+        }
+    }
+
+    /// Frame `offset` of the enclosing scope as the new frame 0 (none
+    /// outside processing).
+    #[inline]
+    pub(crate) fn frame(offset: usize) -> Self {
+        let zero = FRAME_ZERO.with(Cell::get);
+        Self::enter(match zero {
+            NOWHERE => NOWHERE,
+            zero => zero + offset as u64,
+        })
+    }
+}
+
+impl Drop for FrameScope {
+    #[inline]
+    fn drop(&mut self) {
+        FRAME_ZERO.with(|zero| zero.set(self.outer));
     }
 }
 
@@ -158,6 +218,25 @@ impl Holds {
     /// Records that a write of `standing` applied to `index`.
     pub(crate) fn take(&self, index: ControlIndex, standing: Standing) {
         self.set(index, encode(standing.rank, standing.due));
+    }
+
+    /// Whether a tier above automation holds `index`: a ramp's writes to
+    /// it are dropped until automation's next event on it.
+    pub(crate) fn holds_off_automation(&self, index: ControlIndex) -> bool {
+        decode(self.word(index)).is_some_and(|(held, _)| held.tier > AUTOMATION)
+    }
+
+    /// Automation's next scheduled event on `index`, firing on frame
+    /// `frame` of the processing modules: it takes the control back,
+    /// unless the hold's write was due at that sample or after it.
+    /// Outside processing, it always does.
+    pub(crate) fn release(&self, index: ControlIndex, frame: usize) {
+        let zero = FRAME_ZERO.with(Cell::get);
+        let outranks = |at| zero != NOWHERE && (zero + frame as u64) & SAMPLE_MASK <= at;
+        match decode(self.word(index)) {
+            Some((held, at)) if held.tier > AUTOMATION && outranks(at) => {}
+            _ => self.set(index, FREE),
+        }
     }
 }
 

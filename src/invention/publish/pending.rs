@@ -29,6 +29,12 @@ pub(crate) struct PendingWrite {
     pub(crate) raw: Option<RtValue>,
     /// Its musical time, when it is timed in beats.
     pub(crate) beat: Option<LoggedBeat>,
+    /// Submitted at the automation tier, which takes a control back from a
+    /// hold: a replay holds every logged write above automation, so it
+    /// cannot reproduce one (it counts as unlogged). Every front door
+    /// submits a user's requests until FUG-317 tags sources; one that tags
+    /// automation must set this.
+    pub(crate) automated: bool,
 }
 
 /// Submitted writes, oldest first, until their outcome arrives, and the
@@ -96,7 +102,7 @@ impl PendingLog {
             self.log.lost(1);
             return;
         };
-        let Some(raw) = write.raw else {
+        let Some(raw) = write.raw.filter(|_| !write.automated) else {
             self.log.unlogged();
             return;
         };

@@ -1,5 +1,5 @@
 use crate::control_request::{
-    take_automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue,
+    take_automation, ControlCells, ControlIndex, ControlTable, FrameScope, Refusal, RtValue,
 };
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::graph::RoutingConnection;
@@ -390,6 +390,9 @@ impl DevelopmentModule {
     /// one-sample delay (the pre-block behavior).
     fn process_per_sample(&mut self, frames: usize) {
         for i in 0..frames {
+            // Where an inner scheduler's entries fall (see
+            // `control_request::hold`).
+            let _frame_zero = FrameScope::frame(i);
             for (index, routes) in self.input_routes.iter().enumerate() {
                 let value = self.input_buffers[index][i];
                 for route in routes {

@@ -46,7 +46,7 @@ use super::publish::{PendingLog, PendingWrite, Publisher, Settler};
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
-    PayloadCodec, Refusal, Request, RequestSender, RequestValue, RtValue, Writer,
+    PayloadCodec, Refusal, Request, RequestSender, RequestValue, RtValue, Source, Writer,
 };
 use crate::payload::Payload;
 use crate::traits::ControlSurfaceMap;
@@ -287,6 +287,7 @@ impl DeclaredSurface {
                 };
                 let mut request = Request::new(target, value);
                 request.event = event;
+                let automated = request.source == Source::Automation;
                 // The log is locked before the submission, so its outcome
                 // cannot be received before the write is recorded.
                 let mut pending = port.pending.lock().unwrap();
@@ -308,6 +309,7 @@ impl DeclaredSurface {
                         value: written,
                         raw,
                         beat: None,
+                        automated,
                     };
                     pending.submitted(id, write);
                 }
