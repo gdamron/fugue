@@ -262,6 +262,11 @@ impl LiveGraph {
             .collect()
     }
 
+    /// Module `id`'s timeline context as of the latest publication.
+    pub(crate) fn timeline_of(&self, id: &str) -> Option<crate::TimelineContext> {
+        self.publisher.lock().unwrap().mirror().timeline_of(id)
+    }
+
     /// The shared publisher, for observation in tests.
     #[cfg(test)]
     pub(crate) fn publisher(&self) -> &Arc<Mutex<Publisher>> {

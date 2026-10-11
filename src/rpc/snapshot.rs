@@ -22,7 +22,8 @@ pub struct RuntimeModuleSnapshot {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub controls: Vec<RuntimeControlSnapshot>,
     /// The clock a request timed in beats on this module counts on when it
-    /// names none. Absent when the invention has no clock.
+    /// names none. Absent when the invention has no clock, and in offline
+    /// render snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline: Option<TimelineContext>,
 }
@@ -33,14 +34,19 @@ pub struct RuntimeModuleSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TimelineContext {
     /// The nearest clock upstream, `distance` connections away (0 for a
-    /// clock itself). Ties go to the clock first in module order.
+    /// clock itself). Ties go to a clock a request can name over one inside
+    /// a development, then to the one first in module order.
     Connected { clock: String, distance: u32 },
-    /// No clock is connected to the module: the first clock in module order.
+    /// No clock is connected to the module: the first clock a request can
+    /// name, in module order.
     Fallback { clock: String },
-    /// The module is driven by a clock inside this development, which a
-    /// request cannot name yet: a request timed in beats must name a clock.
+    /// The module counts on a clock inside this development, which a
+    /// request cannot name yet: the nearest clock driving it, or, with no
+    /// clock a request can name anywhere, the first development holding one.
+    /// A request timed in beats on it must name a clock.
     Enclosed { development: String },
 }
 

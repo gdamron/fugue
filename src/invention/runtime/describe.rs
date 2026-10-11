@@ -24,7 +24,7 @@ impl RunningInvention {
     ) -> Result<crate::ModuleDescription, crate::RpcError> {
         query.validate()?;
         if let Some(id) = &query.module_id {
-            let timeline = self.live.timelines().remove(id);
+            let timeline = self.live.timeline_of(id);
             let ports = self.module_ports.lock().unwrap();
             let mut snapshot = self.snapshot().module_snapshot_with_ports(id, &ports)?;
             snapshot.timeline = timeline;
