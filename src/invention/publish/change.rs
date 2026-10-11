@@ -17,6 +17,7 @@ use crate::invention::graph::{
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::invention::state::RuntimeModuleInfo;
+use crate::invention::timelines::{Context, Flow};
 use crate::modules::control_scheduler::{
     attach_from_handle_resolving, SurfaceDirectory, CONTROL_SCHEDULER_TYPE_ID,
 };
@@ -30,6 +31,7 @@ pub(crate) type SurfaceMap = IndexMap<String, ControlSurfaceInstance>;
 pub(crate) struct MirrorModule {
     pub(crate) ports: ModulePorts,
     pub(crate) is_sink: bool,
+    pub(crate) flow: Flow,
 }
 
 /// The authoritative control-thread mirror of a live graph's topology, in
@@ -38,6 +40,9 @@ pub(crate) struct MirrorModule {
 pub(crate) struct TopologyMirror {
     pub(crate) modules: IndexMap<String, MirrorModule>,
     pub(crate) edges: Vec<RoutingConnection>,
+    /// Each module's timeline context, in module order, as of the latest
+    /// compile (see [`Self::settle_timelines`]).
+    pub(crate) timelines: Vec<Context>,
 }
 
 impl TopologyMirror {
@@ -52,14 +57,18 @@ impl TopologyMirror {
                 let module = MirrorModule {
                     ports: ports_of(instance),
                     is_sink: matches!(instance, GraphModule::Sink(_)),
+                    flow: Flow::of(instance.module()),
                 };
                 (id.clone(), module)
             })
             .collect();
-        Self {
+        let mut mirror = Self {
             modules,
             edges: edges.to_vec(),
-        }
+            timelines: Vec::new(),
+        };
+        mirror.settle_timelines();
+        mirror
     }
 
     /// Sink module ids, in module order.
@@ -197,6 +206,7 @@ impl GraphChange {
             module: MirrorModule {
                 ports: ports_of(&result.module),
                 is_sink: matches!(result.module, GraphModule::Sink(_)),
+                flow: Flow::of(result.module.module()),
             },
             instance: Some(result.module),
             info: RuntimeModuleInfo {
@@ -340,6 +350,7 @@ impl GraphChange {
             .iter_mut()
             .filter_map(|(id, module)| Some((id.clone(), module.instance.take()?)))
             .collect();
+        self.mirror.settle_timelines();
         let publication = build_publication(
             &self.mirror,
             &self.surfaces,
@@ -472,3 +483,4 @@ fn build_publication(
 
 #[cfg(test)]
 mod tests;
+mod timelines;

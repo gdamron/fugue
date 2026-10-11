@@ -14,6 +14,7 @@ use crate::invention::graph::{
     AudioLink, InputWrite, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
 };
 use crate::invention::runtime::GraphCommandError;
+use crate::invention::timelines::Context;
 use crate::payload::{self, Payload, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
 use crate::spsc::{Consumer, Producer, Ring};
 
@@ -232,6 +233,47 @@ impl Publisher {
             module_idx,
             control,
         })
+    }
+
+    /// Resolves the clock a request timed in beats on `module_id` counts on,
+    /// for [`BeatTime::clock`](crate::control_request::BeatTime): `clock`
+    /// by id when the request names one, otherwise the module's timeline
+    /// context (see `crate::invention::timelines`). Resolved against the
+    /// mirror, as [`Self::control_target`] is, and submitted under the same
+    /// lock. The request keeps this clock whatever later changes do to the
+    /// context, and is refused `TimelineGone` if the clock goes.
+    ///
+    /// Fails with [`GraphCommandError::UnknownModule`], or with
+    /// [`GraphCommandError::ControlError`] when an unnamed clock cannot be
+    /// resolved: the invention has no clock.
+    // The front doors that submit beat-timed requests arrive with FUG-317.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn beat_clock(
+        &self,
+        module_id: &str,
+        clock: Option<&str>,
+    ) -> Result<u32, GraphCommandError> {
+        debug_assert_control_thread("Publisher::beat_clock");
+        let modules = &self.mirror.modules;
+        let index_of = |id: &str| {
+            modules
+                .get_index_of(id)
+                .ok_or_else(|| GraphCommandError::UnknownModule(id.to_string()))
+        };
+        let module = index_of(module_id)?;
+        let clock = match clock {
+            Some(id) => index_of(id)?,
+            None => match self.mirror.timelines.get(module) {
+                Some(Context::Connected { clock, .. } | Context::Fallback { clock }) => *clock,
+                Some(Context::None) | None => {
+                    return Err(GraphCommandError::ControlError(format!(
+                        "module '{module_id}' has no timeline: the invention has no clock"
+                    )));
+                }
+            },
+        };
+        // Module counts are far below u32::MAX (`BeatTime` keeps it narrow).
+        Ok(clock as u32)
     }
 
     /// Queues a write resolved by [`Self::input_write`] for the next block.

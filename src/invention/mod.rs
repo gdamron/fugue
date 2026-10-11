@@ -35,6 +35,7 @@ pub mod runtime;
 pub mod save;
 pub mod score;
 pub mod state;
+pub(crate) mod timelines;
 
 pub use builder::InventionBuilder;
 pub use format::{
