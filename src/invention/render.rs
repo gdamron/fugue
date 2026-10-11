@@ -16,6 +16,7 @@ use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, Runti
 mod audio_file_sink;
 mod code_modules;
 mod editing;
+mod replay;
 
 pub use code_modules::CodeModuleRuntimeInfo;
 
@@ -45,6 +46,8 @@ pub struct RenderEngine {
     /// Offline render has no event consumer, so this slot stays empty; it exists
     /// only so snapshots share the [`RuntimeSnapshot`] shape with live runtimes.
     event_sink: super::orchestration::EventSinkSlot,
+    /// A live session's requests still to apply (see [`Self::replay`]).
+    replay: replay::Replay,
 }
 
 impl RenderEngine {
@@ -65,6 +68,7 @@ impl RenderEngine {
             scripts: ScriptManager::default(),
             agents: AgentManager::default(),
             event_sink: Arc::new(Mutex::new(None)),
+            replay: replay::Replay::default(),
         }
     }
 
@@ -133,6 +137,47 @@ impl RenderEngine {
         self.load_json(&json)
     }
 
+    /// Replays a live session's request log (see
+    /// [`RunningInvention::request_log`](crate::RunningInvention::request_log)):
+    /// from now on, renders apply each logged request at its recorded
+    /// sample, splitting the render there as the live block was split.
+    ///
+    /// Load the invention the session played, as loaded, and replay before
+    /// rendering, at the session's sample rate and block size: the render
+    /// then matches what played sample for sample (see
+    /// [`RequestLog::is_exact`](crate::RequestLog::is_exact) for what it
+    /// cannot reproduce). Replay is by sample, not by beat. Replaces any
+    /// replay in progress; loading an invention ends it. Fails, replaying
+    /// nothing, when the log was played at another sample rate or block
+    /// size, is out of time order, or names a control not declared here.
+    pub fn replay(&mut self, log: &crate::RequestLog) -> Result<(), Box<dyn std::error::Error>> {
+        self.replay = replay::Replay::default();
+        let block_size = self.block_size();
+        if (log.sample_rate, log.block_size) != (self.sample_rate, block_size) {
+            return Err(format!(
+                "the log was played at {} Hz in blocks of {}; this render is {} Hz in blocks of {}",
+                log.sample_rate, log.block_size, self.sample_rate, block_size
+            )
+            .into());
+        }
+        let replay = {
+            let surfaces = self.control_surfaces.lock().unwrap();
+            replay::Replay::resolve(log, &surfaces)?
+        };
+        if let Some(graph) = &self.graph {
+            replay.check_clocks(&mut graph.lock().unwrap())?;
+        }
+        self.replay = replay;
+        Ok(())
+    }
+
+    /// How many replayed requests the render refused so far (a value its
+    /// control does not hold, a module gone): none, for a log of this
+    /// invention.
+    pub fn replay_refused(&self) -> usize {
+        self.replay.refused
+    }
+
     /// Renders interleaved stereo frames into a caller-provided buffer.
     ///
     /// The buffer length must be even because output is written as
@@ -159,7 +204,13 @@ impl RenderEngine {
         let mut done = 0;
         while done < frames_total {
             let n = (frames_total - done).min(block);
-            graph.process_block(&mut left[..n], &mut right[..n]);
+            // Split where a replayed request is due, as the live drain does.
+            let mut at = 0;
+            while at < n {
+                let end = at + self.replay.apply_due(&mut graph, n - at);
+                graph.process_block(&mut left[at..end], &mut right[at..end]);
+                at = end;
+            }
             for k in 0..n {
                 output[(done + k) * 2] = left[k];
                 output[(done + k) * 2 + 1] = right[k];
@@ -319,6 +370,7 @@ impl RenderEngine {
     }
 
     fn install_runtime(&mut self, runtime: super::runtime::InventionRuntime) {
+        self.replay = replay::Replay::default();
         self.scripts.stop_all();
         self.agents.stop_all();
         runtime.state.lock().unwrap().running = true;
