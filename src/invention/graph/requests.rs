@@ -86,8 +86,7 @@
 //!
 //! # Tiers
 //!
-//! Every request timed in samples applies through
-//! [`SignalGraph::apply_ranked`]: one losing
+//! Every request applies through [`SignalGraph::apply_ranked`]: one losing
 //! to a higher-ranked write due at or after its own due sample is settled
 //! [`Outcome::Overridden`] (a higher tier) or [`Outcome::Superseded`] (its
 //! own tier, higher priority) and changes nothing, and one that applies
@@ -593,9 +592,9 @@ impl SignalGraph {
     }
 
     /// Keeps `payload` as declared payload control `control` of module
-    /// `module_id` at once, as [`Self::apply_control`] applies a value.
-    /// Control thread: the value it replaces, or a refused payload, is
-    /// dropped here.
+    /// `module_id` at once, as [`Self::apply_control`] applies a value,
+    /// holding it as that does. Control thread: the value it replaces, or a
+    /// refused payload, is dropped here.
     pub(crate) fn apply_payload(
         &mut self,
         module_id: &str,
@@ -607,7 +606,13 @@ impl SignalGraph {
             .module_mut()
             .apply_payload(control, payload)
             .map(drop)
-            .map_err(|(refusal, _)| refusal)
+            .map_err(|(refusal, _)| refusal)?;
+        take_hold(
+            instance.module(),
+            control,
+            Standing::user(self.current_sample),
+        );
+        Ok(())
     }
 
     /// A [`RequestHook`] applying an `F32` request as an input write, with

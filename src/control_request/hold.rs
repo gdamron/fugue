@@ -15,10 +15,12 @@
 //!   [`Outcome::Superseded`].
 //! - A write that applies holds its control against lower-ranked writes
 //!   due at or before its due sample. A lower-tier request due after it is
-//!   that tier's next scheduled event on the control, and applies, taking
-//!   the control back.
+//!   that tier's next scheduled event on the control (a repeating grid's
+//!   every beat included), and applies, taking the control back.
 //! - Events (triggers) are never held: two are two events.
-//! - Requests timed in beats are not ranked yet.
+//! - A payload control ranks and holds as a value does. No automation
+//!   writes one, so its hold only weighs requests. A payload that loses is
+//!   retired with the request, never dropped on the audio thread.
 //!
 //! # State
 //!

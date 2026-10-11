@@ -6,10 +6,12 @@
 
 use super::declared::dial_rig;
 use super::migrated::block_with_locks_held;
+use super::request_beats::{beat_rig, level_change, render_counted, Twin};
 use super::requests::{counted_block, outcomes};
 use super::*;
 use crate::control_request::{
-    ControlIndex, Outcome, Request, RequestId, RequestValue, RtValue, Source, When,
+    BeatSpec, BeatTime, ControlIndex, Outcome, Request, RequestId, RequestValue, RtValue, Source,
+    Timeline, When,
 };
 use crate::test_support::dial::LEVEL;
 
@@ -102,6 +104,55 @@ fn at_equal_tier_and_priority_the_last_write_wins() {
     assert_eq!(
         outcomes(&mut rig),
         [(agent, Outcome::Superseded), (user, applied)]
+    );
+}
+
+#[test]
+fn a_beat_lost_to_a_higher_tier_is_only_that_beat() {
+    let bpm = 120.0;
+    let mut rig = beat_rig(bpm);
+    rig.render(10);
+    let start = rig.graph.current_sample;
+    let mut twin = Twin::new(bpm);
+    twin.run_to(start);
+    let next = twin.clock.position().floor() + 1.0;
+    let first = twin.until(|clock| clock.position() >= next);
+    let second = twin.until(|clock| clock.position() >= next + 1.0);
+
+    let grid = BeatSpec::Grid {
+        every: 1.0,
+        offset: 0.0,
+        repeat: true,
+    };
+    let script = {
+        let publisher = rig.live.publisher().lock().unwrap();
+        let target = publisher.control_target("dial", LEVEL).unwrap();
+        let clock = publisher.control_target("clock", ControlIndex(0)).unwrap();
+        let mut request = Request::new(target, RequestValue::Value(RtValue::F32(0.5)));
+        request.when = When::Beat(BeatTime {
+            clock: clock.module_idx as u32,
+            spec: grid,
+        });
+        request.source = Source::Script;
+        rig.live.requests.submit(request).unwrap()
+    };
+    let user = submit_ranked(&rig, 0.75, first, USER);
+    let blocks = ((second - start) / 64 + 2) as usize;
+    let out = render_counted(&mut rig, blocks);
+    let at = |sample: u64| Some((sample - start) as usize);
+    assert_eq!(
+        level_change(&out, 0.75),
+        at(first),
+        "the user's, on the beat"
+    );
+    assert_eq!(level_change(&out, 0.5), at(second), "the grid's next beat");
+    // The grid settles at the first beat it applied on.
+    assert_eq!(
+        outcomes(&mut rig),
+        [
+            (user, Outcome::Applied { at: first }),
+            (script, Outcome::Applied { at: second })
+        ]
     );
 }
 

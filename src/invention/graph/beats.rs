@@ -4,7 +4,8 @@
 
 use super::SignalGraph;
 use crate::control_request::{
-    take_automation, BeatHost, ControlTarget, Outcomes, Refusal, RequestValue, Timeline, Watches,
+    take_automation, BeatHost, ControlTarget, Outcome, Outcomes, RequestValue, Standing, Timeline,
+    Watches,
 };
 use crate::payload::Retirer;
 
@@ -25,10 +26,11 @@ impl BeatHost for SignalGraph {
     fn apply(
         &mut self,
         target: &ControlTarget,
+        standing: Option<Standing>,
         value: RequestValue,
         retirer: &mut Retirer,
-    ) -> Result<(), Refusal> {
-        self.apply_request(target.module_idx, target.control, value, retirer)
+    ) -> Result<(), Outcome> {
+        self.apply_ranked(target, standing, value, retirer)
     }
 }
 
