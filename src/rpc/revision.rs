@@ -247,7 +247,6 @@ impl RpcCommand {
             | Self::DescribeExample { .. }
             | Self::DescribeModuleTypes(_)
             | Self::DescribeModule(_)
-            | Self::ExportRequestLog { .. }
             | Self::Shutdown => false,
         }
     }
