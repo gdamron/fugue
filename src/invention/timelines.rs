@@ -70,6 +70,7 @@ pub(crate) enum Context {
 /// Every module's timeline context, in module order.
 pub(crate) fn contexts(flows: &[Flow], links: &[Link]) -> Vec<Context> {
     let first = flows.iter().position(|flow| matches!(flow, Flow::Clock));
+    let incoming = incoming(flows.len(), links);
     (0..flows.len())
         .map(|module| match &flows[module] {
             Flow::Clock => Context::Connected {
@@ -77,7 +78,7 @@ pub(crate) fn contexts(flows: &[Flow], links: &[Link]) -> Vec<Context> {
                 distance: 0,
             },
             Flow::Plain => {
-                let walk = walk(flows, links, Node::In(module, None));
+                let walk = walk(flows, &incoming, Node::In(module, None));
                 match walk.clocks.into_iter().min() {
                     Some((distance, clock)) => Context::Connected { clock, distance },
                     None => first.map_or(Context::None, |clock| Context::Fallback { clock }),
@@ -85,6 +86,15 @@ pub(crate) fn contexts(flows: &[Flow], links: &[Link]) -> Vec<Context> {
             }
         })
         .collect()
+}
+
+/// The links into each module, by module index.
+fn incoming(modules: usize, links: &[Link]) -> Vec<Vec<Link>> {
+    let mut incoming = vec![Vec::new(); modules];
+    for link in links {
+        incoming[link.to].push(*link);
+    }
+    incoming
 }
 
 /// Where a signal is, walking upstream: leaving a module's output port, or
@@ -103,7 +113,7 @@ struct Walk {
 
 /// Walks upstream from `start` in order of distance, ending each path at
 /// its first clock.
-fn walk(flows: &[Flow], links: &[Link], start: Node) -> Walk {
+fn walk(flows: &[Flow], incoming: &[Vec<Link>], start: Node) -> Walk {
     let mut queue = BinaryHeap::from([Reverse((0u32, start))]);
     let mut seen = HashSet::new();
     let mut found = Walk::default();
@@ -117,10 +127,8 @@ fn walk(flows: &[Flow], links: &[Link], start: Node) -> Walk {
                 Flow::Plain => queue.push(Reverse((distance, Node::In(module, None)))),
             },
             Node::In(module, port) => {
-                let enters = |to: usize, to_port: usize| {
-                    to == module && port.is_none_or(|port| port == to_port)
-                };
-                for link in links.iter().filter(|link| enters(link.to, link.to_port)) {
+                let enters = |to_port: usize| port.is_none_or(|port| port == to_port);
+                for link in incoming[module].iter().filter(|link| enters(link.to_port)) {
                     let source = Node::Out(link.from, link.from_port);
                     queue.push(Reverse((distance.saturating_add(1), source)));
                 }
@@ -145,7 +153,8 @@ mod tests {
 
     #[test]
     fn a_feedback_loop_ends_and_ties_go_to_module_order() {
-        // 0 and 1 feed each other; clocks 3 and 2 both drive 4 directly.
+        // 0 and 1 feed each other; clocks 3 and 2 both drive 4 directly,
+        // 3's link listed first: the tie still goes to 2, first in order.
         let flows = [
             Flow::Plain,
             Flow::Plain,

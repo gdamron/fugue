@@ -14,7 +14,7 @@ use crate::invention::graph::{
     AudioLink, InputWrite, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
 };
 use crate::invention::runtime::GraphCommandError;
-use crate::invention::timelines::Context;
+use crate::invention::timelines::{Context, Flow};
 use crate::payload::{self, Payload, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
 use crate::spsc::{Consumer, Producer, Ring};
 
@@ -244,7 +244,8 @@ impl Publisher {
     /// context, and is refused `TimelineGone` if the clock goes.
     ///
     /// Fails with [`GraphCommandError::UnknownModule`], or with
-    /// [`GraphCommandError::ControlError`] when an unnamed clock cannot be
+    /// [`GraphCommandError::ControlError`] when the named module is not a
+    /// clock, or an unnamed clock cannot be
     /// resolved: the invention has no clock.
     // The front doors that submit beat-timed requests arrive with FUG-317.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -262,7 +263,14 @@ impl Publisher {
         };
         let module = index_of(module_id)?;
         let clock = match clock {
-            Some(id) => index_of(id)?,
+            Some(id) => match index_of(id)? {
+                clock if matches!(modules[clock].flow, Flow::Clock) => clock,
+                _ => {
+                    return Err(GraphCommandError::ControlError(format!(
+                        "module '{id}' is not a clock"
+                    )));
+                }
+            },
             None => match self.mirror.timelines.get(module) {
                 Some(Context::Connected { clock, .. } | Context::Fallback { clock }) => *clock,
                 Some(Context::None) | None => {

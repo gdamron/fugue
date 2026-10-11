@@ -110,6 +110,10 @@ fn each_sequencer_resolves_to_the_clock_driving_it() {
     // A named clock wins over the context.
     let publisher = rig.live.publisher().lock().unwrap();
     assert_eq!(publisher.beat_clock("voice", Some("a")).unwrap(), 0);
+    assert!(matches!(
+        publisher.beat_clock("voice", Some("osc")),
+        Err(GraphCommandError::ControlError(_))
+    ));
 }
 
 #[test]
