@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::automation::AutomationSlots;
+use super::hold::Holds;
 use super::pending::Refusal;
 use super::request::{ControlIndex, RtValue};
 use crate::Module;
@@ -37,6 +38,9 @@ pub(crate) struct ControlCells {
     /// Writes automation made on the audio thread, waiting for the module
     /// to process (see [`super::automation`]).
     pub(crate) automation: AutomationSlots,
+    /// Which tier holds each control against lower ones (see
+    /// [`super::hold`]).
+    pub(crate) holds: Holds,
 }
 
 impl ControlCells {
@@ -48,7 +52,12 @@ impl ControlCells {
             .map(|value| AtomicU64::new(encode(value)))
             .collect();
         let automation = AutomationSlots::new(cells.len());
-        Self { cells, automation }
+        let holds = Holds::new(cells.len());
+        Self {
+            cells,
+            automation,
+            holds,
+        }
     }
 
     pub(crate) fn len(&self) -> usize {

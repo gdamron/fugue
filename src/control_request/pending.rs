@@ -1,6 +1,7 @@
 //! The audio thread's store of requests waiting for their sample, and the
 //! one point every request leaves the audio thread's hands through.
 
+use super::hold::{Rank, Standing};
 use super::outcome::OutcomeSender;
 use super::request::{ControlTarget, Request, RequestValue};
 use crate::payload::{Retirer, MAX_RETIRES_PER_REQUEST};
@@ -45,9 +46,19 @@ pub(crate) enum Outcome {
         at: u64,
         due: u64,
     },
-    /// Replaced by a later request for the same control and sample.
+    /// Lost to another request of its tier for the same control and
+    /// sample: a later one, or one of higher priority.
     Superseded,
+    /// Lost to a request of a higher tier for the same control and sample
+    /// (see `control_request::hold`).
+    Overridden,
     Refused(Refusal),
+}
+
+impl From<Refusal> for Outcome {
+    fn from(refusal: Refusal) -> Self {
+        Self::Refused(refusal)
+    }
 }
 
 /// Where requests go once settled, and the retirer that takes every
@@ -137,9 +148,11 @@ struct Pending {
 /// inserted after every entry with the same `at`, so equal times apply in
 /// the order they were popped.
 ///
-/// At most one entry per target and `at`: a request for the same control
-/// at the same sample replaces the waiting one (last write wins), which is
-/// settled [`Outcome::Superseded`]. A remap across a publication may merge
+/// At most one entry per target and `at`: of two requests for the same
+/// control at the same sample the higher [`Rank`] stays, and at equal rank
+/// the later (last write wins); the other is settled
+/// [`Outcome::Superseded`], or [`Outcome::Overridden`] when it lost to a
+/// higher tier. A remap across a publication may merge
 /// two targets afterwards; both then apply in receipt order, which leaves
 /// the same value. Events ([`Request::event`]) never coalesce: two
 /// triggers at one sample are two events, and both apply.
@@ -217,8 +230,16 @@ impl PendingStore {
             .iter()
             .position(|e| replace && !request.event && e.request.target == request.target);
         if let Some(offset) = same {
+            let waiting = Rank::of(&self.entries[first + offset].request);
+            let lost = match (Rank::of(&request), waiting) {
+                (Some(new), Some(waiting)) if new < waiting => {
+                    return self.outcomes.settle(request, new.loses_to(waiting));
+                }
+                (Some(new), Some(waiting)) => waiting.loses_to(new),
+                _ => Outcome::Superseded,
+            };
             let old = self.entries.remove(first + offset);
-            self.outcomes.settle(old.request, Outcome::Superseded);
+            self.outcomes.settle(old.request, lost);
             end -= 1;
         } else if self.is_full() {
             self.outcomes
@@ -229,8 +250,9 @@ impl PendingStore {
     }
 
     /// Applies, in order, every entry due at `now` (`at <= now`) whose
-    /// target is in the `installed` generation, settling each applied or
-    /// refused as `apply` decides, or refused [`Refusal::Expired`] without
+    /// target is in the `installed` generation, handing `apply` its
+    /// [`Standing`] (none for an event) and settling each applied, or as
+    /// `apply` decides, or refused [`Refusal::Expired`] without
     /// calling `apply` when `now` is past its `expires` sample. Held
     /// entries stay. Compacts in place: allocation- and free-free.
     ///
@@ -242,7 +264,12 @@ impl PendingStore {
         &mut self,
         now: u64,
         installed: u64,
-        mut apply: impl FnMut(&ControlTarget, RequestValue, &mut Retirer) -> Result<(), Refusal>,
+        mut apply: impl FnMut(
+            &ControlTarget,
+            Option<Standing>,
+            RequestValue,
+            &mut Retirer,
+        ) -> Result<(), Outcome>,
     ) {
         let due = self.entries.partition_point(|e| e.at <= now);
         let applied = self
@@ -254,14 +281,15 @@ impl PendingStore {
                     .settle(request, Outcome::Refused(Refusal::Expired));
                 continue;
             }
+            let standing = Standing::of(&request, due);
             let Request {
                 target, value, id, ..
             } = request;
             let payload = value.is_payload();
-            let outcome = match apply(&target, value, &mut self.outcomes.retirer) {
+            let outcome = match apply(&target, standing, value, &mut self.outcomes.retirer) {
                 Ok(()) if due < now => Outcome::AppliedLate { at: now, due },
                 Ok(()) => Outcome::Applied { at: now },
-                Err(refusal) => Outcome::Refused(refusal),
+                Err(outcome) => outcome,
             };
             self.outcomes.record(id, payload, outcome);
         }

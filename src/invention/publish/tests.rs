@@ -25,6 +25,7 @@ mod request_intake;
 mod request_log;
 mod request_payloads;
 mod request_races;
+mod request_tiers;
 mod request_timing;
 mod requests;
 mod step_pattern;

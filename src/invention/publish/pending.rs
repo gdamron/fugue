@@ -90,7 +90,7 @@ impl PendingLog {
         let (sample, due) = match outcome {
             Outcome::Applied { at } => (at, None),
             Outcome::AppliedLate { at, due } => (at, Some(due)),
-            Outcome::Superseded | Outcome::Refused(_) => return,
+            Outcome::Superseded | Outcome::Overridden | Outcome::Refused(_) => return,
         };
         let Some(write) = write else {
             self.log.lost(1);
