@@ -12,6 +12,7 @@ use crate::control_request::{
     Timeline, When,
 };
 use crate::invention::timelines::Context;
+use crate::{DescribeModuleQuery, NullBackend, TimelineContext};
 
 /// vca `level`, its one declared control.
 const LEVEL: ControlIndex = ControlIndex(0);
@@ -332,4 +333,48 @@ fn a_clock_two_developments_down_is_reported_and_so_is_one_with_no_other_clock()
             Err(GraphCommandError::ControlError(_))
         ));
     }
+}
+
+#[test]
+fn describe_and_the_full_snapshot_show_the_context() {
+    let document = Invention::from_json(TWO_CLOCKS).unwrap();
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
+    let running = runtime
+        .start_with_backend(NullBackend::new(SAMPLE_RATE))
+        .unwrap();
+    let query = DescribeModuleQuery {
+        module_type: None,
+        module_id: Some("voice".to_string()),
+        config: None,
+    };
+    let description = running.describe_module(&query).unwrap();
+    let on_b = TimelineContext::Connected {
+        clock: "b".to_string(),
+        distance: 2,
+    };
+    assert_eq!(description.timeline, Some(on_b));
+    let json = serde_json::to_value(&description).unwrap();
+    assert_eq!(
+        json["timeline"],
+        serde_json::json!({ "kind": "connected", "clock": "b", "distance": 2 })
+    );
+    let snapshot = running.full_snapshot();
+    let timeline = |id: &str| {
+        let module = snapshot.modules.iter().find(|m| m.info.id == id);
+        module.unwrap().timeline.clone()
+    };
+    let fallback = TimelineContext::Fallback {
+        clock: "a".to_string(),
+    };
+    assert_eq!(timeline("osc"), Some(fallback));
+}
+
+#[test]
+fn describe_names_the_development_whose_clock_drives_a_module() {
+    let rig = Rig::new(NESTED);
+    let enclosed = TimelineContext::Enclosed {
+        development: "drums".to_string(),
+    };
+    assert_eq!(rig.live.timelines().remove("kick"), Some(enclosed));
+    assert!(Rig::new(BASE).live.timelines().is_empty());
 }

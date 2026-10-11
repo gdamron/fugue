@@ -24,8 +24,10 @@ impl RunningInvention {
     ) -> Result<crate::ModuleDescription, crate::RpcError> {
         query.validate()?;
         if let Some(id) = &query.module_id {
+            let timeline = self.live.timelines().remove(id);
             let ports = self.module_ports.lock().unwrap();
-            let snapshot = self.snapshot().module_snapshot_with_ports(id, &ports)?;
+            let mut snapshot = self.snapshot().module_snapshot_with_ports(id, &ports)?;
+            snapshot.timeline = timeline;
             let is_sink = self.registry().is_sink(&snapshot.info.module_type);
             crate::ModuleDescription::from_snapshot(snapshot, self.sample_rate, is_sink)
         } else {

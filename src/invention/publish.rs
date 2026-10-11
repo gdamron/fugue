@@ -250,6 +250,18 @@ impl LiveGraph {
         self.publisher.lock().unwrap().generation()
     }
 
+    /// Every module's timeline context as of the latest publication, by
+    /// module id (see `crate::invention::timelines`).
+    pub(crate) fn timelines(&self) -> HashMap<String, crate::TimelineContext> {
+        let publisher = self.publisher.lock().unwrap();
+        let mirror = publisher.mirror();
+        mirror
+            .modules
+            .keys()
+            .filter_map(|id| Some((id.clone(), mirror.timeline_of(id)?)))
+            .collect()
+    }
+
     /// The shared publisher, for observation in tests.
     #[cfg(test)]
     pub(crate) fn publisher(&self) -> &Arc<Mutex<Publisher>> {

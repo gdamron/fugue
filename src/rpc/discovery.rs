@@ -311,6 +311,10 @@ pub struct ModuleDescription {
     pub info: ModuleTypeInfo,
     /// Initial values for supplied config/defaults; current values for a running instance.
     pub control_values: BTreeMap<String, ControlValue>,
+    /// For a running instance in an invention with a clock: the clock a
+    /// request timed in beats on it counts on when it names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<crate::TimelineContext>,
 }
 
 impl ModuleDescription {
@@ -383,6 +387,7 @@ impl ModuleDescription {
                 is_sink: registry.is_sink(name),
             },
             control_values,
+            timeline: None,
         };
         check_discovery_size(&response)?;
         Ok(response)
@@ -415,6 +420,7 @@ impl ModuleDescription {
                 is_sink,
             },
             control_values,
+            timeline: snapshot.timeline,
         };
         check_discovery_size(&response)?;
         Ok(response)

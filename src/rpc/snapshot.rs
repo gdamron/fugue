@@ -21,6 +21,27 @@ pub struct RuntimeModuleSnapshot {
     pub ports: RuntimePortInfo,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub controls: Vec<RuntimeControlSnapshot>,
+    /// The clock a request timed in beats on this module counts on when it
+    /// names none. Absent when the invention has no clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<TimelineContext>,
+}
+
+/// A module's timeline context: the clock that drives it through its
+/// connections, which a request timed in beats on it counts on when it
+/// names no clock.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TimelineContext {
+    /// The nearest clock upstream, `distance` connections away (0 for a
+    /// clock itself). Ties go to the clock first in module order.
+    Connected { clock: String, distance: u32 },
+    /// No clock is connected to the module: the first clock in module order.
+    Fallback { clock: String },
+    /// The module is driven by a clock inside this development, which a
+    /// request cannot name yet: a request timed in beats must name a clock.
+    Enclosed { development: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

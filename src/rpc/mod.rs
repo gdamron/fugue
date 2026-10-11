@@ -57,6 +57,7 @@ pub use revision::{
 };
 pub use snapshot::{
     RuntimeControlSnapshot, RuntimeFullSnapshot, RuntimeModuleSnapshot, RuntimePortInfo,
+    TimelineContext,
 };
 pub use spectrogram::{
     SpectrogramBinSpacing, SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding,
