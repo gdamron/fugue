@@ -1,7 +1,7 @@
 //! Modular synthesis components.
 //!
 //! This module contains all the building blocks for creating modular synthesis setups:
-//! - [`Clock`] / [`ClockControls`] - Timing and tempo control
+//! - [`Clock`] - Timing and tempo control
 //! - [`Oscillator`] / [`OscillatorType`] - Waveform generation
 //! - [`Lfo`] / [`LfoControls`] - Low frequency oscillator for modulation
 //! - [`Filter`] / [`FilterControls`] / [`FilterType`] - Resonant filter for subtractive synthesis
@@ -55,7 +55,7 @@ pub use audio_file_sink::{
     AudioFileSink, AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats,
 };
 pub use cell_sequencer::{CellSequencer, CellSequencerControls};
-pub use clock::{Clock, ClockControls};
+pub use clock::Clock;
 pub use code::CodeControls;
 pub use control_scheduler::{
     ControlScheduler, ControlSchedulerControls, ScheduleEntry, ScheduleValue,
