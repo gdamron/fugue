@@ -56,6 +56,19 @@ pub(super) fn block_with_locks_held(
     rig: &mut Rig,
     also: &[&Mutex<()>],
 ) -> Result<(usize, usize), &'static str> {
+    block_while_held(rig, || {
+        also.iter()
+            .map(|lock| lock.lock().unwrap())
+            .collect::<Vec<_>>()
+    })
+}
+
+/// [`block_with_locks_held`], with `hold` taking (and returning the guards
+/// of) the other locks to hold, such as a module's own control-side lock.
+pub(super) fn block_while_held<G>(
+    rig: &mut Rig,
+    hold: impl FnOnce() -> G + Send,
+) -> Result<(usize, usize), &'static str> {
     let live = &rig.live;
     let (publisher, pending, state) = (&live.publisher, &live.pending, &live.state);
     let (surfaces, ports) = (&live.control_surfaces, &live.module_ports);
@@ -72,7 +85,7 @@ pub(super) fn block_with_locks_held(
                 surfaces.lock().unwrap(),
                 ports.lock().unwrap(),
             );
-            let locks: Vec<_> = also.iter().map(|lock| lock.lock().unwrap()).collect();
+            let locks = hold();
             held.send(()).unwrap();
             let _ = finished.recv_timeout(Duration::from_secs(2));
             released.store(true, Ordering::SeqCst);
@@ -92,12 +105,18 @@ pub(super) fn block_with_locks_held(
     })
 }
 
-/// A module that locks `0` every block, as a module sharing state with
-/// control threads under a lock does.
-#[derive(Clone, Default)]
-struct LockingFactory(Arc<Mutex<()>>);
+/// A module that runs `0` every block: by default it locks a mutex, as a
+/// module sharing state with control threads under a lock does.
+#[derive(Clone)]
+pub(super) struct LockingFactory(pub(super) Arc<dyn Fn() + Send + Sync>);
 
-struct Locking(Arc<Mutex<()>>, [f32; crate::MAX_BLOCK]);
+impl LockingFactory {
+    fn locking(lock: Arc<Mutex<()>>) -> Self {
+        Self(Arc::new(move || drop(lock.lock().unwrap())))
+    }
+}
+
+struct Locking(Arc<dyn Fn() + Send + Sync>, [f32; crate::MAX_BLOCK]);
 
 impl crate::ModuleFactory for LockingFactory {
     fn type_id(&self) -> &'static str {
@@ -125,7 +144,7 @@ impl crate::Module for Locking {
     }
 
     fn process(&mut self, _frames: usize) -> bool {
-        drop(self.0.lock().unwrap());
+        (self.0)();
         true
     }
 
@@ -154,11 +173,9 @@ impl crate::Module for Locking {
     }
 }
 
-#[test]
-fn a_block_that_takes_a_held_lock_is_caught() {
-    let locking = LockingFactory::default();
-    let mut rig = Rig::new(REVERB);
-    rig.registry.register(locking.clone());
+/// Adds a [`LockingFactory`] module running `each_block` to the rig.
+pub(super) fn add_locking(rig: &mut Rig, each_block: LockingFactory) {
+    rig.registry.register(each_block);
     rig.adopt_registry();
     let module = rig.build("locking", "locking", serde_json::json!({}));
     rig.live
@@ -168,9 +185,16 @@ fn a_block_that_takes_a_held_lock_is_caught() {
         })
         .unwrap();
     rig.render(1);
+}
+
+#[test]
+fn a_block_that_takes_a_held_lock_is_caught() {
+    let lock = Arc::new(Mutex::new(()));
+    let mut rig = Rig::new(REVERB);
+    add_locking(&mut rig, LockingFactory::locking(lock.clone()));
 
     assert!(block_with_locks_held(&mut rig, &[]).is_ok());
-    assert!(block_with_locks_held(&mut rig, &[&locking.0]).is_err());
+    assert!(block_with_locks_held(&mut rig, &[&lock]).is_err());
 }
 
 #[test]
