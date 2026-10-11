@@ -148,8 +148,18 @@ impl RenderEngine {
     /// [`RequestLog::is_exact`](crate::RequestLog::is_exact) for what it
     /// cannot reproduce). Replay is by sample, not by beat. Replaces any
     /// replay in progress; loading an invention ends it. Fails, replaying
-    /// nothing, when a logged request names no declared control here.
+    /// nothing, when the log was played at another sample rate or block
+    /// size, is out of time order, or names a control not declared here.
     pub fn replay(&mut self, log: &crate::RequestLog) -> Result<(), Box<dyn std::error::Error>> {
+        self.replay = replay::Replay::default();
+        let block_size = self.block_size();
+        if (log.sample_rate, log.block_size) != (self.sample_rate, block_size) {
+            return Err(format!(
+                "the log was played at {} Hz in blocks of {}; this render is {} Hz in blocks of {}",
+                log.sample_rate, log.block_size, self.sample_rate, block_size
+            )
+            .into());
+        }
         let surfaces = self.control_surfaces.lock().unwrap();
         self.replay = replay::Replay::resolve(log, &surfaces)?;
         Ok(())

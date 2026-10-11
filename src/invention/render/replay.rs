@@ -3,7 +3,10 @@
 //! Each logged request applies at its recorded sample, by splitting the
 //! render there, exactly as the live drain split the block it applied in,
 //! and through the same apply a live request takes (automation still
-//! waiting first, then the module's declared control). Replay is by sample:
+//! waiting first, then the module's declared control). A request that
+//! applied on its clock's beat latches the clock first, as the live watch
+//! did, so a tempo it changes there takes effect from the same sample.
+//! Replay is by sample:
 //! a render of the invention as loaded, at the session's sample rate and
 //! block grid, then reproduces what played (see
 //! [`RequestLog::is_exact`](crate::RequestLog::is_exact)). A log entry's
@@ -15,7 +18,7 @@ use indexmap::IndexMap;
 use crate::control_request::{ControlIndex, RtValue};
 use crate::invention::graph::SignalGraph;
 use crate::invention::runtime::ControlSurfaceInstance;
-use crate::RequestLog;
+use crate::{LoggedBeat, RequestLog};
 
 /// A logged request resolved against the render's surfaces.
 struct Due {
@@ -23,6 +26,8 @@ struct Due {
     module_id: String,
     control: ControlIndex,
     value: RtValue,
+    /// The clock it applied on the beat of, which it latches first.
+    latch: Option<String>,
 }
 
 /// The requests a render still has to apply, in log order.
@@ -36,11 +41,20 @@ pub(super) struct Replay {
 
 impl Replay {
     /// Resolves every request in `log` to a declared control of a module
-    /// in `surfaces`, or fails naming the first that is not one.
+    /// in `surfaces`, or fails naming the first that is not one, or the
+    /// first that is out of time order.
     pub(super) fn resolve(
         log: &RequestLog,
         surfaces: &IndexMap<String, ControlSurfaceInstance>,
     ) -> Result<Self, String> {
+        let samples = log.requests.iter().map(|request| request.sample);
+        if let Some(at) = samples
+            .clone()
+            .zip(samples.skip(1))
+            .position(|(a, b)| b < a)
+        {
+            return Err(format!("logged request {} is out of time order", at + 1));
+        }
         let due = log
             .requests
             .iter()
@@ -55,11 +69,21 @@ impl Replay {
                         )
                     })?
                     .index;
+                // Live latches a clock for a watch applied on its beat, not
+                // for one that applied late.
+                let latch = match (&request.beat, request.due) {
+                    (
+                        Some(LoggedBeat::After { clock, .. } | LoggedBeat::Grid { clock, .. }),
+                        None,
+                    ) => Some(clock.clone()),
+                    _ => None,
+                };
                 Ok(Due {
                     sample: request.sample,
                     module_id: request.module_id.clone(),
                     control,
                     value: request.value.into(),
+                    latch,
                 })
             })
             .collect::<Result<_, String>>()?;
@@ -76,6 +100,13 @@ impl Replay {
     pub(super) fn apply_due(&mut self, graph: &mut SignalGraph, frames: usize) -> usize {
         let now = graph.current_sample;
         while let Some(due) = self.due.get(self.next).filter(|due| due.sample <= now) {
+            let clock = due
+                .latch
+                .as_ref()
+                .and_then(|clock| graph.modules.get_mut(clock));
+            if let Some(timeline) = clock.and_then(|clock| clock.module_mut().timeline_mut()) {
+                timeline.latch();
+            }
             if graph
                 .apply_control(&due.module_id, due.control, due.value)
                 .is_err()

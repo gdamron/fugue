@@ -102,6 +102,26 @@ fn live_session() -> (RequestLog, Output) {
         None,
     );
     play(1000);
+    // A tempo change on the clock's own beat: it latches the clock, so the
+    // new tempo runs from that beat's sample.
+    let on_beat = LoggedBeat::Grid {
+        clock: "clock".into(),
+        every: 2.0,
+        offset: 0.0,
+        repeat: false,
+    };
+    let spec = BeatSpec::Grid {
+        every: 2.0,
+        offset: 0.0,
+        repeat: false,
+    };
+    live.submit_logged(
+        ("clock", "bpm"),
+        RtValue::F32(141.0),
+        beats(spec),
+        Some(on_beat),
+    );
+    play(1500);
     // Due long ago: applies late, at the next block start.
     live.submit_logged(
         ("seq", "gate_length"),
@@ -165,7 +185,7 @@ fn a_replayed_session_matches_what_played_sample_for_sample() {
     let (log, played) = live_session();
     assert!(log.is_exact(), "{log:?}");
     let samples: Vec<u64> = log.requests.iter().map(|r| r.sample).collect();
-    assert_eq!(log.requests.len(), 8, "{samples:?}");
+    assert_eq!(log.requests.len(), 9, "{samples:?}");
     assert!(
         samples.is_sorted(),
         "apply order is time order: {samples:?}"
@@ -173,7 +193,7 @@ fn a_replayed_session_matches_what_played_sample_for_sample() {
     assert!(samples.contains(&20_011) && samples.contains(&30_007));
     assert!(samples.contains(&80_003));
     let beat_timed = log.requests.iter().filter(|r| r.beat.is_some());
-    assert_eq!(beat_timed.count(), 2);
+    assert_eq!(beat_timed.count(), 3);
     assert_eq!(
         log.requests.iter().filter(|r| r.due == Some(100)).count(),
         1
@@ -215,4 +235,27 @@ fn a_log_naming_no_declared_control_here_is_refused() {
     engine.load_json(DOC).unwrap();
     let error = engine.replay(&log).unwrap_err().to_string();
     assert!(error.contains("no_such_control"), "{error}");
+}
+
+#[test]
+fn a_log_played_at_another_rate_or_block_size_or_out_of_order_is_refused() {
+    let (log, _) = live_session();
+    let refused = |log: &RequestLog| {
+        let mut engine = RenderEngine::new(SAMPLE_RATE);
+        engine.load_json(DOC).unwrap();
+        engine.replay(log).unwrap_err().to_string()
+    };
+    let other_rate = RequestLog {
+        sample_rate: 44_100,
+        ..log.clone()
+    };
+    assert!(refused(&other_rate).contains("44100 Hz"));
+    let other_block = RequestLog {
+        block_size: 128,
+        ..log.clone()
+    };
+    assert!(refused(&other_block).contains("blocks of 128"));
+    let mut unsorted = log;
+    unsorted.requests.swap(2, 3);
+    assert!(refused(&unsorted).contains("out of time order"));
 }
