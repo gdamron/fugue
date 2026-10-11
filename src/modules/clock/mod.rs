@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::control_request::{
     apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
-    Refusal, RtValue,
+    Refusal, RtValue, Timeline,
 };
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::invention::declared::DeclaredSurface;
@@ -11,11 +11,12 @@ use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
-use self::controls::{BPM, GATE_LENGTH, TABLE};
+use self::controls::{BPM, GATE_LENGTH, POSITION, RESET, TABLE};
 
 mod controls;
 mod inputs;
 mod outputs;
+mod timeline;
 
 /// Factory for constructing Clock modules from configuration.
 pub struct ClockFactory;
@@ -69,6 +70,16 @@ impl ModuleFactory for ClockFactory {
 /// tempo map) the beat count, and therefore every gate's phase, is continuous
 /// across the seam — no clipped or doubled pulse. With a constant tempo the
 /// epoch stays at `(0, 0)` and the beat count is simply `sample_count / spb`.
+///
+/// # Beat position and reset
+///
+/// The beat count is the clock's *position*: beat 0 is its first gate, so
+/// beat `N` falls on the first sample whose position reaches `N`, the sample
+/// the `beat` gate rises on. The `reset` control returns it to beat 0: its
+/// next sample is at position 0 exactly, so a reset every `N` beats loops
+/// them `N` beats long to the sample. (A new clock's first sample is one
+/// sample past 0, as it has always been.) The read-only
+/// `position` control reports it.
 pub struct Clock {
     sample_rate: u32,
     // Controls, applied on the thread running the clock.
@@ -84,6 +95,10 @@ pub struct Clock {
     // Timing state derived from the continuous beat count.
     beats: f64,
     phase: f32,
+    // Whether it has output a sample since it was built or reset, and the
+    // beats begun before the latest reset (see `Timeline::beats_before`).
+    started: bool,
+    beats_before: u64,
     // Cached output for modular routing
     outputs: outputs::ClockOutputs,
 }
@@ -108,6 +123,8 @@ impl Clock {
             last_bpm: 0.0,
             beats: 0.0,
             phase: 0.0,
+            started: false,
+            beats_before: 0,
             outputs: outputs::ClockOutputs::new(),
         };
         let _ = apply_declared(&mut clock, BPM, RtValue::F32(bpm as f32));
@@ -132,10 +149,14 @@ impl Clock {
         let bpm = self.bpm();
         // Re-anchor the epoch on a tempo change so the beat count stays
         // continuous: beats accrued so far are preserved, and the new tempo
-        // takes effect from the previous sample forward.
+        // takes effect from the previous sample forward. Before the first
+        // sample since the clock was built or reset there is nothing to
+        // keep: the epoch already starts the count.
         if bpm != self.last_bpm {
-            self.epoch_beats = self.beats;
-            self.epoch_sample = self.sample_count.saturating_sub(1);
+            if self.started {
+                self.epoch_beats = self.beats;
+                self.epoch_sample = self.sample_count.saturating_sub(1);
+            }
             self.last_bpm = bpm;
         }
 
@@ -179,6 +200,7 @@ impl Clock {
     fn advance(&mut self, i: usize) {
         self.sample_count += 1;
         self.update_signal();
+        self.started = true;
         self.update_cached_outputs(i);
     }
 
@@ -197,7 +219,8 @@ impl Clock {
         Duration::from_secs_f64(self.sample_count as f64 / self.sample_rate as f64)
     }
 
-    /// Returns the total number of beats elapsed since the clock started.
+    /// Returns the beats elapsed since the clock started, or since it was
+    /// last reset.
     ///
     /// This is the continuous beat count: across a tempo change it advances
     /// smoothly rather than jumping, so it stays musically meaningful when the
@@ -221,6 +244,8 @@ impl Module for Clock {
         for i in 0..frames {
             self.advance(i);
         }
+        let position = self.beat_position().max(0.0) as f32;
+        self.cells.publish(POSITION, RtValue::F32(position));
         true
     }
 
@@ -259,12 +284,23 @@ impl Module for Clock {
         match (control, value) {
             (BPM, RtValue::F32(bpm)) => self.bpm = bpm,
             (GATE_LENGTH, RtValue::F32(length)) => self.gate_length = length.clamp(0.0, 1.0),
+            (RESET, RtValue::Bool(fire)) => {
+                if fire {
+                    self.reset();
+                }
+                return Ok(RtValue::Bool(false));
+            }
             _ => return Err(Refusal::Unsupported),
         }
         Ok(match control {
             BPM => RtValue::F32(self.bpm),
             _ => RtValue::F32(self.gate_length),
         })
+    }
+
+    #[allow(private_interfaces)]
+    fn timeline(&self) -> Option<&dyn Timeline> {
+        Some(self)
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

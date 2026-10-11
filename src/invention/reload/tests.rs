@@ -4,6 +4,7 @@ use crate::invention::manual_backend::Settled;
 use crate::modules::NullBackend;
 
 mod authored;
+mod clock;
 mod numeric;
 mod sample_levels;
 
