@@ -18,7 +18,10 @@
 //! does no extra work: it allocates, frees and locks nothing for the log.
 //!
 //! Perform and author writes are both recorded: both shaped what was heard.
-//! Superseded and refused requests are not: they never applied.
+//! Superseded, overridden and refused requests are not: they never
+//! applied. (A request overridden at its due sample lost to a write that
+//! applied there, which is logged, or came late and was weighed at a block
+//! start: it splits no block the log does not.)
 //!
 //! # Bounded
 //!

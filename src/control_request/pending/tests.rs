@@ -37,7 +37,7 @@ fn request(id: u64, target: ControlTarget, value: f32) -> Request {
 /// the order applied.
 fn apply_at(store: &mut PendingStore, now: u64) -> Vec<(usize, u16, f32)> {
     let mut applied = Vec::new();
-    store.apply_due(now, INSTALLED, |target, value, _| {
+    store.apply_due(now, INSTALLED, |target, _, value, _| {
         let RequestValue::Value(RtValue::F32(value)) = value else {
             panic!("unexpected value {value:?}");
         };
@@ -106,7 +106,7 @@ fn held_entries_neither_apply_nor_bound_a_segment() {
 
     // Once its generation installs it is due (late) at once.
     let mut applied = Vec::new();
-    store.apply_due(10, INSTALLED + 1, |target, _, _| {
+    store.apply_due(10, INSTALLED + 1, |target, _, _, _| {
         applied.push(target.module_idx);
         Ok(())
     });
@@ -131,7 +131,7 @@ fn remapping_rewrites_or_refuses_older_entries_only() {
 fn a_refused_apply_settles_refused() {
     let (mut store, outcomes) = store_of(2);
     store.insert(request(1, target(INSTALLED, 0, 0), 1.0), 0);
-    store.apply_due(0, INSTALLED, |_, _, _| Err(Refusal::Unsupported));
+    store.apply_due(0, INSTALLED, |_, _, _, _| Err(Refusal::Unsupported.into()));
     assert_eq!(store.len(), 0);
     assert_eq!(
         log(&outcomes),
@@ -190,7 +190,7 @@ fn an_entry_applied_past_its_due_sample_is_late_and_past_its_expiry_is_refused()
     // in time, the third is exactly on time.
     let mut applied = Vec::with_capacity(8);
     let ((), allocs, frees) = allocator_events(|| {
-        store.apply_due(20, INSTALLED, |target, _, _| {
+        store.apply_due(20, INSTALLED, |target, _, _, _| {
             applied.push(target.control.0);
             Ok(())
         })

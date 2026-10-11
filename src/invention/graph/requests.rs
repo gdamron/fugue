@@ -84,6 +84,22 @@
 //! therefore waits for the reclaimer, never for a request's sample, and
 //! cannot deadlock.
 //!
+//! # Tiers
+//!
+//! Every request timed in samples applies through
+//! [`SignalGraph::apply_ranked`]: one losing
+//! to a higher-ranked write due at or after its own due sample is settled
+//! [`Outcome::Overridden`] (a higher tier) or [`Outcome::Superseded`] (its
+//! own tier, higher priority) and changes nothing, and one that applies
+//! holds its control against lower tiers (see
+//! `crate::control_request::hold`). The holds live in each module's cells,
+//! so they follow the instance through an install: a surviving module
+//! keeps them, a rebuilt or added one starts free, and a removed one's go
+//! with it. A request submitted before an edit and due at its sample holds
+//! the instance the edit replaces, so one submitted after it, on a rebuilt
+//! module, is not held off by it. A reload's control changes on a
+//! surviving module are a user's writes, and hold as any does.
+//!
 //! # Sample accuracy by splitting the block
 //!
 //! `process_block` runs a block as segments bounded by the due times of
@@ -100,8 +116,9 @@ use std::sync::Arc;
 use super::publication::{Disposition, Publication};
 use super::SignalGraph;
 use crate::control_request::{
-    apply_declared, expired, take_automation, ControlIndex, ControlTarget, Outcome, OutcomeSender,
-    PendingStore, QueueConsumer, Refusal, Request, RequestValue, RtValue, Watches, When,
+    admits_hold, apply_declared, expired, take_automation, take_hold, ControlIndex, ControlTarget,
+    Outcome, OutcomeSender, PendingStore, QueueConsumer, Refusal, Request, RequestValue, RtValue,
+    Standing, Watches, When,
 };
 use crate::payload::{Payload, Retirer};
 
@@ -449,8 +466,8 @@ impl SignalGraph {
         drain.watches.arm(drain.installed, self);
         drain
             .pending
-            .apply_due(now, drain.installed, |target, value, retirer| {
-                self.apply_request(target.module_idx, target.control, value, retirer)
+            .apply_due(now, drain.installed, |target, standing, value, retirer| {
+                self.apply_ranked(target, standing, value, retirer)
             });
         let next = drain.pending.next_due(drain.installed).map(|at| at - now);
         let outcomes = &mut drain.pending.outcomes;
@@ -472,6 +489,35 @@ impl SignalGraph {
         let next = self.apply_due(&mut drain, now);
         self.requests = Some(drain);
         next.map_or(remaining, |next| next.min(remaining as u64) as usize)
+    }
+
+    /// Applies a request of `standing` (none for an event) as
+    /// [`Self::apply_request`] does, unless a higher-ranked write due at or
+    /// after its due sample holds its control: then it reports what it
+    /// lost as and changes nothing (a payload is retired). Once applied,
+    /// it holds the control (see `crate::control_request::hold`).
+    /// Allocation-, free- and lock-free.
+    pub(super) fn apply_ranked(
+        &mut self,
+        target: &ControlTarget,
+        standing: Option<Standing>,
+        value: RequestValue,
+        retirer: &mut Retirer,
+    ) -> Result<(), Outcome> {
+        let index = target.module_idx;
+        if let (Some(standing), Some((_, instance))) = (standing, self.modules.get_index(index)) {
+            if let Err(lost) = admits_hold(instance.module(), target.control, standing) {
+                if let RequestValue::Payload(payload) | RequestValue::Edit(payload) = value {
+                    retirer.retire(payload);
+                }
+                return Err(lost);
+            }
+        }
+        self.apply_request(target.module_idx, target.control, value, retirer)?;
+        if let (Some(standing), Some((_, instance))) = (standing, self.modules.get_index(index)) {
+            take_hold(instance.module(), target.control, standing);
+        }
+        Ok(())
     }
 
     /// Applies `value` to `control` of the module at `module_idx`, under
@@ -527,7 +573,8 @@ impl SignalGraph {
 
     /// Applies `value` to declared control `control` of module `module_id`
     /// at once: an offline render's control write, made under the lock its
-    /// renders take (see [`crate::invention::declared::Route`]).
+    /// renders take (see [`crate::invention::declared::Route`]). A user's,
+    /// it holds the control against lower tiers as a request does.
     pub(crate) fn apply_control(
         &mut self,
         module_id: &str,
@@ -536,7 +583,13 @@ impl SignalGraph {
     ) -> Result<(), Refusal> {
         let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
         take_automation(instance.module_mut());
-        apply_declared(instance.module_mut(), control, value)
+        apply_declared(instance.module_mut(), control, value)?;
+        take_hold(
+            instance.module(),
+            control,
+            Standing::user(self.current_sample),
+        );
+        Ok(())
     }
 
     /// Keeps `payload` as declared payload control `control` of module

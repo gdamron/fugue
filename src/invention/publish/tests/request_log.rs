@@ -23,6 +23,19 @@ impl LiveGraph {
         when: crate::control_request::When,
         beat: Option<crate::LoggedBeat>,
     ) -> RequestId {
+        let user = crate::control_request::Source::User;
+        self.submit_logged_from((module_id, key), value, when, beat, user)
+    }
+
+    /// [`Self::submit_logged`], from `source`.
+    pub(crate) fn submit_logged_from(
+        &self,
+        (module_id, key): (&str, &str),
+        value: crate::control_request::RtValue,
+        when: crate::control_request::When,
+        beat: Option<crate::LoggedBeat>,
+        source: crate::control_request::Source,
+    ) -> RequestId {
         use crate::control_request::{Request, RequestValue, RtValue};
         let surface = self.control_surfaces.lock().unwrap()[module_id].clone();
         let declaration = surface.declaration(key).unwrap();
@@ -32,6 +45,7 @@ impl LiveGraph {
             .unwrap();
         let mut request = Request::new(target, RequestValue::Value(value));
         request.when = when;
+        request.source = source;
         request.event = declaration.decl.event;
         let mut pending = self.pending.lock().unwrap();
         let id = self.requests.submit(request).unwrap();

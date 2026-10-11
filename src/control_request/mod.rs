@@ -26,6 +26,7 @@ mod automation;
 mod cells;
 mod declare;
 mod event;
+mod hold;
 mod key;
 mod legacy;
 mod local;
@@ -75,6 +76,7 @@ pub(crate) use declare::{
     integer_domain, ControlDecl, ControlTable, DeclKind, PayloadCodec, Writer,
 };
 pub(crate) use event::{EventCounter, EventCursor};
+pub(crate) use hold::{admits_hold, take_hold, Standing};
 pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
 pub(crate) use legacy::LEGACY_CONTROLS;
 pub(crate) use local::{local_controls, local_get, local_set};
