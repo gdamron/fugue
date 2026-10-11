@@ -62,7 +62,7 @@ pub use rpc::{
     RuntimePortInfo, RuntimeRevision, SaveReport, SeqEvent, SinkStatusState, SpectrogramBinSpacing,
     SpectrogramDbReference, SpectrogramDbScale, SpectrogramEncoding, SpectrogramFrequencyAxis,
     SpectrogramLimits, SpectrogramMagnitudes, SpectrogramProvenance, SpectrogramStreamMeta,
-    SpectrogramTile, SpectrogramWindow, TypeDetail, RPC_SCHEMA_VERSION,
+    SpectrogramTile, SpectrogramWindow, TimelineContext, TypeDetail, RPC_SCHEMA_VERSION,
 };
 
 // Re-export modules

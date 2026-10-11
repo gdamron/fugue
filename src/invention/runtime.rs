@@ -297,8 +297,12 @@ impl RunningInvention {
     }
 
     pub fn full_snapshot(&self) -> crate::RuntimeFullSnapshot {
+        let mut timelines = self.live.timelines();
         let module_ports = self.module_ports.lock().unwrap();
         let mut snapshot = self.snapshot().full_snapshot_with_ports(&module_ports);
+        for module in &mut snapshot.modules {
+            module.timeline = timelines.remove(&module.info.id);
+        }
         snapshot.status = self.with_audio_diagnostics(snapshot.status);
         snapshot
     }

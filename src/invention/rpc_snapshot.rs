@@ -131,6 +131,7 @@ impl RuntimeSnapshot {
                 outputs: ports.outputs.clone(),
             },
             controls,
+            timeline: None,
         })
     }
 
@@ -168,6 +169,7 @@ impl RuntimeSnapshot {
                         .unwrap_or_default(),
                     info,
                     controls: control_snapshots,
+                    timeline: None,
                 }
             })
             .collect();
@@ -208,6 +210,7 @@ mod tests {
             },
             ports: RuntimePortInfo::default(),
             controls: Vec::new(),
+            timeline: None,
         }
     }
 
