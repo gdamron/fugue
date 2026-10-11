@@ -110,6 +110,9 @@ pub struct Clock {
     // beats begun before the latest reset (see `Timeline::beats_before`).
     started: bool,
     beats_before: u64,
+    // The next sample's (sample, position, bpm) as predicted when latched
+    // (see `Timeline::latch`): a tempo change before it re-anchors there.
+    latch: Option<(u64, f64, f32)>,
     // Cached output for modular routing
     outputs: outputs::ClockOutputs,
 }
@@ -136,6 +139,7 @@ impl Clock {
             phase: 0.0,
             started: false,
             beats_before: 0,
+            latch: None,
             outputs: outputs::ClockOutputs::new(),
         };
         let _ = apply_declared(&mut clock, BPM, RtValue::F32(bpm as f32));
@@ -160,16 +164,14 @@ impl Clock {
         let bpm = self.bpm();
         // Re-anchor the epoch on a tempo change so the beat count stays
         // continuous: beats accrued so far are preserved, and the new tempo
-        // takes effect from the previous sample forward. Before the first
-        // sample since the clock was built or reset there is nothing to
-        // keep: the epoch already starts the count.
-        if bpm != self.last_bpm {
-            if self.started {
-                self.epoch_beats = self.beats;
-                self.epoch_sample = self.sample_count.saturating_sub(1);
-            }
-            self.last_bpm = bpm;
+        // takes effect from the previous sample forward (from this one, when
+        // latched for a request on its beat). Before the first sample since
+        // the clock was built or reset there is nothing to keep: the epoch
+        // already starts the count.
+        if let Some(anchor) = self.reanchor(self.sample_count) {
+            (self.epoch_sample, self.epoch_beats) = anchor;
         }
+        self.last_bpm = bpm;
 
         let samples_per_beat = self.samples_per_beat();
         let elapsed = self.sample_count.saturating_sub(self.epoch_sample) as f64;
@@ -212,6 +214,7 @@ impl Clock {
         self.sample_count += 1;
         self.update_signal();
         self.started = true;
+        self.latch = None;
         self.update_cached_outputs(i);
     }
 
@@ -311,6 +314,11 @@ impl Module for Clock {
 
     #[allow(private_interfaces)]
     fn timeline(&self) -> Option<&dyn Timeline> {
+        Some(self)
+    }
+
+    #[allow(private_interfaces)]
+    fn timeline_mut(&mut self) -> Option<&mut dyn Timeline> {
         Some(self)
     }
 

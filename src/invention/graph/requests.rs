@@ -17,11 +17,12 @@
 //! store directly instead.)
 //!
 //! The drain pops in that order. At an edit at the head it applies every
-//! request already due (so those submitted before the edit act on the graph
-//! it replaces), pops the edit and hands its publication to `drain_link`,
-//! which installs it, maps every pending request through it exactly as an
-//! input write is mapped (see `SignalGraph::dispose`: onto its module's new
-//! index, or refused with [`Refusal::TargetGone`] when the module was
+//! request already due, those timed in beats included (so those submitted
+//! before the edit act on the graph it replaces), pops the edit and hands
+//! its publication to `drain_link`, which installs it, maps every pending
+//! request and every watch (its target and its clock) through it exactly as
+//! an input write is mapped (see `SignalGraph::dispose`: onto its module's
+//! new index, or refused with [`Refusal::TargetGone`] when the module was
 //! removed or rebuilt), retires it, and drains on. Several edits can
 //! install in one block, in order. While the link holds a retirement (its
 //! retire ring was full), the edit stays at the head and everything behind
@@ -53,12 +54,18 @@
 //!   once the budget is spent; a payload without retire room stops intake
 //!   ahead of any edit (below).
 //!
+//! A request timed in beats needs room among the watches, which may never
+//! free (a beat far off, a clock stopped): one of the installed generation
+//! finding them full is refused (`Refusal::PendingFull`) rather than left
+//! at the head of the queue, so it never blocks what follows, edits
+//! included. One held for a newer generation needs room, as in the store.
+//!
 //! A clockless drain (a `NullBackend`'s) applies no back-pressure: what
-//! fills its store waits for samples that never come, so nothing would
-//! ever free the room. Every request it pops is placed or, when the store
-//! is full, refused (`Refusal::PendingFull`): none is left queued for want
-//! of room. Its blocks take up every edit queued before them (see
-//! `publish::Settler`).
+//! fills its store (or its watches) waits for samples that never come,
+//! so nothing would ever free the room. Every request it pops is placed
+//! or, when there is no room for it, refused (`Refusal::PendingFull`):
+//! none is left queued for want of room. Its blocks take up every edit
+//! queued before them (see `publish::Settler`).
 //!
 //! # Retire room: payloads stop the intake
 //!
@@ -93,8 +100,8 @@ use std::sync::Arc;
 use super::publication::{Disposition, Publication};
 use super::SignalGraph;
 use crate::control_request::{
-    apply_declared, expired, take_automation, ControlIndex, Outcome, OutcomeSender, PendingStore,
-    QueueConsumer, Refusal, Request, RequestValue, RtValue, When,
+    apply_declared, expired, take_automation, ControlIndex, ControlTarget, Outcome, OutcomeSender,
+    PendingStore, QueueConsumer, Refusal, Request, RequestValue, RtValue, Watches, When,
 };
 use crate::payload::Retirer;
 
@@ -104,6 +111,14 @@ use crate::payload::Retirer;
 pub(crate) type RequestHook =
     fn(&mut SignalGraph, usize, ControlIndex, RequestValue, &mut Retirer) -> Result<(), Refusal>;
 
+/// Where a request taken from the queue waits: in the pending store for its
+/// sample, or among the watches on its clock.
+#[derive(Clone, Copy)]
+enum Landing {
+    At(ControlTarget, u64),
+    Watch(ControlTarget, usize),
+}
+
 /// The audio thread's end of a live graph's request channel.
 pub(crate) struct RequestDrain {
     requests: QueueConsumer<Request>,
@@ -112,6 +127,8 @@ pub(crate) struct RequestDrain {
     /// a full queue. Edits do not count against it.
     pub(super) pop_limit: usize,
     pub(crate) pending: PendingStore,
+    /// Requests timed in beats (see [`super::beats`]).
+    pub(crate) watches: Watches,
     /// The installed publication's generation, as of the last drain.
     installed: u64,
     /// No time passes (a `NullBackend`): a request that finds the store
@@ -146,6 +163,7 @@ pub(crate) fn link_requests(
         requests,
         capacity,
         capacity,
+        capacity,
         retirer,
         outcomes,
         Default::default(),
@@ -161,6 +179,7 @@ impl RequestDrain {
         requests: QueueConsumer<Request>,
         pop_limit: usize,
         pending: usize,
+        watches: usize,
         retirer: Retirer,
         outcomes: OutcomeSender,
         published: Arc<AtomicU64>,
@@ -169,6 +188,7 @@ impl RequestDrain {
             requests,
             pop_limit,
             pending: PendingStore::new(pending, retirer, outcomes),
+            watches: Watches::new(watches),
             installed: 0,
             clockless: false,
             published,
@@ -200,9 +220,10 @@ impl SignalGraph {
     /// Pops the queue into the pending store, in order, while the store has
     /// room and the retirer has room for a payload (see the module docs),
     /// taking at most `budget` requests. Stops at an edit: when
-    /// `can_install`, it first applies every request now due, so those
-    /// submitted before the edit act on the graph it replaces, then pops
-    /// the edit and returns its publication for `drain_link` to install.
+    /// `can_install`, it first applies every request now due, those timed
+    /// in beats included, so those submitted before the edit act on the
+    /// graph it replaces, then pops the edit and returns its publication
+    /// for `drain_link` to install.
     /// Runs in `drain_link`. Allocation-, free- and lock-free.
     pub(super) fn drain_requests(
         &mut self,
@@ -227,9 +248,28 @@ impl SignalGraph {
         // (`Ok(None)`), and is refused then. (An immediate edit is queued
         // ahead of every request for the generation it installs, so these
         // are held only once an edit can wait for its time.)
+        //
+        // A request timed in beats waits among the watches instead, on its
+        // clock, in its target's generation (see `super::beats`).
         let resolve = |graph: &Self, request: &Request| {
             let mut target = request.target;
             let at = match request.when {
+                When::Beat(beat) => {
+                    Watches::check(request)?;
+                    // Its clock is in its target's generation, as the
+                    // target is: an install maps both (`remap_requests`).
+                    let clock = beat.clock as usize;
+                    if target.generation > installed {
+                        return Ok(Some(Landing::Watch(target, clock)));
+                    }
+                    if target.generation < installed {
+                        return Err(Refusal::TargetGone);
+                    }
+                    if expired(request, now) {
+                        return Err(Refusal::Expired);
+                    }
+                    return Ok(Some(Landing::Watch(target, clock)));
+                }
                 When::Now => Some(now),
                 When::AtSample(sample) => Some(sample),
                 // Resolved by the sender; counted from here only for a
@@ -238,11 +278,9 @@ impl SignalGraph {
                 // Left for this thread when the clock was not yet anchored
                 // at submission: it is now, unless there is no clock.
                 When::AtTime(time) => graph.transport.sample_at(time),
-                // Placed on its clock's beats with FUG-320's next step.
-                When::Beat(_) => return Err(Refusal::Unsupported),
             };
             if target.generation > installed {
-                return Ok(at.map(|at| (target, at)));
+                return Ok(at.map(|at| Landing::At(target, at)));
             }
             if target.generation < installed {
                 // Defensive: a request queued behind an edit is never older
@@ -254,7 +292,7 @@ impl SignalGraph {
             if expired(request, at.max(now)) {
                 return Err(Refusal::Expired);
             }
-            Ok(Some((target, at)))
+            Ok(Some(Landing::At(target, at)))
         };
         // An edit waiting behind a full store must not starve: the requests
         // ahead of it are taken, and those finding no room refused
@@ -297,11 +335,22 @@ impl SignalGraph {
             // one replacing a waiting request (last write wins even when
             // the store is saturated). A request held for a newer
             // generation still needs room.
-            let needs_room = match landing {
-                Ok((target, at)) => !(replaces && drain.pending.coalesces_with(&target, at, event)),
-                Err(_) => false,
+            let (needs_room, full) = match landing {
+                Ok(Landing::At(target, at)) => (
+                    !(replaces && drain.pending.coalesces_with(&target, at, event)),
+                    drain.pending.is_full(),
+                ),
+                // A watch may wait without end (a repeating grid, a far
+                // beat, a stopped clock), so a full store refuses one of
+                // the installed generation rather than hold the queue
+                // behind it; one held for a newer generation waits, until
+                // that install.
+                Ok(Landing::Watch(target, _)) => {
+                    (target.generation > installed, drain.watches.is_full())
+                }
+                Err(_) => (false, false),
             };
-            if !drain.clockless && drain.pending.is_full() && needs_room && !edit_waiting {
+            if !drain.clockless && full && needs_room && !edit_waiting {
                 break;
             }
             let Some(mut request) = drain.requests.pop() else {
@@ -310,13 +359,18 @@ impl SignalGraph {
             *budget -= 1;
             drain.pending.outcomes.reserve(&request);
             match landing {
-                Ok((target, at)) => {
+                Ok(Landing::At(target, at)) => {
                     request.target = target;
                     if replaces {
                         drain.pending.insert(request, at);
                     } else {
                         drain.pending.insert_beside(request, at);
                     }
+                }
+                Ok(Landing::Watch(target, clock)) => {
+                    request.target = target;
+                    let outcomes = &mut drain.pending.outcomes;
+                    drain.watches.insert(request, clock, outcomes);
                 }
                 Err(refusal) => drain
                     .pending
@@ -328,7 +382,9 @@ impl SignalGraph {
         // it replaces, at this same sample.
         let publication = edit.map(|edit| {
             debug_assert_eq!(edit.target.generation, installed, "edits install in order");
-            self.apply_due(&mut drain, now);
+            // Beat-timed requests due now included; the segment start
+            // after the install looks again for the next one.
+            let _ = self.apply_due(&mut drain, now);
             Self::take_publication(&mut drain, edit)
         });
         self.requests = Some(drain);
@@ -361,38 +417,61 @@ impl SignalGraph {
         };
         drain.installed = installed;
         let now = self.current_sample;
+        let map = |graph: &Self, generation, module_idx| match graph
+            .dispose(generation, module_idx, installed, retired)
+        {
+            Disposition::Apply(new) => Some(new),
+            Disposition::Hold | Disposition::Drop => None,
+        };
         drain.pending.remap(installed, now, |target| {
-            match self.dispose(target.generation, target.module_idx, installed, retired) {
-                Disposition::Apply(new) => Some(new),
-                Disposition::Hold | Disposition::Drop => None,
-            }
+            map(self, target.generation, target.module_idx)
         });
+        // A watch's clock maps with its target: a clock removed or rebuilt
+        // refuses it (`Refusal::TimelineGone`).
+        let outcomes = &mut drain.pending.outcomes;
+        drain
+            .watches
+            .remap(installed, outcomes, |generation, module_idx| {
+                map(self, generation, module_idx)
+            });
         self.requests = Some(drain);
     }
 
-    /// Applies every request in `drain` due at `now`. Allocation-, free-
-    /// and lock-free.
-    fn apply_due(&mut self, drain: &mut RequestDrain, now: u64) {
+    /// Applies every request in `drain` due at `now`, those timed in beats
+    /// included, and returns how many samples until the next may be due.
+    /// Allocation-, free- and lock-free.
+    fn apply_due(&mut self, drain: &mut RequestDrain, now: u64) -> Option<u64> {
+        // New beat spans count from the clocks as they are before a
+        // request timed in samples (a reset) moves them. An edit splits
+        // the sample: what was submitted before it applies before it
+        // installs, so a span submitted after the edit counts from after
+        // such a reset.
+        drain.watches.arm(drain.installed, self);
         drain
             .pending
             .apply_due(now, drain.installed, |target, value, retirer| {
                 self.apply_request(target.module_idx, target.control, value, retirer)
             });
+        let next = drain.pending.next_due(drain.installed).map(|at| at - now);
+        let outcomes = &mut drain.pending.outcomes;
+        match self.watch_beats(&mut drain.watches, outcomes, drain.installed) {
+            Some(wait) => Some(next.map_or(wait, |next| next.min(wait))),
+            None => next,
+        }
     }
 
-    /// Applies every request due at the current sample and returns the
-    /// length of the segment to process next: up to the next due request,
-    /// at most `remaining` frames, at least one. Allocation-, free- and
-    /// lock-free.
+    /// Applies every request due at the current sample, those timed in
+    /// beats included, and returns the length of the segment to process
+    /// next: up to the next due request, at most `remaining` frames, at
+    /// least one. Allocation-, free- and lock-free.
     pub(super) fn apply_due_requests(&mut self, remaining: usize) -> usize {
         let Some(mut drain) = self.requests.take() else {
             return remaining;
         };
         let now = self.current_sample;
-        self.apply_due(&mut drain, now);
-        let next = drain.pending.next_due(drain.installed);
+        let next = self.apply_due(&mut drain, now);
         self.requests = Some(drain);
-        next.map_or(remaining, |at| (at - now).min(remaining as u64) as usize)
+        next.map_or(remaining, |next| next.min(remaining as u64) as usize)
     }
 
     /// Applies `value` to `control` of the module at `module_idx`, under
@@ -401,7 +480,7 @@ impl SignalGraph {
     /// holds (see [`apply_declared`]). No module takes a payload yet, so one
     /// is retired and refused with [`Refusal::Unsupported`]. A test's hook
     /// replaces all of it.
-    fn apply_request(
+    pub(super) fn apply_request(
         &mut self,
         module_idx: usize,
         control: ControlIndex,

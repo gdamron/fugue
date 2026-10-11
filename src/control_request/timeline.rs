@@ -39,6 +39,13 @@ pub(crate) trait Timeline {
     /// it counts every beat begun, so a span counted in beats survives a
     /// reset: it jumps the count to the next whole beat, never back.
     fn beats_before(&self) -> u64;
+
+    /// Holds the next sample at the position it is now predicted to have:
+    /// a tempo change before it then takes effect from the sample after,
+    /// so a request applied on a beat (a tempo change among them) does not
+    /// move the beat it applies on. Until the next sample; no effect
+    /// without a tempo change.
+    fn latch(&mut self);
 }
 
 /// The least `k >= 1` with `position_after(k) >= beat`, given `estimate`,

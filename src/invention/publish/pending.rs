@@ -8,13 +8,13 @@
 
 use std::collections::VecDeque;
 
-use super::publisher::{OUTCOME_QUEUE_CAPACITY, PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
+use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
 use crate::control_request::{EventCursor, Outcome, OutcomeReceiver, RequestId};
 use crate::ControlValue;
 
-/// The most writes the log remembers: every request the queue and the
-/// pending store can hold at once.
-const LOG_CAPACITY: usize = REQUEST_QUEUE_CAPACITY + PENDING_REQUEST_CAPACITY;
+/// The most writes the log remembers: every request the queue, the
+/// pending store and the watches can hold at once.
+const LOG_CAPACITY: usize = REQUEST_QUEUE_CAPACITY + WAITING_CAPACITY;
 
 /// A control write waiting to be applied.
 #[derive(Clone, Debug, PartialEq)]

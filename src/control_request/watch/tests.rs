@@ -35,6 +35,8 @@ impl Timeline for Scripted {
     fn beats_before(&self) -> u64 {
         self.beats_before
     }
+
+    fn latch(&mut self) {}
 }
 
 /// A scripted clock at module 0, recording the targets it applies to and
