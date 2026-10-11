@@ -14,6 +14,9 @@
 //! value its first one does ([`takes_all`]), or the development fails to
 //! build. So the alias taking the fewest values is listed first (a choice
 //! with the fewest options, the narrowest integer range).
+//!
+//! A payload key reaches exactly one inner payload control: its payload is
+//! handed on whole, and the one value it replaces is retired.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -27,6 +30,7 @@ use crate::control_request::{
 };
 use crate::invention::declared::{DeclaredSurface, Route};
 use crate::invention::runtime::ControlSurfaceInstance;
+use crate::payload::{Payload, Retired};
 use crate::{GraphModule, Invention};
 
 /// The declared aliases behind each of a development's declared controls.
@@ -174,6 +178,14 @@ impl DevelopmentControls {
                 }
             };
             let first = &decls[position];
+            let payload = first.kind == DeclKind::Payload || found.decl.kind == DeclKind::Payload;
+            if payload && !aliases[position].is_empty() {
+                return Err(format!(
+                    "Development control '{}': a payload control reaches exactly one \
+                     inner control, and '{}' already reaches '{}'",
+                    control.name, control.name, firsts[position]
+                ));
+            }
             if found.decl.writer != first.writer || !takes_all(first, &found.decl) {
                 return Err(format!(
                     "Development control '{}': '{}.{}' does not take every value '{}' does; \
@@ -195,10 +207,30 @@ impl DevelopmentControls {
         if decls.is_empty() {
             return Ok(None);
         }
+        // Nor may a legacy alias share a payload key.
+        for decl in decls.iter().filter(|decl| decl.kind == DeclKind::Payload) {
+            let listed = definition.controls.iter();
+            if listed.filter(|control| control.name == decl.key).count() > 1 {
+                return Err(format!(
+                    "Development control '{}': a payload control reaches exactly one \
+                     inner control",
+                    decl.key
+                ));
+            }
+        }
         let table =
             ControlTable::built(decls).map_err(|why| format!("Development controls: {why}"))?;
         let cells = Arc::new(ControlCells::new(current));
         let surface = DeclaredSurface::fanning_out(table.clone(), cells.clone());
+        // A payload key reads back as its one alias does, until written.
+        for control in &definition.controls {
+            if surface.is_payload(&control.name) {
+                let inner = surfaces.get(&control.module);
+                if let Some(Ok(shown)) = inner.map(|inner| inner.get_control(&control.control)) {
+                    surface.show_payload(&control.name, shown);
+                }
+            }
+        }
         let controls = Self {
             table,
             cells,
@@ -268,6 +300,27 @@ impl DevelopmentControls {
             (Some(refusal), _) => Err(refusal),
             (None, Some(applied)) => applied,
             (None, None) => Err(Refusal::Unsupported),
+        }
+    }
+}
+
+impl DevelopmentControls {
+    /// Hands `payload` to payload control `control`'s one alias, returning
+    /// what it replaces, or refuses it and hands it back. Audio thread, as
+    /// [`Self::apply`].
+    pub(super) fn apply_payload(
+        &self,
+        modules: &mut [GraphModule],
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        let alias = match self.aliases.get(usize::from(control.0)).map(Vec::as_slice) {
+            Some([alias]) => alias,
+            _ => return Err((Refusal::Unsupported, payload)),
+        };
+        match modules.get_mut(alias.module) {
+            Some(module) => module.module_mut().apply_payload(alias.index, payload),
+            None => Err((Refusal::TargetGone, payload)),
         }
     }
 }

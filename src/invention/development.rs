@@ -6,6 +6,7 @@ use crate::invention::graph::RoutingConnection;
 use crate::invention::runtime::{
     validate_input_port, validate_output_port, ControlSurfaceInstance, InventionRuntime,
 };
+use crate::payload::{Payload, Retired};
 use crate::{
     ControlMeta, ControlSurface, ControlValue, Invention, Module, ModuleRegistry, MAX_BLOCK,
 };
@@ -23,6 +24,8 @@ mod control_surface;
 mod declared_controls;
 #[cfg(test)]
 mod declared_tests;
+#[cfg(test)]
+mod payload_tests;
 #[cfg(test)]
 mod tests;
 
@@ -460,6 +463,17 @@ impl Module for DevelopmentModule {
 
     fn enclosure(&self) -> Option<&Arc<Enclosure>> {
         Some(&self.enclosure)
+    }
+
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        match &self.controls {
+            Some(controls) => controls.apply_payload(&mut self.graph.modules, control, payload),
+            None => Err((Refusal::Unsupported, payload)),
+        }
     }
 
     /// Prepares every inner module, so a scheduler inside a development
