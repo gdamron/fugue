@@ -30,6 +30,14 @@
 //!   until automation's next event on it, and an inner entry frees the
 //!   alias it writes, not the development's own word (which only weighs
 //!   requests due at or before it).
+//! - Through a development, the hold covers every inner control its key
+//!   reaches: a write through another key reaching one of them is weighed
+//!   against it, and automation writing them is held off. Each is released
+//!   by automation's next event on it, as any control is. One held alias
+//!   holds off the whole write (it loses to the strongest hold it meets),
+//!   and two keys sharing an inner control are two targets: at one sample
+//!   the one applied first holds the other off, so they resolve in the
+//!   order they apply, not by rank.
 //! - Events (triggers) are never held: two are two events.
 //! - A payload control ranks and holds as a value does. No automation
 //!   writes one, so its hold only weighs requests. A payload that loses is
@@ -49,6 +57,8 @@
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::cells::ControlCells;
+use super::declare::ControlTable;
 use super::pending::Outcome;
 use super::request::{ControlIndex, Request, Source};
 use crate::Module;
@@ -241,21 +251,34 @@ impl Holds {
 }
 
 /// Whether a write of `standing` may apply to declared `control` of
-/// `module` ([`Holds::admits`]). Allocation-, free- and lock-free.
+/// `module` ([`Holds::admits`]): weighed against the hold on it, and on
+/// every inner control a development's key reaches, which another key may
+/// hold. Allocation-, free- and lock-free.
 pub(crate) fn admits_hold<M: Module + ?Sized>(
     module: &M,
     control: ControlIndex,
     standing: Standing,
 ) -> Result<(), Outcome> {
-    match module.declared() {
-        Some((_, cells)) => cells.holds.admits(control, standing),
-        None => Ok(()),
+    let mut admitted = Ok(());
+    let mut weigh = |_: &ControlTable, cells: &ControlCells, index| {
+        // A loss to a higher tier outweighs one within the tier.
+        if admitted != Err(Outcome::Overridden) {
+            if let Err(lost) = cells.holds.admits(index, standing) {
+                admitted = Err(lost);
+            }
+        }
+    };
+    if let Some((table, cells)) = module.declared() {
+        weigh(table, cells, control);
     }
+    module.for_each_alias(control, &mut weigh);
+    admitted
 }
 
 /// Records that a write of `standing` applied to declared `control` of
-/// `module` ([`Holds::take`]). An event control is never held.
-/// Allocation-, free- and lock-free.
+/// `module` ([`Holds::take`]), and to every inner control a development's
+/// key reaches, so automation writing those directly is held off too. An
+/// event control is never held. Allocation-, free- and lock-free.
 pub(crate) fn take_hold<M: Module + ?Sized>(module: &M, control: ControlIndex, standing: Standing) {
     let Some((table, cells)) = module.declared() else {
         return;
@@ -264,6 +287,9 @@ pub(crate) fn take_hold<M: Module + ?Sized>(module: &M, control: ControlIndex, s
         return;
     }
     cells.holds.take(control, standing);
+    module.for_each_alias(control, &mut |_, cells, index| {
+        cells.holds.take(index, standing);
+    });
 }
 
 #[cfg(test)]

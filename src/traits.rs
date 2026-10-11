@@ -482,6 +482,20 @@ pub trait Module: Send {
         Err(Refusal::Unsupported)
     }
 
+    /// Calls `f` with each inner declared control a write to `control`
+    /// reaches beyond the module's own (a development's aliases, and
+    /// theirs in a nested one), so a write's hold reaches them too (see
+    /// `control_request::take_hold`). Allocation-, free- and lock-free.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn for_each_alias(
+        &self,
+        control: ControlIndex,
+        f: &mut dyn FnMut(&ControlTable, &ControlCells, ControlIndex),
+    ) {
+        let _ = (control, f);
+    }
+
     /// This module's beat timeline, when it keeps one (a clock), for the
     /// audio thread to place requests timed in beats on. Read between
     /// [`Module::process`] calls only.

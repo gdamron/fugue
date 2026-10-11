@@ -447,6 +447,8 @@ fn a_clamping_integer_key_takes_any_whole_number_and_each_alias_clamps_it() {
     assert!(surface.set_control("n", 2.5.into()).is_err());
 
     let n = surface.automation("n").unwrap();
+    // An entry firing: the user's writes above held the key until now.
+    n.begin(0);
     n.write_number(40.0);
     assert_eq!(n.current(), Some(8.0), "as the first alias will hold it");
     outputs_a(&graph);
@@ -507,4 +509,68 @@ fn a_clamping_integer_reads_pending_automation_as_its_module_will_hold_it() {
     steps.write_number(-16_777_216.0);
     // Refused: past what a client's f32 carries unambiguously.
     assert_eq!(steps.current(), Some(8.0));
+}
+
+#[test]
+fn a_write_holds_every_alias_against_automation_until_its_next_event() {
+    let (graph, surface) = running(json!({}));
+    let level = surface.automation("level").unwrap();
+    let frame = |graph: &Arc<Mutex<SignalGraph>>| {
+        let mut graph = graph.lock().unwrap();
+        let module = graph.modules["pair"].module_mut();
+        take_automation(module);
+        module.process(1);
+        (module.output_block(0)[0], module.output_block(1)[0])
+    };
+    // An offline write is a user's: it holds both dials it reaches.
+    surface.set_control("level", 0.5.into()).unwrap();
+    level.write_number(0.75);
+    assert_eq!(frame(&graph), (0.5, 0.5), "a ramp's write is held off");
+    // Another key reaching one of its aliases is held off too.
+    let inner = surface.automation("b_level").unwrap();
+    inner.write_number(0.125);
+    assert_eq!(frame(&graph), (0.5, 0.5));
+
+    level.begin(0);
+    level.write_number(0.75);
+    assert_eq!(frame(&graph), (0.75, 0.75), "its next entry takes it back");
+}
+
+#[test]
+fn a_hold_reaches_through_a_development_without_allocating() {
+    use crate::control_request::{admits_hold, take_hold, Outcome, Rank, Source, Standing};
+    let (graph, surface) = running(json!({}));
+    let graph = graph.lock().unwrap();
+    let module = graph.modules["pair"].module();
+    let (table, _) = module.declared().unwrap();
+    let (level, b_level) = (
+        table.resolve("level").unwrap(),
+        table.resolve("b_level").unwrap(),
+    );
+    let ((), allocs, frees) = allocator_events(|| take_hold(module, level, Standing::user(7)));
+    assert_eq!((allocs, frees), (0, 0));
+    // Another key reaching an alias is weighed against the hold there.
+    let script = |due| Standing {
+        rank: Rank::new(Source::Script, 0),
+        due,
+    };
+    let (admitted, allocs, frees) = allocator_events(|| admits_hold(module, b_level, script(7)));
+    assert_eq!((admitted, allocs, frees), (Err(Outcome::Overridden), 0, 0));
+    assert_eq!(admits_hold(module, b_level, script(8)), Ok(()));
+    // Its own word held within the tier, an alias by a higher tier: the
+    // loss to the higher tier is the one reported.
+    let priority = |priority| Standing {
+        rank: Rank::new(Source::Script, priority),
+        due: 9,
+    };
+    take_hold(module, b_level, priority(5));
+    take_hold(module, level, Standing::user(9));
+    assert_eq!(
+        admits_hold(module, b_level, priority(0)),
+        Err(Outcome::Overridden)
+    );
+    drop(graph);
+    let level = surface.automation("level").unwrap();
+    level.write_number(0.75);
+    assert!(level.current() != Some(0.75), "held off");
 }
