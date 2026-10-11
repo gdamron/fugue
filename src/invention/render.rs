@@ -160,8 +160,14 @@ impl RenderEngine {
             )
             .into());
         }
-        let surfaces = self.control_surfaces.lock().unwrap();
-        self.replay = replay::Replay::resolve(log, &surfaces)?;
+        let replay = {
+            let surfaces = self.control_surfaces.lock().unwrap();
+            replay::Replay::resolve(log, &surfaces)?
+        };
+        if let Some(graph) = &self.graph {
+            replay.check_clocks(&mut graph.lock().unwrap())?;
+        }
+        self.replay = replay;
         Ok(())
     }
 

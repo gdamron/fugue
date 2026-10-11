@@ -259,3 +259,18 @@ fn a_log_played_at_another_rate_or_block_size_or_out_of_order_is_refused() {
     unsorted.requests.swap(2, 3);
     assert!(refused(&unsorted).contains("out of time order"));
 }
+
+#[test]
+fn a_log_whose_beat_names_no_clock_here_is_refused() {
+    let (mut log, _) = live_session();
+    let on_beat = log.requests.iter_mut().find(|r| r.beat.is_some()).unwrap();
+    on_beat.beat = Some(LoggedBeat::After {
+        clock: "osc".into(),
+        beats: 1.0,
+    });
+    on_beat.due = None;
+    let mut engine = RenderEngine::new(SAMPLE_RATE);
+    engine.load_json(DOC).unwrap();
+    let error = engine.replay(&log).unwrap_err().to_string();
+    assert!(error.contains("'osc' is not a clock"), "{error}");
+}

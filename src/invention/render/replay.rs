@@ -5,7 +5,10 @@
 //! and through the same apply a live request takes (automation still
 //! waiting first, then the module's declared control). A request that
 //! applied on its clock's beat latches the clock first, as the live watch
-//! did, so a tempo it changes there takes effect from the same sample.
+//! did, so a tempo it changes there takes effect from the same sample. (A
+//! watch refused on its beat latched its clock live, unlogged: a late
+//! request changing that clock's tempo in the same sample would then take
+//! effect a sample apart. Rare enough to leave.)
 //! Replay is by sample:
 //! a render of the invention as loaded, at the session's sample rate and
 //! block grid, then reproduces what played (see
@@ -15,7 +18,7 @@
 
 use indexmap::IndexMap;
 
-use crate::control_request::{ControlIndex, RtValue};
+use crate::control_request::{take_automation, ControlIndex, RtValue};
 use crate::invention::graph::SignalGraph;
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::{LoggedBeat, RequestLog};
@@ -94,6 +97,20 @@ impl Replay {
         })
     }
 
+    /// Fails naming the first clock a logged beat names that keeps no beat
+    /// timeline in `graph`: its latch would silently do nothing.
+    pub(super) fn check_clocks(&self, graph: &mut SignalGraph) -> Result<(), String> {
+        for clock in self.due.iter().filter_map(|due| due.latch.as_ref()) {
+            let module = graph.modules.get_mut(clock);
+            if module.is_none_or(|module| module.module_mut().timeline_mut().is_none()) {
+                return Err(format!(
+                    "the logged beat's clock '{clock}' is not a clock here"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Applies every request due at `graph`'s current sample (one already
     /// past applies now, as a late request would), and returns how many of
     /// the next `frames` frames to render before the next is due.
@@ -104,8 +121,13 @@ impl Replay {
                 .latch
                 .as_ref()
                 .and_then(|clock| graph.modules.get_mut(clock));
-            if let Some(timeline) = clock.and_then(|clock| clock.module_mut().timeline_mut()) {
-                timeline.latch();
+            if let Some(clock) = clock {
+                // As the live watch does: automation written before this
+                // sample first, then the latch.
+                take_automation(clock.module_mut());
+                if let Some(timeline) = clock.module_mut().timeline_mut() {
+                    timeline.latch();
+                }
             }
             if graph
                 .apply_control(&due.module_id, due.control, due.value)
