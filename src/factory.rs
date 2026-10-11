@@ -127,6 +127,25 @@ pub trait ModuleFactory: Send + Sync + 'static {
     fn config_keys(&self) -> &'static [ConfigKey] {
         &[]
     }
+
+    /// The control writes a reload makes to a module of this type it keeps
+    /// running, given the module's new config (a clock's `reset` when its
+    /// config sets `reset_on_reload`). Written right after the reload
+    /// publishes, as a config change expressed as controls is. Default is
+    /// none.
+    fn writes_on_reload(
+        &self,
+        _config: &serde_json::Value,
+    ) -> Vec<(&'static str, crate::ControlValue)> {
+        Vec::new()
+    }
+
+    /// Config keys only a reload reads (a clock's `reset_on_reload`): a
+    /// change to one never rebuilds a running module, it is just kept in
+    /// its config. Default is none.
+    fn reload_keys(&self) -> &'static [&'static str] {
+        &[]
+    }
 }
 
 /// Applies the entries of `config` whose keys `selects` picks to `surface`

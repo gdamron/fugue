@@ -23,7 +23,7 @@ use super::format::ModuleSpec;
 use super::runtime::{GraphCommandError, RunningInvention};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
 use crate::module_config::{ConfigKey, ConfigKind};
-use config_diff::{configs_equal, control_updates_for};
+use config_diff::{configs_equal, control_updates_for, without};
 
 /// Development definitions as loaded for a document, by declaration scope
 /// (see [`LoadedDevelopments`]). Path-based definitions are captured at load
@@ -186,6 +186,10 @@ pub(crate) struct ReloadPlan {
     pub(crate) unchanged: Vec<String>,
 }
 
+/// A module type's config keys, and those of them only a reload reads
+/// ([`crate::ModuleFactory::reload_keys`]).
+pub(crate) type TypeKeys = (&'static [ConfigKey], &'static [&'static str]);
+
 /// Diffs the new document against the current runtime topology.
 ///
 /// A module keeps its running instance (and therefore its phase and state)
@@ -196,21 +200,23 @@ pub(crate) struct ReloadPlan {
 /// under the key type its module type declares (`config_keys`), so `440`
 /// and `440.0` are no change; see [`ConfigKind::same_value`](crate::module_config::ConfigKind::same_value).
 /// So does a key `control_kind` reports a running module declares as a
-/// control. `has_control` answers whether a module exposes a control key at
+/// control. A key only a reload reads (the second slice `config_keys`
+/// gives) never swaps the module: a change to it alone refreshes its
+/// config. `has_control` answers whether a module exposes a control key at
 /// runtime.
 pub(crate) fn plan_reload(
     current_modules: &IndexMap<String, RuntimeModuleInfo>,
     current_connections: &[RuntimeConnectionInfo],
     new: &Invention,
     changed_types: &HashSet<String>,
-    config_keys: impl Fn(&str) -> &'static [ConfigKey],
+    config_keys: impl Fn(&str) -> TypeKeys,
     control_kind: impl Fn(&str, &str) -> Option<ConfigKind>,
     mut has_control: impl FnMut(&str, &str) -> bool,
 ) -> Result<ReloadPlan, String> {
     let mut plan = ReloadPlan::default();
 
     for spec in &new.modules {
-        let keys = config_keys(&spec.module_type);
+        let (keys, reload_only) = config_keys(&spec.module_type);
         let kind = |key: &str| {
             let declared = keys.iter().find(|declared| declared.key == key);
             declared
@@ -225,24 +231,35 @@ pub(crate) fn plan_reload(
             {
                 plan.swapped.push(spec.clone());
             }
-            Some(info) if !configs_equal(&info.config, &spec.config, &kind) => {
-                match control_updates_for(&info.config, &spec.config, &kind, |key| {
-                    has_control(&spec.id, key)
-                }) {
-                    Some(updates) => {
-                        plan.unchanged.push(spec.id.clone());
-                        plan.refreshed_configs
-                            .push((spec.id.clone(), spec.config.clone()));
-                        plan.control_updates.extend(
-                            updates
-                                .into_iter()
-                                .map(|(key, value)| (spec.id.clone(), key, value)),
-                        );
+            // Keys only a reload reads never rebuild the module: compared
+            // without them, and kept in its config when only they changed.
+            Some(info) => {
+                let previous = without(&info.config, reload_only);
+                let config = without(&spec.config, reload_only);
+                let updates = if configs_equal(&previous, &config, &kind) {
+                    (!reload_only.is_empty() && info.config != spec.config).then(Vec::new)
+                } else {
+                    match control_updates_for(&previous, &config, &kind, |key| {
+                        has_control(&spec.id, key)
+                    }) {
+                        Some(updates) => Some(updates),
+                        None => {
+                            plan.swapped.push(spec.clone());
+                            continue;
+                        }
                     }
-                    None => plan.swapped.push(spec.clone()),
+                };
+                plan.unchanged.push(spec.id.clone());
+                if let Some(updates) = updates {
+                    plan.refreshed_configs
+                        .push((spec.id.clone(), spec.config.clone()));
+                    plan.control_updates.extend(
+                        updates
+                            .into_iter()
+                            .map(|(key, value)| (spec.id.clone(), key, value)),
+                    );
                 }
             }
-            Some(_) => plan.unchanged.push(spec.id.clone()),
         }
     }
 
@@ -468,16 +485,39 @@ impl RunningInvention {
             let state = self.state.lock().unwrap();
             (state.modules.clone(), state.connections.clone())
         };
-        plan_reload(
+        let mut plan = plan_reload(
             &current_modules,
             &current_connections,
             &validated.resolved,
             &changed_types,
-            |module_type| validated.registry.config_keys(module_type),
+            |module_type| {
+                let registry = &validated.registry;
+                let keys = registry.config_keys(module_type);
+                (keys, registry.reload_keys(module_type))
+            },
             |module_id, key| self.control_kind(module_id, key),
             |module_id, key| self.get_control(module_id, key).is_ok(),
         )
-        .map_err(ReloadError::Invalid)
+        .map_err(ReloadError::Invalid)?;
+        // A kept module's reload writes (a clock that resets on reload)
+        // land after its config's, so they act on the new values. Only a
+        // reload makes them: an edit batch keeps the clock's position, and
+        // a module inside a development is not reached (its spec is the
+        // development's).
+        for spec in &validated.resolved.modules {
+            if !plan.unchanged.contains(&spec.id) {
+                continue;
+            }
+            let writes = validated
+                .registry
+                .writes_on_reload(&spec.module_type, &spec.config);
+            plan.control_updates.extend(
+                writes
+                    .into_iter()
+                    .map(|(key, value)| (spec.id.clone(), key.to_string(), value)),
+            );
+        }
+        Ok(plan)
     }
 }
 
