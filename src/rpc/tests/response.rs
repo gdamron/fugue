@@ -157,3 +157,30 @@ fn a_reload_answered_with_a_receipt_omits_the_snapshot() {
     let decoded: RpcResponse = serde_json::from_value(json).unwrap();
     assert_eq!(decoded.payload, RpcResponsePayload::Reload(outcome));
 }
+
+#[test]
+fn a_receipt_reads_back_the_controls_a_command_wrote() {
+    let value = || crate::ControlValue::Number(1.0);
+    let single = RpcCommand::SetControl {
+        module_id: "osc".to_string(),
+        key: "frequency".to_string(),
+        value: value(),
+        intent: ControlWriteIntent::Perform,
+    };
+    assert_eq!(single.written_controls(), vec![("osc", "frequency")]);
+
+    let batch = RpcCommand::SetControls {
+        writes: vec![
+            ControlWrite::new("osc", "frequency", value()),
+            ControlWrite::new("mix", "level", value()),
+            ControlWrite::new("osc", "frequency", value()),
+        ],
+    };
+    assert_eq!(
+        batch.written_controls(),
+        vec![("osc", "frequency"), ("mix", "level"), ("osc", "frequency")]
+    );
+    assert!(RpcCommand::RemoveModule { id: "osc".into() }
+        .written_controls()
+        .is_empty());
+}

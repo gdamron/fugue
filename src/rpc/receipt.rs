@@ -62,3 +62,19 @@ pub struct AppliedControl {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<ControlValue>,
 }
+
+impl super::RpcCommand {
+    /// The controls a receipt for this command reads back, as
+    /// `(module_id, key)` in request order: each write of a `SetControl` or
+    /// `SetControls`. Empty for every other command.
+    pub fn written_controls(&self) -> Vec<(&str, &str)> {
+        match self {
+            Self::SetControl { module_id, key, .. } => vec![(module_id, key)],
+            Self::SetControls { writes } => writes
+                .iter()
+                .map(|write| (write.module_id.as_str(), write.key.as_str()))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+}
