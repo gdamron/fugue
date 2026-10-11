@@ -17,7 +17,7 @@ const DAC: &str = r#"{
 }"#;
 
 /// A tape holding `[0.25]`, into the dac.
-fn rig() -> Rig {
+pub(super) fn rig() -> Rig {
     let mut rig = Rig::new(DAC);
     rig.registry.register(TapeFactory);
     rig.adopt_registry();
@@ -38,7 +38,7 @@ fn rig() -> Rig {
     rig
 }
 
-fn output(rig: &Rig) -> f32 {
+pub(super) fn output(rig: &Rig) -> f32 {
     rig.graph.modules["tape"].module().output_block(0)[0]
 }
 

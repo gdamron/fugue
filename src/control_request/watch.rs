@@ -12,6 +12,7 @@
 //! seen at the next segment start: the request then applies there, late,
 //! and says so ([`Outcome::AppliedLate`]). It never applies early.
 
+use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
 use super::request::{BeatSpec, ControlTarget, Request, RequestValue, When};
 use super::timeline::Timeline;
@@ -28,12 +29,15 @@ pub(crate) trait BeatHost {
     /// there.
     fn latch(&mut self, module_idx: usize);
 
+    /// Applies `value` as the pending store's `apply` does, of `standing`
+    /// (none for an event): `Err` is what it reports instead.
     fn apply(
         &mut self,
         target: &ControlTarget,
+        standing: Option<Standing>,
         value: RequestValue,
         retirer: &mut Retirer,
-    ) -> Result<(), Refusal>;
+    ) -> Result<(), Outcome>;
 }
 
 /// The beat a watch waits for, in its clock's positions.
@@ -62,8 +66,11 @@ struct Watch {
     /// Its clock, in the order of its target's generation.
     clock: usize,
     goal: Goal,
-    /// The sample it last applied at, if it repeats.
+    /// The sample it last applied at, if it repeats (or lost that beat to
+    /// a higher rank).
     applied: Option<u64>,
+    /// Whether a repeat has settled: at the first beat it applied on.
+    settled: bool,
 }
 
 impl Watch {
@@ -247,6 +254,7 @@ impl Watches {
             clock,
             goal,
             applied: None,
+            settled: false,
         });
     }
 
@@ -299,7 +307,7 @@ impl Watches {
     /// silently. Allocation- and free-free.
     fn end(&mut self, i: usize, outcomes: &mut Outcomes, outcome: Outcome) {
         let watch = self.entries.remove(i);
-        if watch.applied.is_none() {
+        if !watch.settled {
             outcomes.settle(watch.request, outcome);
         }
     }
@@ -330,7 +338,9 @@ impl Watches {
     /// have moved a clock (a reset or tempo timed on beats), so the caller
     /// passes again until none does, and how many samples until the next
     /// may, as far as the clocks' tempi now say. A repeating watch applies
-    /// at most once per sample, and settles at its first application only.
+    /// at most once per sample, and settles at the first beat it applies on
+    /// only; one losing every beat to a higher rank settles as it ends
+    /// (refused [`Refusal::Expired`] at its ttl, say).
     /// Allocation- and free-free.
     pub(crate) fn pass(
         &mut self,
@@ -386,25 +396,35 @@ impl Watches {
                 continue;
             };
             applied = true;
-            let outcome = |result: Result<(), Refusal>| match result {
+            let outcome = |result: Result<(), Outcome>| match result {
                 Ok(()) if due < now => Outcome::AppliedLate { at: now, due },
                 Ok(()) => Outcome::Applied { at: now },
-                Err(refusal) => Outcome::Refused(refusal),
+                Err(outcome) => outcome,
             };
             if due == now {
                 host.latch(watch.clock);
             }
+            let standing = Standing::of(&watch.request, due);
             if let (true, RequestValue::Value(value)) = (watch.repeats(), &watch.request.value) {
                 let value = RequestValue::Value(*value);
-                let result = host.apply(&watch.request.target, value, &mut outcomes.retirer);
-                if result.is_err() {
+                let result = host.apply(
+                    &watch.request.target,
+                    standing,
+                    value,
+                    &mut outcomes.retirer,
+                );
+                // A beat lost to a higher rank at its sample is only that
+                // beat: the next is the grid's next event, and it runs on.
+                if let Err(Outcome::Refused(_)) = result {
                     self.end(i, outcomes, outcome(result));
                     continue;
                 }
-                // Settled at its first application only: the outcome
-                // queue holds one per request, and a repeat runs on.
-                if watch.applied.is_none() {
+                // Settled at the first beat it applied on only: the
+                // outcome queue holds one per request, and a repeat runs
+                // on.
+                if result.is_ok() && !watch.settled {
                     outcomes.record(watch.request.id, false, outcome(result));
+                    watch.settled = true;
                 }
                 watch.applied = Some(now);
                 if let Goal::Grid { next, .. } = &mut watch.goal {
@@ -417,7 +437,7 @@ impl Watches {
                 target, value, id, ..
             } = self.entries.remove(i).request;
             let payload = value.is_payload();
-            let result = host.apply(&target, value, &mut outcomes.retirer);
+            let result = host.apply(&target, standing, value, &mut outcomes.retirer);
             outcomes.record(id, payload, outcome(result));
         }
         (applied, wait)

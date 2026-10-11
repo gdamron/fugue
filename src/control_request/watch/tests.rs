@@ -79,9 +79,10 @@ impl BeatHost for Host {
     fn apply(
         &mut self,
         target: &ControlTarget,
+        _standing: Option<Standing>,
         _value: RequestValue,
         _retirer: &mut Retirer,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Outcome> {
         self.applied.push(target.module_idx);
         if target.module_idx == 0 {
             let begun = (self.clock.position.floor() + 1.0) as u64;
