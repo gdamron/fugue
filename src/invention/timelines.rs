@@ -23,9 +23,10 @@
 //!   no other clock is the one driving the module.
 //! - Ties go to a clock requests can name over an enclosed one, then to the
 //!   one first in module order.
-//! - With no clock connected, the timeline is the first clock in module
-//!   order (top-down). With no clock at all there is none, and an unnamed
-//!   request is refused.
+//! - With no clock connected, the timeline is the first clock a request
+//!   can name, in module order (top-down). When only developments hold
+//!   clocks, it is the first of them, enclosed, and an unnamed request is
+//!   refused. With no clock at all there is none, and it is refused too.
 //!
 //! [`Publisher::beat_clock`]: crate::invention::publish::Publisher::beat_clock
 //! [`BeatTime::clock`]: crate::control_request::BeatTime
@@ -94,7 +95,7 @@ pub(crate) enum Context {
     Connected { clock: usize, distance: u32 },
     /// Driven by a clock inside `development`.
     Enclosed { development: usize },
-    /// No clock is connected: the first clock in module order.
+    /// No clock is connected: the first clock a request can name.
     Fallback { clock: usize },
     /// The graph has no clock.
     None,
@@ -102,7 +103,14 @@ pub(crate) enum Context {
 
 /// Every module's timeline context, in module order.
 pub(crate) fn contexts(flows: &[Flow], links: &[Link]) -> Vec<Context> {
-    let first = flows.iter().position(|flow| matches!(flow, Flow::Clock));
+    let holds = |flow: &Flow| matches!(flow, Flow::Development(e) if e.clock);
+    let fallback = match flows.iter().position(|flow| matches!(flow, Flow::Clock)) {
+        Some(clock) => Context::Fallback { clock },
+        None => match flows.iter().position(holds) {
+            Some(development) => Context::Enclosed { development },
+            None => Context::None,
+        },
+    };
     let incoming = incoming(flows.len(), links);
     (0..flows.len())
         .map(|module| match &flows[module] {
@@ -118,7 +126,7 @@ pub(crate) fn contexts(flows: &[Flow], links: &[Link]) -> Vec<Context> {
                 match walk.clocks.into_iter().min() {
                     Some((distance, false, clock)) => Context::Connected { clock, distance },
                     Some((_, true, development)) => Context::Enclosed { development },
-                    None => first.map_or(Context::None, |clock| Context::Fallback { clock }),
+                    None => fallback,
                 }
             }
         })
@@ -270,5 +278,41 @@ mod tests {
             }
         );
         assert_eq!(contexts(&[Flow::Plain], &[]), [Context::None]);
+    }
+
+    #[test]
+    fn a_clock_a_request_can_name_wins_a_tie_with_an_enclosed_one() {
+        // A development whose output comes straight from its inner clock,
+        // first in module order, and a clock: both drive 2 directly.
+        let enclosure = Enclosure {
+            clock: true,
+            outputs: vec![Reach {
+                clock: Some(0),
+                inputs: Vec::new(),
+            }],
+        };
+        let flows = [
+            Flow::Development(Arc::new(enclosure)),
+            Flow::Clock,
+            Flow::Plain,
+        ];
+        let found = contexts(&flows, &[link(0, 2), link(1, 2)]);
+        let on_clock = Context::Connected {
+            clock: 1,
+            distance: 1,
+        };
+        assert_eq!(found[2], on_clock);
+        // Without it, the development's clock drives 2, and is reported.
+        let found = contexts(
+            &flows[..1]
+                .iter()
+                .cloned()
+                .chain([Flow::Plain, Flow::Plain])
+                .collect::<Vec<_>>(),
+            &[link(0, 2)],
+        );
+        assert_eq!(found[2], Context::Enclosed { development: 0 });
+        // Only an enclosed clock anywhere: an unconnected module reports it.
+        assert_eq!(found[1], Context::Enclosed { development: 0 });
     }
 }

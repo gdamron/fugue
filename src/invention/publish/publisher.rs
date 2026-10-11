@@ -275,15 +275,16 @@ impl Publisher {
             None => match self.mirror.timelines.get(module) {
                 Some(Context::Connected { clock, .. } | Context::Fallback { clock }) => *clock,
                 Some(Context::Enclosed { development }) => {
-                    let (development, _) = modules.get_index(*development).unwrap();
+                    let development = modules.get_index(*development).map_or("?", |(id, _)| id);
                     return Err(GraphCommandError::ControlError(format!(
-                        "module '{module_id}' is driven by a clock inside development \
+                        "module '{module_id}' counts on a clock inside development \
                          '{development}', which a request cannot name yet; name a clock"
                     )));
                 }
                 Some(Context::None) | None => {
                     return Err(GraphCommandError::ControlError(format!(
-                        "module '{module_id}' has no timeline: the invention has no clock"
+                        "module '{module_id}' has no timeline: the invention has no clock \
+                         a request can name"
                     )));
                 }
             },
