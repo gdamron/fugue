@@ -287,3 +287,30 @@ fn preconditioned_request_round_trips() {
     assert_eq!(json["expected_revision"]["revision"], 4);
     assert_eq!(serde_json::from_value::<RpcRequest>(json).unwrap(), request);
 }
+
+#[test]
+fn export_request_log_is_a_read_answered_with_the_log() {
+    let json = serde_json::json!({ "command": "export_request_log" });
+    let command: RpcCommand = serde_json::from_value(json).unwrap();
+    assert_eq!(command, RpcCommand::ExportRequestLog { delivery: None });
+    assert!(!command.advances_revision());
+    assert_eq!(command.replay_policy(), ReplayPolicy::Resend);
+
+    let log = crate::RequestLog {
+        requests: vec![crate::LoggedRequest {
+            sample: 64,
+            module_id: "osc".into(),
+            key: "frequency".into(),
+            value: crate::LoggedValue::Number(220.0),
+            due: None,
+            beat: None,
+        }],
+        ..Default::default()
+    };
+    let response = RpcResponse::ok(None, RpcResponsePayload::RequestLog { log });
+    let json = serde_json::to_string(&response).unwrap();
+    assert_eq!(
+        serde_json::from_str::<RpcResponse>(&json).unwrap(),
+        response
+    );
+}
