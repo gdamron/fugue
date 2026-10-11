@@ -314,6 +314,46 @@ impl LiveGraph {
         self.pending.lock().unwrap().request_log()
     }
 
+    /// Submits `value` for declared control `key` of `module_id` at `when`
+    /// as a front door would, logging it with `beat` as its musical time.
+    /// For tests, until a front door submits timed requests (FUG-317).
+    #[cfg(test)]
+    pub(crate) fn submit_logged(
+        &self,
+        (module_id, key): (&str, &str),
+        value: crate::control_request::RtValue,
+        when: crate::control_request::When,
+        beat: Option<crate::LoggedBeat>,
+    ) -> RequestId {
+        use crate::control_request::{Request, RequestValue, RtValue};
+        let surface = self.control_surfaces.lock().unwrap()[module_id].clone();
+        let declaration = surface.declaration(key).unwrap();
+        let publisher = self.publisher.lock().unwrap();
+        let target = publisher
+            .control_target(module_id, declaration.index)
+            .unwrap();
+        let mut request = Request::new(target, RequestValue::Value(value));
+        request.when = when;
+        request.event = declaration.decl.event;
+        let mut pending = self.pending.lock().unwrap();
+        let id = self.requests.submit(request).unwrap();
+        let shown = match value {
+            RtValue::F32(number) => crate::ControlValue::Number(number),
+            RtValue::I32(number) => crate::ControlValue::Number(number as f32),
+            RtValue::U32(number) => crate::ControlValue::Number(number as f32),
+            RtValue::Bool(flag) => crate::ControlValue::Bool(flag),
+        };
+        let write = PendingWrite {
+            module_id: module_id.to_string(),
+            key: key.to_string(),
+            value: shown,
+            raw: value,
+            beat,
+        };
+        pending.submitted(id, write);
+        id
+    }
+
     /// The request queue declared surfaces submit to, for any module.
     fn port(&self) -> RequestPort {
         RequestPort {

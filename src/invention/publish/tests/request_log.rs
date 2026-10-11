@@ -10,39 +10,17 @@ use super::*;
 use crate::control_request::{
     BeatSpec, BeatTime, ControlIndex, Request, RequestId, RequestValue, RtValue, When,
 };
-use crate::invention::publish::PendingWrite;
 use crate::{LoggedBeat, LoggedRequest, LoggedValue, RequestLog};
 
-/// Submits `value` for `key` of `module_id` at `when` as a front door
-/// would, recording the write in the pending log first, with `beat` as its
-/// musical time.
+/// Submits `value` for `key` of `module_id` at `when`, logged.
 fn submit_logged(
     rig: &Rig,
-    (module_id, key): (&str, &str),
+    target: (&str, &str),
     value: RtValue,
     when: When,
     beat: Option<LoggedBeat>,
 ) -> RequestId {
-    let surface = rig.live.control_surfaces.lock().unwrap()[module_id].clone();
-    let declaration = surface.declaration(key).unwrap();
-    let publisher = rig.live.publisher().lock().unwrap();
-    let target = publisher
-        .control_target(module_id, declaration.index)
-        .unwrap();
-    let mut request = Request::new(target, RequestValue::Value(value));
-    request.when = when;
-    request.event = declaration.decl.event;
-    let mut pending = rig.live.pending.lock().unwrap();
-    let id = rig.live.requests.submit(request).unwrap();
-    let write = PendingWrite {
-        module_id: module_id.to_string(),
-        key: key.to_string(),
-        value: crate::ControlValue::Number(0.0),
-        raw: value,
-        beat,
-    };
-    pending.submitted(id, write);
-    id
+    rig.live.submit_logged(target, value, when, beat)
 }
 
 /// The clock's position in the installed order, for a beat request.
