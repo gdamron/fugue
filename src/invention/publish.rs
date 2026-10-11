@@ -309,9 +309,20 @@ impl LiveGraph {
     }
 
     /// The session's log of applied control requests (see
-    /// [`crate::invention::request_log`]).
+    /// [`crate::invention::request_log`]), with the block size it was
+    /// played at.
     pub(crate) fn request_log(&self) -> crate::RequestLog {
-        self.pending.lock().unwrap().request_log()
+        let block_size = self.publisher.lock().unwrap().block_size();
+        crate::RequestLog {
+            block_size,
+            ..self.pending.lock().unwrap().request_log()
+        }
+    }
+
+    /// Counts a write that reached the graph without a request, so a
+    /// replay of the log cannot reproduce it.
+    pub(crate) fn note_unlogged(&self) {
+        self.pending.lock().unwrap().unlogged();
     }
 
     /// Submits `value` for declared control `key` of `module_id` at `when`
@@ -478,6 +489,13 @@ impl LiveGraph {
             drop(prepared);
             return Err(GraphCommandError::TopologyMoved);
         }
+        // Every commit counts, even one that publishes nothing (a reload or
+        // an edit batch that only writes controls): conservative. Under the
+        // publisher, as a write records itself (publisher, then the log).
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .edited();
         if prepared.is_empty() {
             retain(&mut self.state.lock().unwrap());
             drop(publisher);
@@ -498,9 +516,6 @@ impl LiveGraph {
                 return Err(error);
             }
         };
-        // Under the publisher, as a write records itself (publisher, then
-        // the log).
-        self.pending.lock().unwrap().edited();
         let mirror = publisher.mirror();
         let removed: Vec<&String> = published
             .previous
@@ -600,6 +615,7 @@ impl LiveGraph {
         let write = publisher.input_write(module_id, port, value)?;
         publisher.queue_input(write)?;
         drop(publisher);
+        self.note_unlogged();
         self.settle();
         Ok(())
     }

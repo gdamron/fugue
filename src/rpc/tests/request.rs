@@ -290,9 +290,9 @@ fn preconditioned_request_round_trips() {
 
 #[test]
 fn export_request_log_is_a_read_answered_with_the_log() {
-    let command = RpcCommand::ExportRequestLog;
-    let json = serde_json::to_value(&command).unwrap();
-    assert_eq!(json, serde_json::json!({ "command": "export_request_log" }));
+    let json = serde_json::json!({ "command": "export_request_log" });
+    let command: RpcCommand = serde_json::from_value(json).unwrap();
+    assert_eq!(command, RpcCommand::ExportRequestLog { delivery: None });
     assert!(!command.advances_revision());
     assert_eq!(command.replay_policy(), ReplayPolicy::Resend);
 

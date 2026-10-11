@@ -304,7 +304,12 @@ pub enum RpcCommand {
     /// Answers [`RpcResponsePayload::RequestLog`].
     ///
     /// [`RpcResponsePayload::RequestLog`]: super::RpcResponsePayload::RequestLog
-    ExportRequestLog,
+    ExportRequestLog {
+        /// `Inline` (the default) for a log that fits a model's context,
+        /// `File` for a full one, which may run to megabytes.
+        #[serde(default)]
+        delivery: Option<SnapshotDelivery>,
+    },
     /// Discover registered types; defaults to a terse index.
     DescribeModuleTypes(ModuleTypeQuery),
     /// Inspect type defaults, supplied config, or an existing module instance.

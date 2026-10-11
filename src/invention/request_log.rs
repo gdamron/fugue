@@ -29,15 +29,29 @@
 //!
 //! # When a replay is exact
 //!
-//! [`RequestLog::is_exact`] says whether the log accounts for every control
-//! request applied in the session. It is not when the log filled, when an
-//! applied request could not be recorded (outcomes the audio thread had to
-//! drop, or a write evicted before its outcome came), when the graph was
-//! edited structurally during the session (a replay runs against the
-//! invention as loaded), or when a repeating beat grid applied (it reports
-//! its first application only). Writes that never pass through a request
-//! (input writes, legacy controls) and wall-clock scripts, agents and code
-//! modules (which act again in the render) are outside the log altogether.
+//! [`RequestLog::is_exact`] says whether a replay can account for every
+//! change made to the session. It is not when:
+//!
+//! - the log filled, or an applied request could not be recorded (outcomes
+//!   the audio thread had to drop, or a write evicted before its outcome
+//!   came): [`RequestLog::full`], [`RequestLog::lost`];
+//! - a write reached the graph without a request (an input write, or a
+//!   control a module has not yet moved onto declared controls):
+//!   [`RequestLog::unlogged`];
+//! - the graph was edited, reloaded or given an edit batch during the
+//!   session (a replay runs against the invention as loaded):
+//!   [`RequestLog::edits`];
+//! - the invention runs code or agent modules, whose wall-clock writes are
+//!   logged and would act again in the render: [`RequestLog::actors`];
+//! - a repeating beat grid applied (it reports its first application only).
+//!
+//! It also assumes that what live playback split each block at is what the
+//! replay splits at: the logged samples, on a grid of
+//! [`RequestLog::block_size`] frames from sample 0, which holds while every
+//! device callback is a whole number of blocks. A module whose output
+//! depends on how a block is split (a control scheduler keeps the last
+//! write of each piece it processes) can tell a split the log does not
+//! record: the due sample of a request refused when it came to apply.
 
 use std::collections::VecDeque;
 
@@ -85,7 +99,7 @@ impl From<LoggedValue> for RtValue {
 /// The musical time a request was submitted for: which beat of which clock.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
-#[serde(tag = "beat", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LoggedBeat {
     /// `beats` after the clock's position when the audio thread took it.
     After { clock: String, beats: f32 },
@@ -120,26 +134,46 @@ pub struct LoggedRequest {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct RequestLog {
+    /// The session's sample rate: a replay renders at this rate.
+    #[serde(default)]
+    pub sample_rate: u32,
+    /// The session's block size in frames: a replay renders with this one.
+    #[serde(default)]
+    pub block_size: usize,
+    #[serde(default)]
     pub requests: Vec<LoggedRequest>,
     /// The log filled and stopped recording after its last entry.
+    #[serde(default)]
     pub full: bool,
     /// Applied requests the log may have missed: outcomes the audio thread
     /// dropped for want of room (counted whether or not they were
     /// applications), and applications of writes it no longer remembered.
+    #[serde(default)]
     pub lost: u64,
-    /// Structural edits published during the session.
+    /// Writes that reached the graph without a request, so are not logged:
+    /// input writes, and writes to controls not declared.
+    #[serde(default)]
+    pub unlogged: u64,
+    /// Changes committed to the graph during the session: structural
+    /// edits, reloads and edit batches.
+    #[serde(default)]
     pub edits: u64,
+    /// Code and agent modules in the invention, which write on wall-clock
+    /// time and would write again in a replay.
+    #[serde(default)]
+    pub actors: u64,
 }
 
 impl RequestLog {
-    /// Whether a replay against the invention as loaded applies every
-    /// request the session applied (see the module docs).
+    /// Whether a replay against the invention as loaded can reproduce the
+    /// session (see the module docs).
     pub fn is_exact(&self) -> bool {
         let repeats = self
             .requests
             .iter()
             .any(|request| matches!(request.beat, Some(LoggedBeat::Grid { repeat: true, .. })));
-        !self.full && self.lost == 0 && self.edits == 0 && !repeats
+        let missed = self.lost + self.unlogged + self.edits + self.actors;
+        !self.full && missed == 0 && !repeats
     }
 }
 
@@ -149,6 +183,7 @@ pub(crate) struct Recorder {
     requests: VecDeque<LoggedRequest>,
     full: bool,
     lost: u64,
+    unlogged: u64,
     edits: u64,
 }
 
@@ -167,18 +202,26 @@ impl Recorder {
         self.lost += count;
     }
 
-    /// Counts a structural edit published.
+    /// Counts a write that reached the graph without a request.
+    pub(crate) fn unlogged(&mut self) {
+        self.unlogged += 1;
+    }
+
+    /// Counts a change committed to the graph.
     pub(crate) fn edited(&mut self) {
         self.edits += 1;
     }
 
-    /// The log as recorded so far.
+    /// The log as recorded so far; the session adds its rate, block size
+    /// and actors.
     pub(crate) fn export(&self) -> RequestLog {
         RequestLog {
             requests: self.requests.iter().cloned().collect(),
             full: self.full,
             lost: self.lost,
+            unlogged: self.unlogged,
             edits: self.edits,
+            ..RequestLog::default()
         }
     }
 }

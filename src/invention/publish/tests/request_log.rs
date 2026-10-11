@@ -280,3 +280,58 @@ fn the_exported_log_round_trips_through_json() {
     assert_eq!(serde_json::from_str::<RequestLog>(&json).unwrap(), log);
     assert!(log.is_exact());
 }
+
+/// A running session of the step sequencer example on a manual backend.
+fn running_example() -> (
+    crate::RunningInvention,
+    crate::invention::manual_backend::Pump,
+) {
+    use crate::invention::manual_backend::{start_manual, SAMPLE_RATE};
+    let json = include_str!("../../../../examples/step_sequencer.json");
+    let document = Invention::from_json(json).unwrap();
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
+    start_manual(runtime)
+}
+
+#[test]
+fn a_session_log_names_its_rate_and_block_size_and_starts_exact() {
+    let (running, pump) = running_example();
+    pump.render(4);
+    let log = running.request_log();
+    assert_eq!((log.sample_rate, log.block_size), (48_000, 64));
+    assert_eq!((log.edits, log.unlogged, log.actors), (0, 0, 0));
+    assert!(log.is_exact());
+    running.stop();
+}
+
+#[test]
+fn writes_that_reach_a_module_without_a_request_make_the_log_inexact() {
+    let (running, pump) = running_example();
+    let snapshot = running.snapshot();
+    // Declared: a request, logged.
+    snapshot
+        .set_control("osc", "waveform", "square".into())
+        .unwrap();
+    pump.render(1);
+    let log = running.request_log();
+    assert_eq!((log.requests.len(), log.unlogged), (1, 0));
+    // Not declared yet: straight to the module.
+    snapshot.set_control("adsr", "attack", 0.1.into()).unwrap();
+    assert_eq!(running.request_log().unlogged, 1);
+    // An input write.
+    running.set_module_input("osc", "frequency", 220.0).unwrap();
+    pump.render(1);
+    let log = running.request_log();
+    assert_eq!(log.unlogged, 2);
+    assert!(!log.is_exact());
+    running.stop();
+}
+
+#[test]
+fn every_commit_counts_as_an_edit_even_one_publishing_nothing() {
+    let mut rig = dial_rig();
+    let before = rig.live.request_log().edits;
+    rig.adopt_registry();
+    rig.render(1);
+    assert_eq!(rig.live.request_log().edits, before + 1);
+}

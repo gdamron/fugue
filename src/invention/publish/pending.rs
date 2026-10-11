@@ -105,10 +105,15 @@ impl PendingLog {
         });
     }
 
-    /// Counts a structural edit published, which a replay of the log does
-    /// not reproduce.
+    /// Counts a change committed to the graph, which a replay of the log
+    /// does not reproduce.
     pub(crate) fn edited(&mut self) {
         self.log.edited();
+    }
+
+    /// Counts a write that reached the graph without a request.
+    pub(crate) fn unlogged(&mut self) {
+        self.log.unlogged();
     }
 
     /// The session's request log as recorded so far, every outcome

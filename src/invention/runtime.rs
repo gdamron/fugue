@@ -251,6 +251,7 @@ impl RunningInvention {
             state: self.state.clone(),
             control_surfaces: self.control_surfaces.clone(),
             event_sink: self.event_sink.clone(),
+            live: Some(self.live.clone()),
         }
     }
 
@@ -348,7 +349,18 @@ impl RunningInvention {
     /// the sample it applied at, for an offline render of the invention as
     /// loaded to replay (see [`crate::invention::request_log`]).
     pub fn request_log(&self) -> crate::RequestLog {
-        self.live.request_log()
+        let state = self.state.lock().unwrap();
+        let actors = state
+            .modules
+            .values()
+            .filter(|module| matches!(module.module_type.as_str(), "code" | "agent"));
+        let actors = actors.count() as u64;
+        drop(state);
+        crate::RequestLog {
+            sample_rate: self.sample_rate,
+            actors,
+            ..self.live.request_log()
+        }
     }
 }
 

@@ -14,8 +14,8 @@
 
 pub(crate) mod audio_assets;
 pub(crate) mod authored_document;
-pub mod builder;
 pub(crate) mod declared;
+pub mod builder;
 pub mod development;
 // Only tests call the candidate step until the runtime's atomic apply path
 // is built on it; remove this allowance then.

@@ -92,6 +92,9 @@ pub struct RuntimeSnapshot {
     /// Where recorded control writes announce themselves; empty until a host
     /// installs a sink. Offline render runtimes leave it empty.
     pub(crate) event_sink: EventSinkSlot,
+    /// The live graph, whose request log counts the writes that reach a
+    /// module without a request. `None` offline.
+    pub(crate) live: Option<LiveGraph>,
 }
 
 /// Cloneable mutation handle used by orchestration hosts and external APIs.
@@ -350,7 +353,13 @@ impl RuntimeSnapshot {
         };
         surface
             .set_control(key, value)
-            .map_err(GraphCommandError::ControlError)
+            .map_err(GraphCommandError::ControlError)?;
+        // A declared control's write is a request, and logged; any other
+        // reaches its module directly.
+        if let Some(live) = self.live.as_ref().filter(|_| !surface.declares(key)) {
+            live.note_unlogged();
+        }
+        Ok(())
     }
 
     /// Returns the declarative document describing the current graph (see
