@@ -41,13 +41,18 @@
 //! - a write reached the graph without a request (an input write, or a
 //!   control a module has not yet moved onto declared controls), or applied
 //!   a payload (a step sequencer's `pattern`), which a [`LoggedValue`]
-//!   cannot carry: [`RequestLog::unlogged`];
+//!   cannot carry, or applied a request at the automation tier, which a
+//!   replay (holding every logged write above automation) cannot
+//!   reproduce: [`RequestLog::unlogged`];
 //! - the graph was edited, reloaded or given an edit batch during the
 //!   session (a replay runs against the invention as loaded):
 //!   [`RequestLog::edits`];
 //! - the invention runs code or agent modules, whose wall-clock writes are
 //!   logged and would act again in the render: [`RequestLog::actors`];
 //! - a repeating beat grid applied (it reports its first application only).
+//!
+//! A write's hold against a control scheduler is no exception: a replay
+//! holds each control as the session did (see the replay's docs).
 //!
 //! It also assumes that what live playback split each block at is what the
 //! replay splits at: the logged samples, on a grid of
@@ -155,8 +160,10 @@ pub struct RequestLog {
     #[serde(default)]
     pub lost: u64,
     /// Writes that reached the graph without a logged request: input
-    /// writes, writes to controls not declared, and applied payload writes
-    /// (a step sequencer's `pattern`), which a [`LoggedValue`] cannot carry.
+    /// writes, writes to controls not declared, applied payload writes
+    /// (a step sequencer's `pattern`), which a [`LoggedValue`] cannot carry,
+    /// and applied automation-tier requests, which a replay cannot hold as
+    /// they held.
     #[serde(default)]
     pub unlogged: u64,
     /// Commits attempted on the graph during the session (structural

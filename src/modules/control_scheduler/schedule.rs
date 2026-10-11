@@ -214,11 +214,13 @@ pub(crate) struct ResolvedEntry {
 }
 
 impl ResolvedEntry {
-    /// Writes `value` to the target. Audio thread: allocation- and
+    /// Writes `value` to the target, returning false when a higher tier
+    /// holds it and the write was dropped. Audio thread: allocation- and
     /// lock-free for a declared target; a legacy target's setter is its
-    /// own (and its error, which may allocate, is dropped).
+    /// own (and its error, which may allocate, is dropped), and it has no
+    /// tiers.
     #[inline]
-    pub(crate) fn write(&self, value: ScheduleValue) {
+    pub(crate) fn write(&self, value: ScheduleValue) -> bool {
         match (&self.automation, value) {
             (Some(target), ScheduleValue::Number(number)) => target.write_number(number),
             (Some(target), ScheduleValue::Bool(flag)) => target.write_bool(flag),
@@ -226,7 +228,18 @@ impl ResolvedEntry {
                 let _ = self
                     .surface
                     .set_control(&self.control, value.to_control_value());
+                true
             }
+        }
+    }
+
+    /// Automation's next event on the target, on frame `frame` of the
+    /// scheduler's processing: frees it from a higher tier's hold (see
+    /// `Automation::begin`). A legacy target has no tiers.
+    #[inline]
+    pub(crate) fn begin(&self, frame: usize) {
+        if let Some(target) = &self.automation {
+            target.begin(frame);
         }
     }
 

@@ -2,7 +2,7 @@
 
 use super::SignalGraph;
 use crate::audio_thread::AudioThreadScope;
-use crate::control_request::take_automation;
+use crate::control_request::{take_automation, FrameScope};
 
 impl SignalGraph {
     /// Processes a block of `frames` frames (`frames == left.len() == right.len()`,
@@ -44,6 +44,8 @@ impl SignalGraph {
     /// the end, so the next segment continues sample for sample.
     fn process_segment(&mut self, left: &mut [f32], right: &mut [f32]) {
         let frames = left.len();
+        // Where a scheduler's entries fall (see `control_request::hold`).
+        let _frame_zero = FrameScope::enter(self.current_sample);
         self.current_sample += frames as u64;
 
         for g in 0..self.process_groups.len() {
@@ -130,6 +132,7 @@ impl SignalGraph {
     /// one-sample delay, preserving feedback fidelity regardless of block size.
     fn process_feedback_group(&mut self, group: usize, frames: usize) {
         for s in 0..frames {
+            let _frame_zero = FrameScope::frame(s);
             let member_count = self.process_groups[group].members.len();
             for mi in 0..member_count {
                 let module_idx = self.process_groups[group].members[mi];

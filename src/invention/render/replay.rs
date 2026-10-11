@@ -6,7 +6,8 @@
 //! waiting first, then the module's declared control). A request that
 //! applied on its clock's beat latches the clock first, as the live watch
 //! did, so a tempo it changes there takes effect from the same sample. (A
-//! watch refused on its beat latched its clock live, unlogged: a late
+//! watch refused or overridden on its beat latched its clock live,
+//! unlogged: a late
 //! request changing that clock's tempo in the same sample would then take
 //! effect a sample apart. Rare enough to leave.)
 //! Replay is by sample:
@@ -15,6 +16,14 @@
 //! [`RequestLog::is_exact`](crate::RequestLog::is_exact)). A log entry's
 //! musical time is kept for the record; replaying against a changed tempo
 //! by beats is not done here.
+//!
+//! A replayed request holds its control above automation as it did live
+//! (`crate::control_request::hold`), from the sample it was due at, so a
+//! scheduler entry is held off, or not, as it was. The log does not keep a
+//! request's tier: every tier above automation holds against it alike, a
+//! request that lost to a higher rank never applied, so is not logged, and
+//! an automation-tier request (which takes a control back from a hold) is
+//! counted unlogged, not replayed as a hold.
 
 use indexmap::IndexMap;
 
@@ -26,6 +35,8 @@ use crate::{LoggedBeat, RequestLog};
 /// A logged request resolved against the render's surfaces.
 struct Due {
     sample: u64,
+    /// The sample it was due at, which its hold counts from.
+    due: u64,
     module_id: String,
     control: ControlIndex,
     value: RtValue,
@@ -83,6 +94,7 @@ impl Replay {
                 };
                 Ok(Due {
                     sample: request.sample,
+                    due: request.due.unwrap_or(request.sample).min(request.sample),
                     module_id: request.module_id.clone(),
                     control,
                     value: request.value.into(),
@@ -130,7 +142,7 @@ impl Replay {
                 }
             }
             if graph
-                .apply_control(&due.module_id, due.control, due.value)
+                .apply_control_due(&due.module_id, due.control, due.value, due.due)
                 .is_err()
             {
                 self.refused += 1;
@@ -143,5 +155,7 @@ impl Replay {
     }
 }
 
+#[cfg(test)]
+mod hold_tests;
 #[cfg(test)]
 mod tests;

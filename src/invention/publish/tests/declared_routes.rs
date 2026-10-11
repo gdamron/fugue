@@ -356,6 +356,7 @@ fn a_live_write_is_listed_pending_until_the_audio_thread_applies_it() {
         value,
         raw: Some(raw),
         beat: None,
+        automated: false,
     };
     assert_eq!(
         rig.live.pending_writes(),
