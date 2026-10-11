@@ -167,6 +167,40 @@ fn a_repeating_payload_is_refused_and_freed_off_thread() {
     assert_eq!(freed(), before + 1);
 }
 
+#[test]
+fn a_payload_waiting_on_a_beat_is_refused_and_freed_off_thread_when_an_edit_takes_its_module_or_clock(
+) {
+    for (removed, refusal) in [
+        ("tape", Refusal::TargetGone),
+        ("clock", Refusal::TimelineGone),
+    ] {
+        let mut rig = beat_rig(120.0);
+        add_tape(&mut rig);
+        rig.live.reclaim();
+        let waiting = submit_on_clock(&rig, &[4.0], BeatSpec::After(8.0));
+        assert_eq!(counted_block(&mut rig), (0, 0));
+        assert_eq!(outcomes_of(&mut rig, waiting), [], "still waiting");
+        let before = freed();
+        rig.live
+            .edit(|change| {
+                change.remove(removed);
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(counted_block(&mut rig), (0, 0));
+        assert_eq!(freed(), before);
+        assert_eq!(
+            outcomes_of(&mut rig, waiting),
+            [(waiting, Outcome::Refused(refusal))]
+        );
+        rig.live.reclaim();
+        // The refused payload, and the removed tape's notes with it.
+        let tape_notes = usize::from(removed == "tape");
+        assert_eq!(freed(), before + 1 + tape_notes, "removed: {removed}");
+    }
+}
+
 /// Submits `[values]` for the tape's notes at `spec` on the clock.
 fn submit_on_clock(rig: &Rig, values: &[f32], spec: BeatSpec) -> RequestId {
     let publisher = rig.live.publisher().lock().unwrap();
