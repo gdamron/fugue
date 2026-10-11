@@ -194,14 +194,16 @@ impl DeclaredSurface {
                     .requests
                     .submit(request)
                     .map_err(|_| "The control request queue is full; try again")?;
-                if let (Some(key), Some(value)) =
+                if let (Some(key), Some(written)) =
                     (self.table.key(index), self.table.value(index, value))
                 {
                     let module_id = port.module_id.clone();
                     let write = PendingWrite {
                         module_id,
                         key,
-                        value,
+                        value: written,
+                        raw: value,
+                        beat: None,
                     };
                     pending.submitted(id, write);
                 }

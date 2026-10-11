@@ -308,6 +308,27 @@ impl LiveGraph {
         self.pending.lock().unwrap().take_outcomes()
     }
 
+    /// The session's log of applied control requests (see
+    /// [`crate::invention::request_log`]), with the block size it was
+    /// played at.
+    pub(crate) fn request_log(&self) -> crate::RequestLog {
+        let block_size = self.publisher.lock().unwrap().block_size();
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        crate::RequestLog {
+            block_size,
+            ..pending.request_log()
+        }
+    }
+
+    /// Counts a write that reached the graph without a request, so a
+    /// replay of the log cannot reproduce it.
+    pub(crate) fn note_unlogged(&self) {
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .unlogged();
+    }
+
     /// The request queue declared surfaces submit to, for any module.
     fn port(&self) -> RequestPort {
         RequestPort {
@@ -432,6 +453,13 @@ impl LiveGraph {
             drop(prepared);
             return Err(GraphCommandError::TopologyMoved);
         }
+        // Every commit counts, even one that publishes nothing (a reload or
+        // an edit batch that only writes controls): conservative. Under the
+        // publisher, as a write records itself (publisher, then the log).
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .edited();
         if prepared.is_empty() {
             retain(&mut self.state.lock().unwrap());
             drop(publisher);
@@ -551,6 +579,7 @@ impl LiveGraph {
         let write = publisher.input_write(module_id, port, value)?;
         publisher.queue_input(write)?;
         drop(publisher);
+        self.note_unlogged();
         self.settle();
         Ok(())
     }

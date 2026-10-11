@@ -78,6 +78,7 @@ impl RenderEngine {
             state: self.state.clone(),
             control_surfaces: self.control_surfaces.clone(),
             event_sink: self.event_sink.clone(),
+            live: None,
         }
     }
 
