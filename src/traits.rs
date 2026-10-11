@@ -10,6 +10,7 @@ use crate::control_request::{
     Automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue, Timeline,
 };
 use crate::invention::declared::{Declaration, Route};
+use crate::invention::timelines::Enclosure;
 
 mod control_meta;
 mod control_validation;
@@ -493,6 +494,15 @@ pub trait Module: Send {
     #[doc(hidden)]
     #[allow(private_interfaces)]
     fn timeline_mut(&mut self) -> Option<&mut dyn Timeline> {
+        None
+    }
+
+    /// A development's signal flow seen from outside, for working out the
+    /// clock that drives a module (see `crate::invention::timelines`). Read
+    /// on a control thread, while a topology is compiled.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn enclosure(&self) -> Option<&std::sync::Arc<Enclosure>> {
         None
     }
 

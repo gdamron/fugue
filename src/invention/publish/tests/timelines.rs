@@ -137,6 +137,95 @@ fn with_no_clock_at_all_an_unnamed_request_is_refused() {
     ));
 }
 
+/// `thru` passes its input through a vca. `outer` routes its `gate` input
+/// through a `thru` to its output, and its `other` input to a vca that
+/// reaches no output. `drummer` holds its own clock.
+const NESTED: &str = r#"{
+    "version": "1.0.0",
+    "developments": [
+        { "name": "outer", "definition": {
+            "version": "1.0.0",
+            "developments": [
+                { "name": "thru", "definition": {
+                    "version": "1.0.0",
+                    "modules": [{ "id": "v", "type": "vca" }],
+                    "connections": [],
+                    "inputs": [{ "name": "in", "to": "v", "to_port": "audio" }],
+                    "outputs": [{ "name": "out", "from": "v", "from_port": "audio" }]
+                } }
+            ],
+            "modules": [
+                { "id": "t", "type": "thru" },
+                { "id": "g", "type": "vca" },
+                { "id": "x", "type": "vca" }
+            ],
+            "connections": [{ "from": "t", "from_port": "out", "to": "g", "to_port": "audio" }],
+            "inputs": [
+                { "name": "gate", "to": "t", "to_port": "in" },
+                { "name": "other", "to": "x", "to_port": "audio" }
+            ],
+            "outputs": [{ "name": "out", "from": "g", "from_port": "audio" }]
+        } },
+        { "name": "drummer", "definition": {
+            "version": "1.0.0",
+            "modules": [
+                { "id": "c", "type": "clock", "config": { "bpm": 140.0 } },
+                { "id": "e", "type": "vca" }
+            ],
+            "connections": [{ "from": "c", "from_port": "beat", "to": "e", "to_port": "audio" }],
+            "outputs": [{ "name": "out", "from": "e", "from_port": "audio" }]
+        } }
+    ],
+    "modules": [
+        { "id": "a", "type": "clock", "config": { "bpm": 120.0 } },
+        { "id": "b", "type": "clock", "config": { "bpm": 97.0 } },
+        { "id": "dev", "type": "outer" },
+        { "id": "voice", "type": "vca" },
+        { "id": "drums", "type": "drummer" },
+        { "id": "kick", "type": "vca" },
+        { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+    ],
+    "connections": [
+        { "from": "a", "from_port": "beat", "to": "dev", "to_port": "other" },
+        { "from": "b", "from_port": "beat", "to": "dev", "to_port": "gate" },
+        { "from": "dev", "from_port": "out", "to": "voice", "to_port": "audio" },
+        { "from": "drums", "from_port": "out", "to": "kick", "to_port": "audio" },
+        { "from": "voice", "from_port": "audio", "to": "dac", "to_port": "audio" },
+        { "from": "kick", "from_port": "audio", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+#[test]
+fn the_walk_crosses_nested_developments_by_the_ports_that_connect() {
+    let rig = Rig::new(NESTED);
+    // b -> thru's v -> g -> voice, as if laid out flat; `a` reaches only
+    // an inner module that no output comes from.
+    assert_eq!(timeline(&rig, "voice"), connected(&rig, "b", 3));
+    assert_eq!(resolves_to(&rig, "voice").unwrap(), "b");
+    // The development itself hears both clocks at 1: the tie goes to the
+    // one first in module order.
+    assert_eq!(timeline(&rig, "dev"), connected(&rig, "a", 1));
+}
+
+#[test]
+fn a_clock_inside_a_development_is_named_but_not_resolved() {
+    let rig = Rig::new(NESTED);
+    let enclosed = Context::Enclosed {
+        development: index(&rig, "drums"),
+    };
+    assert_eq!(timeline(&rig, "kick"), enclosed);
+    assert_eq!(timeline(&rig, "drums"), enclosed);
+    assert!(matches!(
+        resolves_to(&rig, "kick"),
+        Err(GraphCommandError::ControlError(_))
+    ));
+    // The dac hears `b` (distance 4) and the drummer's clock (3): the
+    // nearer, enclosed, one drives it.
+    assert_eq!(timeline(&rig, "dac"), enclosed);
+    let publisher = rig.live.publisher().lock().unwrap();
+    assert_eq!(publisher.beat_clock("kick", Some("b")).unwrap(), 1);
+}
+
 #[test]
 fn a_repatch_moves_the_module_but_not_what_already_waits() {
     let mut rig = Rig::new(TWO_CLOCKS);
