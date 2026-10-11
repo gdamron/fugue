@@ -479,6 +479,16 @@ impl Module for DevelopmentModule {
         }
     }
 
+    fn for_each_alias(
+        &self,
+        control: ControlIndex,
+        f: &mut dyn FnMut(&ControlTable, &ControlCells, ControlIndex),
+    ) {
+        if let Some(controls) = &self.controls {
+            controls.for_each_alias(&self.graph.modules, control, f);
+        }
+    }
+
     /// Prepares every inner module, so a scheduler inside a development
     /// adopts its schedule here rather than on its first audio block.
     fn prepare_for_publication(&mut self) {

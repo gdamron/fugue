@@ -302,6 +302,31 @@ impl DevelopmentControls {
             (None, None) => Err(Refusal::Unsupported),
         }
     }
+
+    /// Calls `f` with each inner control `control` reaches, and those its
+    /// nested developments reach in turn (see
+    /// [`crate::Module::for_each_alias`]). Allocation-, free- and
+    /// lock-free.
+    pub(super) fn for_each_alias(
+        &self,
+        modules: &[GraphModule],
+        control: ControlIndex,
+        f: &mut dyn FnMut(&ControlTable, &ControlCells, ControlIndex),
+    ) {
+        let Some(aliases) = self.aliases.get(usize::from(control.0)) else {
+            return;
+        };
+        for alias in aliases {
+            let Some(module) = modules.get(alias.module) else {
+                continue;
+            };
+            let module = module.module();
+            if let Some((table, cells)) = module.declared() {
+                f(table, cells, alias.index);
+            }
+            module.for_each_alias(alias.index, f);
+        }
+    }
 }
 
 impl DevelopmentControls {
