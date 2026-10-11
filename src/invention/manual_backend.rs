@@ -31,6 +31,21 @@ impl Pump {
         out
     }
 
+    /// Renders `blocks` blocks of 64 frames and returns both channels.
+    pub(crate) fn render_stereo(&self, blocks: usize) -> (Vec<f32>, Vec<f32>) {
+        let mut render = self.0.lock().unwrap();
+        let render = render.as_mut().expect("backend started");
+        let (mut lefts, mut rights) = (Vec::new(), Vec::new());
+        let mut left = [0.0f32; 64];
+        let mut right = [0.0f32; 64];
+        for _ in 0..blocks {
+            render(&mut left, &mut right);
+            lefts.extend_from_slice(&left);
+            rights.extend_from_slice(&right);
+        }
+        (lefts, rights)
+    }
+
     /// Renders one block and keeps nothing, so a test can count what the
     /// block alone allocates.
     pub(crate) fn block(&self) {
