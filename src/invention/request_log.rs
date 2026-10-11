@@ -154,8 +154,8 @@ pub struct RequestLog {
     /// input writes, and writes to controls not declared.
     #[serde(default)]
     pub unlogged: u64,
-    /// Changes committed to the graph during the session: structural
-    /// edits, reloads and edit batches.
+    /// Commits attempted on the graph during the session (structural
+    /// edits, reloads and edit batches), whether or not they landed.
     #[serde(default)]
     pub edits: u64,
     /// Code and agent modules in the invention, which write on wall-clock
@@ -207,7 +207,7 @@ impl Recorder {
         self.unlogged += 1;
     }
 
-    /// Counts a change committed to the graph.
+    /// Counts a commit attempted on the graph.
     pub(crate) fn edited(&mut self) {
         self.edits += 1;
     }

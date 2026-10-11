@@ -313,16 +313,20 @@ impl LiveGraph {
     /// played at.
     pub(crate) fn request_log(&self) -> crate::RequestLog {
         let block_size = self.publisher.lock().unwrap().block_size();
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
         crate::RequestLog {
             block_size,
-            ..self.pending.lock().unwrap().request_log()
+            ..pending.request_log()
         }
     }
 
     /// Counts a write that reached the graph without a request, so a
     /// replay of the log cannot reproduce it.
     pub(crate) fn note_unlogged(&self) {
-        self.pending.lock().unwrap().unlogged();
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .unlogged();
     }
 
     /// Submits `value` for declared control `key` of `module_id` at `when`

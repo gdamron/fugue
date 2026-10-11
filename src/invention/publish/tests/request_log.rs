@@ -335,3 +335,23 @@ fn every_commit_counts_as_an_edit_even_one_publishing_nothing() {
     rig.render(1);
     assert_eq!(rig.live.request_log().edits, before + 1);
 }
+
+#[test]
+fn code_and_agent_modules_make_the_log_inexact() {
+    let (running, pump) = running_example();
+    pump.render(1);
+    // Standing in for a code module's entry: building one needs its
+    // script runtime, and only its type is counted.
+    let module = crate::RuntimeModuleInfo {
+        id: "script".into(),
+        module_type: "code".into(),
+        config: serde_json::json!({}),
+    };
+    let mut state = running.state.lock().unwrap();
+    state.modules.insert("script".into(), module);
+    drop(state);
+    let log = running.request_log();
+    assert_eq!(log.actors, 1);
+    assert!(!log.is_exact());
+    running.stop();
+}
