@@ -88,6 +88,9 @@ pub enum RpcErrorCode {
     InvalidPort,
     ControlError,
     Unsupported,
+    /// The daemon could not save its session. The music and the live state
+    /// are unaffected; the daemon keeps retrying.
+    SessionPersistFailed,
     Internal,
 }
 

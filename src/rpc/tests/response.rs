@@ -7,6 +7,7 @@ fn status(module_count: usize, connection_count: usize) -> crate::RuntimeStatus 
         module_count,
         connection_count,
         diagnostics: None,
+        session: None,
     }
 }
 

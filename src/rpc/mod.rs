@@ -10,6 +10,7 @@ pub use inspection::{
     InspectionSelection, MAX_INSPECTION_BYTES, MAX_INSPECTION_ENTRIES, MAX_INSPECTION_VALUE_BYTES,
 };
 mod discovery;
+mod durability;
 mod edits;
 mod error;
 mod event;
@@ -35,6 +36,7 @@ pub use edits::{
     check_edit_batch, ApplyEditsReport, ControlWriteFailure, EditFailure, EditFailureReason,
     EditOp, StructuralEdit, WrittenControl, MAX_EDITS_PER_BATCH, MAX_EDIT_NAME_BYTES,
 };
+pub use durability::{SessionDurability, SessionSaveState};
 pub use error::{RpcError, RpcErrorCode};
 pub use event::{
     EventPage, MeterReading, RpcEvent, RpcEventPayload, RpcEventSink, RpcSubscriptionTopic,

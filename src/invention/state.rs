@@ -41,6 +41,10 @@ pub struct RuntimeStatus {
     pub connection_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<AudioDiagnosticsSnapshot>,
+    /// Where saving the daemon session stands. Filled in by a daemon; `None`
+    /// from the runtime itself, which saves nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<crate::rpc::SessionDurability>,
 }
 
 /// Authoritative runtime-owned snapshot of modules, connections, and status.
@@ -68,6 +72,7 @@ impl RuntimeState {
             module_count: self.modules.len(),
             connection_count: self.connections.len(),
             diagnostics: None,
+            session: None,
         }
     }
 

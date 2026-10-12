@@ -315,3 +315,87 @@ fn export_request_log_is_a_read_answered_with_the_log() {
         response
     );
 }
+
+#[test]
+fn flush_session_is_a_fenced_read_answered_with_durability() {
+    let json = serde_json::json!({ "command": "flush_session", "session_id": "s-1" });
+    let command: RpcCommand = serde_json::from_value(json).unwrap();
+    assert_eq!(
+        command,
+        RpcCommand::FlushSession {
+            session_id: "s-1".into()
+        }
+    );
+    assert!(!command.advances_revision());
+    assert!(!command.requires_ticket());
+    assert!(!command.replies_with_snapshot());
+    assert!(command.written_controls().is_empty());
+    // Safe to resend: a replacement daemon refuses the session it names.
+    assert_eq!(command.replay_policy(), ReplayPolicy::Resend);
+    // The session it fences on is required.
+    assert!(serde_json::from_value::<RpcCommand>(
+        serde_json::json!({ "command": "flush_session" })
+    )
+    .is_err());
+
+    let saved = SessionDurability {
+        state: SessionSaveState::Saved,
+        saved_revision: Some(RuntimeRevision {
+            session_id: "s-1".into(),
+            revision: 7,
+        }),
+        behind_ms: None,
+        error: None,
+    };
+    let response = RpcResponse::ok(None, RpcResponsePayload::SessionFlushed(saved));
+    let json = serde_json::to_value(&response).unwrap();
+    assert_eq!(json["kind"], "session_flushed");
+    assert_eq!(json["state"], "saved");
+    assert!(
+        json.get("behind_ms").is_none(),
+        "absent fields stay off the wire"
+    );
+    assert_eq!(
+        serde_json::from_value::<RpcResponse>(json).unwrap(),
+        response
+    );
+
+    let failed = RpcError::new(RpcErrorCode::SessionPersistFailed, "disk full");
+    assert_eq!(
+        serde_json::to_value(&failed).unwrap()["code"],
+        "session_persist_failed"
+    );
+}
+
+#[test]
+fn runtime_status_carries_session_durability_only_when_set() {
+    let mut status = crate::RuntimeStatus {
+        running: true,
+        sample_rate: 48_000,
+        module_count: 1,
+        connection_count: 0,
+        diagnostics: None,
+        session: None,
+    };
+    // A status without it reads exactly as before.
+    let json = serde_json::to_value(&status).unwrap();
+    assert!(json.get("session").is_none());
+    assert_eq!(
+        serde_json::from_value::<crate::RuntimeStatus>(json).unwrap(),
+        status
+    );
+
+    status.session = Some(SessionDurability {
+        state: SessionSaveState::Failing,
+        saved_revision: None,
+        behind_ms: Some(1_500),
+        error: Some("permission denied".into()),
+    });
+    let json = serde_json::to_value(&status).unwrap();
+    assert_eq!(json["session"]["state"], "failing");
+    assert_eq!(json["session"]["behind_ms"], 1_500);
+    assert_eq!(
+        serde_json::from_value::<crate::RuntimeStatus>(json).unwrap(),
+        status
+    );
+}
