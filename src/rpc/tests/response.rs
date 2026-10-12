@@ -195,6 +195,9 @@ fn an_unknown_reply_shape_decodes_rather_than_failing_the_request() {
     }))
     .unwrap();
     assert_eq!(request.reply, MutationReply::Unknown);
+    // It is answered as the default, and never goes back on the wire.
+    let wire = serde_json::to_value(&request).unwrap();
+    assert!(wire.get("reply").is_none(), "{wire}");
 }
 
 #[test]

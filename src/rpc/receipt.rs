@@ -37,9 +37,11 @@ pub enum MutationReply {
 }
 
 impl MutationReply {
-    /// Whether this is the default, so the request can leave it off the wire.
+    /// Whether this is answered with a snapshot, so the request can leave it
+    /// off the wire. True for [`MutationReply::Unknown`] too, which is never
+    /// sent: it reads back as the default it is answered as.
     pub fn is_snapshot(&self) -> bool {
-        matches!(self, Self::Snapshot)
+        matches!(self, Self::Snapshot | Self::Unknown)
     }
 }
 
@@ -83,20 +85,34 @@ impl super::RpcCommand {
     ///
     /// [`RpcRequest::reply`]: super::RpcRequest::reply
     pub fn replies_with_snapshot(&self) -> bool {
-        matches!(
-            self,
+        // Exhaustive, so a new command needs a decision here.
+        match self {
             Self::LoadInvention { .. }
-                | Self::LoadExample { .. }
-                | Self::ReloadInvention { .. }
-                | Self::UnloadInvention
-                | Self::SetControl { .. }
-                | Self::SetControls { .. }
-                | Self::AddModule { .. }
-                | Self::RemoveModule { .. }
-                | Self::Connect { .. }
-                | Self::Disconnect { .. }
-                | Self::SwapModule { .. }
-        )
+            | Self::LoadExample { .. }
+            | Self::ReloadInvention { .. }
+            | Self::UnloadInvention
+            | Self::SetControl { .. }
+            | Self::SetControls { .. }
+            | Self::AddModule { .. }
+            | Self::RemoveModule { .. }
+            | Self::Connect { .. }
+            | Self::Disconnect { .. }
+            | Self::SwapModule { .. } => true,
+            Self::ApplyEdits { .. }
+            | Self::InspectInvention { .. }
+            | Self::GetInvention { .. }
+            | Self::SaveInvention { .. }
+            | Self::InstallPackage(_)
+            | Self::ListPackages { .. }
+            | Self::ListDevelopments { .. }
+            | Self::DescribeDevelopment { .. }
+            | Self::ListExamples { .. }
+            | Self::DescribeExample { .. }
+            | Self::ExportRequestLog { .. }
+            | Self::DescribeModuleTypes(_)
+            | Self::DescribeModule(_)
+            | Self::Shutdown => false,
+        }
     }
 
     /// The controls a receipt for this command reads back, as
