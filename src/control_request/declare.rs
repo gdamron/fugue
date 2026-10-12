@@ -18,7 +18,9 @@ use super::request::{ControlIndex, RtValue};
 use crate::module_config::{whole_number_in, ConfigKind};
 use crate::payload::Payload;
 use crate::traits::check_finite;
-use crate::{ControlKind, ControlMeta, ControlValue};
+use crate::{ControlKind, ControlMeta, ControlScale, ControlValue};
+
+mod hints;
 
 /// What a declared control holds, and so which [`RtValue`] carries it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -129,6 +131,13 @@ pub(crate) struct ControlDecl {
     pub(crate) spellings: &'static [(&'static str, &'static str)],
     /// The unit a number is in (`"Hz"`, `"s"`), or `""`.
     pub(crate) unit: &'static str,
+    /// How editors map a number's range onto their travel (see
+    /// [`hints`]); linear when `None`.
+    pub(crate) scale: Option<ControlScale>,
+    /// A number's keyboard step in its unit, when not the editor's own.
+    pub(crate) step: Option<f32>,
+    /// Decimal places a number shows, when not the editor's own.
+    pub(crate) precision: Option<u8>,
     /// The value a module starts from when its config leaves it out.
     pub(crate) default: RtValue,
     pub(crate) writer: Writer,
@@ -155,6 +164,9 @@ impl ControlDecl {
             clamp: None,
             spellings: &[],
             unit: "",
+            scale: None,
+            step: None,
+            precision: None,
             default,
             writer: Writer::Parameter,
             description: Cow::Borrowed(description),
@@ -171,11 +183,6 @@ impl ControlDecl {
         let mut decl = Self::new(key, DeclKind::Payload, RtValue::Bool(false), description);
         decl.codec = Some(codec);
         decl
-    }
-
-    pub(crate) const fn unit(mut self, unit: &'static str) -> Self {
-        self.unit = unit;
-        self
     }
 
     /// Declares `key.0` to `key.{count - 1}` instead of `key` (R5).
@@ -395,10 +402,15 @@ impl ControlTable {
                 let index = ControlIndex(index as u16);
                 let (decl, _) = self.decl(index)?;
                 let kind = match decl.kind {
-                    DeclKind::Number { min, max } => ControlKind::Number { min, max },
+                    DeclKind::Number { min, max } => ControlKind::Number {
+                        min,
+                        max,
+                        hints: decl.hints(),
+                    },
                     DeclKind::Integer { min, max } => ControlKind::Number {
                         min: min as f32,
                         max: max as f32,
+                        hints: decl.hints(),
                     },
                     DeclKind::Bool => ControlKind::Bool,
                     DeclKind::Choice(options) => ControlKind::String {
@@ -453,6 +465,9 @@ const fn invalid(decls: &[ControlDecl]) -> Option<&'static str> {
         }
         if !holds_default(decl) {
             return Some("a control's default must be a value its kind holds");
+        }
+        if let Some(why) = hints::invalid(decl) {
+            return Some(why);
         }
         let mut j = 0;
         while j < i {

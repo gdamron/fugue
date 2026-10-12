@@ -18,7 +18,10 @@ const DECLS: &[ControlDecl] = &[
         },
         RtValue::F32(120.0),
         "Tempo in beats per minute",
-    ),
+    )
+    .unit("BPM")
+    .step(1.0)
+    .precision(1),
     ControlDecl::new(
         "gate_length",
         DeclKind::Number { min: 0.0, max: 1.0 },

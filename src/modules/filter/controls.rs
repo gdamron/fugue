@@ -129,6 +129,9 @@ impl ControlSurface for FilterControls {
         vec![
             ControlMeta::number("cutoff", "Cutoff frequency in Hz")
                 .with_range(20.0, 20000.0)
+                .with_unit("Hz")
+                .with_log_scale()
+                .with_precision(0)
                 .with_default(self.cutoff()),
             ControlMeta::number("resonance", "Resonance/Q")
                 .with_range(0.0, 1.0)
@@ -142,6 +145,8 @@ impl ControlSurface for FilterControls {
                 ]),
             ControlMeta::number("cutoff_mod_depth", "CV modulation depth in Hz")
                 .with_range(0.0, 20000.0)
+                .with_unit("Hz")
+                .with_precision(0)
                 .with_default(self.cutoff_mod_depth()),
         ]
     }

@@ -31,6 +31,7 @@ fn type_facts(module_type: &str) -> Option<ModuleFacts> {
     let number = || ControlKind::Number {
         min: 0.0,
         max: 20_000.0,
+        hints: Default::default(),
     };
     match module_type {
         "oscillator" => Some(ModuleFacts {

@@ -72,9 +72,13 @@ impl ControlSurface for LfoControls {
         vec![
             ControlMeta::number("rate", "LFO rate in Hz")
                 .with_range(0.001, 100.0)
+                .with_unit("Hz")
+                .with_log_scale()
+                .with_precision(3)
                 .with_default(self.rate()),
             ControlMeta::number("rate_mod_depth", "Rate modulation depth in Hz")
                 .with_range(0.0, 100.0)
+                .with_unit("Hz")
                 .with_default(self.rate_mod_depth()),
             ControlMeta::string("waveform", "Waveform type")
                 .with_default(self.waveform().as_str())
