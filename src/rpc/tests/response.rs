@@ -184,3 +184,24 @@ fn a_receipt_reads_back_the_controls_a_command_wrote() {
         .written_controls()
         .is_empty());
 }
+
+#[test]
+fn an_unknown_reply_shape_decodes_rather_than_failing_the_request() {
+    let request: RpcRequest = serde_json::from_value(serde_json::json!({
+        "schema_version": RPC_SCHEMA_VERSION,
+        "kind": "command",
+        "command": "unload_invention",
+        "reply": "delta",
+    }))
+    .unwrap();
+    assert_eq!(request.reply, MutationReply::Unknown);
+}
+
+#[test]
+fn only_snapshot_acknowledged_commands_take_a_reply_shape() {
+    assert!(RpcCommand::UnloadInvention.replies_with_snapshot());
+    assert!(RpcCommand::RemoveModule { id: "osc".into() }.replies_with_snapshot());
+    assert!(!RpcCommand::Shutdown.replies_with_snapshot());
+    assert!(!RpcCommand::ApplyEdits { edits: Vec::new() }.replies_with_snapshot());
+    assert!(!RpcCommand::DescribeModuleTypes(Default::default()).replies_with_snapshot());
+}

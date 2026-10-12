@@ -42,8 +42,9 @@ pub struct RpcRequest {
     pub mutation: Option<MutationTicket>,
     /// How a mutating command should be acknowledged: a full snapshot (the
     /// default, and what an omitted field means) or a compact
-    /// [`MutationReceipt`]. Commands that answer with their own payload, such
-    /// as reads and `ApplyEdits`, ignore it.
+    /// [`MutationReceipt`]. Set it only on a command for which
+    /// [`RpcCommand::replies_with_snapshot`] holds: other commands answer with
+    /// their own payload, and an older daemon may refuse the field on them.
     ///
     /// [`MutationReceipt`]: super::MutationReceipt
     #[serde(default, skip_serializing_if = "MutationReply::is_snapshot")]

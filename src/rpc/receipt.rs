@@ -8,10 +8,14 @@ use serde::{Deserialize, Serialize};
 /// (see [`RpcRequest::reply`]).
 ///
 /// The default is [`MutationReply::Snapshot`], which every client that
-/// predates receipts expects. A daemon that does not know the field ignores it
-/// and answers with a snapshot, so a client asking for a receipt must still
-/// accept one.
+/// predates receipts expects. A daemon that predates the field ignores it on a
+/// command answered with a snapshot (see
+/// [`RpcCommand::replies_with_snapshot`]) and sends one, so a client asking for
+/// a receipt must still accept a snapshot. Send it on no other request: an
+/// older daemon refuses the unknown field on commands whose payload denies
+/// unknown fields, such as `DescribeModuleTypes`.
 ///
+/// [`RpcCommand::replies_with_snapshot`]: super::RpcCommand::replies_with_snapshot
 /// [`RpcRequest::reply`]: super::RpcRequest::reply
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
@@ -25,6 +29,11 @@ pub enum MutationReply {
     /// size follows the request, not the invention, and the daemon builds no
     /// snapshot to answer it. Read the graph with `GetSnapshot` when needed.
     Receipt,
+    /// A shape this build does not know, named by a newer client. Answered as
+    /// [`MutationReply::Snapshot`], so a new shape can be added without
+    /// failing requests to older daemons.
+    #[serde(other)]
+    Unknown,
 }
 
 impl MutationReply {
@@ -45,8 +54,10 @@ pub struct MutationReceipt {
     /// Running state, module and connection counts, and audio diagnostics
     /// when a device is attached.
     pub status: RuntimeStatus,
-    /// Each control the command wrote, read back after the write so any
-    /// coercion is visible. Empty for a command that writes no control.
+    /// Each control the command wrote, in request order, read back once the
+    /// command finished so any coercion is visible. A batch that writes one
+    /// control twice reports its final value both times. Empty for a command
+    /// that writes no control.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub controls: Vec<AppliedControl>,
 }
@@ -58,12 +69,36 @@ pub struct AppliedControl {
     pub module_id: String,
     pub key: String,
     /// The value as applied. `None` when the control could not be read back,
-    /// for example because a later write in the same command removed it.
+    /// for example because its module is no longer running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<ControlValue>,
 }
 
 impl super::RpcCommand {
+    /// Whether a daemon acknowledges this command with a full snapshot unless
+    /// the request asks for a [`MutationReceipt`]: the commands that load,
+    /// reload or unload an invention, write controls, or edit its graph. Only
+    /// these honor [`RpcRequest::reply`], so a client sends a non-default
+    /// reply on no other command.
+    ///
+    /// [`RpcRequest::reply`]: super::RpcRequest::reply
+    pub fn replies_with_snapshot(&self) -> bool {
+        matches!(
+            self,
+            Self::LoadInvention { .. }
+                | Self::LoadExample { .. }
+                | Self::ReloadInvention { .. }
+                | Self::UnloadInvention
+                | Self::SetControl { .. }
+                | Self::SetControls { .. }
+                | Self::AddModule { .. }
+                | Self::RemoveModule { .. }
+                | Self::Connect { .. }
+                | Self::Disconnect { .. }
+                | Self::SwapModule { .. }
+        )
+    }
+
     /// The controls a receipt for this command reads back, as
     /// `(module_id, key)` in request order: each write of a `SetControl` or
     /// `SetControls`. Empty for every other command.
