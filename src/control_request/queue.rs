@@ -182,7 +182,10 @@ impl<T> QueueProducer<T> {
     /// Lock-free and allocation-free.
     pub(crate) fn leaves(&self, reserve: u64) -> bool {
         let shared = &*self.shared;
-        debug_assert!(reserve <= shared.mask, "a reserve must leave a slot to push");
+        debug_assert!(
+            reserve <= shared.mask,
+            "a reserve must leave a slot to push"
+        );
         // The consumer frees slots in position order, so the slot `reserve`
         // ahead being free for its position (seq == position, as for a
         // push) means every slot up to it is.

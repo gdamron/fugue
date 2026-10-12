@@ -200,7 +200,10 @@ mod tests {
     #[test]
     fn same_schema_different_commit_is_a_build_mismatch() {
         let local = build("2026.6.0", Some("abc123"), Some(false));
-        let remote = identity(RPC_SCHEMA_VERSION, build("2026.6.0", Some("def456"), Some(false)));
+        let remote = identity(
+            RPC_SCHEMA_VERSION,
+            build("2026.6.0", Some("def456"), Some(false)),
+        );
         assert!(matches!(
             verify_daemon_identity(RPC_SCHEMA_VERSION, &local, &remote),
             Err(IdentityMismatch::Build { .. })
@@ -212,7 +215,10 @@ mod tests {
         // The stale-shared-daemon footgun's cleaner cousin: same version and
         // commit, but one is a dev (dirty) build and the other a clean release.
         let local = build("2026.6.0", Some("abc123"), Some(false));
-        let remote = identity(RPC_SCHEMA_VERSION, build("2026.6.0", Some("abc123"), Some(true)));
+        let remote = identity(
+            RPC_SCHEMA_VERSION,
+            build("2026.6.0", Some("abc123"), Some(true)),
+        );
         assert!(matches!(
             verify_daemon_identity(RPC_SCHEMA_VERSION, &local, &remote),
             Err(IdentityMismatch::Build { .. })
