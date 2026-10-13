@@ -100,9 +100,10 @@ pub enum RpcRequestPayload {
     },
     GetSnapshot,
     /// Poll the daemon's bounded event log for events newer than `after` (the
-    /// `latest_seq` from a previous poll; `None` returns everything still
-    /// buffered). A request/response alternative to `Subscribe` for clients
-    /// that cannot hold a streaming socket open — notably MCP.
+    /// `latest_seq` from a previous poll; `None` or `0` returns everything
+    /// still retained). A request/response alternative to `Subscribe` for
+    /// clients that cannot hold a streaming socket open — notably MCP. See
+    /// [`EventPage`](super::EventPage) for what a missed event looks like.
     PollEvents {
         #[serde(default)]
         after: Option<u64>,
