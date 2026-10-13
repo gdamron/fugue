@@ -42,8 +42,8 @@ pub mod wasm;
 
 // Re-export core traits
 pub use traits::{
-    validate_port, ControlKind, ControlMeta, ControlSurface, ControlValue, Module, SinkModule,
-    SinkOutput, DEFAULT_BLOCK_SIZE, MAX_BLOCK,
+    validate_port, ControlKind, ControlMeta, ControlScale, ControlSurface, ControlValue, Module,
+    NumberHints, SinkModule, SinkOutput, DEFAULT_BLOCK_SIZE, MAX_BLOCK,
 };
 
 // Re-export factory system

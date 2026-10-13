@@ -13,9 +13,11 @@ use crate::invention::declared::{Declaration, Route};
 use crate::invention::timelines::Enclosure;
 use crate::payload::{Payload, Retired};
 
+mod control_hints;
 mod control_meta;
 mod control_validation;
 
+pub use control_hints::{ControlScale, NumberHints};
 pub use control_validation::ControlSurfaceMap;
 pub(crate) use control_validation::{check_finite, check_listed_control, read_only};
 
@@ -130,9 +132,19 @@ impl From<&str> for ControlValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub enum ControlKind {
-    Number { min: f32, max: f32 },
+    /// A number an editor offers from `min` to `max`, with optional
+    /// [`NumberHints`] on how to show it (left out of the wire form when
+    /// none is set).
+    Number {
+        min: f32,
+        max: f32,
+        #[serde(default, skip_serializing_if = "NumberHints::is_empty")]
+        hints: NumberHints,
+    },
     Bool,
-    String { options: Option<Vec<String>> },
+    String {
+        options: Option<Vec<String>>,
+    },
 }
 
 /// Metadata about a single control exposed by a module.
@@ -148,7 +160,7 @@ pub enum ControlKind {
 ///     key: "attack".to_string(),
 ///     description: "Attack time in seconds".to_string(),
 ///     default: ControlValue::Number(0.01),
-///     kind: ControlKind::Number { min: 0.0, max: 10.0 },
+///     kind: ControlKind::Number { min: 0.0, max: 10.0, hints: NumberHints::default() },
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

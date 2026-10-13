@@ -143,8 +143,14 @@ fn values_read_back_as_clients_wrote_them() {
         metas[2].kind,
         ControlKind::Number {
             min: -2.0,
-            max: 12.0
-        }
+            max: 12.0,
+            hints: crate::NumberHints {
+                step: Some(1.0),
+                precision: Some(0),
+                ..Default::default()
+            },
+        },
+        "a whole number steps by 1 and shows no decimals"
     );
 }
 

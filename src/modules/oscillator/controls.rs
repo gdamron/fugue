@@ -21,6 +21,8 @@ const DECLS: &[ControlDecl] = &[
         "Frequency in Hz",
     )
     .unit("Hz")
+    .log()
+    .precision(1)
     .clamped(0.0, f32::MAX),
     ControlDecl::new(
         "waveform",

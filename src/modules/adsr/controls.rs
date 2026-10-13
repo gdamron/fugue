@@ -84,15 +84,21 @@ impl ControlSurface for AdsrControls {
         vec![
             ControlMeta::number("attack", "Attack time in seconds")
                 .with_range(0.0, 10.0)
+                .with_unit("s")
+                .with_precision(3)
                 .with_default(self.attack()),
             ControlMeta::number("decay", "Decay time in seconds")
                 .with_range(0.0, 10.0)
+                .with_unit("s")
+                .with_precision(3)
                 .with_default(self.decay()),
             ControlMeta::number("sustain", "Sustain level")
                 .with_range(0.0, 1.0)
                 .with_default(self.sustain()),
             ControlMeta::number("release", "Release time in seconds")
                 .with_range(0.0, 10.0)
+                .with_unit("s")
+                .with_precision(3)
                 .with_default(self.release()),
         ]
     }
