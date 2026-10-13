@@ -128,6 +128,7 @@ fn hello_request_round_trips() {
         schema_version: RPC_SCHEMA_VERSION,
         expected_revision: None,
         mutation: None,
+        reply: MutationReply::Snapshot,
         request_id: Some("hello".to_string()),
         payload: RpcRequestPayload::Hello,
     };

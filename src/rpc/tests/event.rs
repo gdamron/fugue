@@ -9,6 +9,7 @@ fn poll_events_request_and_page_round_trip() {
         schema_version: RPC_SCHEMA_VERSION,
         expected_revision: None,
         mutation: None,
+        reply: MutationReply::Snapshot,
         request_id: Some("poll".to_string()),
         payload: RpcRequestPayload::PollEvents { after: Some(7) },
     };
@@ -50,6 +51,7 @@ fn get_meters_request_and_reply_round_trip() {
         schema_version: RPC_SCHEMA_VERSION,
         expected_revision: None,
         mutation: None,
+        reply: MutationReply::Snapshot,
         request_id: Some("meters".to_string()),
         payload: RpcRequestPayload::GetMeters,
     };
