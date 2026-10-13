@@ -221,6 +221,7 @@ mod tests {
             module_count: 0,
             connection_count: 0,
             diagnostics: None,
+            session: None,
         }
     }
 

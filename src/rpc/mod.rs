@@ -10,6 +10,7 @@ pub use inspection::{
     InspectionSelection, MAX_INSPECTION_BYTES, MAX_INSPECTION_ENTRIES, MAX_INSPECTION_VALUE_BYTES,
 };
 mod discovery;
+mod durability;
 mod edits;
 mod error;
 mod event;
@@ -30,6 +31,7 @@ pub use discovery::{
     ModuleTypeIndex, ModuleTypeInfo, ModuleTypeList, ModuleTypeQuery, RegistryScope, TypeDetail,
     MAX_DISCOVERY_RESPONSE_BYTES, MAX_DISCOVERY_TYPES, MODULE_DISCOVERY_SCHEMA_VERSION,
 };
+pub use durability::{SessionDurability, SessionSaveState};
 pub(crate) use edits::non_finite_refusal;
 pub use edits::{
     check_edit_batch, ApplyEditsReport, ControlWriteFailure, EditFailure, EditFailureReason,

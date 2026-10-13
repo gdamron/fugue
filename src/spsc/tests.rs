@@ -207,8 +207,7 @@ fn a_stalled_producer_never_makes_the_consumer_wait() {
     let pushed = producer.push_paused(2, || {
         thread::scope(|scope| {
             scope.spawn(|| {
-                let (popped, allocs, frees) =
-                    allocator_events(|| [consumer.pop(), consumer.pop()]);
+                let (popped, allocs, frees) = allocator_events(|| [consumer.pop(), consumer.pop()]);
                 assert_eq!(popped, [Some(1), None]);
                 assert_eq!((allocs, frees), (0, 0));
             });

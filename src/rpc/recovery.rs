@@ -177,7 +177,9 @@ impl RpcCommand {
             | Self::DescribeExample { .. }
             | Self::DescribeModuleTypes(_)
             | Self::DescribeModule(_)
-            | Self::ExportRequestLog { .. } => ReplayPolicy::Resend,
+            | Self::ExportRequestLog { .. }
+            // Fenced to the session it names, so a replacement refuses it.
+            | Self::FlushSession { .. } => ReplayPolicy::Resend,
             // Performance writes (see the module docs), installs, and shutdown,
             // which could stop a replacement daemon.
             _ => ReplayPolicy::Never,

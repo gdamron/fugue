@@ -109,6 +109,10 @@ pub enum RpcResponsePayload {
     /// [`RpcCommand::ApplyEdits`]: super::RpcCommand::ApplyEdits
     EditsApplied(ApplyEditsReport),
     Saved(SaveReport),
+    /// Every change applied before an [`RpcCommand::FlushSession`] is on disk.
+    ///
+    /// [`RpcCommand::FlushSession`]: super::RpcCommand::FlushSession
+    SessionFlushed(super::SessionDurability),
     /// A bounded view of authored state, including its session and revision.
     InventionInspection {
         page: Box<InspectionPage>,

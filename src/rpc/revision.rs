@@ -248,6 +248,7 @@ impl RpcCommand {
             | Self::DescribeModuleTypes(_)
             | Self::DescribeModule(_)
             | Self::ExportRequestLog { .. }
+            | Self::FlushSession { .. }
             | Self::Shutdown => false,
         }
     }

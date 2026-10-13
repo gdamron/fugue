@@ -330,7 +330,27 @@ pub enum RpcCommand {
     DescribeModuleTypes(ModuleTypeQuery),
     /// Inspect type defaults, supplied config, or an existing module instance.
     DescribeModule(DescribeModuleQuery),
-    /// Ask the shared daemon to persist its session and shut down cleanly.
+    /// Wait until every change the daemon has applied is saved to its session
+    /// file, so it survives a daemon restart. A mutation's reply means the
+    /// change is live; the daemon saves in the background shortly after, and
+    /// this is how a client waits for disk. Answers
+    /// [`RpcResponsePayload::SessionFlushed`], or
+    /// [`RpcErrorCode::SessionPersistFailed`] when the save failed.
+    ///
+    /// `session_id` names the daemon session whose changes should be saved
+    /// (see [`DaemonIdentity::session_id`]). A daemon with a different
+    /// session refuses it as a [`ConflictReason::SessionReplaced`] revision
+    /// conflict, so a flush resent after a restart never vouches for a
+    /// restored session that lacks the original's last changes.
+    ///
+    /// [`RpcResponsePayload::SessionFlushed`]: super::RpcResponsePayload::SessionFlushed
+    /// [`RpcErrorCode::SessionPersistFailed`]: super::RpcErrorCode::SessionPersistFailed
+    /// [`DaemonIdentity::session_id`]: super::DaemonIdentity::session_id
+    /// [`ConflictReason::SessionReplaced`]: super::ConflictReason::SessionReplaced
+    FlushSession {
+        session_id: String,
+    },
+    /// Ask the shared daemon to save its session and shut down cleanly.
     ///
     /// Because a spawned shared daemon outlives the client that started it (so
     /// one client exiting never cuts another's audio), this is how a client

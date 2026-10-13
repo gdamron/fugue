@@ -357,10 +357,7 @@ fn a_choice_fans_out_by_option_name_whatever_each_alias_numbers_it() {
             { "name": "b_slope", "module": "b", "control": "slope" }
         ]
     });
-    let (_graph, surface) = running_from(
-        factory("choices", definition),
-        json!({ "form": "flat" }),
-    );
+    let (_graph, surface) = running_from(factory("choices", definition), json!({ "form": "flat" }));
     assert_eq!(surface.get_control("form").unwrap(), "flat".into());
     assert_eq!(surface.get_control("b_slope").unwrap(), "flat".into());
     surface.set_control("form", "steep".into()).unwrap();

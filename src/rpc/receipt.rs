@@ -111,6 +111,7 @@ impl super::RpcCommand {
             | Self::ExportRequestLog { .. }
             | Self::DescribeModuleTypes(_)
             | Self::DescribeModule(_)
+            | Self::FlushSession { .. }
             | Self::Shutdown => false,
         }
     }
