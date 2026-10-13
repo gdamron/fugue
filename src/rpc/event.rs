@@ -71,7 +71,12 @@ pub enum RpcEventPayload {
     /// One run of spectrogram frames.
     SpectrogramTile(SpectrogramTile),
     Error(RpcError),
+    /// The graph or playback state changed. Carries nothing: polled history
+    /// never holds a graph, so its size does not grow with the invention.
+    /// Read a snapshot for the new state.
     TopologyChanged,
+    /// The whole runtime state. Never retained in polled history; streamed
+    /// only to a subscriber, right after a `TopologyChanged` it delivered.
     Snapshot(RuntimeFullSnapshot),
 }
 
@@ -105,20 +110,32 @@ pub struct SeqEvent {
     pub payload: RpcEventPayload,
 }
 
-/// Reply to [`RpcRequestPayload::PollEvents`]: the buffered events newer than
-/// the requested cursor, plus the newest sequence number to poll from next.
+/// Reply to [`RpcRequestPayload::PollEvents`]: the retained events newer than
+/// the requested cursor, plus the cursor to poll from next.
+///
+/// The log is bounded, so a slow poller can miss events. It is then told so
+/// explicitly: `resync_required` is set and `events` is empty. To recover, read
+/// state again (a snapshot), then poll from this page's `latest_seq`. Every
+/// event is emitted after the change it describes has applied, so the snapshot
+/// already reflects everything up to `latest_seq`, and replaying later events
+/// on top of it is idempotent.
 ///
 /// [`RpcRequestPayload::PollEvents`]: super::RpcRequestPayload::PollEvents
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct EventPage {
+    /// Events newer than the cursor, oldest first. Empty when
+    /// `resync_required` is set.
     pub events: Vec<SeqEvent>,
-    /// Newest sequence number the daemon has assigned (0 when nothing has been
-    /// emitted yet). Pass this as the next poll's `after`.
+    /// Newest sequence number the daemon has assigned. Pass it as the next
+    /// poll's `after`. Sequence numbers are not small counters: a daemon may
+    /// start anywhere, so that a cursor from an earlier daemon is never
+    /// mistaken for a current one.
     pub latest_seq: u64,
-    /// True when the cursor fell behind the bounded log and some events between
-    /// it and the oldest retained event were evicted unseen.
-    pub dropped: bool,
+    /// The cursor cannot be continued: events after it were evicted or never
+    /// retained, or it came from a different daemon. Whatever the caller holds
+    /// may be stale; read state again before trusting it.
+    pub resync_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

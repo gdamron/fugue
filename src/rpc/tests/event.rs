@@ -35,8 +35,11 @@ fn poll_events_request_and_page_round_trip() {
             },
         }],
         latest_seq: 8,
-        dropped: false,
+        resync_required: false,
     };
+    let wire = serde_json::to_value(&page).unwrap();
+    assert_eq!(wire["resync_required"], false);
+    assert!(wire.get("dropped").is_none(), "`dropped` left the wire");
     let response = RpcResponse::ok(None, RpcResponsePayload::Events(page.clone()));
     let decoded: RpcResponse =
         serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();

@@ -344,7 +344,8 @@ third attempt, the batch is refused as `internal` and nothing was applied.
 4. The revision advances once, however many edits the batch held.
 5. The session is saved. A failed save is logged and does not undo the
    commit.
-6. One `topology_changed`, then one `snapshot`.
+6. One `topology_changed`. The event carries no graph: a client that wants
+   the new one reads a snapshot.
 
 A refused batch emits no events.
 
