@@ -3,7 +3,49 @@
 //! splicing, and load-time validation (FUG-186; the frame-exactness
 //! discipline mirrors the FUG-176 end-gate tests).
 
+use fugue::modules::mixer::gain_ramp_frames;
 use fugue::{ControlValue, Invention, RenderEngine};
+
+const SAMPLE_RATE: u32 = 48_000;
+/// Frames between beat edges after the first (see SCHEDULED_CUT_INVENTION).
+const STEP_FRAMES: usize = 128;
+/// The step-2 edge, where the configured cut lands.
+const STEP_2_EDGE: usize = 255;
+/// How far the cut's first frame may be from the glide's first step,
+/// relative to full level: f32 rounding only.
+const CUT_TOLERANCE: f32 = 1e-4;
+
+/// Frames the mixer takes to glide to a new level.
+fn glide_frames() -> usize {
+    gain_ramp_frames(SAMPLE_RATE) as usize
+}
+
+/// Frames to render to see a cut at `edge` through its glide and the next
+/// gate after it.
+fn frames_past_cut(edge: usize) -> usize {
+    edge + glide_frames() + 2 * STEP_FRAMES
+}
+
+/// Asserts a cut of the mixer's level lands on exactly `edge`: there, the
+/// output is the first step of the glide down from the same gate frame one
+/// step earlier (had it landed a frame late, it would be at full level), and
+/// once the glide is over the output is silent.
+fn assert_cut_lands_on(output: &[f32], edge: usize) {
+    let full = output[edge - STEP_FRAMES];
+    assert!(full > 0.1, "the gate sounds a step before the cut");
+    let first_step = full * (1.0 - 1.0 / glide_frames() as f32);
+    assert!(
+        (output[edge] - first_step).abs() <= full * CUT_TOLERANCE,
+        "the cut starts its glide on frame {edge}: {} against {first_step}",
+        output[edge]
+    );
+    assert!(
+        output[edge + glide_frames()..]
+            .iter()
+            .all(|&sample| sample == 0.0),
+        "everything after the glide stays silent"
+    );
+}
 
 /// Clock at 22_500 BPM = 128 samples per beat at 48 kHz. The clock
 /// pre-increments its sample counter, so beat edges land at frames 0, 127,
@@ -12,8 +54,8 @@ use fugue::{ControlValue, Invention, RenderEngine};
 ///
 /// The clock's own beat gate feeds mixer channel 1 (high for 32 frames from
 /// each beat edge), so with the scheduled cut of `level.0` at step 2 the
-/// output is nonzero during the step-1 gate and must fall exactly silent
-/// from the step-2 edge (frame 255) onward.
+/// output is nonzero during the step-1 gate, starts the mixer's level glide
+/// on exactly the step-2 edge (frame 255), and is silent once it is over.
 const SCHEDULED_CUT_INVENTION: &str = r#"{
     "version": "1.0.0",
     "title": "scheduled-cut-test",
@@ -56,27 +98,18 @@ fn render_frames(engine: &mut RenderEngine, frames: usize) -> Vec<f32> {
 
 #[test]
 fn scheduled_change_lands_on_the_exact_expected_frame() {
-    let mut engine = RenderEngine::new(48_000);
+    let mut engine = RenderEngine::new(SAMPLE_RATE);
     engine.load_json(SCHEDULED_CUT_INVENTION).unwrap();
     engine.set_block_size(1);
 
-    let output = render_frames(&mut engine, 600);
+    let output = render_frames(&mut engine, frames_past_cut(STEP_2_EDGE));
 
     // Sanity: the step-1 gate (frames 127..158) sounds at full level.
     assert!(
         output[127] > 0.1 && output[140] > 0.1,
         "step-1 gate must be audible before the scheduled cut"
     );
-    // The step-2 edge is frame 255 and its gate runs to frame 286. Had the
-    // cut landed even one frame late, frame 255 would be ~1.0.
-    assert_eq!(
-        output[255], 0.0,
-        "the scheduled cut must land exactly on the step-2 edge"
-    );
-    assert!(
-        output[255..].iter().all(|&sample| sample == 0.0),
-        "everything after the cut stays silent"
-    );
+    assert_cut_lands_on(&output, STEP_2_EDGE);
     assert!(
         output[254] == 0.0 && output[158] > 0.0,
         "silence before the edge comes only from the gate being low"
@@ -196,15 +229,13 @@ fn schedule_can_be_replaced_during_playback() {
         )
         .unwrap();
 
-    let output = render_frames(&mut engine, 600);
+    let step_4_edge = STEP_2_EDGE + 2 * STEP_FRAMES;
+    let output = render_frames(&mut engine, frames_past_cut(step_4_edge));
     assert!(
-        output[255] > 0.1,
+        output[STEP_2_EDGE] > 0.1,
         "the replaced schedule no longer cuts at step 2"
     );
-    assert_eq!(
-        output[511], 0.0,
-        "the new schedule cuts exactly on the step-4 edge (frame 511)"
-    );
+    assert_cut_lands_on(&output, step_4_edge);
 
     // A schedule that fails to resolve is rejected and leaves the old one.
     let err = engine
@@ -264,9 +295,9 @@ fn schedules_splice_in_via_assets() {
     engine.load_invention(invention).unwrap();
     engine.set_block_size(1);
 
-    let output = render_frames(&mut engine, 600);
+    let output = render_frames(&mut engine, frames_past_cut(STEP_2_EDGE));
     assert!(output[140] > 0.1, "spliced schedule leaves step 1 audible");
-    assert_eq!(output[255], 0.0, "spliced schedule cuts at step 2");
+    assert_cut_lands_on(&output, STEP_2_EDGE);
 
     std::fs::remove_dir_all(&dir).ok();
 }

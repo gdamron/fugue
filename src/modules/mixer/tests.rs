@@ -313,3 +313,144 @@ fn ports_count_from_zero_and_the_old_names_are_gone() {
     mixer.process(1);
     approx_eq(mixer.get_output("audio_left").unwrap(), 0.0);
 }
+
+/// Plays `frames` single frames of a constant 1.0 on channel 0 and returns
+/// the left output of each.
+fn left_outputs(mixer: &mut Mixer, frames: u32) -> Vec<f32> {
+    (0..frames)
+        .map(|_| {
+            mixer.set_input("audio.0", 1.0).unwrap();
+            mixer.process(1);
+            mixer.get_output("audio_left").unwrap()
+        })
+        .collect()
+}
+
+/// How far one glide step may stray from an even one: f32 rounding gathered
+/// over a glide, far below the step a click would be.
+const STEP_TOLERANCE: f32 = 0.05;
+/// How close a glide's last frame, or its midpoint, is to where it should be.
+const LANDING_TOLERANCE: f32 = 1e-6;
+const MIDPOINT_TOLERANCE: f32 = 1e-5;
+/// A block of the size a live device plays.
+const BLOCK: usize = 128;
+
+/// The glide of a mixer built without a sample rate.
+fn ramp_frames() -> u32 {
+    gain_ramp_frames(DEFAULT_SAMPLE_RATE)
+}
+
+/// Whether `outputs` move from `from` to `to` in equal steps and land on it.
+fn glides(outputs: &[f32], from: f32, to: f32) -> bool {
+    let step = (to - from) / ramp_frames() as f32;
+    let mut previous = from;
+    let even = outputs.iter().all(|&v| {
+        let ok = ((v - previous) - step).abs() <= step.abs() * STEP_TOLERANCE;
+        previous = v;
+        ok
+    });
+    even && (outputs.last().unwrap() - to).abs() < LANDING_TOLERANCE
+}
+
+#[test]
+fn a_master_change_glides_instead_of_stepping() {
+    let mut mixer = Mixer::new(1);
+    let unity = left_outputs(&mut mixer, 1)[0];
+    mixer.set_master(0.0);
+    let outputs = left_outputs(&mut mixer, ramp_frames());
+    assert!(glides(&outputs, unity, 0.0), "{outputs:?}");
+    assert_eq!(mixer.get_control("master").unwrap(), 0.0);
+}
+
+#[test]
+fn a_level_change_glides_instead_of_stepping() {
+    let mut mixer = Mixer::new(1).with_level(0, 0.5);
+    let half = left_outputs(&mut mixer, 1)[0];
+    mixer.set_level(0, 1.5);
+    let outputs = left_outputs(&mut mixer, ramp_frames());
+    assert!(glides(&outputs, half, half * 3.0), "{outputs:?}");
+}
+
+#[test]
+fn a_change_mid_glide_turns_back_without_a_jump() {
+    let mut mixer = Mixer::new(1);
+    let unity = left_outputs(&mut mixer, 1)[0];
+    mixer.set_master(0.0);
+    let down = left_outputs(&mut mixer, ramp_frames() / 2);
+    let turned_at = *down.last().unwrap();
+    mixer.set_master(1.0);
+    let back = left_outputs(&mut mixer, ramp_frames());
+    assert!(
+        (turned_at - unity / 2.0).abs() < MIDPOINT_TOLERANCE,
+        "{turned_at}"
+    );
+    assert!(glides(&back, turned_at, unity), "{back:?}");
+}
+
+#[test]
+fn the_first_block_starts_at_the_controls_values() {
+    let mut mixer = Mixer::new(1).with_master(0.25);
+    let first = left_outputs(&mut mixer, 1)[0];
+    assert!((first - 0.25 * 2.0_f32.sqrt().recip()).abs() < LANDING_TOLERANCE);
+}
+
+#[test]
+fn the_glide_lasts_the_same_time_at_any_sample_rate() {
+    assert_eq!(gain_ramp_frames(48_000), 480);
+    assert_eq!(gain_ramp_frames(44_100), 441);
+    assert_eq!(gain_ramp_frames(96_000), 960);
+}
+
+/// Plays `blocks` blocks of BLOCK frames of a constant 1.0 on channel 0 and
+/// returns the left output of every frame.
+fn left_blocks(mixer: &mut dyn Module, blocks: usize) -> Vec<f32> {
+    let mut out = Vec::new();
+    for _ in 0..blocks {
+        mixer.input_block_mut(0)[..BLOCK].fill(1.0);
+        mixer.process(BLOCK);
+        out.extend_from_slice(&mixer.output_block(0)[..BLOCK]);
+    }
+    out
+}
+
+#[test]
+fn a_glide_runs_on_across_blocks() {
+    let mut mixer = Mixer::new(1);
+    let unity = left_blocks(&mut mixer, 1)[0];
+    mixer.set_master(0.0);
+    let frames = ramp_frames() as usize;
+    let outputs = left_blocks(&mut mixer, frames.div_ceil(BLOCK) + 1);
+    assert!(glides(&outputs[..frames], unity, 0.0), "{outputs:?}");
+    assert!(outputs[frames..].iter().all(|&v| v == 0.0));
+}
+
+#[test]
+fn the_factory_times_the_glide_from_the_sample_rate() {
+    const RATE: u32 = 44_100;
+    let config = serde_json::json!({ "channel_count": 1 });
+    let mut built = MixerFactory.build(RATE, &config).unwrap();
+    let mixer = built.module.module_mut();
+    left_blocks(mixer, 1);
+    mixer.set_control("master", 0.0).unwrap();
+    let outputs = left_blocks(mixer, 4);
+    let frames = gain_ramp_frames(RATE) as usize;
+    assert!(outputs[frames - 2] > 0.0, "{outputs:?}");
+    assert_eq!(outputs[frames - 1], 0.0);
+}
+
+#[test]
+fn a_glide_never_allocates() {
+    let mut mixer = Mixer::new(2);
+    let blocks = (ramp_frames() as usize).div_ceil(BLOCK) + 1;
+    mixer.process(BLOCK);
+    let ((), allocs, frees) = crate::alloc_counter::allocator_events(|| {
+        mixer.set_master(0.25);
+        mixer.set_level(1, 0.5);
+        for _ in 0..blocks {
+            mixer.input_block_mut(0)[..BLOCK].fill(1.0);
+            mixer.input_block_mut(1)[..BLOCK].fill(1.0);
+            mixer.process(BLOCK);
+        }
+    });
+    assert_eq!((allocs, frees), (0, 0));
+}

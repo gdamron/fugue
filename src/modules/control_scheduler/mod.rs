@@ -22,6 +22,11 @@
 //! late; scheduling the same clock that drives the scheduler (tempo
 //! automation) forms a cycle, which the graph processes sample-by-sample.
 //!
+//! What a target does with a change is its own: a mixer level or master
+//! starts its [`GAIN_RAMP_MS`](crate::modules::mixer::GAIN_RAMP_MS) glide on
+//! the frame the change lands, so a cut is a 10 ms fade rather than a click.
+//! Gating that must be sample-exact goes through the mixer's level CV inputs.
+//!
 //! # Ramps
 //!
 //! An entry with `ramp_steps: N` leaves the control's current value at step
