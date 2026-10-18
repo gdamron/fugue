@@ -313,3 +313,70 @@ fn ports_count_from_zero_and_the_old_names_are_gone() {
     mixer.process(1);
     approx_eq(mixer.get_output("audio_left").unwrap(), 0.0);
 }
+
+/// Plays `frames` single frames of a constant 1.0 on channel 0 and returns
+/// the left output of each.
+fn left_outputs(mixer: &mut Mixer, frames: u32) -> Vec<f32> {
+    (0..frames)
+        .map(|_| {
+            mixer.set_input("audio.0", 1.0).unwrap();
+            mixer.process(1);
+            mixer.get_output("audio_left").unwrap()
+        })
+        .collect()
+}
+
+/// How far one glide step may stray from an even one: f32 rounding gathered
+/// over a glide, far below the step a click would be.
+const STEP_TOLERANCE: f32 = 0.05;
+
+/// Whether `outputs` move from `from` to `to` in equal steps and land on it.
+fn glides(outputs: &[f32], from: f32, to: f32) -> bool {
+    let step = (to - from) / GAIN_RAMP_FRAMES as f32;
+    let mut previous = from;
+    let even = outputs.iter().all(|&v| {
+        let ok = ((v - previous) - step).abs() <= step.abs() * STEP_TOLERANCE;
+        previous = v;
+        ok
+    });
+    even && (outputs.last().unwrap() - to).abs() < 1e-6
+}
+
+#[test]
+fn a_master_change_glides_instead_of_stepping() {
+    let mut mixer = Mixer::new(1);
+    let unity = left_outputs(&mut mixer, 1)[0];
+    mixer.set_master(0.0);
+    let outputs = left_outputs(&mut mixer, GAIN_RAMP_FRAMES);
+    assert!(glides(&outputs, unity, 0.0), "{outputs:?}");
+    assert_eq!(mixer.get_control("master").unwrap(), 0.0);
+}
+
+#[test]
+fn a_level_change_glides_instead_of_stepping() {
+    let mut mixer = Mixer::new(1).with_level(0, 0.5);
+    let half = left_outputs(&mut mixer, 1)[0];
+    mixer.set_level(0, 1.5);
+    let outputs = left_outputs(&mut mixer, GAIN_RAMP_FRAMES);
+    assert!(glides(&outputs, half, half * 3.0), "{outputs:?}");
+}
+
+#[test]
+fn a_change_mid_glide_turns_back_without_a_jump() {
+    let mut mixer = Mixer::new(1);
+    let unity = left_outputs(&mut mixer, 1)[0];
+    mixer.set_master(0.0);
+    let down = left_outputs(&mut mixer, GAIN_RAMP_FRAMES / 2);
+    let turned_at = *down.last().unwrap();
+    mixer.set_master(1.0);
+    let back = left_outputs(&mut mixer, GAIN_RAMP_FRAMES);
+    assert!((turned_at - unity / 2.0).abs() < 1e-5, "{turned_at}");
+    assert!(glides(&back, turned_at, unity), "{back:?}");
+}
+
+#[test]
+fn the_first_block_starts_at_the_controls_values() {
+    let mut mixer = Mixer::new(1).with_master(0.25);
+    let first = left_outputs(&mut mixer, 1)[0];
+    assert!((first - 0.25 * 2.0_f32.sqrt().recip()).abs() < 1e-6);
+}

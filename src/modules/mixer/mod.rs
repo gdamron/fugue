@@ -11,6 +11,8 @@
 //! - Per-channel equal-power panning (-1.0 left to 1.0 right)
 //! - Master output level
 //! - CV inputs for dynamic level and pan control
+//! - Level and master changes glide over [`GAIN_RAMP_FRAMES`], so moving a
+//!   fader never clicks
 //!
 //! # Example Invention
 //!
@@ -39,6 +41,7 @@ use std::any::Any;
 use std::f32::consts::FRAC_PI_4;
 use std::sync::Arc;
 
+use crate::dsp::LinearRamp;
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
@@ -52,6 +55,14 @@ mod outputs;
 
 /// Maximum number of mixer channels supported.
 pub const MAX_CHANNELS: usize = 64;
+
+/// How many frames a level or master change takes to arrive: 10 ms at
+/// 48 kHz. A gain that changes between two samples steps the waveform, which
+/// is heard as a click (FUG-258 measured them on every fast fader move, on
+/// clicking a fader's track and on a cancelled drag's restore). Ten
+/// milliseconds removes the step and is still shorter than one frame of a
+/// gesture at 60 Hz, so a moving fader never falls behind.
+pub const GAIN_RAMP_FRAMES: u32 = 480;
 
 /// A multi-channel audio mixer.
 ///
@@ -93,6 +104,11 @@ pub const MAX_CHANNELS: usize = 64;
 pub struct Mixer {
     channels: usize,
     ctrl: MixerControls,
+    /// The levels and master the audio hears, gliding to the controls'.
+    levels: [LinearRamp; MAX_CHANNELS],
+    master: LinearRamp,
+    /// False until the first block, which starts at the controls' values.
+    started: bool,
     input_state: inputs::MixerInputs,
     outputs: outputs::MixerOutputs,
 }
@@ -114,6 +130,9 @@ impl Mixer {
         Self {
             channels,
             ctrl: controls,
+            levels: [LinearRamp::new(0.0, GAIN_RAMP_FRAMES); MAX_CHANNELS],
+            master: LinearRamp::new(0.0, GAIN_RAMP_FRAMES),
+            started: false,
             input_state: inputs::MixerInputs::new(channels),
             outputs: outputs::MixerOutputs::new(),
         }
@@ -166,21 +185,42 @@ impl Mixer {
         (self.ctrl.pan(channel) + self.input_state.pan_mod(channel, i)).clamp(-1.0, 1.0)
     }
 
+    /// Reads the controls once a block: a changed level or master starts a
+    /// glide; the first block starts at the controls' values.
+    fn follow_controls(&mut self) {
+        for ch in 0..self.channels {
+            let level = self.ctrl.level(ch);
+            if self.started {
+                self.levels[ch].set_target(level);
+            } else {
+                self.levels[ch].snap(level);
+            }
+        }
+        let master = self.ctrl.master();
+        if self.started {
+            self.master.set_target(master);
+        } else {
+            self.master.snap(master);
+        }
+        self.started = true;
+    }
+
     /// Mixes all inputs at frame `i` and returns the stereo output sample.
-    fn mix(&self, i: usize) -> (f32, f32) {
+    fn mix(&mut self, i: usize) -> (f32, f32) {
         let mut left = 0.0;
         let mut right = 0.0;
 
         for ch in 0..self.channels {
             let level_cv = self.input_state.level_cv(ch, i);
-            let channel_out = self.input_state.audio(ch, i) * self.ctrl.level(ch) * level_cv;
+            let level = self.levels[ch].next_value();
+            let channel_out = self.input_state.audio(ch, i) * level * level_cv;
             let pan = self.effective_pan(ch, i);
             let angle = (pan + 1.0) * FRAC_PI_4;
             left += channel_out * angle.cos();
             right += channel_out * angle.sin();
         }
 
-        let master_level = self.ctrl.master();
+        let master_level = self.master.next_value();
         let master_cv = self.input_state.master_cv(i);
         let gain = master_level * master_cv;
 
@@ -194,6 +234,7 @@ impl Module for Mixer {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        self.follow_controls();
         for i in 0..frames {
             let (left, right) = self.mix(i);
             self.outputs.set(i, left, right);
