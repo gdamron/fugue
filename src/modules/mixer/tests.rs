@@ -437,3 +437,20 @@ fn the_factory_times_the_glide_from_the_sample_rate() {
     assert!(outputs[frames - 2] > 0.0, "{outputs:?}");
     assert_eq!(outputs[frames - 1], 0.0);
 }
+
+#[test]
+fn a_glide_never_allocates() {
+    let mut mixer = Mixer::new(2);
+    let blocks = (ramp_frames() as usize).div_ceil(BLOCK) + 1;
+    mixer.process(BLOCK);
+    let ((), allocs, frees) = crate::alloc_counter::allocator_events(|| {
+        mixer.set_master(0.25);
+        mixer.set_level(1, 0.5);
+        for _ in 0..blocks {
+            mixer.input_block_mut(0)[..BLOCK].fill(1.0);
+            mixer.input_block_mut(1)[..BLOCK].fill(1.0);
+            mixer.process(BLOCK);
+        }
+    });
+    assert_eq!((allocs, frees), (0, 0));
+}
