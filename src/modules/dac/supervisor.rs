@@ -4,8 +4,9 @@
 //! playback starts. When the host reports that the stream has stopped (the
 //! output device went away, or the stream was invalidated), the error callback
 //! only raises a flag and wakes this thread, which then rebuilds the stream on
-//! the current default output. While no device can be opened it retries with
-//! backoff. Rebuilding never happens on the audio thread.
+//! the current default output, or the device `FUGUE_OUTPUT_DEVICE` names.
+//! While no device can be opened it retries with backoff. Rebuilding never
+//! happens on the audio thread.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, SyncSender};
@@ -13,10 +14,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle, Thread};
 use std::time::{Duration, Instant};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, SupportedStreamConfig, SupportedStreamConfigRange};
 
-use super::driver::{buffer_period_ns, render_block, stream_error_kind, write_frame};
+use super::driver::{
+    buffer_period_ns, output_device, render_block, stream_error_kind, write_frame,
+};
 use super::{AudioDiagnostics, BlockRenderFn};
 use crate::MAX_BLOCK;
 
@@ -64,7 +67,7 @@ pub(super) struct Supervisor {
 }
 
 impl Supervisor {
-    /// Opens the first stream on the default output and starts supervising
+    /// Opens the first stream on the output device and starts supervising
     /// it. Returns an error, and leaves nothing running, if that first stream
     /// cannot be opened.
     pub(super) fn start(
@@ -214,12 +217,10 @@ impl Backoff {
     }
 }
 
-/// Opens and starts a stream on the current default output at the graph's
-/// sample rate.
+/// Opens and starts a stream on the current default output (or the device
+/// `FUGUE_OUTPUT_DEVICE` names) at the graph's sample rate.
 fn open_stream(shared: &Arc<Shared>) -> Result<Stream, Box<dyn std::error::Error>> {
-    let device = cpal::default_host()
-        .default_output_device()
-        .ok_or("No output device available")?;
+    let device = output_device(&cpal::default_host())?;
     let config = output_config(&device, shared.sample_rate)?;
     let stream = build_for_format(&device, config, shared)?;
     stream.play()?;

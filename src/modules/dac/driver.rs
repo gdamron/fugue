@@ -38,7 +38,49 @@ pub(super) fn render_block<T>(
     }
 }
 
-/// Returns the sample rate of the default audio output device.
+/// Names the output device to play to instead of the system default, e.g.
+/// `FUGUE_OUTPUT_DEVICE="BlackHole 16ch"`. The name must match a device's
+/// name exactly; a name that matches none is an error rather than a fall
+/// back to the default, so audio never goes somewhere it was not sent.
+pub const OUTPUT_DEVICE_ENV: &str = "FUGUE_OUTPUT_DEVICE";
+
+/// The output device to play to: the one [`OUTPUT_DEVICE_ENV`] names, or the
+/// host's default output when it is unset or empty.
+pub(super) fn output_device(host: &cpal::Host) -> Result<cpal::Device, Box<dyn std::error::Error>> {
+    let wanted = std::env::var(OUTPUT_DEVICE_ENV).unwrap_or_default();
+    if wanted.is_empty() {
+        return Ok(host
+            .default_output_device()
+            .ok_or("No output device available")?);
+    }
+    let mut names = Vec::new();
+    for device in host.output_devices()? {
+        let Ok(description) = device.description() else {
+            continue;
+        };
+        if description.name() == wanted {
+            return Ok(device);
+        }
+        names.push(description.name().to_string());
+    }
+    Err(missing_device(&wanted, names.iter().map(String::as_str)).into())
+}
+
+/// Why the named output device cannot be used, listing the ones that can.
+fn missing_device<'a>(wanted: &str, available: impl Iterator<Item = &'a str>) -> String {
+    let available: Vec<&str> = available.collect();
+    format!(
+        "{OUTPUT_DEVICE_ENV} names \"{wanted}\", but no output device has that name; available: {}",
+        if available.is_empty() {
+            "none".to_string()
+        } else {
+            available.join(", ")
+        }
+    )
+}
+
+/// Returns the sample rate of the output device: the system default, or the
+/// one [`OUTPUT_DEVICE_ENV`] names.
 ///
 /// This should be called before building an invention to ensure modules
 /// are configured with the correct sample rate for the audio hardware.
@@ -59,10 +101,7 @@ pub(super) fn render_block<T>(
 ///
 /// Returns an error if no audio output device is available.
 pub fn default_sample_rate() -> Result<u32, Box<dyn std::error::Error>> {
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or("No output device available")?;
+    let device = output_device(&cpal::default_host())?;
     let config = device.default_output_config()?;
     Ok(config.sample_rate())
 }
@@ -114,12 +153,13 @@ pub trait AudioBackend: Send {
 
 /// Default audio backend using the cpal library.
 ///
-/// Sends audio to the system's default output device.
-/// Supports every integer and float sample format cpal exposes.
+/// Sends audio to the system's default output device, or to the one
+/// [`OUTPUT_DEVICE_ENV`] names. Supports every integer and float sample
+/// format cpal exposes.
 ///
 /// If the host stops the stream, e.g. because the output device went away,
-/// the driver rebuilds it on the current default output at the same sample
-/// rate, retrying until a device is available.
+/// the driver rebuilds it on the current default output (or the named
+/// device) at the same sample rate, retrying until a device is available.
 pub struct AudioDriver {
     output: Option<Supervisor>,
     sample_rate: u32,
@@ -127,14 +167,13 @@ pub struct AudioDriver {
 }
 
 impl AudioDriver {
-    /// Creates a new AudioDriver using the system's default output device.
+    /// Creates a new AudioDriver using the system's default output device,
+    /// or the one [`OUTPUT_DEVICE_ENV`] names.
     ///
-    /// Returns an error if no output device is available.
+    /// Returns an error if no output device is available, or none has the
+    /// name given.
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or("No output device available")?;
+        let device = output_device(&cpal::default_host())?;
 
         let config = device.default_output_config()?;
         let sample_rate = config.sample_rate();
@@ -291,6 +330,17 @@ mod tests {
             write_frame::<f32>,
         );
         assert_eq!(data, [0.25, -0.25, 0.25, -0.25, 9.0]);
+    }
+
+    #[test]
+    fn a_missing_output_device_names_the_ones_available() {
+        let message = missing_device("Studio", ["BlackHole 16ch", "Speakers"].into_iter());
+        assert_eq!(
+            message,
+            "FUGUE_OUTPUT_DEVICE names \"Studio\", but no output device has that name; \
+             available: BlackHole 16ch, Speakers"
+        );
+        assert!(missing_device("Studio", std::iter::empty()).ends_with("available: none"));
     }
 
     #[test]
