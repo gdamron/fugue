@@ -43,7 +43,9 @@ impl LinearRamp {
             return;
         }
         self.target = target;
-        if self.frames == 0 {
+        // A glide from a value that is not a number would stay one until it
+        // landed: start again from the target instead.
+        if self.frames == 0 || !self.current.is_finite() {
             self.current = target;
             self.remaining = 0;
         } else {
@@ -114,6 +116,15 @@ mod tests {
         ramp.next_value();
         ramp.set_target(1.0);
         assert_eq!(ramp.next_value(), 0.5);
+    }
+
+    #[test]
+    fn a_glide_does_not_start_from_a_value_that_is_not_a_number() {
+        let mut ramp = LinearRamp::new(0.0, FRAMES);
+        ramp.set_target(f32::NAN);
+        ramp.snap(f32::NAN);
+        ramp.set_target(1.0);
+        assert_eq!(ramp.next_value(), 1.0);
     }
 
     #[test]

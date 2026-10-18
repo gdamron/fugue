@@ -11,8 +11,9 @@
 //! - Per-channel equal-power panning (-1.0 left to 1.0 right)
 //! - Master output level
 //! - CV inputs for dynamic level and pan control
-//! - Level and master changes glide over [`GAIN_RAMP_MS`], so moving a
-//!   fader never clicks
+//! - Level and master changes glide over [`GAIN_RAMP_MS`], starting on the
+//!   frame the change lands, so moving a fader never clicks; the level and
+//!   master CV inputs stay sample-exact, for gating
 //!
 //! # Example Invention
 //!
@@ -66,7 +67,7 @@ pub const GAIN_RAMP_MS: f32 = 10.0;
 
 /// The sample rate a mixer assumes until told otherwise
 /// ([`Mixer::with_sample_rate`]).
-pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+pub(crate) const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
 const MS_PER_SECOND: f32 = 1_000.0;
 
@@ -150,11 +151,13 @@ impl Mixer {
         }
     }
 
-    /// Times the level and master glides for `sample_rate`.
+    /// Times the level and master glides for `sample_rate`. The next block
+    /// starts at the controls' values, as the first one does.
     pub fn with_sample_rate(mut self, sample_rate: u32) -> Self {
         let frames = gain_ramp_frames(sample_rate);
         self.levels = [LinearRamp::new(0.0, frames); MAX_CHANNELS];
         self.master = LinearRamp::new(0.0, frames);
+        self.started = false;
         self
     }
 
