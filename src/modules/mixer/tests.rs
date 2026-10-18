@@ -330,9 +330,14 @@ fn left_outputs(mixer: &mut Mixer, frames: u32) -> Vec<f32> {
 /// over a glide, far below the step a click would be.
 const STEP_TOLERANCE: f32 = 0.05;
 
+/// The glide of a mixer built without a sample rate.
+fn ramp_frames() -> u32 {
+    gain_ramp_frames(DEFAULT_SAMPLE_RATE)
+}
+
 /// Whether `outputs` move from `from` to `to` in equal steps and land on it.
 fn glides(outputs: &[f32], from: f32, to: f32) -> bool {
-    let step = (to - from) / GAIN_RAMP_FRAMES as f32;
+    let step = (to - from) / ramp_frames() as f32;
     let mut previous = from;
     let even = outputs.iter().all(|&v| {
         let ok = ((v - previous) - step).abs() <= step.abs() * STEP_TOLERANCE;
@@ -347,7 +352,7 @@ fn a_master_change_glides_instead_of_stepping() {
     let mut mixer = Mixer::new(1);
     let unity = left_outputs(&mut mixer, 1)[0];
     mixer.set_master(0.0);
-    let outputs = left_outputs(&mut mixer, GAIN_RAMP_FRAMES);
+    let outputs = left_outputs(&mut mixer, ramp_frames());
     assert!(glides(&outputs, unity, 0.0), "{outputs:?}");
     assert_eq!(mixer.get_control("master").unwrap(), 0.0);
 }
@@ -357,7 +362,7 @@ fn a_level_change_glides_instead_of_stepping() {
     let mut mixer = Mixer::new(1).with_level(0, 0.5);
     let half = left_outputs(&mut mixer, 1)[0];
     mixer.set_level(0, 1.5);
-    let outputs = left_outputs(&mut mixer, GAIN_RAMP_FRAMES);
+    let outputs = left_outputs(&mut mixer, ramp_frames());
     assert!(glides(&outputs, half, half * 3.0), "{outputs:?}");
 }
 
@@ -366,10 +371,10 @@ fn a_change_mid_glide_turns_back_without_a_jump() {
     let mut mixer = Mixer::new(1);
     let unity = left_outputs(&mut mixer, 1)[0];
     mixer.set_master(0.0);
-    let down = left_outputs(&mut mixer, GAIN_RAMP_FRAMES / 2);
+    let down = left_outputs(&mut mixer, ramp_frames() / 2);
     let turned_at = *down.last().unwrap();
     mixer.set_master(1.0);
-    let back = left_outputs(&mut mixer, GAIN_RAMP_FRAMES);
+    let back = left_outputs(&mut mixer, ramp_frames());
     assert!((turned_at - unity / 2.0).abs() < 1e-5, "{turned_at}");
     assert!(glides(&back, turned_at, unity), "{back:?}");
 }
@@ -379,4 +384,11 @@ fn the_first_block_starts_at_the_controls_values() {
     let mut mixer = Mixer::new(1).with_master(0.25);
     let first = left_outputs(&mut mixer, 1)[0];
     assert!((first - 0.25 * 2.0_f32.sqrt().recip()).abs() < 1e-6);
+}
+
+#[test]
+fn the_glide_lasts_the_same_time_at_any_sample_rate() {
+    assert_eq!(gain_ramp_frames(48_000), 480);
+    assert_eq!(gain_ramp_frames(44_100), 441);
+    assert_eq!(gain_ramp_frames(96_000), 960);
 }

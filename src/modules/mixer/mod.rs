@@ -11,7 +11,7 @@
 //! - Per-channel equal-power panning (-1.0 left to 1.0 right)
 //! - Master output level
 //! - CV inputs for dynamic level and pan control
-//! - Level and master changes glide over [`GAIN_RAMP_FRAMES`], so moving a
+//! - Level and master changes glide over [`GAIN_RAMP_MS`], so moving a
 //!   fader never clicks
 //!
 //! # Example Invention
@@ -56,13 +56,24 @@ mod outputs;
 /// Maximum number of mixer channels supported.
 pub const MAX_CHANNELS: usize = 64;
 
-/// How many frames a level or master change takes to arrive: 10 ms at
-/// 48 kHz. A gain that changes between two samples steps the waveform, which
-/// is heard as a click (FUG-258 measured them on every fast fader move, on
-/// clicking a fader's track and on a cancelled drag's restore). Ten
-/// milliseconds removes the step and is still shorter than one frame of a
-/// gesture at 60 Hz, so a moving fader never falls behind.
-pub const GAIN_RAMP_FRAMES: u32 = 480;
+/// How long a level or master change takes to arrive. A gain that changes
+/// between two samples steps the waveform, which is heard as a click (FUG-258
+/// measured them on every fast fader move, on clicking a fader's track and on
+/// a cancelled drag's restore). Ten milliseconds removes the step and is
+/// still shorter than one frame of a gesture at 60 Hz, so a moving fader never
+/// falls behind.
+pub const GAIN_RAMP_MS: f32 = 10.0;
+
+/// The sample rate a mixer assumes until told otherwise
+/// ([`Mixer::with_sample_rate`]).
+pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+
+const MS_PER_SECOND: f32 = 1_000.0;
+
+/// [`GAIN_RAMP_MS`] in frames at `sample_rate`.
+pub fn gain_ramp_frames(sample_rate: u32) -> u32 {
+    (sample_rate as f32 * GAIN_RAMP_MS / MS_PER_SECOND).round() as u32
+}
 
 /// A multi-channel audio mixer.
 ///
@@ -126,16 +137,25 @@ impl Mixer {
     /// Creates a new mixer with the given controls.
     pub fn new_with_controls(channels: usize, controls: MixerControls) -> Self {
         let channels = channels.clamp(1, MAX_CHANNELS);
+        let frames = gain_ramp_frames(DEFAULT_SAMPLE_RATE);
 
         Self {
             channels,
             ctrl: controls,
-            levels: [LinearRamp::new(0.0, GAIN_RAMP_FRAMES); MAX_CHANNELS],
-            master: LinearRamp::new(0.0, GAIN_RAMP_FRAMES),
+            levels: [LinearRamp::new(0.0, frames); MAX_CHANNELS],
+            master: LinearRamp::new(0.0, frames),
             started: false,
             input_state: inputs::MixerInputs::new(channels),
             outputs: outputs::MixerOutputs::new(),
         }
+    }
+
+    /// Times the level and master glides for `sample_rate`.
+    pub fn with_sample_rate(mut self, sample_rate: u32) -> Self {
+        let frames = gain_ramp_frames(sample_rate);
+        self.levels = [LinearRamp::new(0.0, frames); MAX_CHANNELS];
+        self.master = LinearRamp::new(0.0, frames);
+        self
     }
 
     /// Sets the level for a specific channel (0-indexed).
@@ -389,7 +409,7 @@ impl ModuleFactory for MixerFactory {
 
     fn build(
         &self,
-        _sample_rate: u32,
+        sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let reader = ConfigReader::new(TYPE_ID, config);
@@ -402,7 +422,8 @@ impl ModuleFactory for MixerFactory {
         crate::factory::apply_control_keys(&controls, config, |key| {
             key.starts_with("level.") || key.starts_with("pan.")
         })?;
-        let mixer = Mixer::new_with_controls(channels, controls.clone());
+        let mixer =
+            Mixer::new_with_controls(channels, controls.clone()).with_sample_rate(sample_rate);
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(mixer)),
