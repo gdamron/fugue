@@ -173,8 +173,8 @@ running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 ### Audio Output
 
 Live playback opens the system's default output device. These environment
-variables change that for any host built on the core (`fyug serve`, `fyug
-play`, or your own program). Set them in the environment that starts the
+variables change that for any host built on the core (`fyug serve` and `fyug
+play`, named `fugue` in older installs, or your own program). Set them in the environment that starts the
 process: a daemon that is already running keeps the device it started with.
 
 | Variable | Effect |
@@ -197,8 +197,9 @@ virtual loopback device such as
 and record from that same device:
 
 ```sh
-FUGUE_OUTPUT_DEVICE="BlackHole 16ch" fyug serve --rpc 127.0.0.1:<port>
-sox -t coreaudio "BlackHole 16ch" -c 2 capture.wav trim 0 5
+FUGUE_OUTPUT_DEVICE="BlackHole 16ch" fyug serve --rpc 127.0.0.1:<port> &
+# Fugue writes the first two channels; keep exactly those.
+sox -t coreaudio "BlackHole 16ch" capture.wav remix 1 2 trim 0 5
 ```
 
 Never capture through the default output: it is the listener's speakers or

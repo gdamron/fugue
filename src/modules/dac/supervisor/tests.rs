@@ -1,3 +1,4 @@
+use super::super::device::FakeHost;
 use super::*;
 use cpal::SupportedBufferSize;
 use std::sync::atomic::AtomicU64;
@@ -244,29 +245,40 @@ fn a_requested_rebuild_keeps_the_same_render_function_playing() {
     );
 }
 
+/// Stops the supervisor thread on drop, so a failed assertion cannot leave it
+/// running.
+struct StopOnDrop {
+    shared: Arc<Shared>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.shared.shutdown.store(true, Ordering::Release);
+        self.shared.wake();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 /// A named device that goes away is waited for, never replaced by the
 /// default output that is still there, and is used again once it returns.
+/// Every open goes through `stream_device`, the routing `open_stream` uses.
 #[test]
 fn a_missing_named_device_is_retried_never_replaced_by_the_default() {
     const NAMED: &str = "Loopback";
     const DEFAULT: &str = "Speakers";
     let mut shared = test_shared();
     Arc::get_mut(&mut shared).unwrap().device_name = Some(NAMED.into());
-    let named_present = Arc::new(AtomicBool::new(true));
+    let host = Arc::new(FakeHost::new(DEFAULT, &[DEFAULT, NAMED]));
     // Every device each open chose, or `None` for an open that was refused.
     let chosen: Arc<Mutex<Vec<Option<&'static str>>>> = Arc::default();
-    let (present, log) = (named_present.clone(), chosen.clone());
+    let (open_host, log) = (host.clone(), chosen.clone());
     let open = move |shared: &Arc<Shared>| {
-        let mut devices = vec![(DEFAULT, Some(DEFAULT.to_string()))];
-        if present.load(Ordering::SeqCst) {
-            devices.push((NAMED, Some(NAMED.to_string())));
-        }
-        let wanted = shared.device_name.as_deref().expect("a named device");
-        let choice = super::super::device::select_named(wanted, devices);
+        let choice = stream_device(&*open_host, shared);
         log.lock().unwrap().push(choice.as_ref().ok().copied());
-        choice
-            .map(|_| ())
-            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })
+        choice.map(|_| ())
     };
     let count = |device: Option<&str>| {
         chosen
@@ -286,20 +298,23 @@ fn a_missing_named_device_is_retried_never_replaced_by_the_default() {
 
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
     let thread_shared = shared.clone();
-    let handle = thread::spawn(move || supervise(thread_shared, ready_tx, open));
+    let _running = StopOnDrop {
+        shared: shared.clone(),
+        handle: Some(thread::spawn(move || {
+            supervise(thread_shared, ready_tx, open)
+        })),
+    };
     ready_rx.recv().unwrap().unwrap();
 
-    named_present.store(false, Ordering::SeqCst);
+    host.set_devices(&[DEFAULT]);
     shared.request_rebuild();
     assert!(wait_for(None, 2), "the missing device was not retried");
-    named_present.store(true, Ordering::SeqCst);
+    host.set_devices(&[DEFAULT, NAMED]);
     assert!(
         wait_for(Some(NAMED), 2),
         "the returned device was not reopened"
     );
 
-    shared.shutdown.store(true, Ordering::Release);
-    shared.wake();
-    handle.join().unwrap();
     assert_eq!(count(Some(DEFAULT)), 0, "fell back to the default output");
+    assert_eq!(host.default_lookups(), 0, "consulted the default output");
 }

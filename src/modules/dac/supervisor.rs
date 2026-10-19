@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, SupportedStreamConfig, SupportedStreamConfigRange};
 
-use super::device::output_device;
+use super::device::{output_device, OutputHost};
 use super::driver::{buffer_period_ns, render_block, stream_error_kind, write_frame};
 use super::{AudioDiagnostics, BlockRenderFn};
 use crate::MAX_BLOCK;
@@ -227,11 +227,20 @@ impl Backoff {
 /// [`OUTPUT_DEVICE_ENV`](super::OUTPUT_DEVICE_ENV) names) at the graph's
 /// sample rate.
 fn open_stream(shared: &Arc<Shared>) -> Result<Stream, Box<dyn std::error::Error>> {
-    let device = output_device(&cpal::default_host(), shared.device_name.as_deref())?;
+    let device = stream_device(&cpal::default_host(), shared)?;
     let config = output_config(&device, shared.sample_rate)?;
     let stream = build_for_format(&device, config, shared)?;
     stream.play()?;
     Ok(stream)
+}
+
+/// The device every stream opens on: the one the driver was created with,
+/// by name, or the host's current default output when it named none.
+fn stream_device<H: OutputHost>(
+    host: &H,
+    shared: &Shared,
+) -> Result<H::Device, Box<dyn std::error::Error>> {
+    output_device(host, shared.device_name.as_deref())
 }
 
 /// The device's default config when it already runs at `sample_rate`,
