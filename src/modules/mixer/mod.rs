@@ -11,9 +11,10 @@
 //! - Per-channel equal-power panning (-1.0 left to 1.0 right)
 //! - Master output level
 //! - CV inputs for dynamic level and pan control
-//! - Level and master changes glide over [`GAIN_RAMP_MS`], starting on the
-//!   frame the change lands, so moving a fader never clicks; the level and
-//!   master CV inputs stay sample-exact, for gating
+//! - Level, pan and master changes glide over [`GAIN_RAMP_MS`], starting on
+//!   the frame the change lands, so moving a fader or a pan never clicks; the
+//!   level, pan and master CV inputs stay sample-exact, for gating and
+//!   audio-rate panning
 //!
 //! # Example Invention
 //!
@@ -57,12 +58,13 @@ mod outputs;
 /// Maximum number of mixer channels supported.
 pub const MAX_CHANNELS: usize = 64;
 
-/// How long a level or master change takes to arrive. A gain that changes
-/// between two samples steps the waveform, which is heard as a click (FUG-258
-/// measured them on every fast fader move, on clicking a fader's track and on
-/// a cancelled drag's restore). Ten milliseconds removes the step and is
-/// still shorter than one frame of a gesture at 60 Hz, so a moving fader never
-/// falls behind.
+/// How long a level, pan or master change takes to arrive. A gain that
+/// changes between two samples steps the waveform, which is heard as a click
+/// (FUG-258 measured them on every fast fader move, on clicking a fader's
+/// track and on a cancelled drag's restore). A pan change is a gain change on
+/// each side, so it glides the same way (FUG-376). Ten milliseconds removes
+/// the step and is still shorter than one frame of a gesture at 60 Hz, so a
+/// moving fader never falls behind.
 pub const GAIN_RAMP_MS: f32 = 10.0;
 
 /// The sample rate a mixer assumes until told otherwise
@@ -116,9 +118,15 @@ pub fn gain_ramp_frames(sample_rate: u32) -> u32 {
 pub struct Mixer {
     channels: usize,
     ctrl: MixerControls,
-    /// The levels and master the audio hears, gliding to the controls'.
+    /// The levels, pans and master the audio hears, gliding to the
+    /// controls'. The pan glides before the pan law, so a glide stays
+    /// equal-power all the way.
     levels: [LinearRamp; MAX_CHANNELS],
+    pans: [LinearRamp; MAX_CHANNELS],
     master: LinearRamp,
+    /// Each channel's last pan and its left and right gains, so the pan law's
+    /// cosine and sine are worked out only when the pan moves.
+    pan_gains: [PanGains; MAX_CHANNELS],
     /// False until the first block, which starts at the controls' values.
     started: bool,
     input_state: inputs::MixerInputs,
@@ -144,18 +152,21 @@ impl Mixer {
             channels,
             ctrl: controls,
             levels: [LinearRamp::new(0.0, frames); MAX_CHANNELS],
+            pans: [LinearRamp::new(0.0, frames); MAX_CHANNELS],
             master: LinearRamp::new(0.0, frames),
+            pan_gains: [PanGains::UNSET; MAX_CHANNELS],
             started: false,
             input_state: inputs::MixerInputs::new(channels),
             outputs: outputs::MixerOutputs::new(),
         }
     }
 
-    /// Times the level and master glides for `sample_rate`. The next block
-    /// starts at the controls' values, as the first one does.
+    /// Times the level, pan and master glides for `sample_rate`. The next
+    /// block starts at the controls' values, as the first one does.
     pub fn with_sample_rate(mut self, sample_rate: u32) -> Self {
         let frames = gain_ramp_frames(sample_rate);
         self.levels = [LinearRamp::new(0.0, frames); MAX_CHANNELS];
+        self.pans = [LinearRamp::new(0.0, frames); MAX_CHANNELS];
         self.master = LinearRamp::new(0.0, frames);
         self.started = false;
         self
@@ -204,27 +215,15 @@ impl Mixer {
         &self.ctrl
     }
 
-    fn effective_pan(&self, channel: usize, i: usize) -> f32 {
-        (self.ctrl.pan(channel) + self.input_state.pan_mod(channel, i)).clamp(-1.0, 1.0)
-    }
-
-    /// Reads the controls once a block: a changed level or master starts a
-    /// glide; the first block starts at the controls' values.
+    /// Reads the controls once a block: a changed level, pan or master
+    /// starts a glide; the first block starts at the controls' values.
     fn follow_controls(&mut self) {
+        let started = self.started;
         for ch in 0..self.channels {
-            let level = self.ctrl.level(ch);
-            if self.started {
-                self.levels[ch].set_target(level);
-            } else {
-                self.levels[ch].snap(level);
-            }
+            follow(&mut self.levels[ch], self.ctrl.level(ch), started);
+            follow(&mut self.pans[ch], self.ctrl.pan(ch), started);
         }
-        let master = self.ctrl.master();
-        if self.started {
-            self.master.set_target(master);
-        } else {
-            self.master.snap(master);
-        }
+        follow(&mut self.master, self.ctrl.master(), started);
         self.started = true;
     }
 
@@ -237,10 +236,11 @@ impl Mixer {
             let level_cv = self.input_state.level_cv(ch, i);
             let level = self.levels[ch].next_value();
             let channel_out = self.input_state.audio(ch, i) * level * level_cv;
-            let pan = self.effective_pan(ch, i);
-            let angle = (pan + 1.0) * FRAC_PI_4;
-            left += channel_out * angle.cos();
-            right += channel_out * angle.sin();
+            let pan =
+                (self.pans[ch].next_value() + self.input_state.pan_mod(ch, i)).clamp(-1.0, 1.0);
+            let gains = self.pan_gains[ch].at(pan);
+            left += channel_out * gains.left;
+            right += channel_out * gains.right;
         }
 
         let master_level = self.master.next_value();
@@ -248,6 +248,48 @@ impl Mixer {
         let gain = master_level * master_cv;
 
         (left * gain, right * gain)
+    }
+}
+
+/// Glides `ramp` to `value`, or puts it there at once before the first block.
+#[inline]
+fn follow(ramp: &mut LinearRamp, value: f32, started: bool) {
+    if started {
+        ramp.set_target(value);
+    } else {
+        ramp.snap(value);
+    }
+}
+
+/// A channel's equal-power pan law at its last pan.
+#[derive(Clone, Copy, Debug)]
+struct PanGains {
+    pan: f32,
+    left: f32,
+    right: f32,
+}
+
+impl PanGains {
+    /// No pan yet: the first one works its gains out.
+    const UNSET: Self = Self {
+        pan: f32::NAN,
+        left: 0.0,
+        right: 0.0,
+    };
+
+    /// The gains at `pan`, worked out again only if it moved. A pan that is
+    /// not a number equals nothing, so it is never taken from the cache.
+    #[inline]
+    fn at(&mut self, pan: f32) -> Self {
+        if pan != self.pan {
+            let angle = (pan + 1.0) * FRAC_PI_4;
+            *self = Self {
+                pan,
+                left: angle.cos(),
+                right: angle.sin(),
+            };
+        }
+        *self
     }
 }
 
@@ -440,5 +482,7 @@ impl ModuleFactory for MixerFactory {
     }
 }
 
+#[cfg(test)]
+mod pan_tests;
 #[cfg(test)]
 mod tests;

@@ -446,6 +446,7 @@ fn a_glide_never_allocates() {
     let ((), allocs, frees) = crate::alloc_counter::allocator_events(|| {
         mixer.set_master(0.25);
         mixer.set_level(1, 0.5);
+        mixer.set_pan(0, -0.5);
         for _ in 0..blocks {
             mixer.input_block_mut(0)[..BLOCK].fill(1.0);
             mixer.input_block_mut(1)[..BLOCK].fill(1.0);
