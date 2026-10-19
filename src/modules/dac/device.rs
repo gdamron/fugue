@@ -61,7 +61,7 @@ pub(super) fn output_device(
 /// Picks the first device whose name is exactly `wanted`. Devices whose name
 /// could not be read are skipped. When none matches, the error lists every
 /// name that was seen.
-fn select_named<D>(
+pub(super) fn select_named<D>(
     wanted: &str,
     devices: impl IntoIterator<Item = (D, Option<String>)>,
 ) -> Result<D, MissingOutputDevice> {
@@ -83,7 +83,7 @@ fn select_named<D>(
 
 /// No output device has the name [`OUTPUT_DEVICE_ENV`] gave.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MissingOutputDevice {
+pub(super) struct MissingOutputDevice {
     wanted: String,
     available: Vec<String>,
 }
