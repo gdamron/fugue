@@ -81,6 +81,7 @@ fn test_shared() -> Arc<Shared> {
         render: Mutex::new(Box::new(|_: &mut [f32], _: &mut [f32]| {})),
         diagnostics: Arc::new(AudioDiagnostics::new()),
         sample_rate: 48_000,
+        device_name: None,
         log_missed_deadlines: false,
         rebuild_requested: AtomicBool::new(false),
         shutdown: AtomicBool::new(false),
@@ -198,8 +199,10 @@ fn stop_while_waiting_for_a_device_exits_promptly() {
     assert!(stopping.elapsed() < Duration::from_millis(500));
 }
 
-/// Exercises a real rebuild on the machine's default output. Plays
-/// silence. Run with `cargo test -- --ignored` on a machine with audio.
+/// Exercises a real rebuild on the machine's default output, or on the device
+/// `FUGUE_OUTPUT_DEVICE` names. Plays silence. Run with `cargo test --
+/// --ignored` on a machine with audio; set `FUGUE_OUTPUT_DEVICE` to a
+/// loopback device (e.g. "BlackHole 16ch") to keep it off the speakers.
 #[test]
 #[ignore = "needs an audio output device"]
 fn a_requested_rebuild_keeps_the_same_render_function_playing() {
@@ -212,8 +215,9 @@ fn a_requested_rebuild_keeps_the_same_render_function_playing() {
         left.fill(0.0);
         right.fill(0.0);
     });
+    let device_name = super::super::device::requested_output_device();
     let mut supervisor =
-        Supervisor::start(render, diagnostics.clone(), sample_rate, false).unwrap();
+        Supervisor::start(render, diagnostics.clone(), sample_rate, device_name, false).unwrap();
 
     thread::sleep(Duration::from_millis(300));
     let before = rendered.load(Ordering::Relaxed);

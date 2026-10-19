@@ -1,9 +1,12 @@
 //! Audio output backend abstraction and default cpal-based implementation.
 
 use crate::MAX_BLOCK;
-use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::traits::DeviceTrait;
 use std::sync::Arc;
 
+use super::device::{output_device, requested_output_device};
+#[cfg(doc)]
+use super::OUTPUT_DEVICE_ENV;
 use super::diagnostics::StreamErrorKind;
 use super::supervisor::Supervisor;
 use super::AudioDiagnostics;
@@ -38,47 +41,6 @@ pub(super) fn render_block<T>(
     }
 }
 
-/// Names the output device to play to instead of the system default, e.g.
-/// `FUGUE_OUTPUT_DEVICE="BlackHole 16ch"`. The name must match a device's
-/// name exactly; a name that matches none is an error rather than a fall
-/// back to the default, so audio never goes somewhere it was not sent.
-pub const OUTPUT_DEVICE_ENV: &str = "FUGUE_OUTPUT_DEVICE";
-
-/// The output device to play to: the one [`OUTPUT_DEVICE_ENV`] names, or the
-/// host's default output when it is unset or empty.
-pub(super) fn output_device(host: &cpal::Host) -> Result<cpal::Device, Box<dyn std::error::Error>> {
-    let wanted = std::env::var(OUTPUT_DEVICE_ENV).unwrap_or_default();
-    if wanted.is_empty() {
-        return Ok(host
-            .default_output_device()
-            .ok_or("No output device available")?);
-    }
-    let mut names = Vec::new();
-    for device in host.output_devices()? {
-        let Ok(description) = device.description() else {
-            continue;
-        };
-        if description.name() == wanted {
-            return Ok(device);
-        }
-        names.push(description.name().to_string());
-    }
-    Err(missing_device(&wanted, names.iter().map(String::as_str)).into())
-}
-
-/// Why the named output device cannot be used, listing the ones that can.
-fn missing_device<'a>(wanted: &str, available: impl Iterator<Item = &'a str>) -> String {
-    let available: Vec<&str> = available.collect();
-    format!(
-        "{OUTPUT_DEVICE_ENV} names \"{wanted}\", but no output device has that name; available: {}",
-        if available.is_empty() {
-            "none".to_string()
-        } else {
-            available.join(", ")
-        }
-    )
-}
-
 /// Returns the sample rate of the output device: the system default, or the
 /// one [`OUTPUT_DEVICE_ENV`] names.
 ///
@@ -99,9 +61,11 @@ fn missing_device<'a>(wanted: &str, available: impl Iterator<Item = &'a str>) ->
 ///
 /// # Errors
 ///
-/// Returns an error if no audio output device is available.
+/// Returns an error if no audio output device is available, or none has the
+/// name [`OUTPUT_DEVICE_ENV`] gives.
 pub fn default_sample_rate() -> Result<u32, Box<dyn std::error::Error>> {
-    let device = output_device(&cpal::default_host())?;
+    let wanted = requested_output_device();
+    let device = output_device(&cpal::default_host(), wanted.as_deref())?;
     let config = device.default_output_config()?;
     Ok(config.sample_rate())
 }
@@ -158,11 +122,16 @@ pub trait AudioBackend: Send {
 /// format cpal exposes.
 ///
 /// If the host stops the stream, e.g. because the output device went away,
-/// the driver rebuilds it on the current default output (or the named
-/// device) at the same sample rate, retrying until a device is available.
+/// the driver rebuilds it at the same sample rate, retrying until a device is
+/// available: on the current default output, or on the named device only. A
+/// named device that went away is waited for, never replaced by the default.
 pub struct AudioDriver {
     output: Option<Supervisor>,
     sample_rate: u32,
+    /// The device [`OUTPUT_DEVICE_ENV`] named when the driver was created,
+    /// or `None` for the default output. Every stream, rebuilds included,
+    /// opens on this choice.
+    device_name: Option<String>,
     diagnostics: Arc<AudioDiagnostics>,
 }
 
@@ -173,7 +142,8 @@ impl AudioDriver {
     /// Returns an error if no output device is available, or none has the
     /// name given.
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let device = output_device(&cpal::default_host())?;
+        let device_name = requested_output_device();
+        let device = output_device(&cpal::default_host(), device_name.as_deref())?;
 
         let config = device.default_output_config()?;
         let sample_rate = config.sample_rate();
@@ -181,6 +151,7 @@ impl AudioDriver {
         Ok(Self {
             output: None,
             sample_rate,
+            device_name,
             diagnostics: Arc::new(AudioDiagnostics::new()),
         })
     }
@@ -198,6 +169,7 @@ impl AudioBackend for AudioDriver {
             render,
             self.diagnostics.clone(),
             self.sample_rate,
+            self.device_name.clone(),
             log_missed_deadlines,
         )?);
         Ok(())
@@ -330,17 +302,6 @@ mod tests {
             write_frame::<f32>,
         );
         assert_eq!(data, [0.25, -0.25, 0.25, -0.25, 9.0]);
-    }
-
-    #[test]
-    fn a_missing_output_device_names_the_ones_available() {
-        let message = missing_device("Studio", ["BlackHole 16ch", "Speakers"].into_iter());
-        assert_eq!(
-            message,
-            "FUGUE_OUTPUT_DEVICE names \"Studio\", but no output device has that name; \
-             available: BlackHole 16ch, Speakers"
-        );
-        assert!(missing_device("Studio", std::iter::empty()).ends_with("available: none"));
     }
 
     #[test]

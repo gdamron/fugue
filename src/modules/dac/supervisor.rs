@@ -17,9 +17,8 @@ use std::time::{Duration, Instant};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, SupportedStreamConfig, SupportedStreamConfigRange};
 
-use super::driver::{
-    buffer_period_ns, output_device, render_block, stream_error_kind, write_frame,
-};
+use super::device::output_device;
+use super::driver::{buffer_period_ns, render_block, stream_error_kind, write_frame};
 use super::{AudioDiagnostics, BlockRenderFn};
 use crate::MAX_BLOCK;
 
@@ -38,6 +37,10 @@ struct Shared {
     diagnostics: Arc<AudioDiagnostics>,
     /// Sample rate the graph was built at; every stream is opened at it.
     sample_rate: u32,
+    /// The output device every stream opens on, by exact name, or `None` for
+    /// the current default output. A named device that is missing is retried,
+    /// never replaced by the default. Only the supervisor thread reads it.
+    device_name: Option<String>,
     log_missed_deadlines: bool,
     rebuild_requested: AtomicBool,
     shutdown: AtomicBool,
@@ -74,12 +77,14 @@ impl Supervisor {
         render: BlockRenderFn,
         diagnostics: Arc<AudioDiagnostics>,
         sample_rate: u32,
+        device_name: Option<String>,
         log_missed_deadlines: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let shared = Arc::new(Shared {
             render: Mutex::new(render),
             diagnostics,
             sample_rate,
+            device_name,
             log_missed_deadlines,
             rebuild_requested: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
@@ -220,7 +225,7 @@ impl Backoff {
 /// Opens and starts a stream on the current default output (or the device
 /// `FUGUE_OUTPUT_DEVICE` names) at the graph's sample rate.
 fn open_stream(shared: &Arc<Shared>) -> Result<Stream, Box<dyn std::error::Error>> {
-    let device = output_device(&cpal::default_host())?;
+    let device = output_device(&cpal::default_host(), shared.device_name.as_deref())?;
     let config = output_config(&device, shared.sample_rate)?;
     let stream = build_for_format(&device, config, shared)?;
     stream.play()?;

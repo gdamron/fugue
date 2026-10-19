@@ -8,6 +8,8 @@
 //! - [`NullBackend`] - Device-free backend for headless hosts
 //! - [`default_sample_rate`] - Get the system's audio sample rate
 
+#[cfg(not(target_arch = "wasm32"))]
+mod device;
 mod diagnostics;
 #[cfg(not(target_arch = "wasm32"))]
 mod driver;
@@ -20,6 +22,8 @@ mod outputs;
 #[cfg(not(target_arch = "wasm32"))]
 mod supervisor;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use device::OUTPUT_DEVICE_ENV;
 pub use diagnostics::{AudioDiagnostics, AudioDiagnosticsSnapshot, StreamErrorKind};
 #[cfg(not(target_arch = "wasm32"))]
 pub use driver::{default_sample_rate, AudioBackend, AudioDriver, BlockRenderFn};

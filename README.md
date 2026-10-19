@@ -170,6 +170,39 @@ running.tempo().set_bpm(140.0);
 running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 ```
 
+### Audio Output
+
+Live playback opens the system's default output device. These environment
+variables change that for any host built on the core (`fyug serve`, `fyug
+play`, or your own program); set them before the process starts.
+
+| Variable | Effect |
+|---|---|
+| `FUGUE_OUTPUT_DEVICE` | Play to the output device with exactly this name instead of the default, e.g. `FUGUE_OUTPUT_DEVICE="BlackHole 16ch"`. Unset or empty means the default output. |
+| `FUGUE_AUDIO_DIAGNOSTICS_LOG` | When set, log each audio callback that misses its deadline to stderr. |
+
+The device name must match exactly, including case and spaces. A name that
+matches no device is an error, raised when playback starts, that lists the
+devices available, and nothing plays; Fugue never falls back to the default output. If the named device goes
+away while playing, Fugue waits for that device to return rather than moving
+to another one.
+
+#### Capturing audio as an agent
+
+An agent that needs to hear or measure what it plays should send it to a
+virtual loopback device such as [BlackHole](https://github.com/ExistentialAudio/BlackHole),
+named exactly, and record from that device:
+
+```sh
+FUGUE_OUTPUT_DEVICE="BlackHole 16ch" fyug serve --rpc 127.0.0.1:<port>
+```
+
+Never capture through the default output: it is the listener's speakers or
+headphones. Name the loopback device every time, so that if it is missing the
+run fails with the device list instead of playing out loud. To list the device
+names without opening any device, start playback with the variable set to a
+name that cannot exist and read the list in the error.
+
 
 ## CLI and REPL
 

@@ -82,7 +82,7 @@ pub use modules::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::{
     RtmpSink, RtmpSinkConfig, RtmpSinkFactory, RtmpSinkHandle, RtmpSinkStats, YoutubeSink,
-    YoutubeSinkFactory, YoutubeSinkHandle, YoutubeSinkStats,
+    YoutubeSinkFactory, YoutubeSinkHandle, YoutubeSinkStats, OUTPUT_DEVICE_ENV,
 };
 
 // Re-export invention system
