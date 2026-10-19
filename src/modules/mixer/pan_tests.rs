@@ -1,13 +1,12 @@
 //! Pan glides (FUG-376): a pan change moves the pan, not the gains, over
 //! [`GAIN_RAMP_MS`], and the pan CV input stays sample-exact.
 
+use super::tests::{left_blocks, ramp_frames, BLOCK};
 use super::*;
 
 /// How close a frame is to the pan law at the pan it should be at: f32
 /// rounding gathered over a glide, far below the step a click would be.
 const LAW_TOLERANCE: f32 = 1e-5;
-/// A block of the size a live device plays.
-const BLOCK: usize = 128;
 const HARD_LEFT: f32 = -1.0;
 const HARD_RIGHT: f32 = 1.0;
 
@@ -32,10 +31,6 @@ fn stereo_outputs(mixer: &mut Mixer, frames: u32) -> Vec<(f32, f32)> {
         .collect()
 }
 
-fn ramp_frames() -> u32 {
-    gain_ramp_frames(DEFAULT_SAMPLE_RATE)
-}
-
 /// Whether each output is the pan law at a pan moving from `from` to `to` in
 /// equal steps, landing on it on the last frame.
 fn pans_glide(outputs: &[(f32, f32)], from: f32, to: f32) -> bool {
@@ -45,6 +40,12 @@ fn pans_glide(outputs: &[(f32, f32)], from: f32, to: f32) -> bool {
         let (l, r) = law(pan);
         (left - l).abs() <= LAW_TOLERANCE && (right - r).abs() <= LAW_TOLERANCE
     })
+}
+
+#[test]
+fn the_first_block_starts_at_the_controls_pan() {
+    let mut mixer = Mixer::new(1).with_pan(0, HARD_LEFT);
+    assert_eq!(stereo_outputs(&mut mixer, 1)[0], law(HARD_LEFT));
 }
 
 #[test]
@@ -102,18 +103,6 @@ fn the_pan_cv_input_adds_to_a_gliding_pan() {
     mixer.set_pan(0, HARD_RIGHT);
     let outputs = stereo_outputs(&mut mixer, ramp_frames());
     assert!(pans_glide(&outputs, CV, HARD_RIGHT + CV), "{outputs:?}");
-}
-
-/// Plays `blocks` blocks of BLOCK frames of a constant 1.0 on channel 0 and
-/// returns the left output of every frame.
-fn left_blocks(mixer: &mut dyn Module, blocks: usize) -> Vec<f32> {
-    let mut out = Vec::new();
-    for _ in 0..blocks {
-        mixer.input_block_mut(0)[..BLOCK].fill(1.0);
-        mixer.process(BLOCK);
-        out.extend_from_slice(&mixer.output_block(0)[..BLOCK]);
-    }
-    out
 }
 
 #[test]

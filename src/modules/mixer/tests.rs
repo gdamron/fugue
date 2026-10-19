@@ -333,10 +333,10 @@ const STEP_TOLERANCE: f32 = 0.05;
 const LANDING_TOLERANCE: f32 = 1e-6;
 const MIDPOINT_TOLERANCE: f32 = 1e-5;
 /// A block of the size a live device plays.
-const BLOCK: usize = 128;
+pub(super) const BLOCK: usize = 128;
 
 /// The glide of a mixer built without a sample rate.
-fn ramp_frames() -> u32 {
+pub(super) fn ramp_frames() -> u32 {
     gain_ramp_frames(DEFAULT_SAMPLE_RATE)
 }
 
@@ -403,7 +403,7 @@ fn the_glide_lasts_the_same_time_at_any_sample_rate() {
 
 /// Plays `blocks` blocks of BLOCK frames of a constant 1.0 on channel 0 and
 /// returns the left output of every frame.
-fn left_blocks(mixer: &mut dyn Module, blocks: usize) -> Vec<f32> {
+pub(super) fn left_blocks(mixer: &mut dyn Module, blocks: usize) -> Vec<f32> {
     let mut out = Vec::new();
     for _ in 0..blocks {
         mixer.input_block_mut(0)[..BLOCK].fill(1.0);
@@ -447,6 +447,7 @@ fn a_glide_never_allocates() {
         mixer.set_master(0.25);
         mixer.set_level(1, 0.5);
         mixer.set_pan(0, -0.5);
+        mixer.set_input("pan.1", 0.3).unwrap();
         for _ in 0..blocks {
             mixer.input_block_mut(0)[..BLOCK].fill(1.0);
             mixer.input_block_mut(1)[..BLOCK].fill(1.0);
