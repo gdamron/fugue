@@ -138,7 +138,7 @@ pub struct Mixer {
     /// How many channels' ramps hold what was last heard: the channel count
     /// once a block has played, or what a predecessor handed on before then
     /// (see [`Mixer::carry_on_from`]), which may be more channels than this
-    /// mixer has. None until then, so the first block starts at the
+    /// mixer has. Zero until then, so the first block starts at the
     /// controls' values.
     heard: usize,
     input_state: inputs::MixerInputs,

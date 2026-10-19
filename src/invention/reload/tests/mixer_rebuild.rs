@@ -130,13 +130,18 @@ fn a_channel_dropped_and_restored_before_the_next_block_plays_on() {
 #[test]
 fn a_rebuilt_mixer_in_a_feedback_loop_keeps_what_it_fed_back() {
     // The mixer's left output feeds back into its third channel; the
-    // rebuild only adds an unwired fourth channel.
+    // rebuilds add an unwired fourth channel and then change its level,
+    // installing together in one block.
     let feedback =
         [json!({ "from": "mix", "from_port": "audio_left", "to": "mix", "to_port": "audio.2" })];
-    let mixer = |channels| json!({ "channel_count": channels, "levels": [1.0, 0.0, 0.5, 0.0] });
+    let mixer =
+        |channels, fourth| json!({ "channel_count": channels, "levels": [1.0, 0.0, 0.5, fourth] });
     rebuilds_do_not_step(
-        document_wired(mixer(3), &feedback),
-        &[document_wired(mixer(4), &feedback)],
+        document_wired(mixer(3, 0.0), &feedback),
+        &[
+            document_wired(mixer(4, 0.0), &feedback),
+            document_wired(mixer(4, 0.25), &feedback),
+        ],
     );
 }
 

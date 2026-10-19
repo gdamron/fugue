@@ -480,6 +480,8 @@ pub trait Module: Send {
     /// Returns whether it took over; the graph then also gives it
     /// `previous`'s last outputs as its feedback carry (what a delayed edge
     /// out of it reads), so a loop through it does not drop out either.
+    /// So a module may return true only when its outputs match
+    /// `previous`'s port for port, in the same order.
     ///
     /// Runs on the audio thread as the edit installs, after `previous` has
     /// processed its last block and before this instance processes its
