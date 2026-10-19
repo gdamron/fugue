@@ -46,6 +46,11 @@ pub(crate) struct Publication {
     pub(crate) modules: IndexMap<String, ModuleInstance>,
     /// Whether each entry of `modules` (by index) is a survivor placeholder.
     pub(crate) survivor: Vec<bool>,
+    /// Whether each entry of `modules` (by index) took over from the running
+    /// instance it replaces (see [`Module::inherit`]). All false until the
+    /// audio thread installs the publication; prepared at full length, so
+    /// marking an entry never allocates.
+    pub(crate) inherited: Vec<bool>,
     /// Sink module ids, in module order.
     pub(crate) sinks: Vec<String>,
     /// The string-keyed edge list the topology was compiled from.
@@ -383,7 +388,8 @@ impl SignalGraph {
     /// Survivors keep their feedback carry and every input that stays
     /// unconnected, with any value written to it; added and rebuilt modules
     /// start from zero, though a rebuilt one may first take over what the
-    /// instance it replaces was playing (see [`Module::inherit`]). A loop is
+    /// instance it replaces was playing (see [`Module::inherit`]), and then
+    /// keeps that instance's feedback carry as a survivor does. A loop is
     /// sample-identical across the install as long as the edit leaves its
     /// per-sample order (and so its delayed edge) as it was.
     fn install(&mut self, publication: &mut Publication) {
@@ -393,10 +399,10 @@ impl SignalGraph {
                 if publication.survivor[idx] {
                     std::mem::swap(slot, instance);
                     moved += 1;
-                } else {
-                    // Rebuilt in place: the replacement may carry on from
-                    // what the running instance was playing.
-                    slot.module_mut().inherit(instance.module());
+                } else if slot.module_mut().inherit(instance.module()) {
+                    // Rebuilt in place, carrying on from what the running
+                    // instance was playing: its feedback carry follows too.
+                    publication.inherited[idx] = true;
                 }
             }
         }
@@ -418,6 +424,7 @@ impl SignalGraph {
             self.topo_dirty = true;
         } else {
             self.carry_survivors(publication);
+            self.carry_inherited(publication);
         }
         self.reset_installed_inputs(publication, moved);
     }
@@ -461,6 +468,29 @@ impl SignalGraph {
             for (old, new) in remap.survivors() {
                 let was = retired.topology.connected_in_ports.get(old);
                 self.reset_module_inputs(new, was.map(Vec::as_slice));
+            }
+        }
+    }
+
+    /// Copies the previous-block outputs of each instance a rebuilt module
+    /// took over from (see [`Module::inherit`]) into the rebuilt module's
+    /// carry, so a delayed edge out of it reads what was last played rather
+    /// than silence. Pairs them by id; allocation- and free-free. An entry
+    /// whose output port counts disagree is skipped (left at zero).
+    fn carry_inherited(&mut self, retired: &Publication) {
+        for (new, _) in retired.inherited.iter().enumerate().filter(|(_, &i)| i) {
+            let old = self
+                .modules
+                .get_index(new)
+                .and_then(|(id, _)| retired.modules.get_index_of(id.as_str()));
+            let (Some(src), Some(dst)) = (
+                old.and_then(|old| retired.topology.out_prev.get(old)),
+                self.out_prev.get_mut(new),
+            ) else {
+                continue;
+            };
+            if src.len() == dst.len() {
+                dst.copy_from_slice(src);
             }
         }
     }

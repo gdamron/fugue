@@ -470,9 +470,11 @@ fn build_publication(
         &sinks,
         block_size,
     );
+    let inherited = vec![false; survivor.len()];
     Box::new(Publication {
         modules,
         survivor,
+        inherited,
         sinks,
         edges: mirror.edges.clone(),
         topology,

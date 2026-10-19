@@ -69,7 +69,8 @@ fn a_channel_the_old_mixer_did_not_have_fades_in() {
 #[test]
 fn a_mixer_that_never_played_hands_nothing_on() {
     let old = Mixer::new(1);
-    let mut new = rebuilt(&old, Mixer::new(1).with_master(0.25));
+    let mut new = Mixer::new(1).with_master(0.25);
+    assert!(!new.inherit(&old));
     let first = left_outputs(&mut new, 1)[0];
     assert_eq!(first, 0.25 * centre());
 }
@@ -81,7 +82,7 @@ fn another_type_of_module_hands_nothing_on() {
         .build(DEFAULT_SAMPLE_RATE, &config)
         .unwrap();
     let mut new = Mixer::new(1).with_master(0.25);
-    new.inherit(other.module.module());
+    assert!(!new.inherit(other.module.module()));
     let first = left_outputs(&mut new, 1)[0];
     assert_eq!(first, 0.25 * centre());
 }

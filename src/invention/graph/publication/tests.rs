@@ -89,9 +89,11 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         .zip(&survivor)
         .map(|((id, instance), &is_survivor)| (id, if is_survivor { vacant() } else { instance }))
         .collect();
+    let inherited = vec![false; survivor.len()];
     Box::new(Publication {
         modules,
         survivor,
+        inherited,
         sinks,
         edges,
         topology,

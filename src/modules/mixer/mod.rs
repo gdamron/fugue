@@ -135,12 +135,11 @@ pub struct Mixer {
     /// Each channel's last pan and its left and right gains, so the pan law's
     /// cosine and sine are worked out only when the pan moves.
     pan_gains: [PanGains; MAX_CHANNELS],
-    /// False until the first block, which starts at the controls' values.
-    started: bool,
     /// How many channels' ramps hold what was last heard: the channel count
     /// once a block has played, or what a predecessor handed on before then
     /// (see [`Mixer::carry_on_from`]), which may be more channels than this
-    /// mixer has.
+    /// mixer has. None until then, so the first block starts at the
+    /// controls' values.
     heard: usize,
     input_state: inputs::MixerInputs,
     outputs: outputs::MixerOutputs,
@@ -168,7 +167,6 @@ impl Mixer {
             pans: [LinearRamp::new(0.0, frames); MAX_CHANNELS],
             master: LinearRamp::new(0.0, frames),
             pan_gains: [PanGains::UNSET; MAX_CHANNELS],
-            started: false,
             heard: 0,
             input_state: inputs::MixerInputs::new(channels),
             outputs: outputs::MixerOutputs::new(),
@@ -182,7 +180,6 @@ impl Mixer {
         self.levels = [LinearRamp::new(0.0, frames); MAX_CHANNELS];
         self.pans = [LinearRamp::new(0.0, frames); MAX_CHANNELS];
         self.master = LinearRamp::new(0.0, frames);
-        self.started = false;
         self.heard = 0;
         self
     }
@@ -233,13 +230,12 @@ impl Mixer {
     /// Reads the controls once a block: a changed level, pan or master
     /// starts a glide; the first block starts at the controls' values.
     fn follow_controls(&mut self) {
-        let started = self.started;
+        let started = self.heard > 0;
         for ch in 0..self.channels {
             follow(&mut self.levels[ch], self.ctrl.level(ch), started);
             follow(&mut self.pans[ch], self.ctrl.pan(ch), started);
         }
         follow(&mut self.master, self.ctrl.master(), started);
-        self.started = true;
         self.heard = self.channels;
     }
 
@@ -254,10 +250,12 @@ impl Mixer {
     /// Edits that install in the same block chain: a `previous` that has not
     /// played yet hands on what it took over, including channels it does not
     /// have itself, so a rebuild that drops a channel and one that restores
-    /// it before the next block lose nothing.
-    fn carry_on_from(&mut self, previous: &Mixer) {
+    /// it before the next block lose nothing. (A different type of module
+    /// in the middle of such a chain hands nothing on.) Returns whether it
+    /// took anything over.
+    fn carry_on_from(&mut self, previous: &Mixer) -> bool {
         if previous.heard == 0 {
-            return;
+            return false;
         }
         for ch in 0..MAX_CHANNELS {
             if ch < previous.heard {
@@ -269,8 +267,8 @@ impl Mixer {
             }
         }
         self.master.snap(previous.master.value());
-        self.started = true;
         self.heard = previous.heard;
+        true
     }
 
     /// Mixes all inputs at frame `i` and returns the stereo output sample.
@@ -385,13 +383,11 @@ impl Module for Mixer {
         Some(self)
     }
 
-    fn inherit(&mut self, previous: &dyn Module) {
-        if let Some(previous) = previous
+    fn inherit(&mut self, previous: &dyn Module) -> bool {
+        previous
             .as_any()
             .and_then(|any| any.downcast_ref::<Mixer>())
-        {
-            self.carry_on_from(previous);
-        }
+            .is_some_and(|previous| self.carry_on_from(previous))
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

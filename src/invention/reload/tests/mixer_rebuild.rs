@@ -23,6 +23,11 @@ const SLOPE_MARGIN: f32 = 1.5;
 /// Two tones and mixer `mix`, whose config is `mixer`, into the dac. The
 /// second tone feeds the mixer's second channel when the mixer has one.
 fn document(mixer: serde_json::Value) -> Invention {
+    document_wired(mixer, &[])
+}
+
+/// [`document`] with the `extra` connections too.
+fn document_wired(mixer: serde_json::Value, extra: &[serde_json::Value]) -> Invention {
     let mut document = json!({
         "version": "1.0.0",
         "modules": [
@@ -44,13 +49,13 @@ fn document(mixer: serde_json::Value) -> Invention {
             json!({ "from": "high", "from_port": "audio", "to": "mix", "to_port": "audio.1" }),
         );
     }
+    let connections = document["connections"].as_array_mut().unwrap();
+    connections.extend_from_slice(extra);
     Invention::from_json(&document.to_string()).unwrap()
 }
 
-fn start(mixer: serde_json::Value) -> (RunningInvention, Pump) {
-    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE)
-        .build(document(mixer))
-        .unwrap();
+fn start(document: Invention) -> (RunningInvention, Pump) {
+    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
     start_manual(runtime)
 }
 
@@ -66,18 +71,17 @@ fn steepest(frames: &[f32]) -> f32 {
 /// the output across the reload is no steeper than the tones are on their
 /// own, before it or once the glide has landed.
 fn a_rebuild_does_not_step(from: serde_json::Value, to: serde_json::Value) {
-    rebuilds_do_not_step(from, &[to]);
+    rebuilds_do_not_step(document(from), &[document(to)]);
 }
 
 /// [`a_rebuild_does_not_step`] for reloads to each of `to` in turn, all
-/// before the next block, so they install together.
-fn rebuilds_do_not_step(from: serde_json::Value, to: &[serde_json::Value]) {
+/// before the next block, so they install together: the manual backend
+/// renders nothing until it is pumped.
+fn rebuilds_do_not_step(from: Invention, to: &[Invention]) {
     let (mut running, pump) = start(from);
     let before = pump.render(BLOCKS_BEFORE);
     for to in to {
-        let report = running
-            .reload(document(to.clone()))
-            .expect("the reload applies");
+        let report = running.reload(to.clone()).expect("the reload applies");
         assert_eq!(report.swapped, ["mix"], "{report:?}");
     }
     let after = pump.render(BLOCKS_AFTER);
@@ -117,13 +121,29 @@ fn a_channel_added_by_a_rebuild_fades_in() {
 #[test]
 fn a_channel_dropped_and_restored_before_the_next_block_plays_on() {
     let both = json!({ "channel_count": 2, "levels": [0.0, 1.0] });
-    rebuilds_do_not_step(both.clone(), &[json!({ "channel_count": 1 }), both]);
+    rebuilds_do_not_step(
+        document(both.clone()),
+        &[document(json!({ "channel_count": 1 })), document(both)],
+    );
+}
+
+#[test]
+fn a_rebuilt_mixer_in_a_feedback_loop_keeps_what_it_fed_back() {
+    // The mixer's left output feeds back into its third channel; the
+    // rebuild only adds an unwired fourth channel.
+    let feedback =
+        [json!({ "from": "mix", "from_port": "audio_left", "to": "mix", "to_port": "audio.2" })];
+    let mixer = |channels| json!({ "channel_count": channels, "levels": [1.0, 0.0, 0.5, 0.0] });
+    rebuilds_do_not_step(
+        document_wired(mixer(3), &feedback),
+        &[document_wired(mixer(4), &feedback)],
+    );
 }
 
 #[test]
 fn a_reload_that_leaves_the_mixer_alone_keeps_it() {
     let mixer = json!({ "channel_count": 2, "levels": [0.5, 0.5] });
-    let (mut running, pump) = start(mixer.clone());
+    let (mut running, pump) = start(document(mixer.clone()));
     pump.render(BLOCKS_BEFORE);
     let mut edited = document(mixer);
     edited.modules[1].config["frequency"] = json!(TONE_HZ * 2.0);

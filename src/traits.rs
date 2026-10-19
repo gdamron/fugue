@@ -477,16 +477,20 @@ pub trait Module: Send {
     /// place (a reload that changes its config, say), so the rebuild does
     /// not step the output. A module typically recognizes a predecessor of
     /// its own type through [`Module::as_any`] and ignores any other.
+    /// Returns whether it took over; the graph then also gives it
+    /// `previous`'s last outputs as its feedback carry (what a delayed edge
+    /// out of it reads), so a loop through it does not drop out either.
     ///
     /// Runs on the audio thread as the edit installs, after `previous` has
     /// processed its last block and before this instance processes its
     /// first. It must not allocate, free, lock or block. Several edits can
     /// install in one block, so `previous` may itself be a replacement that
     /// has only inherited and not yet played: a module that inherits must
-    /// leave itself able to hand the same state on. The default does
-    /// nothing: the replacement starts fresh.
-    fn inherit(&mut self, previous: &dyn Module) {
+    /// leave itself able to hand the same state on. The default takes
+    /// nothing over and returns false: the replacement starts fresh.
+    fn inherit(&mut self, previous: &dyn Module) -> bool {
         let _ = previous;
+        false
     }
 
     /// This module's declared controls and the cells it publishes their
