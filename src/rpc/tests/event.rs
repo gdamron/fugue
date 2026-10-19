@@ -48,8 +48,6 @@ fn poll_events_request_and_page_round_trip() {
 
 #[test]
 fn get_meters_request_and_reply_round_trip() {
-    use crate::MeterReading;
-
     let request = RpcRequest {
         schema_version: RPC_SCHEMA_VERSION,
         expected_revision: None,
@@ -66,11 +64,7 @@ fn get_meters_request_and_reply_round_trip() {
         serde_json::from_str(r#"{"schema_version":1,"kind":"get_meters"}"#).unwrap();
     assert_eq!(bare.payload, RpcRequestPayload::GetMeters);
 
-    let meters = vec![MeterReading {
-        sink_id: "master".to_string(),
-        left_peak: 0.5,
-        right_peak: 0.25,
-    }];
+    let meters = vec![measured_reading()];
     let response = RpcResponse::ok(
         None,
         RpcResponsePayload::Meters {
@@ -80,4 +74,64 @@ fn get_meters_request_and_reply_round_trip() {
     let decoded: RpcResponse =
         serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();
     assert_eq!(decoded.payload, RpcResponsePayload::Meters { meters });
+}
+
+/// A reading with every field, two seconds into a 48 kHz audio clock.
+fn measured_reading() -> crate::MeterReading {
+    crate::MeterReading::new(
+        "master",
+        &crate::MasterLevels {
+            left_peak: 0.5,
+            right_peak: 0.25,
+            left_rms: Some(0.125),
+            right_rms: None,
+            end_frame: 96_000,
+            frames: 4_800,
+            sample_rate: 48_000,
+        },
+    )
+}
+
+#[test]
+fn meter_level_carries_rms_and_the_audio_clock_flat_on_the_wire() {
+    use crate::{RpcEvent, RpcEventPayload};
+
+    let event = RpcEvent::new(RpcEventPayload::MeterLevel(measured_reading()));
+    let wire = serde_json::to_value(&event).unwrap();
+    assert_eq!(
+        wire,
+        serde_json::json!({
+            "schema_version": RPC_SCHEMA_VERSION,
+            "event": "meter_level",
+            "sink_id": "master",
+            "left_peak": 0.5,
+            "right_peak": 0.25,
+            // An RMS that was not measured is left out, not sent as null.
+            "left_rms": 0.125,
+            "audio_clock_frame": 96_000,
+            "audio_clock_ms": 2_000.0,
+            "sample_rate": 48_000,
+        })
+    );
+    let decoded: RpcEvent = serde_json::from_value(wire).unwrap();
+    assert_eq!(decoded, event);
+}
+
+/// Readings from a daemon that predates RMS and the audio clock still
+/// decode, with those fields absent.
+#[test]
+fn a_peak_only_meter_level_from_an_older_daemon_still_decodes() {
+    use crate::{RpcEvent, RpcEventPayload};
+
+    let old = r#"{"schema_version":1,"event":"meter_level","sink_id":"master","left_peak":0.5,"right_peak":0.25}"#;
+    let decoded: RpcEvent = serde_json::from_str(old).unwrap();
+    assert_eq!(
+        decoded.payload,
+        RpcEventPayload::MeterLevel(crate::MeterReading {
+            sink_id: "master".to_string(),
+            left_peak: 0.5,
+            right_peak: 0.25,
+            ..Default::default()
+        })
+    );
 }

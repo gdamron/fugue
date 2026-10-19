@@ -72,6 +72,10 @@ use loom::sync::Arc;
 use loom::thread;
 
 const SAMPLE_RATE: u32 = 48_000;
+/// Each modeled block's sum of squares for its one frame: an RMS of 0.5,
+/// below every block's peak, so the RMS cap never hides a torn window.
+const BLOCK_SUM_OF_SQUARES: f32 = 0.25;
+const BLOCK_RMS: f32 = 0.5;
 /// Bounds preemptions to keep each model to seconds; three are enough for a
 /// drain to land inside a fold, and a second drain inside the next.
 const PREEMPTIONS: usize = 3;
@@ -82,6 +86,8 @@ fn block(n: u64) -> BlockLevels {
     BlockLevels {
         left_peak: n as f32,
         right_peak: n as f32,
+        left_sum_of_squares: BLOCK_SUM_OF_SQUARES,
+        right_sum_of_squares: BLOCK_SUM_OF_SQUARES,
         frames: 1,
     }
 }
@@ -94,10 +100,14 @@ fn assert_tiled(readings: &[MasterLevels], blocks: u64) {
         assert_eq!(reading.end_frame - reading.frames, end, "{readings:?}");
         if reading.frames == 0 {
             assert_eq!(reading.left_peak, 0.0, "{readings:?}");
+            assert_eq!(reading.left_rms, None, "{readings:?}");
         } else {
-            // The window's latest block has the largest peak.
+            // The window's latest block has the largest peak, and every
+            // block's sum came with its frame.
             assert_eq!(reading.left_peak, reading.end_frame as f32, "{readings:?}");
             assert_eq!(reading.right_peak, reading.end_frame as f32, "{readings:?}");
+            assert_eq!(reading.left_rms, Some(BLOCK_RMS), "{readings:?}");
+            assert_eq!(reading.right_rms, Some(BLOCK_RMS), "{readings:?}");
         }
         end = reading.end_frame;
     }

@@ -405,6 +405,10 @@ fn master_meter_reports_output_levels_on_the_audio_clock() {
     assert!(left > 0.0, "expected a non-zero left peak, got {left}");
     assert!(right > 0.0, "expected a non-zero right peak, got {right}");
     assert!(left <= 1.0 && right <= 1.0, "peaks stay within full-scale");
+    for (rms, peak) in [(levels.left_rms, left), (levels.right_rms, right)] {
+        let rms = rms.expect("a window with audio has an RMS");
+        assert!(rms > 0.0 && rms <= peak, "RMS {rms} with peak {peak}");
+    }
     assert_eq!(levels.sample_rate, BACKEND_RATE);
     let mut end = 0;
     for reading in &readings {

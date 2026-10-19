@@ -50,11 +50,9 @@ pub enum RpcEventPayload {
         key: String,
         value: ControlValue,
     },
-    MeterLevel {
-        sink_id: String,
-        left_peak: f32,
-        right_peak: f32,
-    },
+    /// The output's levels over the latest meter window. Streamed only, at
+    /// the daemon's meter rate; never retained in polled history.
+    MeterLevel(MeterReading),
     AgentActivity {
         module_id: String,
         activity: String,
@@ -85,19 +83,71 @@ pub trait RpcEventSink: Send + Sync {
     fn emit(&self, event: RpcEvent);
 }
 
-/// One output source's latest sampled peak levels, in a [`GetMeters`] reply.
+/// One output's levels over one meter window: a [`GetMeters`] reply entry,
+/// and the body of each streamed [`RpcEventPayload::MeterLevel`].
 ///
-/// The same values are also broadcast continuously as
-/// [`RpcEventPayload::MeterLevel`]; this is the pull view for clients that do
-/// not hold a streaming socket (FUG-239 #5).
+/// The daemon meters one output, the mixed master (`sink_id` `"master"`):
+/// that is the intended extent, and there are no per-module meters. It drains
+/// the meter on a fixed cadence (about 10 Hz), streams each window once, and
+/// keeps the latest for `GetMeters`, so polling faster than the cadence
+/// returns the same window again, with the same `audio_clock_frame`.
+///
+/// Channels are `left` and `right` of the stereo mix. Levels are linear
+/// amplitude, where 1.0 is full scale (0 dBFS), measured on the mixed block
+/// before the output stage clamps it, so overs read above 1.0. Peak and RMS
+/// cover the same window: every frame rendered since the previous reading.
+///
+/// Fields after the peaks were added later and are optional on the wire: a
+/// daemon that predates them omits them, and a client that predates them
+/// ignores them. A window with no audio in it reads peaks of 0.0 and no
+/// RMS; RMS is also absent when the window's sum of squares was not finite.
 ///
 /// [`GetMeters`]: super::RpcRequestPayload::GetMeters
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct MeterReading {
+    /// The metered output: `"master"`, the mixed output of every sink.
     pub sink_id: String,
+    /// Largest absolute sample in the window, left channel.
     pub left_peak: f32,
+    /// Largest absolute sample in the window, right channel.
     pub right_peak: f32,
+    /// Root mean square over the window, left channel. Never above the peak.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_rms: Option<f32>,
+    /// Root mean square over the window, right channel. Never above the peak.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_rms: Option<f32>,
+    /// Where the window ended on the audio clock: frames the invention had
+    /// rendered, counted from zero when it started playing. It never goes
+    /// back while one invention plays (reloads included), and restarts from
+    /// zero whenever playback starts again. Windows tile it: each starts
+    /// where the previous one ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_clock_frame: Option<u64>,
+    /// `audio_clock_frame` in milliseconds at `sample_rate`, rounded to the
+    /// microsecond.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_clock_ms: Option<f64>,
+    /// Frames per second on the audio clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<u32>,
+}
+
+impl MeterReading {
+    /// The reading for one window of `sink_id`'s levels.
+    pub fn new(sink_id: impl Into<String>, levels: &crate::MasterLevels) -> Self {
+        Self {
+            sink_id: sink_id.into(),
+            left_peak: levels.left_peak,
+            right_peak: levels.right_peak,
+            left_rms: levels.left_rms,
+            right_rms: levels.right_rms,
+            audio_clock_frame: Some(levels.end_frame),
+            audio_clock_ms: Some(levels.end_ms()),
+            sample_rate: Some(levels.sample_rate),
+        }
+    }
 }
 
 /// One event in an [`EventPage`], tagged with its monotonic sequence number so

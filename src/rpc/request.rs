@@ -111,7 +111,7 @@ pub enum RpcRequestPayload {
     /// Read the latest sampled output levels. High-rate `MeterLevel` events are
     /// broadcast to streaming subscribers only (never the event log), so a
     /// poll-only client — notably MCP — reads current levels here instead of
-    /// draining them from the event stream (FUG-239 #5).
+    /// draining them from the event stream.
     GetMeters,
     /// Connect-time handshake: asks the daemon to report its
     /// [`DaemonIdentity`] so the client can confirm it reached a compatible

@@ -28,10 +28,10 @@ fn observing_neither_allocates_nor_waits_for_the_sampler() {
 }
 
 #[test]
-fn a_window_reads_the_peaks_of_every_block_since_the_last_drain() {
+fn a_window_reads_peak_and_rms_of_every_block_since_the_last_drain() {
     let observers = MasterObservers::live();
-    // A full-scale sine on the left and a quiet constant on the right, over
-    // two blocks.
+    // A full-scale sine (RMS 1/sqrt 2) on the left and a quiet constant on
+    // the right, over two blocks.
     let sine: Vec<f32> = (0..FRAMES)
         .map(|i| (std::f32::consts::TAU * i as f32 / FRAMES as f32).sin())
         .collect();
@@ -41,7 +41,15 @@ fn a_window_reads_the_peaks_of_every_block_since_the_last_drain() {
 
     let levels = drain(&observers);
     assert!((levels.left_peak - 1.0).abs() < 1e-6, "{levels:?}");
+    let left_rms = levels.left_rms.unwrap();
+    assert!(
+        (left_rms - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5,
+        "{levels:?}"
+    );
+    // A constant magnitude's RMS is its peak, never a rounding error above.
     assert_eq!(levels.right_peak, 0.3);
+    let right_rms = levels.right_rms.unwrap();
+    assert!(right_rms <= 0.3 && 0.3 - right_rms < 1e-6, "{levels:?}");
     let two_blocks = 2 * FRAMES as u64;
     assert_eq!((levels.frames, levels.end_frame), (two_blocks, two_blocks));
     assert_eq!(levels.sample_rate, SAMPLE_RATE);
@@ -56,13 +64,33 @@ fn a_window_reads_the_peaks_of_every_block_since_the_last_drain() {
     );
 }
 
+/// Blocks need not be a multiple of the pass's lanes: the last few frames
+/// count too.
 #[test]
-fn a_window_without_audio_does_not_move_the_clock() {
+fn a_short_block_counts_every_frame() {
+    const SHORT: usize = 13;
+    let observers = MasterObservers::live();
+    let mut left = vec![0.0f32; SHORT];
+    left[SHORT - 1] = -0.9;
+    let right = vec![0.5f32; SHORT];
+    observe(&observers, &left, &right, SHORT as u64);
+    let levels = drain(&observers);
+    assert_eq!((levels.left_peak, levels.frames), (0.9, SHORT as u64));
+    let expected = (0.81f32 / SHORT as f32).sqrt();
+    assert!(
+        (levels.left_rms.unwrap() - expected).abs() < 1e-6,
+        "{levels:?}"
+    );
+    assert_eq!(levels.right_rms, Some(0.5));
+}
+
+#[test]
+fn a_window_without_audio_has_no_rms_and_does_not_move_the_clock() {
     let observers = MasterObservers::live();
     let empty = drain(&observers);
     assert_eq!(
-        (empty.left_peak, empty.frames, empty.end_frame),
-        (0.0, 0, 0)
+        (empty.left_peak, empty.left_rms, empty.end_frame),
+        (0.0, None, 0)
     );
 
     let block = vec![0.5f32; FRAMES];
@@ -70,18 +98,29 @@ fn a_window_without_audio_does_not_move_the_clock() {
     assert_eq!(drain(&observers).end_frame, 4_800);
     let idle = drain(&observers);
     assert_eq!((idle.frames, idle.end_frame), (0, 4_800));
-    assert_eq!(idle.right_peak, 0.0);
+    assert_eq!((idle.right_peak, idle.right_rms), (0.0, None));
 }
 
 #[test]
-fn peaks_are_measured_before_the_clamp_and_skip_non_finite_audio() {
+fn silence_measures_as_zero_not_as_missing() {
+    let observers = MasterObservers::live();
+    let silence = vec![0.0f32; FRAMES];
+    observe(&observers, &silence, &silence, FRAMES as u64);
+    let levels = drain(&observers);
+    assert_eq!((levels.left_peak, levels.left_rms), (0.0, Some(0.0)));
+}
+
+#[test]
+fn rms_is_measured_before_the_clamp_and_absent_for_non_finite_audio() {
     let observers = MasterObservers::live();
     let over = vec![2.0f32; FRAMES];
     let mut broken = vec![0.5f32; FRAMES];
     broken[1] = f32::NAN;
     observe(&observers, &over, &broken, FRAMES as u64);
     let levels = drain(&observers);
-    assert_eq!((levels.left_peak, levels.right_peak), (2.0, 0.5));
+    assert_eq!((levels.left_peak, levels.left_rms), (2.0, Some(2.0)));
+    // The peak skips a NaN sample; the RMS cannot, so it is not reported.
+    assert_eq!((levels.right_peak, levels.right_rms), (0.5, None));
 }
 
 #[test]
@@ -89,6 +128,8 @@ fn the_window_end_converts_to_milliseconds_at_the_stated_rate() {
     let levels = |end_frame, sample_rate| MasterLevels {
         left_peak: 0.0,
         right_peak: 0.0,
+        left_rms: None,
+        right_rms: None,
         end_frame,
         frames: 0,
         sample_rate,

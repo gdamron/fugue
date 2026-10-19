@@ -1,10 +1,11 @@
-//! The master level meter: peaks of the mixed output, per meter window,
-//! handed from the audio thread to an off-thread sampler.
+//! The master level meter: peak and RMS of the mixed output, per meter
+//! window, handed from the audio thread to an off-thread sampler.
 //!
-//! The audio thread folds each block's peak magnitudes and frame count into
-//! one of two slots; a drain flips which slot it writes and reads the other.
-//! Every block lands in exactly one window, whole, so a reading's peaks,
-//! frame count and end position always describe the same samples, and consecutive windows tile the audio clock without a gap
+//! The audio thread folds each block's peak magnitudes, sums of squares and
+//! frame count into one of two slots; a drain flips which slot it writes
+//! and reads the other. Every block lands in exactly one window, whole, so a
+//! reading's peak, RMS, frame count and end position always describe the
+//! same samples, and consecutive windows tile the audio clock without a gap
 //! or an overlap.
 //!
 //! # The handoff
@@ -55,6 +56,8 @@ const MICROS_PER_MS: f64 = 1_000.0;
 pub(crate) struct BlockLevels {
     pub(crate) left_peak: f32,
     pub(crate) right_peak: f32,
+    pub(crate) left_sum_of_squares: f32,
+    pub(crate) right_sum_of_squares: f32,
     pub(crate) frames: u32,
 }
 
@@ -70,6 +73,11 @@ pub struct MasterLevels {
     pub left_peak: f32,
     /// Largest absolute sample in the window, right channel.
     pub right_peak: f32,
+    /// Root mean square over the same window, left channel. `None` when the
+    /// window holds no frames or its sum of squares was not finite.
+    pub left_rms: Option<f32>,
+    /// Root mean square over the same window, right channel.
+    pub right_rms: Option<f32>,
     /// The audio clock at the end of the window: frames the invention had
     /// rendered, counted from zero when it started playing. A window with no
     /// frames ends where the previous one did.
@@ -97,14 +105,19 @@ struct Slot {
     /// Bits of the `f32` peaks.
     left_peak: AtomicU64,
     right_peak: AtomicU64,
+    /// Bits of the `f64` sums of squares.
+    left_sum: AtomicU64,
+    right_sum: AtomicU64,
     frames: AtomicU64,
     end_frame: AtomicU64,
 }
 
-/// A window as read back from a slot.
+/// Peak and sums as read back from a slot.
 struct Window {
     left_peak: f32,
     right_peak: f32,
+    left_sum: f64,
+    right_sum: f64,
     frames: u64,
     end_frame: u64,
 }
@@ -113,16 +126,24 @@ fn load_f32(cell: &AtomicU64) -> f32 {
     f32::from_bits(cell.load(Ordering::Relaxed) as u32)
 }
 
+fn load_f64(cell: &AtomicU64) -> f64 {
+    f64::from_bits(cell.load(Ordering::Relaxed))
+}
+
 impl Slot {
     /// Folds one block in. Only the fold holding this slot calls it.
     fn fold(&self, block: &BlockLevels, end_frame: u64) {
         let left_peak = load_f32(&self.left_peak).max(block.left_peak);
         let right_peak = load_f32(&self.right_peak).max(block.right_peak);
+        let left_sum = load_f64(&self.left_sum) + f64::from(block.left_sum_of_squares);
+        let right_sum = load_f64(&self.right_sum) + f64::from(block.right_sum_of_squares);
         let frames = self.frames.load(Ordering::Relaxed) + u64::from(block.frames);
         self.left_peak
             .store(u64::from(left_peak.to_bits()), Ordering::Relaxed);
         self.right_peak
             .store(u64::from(right_peak.to_bits()), Ordering::Relaxed);
+        self.left_sum.store(left_sum.to_bits(), Ordering::Relaxed);
+        self.right_sum.store(right_sum.to_bits(), Ordering::Relaxed);
         self.frames.store(frames, Ordering::Relaxed);
         self.end_frame.store(end_frame, Ordering::Relaxed);
     }
@@ -133,13 +154,17 @@ impl Slot {
         let window = Window {
             left_peak: load_f32(&self.left_peak),
             right_peak: load_f32(&self.right_peak),
+            left_sum: load_f64(&self.left_sum),
+            right_sum: load_f64(&self.right_sum),
             frames: self.frames.load(Ordering::Relaxed),
             end_frame: self.end_frame.load(Ordering::Relaxed),
         };
-        // Zero is the bit pattern of 0.0.
+        // Zero is the bit pattern of 0.0 for both float widths.
         for cell in [
             &self.left_peak,
             &self.right_peak,
+            &self.left_sum,
+            &self.right_sum,
             &self.frames,
             &self.end_frame,
         ] {
@@ -147,6 +172,17 @@ impl Slot {
         }
         window
     }
+}
+
+/// RMS from a window's sum of squares. It never exceeds the peak in exact
+/// arithmetic; a constant-magnitude block (a square wave, say) can round
+/// just above it, so it is capped there.
+fn rms(sum_of_squares: f64, frames: u64, peak: f32) -> Option<f32> {
+    if frames == 0 {
+        return None;
+    }
+    let rms = (sum_of_squares / frames as f64).sqrt() as f32;
+    rms.is_finite().then(|| rms.min(peak))
 }
 
 /// The meter shared by the audio thread, which folds blocks in, and the
@@ -189,6 +225,8 @@ impl LevelMeter {
         MasterLevels {
             left_peak: window.left_peak,
             right_peak: window.right_peak,
+            left_rms: rms(window.left_sum, window.frames, window.left_peak),
+            right_rms: rms(window.right_sum, window.frames, window.right_peak),
             end_frame: *last_end,
             frames: window.frames,
             sample_rate,
