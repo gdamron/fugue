@@ -4,7 +4,8 @@
 //! playback starts. When the host reports that the stream has stopped (the
 //! output device went away, or the stream was invalidated), the error callback
 //! only raises a flag and wakes this thread, which then rebuilds the stream on
-//! the current default output, or the device `FUGUE_OUTPUT_DEVICE` names.
+//! the current default output, or the device
+//! [`OUTPUT_DEVICE_ENV`](super::OUTPUT_DEVICE_ENV) names.
 //! While no device can be opened it retries with backoff. Rebuilding never
 //! happens on the audio thread.
 
@@ -223,7 +224,8 @@ impl Backoff {
 }
 
 /// Opens and starts a stream on the current default output (or the device
-/// `FUGUE_OUTPUT_DEVICE` names) at the graph's sample rate.
+/// [`OUTPUT_DEVICE_ENV`](super::OUTPUT_DEVICE_ENV) names) at the graph's
+/// sample rate.
 fn open_stream(shared: &Arc<Shared>) -> Result<Stream, Box<dyn std::error::Error>> {
     let device = output_device(&cpal::default_host(), shared.device_name.as_deref())?;
     let config = output_config(&device, shared.sample_rate)?;
