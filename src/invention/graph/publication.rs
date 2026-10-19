@@ -383,9 +383,9 @@ impl SignalGraph {
     /// Survivors keep their feedback carry and every input that stays
     /// unconnected, with any value written to it; added and rebuilt modules
     /// start from zero, though a rebuilt one may first take over what the
-    /// instance it replaces was playing (see [`Module::inherit`]). A loop is sample-identical across the install as
-    /// long as the edit leaves its per-sample order (and so its delayed edge)
-    /// as it was.
+    /// instance it replaces was playing (see [`Module::inherit`]). A loop is
+    /// sample-identical across the install as long as the edit leaves its
+    /// per-sample order (and so its delayed edge) as it was.
     fn install(&mut self, publication: &mut Publication) {
         let mut moved = 0;
         for (id, instance) in self.modules.iter_mut() {

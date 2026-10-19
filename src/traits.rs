@@ -480,7 +480,10 @@ pub trait Module: Send {
     ///
     /// Runs on the audio thread as the edit installs, after `previous` has
     /// processed its last block and before this instance processes its
-    /// first. It must not allocate, free, lock or block. The default does
+    /// first. It must not allocate, free, lock or block. Several edits can
+    /// install in one block, so `previous` may itself be a replacement that
+    /// has only inherited and not yet played: a module that inherits must
+    /// leave itself able to hand the same state on. The default does
     /// nothing: the replacement starts fresh.
     fn inherit(&mut self, previous: &dyn Module) {
         let _ = previous;

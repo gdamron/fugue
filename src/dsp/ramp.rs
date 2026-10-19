@@ -70,6 +70,7 @@ impl LinearRamp {
     }
 
     /// The value the last frame took (where a glide is, or the resting value).
+    #[inline]
     pub fn value(&self) -> f32 {
         self.current
     }

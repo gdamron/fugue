@@ -66,10 +66,20 @@ fn steepest(frames: &[f32]) -> f32 {
 /// the output across the reload is no steeper than the tones are on their
 /// own, before it or once the glide has landed.
 fn a_rebuild_does_not_step(from: serde_json::Value, to: serde_json::Value) {
+    rebuilds_do_not_step(from, &[to]);
+}
+
+/// [`a_rebuild_does_not_step`] for reloads to each of `to` in turn, all
+/// before the next block, so they install together.
+fn rebuilds_do_not_step(from: serde_json::Value, to: &[serde_json::Value]) {
     let (mut running, pump) = start(from);
     let before = pump.render(BLOCKS_BEFORE);
-    let report = running.reload(document(to)).expect("the reload applies");
-    assert_eq!(report.swapped, ["mix"], "{report:?}");
+    for to in to {
+        let report = running
+            .reload(document(to.clone()))
+            .expect("the reload applies");
+        assert_eq!(report.swapped, ["mix"], "{report:?}");
+    }
     let after = pump.render(BLOCKS_AFTER);
 
     let mut across = before[before.len() - 1..].to_vec();
@@ -102,6 +112,12 @@ fn a_rebuild_that_changes_the_pans_glides() {
 #[test]
 fn a_channel_added_by_a_rebuild_fades_in() {
     a_rebuild_does_not_step(json!({ "channel_count": 1 }), json!({ "channel_count": 2 }));
+}
+
+#[test]
+fn a_channel_dropped_and_restored_before_the_next_block_plays_on() {
+    let both = json!({ "channel_count": 2, "levels": [0.0, 1.0] });
+    rebuilds_do_not_step(both.clone(), &[json!({ "channel_count": 1 }), both]);
 }
 
 #[test]

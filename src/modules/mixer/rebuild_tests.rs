@@ -62,13 +62,7 @@ fn a_channel_the_old_mixer_did_not_have_fades_in() {
     let mut old = Mixer::new(1);
     left_outputs(&mut old, 1);
     let mut new = rebuilt(&old, Mixer::new(2));
-    let outputs: Vec<f32> = (0..ramp_frames())
-        .map(|_| {
-            new.set_input("audio.1", 1.0).unwrap();
-            new.process(1);
-            new.get_output("audio_left").unwrap()
-        })
-        .collect();
+    let outputs = left_outputs_of_channel_1(&mut new, ramp_frames());
     assert!(glides(&outputs, 0.0, centre()), "{outputs:?}");
 }
 
@@ -103,4 +97,27 @@ fn taking_over_never_allocates() {
         new.process(BLOCK);
     });
     assert_eq!((allocs, frees), (0, 0));
+}
+
+#[test]
+fn rebuilds_in_one_block_lose_no_channel_a_later_one_restores() {
+    let mut old = Mixer::new(2).with_level(0, 0.0);
+    left_outputs_of_channel_1(&mut old, 1);
+    // Two channels to one and back before the next block plays.
+    let between = rebuilt(&old, Mixer::new(1));
+    let mut new = rebuilt(&between, Mixer::new(2).with_level(0, 0.0));
+    let first = left_outputs_of_channel_1(&mut new, 1)[0];
+    assert_eq!(first, centre());
+}
+
+/// Plays `frames` single frames of a constant 1.0 on channel 1 and returns
+/// the left output of each.
+fn left_outputs_of_channel_1(mixer: &mut Mixer, frames: u32) -> Vec<f32> {
+    (0..frames)
+        .map(|_| {
+            mixer.set_input("audio.1", 1.0).unwrap();
+            mixer.process(1);
+            mixer.get_output("audio_left").unwrap()
+        })
+        .collect()
 }

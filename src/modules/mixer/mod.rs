@@ -17,7 +17,8 @@
 //!   audio-rate panning
 //! - A mixer rebuilt by an edit (a reload that changes its config) carries
 //!   on from the levels, pans and master its predecessor was playing, so the
-//!   rebuild glides rather than steps (FUG-375)
+//!   rebuild glides rather than steps (FUG-375). A channel the rebuild
+//!   removes still stops at once: its input goes with it
 //!
 //! # Example Invention
 //!
@@ -76,8 +77,9 @@ pub(crate) const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
 const MS_PER_SECOND: f32 = 1_000.0;
 
-/// The level of a channel no one has heard yet.
-const SILENT: f32 = 0.0;
+/// The level a rebuilt mixer's channel starts from when the mixer it
+/// replaces did not have that channel: it fades in from there.
+const UNHEARD_LEVEL: f32 = 0.0;
 
 /// [`GAIN_RAMP_MS`] in frames at `sample_rate`.
 pub fn gain_ramp_frames(sample_rate: u32) -> u32 {
@@ -135,6 +137,11 @@ pub struct Mixer {
     pan_gains: [PanGains; MAX_CHANNELS],
     /// False until the first block, which starts at the controls' values.
     started: bool,
+    /// How many channels' ramps hold what was last heard: the channel count
+    /// once a block has played, or what a predecessor handed on before then
+    /// (see [`Mixer::carry_on_from`]), which may be more channels than this
+    /// mixer has.
+    heard: usize,
     input_state: inputs::MixerInputs,
     outputs: outputs::MixerOutputs,
 }
@@ -162,6 +169,7 @@ impl Mixer {
             master: LinearRamp::new(0.0, frames),
             pan_gains: [PanGains::UNSET; MAX_CHANNELS],
             started: false,
+            heard: 0,
             input_state: inputs::MixerInputs::new(channels),
             outputs: outputs::MixerOutputs::new(),
         }
@@ -175,6 +183,7 @@ impl Mixer {
         self.pans = [LinearRamp::new(0.0, frames); MAX_CHANNELS];
         self.master = LinearRamp::new(0.0, frames);
         self.started = false;
+        self.heard = 0;
         self
     }
 
@@ -231,29 +240,37 @@ impl Mixer {
         }
         follow(&mut self.master, self.ctrl.master(), started);
         self.started = true;
+        self.heard = self.channels;
     }
 
     /// Carries on from `previous`, the mixer this one replaces in a rebuild:
-    /// each channel both have starts at the level and pan `previous` last
-    /// played, and the master at its master, so the first block glides from
-    /// there to this mixer's controls rather than jumping to them. A channel
-    /// `previous` did not have was not heard, so it fades in from silence
-    /// at its own pan. A `previous` that never played hands nothing on.
+    /// each channel `previous` heard starts at the level and pan it was last
+    /// heard at, and the master at its master, so the first block glides
+    /// from there to this mixer's controls rather than jumping to them. A
+    /// channel no one heard fades in from silence at its own pan. A
+    /// `previous` that never played hands nothing on. A channel this mixer
+    /// does not have stops at once, since its input went with it.
+    ///
+    /// Edits that install in the same block chain: a `previous` that has not
+    /// played yet hands on what it took over, including channels it does not
+    /// have itself, so a rebuild that drops a channel and one that restores
+    /// it before the next block lose nothing.
     fn carry_on_from(&mut self, previous: &Mixer) {
-        if !previous.started {
+        if previous.heard == 0 {
             return;
         }
-        for ch in 0..self.channels {
-            if ch < previous.channels {
+        for ch in 0..MAX_CHANNELS {
+            if ch < previous.heard {
                 self.levels[ch].snap(previous.levels[ch].value());
                 self.pans[ch].snap(previous.pans[ch].value());
-            } else {
-                self.levels[ch].snap(SILENT);
+            } else if ch < self.channels {
+                self.levels[ch].snap(UNHEARD_LEVEL);
                 self.pans[ch].snap(self.ctrl.pan(ch));
             }
         }
         self.master.snap(previous.master.value());
         self.started = true;
+        self.heard = previous.heard;
     }
 
     /// Mixes all inputs at frame `i` and returns the stereo output sample.
