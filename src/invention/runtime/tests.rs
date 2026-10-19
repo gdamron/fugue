@@ -381,9 +381,13 @@ fn master_meter_reports_output_levels_on_the_audio_clock() {
     )
     .unwrap();
 
-    let (runtime, _) = InventionBuilder::new(48_000).build(invention).unwrap();
+    // Built at one rate and rendered at another: the audio clock counts the
+    // backend's frames, so it reports the backend's rate.
+    const BUILD_RATE: u32 = 44_100;
+    const BACKEND_RATE: u32 = 48_000;
+    let (runtime, _) = InventionBuilder::new(BUILD_RATE).build(invention).unwrap();
     let running = runtime
-        .start_with_backend(TickBackend::new(48_000))
+        .start_with_backend(TickBackend::new(BACKEND_RATE))
         .unwrap();
 
     // Let the audio worker render enough blocks to fold in a peak. Reading
@@ -401,7 +405,7 @@ fn master_meter_reports_output_levels_on_the_audio_clock() {
     assert!(left > 0.0, "expected a non-zero left peak, got {left}");
     assert!(right > 0.0, "expected a non-zero right peak, got {right}");
     assert!(left <= 1.0 && right <= 1.0, "peaks stay within full-scale");
-    assert_eq!(levels.sample_rate, 48_000);
+    assert_eq!(levels.sample_rate, BACKEND_RATE);
     let mut end = 0;
     for reading in &readings {
         assert_eq!(reading.end_frame - reading.frames, end, "{readings:?}");

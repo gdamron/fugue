@@ -275,7 +275,9 @@ impl RunningInvention {
     /// serialized, and every rendered block lands in exactly one window.
     /// Never blocks the audio thread.
     pub fn master_meter(&self) -> super::MasterLevels {
-        self.master.levels.drain(self.sample_rate)
+        // The audio clock counts the frames the backend renders, at its rate,
+        // which need not be the rate the invention was built at.
+        self.master.levels.drain(self.backend.sample_rate())
     }
 
     /// Starts reading the master output for spectrum analysis, from now on.
