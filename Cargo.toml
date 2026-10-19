@@ -60,7 +60,8 @@ score-import = ["dep:roxmltree", "dep:zip"]
 spectrogram = ["dep:base64"]
 
 [dev-dependencies]
-# Exhaustive interleaving models of the request queue (src/control_request).
+# Exhaustive interleaving models of the request queue (src/control_request)
+# and the master level meter (src/invention/graph/master).
 loom = "0.7"
 tempfile = "3.27.0"
 wit-component = "0.258.0"

@@ -48,7 +48,7 @@ const BUSY: u64 = CLAIM;
 const MS_PER_SECOND: f64 = 1_000.0;
 /// `audio_clock_ms` is rounded to the microsecond: finer than any window
 /// and short on the wire.
-const MS_PRECISION: f64 = 1_000.0;
+const MICROS_PER_MS: f64 = 1_000.0;
 
 /// One block's levels, measured on the audio thread.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -85,7 +85,7 @@ impl MasterLevels {
     /// to the microsecond.
     pub fn end_ms(&self) -> f64 {
         let ms = self.end_frame as f64 * MS_PER_SECOND / f64::from(self.sample_rate);
-        (ms * MS_PRECISION).round() / MS_PRECISION
+        (ms * MICROS_PER_MS).round() / MICROS_PER_MS
     }
 }
 
