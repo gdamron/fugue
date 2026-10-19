@@ -121,8 +121,8 @@ pub struct MeterReading {
     /// Where the window ended on the audio clock: frames the invention had
     /// rendered, counted from zero when it started playing. It never goes
     /// back while one invention plays (reloads included), and restarts from
-    /// zero whenever playback starts again. Windows tile it: each starts where the
-    /// previous one ended.
+    /// zero whenever playback starts again. Windows tile it: each starts
+    /// where the previous one ended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_clock_frame: Option<u64>,
     /// `audio_clock_frame` in milliseconds at `sample_rate`, rounded to the
