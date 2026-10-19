@@ -230,3 +230,38 @@ fn an_install_that_carries_feedback_state_stays_clean() {
     assert!(!rig.graph.topo_dirty);
     assert_eq!(carries(&rig), before);
 }
+
+#[test]
+fn rebuilding_a_mixer_that_takes_over_stays_clean() {
+    // A mixer feeding itself back, so the install also carries the
+    // replaced mixer's feedback into the rebuilt one.
+    let mut rig = Rig::new(
+        r#"{
+        "version": "1.0.0",
+        "modules": [
+            { "id": "osc", "type": "oscillator", "config": { "waveform": "sine" } },
+            { "id": "mix", "type": "mixer", "config": { "channel_count": 2, "levels": [1.0, 0.5] } },
+            { "id": "dac", "type": "dac" }
+        ],
+        "connections": [
+            { "from": "osc", "from_port": "audio", "to": "mix", "to_port": "audio.0" },
+            { "from": "mix", "from_port": "audio_left", "to": "mix", "to_port": "audio.1" },
+            { "from": "mix", "from_port": "audio_left", "to": "dac", "to_port": "audio_left" }
+        ]
+    }"#,
+    );
+    rig.render(3);
+    let mix = rig.graph.modules.get_index_of("mix").unwrap();
+    let fed_back = rig.graph.out_prev[mix].clone();
+    assert!(fed_back.iter().any(|v| *v != 0.0));
+    let config = serde_json::json!({ "channel_count": 3, "levels": [1.0, 0.5, 0.0] });
+    upsert(&rig, "mix", "mixer", config);
+    let ((), allocs, frees) = allocator_events(|| rig.graph.ensure_process_order());
+    assert_eq!(
+        (allocs, frees),
+        (0, 0),
+        "rebuilding a mixer that takes over"
+    );
+    assert!(!rig.graph.topo_dirty);
+    assert_eq!(rig.graph.out_prev[mix], fed_back);
+}

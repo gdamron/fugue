@@ -465,6 +465,36 @@ pub trait Module: Send {
     /// allocation. May lock and allocate. The default does nothing.
     fn prepare_for_publication(&mut self) {}
 
+    /// This instance as [`std::any::Any`], so the instance built to replace
+    /// it can recognize it (see [`Module::inherit`]). The default, `None`,
+    /// hands nothing on.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
+    /// Takes over what is being heard from `previous`, the running instance
+    /// this newly built one replaces when an edit rebuilds the module in
+    /// place (a reload that changes its config, say), so the rebuild does
+    /// not step the output. A module typically recognizes a predecessor of
+    /// its own type through [`Module::as_any`] and ignores any other.
+    /// Returns whether it took over; the graph then also gives it
+    /// `previous`'s last outputs as its feedback carry (what a delayed edge
+    /// out of it reads), so a loop through it does not drop out either.
+    /// So a module may return true only when its outputs match
+    /// `previous`'s port for port, in the same order.
+    ///
+    /// Runs on the audio thread as the edit installs, after `previous` has
+    /// processed its last block and before this instance processes its
+    /// first. It must not allocate, free, lock or block. Several edits can
+    /// install in one block, so `previous` may itself be a replacement that
+    /// has only inherited and not yet played: a module that inherits must
+    /// leave itself able to hand the same state on. The default takes
+    /// nothing over and returns false: the replacement starts fresh.
+    fn inherit(&mut self, previous: &dyn Module) -> bool {
+        let _ = previous;
+        false
+    }
+
     /// This module's declared controls and the cells it publishes their
     /// values to, once it takes control requests. A module that
     /// returns `None` keeps the legacy `set_control` path.

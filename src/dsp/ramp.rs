@@ -69,6 +69,12 @@ impl LinearRamp {
         self.current
     }
 
+    /// The value the last frame took (where a glide is, or the resting value).
+    #[inline]
+    pub fn value(&self) -> f32 {
+        self.current
+    }
+
     /// Whether the value is still moving.
     pub fn is_gliding(&self) -> bool {
         self.remaining > 0
