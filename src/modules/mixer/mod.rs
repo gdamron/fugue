@@ -15,6 +15,9 @@
 //!   the frame the change lands, so moving a fader or a pan never clicks; the
 //!   level, pan and master CV inputs stay sample-exact, for gating and
 //!   audio-rate panning
+//! - A mixer rebuilt by an edit (a reload that changes its config) carries
+//!   on from the levels, pans and master its predecessor was playing, so the
+//!   rebuild glides rather than steps (FUG-375)
 //!
 //! # Example Invention
 //!
@@ -72,6 +75,9 @@ pub const GAIN_RAMP_MS: f32 = 10.0;
 pub(crate) const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
 const MS_PER_SECOND: f32 = 1_000.0;
+
+/// The level of a channel no one has heard yet.
+const SILENT: f32 = 0.0;
 
 /// [`GAIN_RAMP_MS`] in frames at `sample_rate`.
 pub fn gain_ramp_frames(sample_rate: u32) -> u32 {
@@ -227,6 +233,29 @@ impl Mixer {
         self.started = true;
     }
 
+    /// Carries on from `previous`, the mixer this one replaces in a rebuild:
+    /// each channel both have starts at the level and pan `previous` last
+    /// played, and the master at its master, so the first block glides from
+    /// there to this mixer's controls rather than jumping to them. A channel
+    /// `previous` did not have was not heard, so it fades in from silence
+    /// at its own pan. A `previous` that never played hands nothing on.
+    fn carry_on_from(&mut self, previous: &Mixer) {
+        if !previous.started {
+            return;
+        }
+        for ch in 0..self.channels {
+            if ch < previous.channels {
+                self.levels[ch].snap(previous.levels[ch].value());
+                self.pans[ch].snap(previous.pans[ch].value());
+            } else {
+                self.levels[ch].snap(SILENT);
+                self.pans[ch].snap(self.ctrl.pan(ch));
+            }
+        }
+        self.master.snap(previous.master.value());
+        self.started = true;
+    }
+
     /// Mixes all inputs at frame `i` and returns the stereo output sample.
     fn mix(&mut self, i: usize) -> (f32, f32) {
         let mut left = 0.0;
@@ -333,6 +362,19 @@ impl Module for Mixer {
 
     fn set_input_connected(&mut self, index: usize, connected: bool) {
         self.input_state.set_connected(index, connected);
+    }
+
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
+
+    fn inherit(&mut self, previous: &dyn Module) {
+        if let Some(previous) = previous
+            .as_any()
+            .and_then(|any| any.downcast_ref::<Mixer>())
+        {
+            self.carry_on_from(previous);
+        }
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -484,5 +526,7 @@ impl ModuleFactory for MixerFactory {
 
 #[cfg(test)]
 mod pan_tests;
+#[cfg(test)]
+mod rebuild_tests;
 #[cfg(test)]
 mod tests;

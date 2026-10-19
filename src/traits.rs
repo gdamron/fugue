@@ -465,6 +465,27 @@ pub trait Module: Send {
     /// allocation. May lock and allocate. The default does nothing.
     fn prepare_for_publication(&mut self) {}
 
+    /// This instance as [`std::any::Any`], so the instance built to replace
+    /// it can recognize it (see [`Module::inherit`]). The default, `None`,
+    /// hands nothing on.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
+    /// Takes over what is being heard from `previous`, the running instance
+    /// this newly built one replaces when an edit rebuilds the module in
+    /// place (a reload that changes its config, say), so the rebuild does
+    /// not step the output. A module typically recognizes a predecessor of
+    /// its own type through [`Module::as_any`] and ignores any other.
+    ///
+    /// Runs on the audio thread as the edit installs, after `previous` has
+    /// processed its last block and before this instance processes its
+    /// first. It must not allocate, free, lock or block. The default does
+    /// nothing: the replacement starts fresh.
+    fn inherit(&mut self, previous: &dyn Module) {
+        let _ = previous;
+    }
+
     /// This module's declared controls and the cells it publishes their
     /// values to, once it takes control requests. A module that
     /// returns `None` keeps the legacy `set_control` path.

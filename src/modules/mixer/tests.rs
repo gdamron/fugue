@@ -316,7 +316,7 @@ fn ports_count_from_zero_and_the_old_names_are_gone() {
 
 /// Plays `frames` single frames of a constant 1.0 on channel 0 and returns
 /// the left output of each.
-fn left_outputs(mixer: &mut Mixer, frames: u32) -> Vec<f32> {
+pub(super) fn left_outputs(mixer: &mut Mixer, frames: u32) -> Vec<f32> {
     (0..frames)
         .map(|_| {
             mixer.set_input("audio.0", 1.0).unwrap();
@@ -341,7 +341,7 @@ pub(super) fn ramp_frames() -> u32 {
 }
 
 /// Whether `outputs` move from `from` to `to` in equal steps and land on it.
-fn glides(outputs: &[f32], from: f32, to: f32) -> bool {
+pub(super) fn glides(outputs: &[f32], from: f32, to: f32) -> bool {
     let step = (to - from) / ramp_frames() as f32;
     let mut previous = from;
     let even = outputs.iter().all(|&v| {

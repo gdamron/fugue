@@ -382,7 +382,8 @@ impl SignalGraph {
     /// placeholders where survivors were) and the previous derived state.
     /// Survivors keep their feedback carry and every input that stays
     /// unconnected, with any value written to it; added and rebuilt modules
-    /// start from zero. A loop is sample-identical across the install as
+    /// start from zero, though a rebuilt one may first take over what the
+    /// instance it replaces was playing (see [`Module::inherit`]). A loop is sample-identical across the install as
     /// long as the edit leaves its per-sample order (and so its delayed edge)
     /// as it was.
     fn install(&mut self, publication: &mut Publication) {
@@ -392,6 +393,10 @@ impl SignalGraph {
                 if publication.survivor[idx] {
                     std::mem::swap(slot, instance);
                     moved += 1;
+                } else {
+                    // Rebuilt in place: the replacement may carry on from
+                    // what the running instance was playing.
+                    slot.module_mut().inherit(instance.module());
                 }
             }
         }
