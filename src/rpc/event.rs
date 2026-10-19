@@ -99,7 +99,8 @@ pub trait RpcEventSink: Send + Sync {
 ///
 /// Fields after the peaks were added later and are optional on the wire: a
 /// daemon that predates them omits them, and a client that predates them
-/// ignores them. RMS is also absent for a window with no audio in it.
+/// ignores them. A window with no audio in it reads peaks of 0.0 and no
+/// RMS; RMS is also absent when the window's sum of squares was not finite.
 ///
 /// [`GetMeters`]: super::RpcRequestPayload::GetMeters
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -120,7 +121,7 @@ pub struct MeterReading {
     /// Where the window ended on the audio clock: frames the invention had
     /// rendered, counted from zero when it started playing. It never goes
     /// back while one invention plays (reloads included), and restarts from
-    /// zero when another starts. Windows tile it: each starts where the
+    /// zero whenever playback starts again. Windows tile it: each starts where the
     /// previous one ended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_clock_frame: Option<u64>,

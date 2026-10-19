@@ -74,7 +74,7 @@ pub struct MasterLevels {
     /// Largest absolute sample in the window, right channel.
     pub right_peak: f32,
     /// Root mean square over the same window, left channel. `None` when the
-    /// window holds no frames or its samples were not finite.
+    /// window holds no frames or its sum of squares was not finite.
     pub left_rms: Option<f32>,
     /// Root mean square over the same window, right channel.
     pub right_rms: Option<f32>,
