@@ -30,7 +30,7 @@ mod sync {
 /// graph and the runtime handle that samplers read through. Clones share state.
 #[derive(Clone, Default)]
 pub(crate) struct MasterObservers {
-    /// Peaks per meter window, drained into `MeterLevel` events.
+    /// Peak and RMS per meter window, drained into `MeterLevel` events.
     pub(crate) levels: Arc<LevelMeter>,
     /// Mono tap for spectrogram analysis. Only a live runtime has one: an
     /// offline render has no analyser to feed, so it carries no ring.
@@ -51,15 +51,19 @@ impl MasterObservers {
     /// Audio thread: fold one mixed block, which ends at `end_frame` on the
     /// audio clock, into every observer.
     ///
-    /// Lock-free and allocation-free. Peaks are measured over buffers
-    /// already in hand and handed to the level meter with two atomic adds;
-    /// the spectrum tap is a single relaxed load unless an analyser is
-    /// reading.
+    /// Lock-free and allocation-free. Peak and sum of squares are measured
+    /// over buffers already in hand and handed to the level meter with two
+    /// atomic adds; the spectrum tap is a single relaxed load unless an
+    /// analyser is reading.
     #[inline]
     pub(crate) fn observe(&self, left: &[f32], right: &[f32], frames: usize, end_frame: u64) {
+        let (left_peak, left_sum_of_squares) = channel_levels(&left[..frames]);
+        let (right_peak, right_sum_of_squares) = channel_levels(&right[..frames]);
         let block = BlockLevels {
-            left_peak: channel_peak(&left[..frames]),
-            right_peak: channel_peak(&right[..frames]),
+            left_peak,
+            right_peak,
+            left_sum_of_squares,
+            right_sum_of_squares,
             frames: frames as u32,
         };
         self.levels.observe(&block, end_frame);
@@ -71,11 +75,33 @@ impl MasterObservers {
     }
 }
 
-/// One channel's peak magnitude over a block.
-fn channel_peak(samples: &[f32]) -> f32 {
-    samples
+/// Independent running sums per channel. A float sum may not be reordered,
+/// so one running total is a chain of dependent adds; this many short chains
+/// let the compiler vectorize it.
+const LANES: usize = 8;
+
+/// One channel's peak magnitude and sum of squares over a block. Two tight
+/// loops over the block, which is already in cache: each vectorizes, where
+/// one loop doing both measured over twice as slow. A NaN sample is skipped
+/// by the peak and poisons the sum, so the window reports no RMS rather than
+/// a wrong one.
+fn channel_levels(samples: &[f32]) -> (f32, f32) {
+    let peak = samples
         .iter()
-        .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
+        .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+    let chunks = samples.chunks_exact(LANES);
+    let tail: f32 = chunks
+        .remainder()
+        .iter()
+        .map(|sample| sample * sample)
+        .sum();
+    let mut sums = [0.0f32; LANES];
+    for chunk in chunks {
+        for (sum, sample) in sums.iter_mut().zip(chunk) {
+            *sum += sample * sample;
+        }
+    }
+    (peak, sums.iter().sum::<f32>() + tail)
 }
 
 #[cfg(test)]

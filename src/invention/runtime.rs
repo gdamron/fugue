@@ -265,7 +265,7 @@ impl RunningInvention {
         *self.event_sink.lock().unwrap() = Some(sink);
     }
 
-    /// Returns the mixed master output's peak levels since the
+    /// Returns the mixed master output's peak and RMS levels since the
     /// previous call, and where that window ended on the audio clock; the
     /// next window starts here. Intended for one fixed-cadence sampler that
     /// turns each reading into a `MeterLevel` event.
