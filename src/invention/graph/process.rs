@@ -84,7 +84,8 @@ impl SignalGraph {
 
         // Hand the mixed block to the master observers. Lock-free and
         // allocation-free.
-        self.master.observe(left, right, frames);
+        self.master
+            .observe(left, right, frames, self.current_sample);
 
         self.store_carry(frames);
     }

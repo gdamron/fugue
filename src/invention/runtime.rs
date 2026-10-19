@@ -223,9 +223,9 @@ pub struct RunningInvention {
     /// with scripts/agents started at build time) so an install is observed
     /// even by writers created before it.
     event_sink: super::orchestration::EventSinkSlot,
-    /// Master-output observers shared with the audio-thread graph: the peak
-    /// meter the daemon drains to emit `MeterLevel` (FUG-239 #5), and the
-    /// spectrum tap its analyser reads.
+    /// Master-output observers shared with the audio-thread graph: the level
+    /// meter the daemon drains to emit `MeterLevel`, and the spectrum tap its
+    /// analyser reads.
     master: super::graph::MasterObservers,
 }
 
@@ -265,11 +265,17 @@ impl RunningInvention {
         *self.event_sink.lock().unwrap() = Some(sink);
     }
 
-    /// Returns the peak magnitude of the mixed master output (left, right) since
-    /// the previous call, resetting the accumulator. Intended for a fixed-cadence
-    /// sampler that turns the reading into a `MeterLevel` event (FUG-239 #5).
-    pub fn master_meter(&self) -> (f32, f32) {
-        self.master.peak.drain()
+    /// Returns the mixed master output's peak levels since the
+    /// previous call, and where that window ended on the audio clock; the
+    /// next window starts here. Intended for one fixed-cadence sampler that
+    /// turns each reading into a `MeterLevel` event.
+    ///
+    /// Each call takes the window it returns, so two samplers would split
+    /// the output between them rather than each seeing all of it. Calls are
+    /// serialized, and every rendered block lands in exactly one window.
+    /// Never blocks the audio thread.
+    pub fn master_meter(&self) -> super::MasterLevels {
+        self.master.levels.drain(self.sample_rate)
     }
 
     /// Starts reading the master output for spectrum analysis, from now on.

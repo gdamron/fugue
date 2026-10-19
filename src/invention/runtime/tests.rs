@@ -366,7 +366,7 @@ fn installed_sink_observes_code_module_console_output() {
 }
 
 #[test]
-fn master_meter_reports_output_peaks() {
+fn master_meter_reports_output_levels_on_the_audio_clock() {
     let invention = Invention::from_json(
         r#"{
             "version": "1.0.0",
@@ -387,17 +387,27 @@ fn master_meter_reports_output_peaks() {
         .unwrap();
 
     // Let the audio worker render enough blocks to fold in a peak. Reading
-    // the meter drains it, so keep the reading that satisfied the wait.
-    let mut peaks = (0.0, 0.0);
+    // the meter drains it, so keep every reading: together they tile the
+    // audio clock.
+    let mut readings = Vec::new();
     wait_until(|| {
-        peaks = running.master_meter();
-        peaks.0 > 0.0 && peaks.1 > 0.0
+        let levels = running.master_meter();
+        readings.push(levels);
+        levels.left_peak > 0.0 && levels.right_peak > 0.0
     });
 
-    let (left, right) = peaks;
+    let levels = *readings.last().unwrap();
+    let (left, right) = (levels.left_peak, levels.right_peak);
     assert!(left > 0.0, "expected a non-zero left peak, got {left}");
     assert!(right > 0.0, "expected a non-zero right peak, got {right}");
     assert!(left <= 1.0 && right <= 1.0, "peaks stay within full-scale");
+    assert_eq!(levels.sample_rate, 48_000);
+    let mut end = 0;
+    for reading in &readings {
+        assert_eq!(reading.end_frame - reading.frames, end, "{readings:?}");
+        end = reading.end_frame;
+    }
+    assert!(end > 0, "the audio clock moved: {readings:?}");
 
     running.stop();
 }

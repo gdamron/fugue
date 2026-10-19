@@ -43,6 +43,7 @@ pub use format::{
     AssetSpec, Connection, DevelopmentControl, DevelopmentInput, DevelopmentOutput,
     DevelopmentSpec, Invention, ModuleSpec, TimeSignature,
 };
+pub use graph::MasterLevels;
 pub use handles::InventionHandles;
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 pub use reload::{DevelopmentDefinitions, ReloadError, ReloadReport};
