@@ -5,14 +5,33 @@
 //! Adding an observer means adding it here, not threading another field
 //! through every place a graph is built.
 
-use crate::atomic::StereoPeak;
+use std::sync::Arc;
+
+#[cfg(test)]
+mod level_tests;
+mod levels;
+#[cfg(test)]
+mod loom_tests;
+
+pub use levels::MasterLevels;
+use levels::{BlockLevels, LevelMeter};
+
+/// The atomics, lock and yield the level meter is built on. The loom models
+/// compile the same source file against loom's versions instead.
+mod sync {
+    pub(super) use std::sync::atomic::{AtomicU64, Ordering};
+    pub(super) use std::sync::Mutex;
+    pub(super) use std::thread::yield_now;
+
+    pub(super) use crate::audio_thread::debug_assert_control_thread;
+}
 
 /// Everything that watches the master output, shared between the audio-thread
 /// graph and the runtime handle that samplers read through. Clones share state.
 #[derive(Clone, Default)]
 pub(crate) struct MasterObservers {
-    /// Peak level, drained into `MeterLevel` events (FUG-239 #5).
-    pub(crate) peak: StereoPeak,
+    /// Peaks per meter window, drained into `MeterLevel` events.
+    pub(crate) levels: Arc<LevelMeter>,
     /// Mono tap for spectrogram analysis. Only a live runtime has one: an
     /// offline render has no analyser to feed, so it carries no ring.
     #[cfg(feature = "spectrogram")]
@@ -23,32 +42,40 @@ impl MasterObservers {
     /// Observers for a live runtime, which off-thread samplers can read.
     pub(crate) fn live() -> Self {
         Self {
-            peak: StereoPeak::new(),
+            levels: Arc::default(),
             #[cfg(feature = "spectrogram")]
             spectrum: Some(crate::spectrum::SpectrumTap::new()),
         }
     }
 
-    /// Audio thread: fold one mixed block into every observer.
+    /// Audio thread: fold one mixed block, which ends at `end_frame` on the
+    /// audio clock, into every observer.
     ///
-    /// Lock-free and allocation-free. The peak is one pass over buffers
-    /// already in hand; the spectrum tap is a single relaxed load unless an
-    /// analyser is reading.
+    /// Lock-free and allocation-free. Peaks are measured over buffers
+    /// already in hand and handed to the level meter with two atomic adds;
+    /// the spectrum tap is a single relaxed load unless an analyser is
+    /// reading.
     #[inline]
-    pub(crate) fn observe(&self, left: &[f32], right: &[f32], frames: usize) {
-        let mut left_peak = 0.0f32;
-        let mut right_peak = 0.0f32;
-        for i in 0..frames {
-            left_peak = left_peak.max(left[i].abs());
-            right_peak = right_peak.max(right[i].abs());
-        }
-        self.peak.observe(left_peak, right_peak);
+    pub(crate) fn observe(&self, left: &[f32], right: &[f32], frames: usize, end_frame: u64) {
+        let block = BlockLevels {
+            left_peak: channel_peak(&left[..frames]),
+            right_peak: channel_peak(&right[..frames]),
+            frames: frames as u32,
+        };
+        self.levels.observe(&block, end_frame);
 
         #[cfg(feature = "spectrogram")]
         if let Some(spectrum) = &self.spectrum {
             spectrum.observe_block(left, right, frames);
         }
     }
+}
+
+/// One channel's peak magnitude over a block.
+fn channel_peak(samples: &[f32]) -> f32 {
+    samples
+        .iter()
+        .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
 }
 
 #[cfg(test)]
@@ -80,7 +107,7 @@ mod tests {
                 .map(|_| {
                     let start = Instant::now();
                     for _ in 0..BLOCKS_PER_BATCH {
-                        observers.observe(black_box(&left), black_box(&right), FRAMES);
+                        observers.observe(black_box(&left), black_box(&right), FRAMES, 0);
                     }
                     start.elapsed() / BLOCKS_PER_BATCH
                 })
@@ -90,6 +117,7 @@ mod tests {
 
         let observers = MasterObservers::live();
         let idle = per_block(&observers);
+        eprintln!("master observers, idle: {idle:?} a block");
         assert!(idle < budget, "idle observers took {idle:?} a block");
 
         #[cfg(feature = "spectrogram")]
@@ -99,6 +127,7 @@ mod tests {
             // never looks at readers, so it just keeps overwriting.
             let _reader = tap.reader();
             let reading = per_block(&observers);
+            eprintln!("master observers, with a spectrum reader: {reading:?} a block");
             assert!(reading < budget, "with a reader, took {reading:?} a block");
         }
     }
