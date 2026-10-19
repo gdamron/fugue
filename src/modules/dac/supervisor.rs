@@ -4,8 +4,10 @@
 //! playback starts. When the host reports that the stream has stopped (the
 //! output device went away, or the stream was invalidated), the error callback
 //! only raises a flag and wakes this thread, which then rebuilds the stream on
-//! the current default output. While no device can be opened it retries with
-//! backoff. Rebuilding never happens on the audio thread.
+//! the current default output, or the device
+//! [`OUTPUT_DEVICE_ENV`](super::OUTPUT_DEVICE_ENV) names.
+//! While no device can be opened it retries with backoff. Rebuilding never
+//! happens on the audio thread.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, SyncSender};
@@ -13,9 +15,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle, Thread};
 use std::time::{Duration, Instant};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, SupportedStreamConfig, SupportedStreamConfigRange};
 
+use super::device::{output_device, OutputHost};
 use super::driver::{buffer_period_ns, render_block, stream_error_kind, write_frame};
 use super::{AudioDiagnostics, BlockRenderFn};
 use crate::MAX_BLOCK;
@@ -35,6 +38,10 @@ struct Shared {
     diagnostics: Arc<AudioDiagnostics>,
     /// Sample rate the graph was built at; every stream is opened at it.
     sample_rate: u32,
+    /// The output device every stream opens on, by exact name, or `None` for
+    /// the current default output. A named device that is missing is retried,
+    /// never replaced by the default. Only the supervisor thread reads it.
+    device_name: Option<String>,
     log_missed_deadlines: bool,
     rebuild_requested: AtomicBool,
     shutdown: AtomicBool,
@@ -64,19 +71,21 @@ pub(super) struct Supervisor {
 }
 
 impl Supervisor {
-    /// Opens the first stream on the default output and starts supervising
+    /// Opens the first stream on the output device and starts supervising
     /// it. Returns an error, and leaves nothing running, if that first stream
     /// cannot be opened.
     pub(super) fn start(
         render: BlockRenderFn,
         diagnostics: Arc<AudioDiagnostics>,
         sample_rate: u32,
+        device_name: Option<String>,
         log_missed_deadlines: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let shared = Arc::new(Shared {
             render: Mutex::new(render),
             diagnostics,
             sample_rate,
+            device_name,
             log_missed_deadlines,
             rebuild_requested: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
@@ -214,16 +223,24 @@ impl Backoff {
     }
 }
 
-/// Opens and starts a stream on the current default output at the graph's
+/// Opens and starts a stream on the current default output (or the device
+/// [`OUTPUT_DEVICE_ENV`](super::OUTPUT_DEVICE_ENV) names) at the graph's
 /// sample rate.
 fn open_stream(shared: &Arc<Shared>) -> Result<Stream, Box<dyn std::error::Error>> {
-    let device = cpal::default_host()
-        .default_output_device()
-        .ok_or("No output device available")?;
+    let device = stream_device(&cpal::default_host(), shared)?;
     let config = output_config(&device, shared.sample_rate)?;
     let stream = build_for_format(&device, config, shared)?;
     stream.play()?;
     Ok(stream)
+}
+
+/// The device every stream opens on: the one the driver was created with,
+/// by name, or the host's current default output when it named none.
+fn stream_device<H: OutputHost>(
+    host: &H,
+    shared: &Shared,
+) -> Result<H::Device, Box<dyn std::error::Error>> {
+    output_device(host, shared.device_name.as_deref())
 }
 
 /// The device's default config when it already runs at `sample_rate`,

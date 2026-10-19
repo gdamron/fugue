@@ -1,9 +1,12 @@
 //! Audio output backend abstraction and default cpal-based implementation.
 
 use crate::MAX_BLOCK;
-use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::traits::DeviceTrait;
 use std::sync::Arc;
 
+use super::device::{output_device, requested_output_device};
+#[cfg(doc)]
+use super::OUTPUT_DEVICE_ENV;
 use super::diagnostics::StreamErrorKind;
 use super::supervisor::Supervisor;
 use super::AudioDiagnostics;
@@ -38,7 +41,8 @@ pub(super) fn render_block<T>(
     }
 }
 
-/// Returns the sample rate of the default audio output device.
+/// Returns the sample rate of the output device: the system default, or the
+/// one [`OUTPUT_DEVICE_ENV`] names.
 ///
 /// This should be called before building an invention to ensure modules
 /// are configured with the correct sample rate for the audio hardware.
@@ -57,12 +61,11 @@ pub(super) fn render_block<T>(
 ///
 /// # Errors
 ///
-/// Returns an error if no audio output device is available.
+/// Returns an error if no audio output device is available, or none has the
+/// name [`OUTPUT_DEVICE_ENV`] gives.
 pub fn default_sample_rate() -> Result<u32, Box<dyn std::error::Error>> {
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or("No output device available")?;
+    let wanted = requested_output_device();
+    let device = output_device(&cpal::default_host(), wanted.as_deref())?;
     let config = device.default_output_config()?;
     Ok(config.sample_rate())
 }
@@ -114,27 +117,33 @@ pub trait AudioBackend: Send {
 
 /// Default audio backend using the cpal library.
 ///
-/// Sends audio to the system's default output device.
-/// Supports every integer and float sample format cpal exposes.
+/// Sends audio to the system's default output device, or to the one
+/// [`OUTPUT_DEVICE_ENV`] names. Supports every integer and float sample
+/// format cpal exposes.
 ///
 /// If the host stops the stream, e.g. because the output device went away,
-/// the driver rebuilds it on the current default output at the same sample
-/// rate, retrying until a device is available.
+/// the driver rebuilds it at the same sample rate, retrying until a device is
+/// available: on the current default output, or on the named device only. A
+/// named device that went away is waited for, never replaced by the default.
 pub struct AudioDriver {
     output: Option<Supervisor>,
     sample_rate: u32,
+    /// The device [`OUTPUT_DEVICE_ENV`] named when the driver was created,
+    /// or `None` for the default output. Every stream, rebuilds included,
+    /// opens on this choice.
+    device_name: Option<String>,
     diagnostics: Arc<AudioDiagnostics>,
 }
 
 impl AudioDriver {
-    /// Creates a new AudioDriver using the system's default output device.
+    /// Creates a new AudioDriver using the system's default output device,
+    /// or the one [`OUTPUT_DEVICE_ENV`] names.
     ///
-    /// Returns an error if no output device is available.
+    /// Returns an error if no output device is available, or none has the
+    /// name given.
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or("No output device available")?;
+        let device_name = requested_output_device();
+        let device = output_device(&cpal::default_host(), device_name.as_deref())?;
 
         let config = device.default_output_config()?;
         let sample_rate = config.sample_rate();
@@ -142,6 +151,7 @@ impl AudioDriver {
         Ok(Self {
             output: None,
             sample_rate,
+            device_name,
             diagnostics: Arc::new(AudioDiagnostics::new()),
         })
     }
@@ -159,6 +169,7 @@ impl AudioBackend for AudioDriver {
             render,
             self.diagnostics.clone(),
             self.sample_rate,
+            self.device_name.clone(),
             log_missed_deadlines,
         )?);
         Ok(())

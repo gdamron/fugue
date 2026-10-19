@@ -170,6 +170,47 @@ running.tempo().set_bpm(140.0);
 running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
 ```
 
+### Audio Output
+
+Live playback opens the system's default output device. These environment
+variables change that for any host built on the core (`fyug serve` and `fyug
+play`, named `fugue` in older installs, or your own program). Set them in the environment that starts the
+process: a daemon that is already running keeps the device it started with.
+
+| Variable | Effect |
+|---|---|
+| `FUGUE_OUTPUT_DEVICE` | Play to the output device with exactly this name instead of the default, e.g. `FUGUE_OUTPUT_DEVICE="BlackHole 16ch"`. Unset or empty means the default output. |
+| `FUGUE_AUDIO_DIAGNOSTICS_LOG` | When set, log each audio callback that misses its deadline to stderr. |
+
+The device name must match exactly, including case and spaces; if several
+devices share it, the first is used. A name that matches no device is an
+error, raised when playback starts, that lists the devices available, and
+nothing plays: Fugue never falls back to the default output. If the named
+device goes away while playing, Fugue waits for that device to return rather
+than moving to another one.
+
+#### Capturing audio as an agent
+
+An agent that needs to hear or measure what it plays should send it to a
+virtual loopback device such as
+[BlackHole](https://github.com/ExistentialAudio/BlackHole), named exactly,
+and record from that same device:
+
+```sh
+FUGUE_OUTPUT_DEVICE="BlackHole 16ch" fyug serve --rpc 127.0.0.1:<port> &
+# Fugue writes the first two channels; keep exactly those.
+sox -t coreaudio "BlackHole 16ch" capture.wav remix 1 2 trim 0 5
+```
+
+Never capture through the default output: it is the listener's speakers or
+headphones. Name the loopback device every time, so that if it is missing the
+run fails with the device list instead of playing out loud. Avoid names that
+are themselves aliases for the system output, such as ALSA's `default` or
+`pipewire` on Linux. Start the host after the loopback device exists, so the
+graph is built at that device's sample rate. To list the device names without
+opening any device, start playback with the variable set to a name that
+cannot exist and read the list in the error.
+
 
 ## CLI and REPL
 

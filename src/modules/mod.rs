@@ -67,6 +67,8 @@ pub use dac::{
     default_sample_rate, AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver,
     DacModule, NullBackend, StreamErrorKind,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use dac::OUTPUT_DEVICE_ENV;
 pub use filter::{Filter, FilterControls, FilterType};
 pub use lfo::{Lfo, LfoControls};
 pub use melody::{MelodyControls, MelodyGenerator};
