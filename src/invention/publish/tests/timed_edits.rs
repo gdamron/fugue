@@ -75,6 +75,23 @@ fn an_edit_at_a_sample_lands_on_it_mid_block() {
 }
 
 #[test]
+fn an_edit_reporting_after_the_next_is_queued_is_not_counted_lost() {
+    let mut rig = beat_rig(120.0);
+    rig.render(1);
+    let first = remove_dial(&rig, EditTime::AfterSamples(10)).unwrap();
+    render_counted(&mut rig, 1);
+    // Standing in for the next edit, registered before the first's
+    // outcome is received (adopted as it landed, its outcome in flight).
+    rig.live
+        .pending
+        .lock()
+        .unwrap()
+        .timed(RequestId(first.0 + 1_000));
+    let log = rig.live.request_log();
+    assert_eq!((log.edits, log.lost), (3, 0));
+}
+
+#[test]
 fn untouched_modules_play_as_a_twin_that_never_edited() {
     let mut edited = Rig::new(BASE);
     let mut untouched = Rig::new(BASE);
