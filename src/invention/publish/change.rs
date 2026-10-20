@@ -8,7 +8,6 @@
 
 use indexmap::IndexMap;
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::invention::declared::Route;
@@ -50,9 +49,9 @@ pub(crate) struct TopologyMirror {
     /// Neither routed nor saved; dropped by the first change made once no
     /// condition waits (see [`GraphChange::forget_orders`]).
     pub(crate) watches: Vec<(String, String)>,
-    /// What the topology last published does to the sound (see
-    /// `change::order`).
-    pub(crate) heard: order::Heard,
+    /// Each module's control targets as the topology last published was
+    /// compiled with them (see `change::order`).
+    pub(crate) targets: order::Targets,
 }
 
 impl TopologyMirror {
@@ -61,7 +60,10 @@ impl TopologyMirror {
         modules: &IndexMap<String, ModuleInstance>,
         edges: &[RoutingConnection],
     ) -> Self {
-        let heard = order::heard_live(modules, edges);
+        let targets = modules
+            .iter()
+            .map(|(id, instance)| (id.clone(), instance.module().control_targets()));
+        let targets = targets.collect();
         let modules = modules
             .iter()
             .map(|(id, instance)| {
@@ -78,7 +80,7 @@ impl TopologyMirror {
             edges: edges.to_vec(),
             timelines: Vec::new(),
             watches: Vec::new(),
-            heard,
+            targets,
         };
         mirror.settle_timelines();
         mirror
@@ -375,16 +377,11 @@ impl GraphChange {
             .iter_mut()
             .filter_map(|(id, module)| Some((id.clone(), module.instance.take()?)))
             .collect();
+        // Read once: what the publication compiles with is what it holds.
+        self.mirror.targets = self.targets_now();
         self.keep_orders_inaudible();
         self.mirror.settle_timelines();
-        let scheduled = self.rescheduling.targets(&self.surfaces);
-        let facts = MirrorFacts {
-            mirror: &self.mirror,
-            surfaces: &self.surfaces,
-            scheduled: scheduled.clone(),
-        };
-        let publication = build_publication(facts, &mut instances, self.block_size);
-        self.mirror.heard = self.heard_of(&publication.topology, &scheduled);
+        let publication = build_publication(&self.mirror, &mut instances, self.block_size);
         PreparedChange {
             base_generation: self.base_generation,
             mirror: self.mirror,
@@ -428,14 +425,11 @@ impl PreparedChange {
     }
 }
 
-/// Compilation facts read from a mirror; control targets come from the
-/// modules' control surfaces, or a schedule the change writes.
+/// Compilation facts read from a mirror, with each module's control
+/// targets read from its surface beforehand (see [`order::Targets`]).
 struct MirrorFacts<'a> {
     mirror: &'a TopologyMirror,
-    surfaces: &'a SurfaceMap,
-    /// Targets of the schedules the change writes, by scheduler id (see
-    /// [`Rescheduling::targets`]).
-    scheduled: HashMap<String, Vec<String>>,
+    targets: &'a order::Targets,
 }
 
 impl TopologyFacts for MirrorFacts<'_> {
@@ -469,15 +463,7 @@ impl TopologyFacts for MirrorFacts<'_> {
         let Some((id, _)) = self.mirror.modules.get_index(module) else {
             return Vec::new();
         };
-        // A schedule the change writes stands in for the surface's own.
-        let mut targets = match self.scheduled.get(id) {
-            Some(targets) => targets.clone(),
-            None => self
-                .surfaces
-                .get(id)
-                .map(|surface| surface.control_targets())
-                .unwrap_or_default(),
-        };
+        let mut targets = self.targets.get(id).cloned().unwrap_or_default();
         let watched = self
             .mirror
             .watches
@@ -488,15 +474,13 @@ impl TopologyFacts for MirrorFacts<'_> {
     }
 }
 
-/// Compiles `facts`' mirror into a publication, taking the prepared
-/// instance for each module from `instances` and a survivor placeholder
-/// otherwise.
+/// Compiles `mirror` into a publication, taking the prepared instance for
+/// each module from `instances` and a survivor placeholder otherwise.
 fn build_publication(
-    facts: MirrorFacts<'_>,
+    mirror: &TopologyMirror,
     instances: &mut IndexMap<String, ModuleInstance>,
     block_size: usize,
 ) -> Box<Publication> {
-    let mirror = facts.mirror;
     let n = mirror.modules.len();
     let mut modules = IndexMap::with_capacity(n);
     let mut survivor = Vec::with_capacity(n);
@@ -513,7 +497,15 @@ fn build_publication(
         }
     }
     let sinks = mirror.sinks();
-    let topology = compile_topology(&facts, &mirror.edges, &sinks, block_size);
+    let topology = compile_topology(
+        &MirrorFacts {
+            mirror,
+            targets: &mirror.targets,
+        },
+        &mirror.edges,
+        &sinks,
+        block_size,
+    );
     let inherited = vec![false; survivor.len()];
     Box::new(Publication {
         modules,
