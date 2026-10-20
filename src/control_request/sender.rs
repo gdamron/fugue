@@ -1,5 +1,6 @@
 //! Submitting requests to the audio thread.
 
+use super::conditions::WatchSlots;
 use super::event::EventCounter;
 use super::queue::{bounded, QueueConsumer, QueueProducer};
 use super::request::{Request, RequestId, When};
@@ -20,6 +21,7 @@ pub(crate) fn request_channel(
         next_id: AtomicU64::new(1),
         overflows: EventCounter::new(),
         transport,
+        watches: Arc::new(WatchSlots::default()),
     });
     let sender = RequestSender {
         queue,
@@ -53,6 +55,9 @@ struct SenderShared {
     next_id: AtomicU64,
     overflows: EventCounter,
     transport: Arc<Transport>,
+    /// Requests timed by a condition in flight, released by the drain as
+    /// each settles.
+    watches: Arc<WatchSlots>,
 }
 
 impl RequestSender {
@@ -105,6 +110,12 @@ impl RequestSender {
         if let Some(ttl) = request.ttl.take() {
             request.expires = Some(now.saturating_add(ttl));
         }
+        // Counted before it is queued, so the drain never releases a slot
+        // not yet taken.
+        let watching = matches!(request.when, When::Condition(_));
+        if watching {
+            self.shared.watches.take();
+        }
         let pushed = if self.reserve == 0 || self.queue.leaves(self.reserve) {
             self.queue.try_push(request)
         } else {
@@ -113,10 +124,28 @@ impl RequestSender {
         match pushed {
             Ok(()) => Ok(id),
             Err(request) => {
+                if watching {
+                    self.shared.watches.release();
+                }
                 self.shared.overflows.record();
                 Err(QueueFull(request))
             }
         }
+    }
+
+    /// Whether [`CONDITION_CAPACITY`](super::CONDITION_CAPACITY) requests
+    /// timed by a condition are in flight, so a front door refuses one more
+    /// before submitting it. Exact while submissions are serialized, as a
+    /// live graph's are (under its publisher): the audio thread only
+    /// releases, so a stale count only refuses conservatively.
+    pub(crate) fn watchers_full(&self) -> bool {
+        self.shared.watches.full()
+    }
+
+    /// The count the channel's drain releases requests timed by a
+    /// condition from as they settle.
+    pub(crate) fn watch_slots(&self) -> Arc<WatchSlots> {
+        Arc::clone(&self.shared.watches)
     }
 
     /// Submissions refused for want of room, for telemetry.
