@@ -8,8 +8,8 @@
 //! ordering-only edge published right ahead of the request. A watched module
 //! the target already runs into stays where it is, as does one whose order
 //! would change what is heard (see `change::order`). That request applies
-//! late, at its target's next segment, and says so. Orders outlive their requests until the first
-//! change made once no condition waits.
+//! late, at its target's next segment, and says so. Orders outlive their
+//! requests until the first change made once no condition waits.
 
 use std::any::Any;
 
