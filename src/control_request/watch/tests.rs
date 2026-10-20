@@ -527,3 +527,4 @@ fn a_grid_follows_the_clock_s_new_beat_0_after_a_reset() {
 
 mod ramp;
 mod ramps;
+mod table_ramps;

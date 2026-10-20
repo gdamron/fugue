@@ -7,6 +7,7 @@ use super::*;
 use crate::control_request::hold::Rank;
 use crate::control_request::ramps::{ramp_value, BeatRamp, Ramps};
 use crate::control_request::request::Source;
+use crate::test_support::table::TestTable;
 
 /// A clock at `position`, a beat every 128 samples.
 fn at(position: f64, beats_before: u64) -> Scripted {
@@ -85,6 +86,8 @@ pub(super) struct RampHost {
     /// Writes set the clock's rate, in beats per 128 samples, recording
     /// the position and rate each found.
     pub(super) tempo: Option<Vec<(f64, f64)>>,
+    /// The table module 2 plays.
+    pub(super) table: Option<TestTable>,
 }
 
 impl RampHost {
@@ -102,6 +105,7 @@ impl RampHost {
             held: false,
             taken: false,
             tempo: None,
+            table: None,
         }
     }
 
@@ -131,6 +135,11 @@ impl BeatHost for RampHost {
         (a.module_idx, a.control) == (b.module_idx, b.control)
     }
 
+    fn table(&self, module_idx: usize) -> Option<&dyn BeatTable> {
+        let table = self.table.as_ref().filter(|_| module_idx == 2)?;
+        Some(table as &dyn BeatTable)
+    }
+
     fn apply(
         &mut self,
         _target: &ControlTarget,
@@ -156,7 +165,7 @@ impl BeatHost for RampHost {
 }
 
 /// Control 0 of module 1.
-fn control() -> ControlTarget {
+pub(super) fn control() -> ControlTarget {
     ControlTarget {
         generation: INSTALLED,
         module_idx: 1,
