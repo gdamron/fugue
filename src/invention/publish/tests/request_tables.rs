@@ -17,6 +17,7 @@ use crate::test_support::dial::{DialFactory, DIAL, LEVEL};
 use crate::test_support::table::{entry, TestTable};
 use crate::test_support::tabler::{next_table, TablerFactory, TABLER};
 
+mod order;
 mod tempi;
 
 /// A tempo with fractional samples per beat at 48 kHz.
