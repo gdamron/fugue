@@ -23,7 +23,10 @@ use super::table::BeatTable;
 use super::timeline::Timeline;
 use crate::payload::Retirer;
 
+mod cursor;
 mod ramp;
+
+pub(crate) use cursor::{Cursors, StepClock, CURSOR_CAPACITY};
 
 /// What watches need of the graph: its modules' timelines, and applying a
 /// request as a sample-timed one is applied.
@@ -206,6 +209,8 @@ pub(crate) struct Watches {
     limit: usize,
     /// Ramps running, in a table of their own (see [`Ramps`]).
     pub(crate) ramps: Ramps,
+    /// Tables played in place (see [`cursor`]).
+    pub(crate) cursors: Cursors,
 }
 
 impl Watches {
@@ -215,6 +220,7 @@ impl Watches {
             entries: Vec::with_capacity(capacity),
             limit: capacity,
             ramps: Ramps::new(RAMP_CAPACITY),
+            cursors: Cursors::new(CURSOR_CAPACITY),
         }
     }
 
@@ -222,9 +228,9 @@ impl Watches {
         self.entries.len()
     }
 
-    /// Whether no watch waits and no ramp runs.
+    /// Whether no watch waits, no ramp runs and no table plays.
     pub(crate) fn is_empty(&self) -> bool {
-        self.entries.is_empty() && self.ramps.is_empty()
+        self.entries.is_empty() && self.ramps.is_empty() && self.cursors.is_empty()
     }
 
     pub(crate) fn is_full(&self) -> bool {
@@ -305,13 +311,15 @@ impl Watches {
         });
     }
 
-    /// The clocks of the watches and ramps in the `installed` generation.
+    /// The clocks of the watches, ramps and tables in the `installed`
+    /// generation.
     pub(crate) fn clocks(&self, installed: u64) -> impl Iterator<Item = usize> + '_ {
         self.entries
             .iter()
             .filter(move |watch| watch.request.target.generation == installed)
             .map(|watch| watch.clock)
             .chain(self.ramps.clocks(installed))
+            .chain(self.cursors.clocks())
     }
 
     /// Maps every watch resolved against a generation older than
@@ -390,8 +398,8 @@ impl Watches {
     /// may, as far as the clocks' tempi now say. A repeating watch applies
     /// at most once per sample, and settles at the first beat it applies on
     /// only; one losing every beat to a higher rank settles as it ends
-    /// (refused [`Refusal::Expired`] at its ttl, say).
-    /// Allocation- and free-free.
+    /// (refused [`Refusal::Expired`] at its ttl, say). Then it fires every
+    /// table entry due (see [`cursor`]). Allocation- and free-free.
     pub(crate) fn pass(
         &mut self,
         now: u64,
@@ -502,7 +510,14 @@ impl Watches {
             }
             outcomes.record(id, payload, outcome(result));
         }
-        (applied, wait)
+        // Then the tables, as a scheduler wrote after the requests due at
+        // its sample: at the same tier, the table's entry wins.
+        let (fired, next) = self.cursors.pass(now, host, &mut self.ramps);
+        let wait = match (wait, next) {
+            (Some(wait), Some(next)) => Some(wait.min(next)),
+            (wait, next) => wait.or(next),
+        };
+        (applied || fired, wait)
     }
 }
 
