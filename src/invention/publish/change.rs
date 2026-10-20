@@ -49,6 +49,9 @@ pub(crate) struct TopologyMirror {
     /// Neither routed nor saved; dropped by the first change made once no
     /// condition waits (see [`GraphChange::forget_orders`]).
     pub(crate) watches: Vec<(String, String)>,
+    /// What the topology last published does to the sound (see
+    /// `change::order`).
+    pub(crate) heard: order::Heard,
 }
 
 impl TopologyMirror {
@@ -57,6 +60,7 @@ impl TopologyMirror {
         modules: &IndexMap<String, ModuleInstance>,
         edges: &[RoutingConnection],
     ) -> Self {
+        let heard = order::heard_live(modules, edges);
         let modules = modules
             .iter()
             .map(|(id, instance)| {
@@ -73,6 +77,7 @@ impl TopologyMirror {
             edges: edges.to_vec(),
             timelines: Vec::new(),
             watches: Vec::new(),
+            heard,
         };
         mirror.settle_timelines();
         mirror
@@ -365,6 +370,7 @@ impl GraphChange {
             &mut instances,
             self.block_size,
         );
+        self.mirror.heard = self.heard_of(&publication.topology);
         PreparedChange {
             base_generation: self.base_generation,
             mirror: self.mirror,

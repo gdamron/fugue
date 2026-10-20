@@ -11,15 +11,26 @@
 //! search enters an existing loop, or reordering writers) is not added,
 //! and one a later edit would make do so is dropped as that edit
 //! compiles. The request then applies late, at its target's next segment.
+//!
+//! An order publishes on its own, so it is added only while publishing
+//! the topology again would change nothing heard either: a scheduler
+//! retargeted live writes other controls than the installed topology
+//! orders it by (FUG-388), and a compile now would order it anew.
+
+use indexmap::IndexMap;
 
 use super::{GraphChange, MirrorFacts};
-use crate::invention::graph::{compile_topology, TopologyFacts};
+use crate::invention::graph::{
+    compile_topology, CompiledTopology, RoutingConnection, TopologyFacts,
+};
+use crate::invention::runtime::ModuleInstance;
+use crate::GraphModule;
 
 /// What a topology does to the sound beyond acyclic order: each feedback
 /// group's members in the order they compute, every route with whether it
 /// is delayed a sample, and the modules writing controls in the order they
 /// compute.
-type Heard = (
+pub(crate) type Heard = (
     Vec<Vec<usize>>,
     Vec<(usize, usize, usize, usize, bool)>,
     Vec<usize>,
@@ -34,6 +45,9 @@ impl GraphChange {
             return false;
         }
         let unordered = self.heard();
+        if unordered != self.mirror.heard {
+            return false;
+        }
         let watch = (source.to_string(), target.to_string());
         self.mirror.watches.push(watch);
         if self.heard() != unordered {
@@ -75,31 +89,16 @@ impl GraphChange {
         };
         let sinks = self.mirror.sinks();
         let topology = compile_topology(&facts, &self.mirror.edges, &sinks, 1);
-        let writes = |module: &usize| {
-            let (id, _) = self.mirror.modules.get_index(*module).unwrap();
+        self.heard_of(&topology)
+    }
+
+    /// What `topology`, compiled from this change, does to the sound.
+    pub(super) fn heard_of(&self, topology: &CompiledTopology) -> Heard {
+        heard_of(topology, |module| {
+            let (id, _) = self.mirror.modules.get_index(module).unwrap();
             let surface = self.surfaces.get(id);
             surface.is_some_and(|surface| !surface.control_targets().is_empty())
-        };
-        // In the order they run: group by group, as the graph processes.
-        let groups = topology.process_groups.iter();
-        let run = groups.flat_map(|group| group.members.iter().copied());
-        let writers = run.filter(writes).collect();
-        let mut loops: Vec<_> = topology
-            .process_groups
-            .into_iter()
-            .filter(|group| group.feedback)
-            .map(|group| group.members)
-            .collect();
-        loops.sort_unstable();
-        let mut routes = Vec::new();
-        for (to, into) in topology.compiled_routes.into_iter().enumerate() {
-            for route in into {
-                let from = (route.from_module, route.from_port);
-                routes.push((from.0, from.1, to, route.to_port, route.delayed));
-            }
-        }
-        routes.sort_unstable();
-        (loops, routes, writers)
+        })
     }
 
     /// Whether module `from` computes before module `to` by what orders
@@ -133,4 +132,43 @@ impl GraphChange {
         }
         false
     }
+}
+
+/// What the graph about to go live, `modules` routed by `edges`, does to
+/// the sound.
+pub(super) fn heard_live(
+    modules: &IndexMap<String, ModuleInstance>,
+    edges: &[RoutingConnection],
+) -> Heard {
+    let sinks = modules
+        .iter()
+        .filter(|(_, module)| matches!(module, GraphModule::Sink(_)));
+    let sinks: Vec<_> = sinks.map(|(id, _)| id.clone()).collect();
+    let topology = compile_topology(modules, edges, &sinks, 1);
+    heard_of(&topology, |module| {
+        !modules[module].module().control_targets().is_empty()
+    })
+}
+
+/// What `topology` does to the sound, given which modules write controls.
+fn heard_of(topology: &CompiledTopology, writes: impl Fn(usize) -> bool) -> Heard {
+    // In the order they run: group by group, as the graph processes.
+    let groups = topology.process_groups.iter();
+    let run = groups.flat_map(|group| group.members.iter().copied());
+    let writers = run.filter(|module| writes(*module)).collect();
+    let feedback = topology
+        .process_groups
+        .iter()
+        .filter(|group| group.feedback);
+    let mut loops: Vec<_> = feedback.map(|group| group.members.clone()).collect();
+    loops.sort_unstable();
+    let mut routes = Vec::new();
+    for (to, into) in topology.compiled_routes.iter().enumerate() {
+        for route in into {
+            let from = (route.from_module, route.from_port);
+            routes.push((from.0, from.1, to, route.to_port, route.delayed));
+        }
+    }
+    routes.sort_unstable();
+    (loops, routes, writers)
 }
