@@ -30,6 +30,7 @@ mod request_payloads;
 mod request_races;
 mod request_tiers;
 mod request_timing;
+mod request_watch;
 mod requests;
 mod step_pattern;
 mod timelines;
