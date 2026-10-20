@@ -262,7 +262,11 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
     }
     let origin = cursor.anchor(timeline, table, ramps);
     let next_step = report_step(table, timeline, origin, cursor.clock.beats);
-    let until = |beat| timeline.samples_until(beat).map(|samples| (samples - 1).max(1));
+    let until = |beat| {
+        timeline
+            .samples_until(beat)
+            .map(|samples| (samples - 1).max(1))
+    };
     fired.wait = until(next_step);
     while let Some(entry) = table.entry(cursor.next) {
         let beat = origin + entry.step as f64 * cursor.clock.beats;
