@@ -3,12 +3,14 @@
 //! to land on its end step, the `step` output follows the clock, a reset of
 //! the clock plays the schedule again, an entry later than a conditional
 //! write in one segment takes the control back (FUG-386), two schedulers'
-//! writes at one sample land in module order, and no block allocates,
-//! frees or takes a lock a control thread holds.
+//! writes at one sample land in module order, a schedule plays on across
+//! a timed edit, and no block allocates, frees or takes a lock a control
+//! thread holds.
 
 use super::migrated::{block_with_locks_held, read, write};
-use super::request_beats::{render_counted, Twin};
+use super::request_beats::{outcomes_of, render_counted, Twin};
 use super::*;
+use crate::control_request::Outcome;
 use crate::control_request::{Condition, ControlIndex, Predicate, Request, RequestValue, RtValue};
 use crate::control_request::{Source, Timeline, When};
 use crate::test_support::dial::{DialFactory, DIAL, LEVEL};
@@ -35,7 +37,12 @@ fn level(step: u32, value: f32) -> serde_json::Value {
 /// A dial (level 0.25) and a clock at `bpm` stepping a scheduler playing
 /// `schedule`; the scheduler's `heard` output reaches the unclipped dac.
 fn rig(bpm: f64, schedule: serde_json::Value, heard: (&str, &str)) -> Rig {
-    let mut rig = Rig::new(DOCUMENT);
+    rig_on(DOCUMENT, bpm, schedule, heard)
+}
+
+/// [`rig`], on `document`.
+fn rig_on(document: &str, bpm: f64, schedule: serde_json::Value, heard: (&str, &str)) -> Rig {
+    let mut rig = Rig::new(document);
     rig.registry.register(DialFactory);
     rig.adopt_registry();
     let dial = rig.build("dial", DIAL, serde_json::json!({}));
@@ -265,4 +272,45 @@ fn a_step_the_drain_plays_as_its_clock_is_unplugged_is_not_played_again() {
         ControlValue::Number(0.25),
         "replayed"
     );
+}
+
+/// A timed edit (FUG-323) landing while the drain plays a schedule: the
+/// tables are found again after the landing, and the schedule plays on
+/// from the step it reached, each entry once, on its sample. The edit
+/// removes a module listed before the scheduler and its clock, so both
+/// move in module order; it lands mid-step, and on a step's own sample.
+#[test]
+fn a_schedule_plays_on_across_a_timed_edit() {
+    use crate::invention::publish::timed::EditTime;
+    const SPARE: &str = r#"{
+        "version": "1.0.0",
+        "modules": [
+            { "id": "dac", "type": "dac", "config": { "soft_clip": false } },
+            { "id": "spare", "type": "lfo", "config": {} }
+        ],
+        "connections": []
+    }"#;
+    let value = |step: usize| 0.1 * step as f32;
+    let schedule: Vec<_> = (1..=6)
+        .map(|step| level(step as u32, value(step)))
+        .collect();
+    let beats = beat_samples(BPM, 8);
+    for lands in [beats[2] + 100, beats[3]] {
+        let mut rig = rig_on(SPARE, BPM, serde_json::json!(schedule), ("dial", "out"));
+        let mut change = rig.live.begin();
+        change.remove("spare");
+        let prepared = change.prepare().unwrap();
+        let time = EditTime::AtSample(lands as u64);
+        let id = rig.live.commit_when(prepared, time, None, |_| {}).unwrap();
+        let out = render_counted(&mut rig, blocks(BPM, 7.0));
+        let landed = Outcome::Applied { at: lands as u64 };
+        assert_eq!(outcomes_of(&mut rig, id), [(id, landed)]);
+        assert!(!rig.module_ids().contains(&"spare".to_string()));
+        assert!(out[..beats[1]].iter().all(|&level| level == 0.25));
+        for step in 1..=6 {
+            let span = &out[beats[step]..beats[step + 1]];
+            let heard = span.iter().all(|&level| level == value(step));
+            assert!(heard, "step {step}, the edit landing at {lands}");
+        }
+    }
 }
