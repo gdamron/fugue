@@ -42,6 +42,9 @@ mod reclaim;
 mod registry;
 #[cfg(test)]
 pub(crate) mod tests;
+// Submitted to by the front doors FUG-317 builds.
+#[cfg_attr(not(test), allow(dead_code))]
+mod watch;
 
 pub(crate) use change::{BuiltModule, GraphChange, PreparedChange};
 pub(crate) use pending::{PendingLog, PendingWrite};
