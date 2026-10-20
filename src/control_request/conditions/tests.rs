@@ -152,12 +152,10 @@ fn play_ordered(
     for module in 0..host.signals.len() {
         host.compute(module, start + frames);
     }
-    conditions.read(INSTALLED, Some(TARGET), host);
+    conditions.read(INSTALLED, Some(TARGET), host, &store.outcomes.chains);
     let mut splits = Vec::new();
     let mut at = start;
-    while let Some(next) =
-        conditions.apply_due(INSTALLED, Some(TARGET), at, host, &mut store.outcomes)
-    {
+    while let Some(next) = apply_all(conditions, host, store, at) {
         if next >= start + frames {
             break;
         }
@@ -165,8 +163,26 @@ fn play_ordered(
         at = next;
         host.now = next;
     }
-    conditions.read(INSTALLED, None, host);
+    conditions.read(INSTALLED, None, host, &store.outcomes.chains);
     splits
+}
+
+/// Applies what is due on the target at `at`, and what that meets in
+/// turn, as the graph does.
+fn apply_all(
+    conditions: &mut Conditions,
+    host: &mut Host,
+    store: &mut PendingStore,
+    at: u64,
+) -> Option<u64> {
+    loop {
+        let waiting = conditions.len();
+        let next = conditions.apply_due(INSTALLED, Some(TARGET), at, host, &mut store.outcomes);
+        if conditions.len() == waiting {
+            return next;
+        }
+        conditions.chain(INSTALLED, &store.outcomes.chains);
+    }
 }
 
 #[test]
@@ -189,7 +205,7 @@ fn a_condition_nothing_can_meet_is_refused() {
     timed.when = When::Now;
     assert_eq!(Conditions::check(&timed), Err(Refusal::Unsupported));
     let chained = request(1, &[Predicate::Applied(RequestId(3))]);
-    assert_eq!(Conditions::check(&chained), Err(Refusal::Unsupported));
+    assert_eq!(Conditions::check(&chained), Ok(()));
     let five = [Predicate::edges(0, 0, 1); 5];
     assert_eq!(Condition::all(&five), None);
     assert_eq!(Condition::all(&[]), None);
@@ -279,11 +295,11 @@ fn a_condition_read_only_after_its_target_computed_applies_late() {
     // The target computes first, then the source: nothing to apply yet.
     host.segment(0);
     conditions.start(0, INSTALLED, &host, &mut store.outcomes);
-    conditions.read(INSTALLED, Some(TARGET), &host);
+    conditions.read(INSTALLED, Some(TARGET), &host, &store.outcomes.chains);
     let next = conditions.apply_due(INSTALLED, Some(TARGET), 0, &mut host, &mut store.outcomes);
     assert_eq!(next, None);
     host.compute(0, 64);
-    conditions.read(INSTALLED, None, &host);
+    conditions.read(INSTALLED, None, &host, &store.outcomes.chains);
     // Met at 30, it applies before the target's next sample, at 64.
     host.segment(64);
     conditions.start(64, INSTALLED, &host, &mut store.outcomes);
@@ -396,29 +412,23 @@ fn evaluating_neither_allocates_nor_frees() {
     let parts = [Predicate::edges(0, 0, 3), Predicate::edges(1, 0, 1)];
     insert(&mut conditions, &slots, request(1, &parts), &mut store);
     insert(&mut conditions, &slots, request(2, &parts[..1]), &mut store);
-    let control_part = [control(1, Edge::Rising)];
-    insert(
-        &mut conditions,
-        &slots,
-        request(3, &control_part),
-        &mut store,
-    );
+    let chained = [Predicate::Applied(RequestId(1)), control(1, Edge::Rising)];
+    insert(&mut conditions, &slots, request(3, &chained), &mut store);
     host.segment(0);
     for module in 0..2 {
         host.compute(module, 64);
     }
     let ((), allocs, frees) = allocator_events(|| {
-        let outcomes = &mut store.outcomes;
-        conditions.start(0, INSTALLED, &host, outcomes);
-        conditions.read(INSTALLED, Some(TARGET), &host);
+        conditions.start(0, INSTALLED, &host, &mut store.outcomes);
+        conditions.read(INSTALLED, Some(TARGET), &host, &store.outcomes.chains);
         for at in [0, 30, 40] {
             host.now = at;
-            conditions.apply_due(INSTALLED, Some(TARGET), at, &mut host, outcomes);
+            apply_all(&mut conditions, &mut host, &mut store, at);
         }
         host.segment(64);
         host.controls[1] = 1.0;
-        conditions.start(64, INSTALLED, &host, outcomes);
-        conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, outcomes);
+        conditions.start(64, INSTALLED, &host, &mut store.outcomes);
+        apply_all(&mut conditions, &mut host, &mut store, 64);
     });
     assert_eq!((allocs, frees), (0, 0));
     let applied = [(TARGET, 30), (TARGET, 40), (TARGET, 64)];
@@ -491,4 +501,55 @@ fn a_control_crossing_its_level_is_met_at_the_next_segment_start() {
     play_ordered(&mut conditions, &mut host, &mut store, 128, 64);
     assert_eq!(log(&outcomes), [(2, Outcome::Applied { at: 128 })]);
     assert_eq!(slots.taken(), 0);
+}
+
+#[test]
+fn a_request_waiting_on_another_applies_with_it() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![gate(&[30], 64)]);
+    let first = request(1, &[Predicate::edges(0, 0, 1)]);
+    let second = request(2, &[Predicate::Applied(RequestId(1))]);
+    let third = request(3, &[Predicate::Applied(RequestId(2))]);
+    insert(&mut conditions, &slots, first, &mut store);
+    insert(&mut conditions, &slots, second, &mut store);
+    insert(&mut conditions, &slots, third, &mut store);
+    play_ordered(&mut conditions, &mut host, &mut store, 0, 64);
+    let at_30 = Outcome::Applied { at: 30 };
+    assert_eq!(log(&outcomes), [(1, at_30), (2, at_30), (3, at_30)]);
+    assert_eq!(host.applied, [(TARGET, 30); 3]);
+    assert_eq!(slots.taken(), 0);
+}
+
+#[test]
+fn a_request_waiting_on_one_that_will_not_apply_is_refused() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![vec![0.0; 128]]);
+    let waits = request(2, &[Predicate::Applied(RequestId(1))]);
+    insert(&mut conditions, &slots, waits, &mut store);
+    play_ordered(&mut conditions, &mut host, &mut store, 0, 64);
+    let refused = Outcome::Refused(Refusal::Expired);
+    store
+        .outcomes
+        .settle(request(1, &[Predicate::edges(0, 0, 1)]), refused);
+    play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
+    let broken = Outcome::Refused(Refusal::ChainBroken);
+    assert_eq!(log(&outcomes), [(1, refused), (2, broken)]);
+}
+
+#[test]
+fn a_request_waiting_on_one_already_applied_applies_late() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![vec![0.0; 128]]);
+    let applied = Outcome::Applied { at: 3 };
+    store
+        .outcomes
+        .settle(request(1, &[Predicate::edges(0, 0, 1)]), applied);
+    let waits = request(2, &[Predicate::Applied(RequestId(1))]);
+    insert(&mut conditions, &slots, waits, &mut store);
+    play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
+    let late = Outcome::AppliedLate { at: 64, due: 3 };
+    assert_eq!(log(&outcomes), [(1, applied), (2, late)]);
 }

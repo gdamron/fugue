@@ -12,6 +12,12 @@
 //! starts ([`Conditions::start`]): it is met at the first segment start
 //! that finds the control across its level from where the last one did.
 //!
+//! A part waiting on another request is met at the sample that one
+//! applies at, as [`Chains`] reports it: when it settles without applying,
+//! the request is refused ([`Refusal::ChainBroken`]). One that settled
+//! before the part started waiting counts if it is among the latest
+//! settles.
+//!
 //! # When a request applies
 //!
 //! Before its target module computes any sample at or after the one its
@@ -36,7 +42,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use self::parts::{arm, read_controls};
+use self::parts::{arm, latch, read_controls};
+use super::chains::Chains;
 use super::condition::{Condition, Predicate, MAX_PARTS};
 use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
@@ -138,6 +145,8 @@ struct Entry {
     /// Whether its parts started reading: at the first segment start in
     /// its target's generation.
     armed: bool,
+    /// A request it waits on settled without applying.
+    broken: bool,
 }
 
 impl Entry {
@@ -180,18 +189,14 @@ impl Conditions {
         self.entries.len() >= self.limit
     }
 
-    /// Refuses a condition nothing can meet, and what v1 does not watch
-    /// yet: an edit (FUG-323), or another request.
+    /// Refuses a condition nothing can meet, and an edit timed by one
+    /// (FUG-323).
     pub(crate) fn check(request: &Request) -> Result<(), Refusal> {
         let When::Condition(condition) = &request.when else {
             return Err(Refusal::Unsupported);
         };
         condition.check()?;
-        let chained = condition
-            .parts()
-            .iter()
-            .any(|part| matches!(part, Predicate::Applied(_)));
-        if request.value.is_edit() || chained {
+        if request.value.is_edit() {
             return Err(Refusal::Unsupported);
         }
         Ok(())
@@ -219,19 +224,35 @@ impl Conditions {
             condition,
             seen: [UNSEEN; MAX_PARTS],
             armed: false,
+            broken: false,
         });
+    }
+
+    /// Removes entry `i`, its parts no longer waiting on any request.
+    fn take(&mut self, i: usize, chains: &mut Chains) -> Entry {
+        let entry = self.entries.remove(i);
+        if entry.armed {
+            for part in entry.condition.parts() {
+                if let Predicate::Applied(id) = *part {
+                    chains.unwatch(id);
+                }
+            }
+        }
+        entry
     }
 
     /// Removes entry `i`, settling it with `outcome`.
     fn end(&mut self, i: usize, outcomes: &mut Outcomes, outcome: Outcome) {
-        let entry = self.entries.remove(i);
+        let entry = self.take(i, &mut outcomes.chains);
         self.settle(entry.request, outcome, outcomes);
     }
 
     /// At a segment start at `now`: refuses each request in the
-    /// `installed` generation whose ttl ran out ([`Refusal::Expired`]),
-    /// starts the parts of each new one reading from `now`, and reads the
-    /// controls the rest wait on. Allocation- and free-free.
+    /// `installed` generation whose ttl ran out ([`Refusal::Expired`]) or
+    /// that waits on a request that will not apply
+    /// ([`Refusal::ChainBroken`]), starts the parts of each new one reading
+    /// from `now`, and reads the controls the rest wait on. Allocation- and
+    /// free-free.
     pub(crate) fn start(
         &mut self,
         now: u64,
@@ -250,25 +271,43 @@ impl Conditions {
                 self.end(i, outcomes, Refusal::Expired.into());
                 continue;
             }
-            if !entry.armed && !arm(entry, now, host) {
+            if !entry.armed && !arm(entry, now, host, &mut outcomes.chains) {
                 self.end(i, outcomes, Refusal::Invalid.into());
                 continue;
             }
             entry.armed = true;
             read_controls(entry, now, host);
+            latch(entry, &outcomes.chains);
+            if entry.broken {
+                self.end(i, outcomes, Refusal::ChainBroken.into());
+                continue;
+            }
             i += 1;
         }
     }
 
-    /// Reads what the graph has computed of the current segment into the
-    /// parts of each armed request in the `installed` generation (whose
-    /// target is `target`, if given). Read them all (`None`) at the end of
-    /// every segment, so no sample goes unread. Allocation- and free-free.
+    /// Takes in the requests settled since the parts of each armed request
+    /// in the `installed` generation last looked. Allocation- and
+    /// free-free.
+    pub(crate) fn chain(&mut self, installed: u64, chains: &Chains) {
+        for entry in &mut self.entries {
+            if entry.armed && entry.request.target.generation == installed {
+                latch(entry, chains);
+            }
+        }
+    }
+
+    /// Reads what the graph has computed of the current segment, and the
+    /// requests settled, into the parts of each armed request in the
+    /// `installed` generation (whose target is `target`, if given). Read
+    /// them all (`None`) at the end of every segment, so no sample goes
+    /// unread. Allocation- and free-free.
     pub(crate) fn read(
         &mut self,
         installed: u64,
         target: Option<usize>,
         host: &impl ConditionHost,
+        chains: &Chains,
     ) {
         for entry in &mut self.entries {
             let request = &entry.request;
@@ -282,15 +321,17 @@ impl Conditions {
                     read_part(part, seen, host);
                 }
             }
+            latch(entry, chains);
         }
     }
 
     /// Applies, in receipt order, every request in the `installed`
     /// generation (on module `target`, if given) whose condition was met at
     /// or before `at`, the sample its target computes next: on time at its
-    /// due sample, late after it. Returns the earliest sample a condition
-    /// read so far is met at among the rest, which their target must not
-    /// compute past before this is called again. Allocation- and free-free.
+    /// due sample, late after it; refuses each that waits on a request
+    /// that will not apply. Returns the earliest sample a condition read so
+    /// far is met at among the rest, which their target must not compute
+    /// past before this is called again. Allocation- and free-free.
     pub(crate) fn apply_due(
         &mut self,
         installed: u64,
@@ -308,6 +349,10 @@ impl Conditions {
                 i += 1;
                 continue;
             }
+            if entry.broken {
+                self.end(i, outcomes, Refusal::ChainBroken.into());
+                continue;
+            }
             let Some(due) = entry.due() else {
                 i += 1;
                 continue;
@@ -317,7 +362,7 @@ impl Conditions {
                 i += 1;
                 continue;
             }
-            let Entry { request, .. } = self.entries.remove(i);
+            let Entry { request, .. } = self.take(i, &mut outcomes.chains);
             if expired(&request, at) {
                 self.settle(request, Refusal::Expired.into(), outcomes);
                 continue;

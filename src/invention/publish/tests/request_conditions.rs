@@ -189,3 +189,17 @@ fn a_control_crossing_applies_at_the_next_segment_start() {
         [(waits, Outcome::Applied { at: 128 })]
     );
 }
+
+#[test]
+fn a_request_waiting_on_another_applies_on_its_sample() {
+    let mut rig = rig(true);
+    let first = submit_when(&rig, ("dial", LEVEL), When::AtSample(100));
+    let after = Predicate::Applied(first);
+    let when = When::Condition(Condition::all(&[after]).unwrap());
+    let then = submit_when(&rig, ("clock", ControlIndex(0)), when);
+    render_counted(&mut rig, 4);
+    assert_eq!(
+        outcomes_of(&mut rig, then),
+        [(then, Outcome::Applied { at: 100 })]
+    );
+}
