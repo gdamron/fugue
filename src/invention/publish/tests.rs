@@ -38,6 +38,8 @@ mod schedule_payload;
 mod schedule_rebind;
 mod scheduler_beats;
 mod step_pattern;
+mod timed_edits;
+mod timed_publisher;
 mod timelines;
 mod writes;
 

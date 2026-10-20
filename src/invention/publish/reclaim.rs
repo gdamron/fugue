@@ -64,10 +64,11 @@ impl Reclaimer {
         freed
     }
 
-    /// Starts a thread that reclaims every [`RECLAIM_INTERVAL`] until
-    /// `reclaimer` is dropped. Returns false when no thread could start; the
-    /// publisher's own changes still reclaim before they prepare.
-    pub(crate) fn spawn(reclaimer: &Arc<Self>) -> bool {
+    /// Starts a thread that reclaims, then runs `tick`, every
+    /// [`RECLAIM_INTERVAL`] until `reclaimer` is dropped. Returns false when
+    /// no thread could start; the publisher's own changes still reclaim
+    /// before they prepare.
+    pub(crate) fn spawn(reclaimer: &Arc<Self>, tick: impl Fn() + Send + 'static) -> bool {
         let threaded = &reclaimer.threaded;
         let reclaimer = Arc::downgrade(reclaimer);
         let started = std::thread::Builder::new()
@@ -78,6 +79,7 @@ impl Reclaimer {
                     break;
                 };
                 reclaimer.reclaim();
+                tick();
             })
             .is_ok();
         threaded.store(started, Ordering::Relaxed);

@@ -80,7 +80,7 @@ impl LiveGraph {
     ) -> Result<RequestId, GraphCommandError> {
         let control = GraphCommandError::ControlError;
         self.reclaim();
-        let mut publisher = self.publisher.lock().unwrap();
+        let mut publisher = self.lock();
         if !publisher.audio_alive() {
             return Err(GraphCommandError::AudioThreadStopped);
         }
@@ -155,10 +155,14 @@ impl LiveGraph {
     /// under `publisher`: an order moves no module and routes nothing, so
     /// no surface, port or connection changes with it. Returns what is left
     /// to free once the guard is released; publishes nothing when the
-    /// queue is backed up, or the publisher refuses, or a module was
+    /// queue is backed up, a timed edit waits (see `publisher::timed`), or
+    /// the publisher refuses, or a module was
     /// retargeted between ordering and compiling (see `change::order`).
     fn publish_order(&self, publisher: &mut Publisher, prepared: PreparedChange) -> Box<dyn Any> {
-        if prepared.is_empty() || prepared.mirror.targets != publisher.mirror().targets {
+        // An order would cancel a timed edit waiting: the request applies
+        // late instead.
+        let waits = publisher.timed_waiting();
+        if waits || prepared.is_empty() || prepared.mirror.targets != publisher.mirror().targets {
             return Box::new(prepared);
         }
         if !self.reclaimer.threaded() && publisher.audio_alive() && self.backlogged(publisher) {
@@ -178,7 +182,7 @@ impl LiveGraph {
 
 /// Resolves `parts` against the publisher's mirror and the surfaces into a
 /// condition all of them meet, refusing one that can never be met.
-fn condition_of(
+pub(super) fn condition_of(
     mirror: &TopologyMirror,
     surfaces: &SurfaceMap,
     parts: &[Part<'_>],
