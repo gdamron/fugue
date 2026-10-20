@@ -37,6 +37,8 @@ struct Drain {
     ramps: Ramps,
     store: PendingStore,
     _outcomes: OutcomeReceiver,
+    /// The longest segment it plays.
+    segment: u64,
 }
 
 impl Drain {
@@ -47,6 +49,7 @@ impl Drain {
             ramps,
             store,
             _outcomes,
+            segment: 64,
         }
     }
 }
@@ -74,6 +77,7 @@ fn play(
         cursors,
         ramps,
         store,
+        segment,
         ..
     } = drain;
     while host.now < until {
@@ -87,7 +91,8 @@ fn play(
                 seen.push((host.now, i, value));
             }
         }
-        let next = wait.unwrap_or(64).min(arrives.unwrap_or(64)).min(64);
+        let next = wait.unwrap_or(*segment).min(arrives.unwrap_or(*segment));
+        let next = next.min(*segment);
         host.play(next.min(until - host.now));
     }
 }
@@ -211,6 +216,23 @@ fn a_ramp_entry_glides_to_land_on_its_end_step_or_writes_with_no_room() {
     assert!(a_seen
         .windows(2)
         .all(|pair| pair[0].2 < pair[1].2 || pair[0].0 == 0));
+}
+
+#[test]
+fn back_to_back_ramps_meet_on_their_shared_step_whatever_the_segments() {
+    for segment in [64, 37, 128, 200, 1024] {
+        let level = number(0.0);
+        let entries = vec![entry(0, 1, 1.0, &level), entry(1, 1, 0.0, &level)];
+        let mut host = host(BEFORE_START, entries);
+        let mut drain = drain(1.0, 4);
+        drain.segment = segment;
+        let mut seen = Vec::with_capacity(64);
+        play(&mut drain, &mut host, 512, &[&level], &mut seen);
+        let peak = seen.iter().map(|&(_, _, value)| value).fold(0.0, f32::max);
+        assert_eq!(peak, 1.0, "segments of {segment}");
+        assert!(seen.contains(&(127, 0, 1.0)), "segments of {segment}");
+        assert_eq!(seen.last(), Some(&(255, 0, 0.0)), "segments of {segment}");
+    }
 }
 
 #[test]
