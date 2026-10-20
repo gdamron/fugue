@@ -8,7 +8,7 @@
 use super::request_beats::{outcomes_of, render_counted};
 use super::*;
 use crate::control_request::{
-    Condition, ControlIndex, Outcome, Predicate, Refusal, Request, RequestId, RequestValue,
+    Condition, ControlIndex, Edge, Outcome, Predicate, Refusal, Request, RequestId, RequestValue,
     RtValue, When,
 };
 use crate::test_support::dial::{DialFactory, DIAL, LEVEL};
@@ -148,4 +148,44 @@ fn a_settled_condition_frees_its_slot() {
         [(_, Outcome::Applied { .. })]
     ));
     assert_eq!(rig.live.requests.watch_slots().taken(), 0);
+}
+
+/// Submits `value` for `control` of `module_id`, timed `when`.
+fn submit_when(rig: &Rig, (module_id, control): (&str, ControlIndex), when: When) -> RequestId {
+    let publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher.control_target(module_id, control).unwrap();
+    let mut request = Request::new(target, RequestValue::Value(RtValue::F32(1.0)));
+    request.when = when;
+    rig.live.requests.submit(request).unwrap()
+}
+
+/// The module index of `module_id` in the publisher's order.
+fn index_of(rig: &Rig, module_id: &str) -> u32 {
+    let publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher
+        .control_target(module_id, ControlIndex(0))
+        .unwrap();
+    target.module_idx as u32
+}
+
+#[test]
+fn a_control_crossing_applies_at_the_next_segment_start() {
+    let mut rig = rig(true);
+    let dial = index_of(&rig, "dial");
+    let crossing = Predicate::Control {
+        module: dial,
+        control: LEVEL,
+        edge: Edge::Rising,
+        level: 0.5,
+    };
+    let when = When::Condition(Condition::all(&[crossing]).unwrap());
+    let waits = submit_when(&rig, ("clock", ControlIndex(0)), when);
+    submit_when(&rig, ("dial", LEVEL), When::AtSample(100));
+    render_counted(&mut rig, 4);
+    // The level changes at 100, inside the second block: read at the next
+    // segment start, the third block's.
+    assert_eq!(
+        outcomes_of(&mut rig, waits),
+        [(waits, Outcome::Applied { at: 128 })]
+    );
 }

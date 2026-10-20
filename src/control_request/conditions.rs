@@ -8,6 +8,10 @@
 //! sample the table arms it at. It is met on the exact sample of its
 //! `count`th crossing.
 //!
+//! A control part reads its control where controls change, at segment
+//! starts ([`Conditions::start`]): it is met at the first segment start
+//! that finds the control across its level from where the last one did.
+//!
 //! # When a request applies
 //!
 //! Before its target module computes any sample at or after the one its
@@ -32,10 +36,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use self::parts::{arm, read_controls};
 use super::condition::{Condition, Predicate, MAX_PARTS};
 use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
-use super::request::{ControlTarget, Request, RequestValue, When};
+use super::request::{ControlIndex, ControlTarget, Request, RequestValue, When};
 use crate::payload::Retirer;
 
 /// The most requests timed by a condition one graph keeps waiting.
@@ -89,6 +94,10 @@ pub(crate) trait ConditionHost {
     /// The last value output `port` of `module` computed before the
     /// current segment.
     fn last_output(&self, module: usize, port: usize) -> Option<f32>;
+
+    /// The value declared control `control` of `module` holds, as a
+    /// number. `None` when it declares no such control.
+    fn control(&self, module: usize, control: ControlIndex) -> Option<f32>;
 
     /// Applies `value` as the pending store's `apply` does, of `standing`
     /// (none for an event): `Err` is what it reports instead.
@@ -172,17 +181,17 @@ impl Conditions {
     }
 
     /// Refuses a condition nothing can meet, and what v1 does not watch
-    /// yet: an edit (FUG-323), a control's value or another request.
+    /// yet: an edit (FUG-323), or another request.
     pub(crate) fn check(request: &Request) -> Result<(), Refusal> {
         let When::Condition(condition) = &request.when else {
             return Err(Refusal::Unsupported);
         };
         condition.check()?;
-        let signals = condition
+        let chained = condition
             .parts()
             .iter()
-            .all(|part| matches!(part, Predicate::Signal { .. }));
-        if request.value.is_edit() || !signals {
+            .any(|part| matches!(part, Predicate::Applied(_)));
+        if request.value.is_edit() || chained {
             return Err(Refusal::Unsupported);
         }
         Ok(())
@@ -220,9 +229,9 @@ impl Conditions {
     }
 
     /// At a segment start at `now`: refuses each request in the
-    /// `installed` generation whose ttl ran out ([`Refusal::Expired`]), and
-    /// starts the parts of each new one reading from `now`. Allocation- and
-    /// free-free.
+    /// `installed` generation whose ttl ran out ([`Refusal::Expired`]),
+    /// starts the parts of each new one reading from `now`, and reads the
+    /// controls the rest wait on. Allocation- and free-free.
     pub(crate) fn start(
         &mut self,
         now: u64,
@@ -246,6 +255,7 @@ impl Conditions {
                 continue;
             }
             entry.armed = true;
+            read_controls(entry, now, host);
             i += 1;
         }
     }
@@ -372,33 +382,6 @@ impl Conditions {
     }
 }
 
-/// Starts `entry`'s parts reading from `now`: each signal part from its
-/// output's last value. `false` when one reads an output its module does
-/// not have.
-fn arm(entry: &mut Entry, now: u64, host: &impl ConditionHost) -> bool {
-    let parts = entry.condition.parts();
-    for (part, seen) in parts.iter().zip(&mut entry.seen) {
-        if let Predicate::Signal {
-            module,
-            port,
-            count,
-            ..
-        } = *part
-        {
-            let Some(last) = host.last_output(module as usize, usize::from(port)) else {
-                return false;
-            };
-            *seen = Seen {
-                met: None,
-                remaining: count,
-                last,
-                next: now,
-            };
-        }
-    }
-    true
-}
-
 /// Reads the samples `part` has not yet seen into `seen`.
 fn read_part(part: &Predicate, seen: &mut Seen, host: &impl ConditionHost) {
     let Predicate::Signal {
@@ -430,5 +413,6 @@ fn read_part(part: &Predicate, seen: &mut Seen, host: &impl ConditionHost) {
     seen.next = seen.next.max(first + values.len() as u64);
 }
 
+mod parts;
 #[cfg(test)]
 mod tests;
