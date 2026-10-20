@@ -265,10 +265,11 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
             entry: cursor.next,
         };
         cursor.next += 1;
-        // Weighed against a higher tier's write as of its own sample.
+        // Weighed against a higher tier's write as of its own sample. The
+        // ramp it replaces writes first, so a hold still drops that write.
         let _scope = FrameScope::enter(due);
-        entry.target.begin(0);
         ramps.supersede_entry(&entry.target, host);
+        entry.target.begin(0);
         let ramp = match (entry.ramp_steps, entry.value) {
             (0, _) | (_, TableValue::Bool(_)) => None,
             // A ramp leaves the control where it stands: one holding no

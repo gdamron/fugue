@@ -200,6 +200,25 @@ fn a_user_write_holds_an_entry_s_control_until_its_next_entry() {
 }
 
 #[test]
+fn a_ramp_replaced_as_a_user_s_late_write_lands_leaves_that_write() {
+    let level = number(0.0);
+    let entries = vec![entry(0, 4, 1.0, &level), entry(1, 2, 0.0, &level)];
+    let mut host = host(BEFORE_START, entries);
+    let mut drain = drain(1.0, 4);
+    let mut seen = Vec::with_capacity(64);
+    play(&mut drain, &mut host, 127, &[&level], &mut seen);
+    // Taken late, in the pass that fires step 1: due at 126.
+    level.write_number(0.8);
+    let standing = Standing {
+        rank: Rank::new(Source::User, 0),
+        due: 126,
+    };
+    level.cells.holds.take(level.index, standing);
+    play(&mut drain, &mut host, 128, &[&level], &mut seen);
+    assert_eq!(seen.last(), Some(&(127, 0, 0.8)), "step 1 glides from it");
+}
+
+#[test]
 fn a_ramp_entry_glides_to_land_on_its_end_step_or_writes_with_no_room() {
     let (a, b) = (number(0.0), number(0.0));
     let entries = vec![entry(1, 2, 1.0, &a), entry(1, 2, 1.0, &b)];
