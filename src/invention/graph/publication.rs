@@ -34,8 +34,12 @@ use crate::invention::runtime::ModuleInstance;
 use crate::spsc::{Consumer, Producer};
 use crate::{GraphModule, Module, MAX_BLOCK};
 
+mod landing;
 mod remap;
 
+pub(crate) use landing::FateGuard;
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use landing::{Fate, TIMED_EDIT_MODULE};
 pub(crate) use remap::SurvivorRemap;
 
 /// A complete next topology, prepared off the audio thread.
@@ -63,6 +67,9 @@ pub(crate) struct Publication {
     /// The publisher generation this publication creates. Set by the
     /// publisher as it publishes.
     pub(crate) generation: u64,
+    /// A timed edit's fate, which landing it decides (see `landing`); none
+    /// for an immediate edit.
+    pub(crate) fate: Option<FateGuard>,
 }
 
 impl Publication {
@@ -194,6 +201,8 @@ pub(crate) struct AudioLink {
     /// Writes for a publication not yet installed, oldest first. Allocated
     /// once at link time and never pushed past its capacity.
     pending: Vec<InputWrite>,
+    /// A timed edit taken at this segment start, to install there.
+    landed: Option<Box<Publication>>,
 }
 
 impl AudioLink {
@@ -215,6 +224,7 @@ impl AudioLink {
             applied,
             installed: 0,
             pending: Vec::with_capacity(input_capacity.max(1)),
+            landed: None,
         }
     }
 

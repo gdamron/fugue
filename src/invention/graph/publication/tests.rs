@@ -12,6 +12,7 @@ use crate::payload::Payload;
 use crate::spsc::Ring;
 use crate::ModuleRegistry;
 
+mod landing;
 mod never_waits;
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -99,6 +100,7 @@ fn publication(next: Vec<(&str, Next)>, edges: Vec<RoutingConnection>) -> Box<Pu
         topology,
         remap: SurvivorRemap::default(),
         generation: 0,
+        fate: None,
     })
 }
 
