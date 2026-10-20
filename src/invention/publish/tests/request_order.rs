@@ -3,10 +3,13 @@
 //! else; an order that would change a feedback loop is not added, or kept;
 //! orders go with the first change made once no condition waits.
 
+use super::migrated::{read, write};
 use super::request_beats::{outcomes_of, render_counted};
 use super::request_conditions::{first_change, nth_beat, rig, submit_on_beat};
 use super::*;
 use crate::control_request::Outcome;
+use crate::test_support::dial::DIAL;
+use crate::ControlValue;
 
 fn watches(rig: &Rig) -> Vec<(String, String)> {
     let publisher = rig.live.publisher().lock().unwrap();
@@ -131,11 +134,9 @@ fn step(module: &str, control: &str, value: f32) -> serde_json::Value {
     serde_json::json!({ "at_step": 0, "module": module, "control": control, "value": value })
 }
 
-#[test]
-fn an_order_running_a_writers_loop_earlier_is_not_added() {
-    // sched_a sets the clock's tempo, so the two run as a loop. Ordering
-    // the clock before clock_b moves that loop past sched_b, and so which
-    // of the two schedulers writing the dial's level writes last.
+/// sched_a sets the clock's tempo, so the two run as a loop; it and
+/// sched_b, clocked by clock_b, both write the dial's level.
+fn writers_loop() -> Rig {
     let rig = rig(false);
     let schedule = |at: serde_json::Value| serde_json::json!({ "schedule": at });
     let sched_a = schedule(serde_json::json!([
@@ -155,7 +156,51 @@ fn an_order_running_a_writers_loop_earlier_is_not_added() {
             change.connect(edge("clock_b", "beat", "sched_b", "clock"))
         })
         .unwrap();
+    rig
+}
+
+#[test]
+fn an_order_running_a_writers_loop_earlier_is_not_added() {
+    // Ordering the clock before clock_b moves the loop past sched_b, and
+    // so which of the two schedulers writes the dial's level last.
+    let oracle = writers_loop().render(2_000);
+    let mut rig = writers_loop();
     assert!(!order(&rig, "clock", "clock_b"), "the other would win");
+    submit_on_beat(&rig, 100_000);
+    assert!(rig.render(2_000) == oracle, "unchanged while it waits");
+}
+
+#[test]
+fn an_order_after_a_live_retarget_is_not_added() {
+    // sched_b, retargeted live to write clock2's tempo and d2's level, now
+    // writes after sched_a by the installed topology, though a compile
+    // would run it, with clock2 and sched_a, ahead (FUG-388). An order
+    // publishing that compile would hand d2's level to sched_a.
+    let mut rig = rig(false);
+    let schedule = |at: serde_json::Value| serde_json::json!({ "schedule": at });
+    let sched_b = schedule(serde_json::json!([step("clock", "bpm", 90.0)]));
+    let sched_b = rig.build("sched_b", "control_scheduler", sched_b);
+    let clock2 = rig.build("clock2", "clock", serde_json::json!({ "bpm": 1100.0 }));
+    let d2 = rig.build("d2", DIAL, serde_json::json!({}));
+    let sched_a = schedule(serde_json::json!([step("d2", "level", 0.25)]));
+    let sched_a = rig.build("sched_a", "control_scheduler", sched_a);
+    rig.live
+        .edit(|change| {
+            change.upsert("sched_b", sched_b);
+            change.upsert("clock2", clock2);
+            change.upsert("d2", d2);
+            change.upsert("sched_a", sched_a);
+            change.connect(edge("clock", "beat", "sched_b", "clock"))?;
+            change.connect(edge("clock2", "beat", "sched_a", "clock"))
+        })
+        .unwrap();
+    let retarget = serde_json::json!([step("clock2", "bpm", 1100.0), step("d2", "level", 0.75)]);
+    write(&rig, "sched_b", "schedule", retarget.to_string().into());
+    let generation = rig.live.generation();
+    assert!(!order(&rig, "clock", "dial"), "sched_a would win");
+    assert_eq!(rig.live.generation(), generation);
+    rig.render(200);
+    assert_eq!(read(&rig, "d2", "level"), ControlValue::Number(0.75));
 }
 
 #[test]
