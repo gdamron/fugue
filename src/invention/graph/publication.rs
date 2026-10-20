@@ -34,8 +34,10 @@ use crate::invention::runtime::ModuleInstance;
 use crate::spsc::{Consumer, Producer};
 use crate::{GraphModule, Module, MAX_BLOCK};
 
+mod handover;
 mod remap;
 
+pub(crate) use handover::Handover;
 pub(crate) use remap::SurvivorRemap;
 
 /// A complete next topology, prepared off the audio thread.
@@ -63,6 +65,9 @@ pub(crate) struct Publication {
     /// The publisher generation this publication creates. Set by the
     /// publisher as it publishes.
     pub(crate) generation: u64,
+    /// Payloads for surviving modules, applied as it installs (see
+    /// [`Handover`]). Set by the commit.
+    pub(crate) handovers: Vec<Handover>,
 }
 
 impl Publication {
@@ -391,7 +396,9 @@ impl SignalGraph {
     /// instance it replaces was playing (see [`Module::inherit`]), and then
     /// keeps that instance's feedback carry as a survivor does. A loop is
     /// sample-identical across the install as long as the edit leaves its
-    /// per-sample order (and so its delayed edge) as it was.
+    /// per-sample order (and so its delayed edge) as it was. Last, each
+    /// survivor takes the payloads the publication carries for it (see
+    /// [`Handover`]).
     fn install(&mut self, publication: &mut Publication) {
         let mut moved = 0;
         for (id, instance) in self.modules.iter_mut() {
@@ -427,6 +434,7 @@ impl SignalGraph {
             self.carry_inherited(publication);
         }
         self.reset_installed_inputs(publication, moved);
+        self.hand_over(publication);
     }
 
     /// Whether the running module at `old` in the retired map and the

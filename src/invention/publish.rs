@@ -38,6 +38,7 @@ use crate::ModuleRegistry;
 mod change;
 mod pending;
 mod publisher;
+mod rebind;
 mod reclaim;
 mod registry;
 #[cfg(test)]
@@ -453,7 +454,7 @@ impl LiveGraph {
     fn commit_locked(
         &self,
         mut publisher: MutexGuard<'_, Publisher>,
-        prepared: PreparedChange,
+        mut prepared: PreparedChange,
         retain: impl FnOnce(&mut RuntimeState),
     ) -> Result<Committed, GraphCommandError> {
         if prepared.base_generation != publisher.generation() {
@@ -480,6 +481,16 @@ impl LiveGraph {
             drop(prepared);
             return Err(GraphCommandError::QueueFull);
         }
+        // Under the publisher, where a schedule write records itself, so
+        // each survivor re-resolves the schedule it will be playing.
+        let written = match rebind::pack(&mut prepared) {
+            Ok(written) => written,
+            Err(error) => {
+                drop(publisher);
+                drop(prepared);
+                return Err(error);
+            }
+        };
         let published = match publisher.publish(prepared) {
             Ok(published) => published,
             Err(Refused { error, change }) => {
@@ -488,6 +499,9 @@ impl LiveGraph {
                 return Err(error);
             }
         };
+        for schedule in written {
+            schedule.record();
+        }
         let mirror = publisher.mirror();
         let removed: Vec<&String> = published
             .previous

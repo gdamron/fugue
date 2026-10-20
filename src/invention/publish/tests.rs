@@ -33,6 +33,7 @@ mod request_timing;
 mod request_watch;
 mod requests;
 mod schedule_payload;
+mod schedule_rebind;
 mod step_pattern;
 mod timelines;
 mod writes;

@@ -76,7 +76,11 @@ impl RunningInvention {
             .map(build)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let change = self.stage_plan(base_generation, &plan, swapped, added)?;
+        let writes = plan
+            .control_updates
+            .iter()
+            .map(|(id, key, value)| (id.as_str(), key.as_str(), value));
+        let change = self.stage_plan(base_generation, &plan, swapped, added, writes)?;
         let control_updates = validate_control_updates(&change, plan.control_updates)?;
 
         let report = ReloadReport {
@@ -105,18 +109,22 @@ impl RunningInvention {
     /// Applies `plan`'s structural changes to a change begun against the
     /// current topology and prepares it (see [`GraphChange::prepare`]).
     /// `swapped` and `added` are the modules built for `plan.swapped` and
-    /// `plan.added`, in the same order. Control updates are the caller's.
+    /// `plan.added`, in the same order. Control updates are the caller's to
+    /// make, but `writes` names them, so a surviving scheduler whose target
+    /// the plan rebuilds or removes re-resolves the schedule written to it
+    /// (see [`GraphChange::reschedule`]).
     ///
     /// Fails with [`GraphCommandError::TopologyMoved`] when the graph has
     /// changed since `base_generation`, and with the preparation's error when
     /// a connection or schedule does not resolve; either way nothing visible
     /// changed.
-    pub(crate) fn stage_plan(
+    pub(crate) fn stage_plan<'a>(
         &self,
         base_generation: u64,
         plan: &ReloadPlan,
         swapped: Vec<BuiltModule>,
         added: Vec<BuiltModule>,
+        writes: impl IntoIterator<Item = (&'a str, &'a str, &'a ControlValue)>,
     ) -> Result<PreparedChange, GraphCommandError> {
         let mut change = self.live.begin();
         if change.base_generation != base_generation {
@@ -137,6 +145,11 @@ impl RunningInvention {
         }
         for conn in &plan.added_connections {
             change.connect(edge(&conn.from, &conn.from_port, &conn.to, &conn.to_port))?;
+        }
+        for (id, key, value) in writes {
+            if let ("schedule", Ok(json)) = (key, value.as_string()) {
+                change.reschedule(id, json);
+            }
         }
         change.prepare()
     }

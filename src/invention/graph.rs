@@ -57,7 +57,7 @@ pub(crate) use compile::{compile_topology, TopologyFacts};
 pub use master::MasterLevels;
 pub(crate) use master::MasterObservers;
 pub(crate) use publication::{
-    vacant, AudioLink, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
+    vacant, AudioLink, Handover, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
     MAX_INSTALLS_PER_BLOCK,
 };
 #[cfg(test)]
