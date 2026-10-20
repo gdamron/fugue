@@ -3,7 +3,7 @@
 //! to land on its end step, both graphs play the same samples, a user's
 //! write holds a declared control against a running ramp until the
 //! table's next entry on it, tables are found again as the modules move,
-//! and a table on no clock plays on its own. No block allocates, frees
+//! and a table moved onto anything but a clock's gate is refused. No block allocates, frees
 //! or takes a lock.
 
 use super::migrated::block_with_locks_held;
@@ -219,22 +219,21 @@ fn a_table_plays_on_as_an_edit_moves_its_module_and_clock() {
 }
 
 #[test]
-fn a_table_on_no_clock_output_is_not_played_by_the_drain() {
+fn a_table_moved_onto_no_clock_output_is_refused_and_plays_on() {
+    let beats = beat_samples(3);
     let mut rig = live("beat", |level| {
         vec![entry(1, 0, 0.5, level), entry(2, 0, 0.75, level)]
     });
     rig.render(1);
-    rig.live
-        .edit(|change| {
-            change.disconnect(edge("clock", "beat", "tabler", "clock"));
-            change.connect(edge("dial", "out", "tabler", "clock"))
-        })
-        .unwrap();
-    let heard = render_counted(&mut rig, blocks(3.0));
-    let first = heard.iter().position(|&level| level != 0.25);
-    assert_eq!(first.map(|at| (at, heard[at])), None, "nothing plays");
-    let played = rig.graph.modules["tabler"].module().get_output("played");
-    assert_eq!(played, Ok(0.0), "its module plays it");
+    let generation = rig.live.generation();
+    let refused = rig.live.edit(|change| {
+        change.disconnect(edge("clock", "beat", "tabler", "clock"));
+        change.connect(edge("dial", "out", "tabler", "clock"))
+    });
+    assert!(matches!(refused, Err(GraphCommandError::InvalidPort(_))));
+    assert_eq!(rig.live.generation(), generation, "nothing published");
+    let heard = render_counted(&mut rig, beats[2] / 64 + 2);
+    assert_eq!(heard[beats[2] - 64], 0.75, "it plays on its clock");
 }
 
 #[test]
