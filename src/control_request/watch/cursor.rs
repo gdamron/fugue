@@ -15,14 +15,9 @@
 //!
 //! # Writes
 //!
-//! Each entry writes through its own target (see [`TableTarget`]): it is
-//! automation's next event on its control, so it first frees a declared
-//! control from a higher tier's hold, unless that write was due at the
-//! entry's own sample, and then writes, or starts its ramp among the
-//! graph's ramps (see [`Ramps`]), replacing the table's ramp on that
-//! control. A ramp finding no room writes its value at once.
-//!
-//! [`TableTarget`]: crate::control_request::TableTarget
+//! Each entry is automation's next event on its control (see
+//! [`crate::control_request::TableTarget`]): it writes, or starts a ramp
+//! in [`Ramps`] replacing the table's ramp there; with no room, it writes.
 
 use super::{grid_after, missed_at, BeatHost};
 use crate::control_request::hold::FrameScope;
@@ -80,12 +75,12 @@ impl Cursor {
             seen => {
                 // After a reset, step 0 is the clock's new beat 0.
                 let origin = match seen {
-                    Some(_) => 0.0,
+                    Some(_) => {
+                        ramps.end_table(self.table);
+                        0.0
+                    }
                     None => grid_after(timeline.position(), self.clock.beats, 0.0),
                 };
-                if seen.is_some() {
-                    ramps.end_table(self.table);
-                }
                 self.next = 0;
                 self.plan = table.plan();
                 *self.anchor.insert(Anchor {
@@ -211,36 +206,28 @@ impl Cursors {
         host: &mut impl BeatHost,
         ramps: &mut Ramps,
     ) -> (bool, Option<u64>) {
-        let (mut fired, mut wait) = (false, None::<u64>);
+        let (mut any, mut wait) = (false, None::<u64>);
         for cursor in &mut self.entries {
-            let Fired {
-                any,
-                on_time,
-                wait: next,
-            } = fire(cursor, now, &*host, ramps);
+            let fired = fire(cursor, now, &*host, ramps);
             // The next sample stays where the clock now predicts, so an
             // entry writing its tempo lands its following steps there.
-            if on_time {
+            if fired.on_time {
                 host.latch(cursor.clock.module);
             }
-            fired |= any;
-            if let Some(samples) = next {
-                wait = Some(wait.map_or(samples, |wait| wait.min(samples)));
-            }
+            any |= fired.any;
+            wait = wait.into_iter().chain(fired.wait).min();
         }
-        (fired, wait)
+        (any, wait)
     }
 }
 
-/// What a cursor's pass did.
+/// What a cursor's pass did: whether it fired any entry, whether one was
+/// due at this sample (latching its clock), and the samples until its
+/// next may be: `None` once it played out or its clock or table is gone.
 #[derive(Default)]
 struct Fired {
-    /// Whether it fired any entry.
     any: bool,
-    /// Whether one was due at this sample, so its clock is latched.
     on_time: bool,
-    /// Samples until its next entry may be due: `None` when its table
-    /// played out, or its clock or table is gone.
     wait: Option<u64>,
 }
 
@@ -286,19 +273,19 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
             (0, _) | (_, TableValue::Bool(_)) => None,
             // A ramp leaves the control where it stands: one holding no
             // number is skipped, as a scheduler always skipped it.
-            (steps, TableValue::Number(to)) => match entry.target.current() {
-                Some(from) => {
-                    let beats = steps as f64 * cursor.clock.beats;
-                    Some(BeatRamp::new(
-                        from,
-                        to,
-                        beat,
-                        beats,
-                        timeline.beats_before(),
-                    ))
-                }
-                None => continue,
-            },
+            (steps, TableValue::Number(to)) => {
+                let Some(from) = entry.target.current() else {
+                    continue;
+                };
+                let beats = steps as f64 * cursor.clock.beats;
+                Some(BeatRamp::new(
+                    from,
+                    to,
+                    beat,
+                    beats,
+                    timeline.beats_before(),
+                ))
+            }
         };
         let clock = cursor.clock.module;
         if !ramp.is_some_and(|ramp| ramps.start_entry(key, clock, ramp, host)) {

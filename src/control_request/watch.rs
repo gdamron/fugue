@@ -513,11 +513,7 @@ impl Watches {
         // Then the tables, as a scheduler wrote after the requests due at
         // its sample: at the same tier, the table's entry wins.
         let (fired, next) = self.cursors.pass(now, host, &mut self.ramps);
-        let wait = match (wait, next) {
-            (Some(wait), Some(next)) => Some(wait.min(next)),
-            (wait, next) => wait.or(next),
-        };
-        (applied || fired, wait)
+        (applied || fired, wait.into_iter().chain(next).min())
     }
 }
 
