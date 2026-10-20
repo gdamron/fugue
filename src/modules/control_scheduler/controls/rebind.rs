@@ -93,7 +93,7 @@ impl ControlSchedulerControls {
             }
             (None, spec) => {
                 let resolved = resolve_schedule(&spec.unwrap_or_default(), &own_id, surfaces)?;
-                (ResolvedSchedule::new(resolved), None)
+                (ResolvedSchedule::retargeting(resolved), None)
             }
         };
         let written = Written {

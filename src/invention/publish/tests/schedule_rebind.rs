@@ -241,3 +241,32 @@ fn a_change_compiles_against_the_schedule_it_writes() {
     let feedback = rig.graph.process_groups[group(&rig, "c")].feedback;
     assert!(feedback, "a feedback group");
 }
+
+/// A ramp in flight when its target is rebuilt carries on, onto the new
+/// instance, from the step it had reached.
+#[test]
+fn a_ramp_in_flight_carries_on_onto_the_module_that_replaces_its_target() {
+    let ramp = r#"[{ "at_step": 0, "module": "o", "control": "frequency", "value": 200.0, "ramp_steps": 4 }]"#;
+    let mut rig = Rig::new(STEPS);
+    rig.render(1);
+    write(&rig, "sched", "schedule", ramp.into());
+    step(&mut rig); // step 0: the ramp starts from 440
+    step(&mut rig); // step 1
+    let ControlValue::Number(reached) = frequency(&rig) else {
+        panic!("a number");
+    };
+    assert!(reached < 440.0 && reached > 200.0, "{reached}");
+    let config = serde_json::json!({ "frequency": 440.0 });
+    rig.live
+        .swap_module(SAMPLE_RATE, "o", "oscillator", &config, true)
+        .unwrap();
+    assert_eq!(counted_block(&mut rig), (0, 0), "the installing block");
+    step(&mut rig); // step 2
+    let ControlValue::Number(carried) = frequency(&rig) else {
+        panic!("a number");
+    };
+    assert!(carried < reached && carried > 200.0, "{carried}");
+    step(&mut rig); // step 3
+    step(&mut rig); // step 4: the ramp arrives
+    assert_eq!(frequency(&rig), ControlValue::Number(200.0));
+}

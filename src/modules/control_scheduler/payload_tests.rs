@@ -96,3 +96,34 @@ fn a_schedule_a_development_handed_on_is_recorded_without_resolving_again() {
     assert!(ctrl.schedule_json().contains("gone"));
     assert_eq!(ctrl.target_module_ids(), ["gone"]);
 }
+
+#[test]
+fn a_retarget_of_the_schedule_it_plays_keeps_its_ramps_and_any_other_plan_replaces_it() {
+    let (mixer, surfaces) = mixer_directory();
+    let ramp = r#"[{ "at_step": 0, "module": "mixer", "control": "level.0", "value": 0.0, "ramp_steps": 4 }]"#;
+    let resolve = |json: &str| {
+        resolve_schedule(&parse_schedule_json(json).unwrap(), "sched", &surfaces).unwrap()
+    };
+    let retargeting =
+        |json: &str| Payload::owned(Box::new(ResolvedSchedule::retargeting(resolve(json))));
+    let ctrl = ControlSchedulerControls::new(Vec::new());
+    let mut module = ControlScheduler::new(48_000, ctrl);
+    let _ = module.apply_payload(SCHEDULE, resolved(ramp, &surfaces));
+    pulse(&mut module); // step 0: the ramp starts
+    pulse(&mut module); // step 1
+    let reached = mixer.level(0);
+
+    let again = retargeting(ramp);
+    let (applied, allocs, frees) = allocator_events(|| module.apply_payload(SCHEDULE, again));
+    assert_eq!((allocs, frees), (0, 0));
+    drop(applied);
+    pulse(&mut module); // step 2: the ramp carries on
+    let carried = mixer.level(0);
+    assert!(carried < reached && carried > 0.0, "{carried}");
+
+    // Another plan, though marked a retarget, replaces the schedule.
+    let other = r#"[{ "at_step": 9, "module": "mixer", "control": "level.1", "value": 0.5 }]"#;
+    let _ = module.apply_payload(SCHEDULE, retargeting(other));
+    pulse(&mut module); // step 3
+    assert_eq!(mixer.level(0), carried, "the abandoned ramp holds");
+}
