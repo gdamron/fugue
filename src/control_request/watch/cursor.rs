@@ -352,3 +352,46 @@ fn report_step(
     table.set_step(step);
     (step < LAST_STEP).then(|| at(step + 1))
 }
+
+#[cfg(test)]
+mod last_step {
+    use super::*;
+    use crate::test_support::table::TestTable;
+    use std::sync::atomic::Ordering;
+
+    /// A clock far along and fast: from beat 3e17, 1e10 beats a sample.
+    struct Far;
+
+    impl Timeline for Far {
+        fn position(&self) -> f64 {
+            3e17
+        }
+
+        fn position_after(&self, samples: u64) -> f64 {
+            3e17 + samples as f64 * 1e10
+        }
+
+        fn samples_until(&self, beat: f64) -> Option<u64> {
+            let samples = ((beat - 3e17) / 1e10).ceil().max(1.0);
+            samples.is_finite().then_some(samples as u64)
+        }
+
+        fn beats_before(&self) -> u64 {
+            0
+        }
+
+        fn latch(&mut self) {}
+    }
+
+    #[test]
+    fn a_table_at_the_last_step_it_can_count_waits_on_no_step() {
+        let table = TestTable::new(1, Vec::new());
+        // A beat a step from beat 0: past 2^53 steps, so it holds the last.
+        assert_eq!(report_step(&table, &Far, 0.0, 1.0), None);
+        assert_eq!(table.step.load(Ordering::Relaxed), LAST_STEP);
+        // Short of it, the next step's beat.
+        let next = report_step(&table, &Far, 0.0, 1e9);
+        assert_eq!(table.step.load(Ordering::Relaxed), 300_000_010);
+        assert_eq!(next, Some(300_000_011.0 * 1e9));
+    }
+}
