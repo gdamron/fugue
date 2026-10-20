@@ -91,6 +91,8 @@ pub(crate) use local::{local_controls, local_get, local_set};
 pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
 pub(crate) use pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::{bounded, QueueConsumer, QueueProducer};
+#[cfg(test)]
+pub(crate) use ramps::{ramp_value, BeatRamp, Ramps, RAMP_CAPACITY};
 pub(crate) use request::{
     BeatSpec, BeatTime, ControlIndex, ControlTarget, Intent, Request, RequestId, RequestValue,
     RtValue, Source, When,

@@ -1,5 +1,6 @@
 //! A ramp timed in beats on a development's control starts where its
-//! aliases stand, automation written to them and not yet taken included.
+//! aliases stand, automation written to them and not yet taken included,
+//! and a write through another key reaching the same inner control ends it.
 
 use serde_json::json;
 
@@ -63,6 +64,33 @@ fn target_of(graph: &SignalGraph, id: &str, key: &str) -> ControlTarget {
         module_idx,
         control,
     }
+}
+
+#[test]
+fn a_write_through_another_key_reaching_its_control_ends_a_ramp() {
+    use crate::control_request::Standing;
+    use crate::control_request::{BeatRamp, Ramps, Request, RequestValue, RtValue, Source};
+    let (graph, _) = super::declared_tests::running(json!({}));
+    let graph = graph.lock().unwrap();
+    // `level` reaches both dials; `b_level` the second alone, `pulse` the
+    // first's other control.
+    let level = target_of(&graph, "pair", "level");
+    let b_level = target_of(&graph, "pair", "b_level");
+    let pulse = target_of(&graph, "pair", "pulse");
+    assert!(BeatHost::overlaps(&*graph, &level, &b_level));
+    assert!(!BeatHost::overlaps(&*graph, &b_level, &pulse));
+    assert!(!BeatHost::overlaps(&*graph, &level, &pulse));
+    // A bank-wide ramp, then a per-voice write at its sample and rank.
+    let mut request = Request::new(level, RequestValue::Value(RtValue::F32(1.0)));
+    request.source = Source::Automation;
+    let standing = Standing::of(&request, 0).unwrap();
+    let mut ramps = Ramps::new(4);
+    let ramp = BeatRamp::new(0.0, 1.0, 0.0, 1.0, 0);
+    ramps.start((level, 0), standing, ramp, &*graph);
+    ramps.start((pulse, 0), standing, ramp, &*graph);
+    assert_eq!(ramps.running(), 2);
+    ramps.supersede(&b_level, &*graph);
+    assert_eq!(ramps.running(), 1, "the level ramp ends, the pulse runs");
 }
 
 #[test]
