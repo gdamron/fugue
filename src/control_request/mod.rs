@@ -36,8 +36,6 @@ mod local;
 mod outcome;
 mod pending;
 mod queue;
-// Run by the watches next (FUG-299).
-#[cfg_attr(not(test), allow(dead_code))]
 mod ramps;
 mod request;
 mod sender;

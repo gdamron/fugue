@@ -119,6 +119,10 @@ impl BeatHost for RampHost {
 
     fn latch(&mut self, _module_idx: usize) {}
 
+    fn current(&mut self, target: &ControlTarget) -> Option<f32> {
+        (target.module_idx == 1).then_some(self.value)
+    }
+
     fn kept(&self, _target: &ControlTarget, _standing: Standing) -> bool {
         !self.held && !self.taken
     }

@@ -4,8 +4,8 @@
 
 use super::SignalGraph;
 use crate::control_request::{
-    kept_hold, take_automation, BeatHost, ControlTarget, Outcome, Outcomes, RequestValue, Standing,
-    Timeline, Watches,
+    kept_hold, take_automation, BeatHost, ControlTarget, Outcome, Outcomes, RequestValue, RtValue,
+    Standing, Timeline, Watches,
 };
 use crate::payload::Retirer;
 
@@ -20,6 +20,23 @@ impl BeatHost for SignalGraph {
             if let Some(timeline) = instance.module_mut().timeline_mut() {
                 timeline.latch();
             }
+        }
+    }
+
+    fn current(&mut self, target: &ControlTarget) -> Option<f32> {
+        let (_, instance) = self.modules.get_index_mut(target.module_idx)?;
+        // Automation still waiting was written before this sample.
+        take_automation(instance.module_mut());
+        let module = instance.module();
+        // A development's control reads its first alias, to the leaf, as a
+        // scheduler's ramp does (`Automation::current`).
+        let value = match module.alias_value(target.control) {
+            Some(value) => value,
+            None => module.declared()?.1.load(target.control)?,
+        };
+        match value {
+            RtValue::F32(value) => Some(value),
+            _ => None,
         }
     }
 
@@ -64,8 +81,10 @@ impl BeatHost for SignalGraph {
 
 impl SignalGraph {
     /// Applies every watch due at the current sample, after the requests
-    /// due then, and returns how many samples until the next may be: the
-    /// segment then ends just before it. Allocation-, free- and lock-free.
+    /// due then, then writes every ramp running its value there, and
+    /// returns how many samples until the next watch may be due or ramp
+    /// arrive: the segment then ends just before it. Allocation-, free-
+    /// and lock-free.
     pub(super) fn watch_beats(
         &mut self,
         watches: &mut Watches,
@@ -86,13 +105,23 @@ impl SignalGraph {
             }
         }
         // An application can move a clock (a reset or tempo timed on
-        // beats), so pass again until none applies: each applies at most
-        // once a sample, so this ends.
+        // beats), and so can a ramp's write (one of a tempo), so pass again
+        // after them until none applies, the deadlines then as the clocks
+        // run after every write: each watch applies at most once a sample,
+        // and a ramp writes the same value again at the same sample, so
+        // this ends.
         let now = self.current_sample;
         loop {
+            if watches.pass(now, installed, self, outcomes).0 {
+                continue;
+            }
+            let arrives = watches.ramps.step(installed, self, &mut outcomes.retirer);
             let (applied, wait) = watches.pass(now, installed, self, outcomes);
             if !applied {
-                return wait;
+                return match (wait, arrives) {
+                    (Some(wait), Some(arrives)) => Some(wait.min(arrives)),
+                    (wait, arrives) => wait.or(arrives),
+                };
             }
         }
     }

@@ -554,6 +554,17 @@ pub trait Module: Send {
         let _ = (control, f);
     }
 
+    /// Where a development's `control` stands, as a ramp starting on it
+    /// reads it: its first alias's value, through nested developments to
+    /// the leaf, automation written and not yet taken included. `None` for
+    /// a module that aliases nothing. Allocation-, free- and lock-free.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn alias_value(&self, control: ControlIndex) -> Option<RtValue> {
+        let _ = control;
+        None
+    }
+
     /// This module's beat timeline, when it keeps one (a clock), for the
     /// audio thread to place requests timed in beats on. Read between
     /// [`Module::process`] calls only.
