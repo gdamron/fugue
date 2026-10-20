@@ -311,6 +311,39 @@ fn tables_are_found_again_and_those_gone_end() {
 }
 
 #[test]
+fn a_clock_told_apart_only_by_its_token_starts_the_table_over() {
+    // The same module index and beats: only the token says the clock was
+    // replaced, wherever the allocator put it.
+    for (id, replayed) in [(1, false), (2, true)] {
+        let (level, swell) = (number(0.0), number(0.0));
+        let entries = vec![
+            entry(0, 8, 1.0, &swell),
+            entry(0, 0, 0.25, &level),
+            entry(1, 0, 0.5, &level),
+        ];
+        let mut host = host(BEFORE_START, entries);
+        let mut drain = drain(1.0, 4);
+        let mut seen = Vec::with_capacity(64);
+        play(&mut drain, &mut host, 300, &[&level], &mut seen);
+        assert_eq!(drain.ramps.running(), 1);
+        let Drain { cursors, ramps, .. } = &mut drain;
+        cursors.seek();
+        let found = StepClock {
+            id,
+            ..clock(1.0).unwrap()
+        };
+        assert!(cursors.found(TABLE, 2, Some(found), ramps));
+        cursors.sought(ramps);
+        assert_eq!(ramps.running(), usize::from(!replayed), "token {id}");
+        play(&mut drain, &mut host, 1024, &[&level], &mut seen);
+        // At sample 300 the next gate is beat 3, sample 383.
+        let again = [(383, 0, 0.25), (511, 0, 0.5)];
+        let expected: &[_] = if replayed { &again } else { &[] };
+        assert_eq!(seen[2..], *expected, "token {id}");
+    }
+}
+
+#[test]
 fn a_table_whose_module_plays_another_table_writes_nothing() {
     let level = number(0.0);
     let mut host = host(BEFORE_START, vec![entry(0, 0, 0.25, &level)]);

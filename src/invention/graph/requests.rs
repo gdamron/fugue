@@ -192,6 +192,7 @@ pub(crate) fn offline_requests(graph: &mut SignalGraph) {
         Default::default(),
         slots,
     ));
+    graph.tables_stale = true;
 }
 
 /// Gives `graph` a request drain for `capacity` requests, as
@@ -218,6 +219,7 @@ pub(crate) fn link_requests(
         Default::default(),
         slots,
     ));
+    graph.tables_stale = true;
     sender
 }
 
