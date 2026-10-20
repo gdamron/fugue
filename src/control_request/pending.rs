@@ -1,6 +1,7 @@
 //! The audio thread's store of requests waiting for their sample, and the
 //! one point every request leaves the audio thread's hands through.
 
+use super::chains::Chains;
 use super::hold::{Rank, Standing};
 use super::outcome::OutcomeSender;
 use super::request::{ControlTarget, Request, RequestValue};
@@ -33,6 +34,9 @@ pub(crate) enum Refusal {
     /// It waited on a condition reading a module that was removed or
     /// rebuilt before it was met.
     SourceGone,
+    /// It waited on another request applying, which settled without
+    /// applying.
+    ChainBroken,
 }
 
 /// How a request left the audio thread's hands.
@@ -82,6 +86,8 @@ pub(crate) struct Outcomes {
     /// Retirements reserved by pending payload requests.
     reserved: usize,
     sender: OutcomeSender,
+    /// Every settle, for the conditions waiting on one.
+    pub(crate) chains: Chains,
 }
 
 impl Outcomes {
@@ -90,6 +96,7 @@ impl Outcomes {
             retirer,
             reserved: 0,
             sender,
+            chains: Chains::new(),
         }
     }
 
@@ -127,6 +134,7 @@ impl Outcomes {
         if payload {
             self.reserved -= MAX_RETIRES_PER_REQUEST;
         }
+        self.chains.settled(id, outcome);
         self.sender.send(id, outcome);
     }
 }

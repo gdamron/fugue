@@ -509,15 +509,13 @@ impl SignalGraph {
         // installs, so a span submitted after the edit counts from after
         // such a reset.
         drain.watches.arm(drain.installed, self);
-        // Conditions start reading here; one met in a segment its target
-        // had already computed applies now, late.
+        // Conditions start reading here and read controls; one met in a
+        // segment its target had already computed applies now, late.
         let outcomes = &mut drain.pending.outcomes;
         drain
             .conditions
             .start(now, drain.installed, &*self, outcomes);
-        drain
-            .conditions
-            .apply_due(drain.installed, None, now, self, outcomes);
+        self.apply_conditions(drain, None, now);
         drain
             .pending
             .apply_due(now, drain.installed, |target, standing, value, retirer| {
@@ -525,10 +523,17 @@ impl SignalGraph {
             });
         let next = drain.pending.next_due(drain.installed).map(|at| at - now);
         let outcomes = &mut drain.pending.outcomes;
-        match self.watch_beats(&mut drain.watches, outcomes, drain.installed) {
+        let next = match self.watch_beats(&mut drain.watches, outcomes, drain.installed) {
             Some(wait) => Some(next.map_or(wait, |next| next.min(wait))),
             None => next,
+        };
+        // What those requests applying met applies with them.
+        if !drain.conditions.is_empty() {
+            let chains = &drain.pending.outcomes.chains;
+            drain.conditions.chain(drain.installed, chains);
+            self.apply_conditions(drain, None, now);
         }
+        next
     }
 
     /// Applies every request due at the current sample, those timed in

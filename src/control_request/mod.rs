@@ -24,6 +24,7 @@
 
 mod automation;
 mod cells;
+mod chains;
 mod condition;
 mod conditions;
 mod declare;
