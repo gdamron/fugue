@@ -235,6 +235,9 @@ fn a_change_compiles_against_the_schedule_it_writes() {
     change.upsert("o", rig.build("o", "oscillator", config));
     change.reschedule("sched", onto_c);
     let prepared = change.prepare().unwrap();
+    // The topology it compiles, and orders against later, has them.
+    let compiled = prepared.mirror.targets.get("sched");
+    assert_eq!(compiled, Some(&vec!["c".to_string()]));
     rig.live.commit_with(prepared, |_| {}).unwrap();
     assert_eq!(counted_block(&mut rig), (0, 0), "the installing block");
     assert_eq!(group(&rig, "sched"), group(&rig, "c"));
