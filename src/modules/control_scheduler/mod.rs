@@ -20,8 +20,12 @@
 //! tempo an entry writes moves the next steps at once. When the clock
 //! resets, the schedule plays again from step 0 on the clock's new beat 0;
 //! the `reset` input is not followed there. The `step` output follows the
-//! clock's position. Two schedulers writing one control at one sample land
-//! in module order.
+//! clock's position. When two schedulers write one control at one sample,
+//! the later module's write lands. Module order is the order of the
+//! invention's `modules` at load: a module rebuilt in place keeps its
+//! place, and one added later, live or by a reload, goes after every
+//! other. Reordering `modules` in a reloaded document doesn't reorder the
+//! running modules, so the order is load order plus edit history.
 //!
 //! Inside a development, the scheduler plays the schedule itself: it counts
 //! rising edges of its `clock` input, the first being step 0, and a rising
