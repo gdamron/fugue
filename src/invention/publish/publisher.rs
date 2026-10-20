@@ -18,6 +18,8 @@ use crate::invention::timelines::{Context, Flow};
 use crate::payload::{self, Payload, RetireQueue, Retirer, MAX_RETIRES_PER_REQUEST};
 use crate::spsc::{Consumer, Producer, Ring};
 
+mod timed;
+
 /// Input writes that may wait for the audio thread before a write is
 /// refused with [`GraphCommandError::QueueFull`].
 pub(crate) const INPUT_QUEUE_CAPACITY: usize = 256;
@@ -114,6 +116,8 @@ pub(crate) struct Publisher {
     applied: Arc<AtomicU64>,
     /// Set by [`Self::close`] as the audio side's request drain goes.
     closed: bool,
+    /// A timed edit queued and not yet adopted (see `timed`).
+    timed: Option<timed::Waiting>,
 }
 
 impl Publisher {
@@ -153,6 +157,7 @@ impl Publisher {
             inputs: Producer::claim(inputs),
             applied,
             closed: false,
+            timed: None,
         };
         let ends = LinkEnds {
             requests: requests.reserving(EDIT_RESERVE as u64),
@@ -345,9 +350,11 @@ impl Publisher {
     /// A change prepared before another publication is refused with
     /// [`GraphCommandError::TopologyMoved`]: it was validated against a
     /// topology that no longer exists, so it is never replayed onto the
-    /// current one. A full queue refuses it with
-    /// [`GraphCommandError::QueueFull`]. Every error returns with nothing
-    /// published.
+    /// current one. A timed edit still waiting is cancelled (see `timed`),
+    /// once the change is sure of its room in the queue; one landed and not
+    /// yet adopted refuses the change the same way. A full queue refuses it
+    /// with [`GraphCommandError::QueueFull`]. Every error returns with
+    /// nothing published.
     ///
     /// Nothing the change built is dropped here: a refused change comes back
     /// in [`Refused`], so the caller can drop it (a sink finalizing a file,
@@ -367,6 +374,22 @@ impl Publisher {
                 error: GraphCommandError::AudioThreadStopped,
                 change: prepared,
             });
+        }
+        if prepared.publication.is_some() && self.timed_waiting() {
+            // Submissions are serialized under the publisher, so the room
+            // seen now is there at the push: a full queue never cancels it.
+            if !self.requests.has_room() {
+                return Err(Refused {
+                    error: GraphCommandError::QueueFull,
+                    change: prepared,
+                });
+            }
+            if !self.cancel_timed() {
+                return Err(Refused {
+                    error: GraphCommandError::TopologyMoved,
+                    change: prepared,
+                });
+            }
         }
         let Some(mut publication) = prepared.publication.take() else {
             // An empty change publishes nothing.

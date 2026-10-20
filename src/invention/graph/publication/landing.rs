@@ -58,13 +58,11 @@ use crate::payload::{Payload, Retirer};
 /// any lookup, and every other audio-side path reaches modules through
 /// `get_index`/`get_index_mut`, which find none. A table keyed by target
 /// (holds, ramps) must skip it.
-// Queued by `publish::timed` (the next change).
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
 pub(crate) const TIMED_EDIT_MODULE: usize = usize::MAX;
 
 const WAITING: u8 = 0;
 const LANDED: u8 = 1;
-#[cfg_attr(not(test), allow(dead_code))]
 const CANCELLED: u8 = 2;
 const DROPPED: u8 = 3;
 
@@ -74,8 +72,6 @@ const DROPPED: u8 = 3;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Fate(Arc<AtomicU8>);
 
-// Decided by `publish::timed` (the next change).
-#[cfg_attr(not(test), allow(dead_code))]
 impl Fate {
     fn settle(&self, to: u8) -> bool {
         self.0
@@ -98,7 +94,18 @@ impl Fate {
         self.0.load(Ordering::Acquire) == LANDED
     }
 
+    /// Where it stands, read once: still waiting (`None`), landed
+    /// (`Some(true)`), or cancelled or dropped (`Some(false)`).
+    #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
+    pub(crate) fn settled(&self) -> Option<bool> {
+        match self.0.load(Ordering::Acquire) {
+            WAITING => None,
+            state => Some(state == LANDED),
+        }
+    }
+
     /// The guard its publication carries.
+    #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
     pub(crate) fn guard(&self) -> FateGuard {
         FateGuard(self.clone())
     }
