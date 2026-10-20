@@ -359,3 +359,34 @@ fn tempo_ramp_lands(to: f32) {
     }
     assert!(arrived);
 }
+
+#[test]
+fn an_entry_writing_its_own_clock_s_tempo_lands_the_next_on_the_new_beat() {
+    let mut rig = Rig::new(DOCUMENT);
+    rig.registry.register(DialFactory);
+    rig.registry.register(TablerFactory);
+    let surface = rig.live.control_surfaces.lock().unwrap()["clock"].clone();
+    let tempo = surface.automation("bpm").unwrap();
+    // A beat every 20 samples from step 0: step 1 falls in the first block.
+    let (dial, tabler) = build(&rig.registry, |level| {
+        vec![entry(0, 0, 144_000.0, &tempo), entry(1, 0, 0.75, level)]
+    });
+    rig.live
+        .edit(|change| {
+            change.upsert("dial", dial);
+            change.upsert("tabler", tabler);
+            change.connect(edge("dial", "out", "dac", "audio"))?;
+            change.connect(edge("clock", "beat", "tabler", "clock"))
+        })
+        .unwrap();
+    let out = render_counted(&mut rig, 2);
+    let mut twin = Twin::new(BPM);
+    twin.clock.timeline_mut().unwrap().latch();
+    twin.clock.set_control("bpm", 144_000.0).unwrap();
+    let at = twin.until(|clock| clock.position() >= 1.0);
+    assert!(at < 64);
+    assert_eq!(
+        out.iter().position(|&level| level == 0.75),
+        Some(at as usize)
+    );
+}
