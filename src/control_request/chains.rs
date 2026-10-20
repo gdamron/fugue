@@ -9,9 +9,9 @@ use super::conditions::CONDITION_CAPACITY;
 use super::pending::Outcome;
 use super::request::RequestId;
 
-/// Settles remembered for a condition that starts waiting on a request
-/// after it settled: one submitted with it, or soon after.
-const RECENT: usize = 256;
+/// Settles a store remembers unless told how many it must
+/// ([`Chains::new`]).
+pub(crate) const RECENT: usize = 256;
 
 /// A request some parts wait on.
 #[derive(Clone, Copy, Debug)]
@@ -28,38 +28,43 @@ struct Watched {
 pub(crate) struct Chains {
     /// At most one per part a condition can wait with.
     watched: Vec<Watched>,
-    /// The last [`RECENT`] settles, the oldest overwritten first.
+    /// The latest settles, `remembered` at most, the oldest overwritten
+    /// first.
     recent: Vec<(RequestId, Outcome)>,
+    remembered: usize,
     /// Where the next settle goes in `recent` once it is full.
     oldest: usize,
 }
 
 impl Chains {
-    /// Allocates: control thread.
-    pub(crate) fn new() -> Self {
+    /// Remembers the latest `remembered` settles, for a condition that
+    /// starts waiting on a request after it settled: as many as can settle
+    /// between a request settling and a condition submitted after it
+    /// starting to wait. Allocates: control thread.
+    pub(crate) fn new(remembered: usize) -> Self {
         Self {
             watched: Vec::with_capacity(CONDITION_CAPACITY * MAX_PARTS),
-            recent: Vec::with_capacity(RECENT),
+            recent: Vec::with_capacity(remembered),
+            remembered,
             oldest: 0,
         }
     }
 
-    /// Records that request `id` settled with `outcome`. Allocation- and
-    /// free-free.
+    /// Records that request `id` settled with `outcome`. Allocation-free.
     pub(crate) fn settled(&mut self, id: RequestId, outcome: Outcome) {
-        if self.recent.len() < RECENT {
+        if self.recent.len() < self.remembered {
             self.recent.push((id, outcome));
-        } else {
+        } else if self.remembered > 0 {
             self.recent[self.oldest] = (id, outcome);
-            self.oldest = (self.oldest + 1) % RECENT;
+            self.oldest = (self.oldest + 1) % self.remembered;
         }
         if let Some(watched) = self.watched.iter_mut().find(|watched| watched.id == id) {
             watched.outcome = Some(outcome);
         }
     }
 
-    /// Starts one more part waiting on request `id`. Allocation- and
-    /// free-free: there is room for every part of every condition.
+    /// Starts one more part waiting on request `id`. Allocation-free:
+    /// there is room for every part of every condition.
     pub(crate) fn watch(&mut self, id: RequestId) {
         if let Some(watched) = self.watched.iter_mut().find(|watched| watched.id == id) {
             watched.waiters += 1;
@@ -99,7 +104,7 @@ mod tests {
 
     #[test]
     fn a_watched_request_reports_how_it_settled() {
-        let mut chains = Chains::new();
+        let mut chains = Chains::new(RECENT);
         chains.watch(RequestId(1));
         chains.watch(RequestId(1));
         assert_eq!(chains.outcome(RequestId(1)), None);
@@ -116,7 +121,7 @@ mod tests {
 
     #[test]
     fn a_request_settled_before_it_was_watched_is_remembered_for_a_while() {
-        let mut chains = Chains::new();
+        let mut chains = Chains::new(RECENT);
         let refused = Outcome::Refused(Refusal::Expired);
         chains.settled(RequestId(1), refused);
         for id in 2..RECENT as u64 {

@@ -211,10 +211,15 @@ impl RequestDrain {
         published: Arc<AtomicU64>,
         slots: Arc<WatchSlots>,
     ) -> Self {
+        let mut store = PendingStore::new(pending, retirer, outcomes);
+        // A condition waiting on a request submitted before it starts
+        // waiting once it is taken: before then, every request ahead of it
+        // can settle, and those taken behind it in the same block.
+        store.remember(2 * pop_limit + pending + watches + CONDITION_CAPACITY);
         Self {
             requests,
             pop_limit,
-            pending: PendingStore::new(pending, retirer, outcomes),
+            pending: store,
             watches: Watches::new(watches),
             conditions: Conditions::new(CONDITION_CAPACITY, slots),
             installed: 0,
@@ -521,19 +526,27 @@ impl SignalGraph {
             .apply_due(now, drain.installed, |target, standing, value, retirer| {
                 self.apply_ranked(target, standing, value, retirer)
             });
-        let next = drain.pending.next_due(drain.installed).map(|at| at - now);
-        let outcomes = &mut drain.pending.outcomes;
-        let next = match self.watch_beats(&mut drain.watches, outcomes, drain.installed) {
-            Some(wait) => Some(next.map_or(wait, |next| next.min(wait))),
-            None => next,
-        };
-        // What those requests applying met applies with them.
-        if !drain.conditions.is_empty() {
+        // What those requests applying met applies with them, and may move
+        // a clock (a tempo): beats are placed again until none applies.
+        let beats = loop {
+            let outcomes = &mut drain.pending.outcomes;
+            let beats = self.watch_beats(&mut drain.watches, outcomes, drain.installed);
+            let waiting = drain.conditions.len();
+            if waiting == 0 {
+                break beats;
+            }
             let chains = &drain.pending.outcomes.chains;
             drain.conditions.chain(drain.installed, chains);
             self.apply_conditions(drain, None, now);
+            if drain.conditions.len() == waiting {
+                break beats;
+            }
+        };
+        let next = drain.pending.next_due(drain.installed).map(|at| at - now);
+        match beats {
+            Some(wait) => Some(next.map_or(wait, |next| next.min(wait))),
+            None => next,
         }
-        next
     }
 
     /// Applies every request due at the current sample, those timed in
