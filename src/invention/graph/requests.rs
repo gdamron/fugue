@@ -526,9 +526,13 @@ impl SignalGraph {
             .apply_due(now, drain.installed, |target, standing, value, retirer| {
                 self.apply_ranked(target, standing, value, retirer)
             });
-        // What those requests applying met applies with them, and may move
-        // a clock (a tempo): beats are placed again until none applies.
+        // What those requests applying met applies with them, before beats
+        // are placed: it may move a clock (a tempo). So may what the beats
+        // applying meet, so beats are placed again until none applies.
         let beats = loop {
+            let chains = &drain.pending.outcomes.chains;
+            drain.conditions.chain(drain.installed, chains);
+            self.apply_conditions(drain, None, now);
             let outcomes = &mut drain.pending.outcomes;
             let beats = self.watch_beats(&mut drain.watches, outcomes, drain.installed);
             let waiting = drain.conditions.len();

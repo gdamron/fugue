@@ -208,8 +208,8 @@ fn a_request_waiting_on_another_applies_on_its_sample() {
 fn a_tempo_a_chain_sets_places_the_next_beat_again() {
     use super::request_beats::{beat_rig, submit_level, BPM};
     use crate::control_request::BeatSpec;
-    // At 60 bpm the clock's first beat after sample 0 falls at 48 000;
-    // from 47 000, at 6 000 bpm, it falls ten samples later.
+    // At 60 bpm the clock's first beat falls at 47 999; from 47 000, at
+    // 6 000 bpm, it falls ten samples later.
     let mut rig = beat_rig(60.0);
     let first = submit_when(&rig, ("dial", LEVEL), When::AtSample(47_000));
     let after = Condition::all(&[Predicate::Applied(first)]).unwrap();
@@ -226,6 +226,29 @@ fn a_tempo_a_chain_sets_places_the_next_beat_again() {
         matches!(outcome[..], [(_, Outcome::Applied { at })] if (47_001..47_040).contains(&at)),
         "{outcome:?}"
     );
+}
+
+#[test]
+fn a_chain_stopping_a_clock_on_its_beat_stops_it_before_the_beat() {
+    use super::request_beats::{beat_rig, submit_level, BPM};
+    use crate::control_request::BeatSpec;
+    // At 60 bpm the clock's first beat falls at 47 999, where a stop timed
+    // in samples keeps it from beating: so must one chained to apply there.
+    let mut rig = beat_rig(60.0);
+    let first = submit_when(&rig, ("dial", LEVEL), When::AtSample(47_999));
+    let after = Condition::all(&[Predicate::Applied(first)]).unwrap();
+    let publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher.control_target("clock", BPM).unwrap();
+    let mut stop = Request::new(target, RequestValue::Value(RtValue::F32(0.0)));
+    stop.when = When::Condition(after);
+    let stop = rig.live.requests.submit(stop).unwrap();
+    drop(publisher);
+    let beat = submit_level(&rig, 0.5, BeatSpec::After(1.0));
+    render_counted(&mut rig, 48_200 / 64);
+    let all = super::requests::outcomes(&mut rig);
+    let of = |id| all.iter().filter(move |(got, _)| *got == id);
+    assert!(of(stop).eq([&(stop, Outcome::Applied { at: 47_999 })]));
+    assert_eq!(of(beat).count(), 0, "a stopped clock beats no more");
 }
 
 #[test]
