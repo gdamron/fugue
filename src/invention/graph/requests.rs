@@ -32,6 +32,12 @@
 //! An immediate edit sends no outcome: its acknowledgement is its commit,
 //! which no audio-side condition can undo.
 //!
+//! A timed edit (any other `when`) is popped as a request is, waits where
+//! one with its `when` waits, and is installed at the segment start it
+//! applies at (see `publication::landing`), so it has an outcome. Until it
+//! lands, requests are tagged with the generation it replaces; those taken
+//! after it lands are mapped through the publication it retired.
+//!
 //! # Back-pressure, and edits never starve
 //!
 //! A request is popped only while the store has room, or while the request
@@ -230,6 +236,29 @@ impl RequestDrain {
     }
 }
 
+impl RequestDrain {
+    /// Whether the publisher has adopted generation `generation`: queued
+    /// nothing tagged older since. Acquires the publisher's store, so every
+    /// request and input write queued before it is visible.
+    pub(super) fn adopted(&self, generation: u64) -> bool {
+        self.published.load(Ordering::Acquire) >= generation
+    }
+
+    /// The publisher's count of what it has queued and adopted, for tests
+    /// that link a graph by hand.
+    #[cfg(test)]
+    pub(crate) fn published(&self) -> &Arc<AtomicU64> {
+        &self.published
+    }
+
+    /// Whether nothing tagged `generation` or older waits in the queue.
+    /// Tags never decrease along the queue, so the head tells.
+    pub(super) fn drained_through(&mut self, generation: u64) -> bool {
+        let head = self.requests.peek(|head| head.target.generation);
+        head.is_none_or(|head| head > generation)
+    }
+}
+
 impl Drop for RequestDrain {
     /// Dropped with the graph, on a control thread once the audio has
     /// stopped; the queue then drops whatever is left in it. A render
@@ -258,11 +287,18 @@ impl SignalGraph {
     /// graph it replaces, then pops the edit and returns its publication
     /// for `drain_link` to install.
     /// Runs in `drain_link`. Allocation-, free- and lock-free.
+    ///
+    /// A `bridge` (with the generation it maps from) is a timed edit's
+    /// retired publication (see `publication::landing`): requests tagged
+    /// with that generation are mapped through it, those timed in samples
+    /// as they are taken, watches and conditions before anything is
+    /// applied.
     pub(super) fn drain_requests(
         &mut self,
         installed: u64,
         can_install: bool,
         budget: &mut usize,
+        bridge: Option<(u64, &Publication)>,
     ) -> Option<Box<Publication>> {
         let mut drain = self.requests.take()?;
         drain.pending.outcomes.retirer.flush();
@@ -286,6 +322,8 @@ impl SignalGraph {
         // clock, in its target's generation (see `super::beats`); one timed
         // by a condition among the conditions, its sources in that
         // generation too (see `super::conditions`).
+        let bridged = bridge.map(|(generation, _)| generation);
+        let waits = |generation: u64| generation > installed || Some(generation) == bridged;
         let resolve = |graph: &Self, request: &Request| {
             let mut target = request.target;
             let at = match request.when {
@@ -297,7 +335,7 @@ impl SignalGraph {
                     if target.generation > installed {
                         return Ok(Some(Landing::Watch(target, clock)));
                     }
-                    if target.generation < installed {
+                    if target.generation < installed && !waits(target.generation) {
                         return Err(Refusal::TargetGone);
                     }
                     if expired(request, now) {
@@ -315,10 +353,10 @@ impl SignalGraph {
                 When::AtTime(time) => graph.transport.sample_at(time),
                 When::Condition(_) => {
                     Conditions::check(request)?;
-                    if target.generation < installed {
+                    if target.generation < installed && !waits(target.generation) {
                         return Err(Refusal::TargetGone);
                     }
-                    if target.generation == installed && expired(request, now) {
+                    if target.generation <= installed && expired(request, now) {
                         return Err(Refusal::Expired);
                     }
                     return Ok(Some(Landing::Condition(target)));
@@ -326,6 +364,17 @@ impl SignalGraph {
             };
             if target.generation > installed {
                 return Ok(at.map(|at| Landing::At(target, at)));
+            }
+            // Mapped through the bridge now, as `remap_drain` maps what is
+            // already waiting, so it replaces a write it coalesces with
+            // rather than needing room of its own.
+            if Some(target.generation) == bridged {
+                let disposed =
+                    graph.dispose(target.generation, target.module_idx, installed, bridge);
+                let Disposition::Apply(module_idx) = disposed else {
+                    return Err(Refusal::TargetGone);
+                };
+                (target.generation, target.module_idx) = (installed, module_idx);
             }
             if target.generation < installed {
                 // Defensive: a request queued behind an edit is never older
@@ -341,14 +390,18 @@ impl SignalGraph {
         };
         // An edit waiting behind a full store must not starve: the requests
         // ahead of it are taken, and those finding no room refused
-        // (`Refusal::PendingFull`), so the first one installs this block.
-        let edit_waiting = can_install && drain.published.load(Ordering::Relaxed) > installed;
+        // (`Refusal::PendingFull`), so the first one installs this block,
+        // or once the bridge they hold goes, the next.
+        let unblocked = can_install || bridge.is_some();
+        let edit_waiting = unblocked && drain.published.load(Ordering::Relaxed) > installed;
         let mut edit = None;
+        let mut bridging = false;
         loop {
             let head = drain.requests.peek(|head| {
                 let replaces = head.target.generation <= installed || head.expires.is_none();
                 (
-                    head.value.is_edit(),
+                    // A timed one waits as any timed request does.
+                    head.value.is_edit() && head.when == When::Now,
                     head.value.is_payload(),
                     head.event,
                     replaces,
@@ -406,6 +459,7 @@ impl SignalGraph {
                 break;
             };
             *budget -= 1;
+            bridging |= Some(request.target.generation) == bridged;
             drain.pending.outcomes.reserve(&request);
             match landing {
                 Ok(Landing::At(target, at)) => {
@@ -437,6 +491,9 @@ impl SignalGraph {
                     .outcomes
                     .settle(request, Outcome::Refused(refusal)),
             }
+        }
+        if bridging {
+            self.remap_drain(&mut drain, installed, bridge);
         }
         // One order: what was submitted before the edit acts on the graph
         // it replaces, at this same sample.
@@ -475,6 +532,17 @@ impl SignalGraph {
         let Some(mut drain) = self.requests.take() else {
             return;
         };
+        self.remap_drain(&mut drain, installed, retired);
+        self.requests = Some(drain);
+    }
+
+    /// [`Self::remap_requests`] on a drain taken out of the graph.
+    fn remap_drain(
+        &self,
+        drain: &mut RequestDrain,
+        installed: u64,
+        retired: Option<(u64, &Publication)>,
+    ) {
         drain.installed = installed;
         let now = self.current_sample;
         let map = |graph: &Self, generation, module_idx| match graph
@@ -501,7 +569,6 @@ impl SignalGraph {
             .remap(installed, outcomes, |generation, module_idx| {
                 map(self, generation, module_idx)
             });
-        self.requests = Some(drain);
     }
 
     /// Applies every request in `drain` due at `now`, those timed in beats
@@ -562,8 +629,16 @@ impl SignalGraph {
             return remaining;
         };
         let now = self.current_sample;
-        let next = self.apply_due(&mut drain, now);
+        let mut next = self.apply_due(&mut drain, now);
         self.requests = Some(drain);
+        // A timed edit due now installs once what is due with it has
+        // applied; what it maps may then be due too.
+        if self.land_timed_edit() {
+            if let Some(mut drain) = self.requests.take() {
+                next = self.apply_due(&mut drain, now);
+                self.requests = Some(drain);
+            }
+        }
         next.map_or(remaining, |next| next.min(remaining as u64) as usize)
     }
 
@@ -580,6 +655,10 @@ impl SignalGraph {
         value: RequestValue,
         retirer: &mut Retirer,
     ) -> Result<(), Outcome> {
+        // Only a timed edit reaches here as an edit: it lands.
+        if let RequestValue::Edit(payload) = value {
+            return self.take_timed_edit(payload, retirer);
+        }
         let index = target.module_idx;
         if let (Some(standing), Some((_, instance))) = (standing, self.modules.get_index(index)) {
             if let Err(lost) = admits_hold(instance.module(), target.control, standing) {
@@ -639,7 +718,8 @@ impl SignalGraph {
                     }
                 }
             }
-            // An edit is installed by the drain, never applied.
+            // An edit is installed by the drain, or lands through
+            // `apply_ranked`; never applied.
             RequestValue::Edit(payload) => {
                 retirer.retire(payload);
                 Err(Refusal::Unsupported)
