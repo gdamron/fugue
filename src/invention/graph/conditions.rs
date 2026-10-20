@@ -17,7 +17,9 @@
 //! what comes due inside its segment applies there too.
 
 use super::SignalGraph;
-use crate::control_request::{ConditionHost, ControlTarget, Outcome, RequestValue, Standing};
+use crate::control_request::{
+    ConditionHost, ControlIndex, ControlTarget, Outcome, RequestValue, RtValue, Standing,
+};
 use crate::payload::Retirer;
 
 /// The segment being processed: its first sample, its length, and how many
@@ -50,6 +52,17 @@ impl ConditionHost for SignalGraph {
 
     fn last_output(&self, module: usize, port: usize) -> Option<f32> {
         self.out_prev.get(module)?.get(port).copied()
+    }
+
+    fn control(&self, module: usize, control: ControlIndex) -> Option<f32> {
+        let (_, instance) = self.modules.get_index(module)?;
+        let (_, cells) = instance.module().declared()?;
+        Some(match cells.load(control)? {
+            RtValue::F32(value) => value,
+            RtValue::U32(value) => value as f32,
+            RtValue::I32(value) => value as f32,
+            RtValue::Bool(value) => f32::from(u8::from(value)),
+        })
     }
 
     fn apply(

@@ -25,6 +25,8 @@ struct Host {
     /// The sample the target computes next, where requests apply.
     now: u64,
     applied: Vec<(usize, u64)>,
+    /// Control 0 of each module.
+    controls: Vec<f32>,
 }
 
 impl Host {
@@ -36,6 +38,7 @@ impl Host {
             computed,
             now: 0,
             applied: Vec::with_capacity(8),
+            controls: vec![0.0; 2],
         }
     }
 
@@ -65,6 +68,13 @@ impl ConditionHost for Host {
             0 => 0.0,
             start => signal[start as usize - 1],
         })
+    }
+
+    fn control(&self, module: usize, control: ControlIndex) -> Option<f32> {
+        self.controls
+            .get(module)
+            .filter(|_| control.0 == 0)
+            .copied()
     }
 
     fn apply(
@@ -386,6 +396,13 @@ fn evaluating_neither_allocates_nor_frees() {
     let parts = [Predicate::edges(0, 0, 3), Predicate::edges(1, 0, 1)];
     insert(&mut conditions, &slots, request(1, &parts), &mut store);
     insert(&mut conditions, &slots, request(2, &parts[..1]), &mut store);
+    let control_part = [control(1, Edge::Rising)];
+    insert(
+        &mut conditions,
+        &slots,
+        request(3, &control_part),
+        &mut store,
+    );
     host.segment(0);
     for module in 0..2 {
         host.compute(module, 64);
@@ -398,9 +415,14 @@ fn evaluating_neither_allocates_nor_frees() {
             host.now = at;
             conditions.apply_due(INSTALLED, Some(TARGET), at, &mut host, outcomes);
         }
+        host.segment(64);
+        host.controls[1] = 1.0;
+        conditions.start(64, INSTALLED, &host, outcomes);
+        conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, outcomes);
     });
     assert_eq!((allocs, frees), (0, 0));
-    assert_eq!(host.applied, [(TARGET, 30), (TARGET, 40)]);
+    let applied = [(TARGET, 30), (TARGET, 40), (TARGET, 64)];
+    assert_eq!(host.applied, applied);
 }
 
 /// A condition rides in every queue slot: keep a request narrow.
@@ -438,4 +460,35 @@ fn a_full_queue_releases_the_slot_it_counted() {
     let refused = (0..3).filter(|&id| sender.submit(request(id, &edge)).is_err());
     assert_eq!(refused.count(), 1);
     assert_eq!(sender.watch_slots().taken(), 2);
+}
+
+/// A rising crossing of `level` on control 0 of `module`.
+fn control(module: u32, edge: Edge) -> Predicate {
+    Predicate::Control {
+        module,
+        control: ControlIndex(0),
+        edge,
+        level: 0.5,
+    }
+}
+
+#[test]
+fn a_control_crossing_its_level_is_met_at_the_next_segment_start() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![vec![0.0; 256]; 2]);
+    host.controls = vec![0.2, 0.8];
+    let rising = request(1, &[control(0, Edge::Rising)]);
+    let falling = request(2, &[control(1, Edge::Falling)]);
+    insert(&mut conditions, &slots, rising, &mut store);
+    insert(&mut conditions, &slots, falling, &mut store);
+    play_ordered(&mut conditions, &mut host, &mut store, 0, 64);
+    // Already past its level at arming: not a crossing.
+    host.controls = vec![0.9, 0.9];
+    play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
+    assert_eq!(log(&outcomes), [(1, Outcome::Applied { at: 64 })]);
+    host.controls = vec![0.9, 0.1];
+    play_ordered(&mut conditions, &mut host, &mut store, 128, 64);
+    assert_eq!(log(&outcomes), [(2, Outcome::Applied { at: 128 })]);
+    assert_eq!(slots.taken(), 0);
 }
