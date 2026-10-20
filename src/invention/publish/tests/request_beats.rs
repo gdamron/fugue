@@ -60,6 +60,7 @@ pub(super) fn submit_on(
     request.when = When::Beat(BeatTime {
         clock: clock.module_idx as u32,
         spec,
+        ramp: None,
     });
     request.ttl = ttl;
     request.event = control == RESET && module_id == "clock";

@@ -87,6 +87,14 @@ pub(crate) struct BeatTime {
     /// slot holds) stays small.
     pub(crate) clock: u32,
     pub(crate) spec: BeatSpec,
+    /// A ramp: from the control's value at the beat, the request glides
+    /// linearly to its value over this many beats of its clock (finite,
+    /// positive), arriving exactly on the sample the clock reaches the
+    /// end. Only a one-shot request writing a number may carry one (see
+    /// [`Watches::check`](super::Watches::check)). Here rather than on
+    /// the request, it takes no room in a queue slot: a condition's is
+    /// wider.
+    pub(crate) ramp: Option<f32>,
 }
 
 /// Which beat a [`BeatTime`] waits for.

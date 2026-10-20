@@ -206,6 +206,10 @@ impl Watches {
         let When::Beat(beat) = request.when else {
             return Err(Refusal::Unsupported);
         };
+        // Nothing starts a ramp yet.
+        if beat.ramp.is_some() {
+            return Err(Refusal::Unsupported);
+        }
         match beat.spec {
             BeatSpec::After(beats) if beats.is_finite() && beats >= 0.0 => Ok(()),
             BeatSpec::Grid { every, offset, .. }
