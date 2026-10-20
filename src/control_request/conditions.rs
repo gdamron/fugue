@@ -21,16 +21,62 @@
 //!
 //! # Bounded
 //!
-//! The table never grows past the capacity it is built with: a request
-//! that arrives at a full table is refused ([`Refusal::PendingFull`]).
+//! The table never grows past the capacity it is built with. The request
+//! channel counts the conditions in flight from submission to settling
+//! ([`WatchSlots`]), so a front door can refuse one past
+//! [`CONDITION_CAPACITY`] before it is queued; one that arrives at a full
+//! table anyway is refused ([`Refusal::PendingFull`]).
 //!
 //! [`When::Condition`]: super::When::Condition
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use super::condition::{Condition, Predicate, MAX_PARTS};
 use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
 use super::request::{ControlTarget, Request, RequestValue, When};
 use crate::payload::Retirer;
+
+/// The most requests timed by a condition one graph keeps waiting.
+pub(crate) const CONDITION_CAPACITY: usize = 64;
+
+/// Counts the requests timed by a condition that are submitted and not
+/// yet settled, shared by a request channel's senders and its drain.
+///
+/// `Relaxed` is enough: it is a count, and every change is a
+/// read-modify-write, so none is lost. A submission counts before it is
+/// queued and the drain releases a request only after removing it, so the
+/// count never falls below what the drain holds; a reader on a control
+/// thread may see a release late, which only refuses conservatively.
+#[derive(Debug, Default)]
+pub(crate) struct WatchSlots {
+    taken: AtomicUsize,
+}
+
+impl WatchSlots {
+    /// Counts one more request in flight.
+    pub(crate) fn take(&self) {
+        self.taken.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Counts one fewer: it settled, or was never queued. Never below zero.
+    pub(crate) fn release(&self) {
+        let released = self
+            .taken
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+        debug_assert!(released.is_ok(), "released a slot never taken");
+    }
+
+    /// Whether [`CONDITION_CAPACITY`] requests are in flight.
+    pub(crate) fn full(&self) -> bool {
+        self.taken.load(Ordering::Relaxed) >= CONDITION_CAPACITY
+    }
+
+    pub(crate) fn taken(&self) -> usize {
+        self.taken.load(Ordering::Relaxed)
+    }
+}
 
 /// What conditions need of the graph: the signals they read, and applying
 /// a request as a sample-timed one is applied.
@@ -99,14 +145,17 @@ impl Entry {
 pub(crate) struct Conditions {
     entries: Vec<Entry>,
     limit: usize,
+    slots: Arc<WatchSlots>,
 }
 
 impl Conditions {
-    /// Room for `capacity` requests. Allocates: control thread.
-    pub(crate) fn new(capacity: usize) -> Self {
+    /// Room for `capacity` requests, releasing each one's slot in `slots`
+    /// as it settles. Allocates: control thread.
+    pub(crate) fn new(capacity: usize, slots: Arc<WatchSlots>) -> Self {
         Self {
             entries: Vec::with_capacity(capacity),
             limit: capacity,
+            slots,
         }
     }
 
@@ -139,9 +188,11 @@ impl Conditions {
         Ok(())
     }
 
-    /// Settles `request`, a conditional one that leaves the drain here.
-    fn settle(&self, request: Request, outcome: Outcome, outcomes: &mut Outcomes) {
+    /// Settles `request`, a conditional one that leaves the drain here, and
+    /// releases its slot.
+    pub(crate) fn settle(&self, request: Request, outcome: Outcome, outcomes: &mut Outcomes) {
         outcomes.settle(request, outcome);
+        self.slots.release();
     }
 
     /// Stores `request` ([`Self::check`] has passed it), or settles it
@@ -225,16 +276,15 @@ impl Conditions {
     }
 
     /// Applies, in receipt order, every request in the `installed`
-    /// generation for module `target` whose condition was met at or before
-    /// `at`, the sample the target computes next: on time at its due
-    /// sample, late after it. Returns the earliest sample a condition read
-    /// so far is met at among the rest for `target`, which the target must
-    /// not compute past before this is called again. Allocation- and
-    /// free-free.
+    /// generation (on module `target`, if given) whose condition was met at
+    /// or before `at`, the sample its target computes next: on time at its
+    /// due sample, late after it. Returns the earliest sample a condition
+    /// read so far is met at among the rest, which their target must not
+    /// compute past before this is called again. Allocation- and free-free.
     pub(crate) fn apply_due(
         &mut self,
         installed: u64,
-        target: usize,
+        target: Option<usize>,
         at: u64,
         host: &mut impl ConditionHost,
         outcomes: &mut Outcomes,
@@ -243,7 +293,7 @@ impl Conditions {
         let mut i = 0;
         while i < self.entries.len() {
             let entry = &self.entries[i];
-            let ours = entry.request.target.module_idx == target;
+            let ours = target.is_none_or(|target| entry.request.target.module_idx == target);
             if entry.request.target.generation != installed || !ours {
                 i += 1;
                 continue;
@@ -273,8 +323,52 @@ impl Conditions {
                 Err(outcome) => outcome,
             };
             outcomes.record(id, payload, outcome);
+            self.slots.release();
         }
         next
+    }
+
+    /// Maps every request resolved against a generation older than
+    /// `installed` into it, its target and the modules its condition reads
+    /// alike: `map` gives a module's index in the installed order, or
+    /// `None` when it went away, which refuses the request
+    /// ([`Refusal::TargetGone`], or [`Refusal::SourceGone`] for a module it
+    /// reads). Allocation-free.
+    pub(crate) fn remap(
+        &mut self,
+        installed: u64,
+        outcomes: &mut Outcomes,
+        mut map: impl FnMut(u64, usize) -> Option<usize>,
+    ) {
+        let mut i = 0;
+        while i < self.entries.len() {
+            let entry = &mut self.entries[i];
+            let generation = entry.request.target.generation;
+            if generation >= installed {
+                i += 1;
+                continue;
+            }
+            let Some(module) = map(generation, entry.request.target.module_idx) else {
+                self.end(i, outcomes, Refusal::TargetGone.into());
+                continue;
+            };
+            let mut condition = entry.condition;
+            let sources = condition.parts_mut().iter_mut();
+            let mapped = sources.filter_map(Predicate::module_mut).all(|source| {
+                map(generation, *source as usize).is_some_and(|new| {
+                    *source = new as u32;
+                    true
+                })
+            });
+            if !mapped {
+                self.end(i, outcomes, Refusal::SourceGone.into());
+                continue;
+            }
+            entry.condition = condition;
+            entry.request.target.generation = installed;
+            entry.request.target.module_idx = module;
+            i += 1;
+        }
     }
 }
 

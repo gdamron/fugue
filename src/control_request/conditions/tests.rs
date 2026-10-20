@@ -1,7 +1,9 @@
 //! The condition table on its own, over scripted signals: the exact sample
 //! each kind of signal part is met at, AND across parts and segments, a
 //! condition known only after its target computed (applied late), ttl,
-//! a full table, and no allocation while evaluating.
+//! the cap, remapping, and no allocation while evaluating.
+
+use std::sync::Arc;
 
 use super::*;
 use crate::alloc_counter::allocator_events;
@@ -106,8 +108,15 @@ fn request(id: u64, parts: &[Predicate]) -> Request {
     request
 }
 
-/// Inserts `request` as the drain would.
-fn insert(table: &mut Conditions, request: Request, store: &mut PendingStore) {
+/// A table of `capacity` and its slots.
+fn table(capacity: usize) -> (Conditions, Arc<WatchSlots>) {
+    let slots = Arc::new(WatchSlots::default());
+    (Conditions::new(capacity, Arc::clone(&slots)), slots)
+}
+
+/// Inserts `request` as the drain would, its slot taken at submission.
+fn insert(table: &mut Conditions, slots: &WatchSlots, request: Request, store: &mut PendingStore) {
+    slots.take();
     assert_eq!(Conditions::check(&request), Ok(()));
     table.insert(request, &mut store.outcomes);
 }
@@ -136,7 +145,9 @@ fn play_ordered(
     conditions.read(INSTALLED, Some(TARGET), host);
     let mut splits = Vec::new();
     let mut at = start;
-    while let Some(next) = conditions.apply_due(INSTALLED, TARGET, at, host, &mut store.outcomes) {
+    while let Some(next) =
+        conditions.apply_due(INSTALLED, Some(TARGET), at, host, &mut store.outcomes)
+    {
         if next >= start + frames {
             break;
         }
@@ -177,11 +188,12 @@ fn a_condition_nothing_can_meet_is_refused() {
 #[test]
 fn the_nth_rising_edge_applies_on_its_exact_sample() {
     let (mut store, outcomes) = store();
-    let mut conditions = Conditions::new(4);
+    let (mut conditions, slots) = table(4);
     // Gate onsets at 10, 20, 30, 40: the third is sample 30.
     let mut host = Host::new(vec![gate(&[10, 20, 30, 40], 64)]);
     insert(
         &mut conditions,
+        &slots,
         request(1, &[Predicate::edges(0, 0, 3)]),
         &mut store,
     );
@@ -189,18 +201,19 @@ fn the_nth_rising_edge_applies_on_its_exact_sample() {
     assert_eq!(splits, [30]);
     assert_eq!(host.applied, [(TARGET, 30)]);
     assert_eq!(log(&outcomes), [(1, Outcome::Applied { at: 30 })]);
-    assert!(conditions.is_empty());
+    assert_eq!((conditions.len(), slots.taken()), (0, 0));
 }
 
 #[test]
 fn a_gate_already_high_when_armed_is_not_an_edge_and_counting_spans_segments() {
     let (mut store, outcomes) = store();
-    let mut conditions = Conditions::new(4);
+    let (mut conditions, slots) = table(4);
     // High at 15 and 16 (armed at 16, so not counted), then 40, 70, 100.
     let mut host = Host::new(vec![gate(&[15, 40, 70, 100], 128)]);
     play_ordered(&mut conditions, &mut host, &mut store, 0, 16);
     insert(
         &mut conditions,
+        &slots,
         request(1, &[Predicate::edges(0, 0, 2)]),
         &mut store,
     );
@@ -215,7 +228,7 @@ fn a_gate_already_high_when_armed_is_not_an_edge_and_counting_spans_segments() {
 #[test]
 fn all_parts_are_met_at_the_last_ones_sample() {
     let (mut store, outcomes) = store();
-    let mut conditions = Conditions::new(4);
+    let (mut conditions, slots) = table(4);
     let falling = Predicate::Signal {
         module: 2,
         port: 0,
@@ -231,10 +244,10 @@ fn all_parts_are_met_at_the_last_ones_sample() {
         Predicate::edges(1, 0, 2),
         falling,
     ];
-    insert(&mut conditions, request(1, &parts), &mut store);
-    insert(&mut conditions, request(2, &parts[..1]), &mut store);
+    insert(&mut conditions, &slots, request(1, &parts), &mut store);
+    insert(&mut conditions, &slots, request(2, &parts[..1]), &mut store);
     let four = [parts[0], parts[0], parts[2], parts[2]];
-    insert(&mut conditions, request(3, &four), &mut store);
+    insert(&mut conditions, &slots, request(3, &four), &mut store);
     let splits = play_ordered(&mut conditions, &mut host, &mut store, 0, 64);
     assert_eq!(splits, [5, 25, 33]);
     let applied = |at| Outcome::Applied { at };
@@ -245,10 +258,11 @@ fn all_parts_are_met_at_the_last_ones_sample() {
 #[test]
 fn a_condition_read_only_after_its_target_computed_applies_late() {
     let (mut store, outcomes) = store();
-    let mut conditions = Conditions::new(4);
+    let (mut conditions, slots) = table(4);
     let mut host = Host::new(vec![gate(&[30], 128)]);
     insert(
         &mut conditions,
+        &slots,
         request(1, &[Predicate::edges(0, 0, 1)]),
         &mut store,
     );
@@ -256,14 +270,14 @@ fn a_condition_read_only_after_its_target_computed_applies_late() {
     host.segment(0);
     conditions.start(0, INSTALLED, &host, &mut store.outcomes);
     conditions.read(INSTALLED, Some(TARGET), &host);
-    let next = conditions.apply_due(INSTALLED, TARGET, 0, &mut host, &mut store.outcomes);
+    let next = conditions.apply_due(INSTALLED, Some(TARGET), 0, &mut host, &mut store.outcomes);
     assert_eq!(next, None);
     host.compute(0, 64);
     conditions.read(INSTALLED, None, &host);
     // Met at 30, it applies before the target's next sample, at 64.
     host.segment(64);
     conditions.start(64, INSTALLED, &host, &mut store.outcomes);
-    conditions.apply_due(INSTALLED, TARGET, 64, &mut host, &mut store.outcomes);
+    conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store.outcomes);
     let late = Outcome::AppliedLate { at: 64, due: 30 };
     assert_eq!(log(&outcomes), [(1, late)]);
 }
@@ -271,15 +285,15 @@ fn a_condition_read_only_after_its_target_computed_applies_late() {
 #[test]
 fn a_ttl_refuses_a_condition_not_met_in_time() {
     let (mut store, outcomes) = store();
-    let mut conditions = Conditions::new(4);
+    let (mut conditions, slots) = table(4);
     let mut host = Host::new(vec![gate(&[30, 90], 128)]);
     let edge = [Predicate::edges(0, 0, 1)];
     let mut waits = request(1, &edge);
     waits.expires = Some(50);
     let mut late = request(2, &[Predicate::edges(0, 0, 2)]);
     late.expires = Some(80);
-    insert(&mut conditions, waits, &mut store);
-    insert(&mut conditions, late, &mut store);
+    insert(&mut conditions, &slots, waits, &mut store);
+    insert(&mut conditions, &slots, late, &mut store);
     play_ordered(&mut conditions, &mut host, &mut store, 0, 64);
     play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
     let expired = Outcome::Refused(Refusal::Expired);
@@ -287,29 +301,63 @@ fn a_ttl_refuses_a_condition_not_met_in_time() {
         log(&outcomes),
         [(1, Outcome::Applied { at: 30 }), (2, expired)]
     );
+    assert_eq!(slots.taken(), 0);
 }
 
 #[test]
-fn a_full_table_refuses() {
+fn a_full_table_refuses_and_releases_the_slot() {
     let (mut store, outcomes) = store();
-    let mut conditions = Conditions::new(2);
+    let (mut conditions, slots) = table(2);
     let edge = [Predicate::edges(0, 0, 1)];
     for id in 1..=3 {
-        insert(&mut conditions, request(id, &edge), &mut store);
+        insert(&mut conditions, &slots, request(id, &edge), &mut store);
     }
     let full = Outcome::Refused(Refusal::PendingFull);
     assert_eq!(log(&outcomes), [(3, full)]);
+    assert_eq!((conditions.len(), slots.taken()), (2, 2));
+}
+
+#[test]
+fn an_install_maps_the_target_and_every_source_or_refuses() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let parts = [Predicate::edges(0, 0, 1), Predicate::edges(3, 0, 1)];
+    for id in 1..=3 {
+        let mut request = request(id, &parts);
+        request.target.module_idx = id as usize;
+        request.target.generation = INSTALLED - 1;
+        insert(&mut conditions, &slots, request, &mut store);
+    }
+    // Module 2 (request 2's target) and module 3 (everyone's source)
+    // removed for request 3's mapping only: target first.
+    conditions.remap(INSTALLED, &mut store.outcomes, |_, module| match module {
+        2 => None,
+        3 => Some(7),
+        module => Some(module + 10),
+    });
+    assert_eq!(log(&outcomes), [(2, Outcome::Refused(Refusal::TargetGone))]);
     assert_eq!(conditions.len(), 2);
+    let entry = &conditions.entries[0];
+    assert_eq!(entry.request.target.module_idx, 11);
+    assert_eq!(entry.condition.parts()[0].module(), Some(10));
+    assert_eq!(entry.condition.parts()[1].module(), Some(7));
+    // Then module 10, a source of both, goes.
+    conditions.remap(INSTALLED + 1, &mut store.outcomes, |_, module| {
+        (module != 10).then_some(module)
+    });
+    let gone = Outcome::Refused(Refusal::SourceGone);
+    assert_eq!(log(&outcomes), [(1, gone), (3, gone)]);
+    assert_eq!(slots.taken(), 0);
 }
 
 #[test]
 fn a_held_condition_waits_for_its_generation() {
     let (mut store, outcomes) = store();
-    let mut conditions = Conditions::new(4);
+    let (mut conditions, slots) = table(4);
     let mut host = Host::new(vec![gate(&[10], 64)]);
     let mut held = request(1, &[Predicate::edges(0, 0, 1)]);
     held.target.generation = INSTALLED + 1;
-    insert(&mut conditions, held, &mut store);
+    insert(&mut conditions, &slots, held, &mut store);
     assert!(play_ordered(&mut conditions, &mut host, &mut store, 0, 64).is_empty());
     assert!(log(&outcomes).is_empty());
     assert!(!conditions.entries[0].armed);
@@ -318,10 +366,11 @@ fn a_held_condition_waits_for_its_generation() {
 #[test]
 fn an_output_the_module_lacks_is_refused_when_armed() {
     let (mut store, outcomes) = store();
-    let mut conditions = Conditions::new(4);
+    let (mut conditions, slots) = table(4);
     let host = Host::new(vec![gate(&[10], 64)]);
     insert(
         &mut conditions,
+        &slots,
         request(1, &[Predicate::edges(0, 4, 1)]),
         &mut store,
     );
@@ -332,11 +381,11 @@ fn an_output_the_module_lacks_is_refused_when_armed() {
 #[test]
 fn evaluating_neither_allocates_nor_frees() {
     let (mut store, _outcomes) = store();
-    let mut conditions = Conditions::new(4);
+    let (mut conditions, slots) = table(4);
     let mut host = Host::new(vec![gate(&[10, 20, 30], 64), gate(&[40], 64)]);
     let parts = [Predicate::edges(0, 0, 3), Predicate::edges(1, 0, 1)];
-    insert(&mut conditions, request(1, &parts), &mut store);
-    insert(&mut conditions, request(2, &parts[..1]), &mut store);
+    insert(&mut conditions, &slots, request(1, &parts), &mut store);
+    insert(&mut conditions, &slots, request(2, &parts[..1]), &mut store);
     host.segment(0);
     for module in 0..2 {
         host.compute(module, 64);
@@ -347,9 +396,16 @@ fn evaluating_neither_allocates_nor_frees() {
         conditions.read(INSTALLED, Some(TARGET), &host);
         for at in [0, 30, 40] {
             host.now = at;
-            conditions.apply_due(INSTALLED, TARGET, at, &mut host, outcomes);
+            conditions.apply_due(INSTALLED, Some(TARGET), at, &mut host, outcomes);
         }
     });
     assert_eq!((allocs, frees), (0, 0));
     assert_eq!(host.applied, [(TARGET, 30), (TARGET, 40)]);
+}
+
+/// A condition rides in every queue slot: keep a request narrow.
+#[test]
+fn a_condition_keeps_a_request_within_176_bytes() {
+    assert_eq!(std::mem::size_of::<Predicate>(), 16);
+    assert!(std::mem::size_of::<Request>() <= 176);
 }
