@@ -203,6 +203,14 @@ impl Cursors {
         });
     }
 
+    /// Puts the cursors in their modules' order, so entries of several
+    /// tables firing at one sample write in module order (the last
+    /// module's write lands), however and whenever each table was found.
+    /// In place: allocation- and free-free.
+    pub(crate) fn order(&mut self) {
+        self.entries.sort_unstable_by_key(|cursor| cursor.module);
+    }
+
     /// One pass at sample `now`: fires every entry whose step the clock's
     /// next sample reaches (or, late, has passed). Returns whether any
     /// fired, and how many samples until the next may, as far as the
