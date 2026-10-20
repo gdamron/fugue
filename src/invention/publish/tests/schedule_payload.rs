@@ -141,3 +141,38 @@ fn a_schedule_naming_a_missing_target_is_refused_with_nothing_changed() {
     };
     assert!(shown.contains("220"), "{shown}");
 }
+
+/// A schedule write resolved against the directory before a change
+/// published is refused as stale, recording nothing, so the scheduler
+/// never adopts targets the change replaced; the setter resolves again.
+#[test]
+fn a_schedule_resolved_before_a_change_published_is_refused_as_stale() {
+    use crate::invention::declared::{Checked, STALE};
+    let mut rig = Rig::new(TOP);
+    rig.render(1);
+    let controls = scheduler(&rig);
+    let generation = controls.declared().generation();
+    assert!(generation.is_some(), "live");
+    let config = serde_json::json!({ "frequency": 440.0 });
+    rig.live
+        .swap_module(SAMPLE_RATE, "o", "oscillator", &config, true)
+        .unwrap();
+    let recorded = std::cell::Cell::new(false);
+    let checked = Checked {
+        generation,
+        record: Box::new(|| recorded.set(true)),
+    };
+    let payload = crate::payload::Payload::new(0_u32);
+    let written =
+        controls
+            .declared()
+            .write_payload_checked("schedule", payload, "[]".into(), checked);
+    assert_eq!(written, Err(STALE.to_string()));
+    assert!(!recorded.get());
+    // Written afresh, it resolves against the module the change built.
+    write(&rig, "sched", "schedule", NEXT.into());
+    assert_eq!(clocked(&mut rig, "sched", 1.0), (0, 0), "step 0");
+    assert_eq!(clocked(&mut rig, "sched", 0.0), (0, 0));
+    assert_eq!(clocked(&mut rig, "sched", 1.0), (0, 0), "step 1");
+    assert_eq!(read(&rig, "o", "frequency"), ControlValue::Number(330.0));
+}

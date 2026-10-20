@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, Weak};
 use crate::control_request::{
     Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue,
 };
-use crate::invention::declared::{Declaration, DeclaredSurface, Route};
+use crate::invention::declared::{Checked, Declaration, DeclaredSurface, Route, STALE};
 use crate::payload::Payload;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
@@ -63,12 +63,15 @@ struct Shared {
     state: Mutex<ScheduleState>,
     /// Held across a whole `schedule` write, so concurrent writes reach
     /// the scheduler in the order they record their schedules. Taken
-    /// before `state`, never while holding a publisher or graph lock.
+    /// before `state` and the publisher, never while holding a publisher or
+    /// graph lock.
     writing: Mutex<()>,
 }
 
 struct ScheduleState {
-    /// The schedule as declared (config/JSON form).
+    /// The schedule as declared (config/JSON form). On a live graph, a
+    /// write records it under the publisher, as it submits its payload, so
+    /// a graph change sees the schedule the scheduler will be playing.
     spec: Vec<ScheduleEntry>,
     /// Module ids the schedule last resolved targets.
     targets: Vec<String>,
@@ -80,6 +83,18 @@ struct ScheduleState {
     /// that targets itself.
     unattached_id: Option<String>,
 }
+
+impl ScheduleState {
+    /// Records `spec` as the schedule, and its targets.
+    fn record(&mut self, spec: Vec<ScheduleEntry>) {
+        self.targets = target_module_ids(&spec);
+        self.spec = spec;
+    }
+}
+
+/// How often a schedule write resolves again when a graph change keeps
+/// publishing under it before giving up.
+const STALE_RETRIES: usize = 8;
 
 struct Attachment {
     own_id: String,
@@ -162,19 +177,36 @@ impl ControlSchedulerControls {
     ///
     /// A scheduler not yet attached (one an edit batch is building) keeps
     /// the parsed schedule, and resolves it when it is attached.
+    ///
+    /// On a live graph the schedule resolves against the directory as of a
+    /// publisher generation, and a graph change publishing before the
+    /// payload is submitted makes the write stale (it may have rebuilt a
+    /// target): it resolves again.
     pub fn set_schedule_json(&self, json: &str) -> Result<(), String> {
         let spec = parse_schedule_json(json)?;
         let _writing = self.shared.writing.lock().unwrap();
-        let Some(resolved) = self.resolve_attached(&spec)? else {
-            self.shared.state.lock().unwrap().spec = spec;
-            return Ok(());
-        };
-        let targets = target_module_ids(&spec);
-        self.deliver(resolved, &spec)?;
-        let mut state = self.shared.state.lock().unwrap();
-        state.spec = spec;
-        state.targets = targets;
-        Ok(())
+        for _ in 0..STALE_RETRIES {
+            let generation = self.declared.generation();
+            let Some(resolved) = self.resolve_attached(&spec)? else {
+                self.shared.state.lock().unwrap().record(spec);
+                return Ok(());
+            };
+            let payload = Payload::owned(Box::new(ResolvedSchedule::new(resolved)));
+            let checked = Checked {
+                generation,
+                record: Box::new(|| self.shared.state.lock().unwrap().record(spec.clone())),
+            };
+            match self.declared.write_payload_checked(
+                "schedule",
+                payload,
+                spec_json(&spec).into(),
+                checked,
+            ) {
+                Err(error) if error == STALE => continue,
+                written => return written,
+            }
+        }
+        Err(STALE.into())
     }
 
     /// Resolves `spec` through the attached directory, or `None` when the
@@ -249,6 +281,11 @@ pub(crate) struct HeldLocks<'a> {
 
 #[cfg(test)]
 impl ControlSchedulerControls {
+    /// The surface its `schedule` writes go through.
+    pub(crate) fn declared(&self) -> &DeclaredSurface {
+        &self.declared
+    }
+
     /// Takes every lock these controls take, for a test showing the
     /// scheduler never waits on one.
     pub(crate) fn held(&self) -> HeldLocks<'_> {
@@ -352,9 +389,7 @@ impl ControlSurface for ControlSchedulerControls {
         match key {
             "schedule" => {
                 let spec = parse_schedule_json(value.as_string()?)?;
-                let mut state = self.shared.state.lock().unwrap();
-                state.targets = target_module_ids(&spec);
-                state.spec = spec;
+                self.shared.state.lock().unwrap().record(spec);
                 Ok(())
             }
             _ => self.set_control(key, value),

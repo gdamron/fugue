@@ -132,11 +132,30 @@ pub(crate) struct Resolved {
 }
 
 /// A write on its way to a module: a value, or a payload and what reads
-/// report for it.
-enum Write {
+/// report for it, checked as [`Checked`] says when built against the
+/// directory.
+enum Write<'a> {
     Value(RtValue),
-    Payload(Payload, ControlValue),
+    Payload(Payload, ControlValue, Option<Checked<'a>>),
 }
+
+/// A payload write built against the live graph's control-surface
+/// directory (see [`DeclaredSurface::write_payload_checked`]).
+pub(crate) struct Checked<'a> {
+    /// The publisher generation the directory was read at
+    /// ([`DeclaredSurface::generation`]); a live write the publisher would
+    /// stamp with any other is refused as [`STALE`], since a graph change
+    /// may have replaced what the payload resolved.
+    pub(crate) generation: Option<u64>,
+    /// Records the write where it commits: under the publisher on a live
+    /// graph, so a graph change sees every write submitted before it
+    /// recorded, and none after.
+    pub(crate) record: Box<dyn FnOnce() + 'a>,
+}
+
+/// A live payload write built against a directory a graph change has
+/// replaced since: build it again.
+pub(crate) const STALE: &str = "The graph changed while this write was prepared; try again";
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl DeclaredSurface {
@@ -172,7 +191,39 @@ impl DeclaredSurface {
         let (index, _) = self
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
-        self.deliver(index, Write::Payload(payload, shown))
+        self.deliver(index, Write::Payload(payload, shown, None))
+    }
+
+    /// [`Self::write_payload`] for a payload built against the live graph's
+    /// control-surface directory: refused as [`STALE`] when a graph change
+    /// published since `checked.generation`, and recorded as
+    /// `checked.record` says. Control thread.
+    pub(crate) fn write_payload_checked(
+        &self,
+        key: &str,
+        payload: Payload,
+        shown: ControlValue,
+        checked: Checked<'_>,
+    ) -> Result<(), String> {
+        let (index, _) = self
+            .payload_decl(key)
+            .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
+        self.deliver(index, Write::Payload(payload, shown, Some(checked)))
+    }
+
+    /// The live graph's publisher generation, read under its lock (so
+    /// after any graph change has updated the directory), or `None` when
+    /// the module is not live. Control thread.
+    pub(crate) fn generation(&self) -> Option<u64> {
+        // The route lock is released first: a write takes it under the
+        // publisher.
+        let publisher = match &*self.route.lock().unwrap() {
+            Route::Live(port) => port.publisher.clone(),
+            _ => return None,
+        };
+        let publisher = publisher.upgrade()?;
+        let generation = publisher.lock().unwrap().generation();
+        Some(generation)
     }
 
     /// Whether `key` is a payload control.
@@ -282,8 +333,11 @@ impl DeclaredSurface {
                 }
                 let value = match write {
                     Write::Value(value) => value,
-                    Write::Payload(payload, shown) => {
+                    Write::Payload(payload, shown, checked) => {
                         self.show(index, shown, Some(payload));
+                        if let Some(checked) = checked {
+                            (checked.record)();
+                        }
                         return Ok(());
                     }
                 };
@@ -322,10 +376,18 @@ impl DeclaredSurface {
                 let target = publisher
                     .control_target(&port.module_id, index)
                     .map_err(|error| error.to_string())?;
-                let (value, shown) = match write {
-                    Write::Value(value) => (RequestValue::Value(value), None),
-                    Write::Payload(payload, shown) => (RequestValue::Payload(payload), Some(shown)),
+                let (value, shown, checked) = match write {
+                    Write::Value(value) => (RequestValue::Value(value), None, None),
+                    Write::Payload(payload, shown, checked) => {
+                        (RequestValue::Payload(payload), Some(shown), checked)
+                    }
                 };
+                if checked
+                    .as_ref()
+                    .is_some_and(|checked| checked.generation != Some(target.generation))
+                {
+                    return Err(STALE.into());
+                }
                 // A payload is listed pending by its read-back and counted
                 // unlogged once applied: the session log cannot carry it yet
                 // (see `PendingWrite::raw`).
@@ -363,10 +425,13 @@ impl DeclaredSurface {
                     };
                     pending.submitted(id, write);
                 }
+                drop(pending);
+                if let Some(checked) = checked {
+                    (checked.record)();
+                }
                 // Settled with no lock held: other writers carry on, and a
                 // request one of them queues meanwhile applies in the same
                 // block or theirs.
-                drop(pending);
                 drop(publisher);
                 if let Some(settler) = &port.settler {
                     settler.settle();
@@ -379,10 +444,13 @@ impl DeclaredSurface {
                 self.check_still(|route| matches!(route, Route::Offline { .. }))?;
                 match write {
                     Write::Value(value) => graph.apply_control(&module_id, index, value),
-                    Write::Payload(payload, shown) => {
+                    Write::Payload(payload, shown, checked) => {
                         let applied = graph.apply_payload(&module_id, index, payload);
                         if applied.is_ok() {
                             self.show(index, shown, None);
+                            if let Some(checked) = checked {
+                                (checked.record)();
+                            }
                         }
                         applied
                     }
@@ -439,7 +507,7 @@ impl ControlSurface for DeclaredSurface {
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         if let Some(prepared) = self.prepare(key, &value) {
             let (index, payload, shown) = prepared?;
-            return self.deliver(index, Write::Payload(payload, shown));
+            return self.deliver(index, Write::Payload(payload, shown, None));
         }
         let index = self.index(key)?;
         let value = self.table.coerce(index, &value)?;
