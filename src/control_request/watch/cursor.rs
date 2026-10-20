@@ -320,18 +320,27 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
     fired
 }
 
+/// Beyond this a step no longer counts exactly in a beat (an `f64`): a
+/// clock this far along tells the last step it can.
+const LAST_STEP: i64 = 1 << 53;
+
 /// Tells `table` the step its clock's next sample is in, counting steps
 /// of `beats` from `origin` as its entries count them. Returns the beat
 /// the next step falls on.
 fn report_step(table: &dyn BeatTable, timeline: &dyn Timeline, origin: f64, beats: f64) -> f64 {
     let reached = timeline.position_after(1);
     let at = |step: i64| origin + step as f64 * beats;
-    let mut step = ((reached - origin) / beats).floor().max(-1.0) as i64;
-    // The division may round across a boundary its entries' beats do not.
-    while step >= 0 && at(step) > reached {
+    let steps = ((reached - origin) / beats).floor();
+    let mut step = if steps.is_nan() {
+        -1
+    } else {
+        steps.clamp(-1.0, LAST_STEP as f64) as i64
+    };
+    // The division may round across a boundary its entries' beats do not,
+    // by a step at most.
+    if step >= 0 && at(step) > reached {
         step -= 1;
-    }
-    while at(step + 1) <= reached {
+    } else if step < LAST_STEP && at(step + 1) <= reached {
         step += 1;
     }
     table.set_step(step);
