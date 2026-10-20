@@ -4,6 +4,7 @@ use super::RenderEngine;
 use crate::invention::declared::{add_offline, remove_offline};
 use crate::invention::graph::GraphCommand;
 use crate::invention::orchestration::ModulePorts;
+use crate::invention::publish::{connect_offline, edge};
 use crate::invention::runtime::{validate_input_port, validate_output_port, GraphCommandError};
 use crate::invention::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
 use crate::InventionHandles;
@@ -50,30 +51,22 @@ impl RenderEngine {
             .map_err(GraphCommandError::ModuleBuildFailed)?;
         }
 
-        self.handles
-            .lock()
-            .unwrap()
-            .merge(InventionHandles::new(new_handles));
-
-        self.module_ports.lock().unwrap().insert(
-            module_id.to_string(),
-            ModulePorts {
-                inputs: result
-                    .module
-                    .module()
-                    .inputs()
-                    .iter()
-                    .map(|port| (*port).to_string())
-                    .collect(),
-                outputs: result
-                    .module
-                    .module()
-                    .outputs()
-                    .iter()
-                    .map(|port| (*port).to_string())
-                    .collect(),
-            },
-        );
+        let ports = ModulePorts {
+            inputs: result
+                .module
+                .module()
+                .inputs()
+                .iter()
+                .map(|port| (*port).to_string())
+                .collect(),
+            outputs: result
+                .module
+                .module()
+                .outputs()
+                .iter()
+                .map(|port| (*port).to_string())
+                .collect(),
+        };
 
         add_offline(
             &graph,
@@ -82,6 +75,14 @@ impl RenderEngine {
             result.module,
             result.control_surface,
         )?;
+        self.handles
+            .lock()
+            .unwrap()
+            .merge(InventionHandles::new(new_handles));
+        self.module_ports
+            .lock()
+            .unwrap()
+            .insert(module_id.to_string(), ports);
 
         {
             let mut state = self.state.lock().unwrap();
@@ -154,7 +155,9 @@ impl RenderEngine {
             .as_ref()
             .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))?;
         {
-            let graph = graph.lock().unwrap();
+            // One lock across the checks and the edit, so a concurrent
+            // edit cannot slip between them.
+            let mut graph = graph.lock().unwrap();
             let source = graph
                 .modules
                 .get(from_module)
@@ -167,16 +170,8 @@ impl RenderEngine {
                 .ok_or_else(|| GraphCommandError::UnknownModule(to_module.to_string()))?;
             validate_input_port(dest, to_port)
                 .map_err(|e| GraphCommandError::InvalidPort(e.to_string()))?;
+            connect_offline(&mut graph, edge(from_module, from_port, to_module, to_port))?;
         }
-        graph
-            .lock()
-            .unwrap()
-            .apply_command(GraphCommand::AddConnection {
-                from_module: from_module.to_string(),
-                from_port: from_port.to_string(),
-                to_module: to_module.to_string(),
-                to_port: to_port.to_string(),
-            });
         self.state
             .lock()
             .unwrap()

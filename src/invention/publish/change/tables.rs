@@ -6,7 +6,7 @@
 //! an offline edit. An unconnected clock input is left alone. Accepting any
 //! gate waits on a condition that counts its rising edges (FUG-389).
 
-use crate::invention::graph::{RoutingConnection, SignalGraph};
+use crate::invention::graph::{GraphCommand, RoutingConnection, SignalGraph};
 use crate::invention::runtime::{GraphCommandError, ModuleInstance};
 use crate::Module;
 
@@ -64,20 +64,40 @@ impl TopologyMirror {
 }
 
 /// Refuses an offline edit that would leave `graph` with a table on
-/// another source: `module` added as, or replacing, `id`, or `edge` added.
+/// another source: `module` added as, or replacing, `id` (keeping every
+/// edge, as `GraphCommand::AddModule` does), or `edge` added. The caller
+/// holds the graph's lock across this and the edit.
 pub(crate) fn check_offline(
     graph: &SignalGraph,
-    module: Option<(&str, MirrorModule)>,
-    edge: Option<RoutingConnection>,
+    module: Option<(&str, &ModuleInstance)>,
+    edge: Option<&RoutingConnection>,
 ) -> Result<(), GraphCommandError> {
     let mut mirror = TopologyMirror::of(&graph.modules, &graph.edges);
     if let Some((id, module)) = module {
-        mirror.upsert(id, module);
+        mirror
+            .modules
+            .insert(id.to_string(), MirrorModule::of(module));
     }
-    mirror.edges.extend(edge);
+    mirror.edges.extend(edge.cloned());
     mirror
         .check_tables()
         .map_err(GraphCommandError::InvalidPort)
+}
+
+/// Adds `edge` to an offline render's `graph`, refused if it would leave a
+/// table on another source. The caller holds the graph's lock.
+pub(crate) fn connect_offline(
+    graph: &mut SignalGraph,
+    edge: RoutingConnection,
+) -> Result<(), GraphCommandError> {
+    check_offline(graph, None, Some(&edge))?;
+    graph.apply_command(GraphCommand::AddConnection {
+        from_module: edge.from_module,
+        from_port: edge.from_port,
+        to_module: edge.to_module,
+        to_port: edge.to_port,
+    });
+    Ok(())
 }
 
 /// Refuses a top-level invention about to load with a table on another

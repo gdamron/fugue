@@ -38,6 +38,19 @@ pub(crate) struct MirrorModule {
     pub(crate) gates: Vec<String>,
 }
 
+impl MirrorModule {
+    pub(crate) fn of(instance: &ModuleInstance) -> Self {
+        let (clock, gates) = table_facts(instance.module());
+        MirrorModule {
+            ports: ports_of(instance),
+            is_sink: matches!(instance, GraphModule::Sink(_)),
+            flow: Flow::of(instance.module()),
+            clock,
+            gates,
+        }
+    }
+}
+
 /// The authoritative control-thread mirror of a live graph's topology, in
 /// the audio graph's exact module order.
 #[derive(Clone, Debug, Default)]
@@ -70,17 +83,7 @@ impl TopologyMirror {
         let targets = targets.collect();
         let modules = modules
             .iter()
-            .map(|(id, instance)| {
-                let (clock, gates) = table_facts(instance.module());
-                let module = MirrorModule {
-                    ports: ports_of(instance),
-                    is_sink: matches!(instance, GraphModule::Sink(_)),
-                    flow: Flow::of(instance.module()),
-                    clock,
-                    gates,
-                };
-                (id.clone(), module)
-            })
+            .map(|(id, instance)| (id.clone(), MirrorModule::of(instance)))
             .collect();
         let mut mirror = Self {
             modules,
@@ -540,7 +543,7 @@ mod rebind;
 pub(crate) use rebind::Rescheduling;
 mod tables;
 use tables::table_facts;
-pub(crate) use tables::{check_load, check_offline};
+pub(crate) use tables::{check_load, check_offline, connect_offline};
 #[cfg(test)]
 mod tests;
 mod timelines;

@@ -1,6 +1,7 @@
 //! A top-level scheduler steps on one clock's gate output: one whose
 //! `clock` input has any other source, or several, is refused, at load
-//! and by an offline edit. An unconnected `clock` input is left alone, and
+//! and by an offline edit (through a render's controller or the render
+//! itself). An unconnected `clock` input is left alone, and
 //! so is a scheduler inside a development, which counts any gate's rising
 //! edges itself.
 
@@ -81,6 +82,51 @@ fn an_offline_edit_onto_another_signal_is_refused() {
         .connect("other", "beat", "sched", "clock")
         .unwrap_err();
     assert!(error.to_string().contains("'other.beat'"), "{error}");
+}
+
+#[test]
+fn a_render_engine_edit_onto_another_signal_is_refused() {
+    let mut engine = RenderEngine::new(48_000);
+    engine
+        .load_invention(document(serde_json::json!([])))
+        .unwrap();
+    let error = engine
+        .connect("lfo", "unipolar", "sched", "clock")
+        .unwrap_err();
+    assert!(error.to_string().contains("'lfo.unipolar'"), "{error}");
+    assert!(engine.list_connections().is_empty(), "nothing connected");
+    engine.connect("clock", "beat", "sched", "clock").unwrap();
+    let error = engine
+        .connect("other", "beat", "sched", "clock")
+        .unwrap_err();
+    assert!(error.to_string().contains("'other.beat'"), "{error}");
+    assert_eq!(engine.list_connections().len(), 1);
+}
+
+/// Replacing a scheduler's clock keeps the edge into the scheduler, so a
+/// replacement without the clock's gate is refused, and the graph is left
+/// as it was: an unrelated edit afterwards still goes through.
+#[test]
+fn replacing_a_schedulers_clock_with_another_signal_is_refused() {
+    let lfo = serde_json::json!({ "rate": 2.0, "waveform": "square" });
+    let mut engine = RenderEngine::new(48_000);
+    let feeding = serde_json::json!([to_sched("clock", "beat")]);
+    engine.load_invention(document(feeding)).unwrap();
+    let controller = engine.controller().unwrap();
+    let error = controller.add_module("clock", "lfo", &lfo).unwrap_err();
+    assert!(error.to_string().contains("'clock.beat'"), "{error}");
+    let error = engine.add_module("clock", "lfo", &lfo).unwrap_err();
+    assert!(error.to_string().contains("'clock.beat'"), "{error}");
+    let clock = engine.list_modules().into_iter().find(|m| m.id == "clock");
+    assert_eq!(clock.unwrap().module_type, "clock");
+    engine
+        .connect("lfo", "unipolar", "dac", "audio_left")
+        .unwrap();
+    controller
+        .connect("lfo", "unipolar", "dac", "audio_right")
+        .unwrap();
+    let mut out = vec![0.0f32; 1024];
+    engine.render_interleaved(&mut out).unwrap();
 }
 
 #[test]
