@@ -297,15 +297,26 @@ impl Ramps {
     }
 
     /// Ends every table's ramp on a control `target` reaches: a table's
-    /// next entry on it. (A request's ramp ends as the entry frees its
-    /// hold.) Allocation- and free-free.
+    /// next entry on it. Each first writes its value at the clock's next
+    /// sample, as a scheduler advanced its ramps before firing, so the
+    /// entry's own ramp leaves the control where that one reached (its end,
+    /// when it arrives there). (A request's ramp ends as the entry frees
+    /// its hold.) Allocation- and free-free.
     pub(crate) fn supersede_entry(&mut self, target: &TableTarget, host: &impl BeatHost) {
         for running in &mut self.entries {
-            if let RampOn::Entry(key) = running.on {
-                if entry_target(host, key).is_some_and(|other| other.same(target)) {
-                    running.ended = true;
+            let RampOn::Entry(key) = running.on else {
+                continue;
+            };
+            let Some(own) = entry_target(host, key).filter(|own| own.same(target)) else {
+                continue;
+            };
+            if !running.ended {
+                let reached = host.timeline(running.clock);
+                if let Some((value, _)) = reached.and_then(|at| running.ramp.next(at)) {
+                    own.write(TableValue::Number(value));
                 }
             }
+            running.ended = true;
         }
     }
 

@@ -121,6 +121,26 @@ fn the_table_s_next_entry_on_a_control_replaces_its_ramp_only() {
 }
 
 #[test]
+fn a_replaced_ramp_first_writes_where_it_reached_at_that_sample() {
+    for (at, reached) in [(255, 0.5), (383, 1.0), (500, 1.0)] {
+        let mut ramps = Ramps::new(4);
+        let level = number(0.0);
+        let mut host = host(&[&level, &level]);
+        begin(&mut ramps, &mut host, 0);
+        // At `at`, with no step of the ramps since it started there.
+        host.play(at - host.now);
+        let next = host.table.as_ref().unwrap().entries[1].target.clone();
+        ramps.supersede_entry(&next, &host);
+        assert_eq!(level.current(), Some(reached), "at {at}");
+        // Ended, it writes nothing more.
+        assert_eq!(ramps.running(), 0);
+        level.write_number(0.3);
+        ramps.supersede_entry(&next, &host);
+        assert_eq!(level.current(), Some(0.3));
+    }
+}
+
+#[test]
 fn a_table_s_ramps_end_with_its_plan_or_its_table_and_move_with_it() {
     let (mut store, _outcomes) = store();
     let mut ramps = Ramps::new(4);
