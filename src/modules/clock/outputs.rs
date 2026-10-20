@@ -4,6 +4,9 @@ use crate::MAX_BLOCK;
 
 pub const OUTPUTS: [&str; 5] = ["beat", "beat_d4", "beat_d2", "beat_x2", "beat_x4"];
 
+/// How many beats apart each output's gates rise, in [`OUTPUTS`] order.
+pub(super) const GATE_BEATS: [f64; 5] = [1.0, 4.0, 2.0, 0.5, 0.25];
+
 pub struct ClockOutputs {
     beat: [f32; MAX_BLOCK],
     beat_d4: [f32; MAX_BLOCK],

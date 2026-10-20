@@ -322,6 +322,11 @@ impl Module for Clock {
         Some(self)
     }
 
+    fn gate_beats(&self, port: &str) -> Option<f64> {
+        let index = outputs::OUTPUTS.iter().position(|output| *output == port)?;
+        Some(outputs::GATE_BEATS[index])
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
         local_controls(self)
     }

@@ -171,6 +171,29 @@ pub(crate) struct RequestDrain {
     pub(crate) on_drop: Option<Box<dyn FnOnce() + Send>>,
 }
 
+/// Gives an offline render's `graph` a request drain no request reaches,
+/// built as [`link_requests`] builds one: it plays the modules' tables as
+/// a live graph's drain does (see `super::beats`), so a render plays them
+/// as live playback does. Allocates: control thread.
+pub(crate) fn offline_requests(graph: &mut SignalGraph) {
+    use crate::control_request::{outcome_channel, request_channel};
+    use crate::payload::RetireQueue;
+    let (sender, requests) = request_channel(1, Arc::clone(&graph.transport));
+    let slots = sender.watch_slots();
+    let (outcomes, _) = outcome_channel(1);
+    let retirer = Retirer::new(RetireQueue::with_capacity(1), 1);
+    graph.requests = Some(RequestDrain::new(
+        requests,
+        1,
+        1,
+        1,
+        retirer,
+        outcomes,
+        Default::default(),
+        slots,
+    ));
+}
+
 /// Gives `graph` a request drain for `capacity` requests, as
 /// `Publisher::link` does, and returns the sender edits and requests go
 /// through: for tests that link a graph by hand.

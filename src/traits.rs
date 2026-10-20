@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::control_request::{
-    Automation, ControlCells, ControlIndex, ControlTable, Refusal, RtValue, Timeline,
+    Automation, BeatTable, ControlCells, ControlIndex, ControlTable, Refusal, RtValue, Timeline,
 };
 use crate::invention::declared::{Declaration, Route};
 use crate::invention::timelines::Enclosure;
@@ -571,6 +571,25 @@ pub trait Module: Send {
     #[doc(hidden)]
     #[allow(private_interfaces)]
     fn timeline(&self) -> Option<&dyn Timeline> {
+        None
+    }
+
+    /// How many beats apart the gates of output `port` rise, for a module
+    /// keeping a [`Module::timeline`] (a clock's `beat_x4`: a quarter): a
+    /// table gated from it steps that far. `None` for any other output.
+    #[doc(hidden)]
+    fn gate_beats(&self, port: &str) -> Option<f64> {
+        let _ = port;
+        None
+    }
+
+    /// The table this module plays automation from (a scheduler's), for
+    /// the graph's request drain to play in place, at the sample each
+    /// step's beat falls on (see `crate::control_request::BeatTable`).
+    /// Read between [`Module::process`] calls only.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn beat_table(&self) -> Option<&dyn BeatTable> {
         None
     }
 

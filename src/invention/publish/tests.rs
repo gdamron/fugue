@@ -29,6 +29,7 @@ mod request_order;
 mod request_payloads;
 mod request_races;
 mod request_ramps;
+mod request_tables;
 mod request_tiers;
 mod request_timing;
 mod request_watch;

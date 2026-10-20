@@ -1,11 +1,15 @@
 //! Requests timed in beats on the audio thread: each waits on its clock
 //! and applies at the sample its clock's position reaches the beat (see
-//! [`crate::control_request::Watches`]).
+//! [`crate::control_request::Watches`]). The modules' tables play there
+//! too (see [`crate::control_request::BeatTable`]), each on the clock
+//! output connected to its clock input.
+
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use super::SignalGraph;
 use crate::control_request::{
-    kept_hold, take_automation, BeatHost, ControlTarget, Outcome, Outcomes, RequestValue, RtValue,
-    Standing, Timeline, Watches,
+    kept_hold, take_automation, BeatHost, BeatTable, ControlTarget, Outcome, Outcomes,
+    RequestValue, RtValue, Standing, StepClock, Timeline, Watches,
 };
 use crate::payload::Retirer;
 
@@ -68,6 +72,11 @@ impl BeatHost for SignalGraph {
         shared
     }
 
+    fn table(&self, module_idx: usize) -> Option<&dyn BeatTable> {
+        let (_, instance) = self.modules.get_index(module_idx)?;
+        instance.module().beat_table()
+    }
+
     fn apply(
         &mut self,
         target: &ControlTarget,
@@ -91,6 +100,9 @@ impl SignalGraph {
         outcomes: &mut Outcomes,
         installed: u64,
     ) -> Option<u64> {
+        if std::mem::take(&mut self.tables_stale) {
+            self.find_tables(watches);
+        }
         if watches.is_empty() {
             return None;
         }
@@ -110,13 +122,19 @@ impl SignalGraph {
         // run after every write: each watch applies at most once a sample,
         // and a ramp writes the same value again at the same sample, so
         // this ends.
+        //
+        // A table's entry writes automation, which its clock then takes, so
+        // the deadlines see a tempo it wrote.
         let now = self.current_sample;
         loop {
             if watches.pass(now, installed, self, outcomes).0 {
+                self.take_table_clocks(watches);
                 continue;
             }
             let arrives = watches.ramps.step(installed, self, &mut outcomes.retirer);
+            self.take_table_clocks(watches);
             let (applied, wait) = watches.pass(now, installed, self, outcomes);
+            self.take_table_clocks(watches);
             if !applied {
                 return match (wait, arrives) {
                     (Some(wait), Some(arrives)) => Some(wait.min(arrives)),
@@ -124,5 +142,53 @@ impl SignalGraph {
                 };
             }
         }
+    }
+
+    /// Takes the automation written to the clocks tables step on.
+    fn take_table_clocks(&mut self, watches: &Watches) {
+        for clock in watches.cursors.clocks() {
+            if let Some((_, instance)) = self.modules.get_index_mut(clock) {
+                take_automation(instance.module_mut());
+            }
+        }
+    }
+
+    /// Finds every module's table and the clock it steps on, after the
+    /// modules or their routes changed, telling each table whether the
+    /// drain plays it: a table finding no clock output on its clock input
+    /// (nothing, a mix of sources, or another signal) or no room plays on
+    /// its own. Allocation-, free- and lock-free.
+    fn find_tables(&self, watches: &mut Watches) {
+        let Watches { cursors, ramps, .. } = watches;
+        cursors.seek();
+        for (module, (id, instance)) in self.modules.iter().enumerate() {
+            let Some(table) = instance.module().beat_table() else {
+                continue;
+            };
+            let input = table.clock_input();
+            let mut sources = self
+                .edges
+                .iter()
+                .filter(|edge| edge.to_module == *id && edge.to_port == input);
+            let clock = match (sources.next(), sources.next()) {
+                (Some(edge), None) => self.step_clock(&edge.from_module, &edge.from_port),
+                _ => None,
+            };
+            table.set_played(cursors.found(table.id(), module, clock, ramps));
+        }
+        cursors.sought(ramps);
+    }
+
+    /// The clock whose output `port` of module `id` is, if it is one.
+    fn step_clock(&self, id: &str, port: &str) -> Option<StepClock> {
+        let (module, _, instance) = self.modules.get_full(id)?;
+        let beats = instance.module().gate_beats(port)?;
+        let mut hasher = DefaultHasher::new();
+        id.hash(&mut hasher);
+        Some(StepClock {
+            module,
+            id: hasher.finish(),
+            beats,
+        })
     }
 }
