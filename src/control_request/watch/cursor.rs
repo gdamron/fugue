@@ -267,7 +267,7 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
             .samples_until(beat)
             .map(|samples| (samples - 1).max(1))
     };
-    fired.wait = until(next_step);
+    fired.wait = next_step.and_then(until);
     while let Some(entry) = table.entry(cursor.next) {
         let beat = origin + entry.step as f64 * cursor.clock.beats;
         let due = if timeline.position() >= beat {
@@ -326,8 +326,14 @@ const LAST_STEP: i64 = 1 << 53;
 
 /// Tells `table` the step its clock's next sample is in, counting steps
 /// of `beats` from `origin` as its entries count them. Returns the beat
-/// the next step falls on.
-fn report_step(table: &dyn BeatTable, timeline: &dyn Timeline, origin: f64, beats: f64) -> f64 {
+/// the next step falls on, or `None` at the last step it can count, so a
+/// clock that far along does not end every segment after one sample.
+fn report_step(
+    table: &dyn BeatTable,
+    timeline: &dyn Timeline,
+    origin: f64,
+    beats: f64,
+) -> Option<f64> {
     let reached = timeline.position_after(1);
     let at = |step: i64| origin + step as f64 * beats;
     let steps = ((reached - origin) / beats).floor();
@@ -344,5 +350,5 @@ fn report_step(table: &dyn BeatTable, timeline: &dyn Timeline, origin: f64, beat
         step += 1;
     }
     table.set_step(step);
-    at(step + 1)
+    (step < LAST_STEP).then(|| at(step + 1))
 }

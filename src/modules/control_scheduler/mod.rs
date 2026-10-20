@@ -23,11 +23,20 @@
 //! clock's position. When two schedulers write one control at one sample,
 //! the later module's write lands, unless the earlier one's entry only fell
 //! due there because the later one wrote its clock's tempo at that sample:
-//! it lands after the write that moved it. Module order is the order of the
+//! it lands after the write that moved it. (A scheduler playing its
+//! schedule itself, below, writes as it processes, after every schedule
+//! the drain plays.) Module order is the order of the
 //! invention's `modules` at load: a module rebuilt in place keeps its
 //! place, and one added later, live or by a reload, goes after every
 //! other. Reordering `modules` in a reloaded document doesn't reorder the
 //! running modules, so the order is load order plus edit history.
+//!
+//! When the drain stops playing a schedule (its clock unplugged), the
+//! scheduler plays on by itself from the step the clock reached, counting
+//! gates as inside a development; a ramp then under way stops where it
+//! stands. Plugging a clock in, moving the cable to another clock output,
+//! or replacing the clock starts the schedule over: step 0 falls on that
+//! clock's next gate, and every entry plays again.
 //!
 //! Inside a development, the scheduler plays the schedule itself: it counts
 //! rising edges of its `clock` input, the first being step 0, and a rising
