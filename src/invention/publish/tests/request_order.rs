@@ -108,6 +108,57 @@ fn an_order_moving_a_loops_delayed_route_is_not_added() {
 }
 
 #[test]
+fn an_order_reordering_two_writers_of_a_control_is_not_added() {
+    // Of two schedulers writing the dial's level, the later computed wins:
+    // sched_a, added first, computes after sched_b.
+    let rig = rig(false);
+    let schedule = |value| serde_json::json!({ "schedule": [step("dial", "level", value)] });
+    let a = rig.build("sched_a", "control_scheduler", schedule(0.25));
+    let b = rig.build("sched_b", "control_scheduler", schedule(0.75));
+    rig.live
+        .edit(|change| {
+            change.upsert("sched_a", a);
+            change.upsert("sched_b", b);
+            Ok(())
+        })
+        .unwrap();
+    assert!(!order(&rig, "sched_a", "sched_b"), "sched_b would win");
+    assert!(order(&rig, "sched_b", "sched_a"), "the order they run in");
+}
+
+/// A schedule entry writing `value` to `control` of `module` on step 0.
+fn step(module: &str, control: &str, value: f32) -> serde_json::Value {
+    serde_json::json!({ "at_step": 0, "module": module, "control": control, "value": value })
+}
+
+#[test]
+fn an_order_running_a_writers_loop_earlier_is_not_added() {
+    // sched_a sets the clock's tempo, so the two run as a loop. Ordering
+    // the clock before clock_b moves that loop past sched_b, and so which
+    // of the two schedulers writing the dial's level writes last.
+    let rig = rig(false);
+    let schedule = |at: serde_json::Value| serde_json::json!({ "schedule": at });
+    let sched_a = schedule(serde_json::json!([
+        step("clock", "bpm", 90.0),
+        step("dial", "level", 0.25)
+    ]));
+    let sched_a = rig.build("sched_a", "control_scheduler", sched_a);
+    let clock_b = rig.build("clock_b", "clock", serde_json::json!({}));
+    let sched_b = schedule(serde_json::json!([step("dial", "level", 0.75)]));
+    let sched_b = rig.build("sched_b", "control_scheduler", sched_b);
+    rig.live
+        .edit(|change| {
+            change.upsert("sched_a", sched_a);
+            change.upsert("clock_b", clock_b);
+            change.upsert("sched_b", sched_b);
+            change.connect(edge("clock", "beat", "sched_a", "clock"))?;
+            change.connect(edge("clock_b", "beat", "sched_b", "clock"))
+        })
+        .unwrap();
+    assert!(!order(&rig, "clock", "clock_b"), "the other would win");
+}
+
+#[test]
 fn orders_go_with_the_first_change_once_no_condition_waits() {
     let mut rig = rig(false);
     let unplug = |rig: &Rig, module: &str| {
