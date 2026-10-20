@@ -25,6 +25,7 @@
 mod automation;
 mod cells;
 mod condition;
+mod conditions;
 mod declare;
 mod event;
 mod hold;
@@ -74,6 +75,7 @@ mod sync {
 pub(crate) use automation::{take_automation, Automation};
 pub(crate) use cells::{apply_declared, ControlCells};
 pub(crate) use condition::{Condition, Edge, Join, Predicate, GATE_LEVEL, MAX_PARTS};
+pub(crate) use conditions::{ConditionHost, Conditions};
 pub(crate) use declare::{
     integer_domain, ControlDecl, ControlTable, DeclKind, PayloadCodec, Writer,
 };
