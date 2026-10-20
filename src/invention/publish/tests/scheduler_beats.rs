@@ -222,5 +222,9 @@ fn a_schedule_the_drain_hands_back_plays_on_from_the_step_it_reached() {
         render_counted(&mut rig, 1);
     }
     assert_eq!(read(&rig, "sched", "step"), ControlValue::Number(2.0));
-    assert_eq!(read(&rig, "dial", "level"), ControlValue::Number(0.25), "replayed");
+    assert_eq!(
+        read(&rig, "dial", "level"),
+        ControlValue::Number(0.25),
+        "replayed"
+    );
 }
