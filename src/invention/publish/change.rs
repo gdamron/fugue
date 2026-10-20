@@ -32,6 +32,10 @@ pub(crate) struct MirrorModule {
     pub(crate) ports: ModulePorts,
     pub(crate) is_sink: bool,
     pub(crate) flow: Flow,
+    /// The input its table steps on, if it plays one, and its outputs a
+    /// table can step on (see `tables`).
+    pub(crate) clock: Option<String>,
+    pub(crate) gates: Vec<String>,
 }
 
 /// The authoritative control-thread mirror of a live graph's topology, in
@@ -67,10 +71,13 @@ impl TopologyMirror {
         let modules = modules
             .iter()
             .map(|(id, instance)| {
+                let (clock, gates) = table_facts(instance.module());
                 let module = MirrorModule {
                     ports: ports_of(instance),
                     is_sink: matches!(instance, GraphModule::Sink(_)),
                     flow: Flow::of(instance.module()),
+                    clock,
+                    gates,
                 };
                 (id.clone(), module)
             })
@@ -220,11 +227,14 @@ impl GraphChange {
         let result = registry
             .build(module_type, sample_rate, config)
             .map_err(|e| GraphCommandError::ModuleBuildFailed(format!("module '{id}': {e}")))?;
+        let (clock, gates) = table_facts(result.module.module());
         Ok(BuiltModule {
             module: MirrorModule {
                 ports: ports_of(&result.module),
                 is_sink: matches!(result.module, GraphModule::Sink(_)),
                 flow: Flow::of(result.module.module()),
+                clock,
+                gates,
             },
             instance: Some(result.module),
             info: RuntimeModuleInfo {
@@ -327,6 +337,9 @@ impl GraphChange {
         if self.edits == 0 {
             return Ok(());
         }
+        self.mirror
+            .check_tables()
+            .map_err(GraphCommandError::InvalidPort)?;
         for (id, module) in &self.built {
             if module.info.module_type != CONTROL_SCHEDULER_TYPE_ID {
                 continue;
@@ -525,6 +538,9 @@ fn build_publication(
 mod order;
 mod rebind;
 pub(crate) use rebind::Rescheduling;
+mod tables;
+pub(crate) use tables::{check_load, check_offline};
+use tables::table_facts;
 #[cfg(test)]
 mod tests;
 mod timelines;

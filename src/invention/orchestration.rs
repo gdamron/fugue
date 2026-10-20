@@ -1,5 +1,5 @@
 use crate::invention::graph::{GraphCommand, SignalGraph};
-use crate::invention::publish::{edge, BuiltModule, GraphChange, LiveGraph};
+use crate::invention::publish::{check_offline, edge, BuiltModule, GraphChange, LiveGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
 use crate::rpc::non_finite_refusal;
@@ -432,6 +432,7 @@ impl RuntimeController {
             .graph
             .as_ref()
             .ok_or(GraphCommandError::AudioThreadStopped)?;
+        check_offline(&graph.lock().unwrap(), Some((module_id, module.clone())), None)?;
         if let Some(module) = instance {
             add_offline(
                 graph,
@@ -510,6 +511,10 @@ impl RuntimeController {
             )));
         }
         drop(ports);
+        if let Some(graph) = &self.graph {
+            let edge = edge(from_module, from_port, to_module, to_port);
+            check_offline(&graph.lock().unwrap(), None, Some(edge))?;
+        }
 
         self.apply(GraphCommand::AddConnection {
             from_module: from_module.to_string(),
