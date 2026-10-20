@@ -390,3 +390,35 @@ fn an_entry_writing_its_own_clock_s_tempo_lands_the_next_on_the_new_beat() {
         Some(at as usize)
     );
 }
+
+#[test]
+fn a_table_plays_again_from_step_0_on_a_clock_replacing_its_own_offline() {
+    use crate::invention::graph::GraphCommand;
+    let beats = beat_samples(3);
+    let mut graph = offline("beat", |level| {
+        vec![entry(0, 0, 0.5, level), entry(1, 0, 0.75, level)]
+    });
+    let before = render_offline(&mut graph, beats[2] / 64);
+    assert_eq!(before.last(), Some(&0.75), "played out");
+    // Offline, the clock removed is freed at once: the clock replacing it
+    // may take its address, and is told apart all the same.
+    graph.apply_command(GraphCommand::RemoveModule {
+        module_id: "clock".to_string(),
+    });
+    let config = serde_json::json!({ "bpm": BPM });
+    let mut clock =
+        GraphChange::build(&registry(), SAMPLE_RATE, "clock", "clock", &config).unwrap();
+    graph.apply_command(GraphCommand::AddModule {
+        module_id: "clock".to_string(),
+        module: clock.instance.take().unwrap(),
+    });
+    graph.apply_command(GraphCommand::AddConnection {
+        from_module: "clock".to_string(),
+        from_port: "beat".to_string(),
+        to_module: "tabler".to_string(),
+        to_port: "clock".to_string(),
+    });
+    let after = render_offline(&mut graph, blocks(2.0));
+    assert!(after[..beats[1]].iter().all(|&level| level == 0.5));
+    assert!(after[beats[1]..].iter().all(|&level| level == 0.75));
+}

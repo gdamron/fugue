@@ -175,18 +175,12 @@ impl SignalGraph {
         cursors.sought(ramps);
     }
 
-    /// The clock whose output `port` of module `id` is, if it is one. Its
-    /// instance's address tells it apart: the same while it lives, wherever
-    /// it moves, and another for a clock replacing it (found while the one
-    /// replaced still waits to be retired).
+    /// The clock whose output `port` of module `id` is, if it is one, told
+    /// apart by its instance's token: the same wherever it moves, another
+    /// for a clock replacing it.
     fn step_clock(&self, id: &str, port: &str) -> Option<StepClock> {
         let (module, _, instance) = self.modules.get_full(id)?;
-        let beats = instance.module().gate_beats(port)?;
-        let address = std::ptr::from_ref(instance.module()).cast::<()>();
-        Some(StepClock {
-            module,
-            id: address as usize as u64,
-            beats,
-        })
+        let (id, beats) = instance.module().gate_beats(port)?;
+        Some(StepClock { module, id, beats })
     }
 }

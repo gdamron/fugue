@@ -5,7 +5,9 @@
 //! # Steps
 //!
 //! A table's step is one gate of the clock output connected to its clock
-//! input: a beat, or the output's division of one. Step 0 falls on the
+//! input: a beat, or the output's division of one, on the clock's beat
+//! grid whatever its gates' length (one at 0 or 1, never rising, still
+//! steps it, as the `step` output follows the clock). Step 0 falls on the
 //! clock's first gate past where it stood when the drain first saw the
 //! table (on beat 0 for a clock not yet started), and again on beat 0
 //! after every reset of the clock, which ends the table's ramps then

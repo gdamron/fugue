@@ -574,11 +574,13 @@ pub trait Module: Send {
         None
     }
 
-    /// How many beats apart the gates of output `port` rise, for a module
-    /// keeping a [`Module::timeline`] (a clock's `beat_x4`: a quarter): a
-    /// table gated from it steps that far. `None` for any other output.
+    /// For a module keeping a [`Module::timeline`]: a token telling this
+    /// instance from every other built (never reused), and how many beats
+    /// apart the gates of output `port` rise (a clock's `beat_x4`: a
+    /// quarter). A table gated from it steps that far on the clock's beat
+    /// grid, whatever the gates' length. `None` for any other output.
     #[doc(hidden)]
-    fn gate_beats(&self, port: &str) -> Option<f64> {
+    fn gate_beats(&self, port: &str) -> Option<(u64, f64)> {
         let _ = port;
         None
     }
