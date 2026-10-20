@@ -1,7 +1,7 @@
 //! Ordering-only edges for conditions: a watched module ordered before the
 //! target lets the request apply on its exact sample and changes nothing
-//! else; an order that would close a cycle is not added; orders go with the
-//! first change made once no condition waits.
+//! else; an order that would change a feedback loop is not added, or kept;
+//! orders go with the first change made once no condition waits.
 
 use super::request_beats::{outcomes_of, render_counted};
 use super::request_conditions::{first_change, nth_beat, rig, submit_on_beat};
@@ -60,6 +60,51 @@ fn an_order_closing_a_cycle_is_not_added() {
     assert!(!order(&rig, "dial", "dial"));
     assert_eq!(rig.live.generation(), generation);
     assert!(watches(&rig).is_empty());
+}
+
+/// Adds an oscillator `id` and routes each `(from, to)` pair, output `audio`
+/// into input `frequency_mod`.
+fn add_oscs(rig: &Rig, ids: &[&str], routes: &[(&str, &str)]) {
+    let built: Vec<_> = ids
+        .iter()
+        .map(|id| (*id, rig.build(id, "oscillator", serde_json::json!({}))))
+        .collect();
+    rig.live
+        .edit(|change| {
+            for (id, osc) in built {
+                change.upsert(id, osc);
+            }
+            for (from, to) in routes {
+                change.connect(edge(from, "audio", to, "frequency_mod"))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn a_route_closing_a_cycle_through_an_order_drops_it() {
+    let rig = rig(false);
+    add_oscs(&rig, &["osc"], &[]);
+    assert!(order(&rig, "osc", "dial"));
+    submit_on_beat(&rig, 1_000);
+    rig.live
+        .edit(|change| change.connect(edge("dial", "out", "osc", "frequency_mod")))
+        .unwrap();
+    assert!(watches(&rig).is_empty(), "the order would fold a loop");
+}
+
+#[test]
+fn an_order_moving_a_loops_delayed_route_is_not_added() {
+    // The search enters the loop at osc_a, so osc_b -> osc_a is delayed;
+    // dial, added earlier, ordered before osc_b would enter it there.
+    let rig = rig(false);
+    let routes = [("osc_a", "osc_b"), ("osc_b", "osc_a")];
+    add_oscs(&rig, &["osc_a", "osc_b"], &routes);
+    let generation = rig.live.generation();
+    assert!(!order(&rig, "dial", "osc_b"));
+    assert_eq!(rig.live.generation(), generation);
+    assert!(order(&rig, "dial", "osc_a"), "entered where it already is");
 }
 
 #[test]

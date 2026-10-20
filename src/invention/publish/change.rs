@@ -357,6 +357,7 @@ impl GraphChange {
             .iter_mut()
             .filter_map(|(id, module)| Some((id.clone(), module.instance.take()?)))
             .collect();
+        self.keep_orders_inaudible();
         self.mirror.settle_timelines();
         let publication = build_publication(
             &self.mirror,
