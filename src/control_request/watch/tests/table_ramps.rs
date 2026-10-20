@@ -6,6 +6,7 @@
 use super::ramps::{control, RampHost};
 use super::*;
 use crate::control_request::automation::Automation;
+use crate::control_request::event::EventCursor;
 use crate::control_request::hold::Rank;
 use crate::control_request::ramps::{BeatRamp, EntryKey, Ramps};
 use crate::control_request::request::Source;
@@ -181,7 +182,9 @@ fn tables_and_requests_ramps_are_capped_apart() {
     let mut host = host(&[&controls[0], &controls[1], &controls[2]]);
     assert!(begin(&mut ramps, &mut host, 0));
     assert!(begin(&mut ramps, &mut host, 1));
+    let mut crowded = EventCursor::new();
     assert!(!begin(&mut ramps, &mut host, 2), "the tables' room is full");
+    assert_eq!(crowded.take(ramps.crowded()), 1, "a jump is counted");
     assert!(ramps.has_room(1), "requests' room is their own");
     let standing = Standing::of(&request(1, 1, 0.0), host.now).unwrap();
     for _ in 0..2 {

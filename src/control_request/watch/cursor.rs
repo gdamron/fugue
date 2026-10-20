@@ -203,6 +203,14 @@ impl Cursors {
         });
     }
 
+    /// Puts the cursors in their modules' order, so entries of several
+    /// tables firing at one sample write in module order (the last
+    /// module's write lands), however and whenever each table was found.
+    /// In place: allocation- and free-free.
+    pub(crate) fn order(&mut self) {
+        self.entries.sort_unstable_by_key(|cursor| cursor.module);
+    }
+
     /// One pass at sample `now`: fires every entry whose step the clock's
     /// next sample reaches (or, late, has passed). Returns whether any
     /// fired, and how many samples until the next may, as far as the
@@ -296,6 +304,8 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
             }
         };
         let clock = cursor.clock.module;
+        // With no ramp room the entry jumps to its value: `start_entry`
+        // counts it (`Ramps::crowded`).
         if !ramp.is_some_and(|ramp| ramps.start_entry(key, clock, ramp, host)) {
             entry.target.write(entry.value);
         }

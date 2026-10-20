@@ -154,7 +154,8 @@ impl SignalGraph {
     /// drain plays it: a table finding no clock output on its clock input
     /// (nothing, a mix of sources, or another signal) or no room plays on
     /// its own. The tables played before are found first, so the room of
-    /// those gone is free for new ones. Allocation-, free- and lock-free.
+    /// those gone is free for new ones; then the cursors are put in module
+    /// order. Allocation-, free- and lock-free.
     fn find_tables(&self, watches: &mut Watches) {
         let Watches { cursors, ramps, .. } = watches;
         cursors.seek();
@@ -181,6 +182,7 @@ impl SignalGraph {
                 cursors.sought(ramps);
             }
         }
+        cursors.order();
     }
 
     /// The clock whose output `port` of module `id` is, if it is one, told
