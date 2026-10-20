@@ -162,6 +162,15 @@ struct Running {
 }
 
 impl Running {
+    fn new(on: RampOn, clock: usize, ramp: BeatRamp) -> Self {
+        Self {
+            on,
+            clock,
+            ramp,
+            ended: false,
+        }
+    }
+
     /// Whether it runs in the `installed` generation: a table's always
     /// does, its indices kept current as the tables are found again.
     fn installed(&self, installed: u64) -> bool {
@@ -266,6 +275,12 @@ impl Ramps {
         if let Some(target) = entry_target(host, key) {
             self.supersede_entry(target, host);
         }
+        // An ended ramp of a table's (one just replaced) gives up its room.
+        let ended = |running: &&mut Running| running.ended && running.is_entry();
+        if let Some(slot) = self.entries.iter_mut().find(ended) {
+            *slot = Running::new(RampOn::Entry(key), clock, ramp);
+            return true;
+        }
         if self.count(true) >= self.table_limit {
             return false;
         }
@@ -274,12 +289,7 @@ impl Ramps {
     }
 
     fn push(&mut self, on: RampOn, clock: usize, ramp: BeatRamp) {
-        self.entries.push(Running {
-            on,
-            clock,
-            ramp,
-            ended: false,
-        });
+        self.entries.push(Running::new(on, clock, ramp));
     }
 
     /// Ends every request's ramp on a control `target` reaches: another

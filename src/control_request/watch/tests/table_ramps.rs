@@ -194,6 +194,22 @@ fn tables_and_requests_ramps_are_capped_apart() {
 }
 
 #[test]
+fn a_ramp_replacing_one_takes_its_room_when_the_tables_room_is_full() {
+    let mut ramps = Ramps::new(2);
+    let (a, b) = (number(0.0), number(0.0));
+    let mut host = host(&[&a, &b, &a, &a]);
+    assert!(begin(&mut ramps, &mut host, 0));
+    assert!(begin(&mut ramps, &mut host, 1));
+    let (replaced, allocs, frees) = allocator_events(|| {
+        // Twice at the same sample: each takes the room of the one it ends.
+        [2, 3].map(|entry| begin(&mut ramps, &mut host, entry))
+    });
+    assert_eq!(replaced, [true, true]);
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!((ramps.running(), ramps.len()), (2, 2));
+}
+
+#[test]
 fn running_a_table_s_ramps_neither_allocates_nor_frees() {
     let (mut store, _outcomes) = store();
     let mut ramps = Ramps::new(4);
