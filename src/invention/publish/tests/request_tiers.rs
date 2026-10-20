@@ -43,7 +43,7 @@ fn submit_value(
     rig.live.requests.submit(request).unwrap()
 }
 
-fn level(rig: &Rig) -> f32 {
+pub(super) fn level(rig: &Rig) -> f32 {
     let (_, cells) = rig.graph.modules["dial"].module().declared().unwrap();
     match cells.load(LEVEL).unwrap() {
         RtValue::F32(level) => level,
@@ -58,7 +58,7 @@ fn overridden(rig: &Rig) -> u32 {
 
 /// The dial, its level ramped by a scheduler stepped by hand: 0 at step
 /// 0, up to 1 over 8 steps from step 1, and from step 6 down to 0.1 over 2.
-fn ramp_rig() -> Rig {
+pub(super) fn ramp_rig() -> Rig {
     let mut rig = dial_rig();
     schedule(
         &mut rig,
@@ -73,7 +73,7 @@ fn ramp_rig() -> Rig {
 
 /// One scheduler step (a block with the gate high, one with it low), each
 /// block allocation- and free-free; the dial's level after it.
-fn step(rig: &mut Rig) -> f32 {
+pub(super) fn step(rig: &mut Rig) -> f32 {
     for gate in [1.0, 0.0] {
         rig.live.write_input("sched", "clock", gate).unwrap();
         assert_eq!(counted_block(rig), (0, 0));
