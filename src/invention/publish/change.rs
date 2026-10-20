@@ -43,6 +43,12 @@ pub(crate) struct TopologyMirror {
     /// Each module's timeline context, in module order, as of the latest
     /// compile (see [`Self::settle_timelines`]).
     pub(crate) timelines: Vec<Context>,
+    /// Ordering-only edges, source then target by id, that requests timed
+    /// by a condition watch through: the source computes before the target
+    /// so the request applies on its exact sample (see `graph::conditions`).
+    /// Neither routed nor saved; dropped by the first change made once no
+    /// condition waits (see [`GraphChange::forget_orders`]).
+    pub(crate) watches: Vec<(String, String)>,
 }
 
 impl TopologyMirror {
@@ -66,6 +72,7 @@ impl TopologyMirror {
             modules,
             edges: edges.to_vec(),
             timelines: Vec::new(),
+            watches: Vec::new(),
         };
         mirror.settle_timelines();
         mirror
@@ -431,12 +438,21 @@ impl TopologyFacts for MirrorFacts<'_> {
     }
 
     fn control_targets(&self, module: usize) -> Vec<String> {
-        self.mirror
-            .modules
-            .get_index(module)
-            .and_then(|(id, _)| self.surfaces.get(id))
+        let Some((id, _)) = self.mirror.modules.get_index(module) else {
+            return Vec::new();
+        };
+        let mut targets = self
+            .surfaces
+            .get(id)
             .map(|surface| surface.control_targets())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let watched = self
+            .mirror
+            .watches
+            .iter()
+            .filter(|(source, _)| source == id);
+        targets.extend(watched.map(|(_, target)| target.clone()));
+        targets
     }
 }
 
@@ -483,6 +499,9 @@ fn build_publication(
     })
 }
 
+// Used by requests timed by a condition, once they are submitted by id.
+#[cfg_attr(not(test), allow(dead_code))]
+mod order;
 #[cfg(test)]
 mod tests;
 mod timelines;

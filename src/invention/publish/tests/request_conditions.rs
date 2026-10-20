@@ -18,7 +18,7 @@ const BPM: f64 = 1100.0;
 
 /// A clock and a dial (level 0.25) into an unclipped dac, added in the
 /// given order: the module added later computes first.
-fn rig(clock_first: bool) -> Rig {
+pub(super) fn rig(clock_first: bool) -> Rig {
     let mut rig = Rig::new(
         r#"{
         "version": "1.0.0",
@@ -47,7 +47,7 @@ fn rig(clock_first: bool) -> Rig {
 }
 
 /// Sets the dial's level to 1 on the clock's `beats`th beat from now.
-fn submit_on_beat(rig: &Rig, beats: u32) -> RequestId {
+pub(super) fn submit_on_beat(rig: &Rig, beats: u32) -> RequestId {
     let publisher = rig.live.publisher().lock().unwrap();
     let target = publisher.control_target("dial", LEVEL).unwrap();
     let clock = publisher.control_target("clock", ControlIndex(0)).unwrap();
@@ -59,7 +59,7 @@ fn submit_on_beat(rig: &Rig, beats: u32) -> RequestId {
 
 /// The sample of the clock's `n`th beat (from one) in `out`, a render of
 /// the rig without requests: its gate rising over the dial's 0.25.
-fn nth_beat(out: &[f32], n: usize) -> u64 {
+pub(super) fn nth_beat(out: &[f32], n: usize) -> u64 {
     let mut last = 0.0;
     let mut rises = out.iter().enumerate().filter(|&(_, &sample)| {
         let gate = sample - 0.25;
@@ -71,7 +71,7 @@ fn nth_beat(out: &[f32], n: usize) -> u64 {
 }
 
 /// The first sample `out` differs from `oracle` at.
-fn first_change(out: &[f32], oracle: &[f32]) -> u64 {
+pub(super) fn first_change(out: &[f32], oracle: &[f32]) -> u64 {
     let mut pairs = out.iter().zip(oracle);
     pairs.position(|(a, b)| a != b).unwrap() as u64
 }
