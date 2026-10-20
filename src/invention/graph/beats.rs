@@ -4,8 +4,6 @@
 //! too (see [`crate::control_request::BeatTable`]), each on the clock
 //! output connected to its clock input.
 
-use std::hash::{DefaultHasher, Hash, Hasher};
-
 use super::SignalGraph;
 use crate::control_request::{
     kept_hold, take_automation, BeatHost, BeatTable, ControlTarget, Outcome, Outcomes,
@@ -111,11 +109,7 @@ impl SignalGraph {
         // So a request timed in beats applies after automation written for
         // the same sample, and wins; one timed in samples applies before
         // it, and the automation wins.
-        for clock in watches.clocks(installed) {
-            if let Some((_, instance)) = self.modules.get_index_mut(clock) {
-                take_automation(instance.module_mut());
-            }
-        }
+        self.take_clocks(watches, installed);
         // An application can move a clock (a reset or tempo timed on
         // beats), and so can a ramp's write (one of a tempo), so pass again
         // after them until none applies, the deadlines then as the clocks
@@ -123,18 +117,19 @@ impl SignalGraph {
         // and a ramp writes the same value again at the same sample, so
         // this ends.
         //
-        // A table's entry writes automation, which its clock then takes, so
-        // the deadlines see a tempo it wrote.
+        // A table's entry, or its ramp, writes automation, which every
+        // clock waited on then takes, so the deadlines see a tempo written.
         let now = self.current_sample;
         loop {
             if watches.pass(now, installed, self, outcomes).0 {
-                self.take_table_clocks(watches);
+                self.take_clocks(watches, installed);
                 continue;
             }
-            let arrives = watches.ramps.step(installed, self, &mut outcomes.retirer);
-            self.take_table_clocks(watches);
+            watches.ramps.step(installed, self, &mut outcomes.retirer);
+            self.take_clocks(watches, installed);
+            let arrives = watches.ramps.arrival(installed, self);
             let (applied, wait) = watches.pass(now, installed, self, outcomes);
-            self.take_table_clocks(watches);
+            self.take_clocks(watches, installed);
             if !applied {
                 return match (wait, arrives) {
                     (Some(wait), Some(arrives)) => Some(wait.min(arrives)),
@@ -144,9 +139,10 @@ impl SignalGraph {
         }
     }
 
-    /// Takes the automation written to the clocks tables step on.
-    fn take_table_clocks(&mut self, watches: &Watches) {
-        for clock in watches.cursors.clocks() {
+    /// Takes the automation written to every clock a watch, ramp or table
+    /// waits on.
+    fn take_clocks(&mut self, watches: &Watches, installed: u64) {
+        for clock in watches.clocks(installed) {
             if let Some((_, instance)) = self.modules.get_index_mut(clock) {
                 take_automation(instance.module_mut());
             }
@@ -179,15 +175,17 @@ impl SignalGraph {
         cursors.sought(ramps);
     }
 
-    /// The clock whose output `port` of module `id` is, if it is one.
+    /// The clock whose output `port` of module `id` is, if it is one. Its
+    /// instance's address tells it apart: the same while it lives, wherever
+    /// it moves, and another for a clock replacing it (found while the one
+    /// replaced still waits to be retired).
     fn step_clock(&self, id: &str, port: &str) -> Option<StepClock> {
         let (module, _, instance) = self.modules.get_full(id)?;
         let beats = instance.module().gate_beats(port)?;
-        let mut hasher = DefaultHasher::new();
-        id.hash(&mut hasher);
+        let address = std::ptr::from_ref(instance.module()).cast::<()>();
         Some(StepClock {
             module,
-            id: hasher.finish(),
+            id: address as usize as u64,
             beats,
         })
     }

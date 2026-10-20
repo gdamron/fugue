@@ -7,15 +7,16 @@
 //! or takes a lock.
 
 use super::migrated::block_with_locks_held;
-use super::request_beats::{render_counted, Twin};
+use super::request_beats::{level_change, render_counted, submit_on, Twin, BPM as TEMPO};
 use super::*;
 use crate::control_request::{
-    Automation, Request, RequestValue, RtValue, Source, TableEntry, Timeline,
+    ramp_value, Automation, BeatSpec, Request, RequestValue, RtValue, Source, TableEntry, Timeline,
 };
 use crate::invention::graph::{offline_requests, RoutingConnection};
 use crate::test_support::dial::{DialFactory, DIAL, LEVEL};
 use crate::test_support::table::{entry, TestTable};
 use crate::test_support::tabler::{next_table, TablerFactory, TABLER};
+use crate::Module;
 
 /// A tempo with fractional samples per beat at 48 kHz.
 const BPM: f64 = 97.0;
@@ -239,4 +240,122 @@ fn a_block_playing_a_table_takes_no_lock_a_control_thread_holds() {
     let mut rig = live("beat", plan);
     render_counted(&mut rig, 4);
     block_with_locks_held(&mut rig, &[]).unwrap();
+}
+
+#[test]
+fn a_table_plays_again_from_step_0_on_a_clock_replacing_its_own() {
+    let beats = beat_samples(3);
+    let mut rig = live("beat", |level| {
+        vec![entry(0, 0, 0.5, level), entry(1, 0, 0.75, level)]
+    });
+    let before = render_counted(&mut rig, beats[2] / 64);
+    assert_eq!(before.last(), Some(&0.75), "played out");
+    let clock = rig.build("clock", "clock", serde_json::json!({ "bpm": BPM }));
+    rig.live
+        .edit(|change| {
+            change.upsert("clock", clock);
+            Ok(())
+        })
+        .unwrap();
+    // The new clock's beat 0 is the installing block's first sample.
+    let after = render_counted(&mut rig, blocks(2.0));
+    assert!(after[..beats[1]].iter().all(|&level| level == 0.5));
+    assert!(after[beats[1]..].iter().all(|&level| level == 0.75));
+}
+
+#[test]
+fn a_tempo_a_table_writes_moves_a_request_waiting_on_that_clock() {
+    // The table steps on `clock` and speeds `b` up at its step 1, so that
+    // `b` reaches beat 1, which a request waits on, before the block ends.
+    let doc = DOCUMENT.replace(
+        r#"{ "id": "dac""#,
+        r#"{ "id": "b", "type": "clock", "config": { "bpm": 60.0 } },
+        { "id": "dac""#,
+    );
+    let written = beat_samples(2)[1] as u64;
+    let mut twin = Twin::new(60.0);
+    twin.run_to(written);
+    let left = 1.0 - twin.clock.position();
+    let samples = (written / 64 + 1) * 64 - written;
+    let fast = (left / (samples / 2) as f64 * 60.0 * 48_000.0) as f32;
+    let mut rig = Rig::new(&doc);
+    rig.registry.register(DialFactory);
+    rig.registry.register(TablerFactory);
+    let surface = rig.live.control_surfaces.lock().unwrap()["b"].clone();
+    let tempo = surface.automation("bpm").unwrap();
+    let (dial, tabler) = build(&rig.registry, |_| vec![entry(1, 0, fast, &tempo)]);
+    rig.live
+        .edit(|change| {
+            change.upsert("dial", dial);
+            change.upsert("tabler", tabler);
+            change.connect(edge("b", "beat", "dac", "audio"))?;
+            for edge in edges("beat") {
+                change.connect(edge)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    let spec = BeatSpec::Grid {
+        every: 4.0,
+        offset: 1.0,
+        repeat: false,
+    };
+    submit_on(&rig, ("dial", LEVEL), RtValue::F32(0.75), "b", spec, None);
+    let out = render_counted(&mut rig, blocks(1.5));
+    twin.writes.push((written, TEMPO, RtValue::F32(fast)));
+    let at = twin.until(|clock| clock.position() >= 1.0);
+    assert!(
+        at < (written / 64 + 1) * 64,
+        "in the block it was written in"
+    );
+    assert_eq!(level_change(&out, 0.75), Some(at as usize - 64));
+}
+
+#[test]
+fn a_tempo_ramp_a_table_ends_on_lands_as_its_clock_reaches_its_end() {
+    for to in [300.0, 2_000.0, 20_000.0] {
+        tempo_ramp_lands(to);
+    }
+}
+
+/// From step 1 to step 2 a table's own clock speeds up to `to` bpm, its
+/// last entry: checked against the clock on its own, written the ramp at
+/// the samples the drain runs (the step's, each block's first, and the
+/// one whose next sample reaches beat 2), latched as the drain latches.
+fn tempo_ramp_lands(to: f32) {
+    let mut rig = Rig::new(DOCUMENT);
+    rig.registry.register(DialFactory);
+    rig.registry.register(TablerFactory);
+    let surface = rig.live.control_surfaces.lock().unwrap()["clock"].clone();
+    let tempo = surface.automation("bpm").unwrap();
+    let (dial, tabler) = build(&rig.registry, |_| vec![entry(1, 1, to, &tempo)]);
+    rig.live
+        .edit(|change| {
+            change.upsert("dial", dial);
+            change.upsert("tabler", tabler);
+            change.connect(edge("clock", "beat", "tabler", "clock"))
+        })
+        .unwrap();
+    let mut twin = Twin::new(BPM);
+    let (mut running, mut arrived) = (false, false);
+    for sample in 0..blocks(3.0) as u64 * 64 {
+        let next = twin.clock.position_after(1);
+        let starts = !running && next >= 1.0;
+        running |= starts;
+        if running && !arrived && (starts || sample.is_multiple_of(64) || next >= 2.0) {
+            arrived = next >= 2.0;
+            let bpm = ramp_value(BPM as f32, to, next - 1.0);
+            twin.clock.timeline_mut().unwrap().latch();
+            twin.clock.set_control("bpm", bpm).unwrap();
+        }
+        twin.tick();
+        if twin.sample.is_multiple_of(64) {
+            rig.render(1);
+            let clock = rig.graph.modules["clock"].module().timeline().unwrap();
+            let at = twin.sample;
+            assert_eq!(clock.position(), twin.clock.position(), "{to} at {at}");
+        }
+    }
+    assert!(arrived);
 }
