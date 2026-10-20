@@ -5,8 +5,10 @@
 //! An order never changes what is heard. Acyclic modules may compute in
 //! any order their routes allow, but a feedback group's members, their
 //! order, and which of its routes are delayed a sample are the sound
-//! itself. So an order that would change any of them (closing a cycle, or
-//! moving where the order search enters an existing loop) is not added,
+//! itself, as is the order of the modules that write other modules'
+//! controls: of two writing one control, the later wins. So an order that
+//! would change any of them (closing a cycle, moving where the order
+//! search enters an existing loop, or reordering writers) is not added,
 //! and one a later edit would make do so is dropped as that edit
 //! compiles. The request then applies late, at its target's next segment.
 
@@ -14,9 +16,14 @@ use super::{GraphChange, MirrorFacts};
 use crate::invention::graph::{compile_topology, TopologyFacts};
 
 /// What a topology does to the sound beyond acyclic order: each feedback
-/// group's members in the order they compute, and every route with whether
-/// it is delayed a sample.
-type Heard = (Vec<Vec<usize>>, Vec<(usize, usize, usize, usize, bool)>);
+/// group's members in the order they compute, every route with whether it
+/// is delayed a sample, and the modules writing controls in the order they
+/// compute.
+type Heard = (
+    Vec<Vec<usize>>,
+    Vec<(usize, usize, usize, usize, bool)>,
+    Vec<usize>,
+);
 
 impl GraphChange {
     /// Orders module `source` before module `target` without routing
@@ -68,6 +75,15 @@ impl GraphChange {
         };
         let sinks = self.mirror.sinks();
         let topology = compile_topology(&facts, &self.mirror.edges, &sinks, 1);
+        let writes = |module: &usize| {
+            let (id, _) = self.mirror.modules.get_index(*module).unwrap();
+            let surface = self.surfaces.get(id);
+            surface.is_some_and(|surface| !surface.control_targets().is_empty())
+        };
+        // In the order they run: group by group, as the graph processes.
+        let groups = topology.process_groups.iter();
+        let run = groups.flat_map(|group| group.members.iter().copied());
+        let writers = run.filter(writes).collect();
         let mut loops: Vec<_> = topology
             .process_groups
             .into_iter()
@@ -83,7 +99,7 @@ impl GraphChange {
             }
         }
         routes.sort_unstable();
-        (loops, routes)
+        (loops, routes, writers)
     }
 
     /// Whether module `from` computes before module `to` by what orders
