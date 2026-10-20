@@ -350,6 +350,7 @@ impl RunningInvention {
     /// connections mirrored from the live topology. `None` when the graph
     /// was assembled without a document.
     pub fn document(&self) -> Option<crate::Invention> {
+        self.live.adopt_landed();
         self.state.lock().unwrap().document()
     }
 

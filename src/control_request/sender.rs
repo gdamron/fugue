@@ -133,6 +133,13 @@ impl RequestSender {
         }
     }
 
+    /// Whether a request submitted now would find room. Exact while
+    /// submissions are serialized, as a live graph's are (under its
+    /// publisher): the audio thread only frees slots.
+    pub(crate) fn has_room(&self) -> bool {
+        self.queue.leaves(self.reserve)
+    }
+
     /// Whether [`CONDITION_CAPACITY`](super::CONDITION_CAPACITY) requests
     /// timed by a condition are in flight, so a front door refuses one more
     /// before submitting it. Exact while submissions are serialized, as a
