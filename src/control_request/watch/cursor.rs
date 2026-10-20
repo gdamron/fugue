@@ -289,6 +289,8 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
             }
         };
         let clock = cursor.clock.module;
+        // With no ramp room the entry jumps to its value: `start_entry`
+        // counts it (`Ramps::crowded`).
         if !ramp.is_some_and(|ramp| ramps.start_entry(key, clock, ramp, host)) {
             entry.target.write(entry.value);
         }
