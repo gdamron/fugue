@@ -270,3 +270,35 @@ fn a_ramp_in_flight_carries_on_onto_the_module_that_replaces_its_target() {
     step(&mut rig); // step 4: the ramp arrives
     assert_eq!(frequency(&rig), ControlValue::Number(200.0));
 }
+
+/// A ramp on a target the change leaves alone carries on when the change
+/// rebuilds another target of the same schedule, and reaches its endpoint.
+#[test]
+fn a_ramp_on_a_surviving_target_carries_on_when_another_target_is_rebuilt() {
+    let both = r#"[
+        { "at_step": 0, "module": "p", "control": "frequency", "value": 55.0, "ramp_steps": 4 },
+        { "at_step": 1, "module": "o", "control": "frequency", "value": 330.0 }
+    ]"#;
+    let mut rig = Rig::new(&with_p());
+    rig.render(1);
+    write(&rig, "sched", "schedule", both.into());
+    step(&mut rig); // step 0: p's ramp starts from 110
+    step(&mut rig); // step 1
+    let ControlValue::Number(reached) = read(&rig, "p", "frequency") else {
+        panic!("a number");
+    };
+    assert!(reached < 110.0 && reached > 55.0, "{reached}");
+    let config = serde_json::json!({ "frequency": 440.0 });
+    rig.live
+        .swap_module(SAMPLE_RATE, "o", "oscillator", &config, true)
+        .unwrap();
+    assert_eq!(counted_block(&mut rig), (0, 0), "the installing block");
+    step(&mut rig); // step 2
+    let ControlValue::Number(carried) = read(&rig, "p", "frequency") else {
+        panic!("a number");
+    };
+    assert!(carried < reached && carried > 55.0, "{carried}");
+    step(&mut rig); // step 3
+    step(&mut rig); // step 4: the ramp arrives
+    assert_eq!(read(&rig, "p", "frequency"), ControlValue::Number(55.0));
+}
