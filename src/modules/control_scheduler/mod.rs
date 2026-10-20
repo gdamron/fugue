@@ -111,7 +111,7 @@
 
 use std::sync::Arc;
 
-use crate::control_request::{ControlCells, ControlIndex, ControlTable, Refusal};
+use crate::control_request::{ControlCells, ControlIndex, ControlTable, Refusal, TableValue};
 use crate::payload::{Payload, Retired};
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -263,7 +263,8 @@ impl ControlScheduler {
             0
         } else {
             let step = self.current_step as u64;
-            self.entries.partition_point(|entry| entry.at_step <= step)
+            self.entries
+                .partition_point(|entry| entry.at_step() <= step)
         };
         next
     }
@@ -299,14 +300,12 @@ impl ControlScheduler {
             ramp.steps_done += 1;
             let entry = &entries[ramp.entry_idx];
             if ramp.steps_done >= ramp.steps_total {
-                entry.write(ScheduleValue::Number(ramp.to));
+                entry.write(TableValue::Number(ramp.to));
                 false
             } else {
                 let progress = ramp.steps_done as f32 / ramp.steps_total as f32;
                 // A ramp held off by a higher tier is abandoned.
-                entry.write(ScheduleValue::Number(ramp_value(
-                    ramp.from, ramp.to, progress,
-                )))
+                entry.write(TableValue::Number(ramp_value(ramp.from, ramp.to, progress)))
             }
         });
     }
@@ -316,15 +315,15 @@ impl ControlScheduler {
     fn fire_due_entries(&mut self, frame: usize) {
         debug_assert!(self.current_step >= 0);
         let step = self.current_step as u64;
-        while self.cursor < self.entries.len() && self.entries[self.cursor].at_step <= step {
+        while self.cursor < self.entries.len() && self.entries[self.cursor].at_step() <= step {
             let entry_idx = self.cursor;
             self.cursor += 1;
             self.cancel_conflicting_ramp(entry_idx);
             let entry = &self.entries[entry_idx];
             // The next event on its control takes it back from a hold.
             entry.begin(frame);
-            if entry.ramp_steps == 0 {
-                entry.write(entry.value);
+            if entry.ramp_steps() == 0 {
+                entry.write(entry.entry.value);
                 continue;
             }
             // Ramp: sample the control's current value as the start point.
@@ -333,14 +332,14 @@ impl ControlScheduler {
             let Some(from) = entry.current_number() else {
                 continue;
             };
-            let ScheduleValue::Number(to) = entry.value else {
+            let TableValue::Number(to) = entry.entry.value else {
                 continue;
             };
             self.ramps.push(ActiveRamp {
                 entry_idx,
                 from,
                 to,
-                steps_total: entry.ramp_steps,
+                steps_total: entry.ramp_steps(),
                 steps_done: 0,
             });
         }
@@ -361,7 +360,7 @@ impl ControlScheduler {
         self.ramps.retain(|ramp| {
             let progress = ((ramp.steps_done as f32 + frac) / ramp.steps_total as f32).min(1.0);
             let value = ramp_value(ramp.from, ramp.to, progress);
-            entries[ramp.entry_idx].write(ScheduleValue::Number(value))
+            entries[ramp.entry_idx].write(TableValue::Number(value))
         });
     }
 
