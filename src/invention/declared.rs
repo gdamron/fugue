@@ -121,6 +121,16 @@ struct Written {
     staged: Option<Payload>,
 }
 
+/// A write resolved for a request the live graph times itself.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct Resolved {
+    pub(crate) index: ControlIndex,
+    pub(crate) raw: RtValue,
+    pub(crate) event: bool,
+    /// Its key and value as reads list it pending.
+    pub(crate) shown: Option<(String, ControlValue)>,
+}
+
 /// A write on its way to a module: a value, or a payload and what reads
 /// report for it.
 enum Write {
@@ -153,6 +163,31 @@ impl DeclaredSurface {
     /// Whether `key` is a payload control.
     pub(crate) fn is_payload(&self, key: &str) -> bool {
         self.payload_decl(key).is_some()
+    }
+
+    /// Resolves a write of `value` to `key` for a request the live graph
+    /// times itself (see `publish::watch`): the control, the value as the
+    /// module receives it, whether it is an event, and the key and value
+    /// reads list it pending as. Refuses payloads, which a condition
+    /// cannot time yet.
+    pub(crate) fn resolve_write(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Result<Resolved, String> {
+        if self.is_payload(key) {
+            return Err(format!("{key} cannot be timed by a condition"));
+        }
+        let index = self.index(key)?;
+        let raw = self.table.coerce(index, value)?;
+        let event = self.table.decl(index).is_some_and(|(decl, _)| decl.event);
+        let shown = self.table.key(index).zip(self.table.value(index, raw));
+        Ok(Resolved {
+            index,
+            raw,
+            event,
+            shown,
+        })
     }
 
     fn payload_decl(&self, key: &str) -> Option<(ControlIndex, Option<PayloadCodec>)> {
@@ -461,6 +496,10 @@ impl ControlSurface for DeclaredSurface {
 
     fn set_legacy(&self, key: &str, _value: ControlValue) -> Result<(), String> {
         self.index(key).map(drop)
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
 
     fn declaration(&self, key: &str) -> Option<Declaration> {
