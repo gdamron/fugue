@@ -1,7 +1,7 @@
 //! The audio thread's store of requests waiting for their sample, and the
 //! one point every request leaves the audio thread's hands through.
 
-use super::chains::Chains;
+use super::chains::{Chains, RECENT};
 use super::hold::{Rank, Standing};
 use super::outcome::OutcomeSender;
 use super::request::{ControlTarget, Request, RequestValue};
@@ -96,7 +96,7 @@ impl Outcomes {
             retirer,
             reserved: 0,
             sender,
-            chains: Chains::new(),
+            chains: Chains::new(RECENT),
         }
     }
 
@@ -189,6 +189,12 @@ impl PendingStore {
             limit: capacity,
             outcomes: Outcomes::new(retirer, sender),
         }
+    }
+
+    /// Remembers the latest `settles` settles for conditions waiting on
+    /// them (see [`Chains::new`]). Allocates: control thread.
+    pub(crate) fn remember(&mut self, settles: usize) {
+        self.outcomes.chains = Chains::new(settles);
     }
 
     pub(crate) fn len(&self) -> usize {
