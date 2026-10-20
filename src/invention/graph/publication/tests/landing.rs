@@ -249,6 +249,41 @@ fn writes_for_a_newer_generation_never_keep_the_bridge() {
 }
 
 #[test]
+fn a_full_ring_of_held_writes_never_keeps_the_bridge() {
+    let mut graph = base_graph();
+    let mut ends = link(&mut graph, 4);
+    let port = frequency_port(&graph);
+    time(&ends, rebuild_osc1(), When::AtSample(10));
+    render(&mut graph, 1);
+    // Writes for the next generation fill the held ones, with more queued
+    // behind them: none can apply until an edit installs, and none may
+    // keep the bridge that edit waits on.
+    let write = InputWrite {
+        generation: 2,
+        module_idx: 0,
+        port_idx: port,
+        value: 0.5,
+    };
+    let link = graph.link.as_mut().unwrap();
+    let held = link.pending.capacity();
+    assert!(link.pending.is_empty());
+    link.pending.extend(std::iter::repeat_n(write, held));
+    assert_eq!(link.pending.capacity(), held, "full, not grown");
+    // Never reached: the full ring stops the drain before it pops. It is
+    // what would be queued behind the held writes.
+    ends.inputs.push(write).unwrap();
+    let published = graph.requests.as_ref().unwrap().published().clone();
+    published.store(1, Ordering::Release);
+
+    assert_eq!(counted_block(&mut graph), (0, 0));
+    let bridge = ends.retired.pop().expect("the bridge went back");
+    assert_eq!(bridge.generation, 1);
+    let link = graph.link.as_ref().unwrap();
+    assert!(link.bridge.is_none());
+    assert_eq!(link.pending.len(), held, "held, not dropped");
+}
+
+#[test]
 fn an_edit_behind_a_bridge_is_not_starved_by_a_full_store() {
     let mut graph = base_graph();
     graph.request_hook = Some(SignalGraph::request_as_input_write);
