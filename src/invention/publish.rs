@@ -43,6 +43,7 @@ mod reclaim;
 mod registry;
 #[cfg(test)]
 pub(crate) mod tests;
+mod timed;
 // Submitted to by the front doors FUG-317 builds.
 #[cfg_attr(not(test), allow(dead_code))]
 mod watch;
@@ -140,6 +141,14 @@ impl Settler {
     }
 }
 
+/// The runtime's mirrors of the graph a commit updates: control surfaces,
+/// module ports and the state.
+type Mirrors<'a> = (
+    &'a Mutex<IndexMap<String, ControlSurfaceInstance>>,
+    &'a Mutex<IndexMap<String, ModulePorts>>,
+    &'a Mutex<RuntimeState>,
+);
+
 /// What a committed change did, for the caller's follow-up work.
 #[derive(Default)]
 pub(crate) struct Committed {
@@ -223,10 +232,12 @@ impl LiveGraph {
     /// Starts freeing retired publications on a control thread every
     /// [`reclaim::RECLAIM_INTERVAL`], so a removed module (a sink finalizing
     /// its file, say) is dropped promptly rather than at the next change.
+    /// The same cadence adopts a timed edit once it lands (see `timed`).
     /// The thread ends once every clone of this graph is gone. Returns false
     /// when no thread could start.
     pub(crate) fn start_reclaimer(&self) -> bool {
-        Reclaimer::spawn(&self.reclaimer)
+        let adopter = self.adopter();
+        Reclaimer::spawn(&self.reclaimer, move || adopter.tick())
     }
 
     /// Frees retired publications now, on the calling thread.
@@ -253,13 +264,13 @@ impl LiveGraph {
     /// Publications made so far. A change prepared from state read before
     /// this generation moved is refused when it publishes.
     pub(crate) fn generation(&self) -> u64 {
-        self.publisher.lock().unwrap().generation()
+        self.lock().generation()
     }
 
     /// Every module's timeline context as of the latest publication, by
     /// module id (see `crate::invention::timelines`).
     pub(crate) fn timelines(&self) -> HashMap<String, crate::TimelineContext> {
-        let publisher = self.publisher.lock().unwrap();
+        let publisher = self.lock();
         let mirror = publisher.mirror();
         mirror
             .modules
@@ -270,7 +281,7 @@ impl LiveGraph {
 
     /// Module `id`'s timeline context as of the latest publication.
     pub(crate) fn timeline_of(&self, id: &str) -> Option<crate::TimelineContext> {
-        self.publisher.lock().unwrap().mirror().timeline_of(id)
+        self.lock().mirror().timeline_of(id)
     }
 
     /// The shared publisher, for observation in tests.
@@ -285,7 +296,7 @@ impl LiveGraph {
     /// small enough to prepare under the publisher's lock.
     pub(crate) fn begin(&self) -> GraphChange {
         self.reclaim();
-        let publisher = self.publisher.lock().unwrap();
+        let publisher = self.lock();
         self.change_on(&publisher)
     }
 
@@ -356,6 +367,8 @@ impl LiveGraph {
     fn settle(&self) {
         if let Some(settler) = &self.settler {
             settler.settle();
+            // What the settle landed is adopted at once.
+            drop(self.lock());
         }
     }
 
@@ -381,7 +394,7 @@ impl LiveGraph {
         retain: impl FnOnce(&mut RuntimeState),
     ) -> Result<Committed, GraphCommandError> {
         self.reclaim();
-        self.commit_locked(self.publisher.lock().unwrap(), prepared, retain)
+        self.commit_locked(self.lock(), prepared, retain)
     }
 
     /// [`Self::commit_with`], also adopting `registry`, when given, as the
@@ -398,7 +411,7 @@ impl LiveGraph {
     ) -> Result<Committed, GraphCommandError> {
         let mut superseded = None;
         self.reclaim();
-        let publisher = self.publisher.lock().unwrap();
+        let publisher = self.lock();
         // `retain` runs only when the change commits, under the publisher.
         let result = self.commit_locked(publisher, prepared, |state| {
             superseded = registry.map(|registry| self.registry.replace(registry));
@@ -429,7 +442,7 @@ impl LiveGraph {
         edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
     ) -> Result<Committed, GraphCommandError> {
         self.reclaim();
-        let publisher = self.publisher.lock().unwrap();
+        let publisher = self.lock();
         if built_with.is_some_and(|registry| !self.registry.is_current(registry)) {
             drop(publisher);
             return Err(GraphCommandError::TopologyMoved);
@@ -504,6 +517,34 @@ impl LiveGraph {
         for schedule in written {
             schedule.record();
         }
+        let committed = self.commit_published(&publisher, published, &self.port(), retain);
+        drop(publisher);
+        self.settle();
+        Ok(committed)
+    }
+
+    /// Commits the runtime mirrors to `published`, now the publisher's
+    /// mirror, under `publisher`, built modules' surfaces submitting
+    /// through `port`, then runs `retain` on the state.
+    fn commit_published(
+        &self,
+        publisher: &Publisher,
+        published: publisher::Published,
+        port: &RequestPort,
+        retain: impl FnOnce(&mut RuntimeState),
+    ) -> Committed {
+        let mirrors = (&*self.control_surfaces, &*self.module_ports, &*self.state);
+        Self::commit_mirrors(mirrors, publisher, published, port, retain)
+    }
+
+    /// [`Self::commit_published`], on the mirrors given.
+    fn commit_mirrors(
+        (control_surfaces, module_ports, state): Mirrors<'_>,
+        publisher: &Publisher,
+        published: publisher::Published,
+        port: &RequestPort,
+        retain: impl FnOnce(&mut RuntimeState),
+    ) -> Committed {
         let mirror = publisher.mirror();
         let removed: Vec<&String> = published
             .previous
@@ -516,7 +557,7 @@ impl LiveGraph {
             // Retired under the publisher, so a write racing this commit
             // never reaches the module that replaces one (see
             // `invention::declared`).
-            let mut surfaces = self.control_surfaces.lock().unwrap();
+            let mut surfaces = control_surfaces.lock().unwrap();
             for id in &removed {
                 if let Some(surface) = surfaces.shift_remove(*id) {
                     surface.retire();
@@ -529,7 +570,6 @@ impl LiveGraph {
             }
             // Published now, so each built module's writes are requests
             // resolved against this generation, where it is the module.
-            let port = self.port();
             for (id, module) in &published.built {
                 match &module.surface {
                     Some(surface) => {
@@ -542,13 +582,13 @@ impl LiveGraph {
                 }
             }
         }
-        *self.module_ports.lock().unwrap() = mirror
+        *module_ports.lock().unwrap() = mirror
             .modules
             .iter()
             .map(|(id, module)| (id.clone(), module.ports.clone()))
             .collect();
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = state.lock().unwrap();
             for id in &removed {
                 state.modules.shift_remove(*id);
                 state.document_remove_module(id);
@@ -574,9 +614,7 @@ impl LiveGraph {
             }
             committed.started.push(module.info);
         }
-        drop(publisher);
-        self.settle();
-        Ok(committed)
+        committed
     }
 
     /// Queues a direct write to a module's input port for the next block.
@@ -599,7 +637,7 @@ impl LiveGraph {
         port: &str,
         value: f32,
     ) -> Result<(), GraphCommandError> {
-        let mut publisher = self.publisher.lock().unwrap();
+        let mut publisher = self.lock();
         let write = publisher.input_write(module_id, port, value)?;
         publisher.queue_input(write)?;
         drop(publisher);
