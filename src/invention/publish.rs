@@ -284,12 +284,17 @@ impl LiveGraph {
     }
 
     fn change_on(&self, publisher: &Publisher) -> GraphChange {
-        GraphChange::new(
+        let mut change = GraphChange::new(
             publisher.generation(),
             publisher.mirror().clone(),
             self.control_surfaces.clone(),
             publisher.block_size(),
-        )
+        );
+        // Orders conditions watched through, once none waits (see `change::order`).
+        if self.requests.watch_slots().taken() == 0 {
+            change.forget_orders();
+        }
+        change
     }
 
     /// Control writes submitted and not yet applied (or refused), oldest

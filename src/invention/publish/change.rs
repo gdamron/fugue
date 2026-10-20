@@ -43,6 +43,15 @@ pub(crate) struct TopologyMirror {
     /// Each module's timeline context, in module order, as of the latest
     /// compile (see [`Self::settle_timelines`]).
     pub(crate) timelines: Vec<Context>,
+    /// Ordering-only edges, source then target by id, that requests timed
+    /// by a condition watch through: the source computes before the target
+    /// so the request applies on its exact sample (see `graph::conditions`).
+    /// Neither routed nor saved; dropped by the first change made once no
+    /// condition waits (see [`GraphChange::forget_orders`]).
+    pub(crate) watches: Vec<(String, String)>,
+    /// Each module's control targets as the topology last published was
+    /// compiled with them (see `change::order`).
+    pub(crate) targets: order::Targets,
 }
 
 impl TopologyMirror {
@@ -51,6 +60,10 @@ impl TopologyMirror {
         modules: &IndexMap<String, ModuleInstance>,
         edges: &[RoutingConnection],
     ) -> Self {
+        let targets = modules
+            .iter()
+            .map(|(id, instance)| (id.clone(), instance.module().control_targets()));
+        let targets = targets.collect();
         let modules = modules
             .iter()
             .map(|(id, instance)| {
@@ -66,6 +79,8 @@ impl TopologyMirror {
             modules,
             edges: edges.to_vec(),
             timelines: Vec::new(),
+            watches: Vec::new(),
+            targets,
         };
         mirror.settle_timelines();
         mirror
@@ -350,13 +365,11 @@ impl GraphChange {
             .iter_mut()
             .filter_map(|(id, module)| Some((id.clone(), module.instance.take()?)))
             .collect();
+        // Read once: what the publication compiles with is what it holds.
+        self.mirror.targets = self.targets_now();
+        self.keep_orders_inaudible();
         self.mirror.settle_timelines();
-        let publication = build_publication(
-            &self.mirror,
-            &self.surfaces,
-            &mut instances,
-            self.block_size,
-        );
+        let publication = build_publication(&self.mirror, &mut instances, self.block_size);
         PreparedChange {
             base_generation: self.base_generation,
             mirror: self.mirror,
@@ -396,11 +409,11 @@ impl PreparedChange {
     }
 }
 
-/// Compilation facts read from a mirror; control targets come from the
-/// modules' control surfaces.
+/// Compilation facts read from a mirror, with each module's control
+/// targets read from its surface beforehand (see [`order::Targets`]).
 struct MirrorFacts<'a> {
     mirror: &'a TopologyMirror,
-    surfaces: &'a SurfaceMap,
+    targets: &'a order::Targets,
 }
 
 impl TopologyFacts for MirrorFacts<'_> {
@@ -431,12 +444,17 @@ impl TopologyFacts for MirrorFacts<'_> {
     }
 
     fn control_targets(&self, module: usize) -> Vec<String> {
-        self.mirror
-            .modules
-            .get_index(module)
-            .and_then(|(id, _)| self.surfaces.get(id))
-            .map(|surface| surface.control_targets())
-            .unwrap_or_default()
+        let Some((id, _)) = self.mirror.modules.get_index(module) else {
+            return Vec::new();
+        };
+        let mut targets = self.targets.get(id).cloned().unwrap_or_default();
+        let watched = self
+            .mirror
+            .watches
+            .iter()
+            .filter(|(source, _)| source == id);
+        targets.extend(watched.map(|(_, target)| target.clone()));
+        targets
     }
 }
 
@@ -444,7 +462,6 @@ impl TopologyFacts for MirrorFacts<'_> {
 /// each module from `instances` and a survivor placeholder otherwise.
 fn build_publication(
     mirror: &TopologyMirror,
-    surfaces: &SurfaceMap,
     instances: &mut IndexMap<String, ModuleInstance>,
     block_size: usize,
 ) -> Box<Publication> {
@@ -465,7 +482,10 @@ fn build_publication(
     }
     let sinks = mirror.sinks();
     let topology = compile_topology(
-        &MirrorFacts { mirror, surfaces },
+        &MirrorFacts {
+            mirror,
+            targets: &mirror.targets,
+        },
         &mirror.edges,
         &sinks,
         block_size,
@@ -483,6 +503,9 @@ fn build_publication(
     })
 }
 
+// Used by requests timed by a condition, once they are submitted by id.
+#[cfg_attr(not(test), allow(dead_code))]
+mod order;
 #[cfg(test)]
 mod tests;
 mod timelines;
