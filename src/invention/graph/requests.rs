@@ -32,6 +32,10 @@
 //! An immediate edit sends no outcome: its acknowledgement is its commit,
 //! which no audio-side condition can undo.
 //!
+//! A timed edit (any other `when`) is popped as a request is, waits where
+//! one with its `when` waits, and is installed at the segment start it
+//! applies at (see `publication::landing`), so it has an outcome.
+//!
 //! # Back-pressure, and edits never starve
 //!
 //! A request is popped only while the store has room, or while the request
@@ -348,7 +352,8 @@ impl SignalGraph {
             let head = drain.requests.peek(|head| {
                 let replaces = head.target.generation <= installed || head.expires.is_none();
                 (
-                    head.value.is_edit(),
+                    // A timed one waits as any timed request does.
+                    head.value.is_edit() && head.when == When::Now,
                     head.value.is_payload(),
                     head.event,
                     replaces,
@@ -562,8 +567,16 @@ impl SignalGraph {
             return remaining;
         };
         let now = self.current_sample;
-        let next = self.apply_due(&mut drain, now);
+        let mut next = self.apply_due(&mut drain, now);
         self.requests = Some(drain);
+        // A timed edit due now installs once what is due with it has
+        // applied; what it maps may then be due too.
+        if self.land_timed_edit() {
+            if let Some(mut drain) = self.requests.take() {
+                next = self.apply_due(&mut drain, now);
+                self.requests = Some(drain);
+            }
+        }
         next.map_or(remaining, |next| next.min(remaining as u64) as usize)
     }
 
@@ -580,6 +593,10 @@ impl SignalGraph {
         value: RequestValue,
         retirer: &mut Retirer,
     ) -> Result<(), Outcome> {
+        // Only a timed edit reaches here as an edit: it lands.
+        if let RequestValue::Edit(payload) = value {
+            return self.take_timed_edit(payload, retirer);
+        }
         let index = target.module_idx;
         if let (Some(standing), Some((_, instance))) = (standing, self.modules.get_index(index)) {
             if let Err(lost) = admits_hold(instance.module(), target.control, standing) {
@@ -639,7 +656,8 @@ impl SignalGraph {
                     }
                 }
             }
-            // An edit is installed by the drain, never applied.
+            // An edit is installed by the drain, or lands through
+            // `apply_ranked`; never applied.
             RequestValue::Edit(payload) => {
                 retirer.retire(payload);
                 Err(Refusal::Unsupported)
