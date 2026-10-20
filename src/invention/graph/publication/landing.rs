@@ -33,9 +33,15 @@
 //! Re-validating instead would mean replaying the edit onto a graph it
 //! never saw: a timed reload would undo whatever changed in between.
 //!
-//! A request or input write submitted after the edit lands but before the
-//! publisher adopts it is still tagged `g`. For now it finds its target
-//! gone; a bridge mapping it to the graph the edit installed comes next.
+//! # The bridge
+//!
+//! Requests and input writes submitted after the edit lands but before the
+//! publisher adopts it are still tagged `g`. So the publication the landing
+//! retires is kept as the link's *bridge*, and what arrives tagged `g` is
+//! mapped through its survivor remap, as writes are through any install.
+//! Once the publisher has adopted the edit (`published` reaches its
+//! generation) and nothing tagged `g` is left in either queue, the bridge
+//! goes back to the control thread as any retired publication does.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -110,12 +116,20 @@ impl Drop for FateGuard {
     }
 }
 
+impl AudioLink {
+    /// The generation a bridge maps from, with the bridge.
+    pub(super) fn bridge(&self) -> Option<(u64, &Publication)> {
+        let bridge = self.bridge.as_deref()?;
+        Some((bridge.generation - 1, bridge))
+    }
+}
+
 impl SignalGraph {
     /// Takes the publication a timed edit carries, now due, to install at
     /// this segment start: lands it, or refuses it `TargetGone` when it was
     /// cancelled, or was prepared for another generation than the one
-    /// installed. Waits, refused, while a retirement is held, so the link
-    /// never holds two. Never drops it: a refused one is retired.
+    /// installed. Refused too, defensively, while an earlier landing's
+    /// bridge still maps. Never drops it: a refused one is retired.
     /// Allocation-, free- and lock-free.
     pub(in crate::invention::graph) fn take_timed_edit(
         &mut self,
@@ -129,14 +143,15 @@ impl SignalGraph {
                 return Err(Outcome::Refused(Refusal::Unsupported));
             }
         };
-        let fits = |link: &mut AudioLink| {
+        let fits = |link: &AudioLink| {
             link.landed.is_none()
+                && link.bridge.is_none()
                 && publication.generation == link.installed + 1
-                && link.flush_held()
         };
-        let lands = self.link.as_mut().is_some_and(|link| {
-            fits(link) && publication.fate.as_ref().is_some_and(|f| f.0.land())
-        });
+        let lands = match self.link.as_mut() {
+            Some(link) if fits(link) => publication.fate.as_ref().is_some_and(|f| f.0.land()),
+            _ => false,
+        };
         match self.link.as_mut() {
             Some(link) if lands => {
                 link.landed = Some(publication);
@@ -150,7 +165,8 @@ impl SignalGraph {
     }
 
     /// Installs the timed edit taken this segment start, if any, as
-    /// `drain_link` installs an edit. Returns whether it installed one.
+    /// `drain_link` installs an edit, keeping the publication it retires as
+    /// the link's bridge. Returns whether it installed one.
     /// Allocation-, free- and lock-free, but for the recompile an install
     /// may fall back to (as at a block start).
     pub(in crate::invention::graph) fn land_timed_edit(&mut self) -> bool {
@@ -169,8 +185,35 @@ impl SignalGraph {
         if self.topo_dirty {
             self.recompile();
         }
-        link.retire(publication);
+        link.bridge = Some(publication);
         self.link = Some(link);
+        true
+    }
+
+    /// Hands the bridge back once nothing can need it: the publisher has
+    /// adopted its edit (`adopted`, read before the queues were drained)
+    /// and neither the request queue nor the input ring holds anything
+    /// tagged with the generation it maps from. Drains the input ring
+    /// through it to find out. Waits while a retirement is held, so the
+    /// link never holds two. Returns whether it went.
+    pub(super) fn release_bridge(&mut self, link: &mut AudioLink, adopted: bool) -> bool {
+        let Some(bridge) = link.bridge.take() else {
+            return false;
+        };
+        let previous = bridge.generation - 1;
+        let drained = adopted
+            && self
+                .requests
+                .as_mut()
+                .is_none_or(|drain| drain.drained_through(previous))
+            && self.drain_inputs(link, Some((previous, &bridge)))
+            // Never two retirements held at once.
+            && link.flush_held();
+        if !drained {
+            link.bridge = Some(bridge);
+            return false;
+        }
+        link.retire(bridge);
         true
     }
 }

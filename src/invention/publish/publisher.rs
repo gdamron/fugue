@@ -98,8 +98,13 @@ pub(crate) struct Publisher {
     /// requests share, so the audio thread meets them in one order. It may
     /// use the slots other senders leave free ([`EDIT_RESERVE`]).
     requests: RequestSender,
-    /// The newest generation queued as an edit, for the audio thread: an
-    /// edit waiting there is never starved by a full pending store.
+    /// The newest generation queued as an edit or adopted, for the audio
+    /// thread: an edit waiting there is never starved by a full pending
+    /// store, and a timed edit's bridge goes once nothing is tagged older
+    /// (see `graph::publication::landing`). Every store releases: each
+    /// request and input write queued before it, under the publisher, is
+    /// visible to the audio thread's acquiring load at block start
+    /// (`RequestDrain::adopted`), whichever later store that load reads.
     published: Arc<AtomicU64>,
     /// Queues direct input writes for the next block. Only the publisher
     /// pushes, under its lock, so writes and publications stay in order.
@@ -389,7 +394,8 @@ impl Publisher {
             });
         }
         self.generation += 1;
-        self.published.store(self.generation, Ordering::Relaxed);
+        // Release: see `published`.
+        self.published.store(self.generation, Ordering::Release);
         let previous = std::mem::replace(&mut self.mirror, prepared.mirror);
         Ok(Published {
             previous,
