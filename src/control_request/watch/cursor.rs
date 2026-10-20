@@ -134,6 +134,11 @@ impl Cursors {
         self.entries.iter().map(|cursor| cursor.clock.module)
     }
 
+    /// Whether it plays table `table`.
+    pub(crate) fn has(&self, table: usize) -> bool {
+        self.entries.iter().any(|cursor| cursor.table == table)
+    }
+
     /// Starts looking for the graph's tables again, after the modules
     /// changed: those not found by [`Self::sought`] end there.
     pub(crate) fn seek(&mut self) {

@@ -153,26 +153,34 @@ impl SignalGraph {
     /// modules or their routes changed, telling each table whether the
     /// drain plays it: a table finding no clock output on its clock input
     /// (nothing, a mix of sources, or another signal) or no room plays on
-    /// its own. Allocation-, free- and lock-free.
+    /// its own. The tables played before are found first, so the room of
+    /// those gone is free for new ones. Allocation-, free- and lock-free.
     fn find_tables(&self, watches: &mut Watches) {
         let Watches { cursors, ramps, .. } = watches;
         cursors.seek();
-        for (module, (id, instance)) in self.modules.iter().enumerate() {
-            let Some(table) = instance.module().beat_table() else {
-                continue;
-            };
-            let input = table.clock_input();
-            let mut sources = self
-                .edges
-                .iter()
-                .filter(|edge| edge.to_module == *id && edge.to_port == input);
-            let clock = match (sources.next(), sources.next()) {
-                (Some(edge), None) => self.step_clock(&edge.from_module, &edge.from_port),
-                _ => None,
-            };
-            table.set_played(cursors.found(table.id(), module, clock, ramps));
+        for known in [true, false] {
+            for (module, (id, instance)) in self.modules.iter().enumerate() {
+                let Some(table) = instance.module().beat_table() else {
+                    continue;
+                };
+                if cursors.has(table.id()) != known {
+                    continue;
+                }
+                let input = table.clock_input();
+                let mut sources = self
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.to_module == *id && edge.to_port == input);
+                let clock = match (sources.next(), sources.next()) {
+                    (Some(edge), None) => self.step_clock(&edge.from_module, &edge.from_port),
+                    _ => None,
+                };
+                table.set_played(cursors.found(table.id(), module, clock, ramps));
+            }
+            if known {
+                cursors.sought(ramps);
+            }
         }
-        cursors.sought(ramps);
     }
 
     /// The clock whose output `port` of module `id` is, if it is one, told
