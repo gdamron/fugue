@@ -91,9 +91,10 @@ pub(crate) struct BeatTime {
     /// linearly to its value over this many beats of its clock (finite,
     /// positive), arriving exactly on the sample the clock reaches the
     /// end. Only a one-shot request writing a number may carry one (see
-    /// [`Watches::check`](super::Watches::check)). Here rather than on
-    /// the request, it takes no room in a queue slot: a condition's is
-    /// wider.
+    /// [`Watches::check`](super::Watches::check)). It reports where it
+    /// starts, then runs among the graph's ramps until it ends (see
+    /// [`Ramps`](super::Ramps)). Here rather than on the request, it takes
+    /// no room in a queue slot: a condition's is wider.
     pub(crate) ramp: Option<f32>,
 }
 

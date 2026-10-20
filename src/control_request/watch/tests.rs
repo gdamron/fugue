@@ -75,6 +75,14 @@ impl BeatHost for Host {
         self.latched.push(module_idx);
     }
 
+    fn kept(&self, _target: &ControlTarget, _standing: Standing) -> bool {
+        true
+    }
+
+    fn overlaps(&self, a: &ControlTarget, b: &ControlTarget) -> bool {
+        (a.module_idx, a.control) == (b.module_idx, b.control)
+    }
+
     /// A request to the clock itself resets it.
     fn apply(
         &mut self,

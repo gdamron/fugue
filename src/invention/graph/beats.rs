@@ -4,8 +4,8 @@
 
 use super::SignalGraph;
 use crate::control_request::{
-    take_automation, BeatHost, ControlTarget, Outcome, Outcomes, RequestValue, Standing, Timeline,
-    Watches,
+    kept_hold, take_automation, BeatHost, ControlTarget, Outcome, Outcomes, RequestValue, Standing,
+    Timeline, Watches,
 };
 use crate::payload::Retirer;
 
@@ -21,6 +21,34 @@ impl BeatHost for SignalGraph {
                 timeline.latch();
             }
         }
+    }
+
+    fn kept(&self, target: &ControlTarget, standing: Standing) -> bool {
+        self.modules
+            .get_index(target.module_idx)
+            .is_some_and(|(_, instance)| kept_hold(instance.module(), target.control, standing))
+    }
+
+    fn overlaps(&self, a: &ControlTarget, b: &ControlTarget) -> bool {
+        // Two modules' controls are apart: a development's inner graph is
+        // its own.
+        if a.module_idx != b.module_idx {
+            return false;
+        }
+        if a.control == b.control {
+            return true;
+        }
+        let Some((_, instance)) = self.modules.get_index(a.module_idx) else {
+            return false;
+        };
+        let module = instance.module();
+        let mut shared = false;
+        module.for_each_alias(a.control, &mut |_, cells, index| {
+            module.for_each_alias(b.control, &mut |_, other, other_index| {
+                shared |= std::ptr::eq(cells, other) && index == other_index;
+            });
+        });
+        shared
     }
 
     fn apply(
