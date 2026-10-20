@@ -206,7 +206,7 @@ fn an_order_after_a_live_retarget_is_not_added() {
 /// sched_b, clocked by the clock, writes the dial's level; sched_a,
 /// never clocked, writes d2's, which reaches the dac. Then sched_b is
 /// retargeted live to write d2's level on its first two steps.
-fn retargeted_onto_a_later_module() -> Rig {
+pub(super) fn retargeted_onto_a_later_module() -> Rig {
     let rig = rig(false);
     let schedule = |at: serde_json::Value| serde_json::json!({ "schedule": at });
     let sched_b = schedule(serde_json::json!([step("dial", "level", 0.5)]));
