@@ -9,12 +9,16 @@
 //! is recorded when it lands, as the publisher adopts it: at the next call
 //! that takes the publisher.
 
-use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
+
+use indexmap::IndexMap;
 
 use super::change::BuiltModule;
 use super::watch::{condition_of, Part};
-use super::{publisher, LiveGraph, PreparedChange, Publisher, Refused};
+use super::{publisher, LiveGraph, Mirrors, PreparedChange, Publisher, Refused};
 use crate::control_request::{BeatSpec, BeatTime, RequestId, When};
+use crate::invention::orchestration::ModulePorts;
+use crate::invention::runtime::ControlSurfaceInstance;
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
 
@@ -52,15 +56,25 @@ impl LiveGraph {
     /// Commits the runtime mirrors and document for a timed edit the audio
     /// thread has landed, as [`Self::commit_with`] commits a change.
     fn adopt(&self, publisher: &mut Publisher) {
-        let Some(adopted) = publisher.adopt() else {
-            return;
-        };
-        let publisher::Adopted {
-            published,
-            retain,
-            port,
-        } = adopted;
-        self.commit_published(publisher, published, &port, retain);
+        let mirrors = (&*self.control_surfaces, &*self.module_ports, &*self.state);
+        adopt_into(publisher, mirrors);
+    }
+
+    /// Adopts a timed edit the audio thread has landed, if any, so what is
+    /// read next describes the graph that is playing.
+    pub(crate) fn adopt_landed(&self) {
+        drop(self.lock());
+    }
+
+    /// What adopts a landed timed edit from the reclaimer thread (see
+    /// [`Adopter`]).
+    pub(super) fn adopter(&self) -> Adopter {
+        Adopter {
+            publisher: Arc::downgrade(&self.publisher),
+            surfaces: Arc::downgrade(&self.control_surfaces),
+            ports: Arc::downgrade(&self.module_ports),
+            state: Arc::downgrade(&self.state),
+        }
     }
 
     /// Queues `prepared` to land at `time`, refused once `ttl` samples have
@@ -154,5 +168,53 @@ impl LiveGraph {
                 When::Condition(condition_of(mirror, &surfaces, parts)?)
             }
         })
+    }
+}
+
+/// Adopts the timed edit the audio thread landed, if any, under
+/// `publisher`: the publisher's side, then the runtime's mirrors and
+/// document, as a commit does.
+fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
+    let Some(publisher::Adopted {
+        published,
+        retain,
+        port,
+    }) = publisher.adopt()
+    else {
+        return;
+    };
+    LiveGraph::commit_mirrors(mirrors, publisher, published, &port, retain);
+}
+
+/// Adopts a landed timed edit on the reclaimer thread's cadence, so its
+/// document change is recorded within one reclaim interval of it landing,
+/// whether or not anything else takes the publisher. Holds the live graph
+/// weakly, so the thread never keeps it alive.
+pub(super) struct Adopter {
+    publisher: Weak<Mutex<Publisher>>,
+    surfaces: Weak<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
+    ports: Weak<Mutex<IndexMap<String, ModulePorts>>>,
+    state: Weak<Mutex<RuntimeState>>,
+}
+
+impl Adopter {
+    pub(super) fn tick(&self) {
+        let Some(publisher) = self.publisher.upgrade() else {
+            return;
+        };
+        // Never waits: whoever holds the publisher may adopt it, and the
+        // next tick will if not.
+        let Ok(mut publisher) = publisher.try_lock() else {
+            return;
+        };
+        if !publisher.timed_waiting() {
+            return;
+        }
+        let surfaces = self.surfaces.upgrade();
+        let ports = self.ports.upgrade();
+        let state = self.state.upgrade();
+        if let (Some(surfaces), Some(ports), Some(state)) = (surfaces, ports, state) {
+            adopt_into(&mut publisher, (&surfaces, &ports, &state));
+        }
     }
 }

@@ -298,3 +298,26 @@ fn a_landing_block_takes_no_lock() {
     assert_eq!((allocs, frees), (0, 0));
     assert_eq!(outcomes_of(&mut rig, id), [(id, Outcome::Applied { at })]);
 }
+
+#[test]
+fn the_reclaimer_thread_adopts_a_landed_edit_on_its_own() {
+    let mut rig = beat_rig(120.0);
+    assert!(rig.live.start_reclaimer());
+    rig.render(1);
+    let id = remove_dial(&rig, EditTime::AfterSamples(10)).unwrap();
+    render_counted(&mut rig, 1);
+
+    // Nothing takes the publisher: the reclaimer's cadence adopts it.
+    let recorded = || rig.live.state.lock().unwrap().document.is_none();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !recorded() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(recorded(), "adopted within a few reclaim intervals");
+    assert!(!rig.live.state.lock().unwrap().modules.contains_key("dial"));
+    assert!(!rig.live.publisher().lock().unwrap().timed_waiting());
+    assert!(matches!(
+        outcomes_of(&mut rig, id)[..],
+        [(_, Outcome::Applied { .. })]
+    ));
+}

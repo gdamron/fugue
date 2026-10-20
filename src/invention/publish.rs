@@ -138,6 +138,14 @@ impl Settler {
     }
 }
 
+/// The runtime's mirrors of the graph a commit updates: control surfaces,
+/// module ports and the state.
+type Mirrors<'a> = (
+    &'a Mutex<IndexMap<String, ControlSurfaceInstance>>,
+    &'a Mutex<IndexMap<String, ModulePorts>>,
+    &'a Mutex<RuntimeState>,
+);
+
 /// What a committed change did, for the caller's follow-up work.
 #[derive(Default)]
 pub(crate) struct Committed {
@@ -221,10 +229,12 @@ impl LiveGraph {
     /// Starts freeing retired publications on a control thread every
     /// [`reclaim::RECLAIM_INTERVAL`], so a removed module (a sink finalizing
     /// its file, say) is dropped promptly rather than at the next change.
+    /// The same cadence adopts a timed edit once it lands (see `timed`).
     /// The thread ends once every clone of this graph is gone. Returns false
     /// when no thread could start.
     pub(crate) fn start_reclaimer(&self) -> bool {
-        Reclaimer::spawn(&self.reclaimer)
+        let adopter = self.adopter();
+        Reclaimer::spawn(&self.reclaimer, move || adopter.tick())
     }
 
     /// Frees retired publications now, on the calling thread.
@@ -507,6 +517,18 @@ impl LiveGraph {
         port: &RequestPort,
         retain: impl FnOnce(&mut RuntimeState),
     ) -> Committed {
+        let mirrors = (&*self.control_surfaces, &*self.module_ports, &*self.state);
+        Self::commit_mirrors(mirrors, publisher, published, port, retain)
+    }
+
+    /// [`Self::commit_published`], on the mirrors given.
+    fn commit_mirrors(
+        (control_surfaces, module_ports, state): Mirrors<'_>,
+        publisher: &Publisher,
+        published: publisher::Published,
+        port: &RequestPort,
+        retain: impl FnOnce(&mut RuntimeState),
+    ) -> Committed {
         let mirror = publisher.mirror();
         let removed: Vec<&String> = published
             .previous
@@ -519,7 +541,7 @@ impl LiveGraph {
             // Retired under the publisher, so a write racing this commit
             // never reaches the module that replaces one (see
             // `invention::declared`).
-            let mut surfaces = self.control_surfaces.lock().unwrap();
+            let mut surfaces = control_surfaces.lock().unwrap();
             for id in &removed {
                 if let Some(surface) = surfaces.shift_remove(*id) {
                     surface.retire();
@@ -544,13 +566,13 @@ impl LiveGraph {
                 }
             }
         }
-        *self.module_ports.lock().unwrap() = mirror
+        *module_ports.lock().unwrap() = mirror
             .modules
             .iter()
             .map(|(id, module)| (id.clone(), module.ports.clone()))
             .collect();
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = state.lock().unwrap();
             for id in &removed {
                 state.modules.shift_remove(*id);
                 state.document_remove_module(id);
