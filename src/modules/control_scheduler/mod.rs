@@ -21,7 +21,9 @@
 //! resets, the schedule plays again from step 0 on the clock's new beat 0;
 //! the `reset` input is not followed there. The `step` output follows the
 //! clock's position. When two schedulers write one control at one sample,
-//! the later module's write lands. Module order is the order of the
+//! the later module's write lands, unless the earlier one's entry only fell
+//! due there because the later one wrote its clock's tempo at that sample:
+//! it lands after the write that moved it. Module order is the order of the
 //! invention's `modules` at load: a module rebuilt in place keeps its
 //! place, and one added later, live or by a reload, goes after every
 //! other. Reordering `modules` in a reloaded document doesn't reorder the
@@ -296,6 +298,13 @@ impl ControlScheduler {
         std::mem::swap(&mut self.ramps, &mut next.ramps);
         self.plan += 1;
         self.ramps.clear();
+        self.skip_played();
+        next
+    }
+
+    /// Moves the cursor past every entry at or before the current step:
+    /// those have had their boundary.
+    fn skip_played(&mut self) {
         self.cursor = if self.current_step < 0 {
             0
         } else {
@@ -303,7 +312,6 @@ impl ControlScheduler {
             self.entries
                 .partition_point(|entry| entry.at_step() <= step)
         };
-        next
     }
 
     /// Restarts the schedule: the next gate edge is step 0 again and every
@@ -531,10 +539,16 @@ impl Module for ControlScheduler {
 impl ControlScheduler {
     /// A block the drain plays the schedule in: the step is the one the
     /// drain told, constant through the block (the drain splits blocks on
-    /// each step's sample). The gate and reset inputs are only followed,
-    /// so playing on its own again sees no stale edge.
+    /// each step's sample). The rest is kept as playing on its own again
+    /// needs it: the entries the drain played are skipped, its ramps are
+    /// its own, the next gate starts measuring the step length afresh, and
+    /// the gate and reset inputs are only followed, so no edge is stale.
     fn follow_drain(&mut self, frames: usize) {
         self.current_step = self.told_step.load(Ordering::Relaxed);
+        self.skip_played();
+        self.ramps.clear();
+        self.first_gate_received = false;
+        self.samples_since_gate = 0;
         for i in 0..frames {
             self.outputs.set(i, self.current_step as f32);
         }

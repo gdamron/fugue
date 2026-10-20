@@ -201,3 +201,26 @@ fn a_block_playing_a_schedule_takes_no_lock_a_control_thread_holds() {
     render_counted(&mut rig, 4);
     block_with_locks_held(&mut rig, &[]).unwrap();
 }
+
+#[test]
+fn a_schedule_the_drain_hands_back_plays_on_from_the_step_it_reached() {
+    let schedule = serde_json::json!([level(0, 0.5), level(1, 0.75)]);
+    let beats = beat_samples(BPM, 3);
+    let mut rig = rig(BPM, schedule, ("dial", "out"));
+    render_counted(&mut rig, beats[2] / 64);
+    assert_eq!(read(&rig, "dial", "level"), ControlValue::Number(0.75));
+    // Its clock unplugged, the scheduler plays on its own from step 1.
+    rig.live
+        .edit(|change| {
+            change.disconnect(edge("clock", "beat", "sched", "clock"));
+            Ok(())
+        })
+        .unwrap();
+    write(&rig, "dial", "level", 0.25.into());
+    for gate in [0.0, 1.0] {
+        rig.live.write_input("sched", "clock", gate).unwrap();
+        render_counted(&mut rig, 1);
+    }
+    assert_eq!(read(&rig, "sched", "step"), ControlValue::Number(2.0));
+    assert_eq!(read(&rig, "dial", "level"), ControlValue::Number(0.25), "replayed");
+}
