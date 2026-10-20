@@ -189,16 +189,13 @@ impl Conditions {
         self.entries.len() >= self.limit
     }
 
-    /// Refuses a condition nothing can meet, and an edit timed by one
-    /// (FUG-323).
+    /// Refuses a condition nothing can meet. An edit timed by one lands
+    /// at the segment start it is met at (see `graph::publication::landing`).
     pub(crate) fn check(request: &Request) -> Result<(), Refusal> {
         let When::Condition(condition) = &request.when else {
             return Err(Refusal::Unsupported);
         };
         condition.check()?;
-        if request.value.is_edit() {
-            return Err(Refusal::Unsupported);
-        }
         Ok(())
     }
 
