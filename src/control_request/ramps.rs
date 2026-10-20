@@ -13,7 +13,9 @@
 //! many of tables. A request's ramp's room is taken as its request is: one
 //! that would leave a ramp waiting or running without room is refused
 //! ([`Refusal::PendingFull`](super::Refusal::PendingFull)) then, never at
-//! its beat. A table's entry finding no room writes its value at once.
+//! its beat. A table's entry finding no room writes its value at once, a
+//! jump where the scheduler before tables glided, and is counted
+//! ([`Ramps::crowded`]) so a status can show it.
 //!
 //! # Writes
 //!
@@ -40,6 +42,9 @@
 //!
 //! [`BeatTime::ramp`]: super::BeatTime::ramp
 
+use std::sync::Arc;
+
+use super::event::EventCounter;
 use super::hold::Standing;
 use super::request::{ControlTarget, RequestValue, RtValue};
 use super::table::{TableTarget, TableValue};
@@ -195,6 +200,8 @@ pub(crate) struct Ramps {
     limit: usize,
     /// The tables' ramps it holds at most.
     table_limit: usize,
+    /// Tables' ramps refused for room (see [`Ramps::crowded`]).
+    crowded: Arc<EventCounter>,
 }
 
 impl Ramps {
@@ -205,7 +212,16 @@ impl Ramps {
             entries: Vec::with_capacity(2 * capacity),
             limit: capacity,
             table_limit: capacity,
+            crowded: Arc::new(EventCounter::new()),
         }
+    }
+
+    /// Counts each table's ramp refused because the tables' room was full
+    /// (its entry jumped to its value). Clone it on a control thread
+    /// before the drain moves to the audio thread, and read it through an
+    /// `EventCursor`.
+    pub(crate) fn crowded(&self) -> &Arc<EventCounter> {
+        &self.crowded
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -263,8 +279,8 @@ impl Ramps {
 
     /// Runs `ramp` on table entry `key`, timed on `clock`: it replaces
     /// every table's ramp on a control it reaches. Returns false, starting
-    /// none, when the tables' ramps have no room. Allocation- and
-    /// free-free.
+    /// none and counting it [`crowded`](Self::crowded), when the tables'
+    /// ramps have no room. Allocation-, free- and lock-free.
     pub(crate) fn start_entry(
         &mut self,
         key: EntryKey,
@@ -282,6 +298,7 @@ impl Ramps {
             return true;
         }
         if self.count(true) >= self.table_limit {
+            self.crowded.record();
             return false;
         }
         self.push(RampOn::Entry(key), clock, ramp);
