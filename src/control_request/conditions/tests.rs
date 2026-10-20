@@ -9,7 +9,7 @@ use super::*;
 use crate::alloc_counter::allocator_events;
 use crate::control_request::pending::PendingStore;
 use crate::control_request::{
-    outcome_channel, ControlIndex, Edge, OutcomeReceiver, RequestId, RtValue,
+    outcome_channel, request_channel, ControlIndex, Edge, OutcomeReceiver, RequestId, RtValue,
 };
 
 const INSTALLED: u64 = 1;
@@ -408,4 +408,34 @@ fn evaluating_neither_allocates_nor_frees() {
 fn a_condition_keeps_a_request_within_176_bytes() {
     assert_eq!(std::mem::size_of::<Predicate>(), 16);
     assert!(std::mem::size_of::<Request>() <= 176);
+}
+
+#[test]
+fn the_sender_counts_the_conditions_in_flight() {
+    let edge = [Predicate::edges(0, 0, 1)];
+    let (sender, _consumer) = request_channel(4 * CONDITION_CAPACITY, Default::default());
+    for id in 0..CONDITION_CAPACITY as u64 {
+        assert!(!sender.watchers_full());
+        sender.submit(request(id, &edge)).unwrap();
+    }
+    assert!(sender.watchers_full());
+    // A request timed otherwise is not counted.
+    sender
+        .submit(Request::new(
+            request(0, &edge).target,
+            RequestValue::Value(RtValue::F32(0.0)),
+        ))
+        .unwrap();
+    sender.watch_slots().release();
+    assert!(!sender.watchers_full());
+    assert_eq!(sender.watch_slots().taken(), CONDITION_CAPACITY - 1);
+}
+
+#[test]
+fn a_full_queue_releases_the_slot_it_counted() {
+    let (sender, _consumer) = request_channel(2, Default::default());
+    let edge = [Predicate::edges(0, 0, 1)];
+    let refused = (0..3).filter(|&id| sender.submit(request(id, &edge)).is_err());
+    assert_eq!(refused.count(), 1);
+    assert_eq!(sender.watch_slots().taken(), 2);
 }

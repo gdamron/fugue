@@ -46,6 +46,7 @@ use super::runtime::ModuleInstance;
 
 mod beats;
 mod compile;
+mod conditions;
 mod master;
 mod process;
 mod publication;
@@ -168,6 +169,10 @@ pub(crate) struct SignalGraph {
     pub(crate) connected_in_ports: Vec<Vec<usize>>,
     /// Process groups (SCC condensation) in topological order.
     pub(crate) process_groups: Vec<ProcessGroup>,
+    /// The process group each module index is in.
+    pub(crate) group_of: Vec<usize>,
+    /// The segment being processed, and how far (see [`conditions`]).
+    pub(crate) segment: conditions::Segment,
     /// Sink module indices, cached for the hot path.
     pub(crate) sink_indices: Vec<usize>,
     /// Per-module output block buffers, port-major with stride `block_capacity`:
@@ -218,6 +223,8 @@ impl SignalGraph {
             compiled_routes: Vec::new(),
             connected_in_ports: Vec::new(),
             process_groups: Vec::new(),
+            group_of: Vec::new(),
+            segment: Default::default(),
             sink_indices: Vec::new(),
             out_bufs: Vec::new(),
             out_prev: Vec::new(),

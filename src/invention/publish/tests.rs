@@ -22,6 +22,7 @@ mod pilot;
 pub(crate) mod probe;
 mod request_beat_grids;
 mod request_beats;
+mod request_conditions;
 mod request_intake;
 mod request_log;
 mod request_payloads;

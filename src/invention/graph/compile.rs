@@ -67,6 +67,7 @@ pub(crate) struct CompiledTopology {
     pub(crate) compiled_routes: Vec<Vec<CompiledRoute>>,
     pub(crate) connected_in_ports: Vec<Vec<usize>>,
     pub(crate) process_groups: Vec<ProcessGroup>,
+    pub(crate) group_of: Vec<usize>,
     pub(crate) sink_indices: Vec<usize>,
     pub(crate) out_bufs: Vec<Vec<f32>>,
     pub(crate) out_prev: Vec<Vec<f32>>,
@@ -82,6 +83,7 @@ impl CompiledTopology {
         std::mem::swap(&mut self.compiled_routes, &mut graph.compiled_routes);
         std::mem::swap(&mut self.connected_in_ports, &mut graph.connected_in_ports);
         std::mem::swap(&mut self.process_groups, &mut graph.process_groups);
+        std::mem::swap(&mut self.group_of, &mut graph.group_of);
         std::mem::swap(&mut self.sink_indices, &mut graph.sink_indices);
         std::mem::swap(&mut self.out_bufs, &mut graph.out_bufs);
         std::mem::swap(&mut self.out_prev, &mut graph.out_prev);
@@ -222,7 +224,7 @@ pub(crate) fn compile_topology(
 
     // Process groups: SCCs in topological order, members ordered by their
     // position in the per-sample order.
-    let process_groups = comps
+    let process_groups: Vec<ProcessGroup> = comps
         .into_iter()
         .map(|mut members| {
             members.sort_by_key(|&m| pos[m]);
@@ -230,6 +232,13 @@ pub(crate) fn compile_topology(
             ProcessGroup { members, feedback }
         })
         .collect();
+    // Which group each module processes in.
+    let mut group_of = vec![0; n];
+    for (g, group) in process_groups.iter().enumerate() {
+        for &m in &group.members {
+            group_of[m] = g;
+        }
+    }
 
     // Per-module output block buffers and carry storage.
     let out_counts: Vec<usize> = (0..n).map(|mi| facts.output_count(mi)).collect();
@@ -247,6 +256,7 @@ pub(crate) fn compile_topology(
         compiled_routes,
         connected_in_ports,
         process_groups,
+        group_of,
         sink_indices,
         out_bufs,
         out_prev,

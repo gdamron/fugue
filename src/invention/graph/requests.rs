@@ -115,9 +115,9 @@ use std::sync::Arc;
 use super::publication::{Disposition, Publication};
 use super::SignalGraph;
 use crate::control_request::{
-    admits_hold, apply_declared, expired, take_automation, take_hold, ControlIndex, ControlTarget,
-    Outcome, OutcomeSender, PendingStore, QueueConsumer, Refusal, Request, RequestValue, RtValue,
-    Standing, Watches, When,
+    admits_hold, apply_declared, expired, take_automation, take_hold, Conditions, ControlIndex,
+    ControlTarget, Outcome, OutcomeSender, PendingStore, QueueConsumer, Refusal, Request,
+    RequestValue, RtValue, Standing, WatchSlots, Watches, When, CONDITION_CAPACITY,
 };
 use crate::payload::{Payload, Retirer};
 
@@ -128,11 +128,12 @@ pub(crate) type RequestHook =
     fn(&mut SignalGraph, usize, ControlIndex, RequestValue, &mut Retirer) -> Result<(), Refusal>;
 
 /// Where a request taken from the queue waits: in the pending store for its
-/// sample, or among the watches on its clock.
+/// sample, among the watches on its clock, or among the conditions.
 #[derive(Clone, Copy)]
 enum Landing {
     At(ControlTarget, u64),
     Watch(ControlTarget, usize),
+    Condition(ControlTarget),
 }
 
 /// The audio thread's end of a live graph's request channel.
@@ -145,8 +146,10 @@ pub(crate) struct RequestDrain {
     pub(crate) pending: PendingStore,
     /// Requests timed in beats (see [`super::beats`]).
     pub(crate) watches: Watches,
+    /// Requests timed by a condition (see [`super::conditions`]).
+    pub(crate) conditions: Conditions,
     /// The installed publication's generation, as of the last drain.
-    installed: u64,
+    pub(super) installed: u64,
     /// No time passes (a `NullBackend`): a request that finds the store
     /// full is refused ([`Refusal::PendingFull`]) rather than left queued,
     /// since what fills the store waits for samples that never come.
@@ -173,6 +176,7 @@ pub(crate) fn link_requests(
     use crate::control_request::{outcome_channel, request_channel};
     use crate::payload::RetireQueue;
     let (sender, requests) = request_channel(capacity, std::sync::Arc::clone(&graph.transport));
+    let slots = sender.watch_slots();
     let (outcomes, _) = outcome_channel(capacity);
     let retirer = Retirer::new(RetireQueue::with_capacity(capacity), capacity);
     graph.requests = Some(RequestDrain::new(
@@ -183,6 +187,7 @@ pub(crate) fn link_requests(
         retirer,
         outcomes,
         Default::default(),
+        slots,
     ));
     sender
 }
@@ -191,6 +196,11 @@ impl RequestDrain {
     /// Allocates the pending store: call it on a control thread. The queue
     /// must hold at most `pop_limit` control requests; `retirer` takes every payload
     /// the audio side does not keep, and `outcomes` reports every request.
+    /// `slots` are the request channel's ([`RequestSender::watch_slots`]):
+    /// the conditions release theirs as they settle.
+    ///
+    /// [`RequestSender::watch_slots`]: crate::control_request::RequestSender::watch_slots
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         requests: QueueConsumer<Request>,
         pop_limit: usize,
@@ -199,12 +209,14 @@ impl RequestDrain {
         retirer: Retirer,
         outcomes: OutcomeSender,
         published: Arc<AtomicU64>,
+        slots: Arc<WatchSlots>,
     ) -> Self {
         Self {
             requests,
             pop_limit,
             pending: PendingStore::new(pending, retirer, outcomes),
             watches: Watches::new(watches),
+            conditions: Conditions::new(CONDITION_CAPACITY, slots),
             installed: 0,
             clockless: false,
             published,
@@ -266,7 +278,9 @@ impl SignalGraph {
         // are held only once an edit can wait for its time.)
         //
         // A request timed in beats waits among the watches instead, on its
-        // clock, in its target's generation (see `super::beats`).
+        // clock, in its target's generation (see `super::beats`); one timed
+        // by a condition among the conditions, its sources in that
+        // generation too (see `super::conditions`).
         let resolve = |graph: &Self, request: &Request| {
             let mut target = request.target;
             let at = match request.when {
@@ -294,9 +308,16 @@ impl SignalGraph {
                 // Left for this thread when the clock was not yet anchored
                 // at submission: it is now, unless there is no clock.
                 When::AtTime(time) => graph.transport.sample_at(time),
-                // Nothing submits one yet: the drain watches conditions
-                // from the next change on.
-                When::Condition(_) => return Err(Refusal::Unsupported),
+                When::Condition(_) => {
+                    Conditions::check(request)?;
+                    if target.generation < installed {
+                        return Err(Refusal::TargetGone);
+                    }
+                    if target.generation == installed && expired(request, now) {
+                        return Err(Refusal::Expired);
+                    }
+                    return Ok(Some(Landing::Condition(target)));
+                }
             };
             if target.generation > installed {
                 return Ok(at.map(|at| Landing::At(target, at)));
@@ -367,6 +388,10 @@ impl SignalGraph {
                 Ok(Landing::Watch(target, _)) => {
                     (target.generation > installed, drain.watches.is_full())
                 }
+                // A condition may never be met: as a watch.
+                Ok(Landing::Condition(target)) => {
+                    (target.generation > installed, drain.conditions.is_full())
+                }
                 Err(_) => (false, false),
             };
             if !drain.clockless && full && needs_room && !edit_waiting {
@@ -390,6 +415,17 @@ impl SignalGraph {
                     request.target = target;
                     let outcomes = &mut drain.pending.outcomes;
                     drain.watches.insert(request, clock, outcomes);
+                }
+                Ok(Landing::Condition(target)) => {
+                    request.target = target;
+                    let outcomes = &mut drain.pending.outcomes;
+                    drain.conditions.insert(request, outcomes);
+                }
+                // A condition's settles through the table, releasing its
+                // slot.
+                Err(refusal) if matches!(request.when, When::Condition(_)) => {
+                    let outcomes = &mut drain.pending.outcomes;
+                    drain.conditions.settle(request, refusal.into(), outcomes);
                 }
                 Err(refusal) => drain
                     .pending
@@ -453,6 +489,13 @@ impl SignalGraph {
             .remap(installed, outcomes, |generation, module_idx| {
                 map(self, generation, module_idx)
             });
+        // A condition's sources map with its target: one removed or rebuilt
+        // refuses it (`Refusal::SourceGone`).
+        drain
+            .conditions
+            .remap(installed, outcomes, |generation, module_idx| {
+                map(self, generation, module_idx)
+            });
         self.requests = Some(drain);
     }
 
@@ -466,6 +509,15 @@ impl SignalGraph {
         // installs, so a span submitted after the edit counts from after
         // such a reset.
         drain.watches.arm(drain.installed, self);
+        // Conditions start reading here; one met in a segment its target
+        // had already computed applies now, late.
+        let outcomes = &mut drain.pending.outcomes;
+        drain
+            .conditions
+            .start(now, drain.installed, &*self, outcomes);
+        drain
+            .conditions
+            .apply_due(drain.installed, None, now, self, outcomes);
         drain
             .pending
             .apply_due(now, drain.installed, |target, standing, value, retirer| {

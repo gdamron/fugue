@@ -1,5 +1,6 @@
 //! Audio-thread block processing for the [`SignalGraph`].
 
+use super::conditions::Segment;
 use super::SignalGraph;
 use crate::audio_thread::AudioThreadScope;
 use crate::control_request::{take_automation, FrameScope};
@@ -46,15 +47,39 @@ impl SignalGraph {
         let frames = left.len();
         // Where a scheduler's entries fall (see `control_request::hold`).
         let _frame_zero = FrameScope::enter(self.current_sample);
+        self.segment = Segment {
+            start: self.current_sample,
+            frames,
+            computed: 0,
+        };
         self.current_sample += frames as u64;
 
+        // Requests timed by a condition apply as their target computes
+        // (see `super::conditions`); with none waiting, nothing looks.
+        let conditioned = self.conditions_waiting();
         for g in 0..self.process_groups.len() {
             if self.process_groups[g].feedback {
+                if conditioned {
+                    for m in 0..self.process_groups[g].members.len() {
+                        self.apply_conditions_on(self.process_groups[g].members[m]);
+                    }
+                }
                 self.process_feedback_group(g, frames);
             } else {
                 let module_idx = self.process_groups[g].members[0];
-                self.process_full_block(module_idx, frames);
+                if !conditioned {
+                    self.process_span(module_idx, 0, frames);
+                } else if self.sink_indices.contains(&module_idx) {
+                    self.apply_conditions_on(module_idx);
+                    self.process_span(module_idx, 0, frames);
+                } else {
+                    self.process_conditioned(module_idx, frames);
+                }
             }
+            self.segment.computed = g + 1;
+        }
+        if conditioned {
+            self.read_conditions();
         }
 
         // Mix sink output blocks.
@@ -90,8 +115,11 @@ impl SignalGraph {
         self.store_carry(frames);
     }
 
-    /// Processes a single acyclic module a whole block at a time.
-    fn process_full_block(&mut self, module_idx: usize, frames: usize) {
+    /// Processes a single acyclic module over frames `from..to` of the
+    /// segment (all of it but where a request splits it, see
+    /// [`Self::process_conditioned`]), as a block of its own.
+    pub(super) fn process_span(&mut self, module_idx: usize, from: usize, to: usize) {
+        let frames = to - from;
         // Zero connected input ports, then sum every route feeding them.
         let port_count = self.connected_in_ports[module_idx].len();
         for pi in 0..port_count {
@@ -104,7 +132,7 @@ impl SignalGraph {
         let route_count = self.compiled_routes[module_idx].len();
         for r in 0..route_count {
             let route = self.compiled_routes[module_idx][r];
-            let base = route.from_port * self.block_capacity;
+            let base = route.from_port * self.block_capacity + from;
             if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
                 let dst = inst.module_mut().input_block_mut(route.to_port);
                 let src = &self.out_bufs[route.from_module][base..base + frames];
@@ -115,13 +143,15 @@ impl SignalGraph {
         }
 
         if let Some((_, inst)) = self.modules.get_index_mut(module_idx) {
+            // A span after the first starts at its own frame 0.
+            let _frame_zero = (from > 0).then(|| FrameScope::frame(from));
             take_automation(inst.module_mut());
             inst.module_mut().process(frames);
         }
 
         let n_out = self.out_counts[module_idx];
         for p in 0..n_out {
-            let base = p * self.block_capacity;
+            let base = p * self.block_capacity + from;
             if let Some((_, inst)) = self.modules.get_index(module_idx) {
                 let src = inst.module().output_block(p);
                 self.out_bufs[module_idx][base..base + frames].copy_from_slice(&src[..frames]);
