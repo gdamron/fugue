@@ -245,6 +245,9 @@ pub struct ControlScheduler {
     plan: u64,
     played: AtomicBool,
     told_step: AtomicI64,
+    /// Whether the last block followed the drain: the first it plays on
+    /// its own takes the step the drain told since.
+    followed: bool,
 
     inputs: inputs::ControlSchedulerInputs,
     outputs: outputs::ControlSchedulerOutputs,
@@ -272,6 +275,7 @@ impl ControlScheduler {
             plan: 0,
             played: AtomicBool::new(false),
             told_step: AtomicI64::new(-1),
+            followed: false,
             inputs: inputs::ControlSchedulerInputs::new(),
             outputs: outputs::ControlSchedulerOutputs::new(),
         }
@@ -455,8 +459,13 @@ impl Module for ControlScheduler {
 
     fn process(&mut self, frames: usize) -> bool {
         if self.played.load(Ordering::Relaxed) {
+            self.followed = true;
             self.follow_drain(frames);
         } else {
+            if std::mem::take(&mut self.followed) {
+                // The drain may have played a step since the last block.
+                self.take_told();
+            }
             for i in 0..frames {
                 self.process_sample(i);
             }
@@ -541,16 +550,10 @@ impl Module for ControlScheduler {
 impl ControlScheduler {
     /// A block the drain plays the schedule in: the step is the one the
     /// drain told, constant through the block (the drain splits blocks on
-    /// each step's sample). The rest is kept as playing on its own again
-    /// needs it: the entries the drain played are skipped, its ramps are
-    /// its own, the next gate starts measuring the step length afresh, and
-    /// the gate and reset inputs are only followed, so no edge is stale.
+    /// each step's sample). The gate and reset inputs are only followed,
+    /// so playing on its own again sees no stale edge.
     fn follow_drain(&mut self, frames: usize) {
-        self.current_step = self.told_step.load(Ordering::Relaxed);
-        self.skip_played();
-        self.ramps.clear();
-        self.first_gate_received = false;
-        self.samples_since_gate = 0;
+        self.take_told();
         for i in 0..frames {
             self.outputs.set(i, self.current_step as f32);
         }
@@ -558,6 +561,18 @@ impl ControlScheduler {
             self.last_gate_in = self.inputs.clock(last);
             self.last_reset_in = self.inputs.reset(last);
         }
+    }
+
+    /// Takes the step the drain last told, keeping the rest as playing on
+    /// its own again needs it: the entries the drain played are skipped,
+    /// its ramps are its own, and the next gate starts measuring the step
+    /// length afresh.
+    fn take_told(&mut self) {
+        self.current_step = self.told_step.load(Ordering::Relaxed);
+        self.skip_played();
+        self.ramps.clear();
+        self.first_gate_received = false;
+        self.samples_since_gate = 0;
     }
 }
 

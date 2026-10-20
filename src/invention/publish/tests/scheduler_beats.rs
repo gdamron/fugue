@@ -235,3 +235,34 @@ fn a_clock_too_fast_to_count_holds_the_last_step_it_can() {
     let out = render_counted(&mut rig, 4);
     assert_eq!(out.last(), Some(&((1u64 << 53) as f32)));
 }
+
+#[test]
+fn a_step_the_drain_plays_as_its_clock_is_unplugged_is_not_played_again() {
+    // A step on a block's first sample: the drain plays it as the block
+    // that installs the unplugging starts.
+    let beats = beat_samples(BPM, 400);
+    let step = beats.iter().position(|&at| at > 0 && at % 64 == 0).unwrap();
+    let schedule = serde_json::json!([level(step as u32, 0.75)]);
+    let mut rig = rig(BPM, schedule, ("dial", "out"));
+    render_counted(&mut rig, beats[step] / 64);
+    rig.live
+        .edit(|change| {
+            change.disconnect(edge("clock", "beat", "sched", "clock"));
+            Ok(())
+        })
+        .unwrap();
+    render_counted(&mut rig, 1);
+    assert_eq!(read(&rig, "dial", "level"), ControlValue::Number(0.75));
+    write(&rig, "dial", "level", 0.25.into());
+    for gate in [0.0, 1.0] {
+        rig.live.write_input("sched", "clock", gate).unwrap();
+        render_counted(&mut rig, 1);
+    }
+    let next = ControlValue::Number(step as f32 + 1.0);
+    assert_eq!(read(&rig, "sched", "step"), next);
+    assert_eq!(
+        read(&rig, "dial", "level"),
+        ControlValue::Number(0.25),
+        "replayed"
+    );
+}
