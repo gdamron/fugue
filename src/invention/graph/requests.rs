@@ -290,8 +290,9 @@ impl SignalGraph {
     ///
     /// A `bridge` (with the generation it maps from) is a timed edit's
     /// retired publication (see `publication::landing`): requests tagged
-    /// with that generation wait as those for a newer one do, and are
-    /// mapped through it before anything is applied.
+    /// with that generation are mapped through it, those timed in samples
+    /// as they are taken, watches and conditions before anything is
+    /// applied.
     pub(super) fn drain_requests(
         &mut self,
         installed: u64,
@@ -364,14 +365,16 @@ impl SignalGraph {
             if target.generation > installed {
                 return Ok(at.map(|at| Landing::At(target, at)));
             }
-            // Mapped once taken; no publication left to wait for, so its
-            // expiry is known now, before it can replace anything.
-            if waits(target.generation) {
-                let at = at.ok_or(Refusal::NoClock)?;
-                if expired(request, at.max(now)) {
-                    return Err(Refusal::Expired);
-                }
-                return Ok(Some(Landing::At(target, at)));
+            // Mapped through the bridge now, as `remap_drain` maps what is
+            // already waiting, so it replaces a write it coalesces with
+            // rather than needing room of its own.
+            if Some(target.generation) == bridged {
+                let disposed =
+                    graph.dispose(target.generation, target.module_idx, installed, bridge);
+                let Disposition::Apply(module_idx) = disposed else {
+                    return Err(Refusal::TargetGone);
+                };
+                (target.generation, target.module_idx) = (installed, module_idx);
             }
             if target.generation < installed {
                 // Defensive: a request queued behind an edit is never older

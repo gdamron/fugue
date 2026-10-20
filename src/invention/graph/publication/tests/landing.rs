@@ -275,6 +275,35 @@ fn an_edit_behind_a_bridge_is_not_starved_by_a_full_store() {
 }
 
 #[test]
+fn a_bridged_write_replaces_one_in_a_full_store_without_room() {
+    let mut graph = base_graph();
+    graph.request_hook = Some(SignalGraph::request_as_input_write);
+    let ends = link(&mut graph, 4);
+    time(&ends, rebuild_osc1(), When::AtSample(10));
+    render(&mut graph, 1);
+    // Writes for osc2 in block 6, against the replaced graph, fill the
+    // store, mapped as the landing installed.
+    let at = |n: u64| When::AtSample(FRAMES as u64 * 6 + n);
+    for n in 0..16 {
+        let mut request = frequency_request(&graph, 0, 1, 0.25);
+        request.when = at(n);
+        ends.requests.submit(request).unwrap();
+    }
+    render(&mut graph, 1);
+    // Still tagged with the replaced generation, it replaces the last.
+    let mut again = frequency_request(&graph, 0, 1, 0.5);
+    again.when = at(15);
+    ends.requests.submit(again).unwrap();
+    // Then adopted, with nothing else to install: no edit waits.
+    let drain = graph.requests.as_ref().unwrap();
+    drain.published().store(1, Ordering::Release);
+
+    // Through block 6, the input held at the value written last.
+    render(&mut graph, 5);
+    assert!(frequency(&mut graph, "osc2").iter().all(|v| *v == 0.5));
+}
+
+#[test]
 fn a_bridged_write_already_expired_replaces_nothing() {
     let mut graph = base_graph();
     graph.request_hook = Some(SignalGraph::request_as_input_write);
