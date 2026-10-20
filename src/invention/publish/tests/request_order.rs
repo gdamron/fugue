@@ -203,6 +203,46 @@ fn an_order_after_a_live_retarget_is_not_added() {
     assert_eq!(read(&rig, "d2", "level"), ControlValue::Number(0.75));
 }
 
+/// sched_b, clocked by the clock, writes the dial's level; sched_a,
+/// never clocked, writes d2's, which reaches the dac. Then sched_b is
+/// retargeted live to write d2's level on its first two steps.
+pub(super) fn retargeted_onto_a_later_module() -> Rig {
+    let rig = rig(false);
+    let schedule = |at: serde_json::Value| serde_json::json!({ "schedule": at });
+    let sched_b = schedule(serde_json::json!([step("dial", "level", 0.5)]));
+    let sched_b = rig.build("sched_b", "control_scheduler", sched_b);
+    let d2 = rig.build("d2", DIAL, serde_json::json!({}));
+    let sched_a = schedule(serde_json::json!([step("d2", "level", 0.25)]));
+    let sched_a = rig.build("sched_a", "control_scheduler", sched_a);
+    rig.live
+        .edit(|change| {
+            change.upsert("sched_b", sched_b);
+            change.upsert("d2", d2);
+            change.upsert("sched_a", sched_a);
+            change.connect(edge("clock", "beat", "sched_b", "clock"))?;
+            change.connect(edge("d2", "out", "dac", "audio"))
+        })
+        .unwrap();
+    let mut later = step("d2", "level", 0.5);
+    later["at_step"] = 1.into();
+    let retarget = serde_json::json!([step("d2", "level", 0.75), later]);
+    write(&rig, "sched_b", "schedule", retarget.to_string().into());
+    rig
+}
+
+#[test]
+fn an_order_after_a_retarget_onto_a_later_module_is_not_added() {
+    // Installed, sched_b runs after d2, so its writes land a block late. A
+    // compile now runs it before d2, with the writers still in the same
+    // order, so an order publishing that compile moves those writes.
+    let oracle = retargeted_onto_a_later_module().render(200);
+    let mut rig = retargeted_onto_a_later_module();
+    let generation = rig.live.generation();
+    assert!(!order(&rig, "clock", "dial"), "sched_b would move");
+    assert_eq!(rig.live.generation(), generation);
+    assert!(rig.render(200) == oracle, "unchanged");
+}
+
 #[test]
 fn orders_go_with_the_first_change_once_no_condition_waits() {
     let mut rig = rig(false);
