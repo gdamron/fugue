@@ -155,9 +155,10 @@ impl LiveGraph {
     /// under `publisher`: an order moves no module and routes nothing, so
     /// no surface, port or connection changes with it. Returns what is left
     /// to free once the guard is released; publishes nothing when the
-    /// queue is backed up, or the publisher refuses.
+    /// queue is backed up, or the publisher refuses, or a module was
+    /// retargeted between ordering and compiling (see `change::order`).
     fn publish_order(&self, publisher: &mut Publisher, prepared: PreparedChange) -> Box<dyn Any> {
-        if prepared.is_empty() {
+        if prepared.is_empty() || prepared.mirror.targets != publisher.mirror().targets {
             return Box::new(prepared);
         }
         if !self.reclaimer.threaded() && publisher.audio_alive() && self.backlogged(publisher) {
