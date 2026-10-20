@@ -27,7 +27,9 @@ fn setup(schedule_json: &str) -> (ControlScheduler, MixerControls, SurfaceDirect
     let spec = parse_schedule_json(schedule_json).unwrap();
     let ctrl = ControlSchedulerControls::new(spec);
     ctrl.attach("sched", &directory).unwrap();
-    let module = ControlScheduler::new(48_000, ctrl);
+    let mut module = ControlScheduler::new(48_000, ctrl);
+    module.settle();
+    module.settle();
     (module, mixer, directory)
 }
 
@@ -167,8 +169,9 @@ fn schedule_replaced_during_playback_skips_past_entries() {
         ]"#,
     )
     .unwrap();
+    module.settle();
 
-    pulse(&mut module, 3); // step 2 (adoption happens here)
+    pulse(&mut module, 3); // step 2
     pulse(&mut module, 3); // step 3
     assert_eq!(mixer.level(0), 1.0, "entry in the past must not fire");
     assert_eq!(mixer.level(1), 0.3, "future entry fires at its step");
@@ -371,18 +374,13 @@ fn schedule_control_round_trips_as_json() {
 }
 
 #[test]
-fn a_prepared_scheduler_processes_its_first_block_without_allocating() {
+fn a_bound_scheduler_processes_its_first_block_without_allocating() {
     let schedule = r#"[
         { "at_step": 0, "module": "mixer", "control": "level.0", "value": 0.5 },
         { "at_step": 1, "module": "mixer", "control": "level.1", "value": 0.0, "ramp_steps": 2 }
     ]"#;
-    // Unprepared, the first block adopts the schedule on the audio thread.
-    let (mut module, _mixer, _dir) = setup(schedule);
-    let (_, allocs, _) = crate::alloc_counter::allocator_events(|| module.process(64));
-    assert!(allocs > 0);
-
+    // Bound, the scheduler holds its resolved schedule before it runs.
     let (mut module, mixer, _dir) = setup(schedule);
-    module.prepare_for_publication();
     let ((), allocs, frees) = crate::alloc_counter::allocator_events(|| {
         pulse(&mut module, 15);
         pulse(&mut module, 15);
@@ -443,6 +441,7 @@ fn ramp_between_extreme_values_writes_only_finite_monotonic_values() {
     let ctrl = ControlSchedulerControls::new(spec);
     ctrl.attach("sched", &directory).unwrap();
     let mut module = ControlScheduler::new(48_000, ctrl);
+    module.settle();
 
     for _ in 0..6 {
         pulse(&mut module, 15);

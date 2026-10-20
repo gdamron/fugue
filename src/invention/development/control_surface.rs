@@ -155,9 +155,32 @@ impl ControlSurface for DevelopmentControlSurface {
         // legacy aliases, already checked, take the value.
         if let Some(declared) = self.declared(key) {
             self.validate_control(key, &value, &self.surfaces)?;
-            declared.set_control(key, value.clone())?;
+            // A payload only its alias's own surface can build (a
+            // scheduler's resolved schedule) is built there and handed on.
+            match self.prepare_payload(key, &value) {
+                Some(prepared) => {
+                    let (payload, shown) = prepared?;
+                    declared.write_payload(key, payload, shown)?;
+                }
+                None => declared.set_control(key, value.clone())?,
+            }
         }
         self.set_legacy(key, value)
+    }
+
+    /// Built by the one alias a payload key reaches, when its surface
+    /// builds its own payloads.
+    #[allow(private_interfaces)]
+    fn prepare_payload(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Option<Result<(Payload, ControlValue), String>> {
+        if !self.declared(key)?.is_payload(key) {
+            return None;
+        }
+        let (control, surface) = self.lookup(key).ok()?;
+        surface.prepare_payload(&control.key, value)
     }
 
     /// Writes `key`'s aliases still on the legacy path, and theirs in a

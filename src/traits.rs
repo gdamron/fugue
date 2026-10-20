@@ -235,6 +235,22 @@ pub trait ControlSurface: Send + Sync {
         self.set_control(key, value)
     }
 
+    /// Builds payload control `key`'s write of `value`: the payload and
+    /// what the control reads back as. `None` for a key this surface does
+    /// not build payloads for (a codec builds them, or it is no payload).
+    /// A development aliasing `key` hands the result on, since only the
+    /// module's own surface can build it. Control thread.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn prepare_payload(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Option<Result<(Payload, ControlValue), String>> {
+        let _ = (key, value);
+        None
+    }
+
     /// Opens a surface [`bound`](Self::bind) to a change still being
     /// prepared to `route`, once that change has committed. Legacy surfaces
     /// ignore it.
