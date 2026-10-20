@@ -8,6 +8,7 @@
 
 use crate::invention::graph::{GraphCommand, RoutingConnection, SignalGraph};
 use crate::invention::runtime::{GraphCommandError, ModuleInstance};
+use crate::modules::clock::outputs::OUTPUTS;
 use crate::Module;
 
 use super::{MirrorModule, TopologyMirror};
@@ -34,28 +35,33 @@ impl TopologyMirror {
             let sources: Vec<_> = self.edges.iter().filter(into).collect();
             let named =
                 |edge: &&RoutingConnection| format!("'{}.{}'", edge.from_module, edge.from_port);
-            let connect = format!(
-                "module '{id}' steps on a clock: connect its '{input}' input to one clock \
-                 gate output (a clock's 'beat', 'beat_x2', 'beat_x4', 'beat_d2' or 'beat_d4')"
-            );
+            let connect = || {
+                format!(
+                    "module '{id}' steps on a clock: connect its '{input}' input to one \
+                     clock gate output (a clock's {})",
+                    clock_gates()
+                )
+            };
             match sources[..] {
                 [] => {}
                 [edge] if self.is_gate(edge) => {}
                 [edge] => {
                     return Err(format!(
-                        "{connect}, not {}. Inside a development it can step on any gate",
+                        "{}, not {}. Inside a development it can step on any gate",
+                        connect(),
                         named(&edge)
                     ))
                 }
                 [first, ..] if sources.iter().all(|edge| same_source(edge, first)) => {
                     return Err(format!(
-                        "{connect}, once: {} is connected twice",
+                        "{}, once: {} is connected twice",
+                        connect(),
                         named(&first)
                     ))
                 }
                 _ => {
                     let named: Vec<_> = sources.iter().map(named).collect();
-                    return Err(format!("{connect}, not {}", named.join(" and ")));
+                    return Err(format!("{}, not {}", connect(), named.join(" and ")));
                 }
             }
         }
@@ -65,6 +71,16 @@ impl TopologyMirror {
     fn is_gate(&self, edge: &RoutingConnection) -> bool {
         let source = self.modules.get(&edge.from_module);
         source.is_some_and(|source| source.gates.contains(&edge.from_port))
+    }
+}
+
+/// A clock's gate outputs, quoted: "'beat', …, or 'beat_x4'".
+fn clock_gates() -> String {
+    let quoted: Vec<_> = OUTPUTS.iter().map(|output| format!("'{output}'")).collect();
+    match quoted.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
     }
 }
 
@@ -132,4 +148,15 @@ pub(crate) fn check_load(
     edges: &[RoutingConnection],
 ) -> Result<(), String> {
     TopologyMirror::of(modules, edges).check_tables()
+}
+
+#[cfg(test)]
+mod gates {
+    #[test]
+    fn the_refusal_names_every_clock_gate_output() {
+        assert_eq!(
+            super::clock_gates(),
+            "'beat', 'beat_d4', 'beat_d2', 'beat_x2' or 'beat_x4'"
+        );
+    }
 }
