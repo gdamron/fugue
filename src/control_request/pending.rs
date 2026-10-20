@@ -30,6 +30,9 @@ pub(crate) enum Refusal {
     /// It was timed in beats on a clock that was removed or rebuilt before
     /// it applied.
     TimelineGone,
+    /// It waited on a condition reading a module that was removed or
+    /// rebuilt before it was met.
+    SourceGone,
 }
 
 /// How a request left the audio thread's hands.
