@@ -266,7 +266,11 @@ fn a_full_ring_of_held_writes_never_keeps_the_bridge() {
     };
     let link = graph.link.as_mut().unwrap();
     let held = link.pending.capacity();
+    assert!(link.pending.is_empty());
     link.pending.extend(std::iter::repeat_n(write, held));
+    assert_eq!(link.pending.capacity(), held, "full, not grown");
+    // Never reached: the full ring stops the drain before it pops. It is
+    // what would be queued behind the held writes.
     ends.inputs.push(write).unwrap();
     let published = graph.requests.as_ref().unwrap().published().clone();
     published.store(1, Ordering::Release);

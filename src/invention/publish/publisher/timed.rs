@@ -140,7 +140,7 @@ impl Publisher {
             Some(true) => {}
         }
         let waiting = self.timed.take()?;
-        self.set_timed(None);
+        self.set_timed(None); // for the flag: `take` cleared `timed`
         self.generation += 1;
         // Releases every request and write queued before it to the audio
         // thread, which then knows nothing is tagged older (see `landing`).
