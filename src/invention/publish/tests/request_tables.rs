@@ -295,3 +295,36 @@ fn a_table_plays_again_from_step_0_on_a_clock_replacing_its_own_offline() {
     assert!(after[..beats[1]].iter().all(|&level| level == 0.5));
     assert!(after[beats[1]..].iter().all(|&level| level == 0.75));
 }
+
+#[test]
+fn a_table_replacing_one_takes_its_room_when_the_tables_room_is_full() {
+    let mut rig = Rig::new(DOCUMENT);
+    rig.registry.register(TablerFactory);
+    let tabler = |rig: &Rig, id: usize| {
+        next_table(TestTable::new(id, Vec::new()));
+        rig.build(&format!("t{id}"), TABLER, serde_json::json!({}))
+    };
+    // As many tables as the drain's room (32).
+    let tablers: Vec<_> = (0..32).map(|id| (id, tabler(&rig, id))).collect();
+    rig.live
+        .edit(|change| {
+            for (id, built) in tablers {
+                change.upsert(&format!("t{id}"), built);
+                change.connect(edge("clock", "beat", &format!("t{id}"), "clock"))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    let played = |rig: &Rig, id: &str| rig.graph.modules[id].module().get_output("played");
+    assert_eq!(played(&rig, "t0"), Ok(1.0));
+    let replacing = tabler(&rig, 99);
+    rig.live
+        .edit(|change| {
+            change.upsert("t0", replacing);
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    assert_eq!(played(&rig, "t0"), Ok(1.0), "the drain plays it");
+}
