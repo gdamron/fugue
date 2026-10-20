@@ -59,6 +59,7 @@ fn a_timed_edit_lands_on_its_sample_mid_block_without_touching_the_allocator() {
     let ((), allocs, frees) = allocator_events(|| graph.process_block(&mut left, &mut right));
     assert_eq!((allocs, frees), (0, 0), "landing touched the allocator");
     assert!(fate.landed());
+    assert_eq!(fate.settled(), Some(true));
     assert_eq!(ids(&graph), ["dac"]);
     assert_eq!(ends.applied.load(Ordering::Relaxed), 1);
     // Playing up to the sample it is due on, silent from it on.
@@ -74,6 +75,7 @@ fn a_cancelled_timed_edit_never_lands() {
     let ends = link(&mut graph, 4);
     let fate = time(&ends, silence(), When::AtSample(10));
     assert!(fate.cancel());
+    assert_eq!(fate.settled(), Some(false));
 
     let out = render(&mut graph, 2);
     assert!(!fate.landed());
