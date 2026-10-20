@@ -5,6 +5,7 @@
 
 use super::request_beats::{outcomes_of, render_counted};
 use super::request_conditions::{first_change, nth_beat, rig};
+use super::request_order::retargeted_onto_a_later_module;
 use super::*;
 use crate::control_request::{Edge, Outcome, GATE_LEVEL};
 use crate::invention::publish::watch::Part;
@@ -98,6 +99,19 @@ fn a_watched_module_the_target_runs_into_is_left_and_applies_late() {
         outcomes_of(&mut rig, id)[..],
         [(_, Outcome::AppliedLate { .. })]
     ));
+}
+
+#[test]
+fn a_retarget_since_the_last_publish_publishes_no_order() {
+    // A compile now would move the retargeted scheduler (see
+    // `change::order`), so the request goes in unordered, as it is.
+    let oracle = retargeted_onto_a_later_module().render(200);
+    let mut rig = retargeted_onto_a_later_module();
+    let generation = rig.live.generation();
+    level_on(&rig, beats(1_000)).unwrap();
+    assert_eq!(rig.live.generation(), generation);
+    assert!(watches(&rig).is_empty());
+    assert!(rig.render(200) == oracle, "unchanged while it waits");
 }
 
 #[test]

@@ -12,26 +12,26 @@
 //! and one a later edit would make do so is dropped as that edit
 //! compiles. The request then applies late, at its target's next segment.
 //!
-//! An order publishes on its own, so it is added only while publishing
-//! the topology again would change nothing heard either: a scheduler
-//! retargeted live writes other controls than the installed topology
-//! orders it by (FUG-388), and a compile now would order it anew.
+//! An order publishes on its own, so it is added only while a compile now
+//! is the one installed: while every module writes the controls it wrote
+//! when the topology was last published. A scheduler retargeted live
+//! writes others, yet the installed topology still orders it by the old
+//! ones (FUG-388); a compile now would order it anew.
 
 use indexmap::IndexMap;
-use std::collections::HashMap;
 
 use super::{GraphChange, MirrorFacts};
-use crate::invention::graph::{
-    compile_topology, CompiledTopology, RoutingConnection, TopologyFacts,
-};
-use crate::invention::runtime::ModuleInstance;
-use crate::GraphModule;
+use crate::invention::graph::{compile_topology, CompiledTopology, TopologyFacts};
+
+/// Each module's control targets, by id (see
+/// [`crate::Module::control_targets`]).
+pub(crate) type Targets = IndexMap<String, Vec<String>>;
 
 /// What a topology does to the sound beyond acyclic order: each feedback
 /// group's members in the order they compute, every route with whether it
 /// is delayed a sample, and the modules writing controls in the order they
 /// compute.
-pub(crate) type Heard = (
+type Heard = (
     Vec<Vec<usize>>,
     Vec<(usize, usize, usize, usize, bool)>,
     Vec<usize>,
@@ -40,23 +40,48 @@ pub(crate) type Heard = (
 impl GraphChange {
     /// Orders module `source` before module `target` without routing
     /// anything between them. Adds nothing, and returns false, when the
-    /// order already holds or would change what is heard.
+    /// order already holds or would change what is heard, or while a
+    /// compile now would not reproduce the topology installed.
     pub(crate) fn order(&mut self, source: &str, target: &str) -> bool {
-        if source == target || self.reaches(source, target) || self.reaches(target, source) {
+        let targets = self.targets_now();
+        if source == target || !self.compiles_as_installed(&targets) {
             return false;
         }
-        let unordered = self.heard();
-        if unordered != self.mirror.heard {
+        if self.reaches(&targets, source, target) || self.reaches(&targets, target, source) {
             return false;
         }
+        let unordered = self.heard(&targets);
         let watch = (source.to_string(), target.to_string());
         self.mirror.watches.push(watch);
-        if self.heard() != unordered {
+        if self.heard(&targets) != unordered {
             self.mirror.watches.pop();
             return false;
         }
         self.edits += 1;
         true
+    }
+
+    /// Each module's control targets as its surface reports them now, or
+    /// as a schedule the change writes to it does (see
+    /// `Rescheduling::targets`): what the change compiles with.
+    pub(super) fn targets_now(&self) -> Targets {
+        let mut scheduled = self.rescheduling.targets(&self.surfaces);
+        let targets = self.mirror.modules.keys().map(|id| {
+            let surface = self.surfaces.get(id);
+            let targets = scheduled
+                .remove(id)
+                .or_else(|| surface.map(|surface| surface.control_targets()));
+            (id.clone(), targets.unwrap_or_default())
+        });
+        targets.collect()
+    }
+
+    /// Whether every module the topology last published was compiled with
+    /// still writes the controls it did then (`targets` being what they
+    /// write now), so that a compile now orders them as installed.
+    fn compiles_as_installed(&self, targets: &Targets) -> bool {
+        let mut installed = self.mirror.targets.iter();
+        installed.all(|(id, was)| targets.get(id).is_none_or(|now| now == was))
     }
 
     /// Drops every order [`Self::order`] added, once no condition waits on
@@ -67,59 +92,39 @@ impl GraphChange {
 
     /// Drops each order that, with the change's other edits, would change
     /// what is heard: kept in the order they were added while, together,
-    /// they leave it as it is with none.
+    /// they leave it as it is with none. Run as the change compiles, once
+    /// the mirror holds the targets it compiles with.
     pub(super) fn keep_orders_inaudible(&mut self) {
         if self.mirror.watches.is_empty() {
             return;
         }
         let watches = std::mem::take(&mut self.mirror.watches);
-        let unordered = self.heard();
+        let unordered = self.heard(&self.mirror.targets);
         for watch in watches {
             self.mirror.watches.push(watch);
-            if self.heard() != unordered {
+            if self.heard(&self.mirror.targets) != unordered {
                 self.mirror.watches.pop();
             }
         }
     }
 
-    /// What the topology as edited so far does to the sound.
-    fn heard(&self) -> Heard {
-        let facts = MirrorFacts {
-            mirror: &self.mirror,
-            surfaces: &self.surfaces,
-            scheduled: self.rescheduling.targets(&self.surfaces),
-        };
-        let sinks = self.mirror.sinks();
-        let topology = compile_topology(&facts, &self.mirror.edges, &sinks, 1);
-        self.heard_of(&topology, &facts.scheduled)
-    }
-
-    /// What `topology`, compiled from this change with the schedules it
-    /// writes, `scheduled`, does to the sound.
-    pub(super) fn heard_of(
-        &self,
-        topology: &CompiledTopology,
-        scheduled: &HashMap<String, Vec<String>>,
-    ) -> Heard {
-        heard_of(topology, |module| {
-            let (id, _) = self.mirror.modules.get_index(module).unwrap();
-            // A schedule the change writes stands in for the surface's own.
-            match scheduled.get(id) {
-                Some(targets) => !targets.is_empty(),
-                None => (self.surfaces.get(id))
-                    .is_some_and(|surface| !surface.control_targets().is_empty()),
-            }
+    /// What the topology as edited so far, compiled with `targets`, does
+    /// to the sound.
+    fn heard(&self, targets: &Targets) -> Heard {
+        let mirror = &self.mirror;
+        let facts = MirrorFacts { mirror, targets };
+        let topology = compile_topology(&facts, &mirror.edges, &mirror.sinks(), 1);
+        heard_of(&topology, |module| {
+            let (id, _) = mirror.modules.get_index(module).unwrap();
+            targets.get(id).is_some_and(|targets| !targets.is_empty())
         })
     }
 
     /// Whether module `from` computes before module `to` by what orders
     /// modules: routes, control targets and watches.
-    fn reaches(&self, from: &str, to: &str) -> bool {
-        let facts = MirrorFacts {
-            mirror: &self.mirror,
-            surfaces: &self.surfaces,
-            scheduled: self.rescheduling.targets(&self.surfaces),
-        };
+    fn reaches(&self, targets: &Targets, from: &str, to: &str) -> bool {
+        let mirror = &self.mirror;
+        let facts = MirrorFacts { mirror, targets };
         let (Some(from), Some(to)) = (facts.index_of(from), facts.index_of(to)) else {
             return false;
         };
@@ -144,22 +149,6 @@ impl GraphChange {
         }
         false
     }
-}
-
-/// What the graph about to go live, `modules` routed by `edges`, does to
-/// the sound.
-pub(super) fn heard_live(
-    modules: &IndexMap<String, ModuleInstance>,
-    edges: &[RoutingConnection],
-) -> Heard {
-    let sinks = modules
-        .iter()
-        .filter(|(_, module)| matches!(module, GraphModule::Sink(_)));
-    let sinks: Vec<_> = sinks.map(|(id, _)| id.clone()).collect();
-    let topology = compile_topology(modules, edges, &sinks, 1);
-    heard_of(&topology, |module| {
-        !modules[module].module().control_targets().is_empty()
-    })
 }
 
 /// What `topology` does to the sound, given which modules write controls.
