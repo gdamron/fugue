@@ -57,8 +57,8 @@ pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};
 pub use master::MasterLevels;
 pub(crate) use master::MasterObservers;
 pub(crate) use publication::{
-    vacant, AudioLink, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
-    MAX_INSTALLS_PER_BLOCK,
+    vacant, AudioLink, Fate, InputWrite, Publication, SurvivorRemap, MAX_INPUT_PORT_NAME,
+    MAX_INSTALLS_PER_BLOCK, TIMED_EDIT_MODULE,
 };
 #[cfg(test)]
 pub(crate) use requests::link_requests;

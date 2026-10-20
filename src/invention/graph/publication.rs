@@ -34,8 +34,12 @@ use crate::invention::runtime::ModuleInstance;
 use crate::spsc::{Consumer, Producer};
 use crate::{GraphModule, Module, MAX_BLOCK};
 
+mod landing;
 mod remap;
 
+pub(crate) use landing::FateGuard;
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use landing::{Fate, TIMED_EDIT_MODULE};
 pub(crate) use remap::SurvivorRemap;
 
 /// A complete next topology, prepared off the audio thread.
@@ -63,6 +67,9 @@ pub(crate) struct Publication {
     /// The publisher generation this publication creates. Set by the
     /// publisher as it publishes.
     pub(crate) generation: u64,
+    /// A timed edit's fate, which landing it decides (see `landing`); none
+    /// for an immediate edit.
+    pub(crate) fate: Option<FateGuard>,
 }
 
 impl Publication {
@@ -194,6 +201,11 @@ pub(crate) struct AudioLink {
     /// Writes for a publication not yet installed, oldest first. Allocated
     /// once at link time and never pushed past its capacity.
     pending: Vec<InputWrite>,
+    /// A timed edit taken at this segment start, to install there.
+    landed: Option<Box<Publication>>,
+    /// The publication a timed edit's landing retired, kept to map what
+    /// was submitted against the generation it replaced (see `landing`).
+    bridge: Option<Box<Publication>>,
 }
 
 impl AudioLink {
@@ -215,6 +227,8 @@ impl AudioLink {
             applied,
             installed: 0,
             pending: Vec::with_capacity(input_capacity.max(1)),
+            landed: None,
+            bridge: None,
         }
     }
 
@@ -250,6 +264,11 @@ impl SignalGraph {
     /// one that falls back to recompiling (which `ensure_process_order`
     /// runs afterwards; see [`SignalGraph::recompile`]).
     ///
+    /// A timed edit's bridge (see `landing`) goes back first, once the
+    /// publisher has adopted its edit and nothing is left to map through
+    /// it; until then no further edit installs, nor while it waits for
+    /// room to go back.
+    ///
     /// An edit installs only while no retirement is held, so the audio
     /// thread never holds more than one, and at most
     /// [`MAX_INSTALLS_PER_BLOCK`] install per block, however fast the
@@ -261,11 +280,23 @@ impl SignalGraph {
         };
         let mut budget = self.requests.as_ref().map_or(0, |drain| drain.pop_limit);
         let mut installs = 0;
+        // Read before anything is drained (see `landing`).
+        let adopted = link.bridge.is_some()
+            && self
+                .requests
+                .as_ref()
+                .is_some_and(|drain| drain.adopted(link.installed));
         loop {
-            let can_install = installs < MAX_INSTALLS_PER_BLOCK && link.flush_held();
-            let Some(mut publication) =
-                self.drain_requests(link.installed, can_install, &mut budget)
-            else {
+            // A bridge goes before the next edit installs, so the link
+            // never holds two publications back.
+            let can_install =
+                installs < MAX_INSTALLS_PER_BLOCK && link.bridge.is_none() && link.flush_held();
+            let drained =
+                self.drain_requests(link.installed, can_install, &mut budget, link.bridge());
+            let Some(mut publication) = drained else {
+                if self.release_bridge(&mut link, adopted) {
+                    continue;
+                }
                 break;
             };
             let previous = link.installed;
@@ -278,15 +309,23 @@ impl SignalGraph {
             link.retire(publication);
             installs += 1;
         }
-        self.drain_inputs(&mut link, None);
+        let bridge = link.bridge.take();
+        let retired = bridge
+            .as_deref()
+            .map(|bridge| (bridge.generation - 1, bridge));
+        self.drain_inputs(&mut link, retired);
+        link.bridge = bridge;
         self.link = Some(link);
     }
 
     /// Applies queued input writes for the installed generation, maps those
     /// for the one `retired` replaced, and holds those for a newer one.
     /// Takes at most the ring's capacity from the queue per call, so a
-    /// sender keeping pace cannot hold the block here.
-    fn drain_inputs(&mut self, link: &mut AudioLink, retired: Option<(u64, &Publication)>) {
+    /// sender keeping pace cannot hold the block here. Returns whether
+    /// nothing for the installed generation or an older one is left in the
+    /// queue: it emptied, or holds a write for a newer one, so everything
+    /// behind it is newer too.
+    fn drain_inputs(&mut self, link: &mut AudioLink, retired: Option<(u64, &Publication)>) -> bool {
         let installed = link.installed;
         // Held writes came off the queue first, so they go first.
         link.pending.retain(|write| {
@@ -304,10 +343,10 @@ impl SignalGraph {
         let limit = link.pending.capacity();
         for _ in 0..limit {
             if link.pending.len() == limit {
-                break;
+                return true;
             }
             let Some(write) = link.inputs.pop() else {
-                break;
+                return true;
             };
             match self.dispose(write.generation, write.module_idx, installed, retired) {
                 Disposition::Apply(module_idx) => {
@@ -317,6 +356,7 @@ impl SignalGraph {
                 Disposition::Drop => {}
             }
         }
+        !link.pending.is_empty()
     }
 
     /// Decides where a write or request resolved against module `old` of
