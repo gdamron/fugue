@@ -33,6 +33,7 @@ mod request_timing;
 mod request_watch;
 mod requests;
 mod step_pattern;
+mod timed_edits;
 mod timed_publisher;
 mod timelines;
 mod writes;

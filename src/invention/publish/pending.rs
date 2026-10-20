@@ -51,6 +51,8 @@ pub(crate) struct PendingLog {
     lost: u64,
     /// The session's applied writes.
     log: Recorder,
+    /// A timed edit queued (see `publish::timed`), until its outcome.
+    timed: Option<RequestId>,
 }
 
 impl PendingLog {
@@ -62,7 +64,17 @@ impl PendingLog {
             dropped: EventCursor::new(),
             lost: 0,
             log: Recorder::default(),
+            timed: None,
         }
+    }
+
+    /// Counts timed edit `id`, just queued, as a commit (whether or not it
+    /// lands, as every commit counts), and expects its outcome, never a
+    /// lost write. Call it under this log's lock, taken before the
+    /// submission, so the outcome cannot be received first.
+    pub(crate) fn timed(&mut self, id: RequestId) {
+        self.log.edited();
+        self.timed = Some(id);
     }
 
     /// Receives every outcome waiting, settling the writes they belong to.
@@ -71,11 +83,15 @@ impl PendingLog {
     /// rather than list one as pending for ever.
     pub(crate) fn settle(&mut self) {
         while let Some((id, outcome)) = self.receiver.try_recv() {
-            let write = self.writes.iter().position(|(pending, _)| *pending == id);
-            let write = write
-                .and_then(|at| self.writes.remove(at))
-                .map(|(_, write)| write);
-            self.record(write, outcome);
+            if self.timed == Some(id) {
+                self.timed = None;
+            } else {
+                let write = self.writes.iter().position(|(pending, _)| *pending == id);
+                let write = write
+                    .and_then(|at| self.writes.remove(at))
+                    .map(|(_, write)| write);
+                self.record(write, outcome);
+            }
             if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
                 self.outcomes.pop_front();
                 self.lost += 1;

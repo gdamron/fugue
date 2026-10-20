@@ -96,7 +96,6 @@ impl Fate {
 
     /// Where it stands, read once: still waiting (`None`), landed
     /// (`Some(true)`), or cancelled or dropped (`Some(false)`).
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
     pub(crate) fn settled(&self) -> Option<bool> {
         match self.0.load(Ordering::Acquire) {
             WAITING => None,
