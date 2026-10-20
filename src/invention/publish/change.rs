@@ -539,8 +539,8 @@ mod order;
 mod rebind;
 pub(crate) use rebind::Rescheduling;
 mod tables;
-pub(crate) use tables::{check_load, check_offline};
 use tables::table_facts;
+pub(crate) use tables::{check_load, check_offline};
 #[cfg(test)]
 mod tests;
 mod timelines;

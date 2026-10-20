@@ -432,7 +432,11 @@ impl RuntimeController {
             .graph
             .as_ref()
             .ok_or(GraphCommandError::AudioThreadStopped)?;
-        check_offline(&graph.lock().unwrap(), Some((module_id, module.clone())), None)?;
+        check_offline(
+            &graph.lock().unwrap(),
+            Some((module_id, module.clone())),
+            None,
+        )?;
         if let Some(module) = instance {
             add_offline(
                 graph,

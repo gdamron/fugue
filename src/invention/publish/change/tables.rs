@@ -15,7 +15,9 @@ use super::{MirrorModule, TopologyMirror};
 /// The clock input `module` steps its table on, if it plays one, and its
 /// outputs a table can step on: a clock's gates. Control thread.
 pub(super) fn table_facts(module: &dyn Module) -> (Option<String>, Vec<String>) {
-    let clock = module.beat_table().map(|table| table.clock_input().to_string());
+    let clock = module
+        .beat_table()
+        .map(|table| table.clock_input().to_string());
     let gates = module.outputs().iter();
     let gates = gates.filter(|port| module.gate_beats(port).is_some());
     (clock, gates.map(|port| (*port).to_string()).collect())
@@ -30,9 +32,8 @@ impl TopologyMirror {
         for (id, input) in tables {
             let into = |edge: &&RoutingConnection| edge.to_module == *id && edge.to_port == input;
             let sources: Vec<_> = self.edges.iter().filter(into).collect();
-            let named = |edge: &&RoutingConnection| {
-                format!("'{}.{}'", edge.from_module, edge.from_port)
-            };
+            let named =
+                |edge: &&RoutingConnection| format!("'{}.{}'", edge.from_module, edge.from_port);
             match sources[..] {
                 [] => {}
                 [edge] if self.is_gate(edge) => {}
@@ -74,7 +75,9 @@ pub(crate) fn check_offline(
         mirror.upsert(id, module);
     }
     mirror.edges.extend(edge);
-    mirror.check_tables().map_err(GraphCommandError::InvalidPort)
+    mirror
+        .check_tables()
+        .map_err(GraphCommandError::InvalidPort)
 }
 
 /// Refuses a top-level invention about to load with a table on another

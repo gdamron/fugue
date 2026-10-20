@@ -30,7 +30,10 @@ fn to_sched(from: &str, port: &str) -> serde_json::Value {
 
 fn load(connections: serde_json::Value) -> Result<(), String> {
     let builder = InventionBuilder::new(48_000);
-    builder.build(document(connections)).map(drop).map_err(|error| error.to_string())
+    builder
+        .build(document(connections))
+        .map(drop)
+        .map_err(|error| error.to_string())
 }
 
 #[test]
@@ -43,7 +46,10 @@ fn a_scheduler_steps_on_a_clock_gate_or_on_nothing() {
 #[test]
 fn a_scheduler_on_another_signal_is_refused_at_load() {
     let error = load(serde_json::json!([to_sched("lfo", "unipolar")])).unwrap_err();
-    assert!(error.contains("'sched'") && error.contains("'lfo.unipolar'"), "{error}");
+    assert!(
+        error.contains("'sched'") && error.contains("'lfo.unipolar'"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -56,13 +62,24 @@ fn a_scheduler_on_two_clocks_is_refused_at_load() {
 #[test]
 fn an_offline_edit_onto_another_signal_is_refused() {
     let mut engine = RenderEngine::new(48_000);
-    engine.load_invention(document(serde_json::json!([]))).unwrap();
+    engine
+        .load_invention(document(serde_json::json!([])))
+        .unwrap();
     let controller = engine.controller().unwrap();
-    let error = controller.connect("lfo", "unipolar", "sched", "clock").unwrap_err();
+    let error = controller
+        .connect("lfo", "unipolar", "sched", "clock")
+        .unwrap_err();
     assert!(error.to_string().contains("'lfo.unipolar'"), "{error}");
-    assert!(engine.snapshot().list_connections().is_empty(), "nothing connected");
-    controller.connect("clock", "beat", "sched", "clock").unwrap();
-    let error = controller.connect("other", "beat", "sched", "clock").unwrap_err();
+    assert!(
+        engine.snapshot().list_connections().is_empty(),
+        "nothing connected"
+    );
+    controller
+        .connect("clock", "beat", "sched", "clock")
+        .unwrap();
+    let error = controller
+        .connect("other", "beat", "sched", "clock")
+        .unwrap_err();
     assert!(error.to_string().contains("'other.beat'"), "{error}");
 }
 
