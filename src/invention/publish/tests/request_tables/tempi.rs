@@ -135,4 +135,3 @@ fn an_entry_writing_its_own_clock_s_tempo_lands_the_next_on_the_new_beat() {
         Some(at as usize)
     );
 }
-
