@@ -10,9 +10,6 @@
 //! nothing changed), as any change prepared against a generation that has
 //! moved is.
 
-// Until the live graph queues and adopts timed edits (FUG-323 4/5).
-#![allow(dead_code)]
-
 use std::sync::atomic::Ordering;
 
 use super::{Published, Publisher, Refused};

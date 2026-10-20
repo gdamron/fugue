@@ -20,6 +20,8 @@ use crate::spsc::{Consumer, Producer, Ring};
 
 mod timed;
 
+pub(crate) use timed::Adopted;
+
 /// Input writes that may wait for the audio thread before a write is
 /// refused with [`GraphCommandError::QueueFull`].
 pub(crate) const INPUT_QUEUE_CAPACITY: usize = 256;
