@@ -517,6 +517,7 @@ fn build_publication(
         remap: SurvivorRemap::default(),
         generation: 0,
         handovers: Vec::new(),
+        fate: None,
     })
 }
 
