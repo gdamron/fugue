@@ -18,6 +18,11 @@ use crate::ControlValue;
 /// pending store and the watches can hold at once.
 const LOG_CAPACITY: usize = REQUEST_QUEUE_CAPACITY + WAITING_CAPACITY;
 
+/// Timed edits whose outcomes the log awaits. One waits at a time, so a
+/// few more cover those adopted before reporting; past that, the oldest is
+/// forgotten and its outcome counted lost, conservatively.
+const TIMED_CAPACITY: usize = 8;
+
 /// A control write waiting to be applied.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PendingWrite {
@@ -51,6 +56,9 @@ pub(crate) struct PendingLog {
     lost: u64,
     /// The session's applied writes.
     log: Recorder,
+    /// Timed edits queued (see `publish::timed`), until their outcomes.
+    /// More than the one waiting: one adopted may not have reported yet.
+    timed: VecDeque<RequestId>,
 }
 
 impl PendingLog {
@@ -62,7 +70,20 @@ impl PendingLog {
             dropped: EventCursor::new(),
             lost: 0,
             log: Recorder::default(),
+            timed: VecDeque::new(),
         }
+    }
+
+    /// Counts timed edit `id`, just queued, as a commit (whether or not it
+    /// lands, as every commit counts), and expects its outcome, never a
+    /// lost write. Call it under this log's lock, taken before the
+    /// submission, so the outcome cannot be received first.
+    pub(crate) fn timed(&mut self, id: RequestId) {
+        self.log.edited();
+        if self.timed.len() == TIMED_CAPACITY {
+            self.timed.pop_front();
+        }
+        self.timed.push_back(id);
     }
 
     /// Receives every outcome waiting, settling the writes they belong to.
@@ -71,11 +92,15 @@ impl PendingLog {
     /// rather than list one as pending for ever.
     pub(crate) fn settle(&mut self) {
         while let Some((id, outcome)) = self.receiver.try_recv() {
-            let write = self.writes.iter().position(|(pending, _)| *pending == id);
-            let write = write
-                .and_then(|at| self.writes.remove(at))
-                .map(|(_, write)| write);
-            self.record(write, outcome);
+            if let Some(at) = self.timed.iter().position(|timed| *timed == id) {
+                self.timed.remove(at);
+            } else {
+                let write = self.writes.iter().position(|(pending, _)| *pending == id);
+                let write = write
+                    .and_then(|at| self.writes.remove(at))
+                    .map(|(_, write)| write);
+                self.record(write, outcome);
+            }
             if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
                 self.outcomes.pop_front();
                 self.lost += 1;
@@ -87,6 +112,7 @@ impl PendingLog {
             self.lost += u64::from(dropped);
             self.log.lost(u64::from(dropped));
             self.writes.clear();
+            self.timed.clear();
         }
     }
 
