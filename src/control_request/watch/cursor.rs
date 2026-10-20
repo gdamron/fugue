@@ -203,10 +203,11 @@ impl Cursors {
         });
     }
 
-    /// One pass at sample `now`: fires every entry whose step the clock's
-    /// next sample reaches (or, late, has passed). Returns whether any
-    /// fired, and how many samples until the next may, as far as the
-    /// clocks' tempi now say. Allocation- and free-free.
+    /// One pass at sample `now`: tells each table its step and fires every
+    /// entry whose step the clock's next sample reaches (or, late, has
+    /// passed). Returns whether any fired, and how many samples until the
+    /// next entry or step may, as far as the clocks' tempi now say.
+    /// Allocation- and free-free.
     pub(crate) fn pass(
         &mut self,
         now: u64,
@@ -230,7 +231,7 @@ impl Cursors {
 
 /// What a cursor's pass did: whether it fired any entry, whether one was
 /// due at this sample (latching its clock), and the samples until its
-/// next may be: `None` once it played out or its clock or table is gone.
+/// next entry or step may be: `None` once its clock or table is gone.
 #[derive(Default)]
 struct Fired {
     any: bool,
@@ -252,6 +253,9 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
         return fired;
     }
     let origin = cursor.anchor(timeline, table, ramps);
+    let next_step = report_step(table, timeline, origin, cursor.clock.beats);
+    let until = |beat| timeline.samples_until(beat).map(|samples| (samples - 1).max(1));
+    fired.wait = until(next_step);
     while let Some(entry) = table.entry(cursor.next) {
         let beat = origin + entry.step as f64 * cursor.clock.beats;
         let due = if timeline.position() >= beat {
@@ -259,8 +263,7 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
         } else if timeline.position_after(1) >= beat {
             now
         } else {
-            let samples = timeline.samples_until(beat);
-            fired.wait = samples.map(|samples| (samples - 1).max(1));
+            fired.wait = fired.wait.into_iter().chain(until(beat)).min();
             return fired;
         };
         fired.any = true;
@@ -301,4 +304,22 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
         }
     }
     fired
+}
+
+/// Tells `table` the step its clock's next sample is in, counting steps
+/// of `beats` from `origin` as its entries count them. Returns the beat
+/// the next step falls on.
+fn report_step(table: &dyn BeatTable, timeline: &dyn Timeline, origin: f64, beats: f64) -> f64 {
+    let reached = timeline.position_after(1);
+    let at = |step: i64| origin + step as f64 * beats;
+    let mut step = ((reached - origin) / beats).floor().max(-1.0) as i64;
+    // The division may round across a boundary its entries' beats do not.
+    while step >= 0 && at(step) > reached {
+        step -= 1;
+    }
+    while at(step + 1) <= reached {
+        step += 1;
+    }
+    table.set_step(step);
+    at(step + 1)
 }

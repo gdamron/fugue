@@ -200,7 +200,10 @@ fn an_order_after_a_live_retarget_is_not_added() {
     assert!(!order(&rig, "clock", "dial"), "sched_a would win");
     assert_eq!(rig.live.generation(), generation);
     rig.render(200);
-    assert_eq!(read(&rig, "d2", "level"), ControlValue::Number(0.75));
+    // Played by the drain, schedulers writing one control at one sample
+    // land in module order, whatever the process order: sched_a, added
+    // after sched_b, writes last.
+    assert_eq!(read(&rig, "d2", "level"), ControlValue::Number(0.25));
 }
 
 /// sched_b, clocked by the clock, writes the dial's level; sched_a,

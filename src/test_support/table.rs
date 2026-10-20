@@ -1,7 +1,7 @@
 //! A table of automation for tests (see `crate::control_request::BeatTable`):
 //! entries on number controls in cells of their own, gated on `clock`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 
 use crate::control_request::{
@@ -14,6 +14,8 @@ pub(crate) struct TestTable {
     pub(crate) plan: u64,
     pub(crate) entries: Vec<TableEntry>,
     pub(crate) played: AtomicBool,
+    /// The step the drain last told it.
+    pub(crate) step: AtomicI64,
 }
 
 impl TestTable {
@@ -23,6 +25,7 @@ impl TestTable {
             plan: 1,
             entries,
             played: AtomicBool::new(false),
+            step: AtomicI64::new(-1),
         }
     }
 }
@@ -50,6 +53,10 @@ impl BeatTable for TestTable {
 
     fn set_played(&self, played: bool) {
         self.played.store(played, Ordering::Relaxed);
+    }
+
+    fn set_step(&self, step: i64) {
+        self.step.store(step, Ordering::Relaxed);
     }
 }
 

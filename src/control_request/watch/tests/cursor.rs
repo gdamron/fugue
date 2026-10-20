@@ -114,6 +114,29 @@ fn step_0_is_the_clock_s_first_gate_and_each_entry_fires_on_its_step() {
 }
 
 #[test]
+fn a_table_is_told_its_step_on_each_step_s_sample_with_or_without_entries() {
+    use std::sync::atomic::Ordering;
+    for entries in [0, 1] {
+        let level = number(0.0);
+        let table = (0..entries).map(|_| entry(1, 0, 0.5, &level)).collect();
+        let mut host = host(BEFORE_START, table);
+        let Drain { cursors, ramps, .. } = &mut drain(1.0, 4);
+        let mut steps = Vec::with_capacity(16);
+        while host.now < 600 {
+            // In segments of 64 at most, split where the cursor waits.
+            let (_, wait) = cursors.pass(host.now, &mut host, ramps);
+            let step = host.table.as_ref().unwrap().step.load(Ordering::Relaxed);
+            if steps.last().is_none_or(|&(_, last)| last != step) {
+                steps.push((host.now, step));
+            }
+            host.play(wait.unwrap_or(64).min(64));
+        }
+        // Sample n is at position (n + 1) / 128: step k from sample 128k - 1.
+        assert_eq!(steps, [(0, 0), (127, 1), (255, 2), (383, 3), (511, 4)]);
+    }
+}
+
+#[test]
 fn a_table_first_seen_mid_play_starts_on_the_clock_s_next_gate() {
     let level = number(0.0);
     let entries = vec![entry(0, 0, 0.25, &level), entry(1, 0, 0.5, &level)];
