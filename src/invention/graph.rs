@@ -53,7 +53,7 @@ mod publication;
 mod requests;
 mod scc;
 
-pub(crate) use compile::{compile_topology, TopologyFacts};
+pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};
 pub use master::MasterLevels;
 pub(crate) use master::MasterObservers;
 pub(crate) use publication::{
