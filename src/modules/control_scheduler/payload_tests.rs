@@ -82,3 +82,17 @@ fn anything_but_a_resolved_schedule_is_refused_and_handed_back() {
     };
     assert_eq!(refusal, Refusal::Unsupported);
 }
+
+#[test]
+fn a_schedule_a_development_handed_on_is_recorded_without_resolving_again() {
+    // The development delivered the payload already: what it targets may
+    // have changed since, and recording it must not report the write failed.
+    let (_, surfaces) = mixer_directory();
+    let directory = Arc::new(std::sync::Mutex::new(surfaces));
+    let ctrl = ControlSchedulerControls::new(Vec::new());
+    ctrl.attach("sched", &directory).unwrap();
+    let gone = r#"[{ "at_step": 0, "module": "gone", "control": "level.0", "value": 0.5 }]"#;
+    assert!(ctrl.set_legacy("schedule", gone.into()).is_ok());
+    assert!(ctrl.schedule_json().contains("gone"));
+    assert_eq!(ctrl.target_module_ids(), ["gone"]);
+}

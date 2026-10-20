@@ -139,7 +139,7 @@ impl ControlSchedulerControls {
         let _writing = self.shared.writing.lock().unwrap();
         let spec = self.shared.state.lock().unwrap().spec.clone();
         let resolved = resolve_schedule(&spec, own_id, surfaces)?;
-        let targets = target_module_ids(&resolved);
+        let targets = target_module_ids(&spec);
         self.deliver(resolved, &spec)?;
         let mut state = self.shared.state.lock().unwrap();
         state.attachment = Some(Attachment {
@@ -169,7 +169,7 @@ impl ControlSchedulerControls {
             self.shared.state.lock().unwrap().spec = spec;
             return Ok(());
         };
-        let targets = target_module_ids(&resolved);
+        let targets = target_module_ids(&spec);
         self.deliver(resolved, &spec)?;
         let mut state = self.shared.state.lock().unwrap();
         state.spec = spec;
@@ -344,16 +344,16 @@ impl ControlSurface for ControlSchedulerControls {
     }
 
     /// Records a schedule a development handed on (see
-    /// [`Self::prepare_payload`]), as reads report it.
+    /// [`Self::prepare_payload`]), as reads report it. The payload is
+    /// already delivered, so this only records: it never resolves again,
+    /// and fails only on text that does not parse, which
+    /// `prepare_payload` refused already.
     fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
             "schedule" => {
                 let spec = parse_schedule_json(value.as_string()?)?;
-                let resolved = self.resolve_attached(&spec)?;
                 let mut state = self.shared.state.lock().unwrap();
-                if let Some(resolved) = resolved {
-                    state.targets = target_module_ids(&resolved);
-                }
+                state.targets = target_module_ids(&spec);
                 state.spec = spec;
                 Ok(())
             }

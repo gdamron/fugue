@@ -7,7 +7,7 @@
 //! replace, to be retired off the audio thread, so a live schedule change
 //! allocates, frees and locks nothing there.
 
-use super::schedule::ResolvedEntry;
+use super::schedule::{ResolvedEntry, ScheduleEntry};
 use super::ActiveRamp;
 
 /// A resolved schedule and the ramps it runs.
@@ -30,10 +30,11 @@ impl ResolvedSchedule {
     }
 }
 
-/// Module ids `entries` target, deduplicated, in first-use order.
-pub(super) fn target_module_ids(entries: &[ResolvedEntry]) -> Vec<String> {
-    let mut ids: Vec<String> = Vec::with_capacity(entries.len());
-    for entry in entries {
+/// Module ids `spec` targets, deduplicated, in first-use order: those its
+/// resolved entries write, since a schedule resolves only whole.
+pub(super) fn target_module_ids(spec: &[ScheduleEntry]) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::with_capacity(spec.len());
+    for entry in spec {
         if !ids.contains(&entry.module) {
             ids.push(entry.module.clone());
         }
