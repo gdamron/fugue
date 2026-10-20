@@ -294,6 +294,9 @@ impl SignalGraph {
                 // Left for this thread when the clock was not yet anchored
                 // at submission: it is now, unless there is no clock.
                 When::AtTime(time) => graph.transport.sample_at(time),
+                // Nothing submits one yet: the drain watches conditions
+                // from the next change on.
+                When::Condition(_) => return Err(Refusal::Unsupported),
             };
             if target.generation > installed {
                 return Ok(at.map(|at| Landing::At(target, at)));

@@ -2,6 +2,7 @@
 
 use std::time::Instant;
 
+use super::condition::Condition;
 use crate::payload::Payload;
 
 /// A real-time control value: `Copy` and small, so carrying, coalescing and
@@ -37,8 +38,8 @@ pub(crate) struct ControlTarget {
 /// [`Transport`](super::Transport)).
 ///
 /// This is the extension point for musical time: [`When::Beat`] places a
-/// request on a clock's beats (B2); conditions arrive with B4 as new
-/// variants.
+/// request on a clock's beats (B2), [`When::Condition`] on what happens in
+/// the running invention (B4).
 ///
 /// A request whose sample has already passed when the audio thread takes
 /// it still applies, at the first segment start after it, and reports
@@ -68,6 +69,10 @@ pub(crate) enum When {
     /// [`BeatTime`]): resolved as the clock plays, so a tempo change made
     /// while the request waits is honoured.
     Beat(BeatTime),
+    /// When a condition on the running invention is met (see
+    /// [`Condition`]): resolved as the graph computes what it reads, so it
+    /// applies on the sample the condition is met at.
+    Condition(Condition),
 }
 
 /// A beat on a clock's timeline (see
