@@ -229,3 +229,21 @@ fn a_ramp_stopping_its_own_clock_still_reaches_its_end_beat() {
         "{stopped}"
     );
 }
+
+#[test]
+fn a_write_chained_to_a_ramp_at_its_rank_replaces_it() {
+    use crate::control_request::{Condition, Predicate};
+    let mut rig = ramp_rig();
+    let when = on_beat(&rig, 4.0, 1.0);
+    let ramp = submit_level(&rig, Source::Automation, 0.75, when, Some(2.0));
+    // Applying on the ramp's own sample, at its own rank, it leaves the
+    // dial's hold as the ramp took it: the write itself ends the ramp.
+    let after = Condition::all(&[Predicate::Applied(ramp)]).unwrap();
+    let then = submit_level(&rig, Source::Automation, 0.1, When::Condition(after), None);
+    let out = render_counted(&mut rig, 64);
+    let [(_, Outcome::Applied { at })] = outcomes_of(&mut rig, then)[..] else {
+        panic!("the chained write applies");
+    };
+    assert_eq!(at as usize, beat_one());
+    assert!(out[at as usize..].iter().all(|&level| level == 0.1));
+}

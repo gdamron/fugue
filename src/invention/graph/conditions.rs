@@ -19,7 +19,7 @@
 use super::requests::RequestDrain;
 use super::SignalGraph;
 use crate::control_request::{
-    ConditionHost, ControlIndex, ControlTarget, Outcome, RequestValue, RtValue, Standing,
+    ConditionHost, ControlIndex, ControlTarget, Outcome, Ramps, RequestValue, RtValue, Standing,
 };
 use crate::payload::Retirer;
 
@@ -74,6 +74,43 @@ impl ConditionHost for SignalGraph {
         retirer: &mut Retirer,
     ) -> Result<(), Outcome> {
         self.apply_ranked(target, standing, value, retirer)
+    }
+}
+
+/// The graph as a condition's requests apply to it: each write ends every
+/// ramp in beats on a control it reaches, as any other write does (see
+/// [`Ramps::supersede`]). One at a ramp's own rank leaves the hold as the
+/// ramp took it, so the hold alone would not end it.
+struct Superseding<'a> {
+    graph: &'a mut SignalGraph,
+    ramps: &'a mut Ramps,
+}
+
+impl ConditionHost for Superseding<'_> {
+    fn output(&self, module: usize, port: usize) -> Option<(u64, &[f32])> {
+        ConditionHost::output(&*self.graph, module, port)
+    }
+
+    fn last_output(&self, module: usize, port: usize) -> Option<f32> {
+        ConditionHost::last_output(&*self.graph, module, port)
+    }
+
+    fn control(&self, module: usize, control: ControlIndex) -> Option<f32> {
+        ConditionHost::control(&*self.graph, module, control)
+    }
+
+    fn apply(
+        &mut self,
+        target: &ControlTarget,
+        standing: Option<Standing>,
+        value: RequestValue,
+        retirer: &mut Retirer,
+    ) -> Result<(), Outcome> {
+        let applied = self.graph.apply_ranked(target, standing, value, retirer);
+        if applied.is_ok() {
+            self.ramps.supersede(target, &*self.graph);
+        }
+        applied
     }
 }
 
@@ -138,9 +175,13 @@ impl SignalGraph {
         loop {
             let waiting = drain.conditions.len();
             let outcomes = &mut drain.pending.outcomes;
+            let mut host = Superseding {
+                graph: self,
+                ramps: &mut drain.watches.ramps,
+            };
             let next = drain
                 .conditions
-                .apply_due(installed, target, at, self, outcomes);
+                .apply_due(installed, target, at, &mut host, outcomes);
             if drain.conditions.len() == waiting {
                 return next;
             }
