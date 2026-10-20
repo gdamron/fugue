@@ -228,3 +228,10 @@ fn a_schedule_the_drain_hands_back_plays_on_from_the_step_it_reached() {
         "replayed"
     );
 }
+
+#[test]
+fn a_clock_too_fast_to_count_holds_the_last_step_it_can() {
+    let mut rig = rig(3e25, serde_json::json!([]), ("sched", "step"));
+    let out = render_counted(&mut rig, 4);
+    assert_eq!(out.last(), Some(&((1u64 << 53) as f32)));
+}
