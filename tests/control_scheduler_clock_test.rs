@@ -103,30 +103,46 @@ fn a_render_engine_edit_onto_another_signal_is_refused() {
     assert_eq!(engine.list_connections().len(), 1);
 }
 
-/// Replacing a scheduler's clock keeps the edge into the scheduler, so a
-/// replacement without the clock's gate is refused, and the graph is left
-/// as it was: an unrelated edit afterwards still goes through.
+/// Replacing a scheduler's clock with a module without its gate output
+/// leaves the scheduler unclocked, as a live edit does (which drops the
+/// edge): accepted, and an edit afterwards still goes through.
 #[test]
-fn replacing_a_schedulers_clock_with_another_signal_is_refused() {
+fn replacing_a_schedulers_clock_leaves_it_unclocked() {
     let lfo = serde_json::json!({ "rate": 2.0, "waveform": "square" });
-    let mut engine = RenderEngine::new(48_000);
     let feeding = serde_json::json!([to_sched("clock", "beat")]);
-    engine.load_invention(document(feeding)).unwrap();
-    let controller = engine.controller().unwrap();
-    let error = controller.add_module("clock", "lfo", &lfo).unwrap_err();
-    assert!(error.to_string().contains("'clock.beat'"), "{error}");
-    let error = engine.add_module("clock", "lfo", &lfo).unwrap_err();
-    assert!(error.to_string().contains("'clock.beat'"), "{error}");
-    let clock = engine.list_modules().into_iter().find(|m| m.id == "clock");
-    assert_eq!(clock.unwrap().module_type, "clock");
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_invention(document(feeding.clone())).unwrap();
+    engine.add_module("clock", "lfo", &lfo).unwrap();
     engine
         .connect("lfo", "unipolar", "dac", "audio_left")
         .unwrap();
-    controller
-        .connect("lfo", "unipolar", "dac", "audio_right")
-        .unwrap();
     let mut out = vec![0.0f32; 1024];
     engine.render_interleaved(&mut out).unwrap();
+    // The same through the render's controller.
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_invention(document(feeding)).unwrap();
+    let controller = engine.controller().unwrap();
+    controller.add_module("clock", "lfo", &lfo).unwrap();
+    controller
+        .connect("lfo", "unipolar", "dac", "audio_left")
+        .unwrap();
+    // A clock again on the edge left behind is a clock's gate once more.
+    let clock = serde_json::json!({ "bpm": 120.0 });
+    controller.add_module("clock", "clock", &clock).unwrap();
+    let error = controller
+        .connect("other", "beat", "sched", "clock")
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("'clock.beat' and 'other.beat'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_scheduler_connected_twice_to_one_clock_is_told_so() {
+    let twice = serde_json::json!([to_sched("clock", "beat"), to_sched("clock", "beat")]);
+    let error = load(twice).unwrap_err();
+    assert!(error.contains("'clock.beat' is connected twice"), "{error}");
 }
 
 #[test]

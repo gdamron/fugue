@@ -236,6 +236,35 @@ fn a_table_moved_onto_no_clock_output_is_refused_and_plays_on() {
     assert_eq!(heard[beats[2] - 64], 0.75, "it plays on its clock");
 }
 
+/// A clock replaced by a module without its gate output: the edit drops
+/// the edge, as any edit drops one through a port gone, and the table
+/// stops where it stood, unclocked.
+#[test]
+fn a_clock_replaced_by_another_signal_leaves_the_table_unclocked() {
+    let beats = beat_samples(3);
+    let mut rig = live("beat", |level| {
+        vec![entry(1, 0, 0.5, level), entry(2, 0, 0.75, level)]
+    });
+    rig.render(1);
+    let lfo = rig.build("clock", "lfo", serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("clock", lfo);
+            Ok(())
+        })
+        .unwrap();
+    let heard = render_counted(&mut rig, beats[2] / 64 + 2);
+    let into = |edge: &&RoutingConnection| edge.to_module == "tabler";
+    assert!(
+        rig.graph.edges.iter().find(into).is_none(),
+        "the edge is gone"
+    );
+    assert!(
+        heard.iter().all(|&level| level == heard[0]),
+        "nothing plays"
+    );
+}
+
 #[test]
 fn a_block_playing_a_table_takes_no_lock_a_control_thread_holds() {
     let mut rig = live("beat", plan);

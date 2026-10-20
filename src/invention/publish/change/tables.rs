@@ -34,23 +34,28 @@ impl TopologyMirror {
             let sources: Vec<_> = self.edges.iter().filter(into).collect();
             let named =
                 |edge: &&RoutingConnection| format!("'{}.{}'", edge.from_module, edge.from_port);
+            let connect = format!(
+                "module '{id}' steps on a clock: connect its '{input}' input to one clock \
+                 gate output (a clock's 'beat', 'beat_x2', 'beat_x4', 'beat_d2' or 'beat_d4')"
+            );
             match sources[..] {
                 [] => {}
                 [edge] if self.is_gate(edge) => {}
                 [edge] => {
                     return Err(format!(
-                        "module '{id}' steps on a clock: its '{input}' input takes a clock's \
-                         gate output (such as a clock's 'beat'), not {}",
+                        "{connect}, not {}. Inside a development it can step on any gate",
                         named(&edge)
+                    ))
+                }
+                [first, ..] if sources.iter().all(|edge| same_source(edge, first)) => {
+                    return Err(format!(
+                        "{connect}, once: {} is connected twice",
+                        named(&first)
                     ))
                 }
                 _ => {
                     let named: Vec<_> = sources.iter().map(named).collect();
-                    return Err(format!(
-                        "module '{id}' steps on one clock: its '{input}' input takes one \
-                         clock gate output, not {}",
-                        named.join(" and ")
-                    ));
+                    return Err(format!("{connect}, not {}", named.join(" and ")));
                 }
             }
         }
@@ -63,22 +68,42 @@ impl TopologyMirror {
     }
 }
 
+/// Whether `a` and `b`, into one input, come from one output.
+fn same_source(a: &RoutingConnection, b: &RoutingConnection) -> bool {
+    a.from_module == b.from_module && a.from_port == b.from_port
+}
+
 /// Refuses an offline edit that would leave `graph` with a table on
-/// another source: `module` added as, or replacing, `id` (keeping every
-/// edge, as `GraphCommand::AddModule` does), or `edge` added. The caller
+/// another source: `module` added as, or replacing, `id`, or `edge` added.
+/// An edge through a port its module lacks (one a replacement left) carries
+/// nothing, so it is not counted, as a live edit removes it. The caller
 /// holds the graph's lock across this and the edit.
 pub(crate) fn check_offline(
     graph: &SignalGraph,
     module: Option<(&str, &ModuleInstance)>,
     edge: Option<&RoutingConnection>,
 ) -> Result<(), GraphCommandError> {
-    let mut mirror = TopologyMirror::of(&graph.modules, &graph.edges);
+    // Only what the check reads: no targets, no timelines.
+    let modules = graph.modules.iter();
+    let modules = modules.map(|(id, instance)| (id.clone(), MirrorModule::of(instance)));
+    let mut mirror = TopologyMirror {
+        modules: modules.collect(),
+        ..TopologyMirror::default()
+    };
     if let Some((id, module)) = module {
         mirror
             .modules
             .insert(id.to_string(), MirrorModule::of(module));
     }
-    mirror.edges.extend(edge.cloned());
+    let edges = graph.edges.iter().chain(edge);
+    let carried = |edge: &&RoutingConnection| {
+        let port = |id: &str| mirror.modules.get(id).map(|module| &module.ports);
+        let from = port(&edge.from_module);
+        let to = port(&edge.to_module);
+        from.is_some_and(|ports| ports.outputs.contains(&edge.from_port))
+            && to.is_some_and(|ports| ports.inputs.contains(&edge.to_port))
+    };
+    mirror.edges = edges.filter(carried).cloned().collect();
     mirror
         .check_tables()
         .map_err(GraphCommandError::InvalidPort)
