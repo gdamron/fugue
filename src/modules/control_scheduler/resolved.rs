@@ -7,8 +7,13 @@
 //! replace, to be retired off the audio thread, so a live schedule change
 //! allocates, frees and locks nothing there.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use super::schedule::{ResolvedEntry, ScheduleEntry};
 use super::ActiveRamp;
+
+/// The next [`ResolvedSchedule::id`]. Zero is never handed out.
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A resolved schedule and the ramps it runs.
 pub(crate) struct ResolvedSchedule {
@@ -17,6 +22,10 @@ pub(crate) struct ResolvedSchedule {
     /// Ramps in flight. Capacity is reserved for every ramp entry in the
     /// schedule, so pushes never allocate on the audio thread.
     pub(super) ramps: Vec<ActiveRamp>,
+    /// Tells this schedule from every other: the scheduler reports the one
+    /// it adopted last, so a control thread can tell whether the schedule
+    /// it recorded is the one playing.
+    pub(super) id: u64,
 }
 
 impl ResolvedSchedule {
@@ -26,8 +35,15 @@ impl ResolvedSchedule {
         Self {
             entries,
             ramps: Vec::with_capacity(ramp_count),
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
+}
+
+/// The module ids schedule text targets, or `None` when it does not parse.
+pub(crate) fn schedule_targets(json: &str) -> Option<Vec<String>> {
+    let spec = super::schedule::parse_schedule_json(json).ok()?;
+    Some(target_module_ids(&spec))
 }
 
 /// Module ids `spec` targets, deduplicated, in first-use order: those its

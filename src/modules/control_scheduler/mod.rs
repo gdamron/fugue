@@ -124,6 +124,7 @@ pub(crate) use self::controls::{Rebind, SurfaceDirectory, Written};
 pub(crate) use self::factory::{
     attach_from_handle, attach_from_handle_resolving, name_unattached_from_handles,
 };
+pub(crate) use self::resolved::schedule_targets;
 
 mod controls;
 mod factory;
@@ -247,6 +248,7 @@ impl ControlScheduler {
     /// boundary, so only later ones fire. Swaps rather than moves, so it
     /// allocates, frees and locks nothing.
     fn adopt(&mut self, mut next: Box<ResolvedSchedule>) -> Box<ResolvedSchedule> {
+        self.ctrl.set_adopted(next.id);
         std::mem::swap(&mut self.entries, &mut next.entries);
         std::mem::swap(&mut self.ramps, &mut next.ramps);
         self.ramps.clear();

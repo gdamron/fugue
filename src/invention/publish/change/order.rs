@@ -72,13 +72,18 @@ impl GraphChange {
         let facts = MirrorFacts {
             mirror: &self.mirror,
             surfaces: &self.surfaces,
+            scheduled: self.rescheduling.targets(&self.surfaces),
         };
         let sinks = self.mirror.sinks();
         let topology = compile_topology(&facts, &self.mirror.edges, &sinks, 1);
         let writes = |module: &usize| {
             let (id, _) = self.mirror.modules.get_index(*module).unwrap();
-            let surface = self.surfaces.get(id);
-            surface.is_some_and(|surface| !surface.control_targets().is_empty())
+            // A schedule the change writes stands in for the surface's own.
+            match facts.scheduled.get(id) {
+                Some(targets) => !targets.is_empty(),
+                None => (self.surfaces.get(id))
+                    .is_some_and(|surface| !surface.control_targets().is_empty()),
+            }
         };
         // In the order they run: group by group, as the graph processes.
         let groups = topology.process_groups.iter();
@@ -108,6 +113,7 @@ impl GraphChange {
         let facts = MirrorFacts {
             mirror: &self.mirror,
             surfaces: &self.surfaces,
+            scheduled: self.rescheduling.targets(&self.surfaces),
         };
         let (Some(from), Some(to)) = (facts.index_of(from), facts.index_of(to)) else {
             return false;
