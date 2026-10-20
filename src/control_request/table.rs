@@ -79,7 +79,10 @@ impl TableTarget {
     }
 
     /// Whether `self` and `other` reach a control in common: the same
-    /// control, or, through a development, an inner control both reach.
+    /// control, or, through a development, an inner declared control both
+    /// reach. Legacy controls compare by surface and name, as a scheduler
+    /// always compared them: two names a development forwards to one inner
+    /// legacy control stay apart.
     pub(crate) fn same(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Declared(a), Self::Declared(b)) => {
