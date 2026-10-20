@@ -8,7 +8,7 @@ use super::change::{BuiltModule, PreparedChange, TopologyMirror};
 use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{
     outcome_channel, request_channel, ControlIndex, ControlTarget, OutcomeReceiver, QueueFull,
-    Request, RequestSender, RequestValue,
+    Request, RequestSender, RequestValue, CONDITION_CAPACITY,
 };
 use crate::invention::graph::{
     AudioLink, InputWrite, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
@@ -55,8 +55,10 @@ pub(crate) const PENDING_REQUEST_CAPACITY: usize = 512;
 /// refused, as it may never free (see `graph::requests`).
 pub(crate) const BEAT_WATCH_CAPACITY: usize = 64;
 
-/// Popped requests waiting on the audio thread, timed or watching a clock.
-pub(crate) const WAITING_CAPACITY: usize = PENDING_REQUEST_CAPACITY + BEAT_WATCH_CAPACITY;
+/// Popped requests waiting on the audio thread: timed, watching a clock, or
+/// waiting on a condition.
+pub(crate) const WAITING_CAPACITY: usize =
+    PENDING_REQUEST_CAPACITY + BEAT_WATCH_CAPACITY + CONDITION_CAPACITY;
 
 /// Request outcomes the audio thread may queue before a control thread
 /// receives them; beyond that they are counted dropped. Enough for every
@@ -128,6 +130,7 @@ impl Publisher {
             Retirer::new(Arc::clone(&payloads), PAYLOAD_RETIRE_HOLD),
             outcome_tx,
             Arc::clone(&published),
+            requests.watch_slots(),
         ));
         let applied = Arc::new(AtomicU64::new(0));
         graph.link = Some(AudioLink::new(
