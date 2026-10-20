@@ -189,3 +189,98 @@ fn a_control_crossing_applies_at_the_next_segment_start() {
         [(waits, Outcome::Applied { at: 128 })]
     );
 }
+
+#[test]
+fn a_request_waiting_on_another_applies_on_its_sample() {
+    let mut rig = rig(true);
+    let first = submit_when(&rig, ("dial", LEVEL), When::AtSample(100));
+    let after = Predicate::Applied(first);
+    let when = When::Condition(Condition::all(&[after]).unwrap());
+    let then = submit_when(&rig, ("clock", ControlIndex(0)), when);
+    render_counted(&mut rig, 4);
+    assert_eq!(
+        outcomes_of(&mut rig, then),
+        [(then, Outcome::Applied { at: 100 })]
+    );
+}
+
+#[test]
+fn a_tempo_a_chain_sets_places_the_next_beat_again() {
+    use super::request_beats::{beat_rig, submit_level, BPM};
+    use crate::control_request::BeatSpec;
+    // At 60 bpm the clock's first beat falls at 47 999; from 47 000, at
+    // 6 000 bpm, it falls ten samples later.
+    let mut rig = beat_rig(60.0);
+    let first = submit_when(&rig, ("dial", LEVEL), When::AtSample(47_000));
+    let after = Condition::all(&[Predicate::Applied(first)]).unwrap();
+    let publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher.control_target("clock", BPM).unwrap();
+    let mut faster = Request::new(target, RequestValue::Value(RtValue::F32(6_000.0)));
+    faster.when = When::Condition(after);
+    rig.live.requests.submit(faster).unwrap();
+    drop(publisher);
+    let beat = submit_level(&rig, 0.5, BeatSpec::After(1.0));
+    render_counted(&mut rig, 47_100 / 64);
+    let outcome = outcomes_of(&mut rig, beat);
+    assert!(
+        matches!(outcome[..], [(_, Outcome::Applied { at })] if (47_001..47_040).contains(&at)),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn a_chain_stopping_a_clock_on_its_beat_stops_it_before_the_beat() {
+    use super::request_beats::{beat_rig, submit_level, BPM};
+    use crate::control_request::BeatSpec;
+    // At 60 bpm the clock's first beat falls at 47 999, where a stop timed
+    // in samples keeps it from beating: so must one chained to apply there.
+    let mut rig = beat_rig(60.0);
+    let first = submit_when(&rig, ("dial", LEVEL), When::AtSample(47_999));
+    let after = Condition::all(&[Predicate::Applied(first)]).unwrap();
+    let publisher = rig.live.publisher().lock().unwrap();
+    let target = publisher.control_target("clock", BPM).unwrap();
+    let mut stop = Request::new(target, RequestValue::Value(RtValue::F32(0.0)));
+    stop.when = When::Condition(after);
+    let stop = rig.live.requests.submit(stop).unwrap();
+    drop(publisher);
+    let beat = submit_level(&rig, 0.5, BeatSpec::After(1.0));
+    render_counted(&mut rig, 48_200 / 64);
+    let all = super::requests::outcomes(&mut rig);
+    let of = |id| all.iter().filter(move |(got, _)| *got == id);
+    assert!(of(stop).eq([&(stop, Outcome::Applied { at: 47_999 })]));
+    assert_eq!(of(beat).count(), 0, "a stopped clock beats no more");
+}
+
+#[test]
+fn a_request_waited_on_is_remembered_however_long_intake_is_held_up() {
+    use crate::invention::publish::publisher::PENDING_REQUEST_CAPACITY;
+    use crate::test_support::dial::PULSE;
+    let mut rig = rig(true);
+    let pulse = |rig: &Rig| {
+        let publisher = rig.live.publisher().lock().unwrap();
+        let target = publisher.control_target("dial", PULSE).unwrap();
+        let mut request = Request::new(target, RequestValue::Value(RtValue::Bool(true)));
+        request.when = When::AtSample(1_000);
+        request.event = true;
+        rig.live.requests.submit(request).unwrap()
+    };
+    // A full store of events due together holds up what comes behind it:
+    // one more, then a condition waiting on the first of them.
+    let first = pulse(&rig);
+    for n in 1..PENDING_REQUEST_CAPACITY {
+        if n % 128 == 0 {
+            render_counted(&mut rig, 1);
+        }
+        pulse(&rig);
+    }
+    render_counted(&mut rig, 1);
+    pulse(&rig);
+    let after = When::Condition(Condition::all(&[Predicate::Applied(first)]).unwrap());
+    let waits = submit_when(&rig, ("dial", LEVEL), after);
+    render_counted(&mut rig, 20);
+    assert!(matches!(
+        outcomes_of(&mut rig, waits)[..],
+        [(_, Outcome::AppliedLate { due: 1_000, .. })]
+    ));
+    assert_eq!(rig.live.requests.watch_slots().taken(), 0);
+}

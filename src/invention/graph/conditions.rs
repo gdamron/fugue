@@ -16,6 +16,7 @@
 //! reported late. A target in a feedback group, or a sink, is not split:
 //! what comes due inside its segment applies there too.
 
+use super::requests::RequestDrain;
 use super::SignalGraph;
 use crate::control_request::{
     ConditionHost, ControlIndex, ControlTarget, Outcome, RequestValue, RtValue, Standing,
@@ -93,16 +94,15 @@ impl SignalGraph {
         let Some(mut drain) = self.requests.take() else {
             return self.process_span(module, 0, frames);
         };
-        let installed = drain.installed;
-        drain.conditions.read(installed, Some(module), self);
+        let chains = &drain.pending.outcomes.chains;
+        drain
+            .conditions
+            .read(drain.installed, Some(module), self, chains);
         let start = self.segment.start;
         let mut from = 0;
         while from < frames {
             let at = start + from as u64;
-            let outcomes = &mut drain.pending.outcomes;
-            let next = drain
-                .conditions
-                .apply_due(installed, Some(module), at, self, outcomes);
+            let next = self.apply_conditions(&mut drain, Some(module), at);
             let to = next.map_or(frames, |due| ((due - start) as usize).min(frames));
             self.process_span(module, from, to);
             from = to;
@@ -116,21 +116,44 @@ impl SignalGraph {
         let Some(mut drain) = self.requests.take() else {
             return;
         };
-        let installed = drain.installed;
-        drain.conditions.read(installed, Some(module), self);
-        let outcomes = &mut drain.pending.outcomes;
-        let at = self.segment.start;
+        let chains = &drain.pending.outcomes.chains;
         drain
             .conditions
-            .apply_due(installed, Some(module), at, self, outcomes);
+            .read(drain.installed, Some(module), self, chains);
+        self.apply_conditions(&mut drain, Some(module), self.segment.start);
         self.requests = Some(drain);
+    }
+
+    /// Applies every request in `drain` (on `target`, if given) whose
+    /// condition is met by `at`, the sample its target computes next, and
+    /// those met by their applying in turn: a chain applies in one pass.
+    /// Returns the earliest sample one of the rest is met at.
+    pub(super) fn apply_conditions(
+        &mut self,
+        drain: &mut RequestDrain,
+        target: Option<usize>,
+        at: u64,
+    ) -> Option<u64> {
+        let installed = drain.installed;
+        loop {
+            let waiting = drain.conditions.len();
+            let outcomes = &mut drain.pending.outcomes;
+            let next = drain
+                .conditions
+                .apply_due(installed, target, at, self, outcomes);
+            if drain.conditions.len() == waiting {
+                return next;
+            }
+            drain.conditions.chain(installed, &outcomes.chains);
+        }
     }
 
     /// Reads what every module computed of the segment just processed, for
     /// the conditions their targets could not see in time.
     pub(super) fn read_conditions(&mut self) {
         if let Some(mut drain) = self.requests.take() {
-            drain.conditions.read(drain.installed, None, self);
+            let chains = &drain.pending.outcomes.chains;
+            drain.conditions.read(drain.installed, None, self, chains);
             self.requests = Some(drain);
         }
     }
