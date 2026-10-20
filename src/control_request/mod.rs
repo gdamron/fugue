@@ -39,6 +39,7 @@ mod queue;
 mod ramps;
 mod request;
 mod sender;
+mod table;
 mod timeline;
 mod transport;
 mod watch;
@@ -99,6 +100,7 @@ pub(crate) use request::{
     RtValue, Source, When,
 };
 pub(crate) use sender::{request_channel, QueueFull, RequestSender};
+pub(crate) use table::{BeatTable, TableEntry, TableTarget, TableValue};
 pub(crate) use timeline::{first_sample_reaching, Timeline, BEFORE_START};
 pub(crate) use transport::Transport;
 pub(crate) use watch::{BeatHost, Watches};

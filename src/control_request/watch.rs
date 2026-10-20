@@ -19,6 +19,7 @@ use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
 use super::ramps::{Ramps, RAMP_CAPACITY};
 use super::request::{BeatSpec, ControlTarget, Request, RequestValue, RtValue, When};
+use super::table::BeatTable;
 use super::timeline::Timeline;
 use crate::payload::Retirer;
 
@@ -48,6 +49,13 @@ pub(crate) trait BeatHost {
     /// Whether `a` and `b` reach a control in common: the same, or, on a
     /// development, an inner one both keys reach.
     fn overlaps(&self, a: &ControlTarget, b: &ControlTarget) -> bool;
+
+    /// The table the module at `module_idx` plays automation from, if any
+    /// (see [`super::table`]).
+    fn table(&self, module_idx: usize) -> Option<&dyn BeatTable> {
+        let _ = module_idx;
+        None
+    }
 
     /// Applies `value` as the pending store's `apply` does, of `standing`
     /// (none for an event): `Err` is what it reports instead.
