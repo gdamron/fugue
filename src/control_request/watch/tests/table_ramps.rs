@@ -7,7 +7,7 @@ use super::ramps::{control, RampHost};
 use super::*;
 use crate::control_request::automation::Automation;
 use crate::control_request::hold::Rank;
-use crate::control_request::ramps::{BeatRamp, Ramps};
+use crate::control_request::ramps::{BeatRamp, EntryKey, Ramps};
 use crate::control_request::request::Source;
 use crate::test_support::table::{entry, number, TestTable};
 
@@ -32,7 +32,13 @@ fn begin(ramps: &mut Ramps, host: &mut RampHost, entry: usize) -> bool {
     let table = host.table.as_ref().unwrap();
     let from = table.entries[entry].target.current().unwrap();
     let ramp = BeatRamp::new(from, 1.0, 1.0, 2.0, 0);
-    ramps.start_entry((TABLE.0, TABLE.1, PLAN, entry), 0, ramp, &*host)
+    let key = EntryKey {
+        module: TABLE.0,
+        table: TABLE.1,
+        plan: PLAN,
+        entry,
+    };
+    ramps.start_entry(key, 0, ramp, &*host)
 }
 
 /// Steps the ramps at each segment start until sample `until`, recording
@@ -131,6 +137,13 @@ fn a_table_s_ramps_end_with_its_plan_or_its_table_and_move_with_it() {
     ramps.retable(TABLE.1, 3, 0);
     ramps.step(INSTALLED, &mut host, &mut store.outcomes.retirer);
     assert!(ramps.is_empty(), "module 3 plays no table here");
+
+    // Another table, found where its module was, is not its own.
+    begin(&mut ramps, &mut host, 0);
+    host.table.as_mut().unwrap().id = TABLE.1 + 1;
+    ramps.step(INSTALLED, &mut host, &mut store.outcomes.retirer);
+    assert!(ramps.is_empty(), "it plays another table");
+    host.table.as_mut().unwrap().id = TABLE.1;
 
     // Another plan replaced the entries: it ends without a write.
     begin(&mut ramps, &mut host, 0);

@@ -134,14 +134,20 @@ enum RampOn {
     /// A table entry's ([`TableEntry`](super::table::TableEntry)): it
     /// writes through the entry's own target while its table plays the
     /// plan it started in and its writes are let through.
-    Entry {
-        /// The module whose table it is, in the installed order, and the
-        /// table's id.
-        module: usize,
-        table: usize,
-        plan: u64,
-        entry: usize,
-    },
+    Entry(EntryKey),
+}
+
+/// A table's entry, as a ramp finds it on the graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EntryKey {
+    /// The module whose table it is, in the installed order.
+    pub(crate) module: usize,
+    /// The table's id ([`BeatTable::id`](super::table::BeatTable::id)).
+    pub(crate) table: usize,
+    /// The plan the table played when the ramp started.
+    pub(crate) plan: u64,
+    /// Its index in the table.
+    pub(crate) entry: usize,
 }
 
 /// A ramp running on its control.
@@ -161,12 +167,12 @@ impl Running {
     fn installed(&self, installed: u64) -> bool {
         match self.on {
             RampOn::Request { target, .. } => target.generation == installed,
-            RampOn::Entry { .. } => true,
+            RampOn::Entry(_) => true,
         }
     }
 
     fn is_entry(&self) -> bool {
-        matches!(self.on, RampOn::Entry { .. })
+        matches!(self.on, RampOn::Entry(_))
     }
 }
 
@@ -246,30 +252,24 @@ impl Ramps {
         }
     }
 
-    /// Runs `ramp` on entry `entry` of table `table` (at `module`, playing
-    /// `plan`), timed on `clock`: it replaces every table's ramp on a
-    /// control it reaches. Returns false, starting none, when the tables'
-    /// ramps have no room. Allocation- and free-free.
+    /// Runs `ramp` on table entry `key`, timed on `clock`: it replaces
+    /// every table's ramp on a control it reaches. Returns false, starting
+    /// none, when the tables' ramps have no room. Allocation- and
+    /// free-free.
     pub(crate) fn start_entry(
         &mut self,
-        (module, table, plan, entry): (usize, usize, u64, usize),
+        key: EntryKey,
         clock: usize,
         ramp: BeatRamp,
         host: &impl BeatHost,
     ) -> bool {
-        if let Some(target) = entry_target(host, module, plan, entry) {
+        if let Some(target) = entry_target(host, key) {
             self.supersede_entry(target, host);
         }
         if self.count(true) >= self.table_limit {
             return false;
         }
-        let on = RampOn::Entry {
-            module,
-            table,
-            plan,
-            entry,
-        };
-        self.push(on, clock, ramp);
+        self.push(RampOn::Entry(key), clock, ramp);
         true
     }
 
@@ -301,16 +301,8 @@ impl Ramps {
     /// hold.) Allocation- and free-free.
     pub(crate) fn supersede_entry(&mut self, target: &TableTarget, host: &impl BeatHost) {
         for running in &mut self.entries {
-            if let RampOn::Entry {
-                module,
-                plan,
-                entry,
-                ..
-            } = running.on
-            {
-                let reaches =
-                    entry_target(host, module, plan, entry).is_some_and(|other| other.same(target));
-                if reaches {
+            if let RampOn::Entry(key) = running.on {
+                if entry_target(host, key).is_some_and(|other| other.same(target)) {
                     running.ended = true;
                 }
             }
@@ -321,7 +313,7 @@ impl Ramps {
     /// step, another plan, or went away. Allocation- and free-free.
     pub(crate) fn end_table(&mut self, table: usize) {
         for running in &mut self.entries {
-            if matches!(running.on, RampOn::Entry { table: of, .. } if of == table) {
+            if matches!(running.on, RampOn::Entry(key) if key.table == table) {
                 running.ended = true;
             }
         }
@@ -332,14 +324,9 @@ impl Ramps {
     /// modules changed order. Allocation- and free-free.
     pub(crate) fn retable(&mut self, table: usize, module: usize, clock: usize) {
         for running in &mut self.entries {
-            if let RampOn::Entry {
-                table: of,
-                module: at,
-                ..
-            } = &mut running.on
-            {
-                if *of == table {
-                    *at = module;
+            if let RampOn::Entry(key) = &mut running.on {
+                if key.table == table {
+                    key.module = module;
                     running.clock = clock;
                 }
             }
@@ -402,7 +389,7 @@ impl Ramps {
             } = running;
             let kept = match on {
                 RampOn::Request { target, standing } => host.kept(&target, standing),
-                RampOn::Entry { .. } => true,
+                RampOn::Entry(_) => true,
             };
             let next = (host.timeline(clock))
                 .and_then(|timeline| ramp.next(timeline))
@@ -421,12 +408,7 @@ impl Ramps {
                 }
                 // Dropped while a higher tier holds the control: it ends,
                 // and the table's next entry on the control takes it back.
-                RampOn::Entry {
-                    module,
-                    plan,
-                    entry,
-                    ..
-                } => entry_target(&*host, module, plan, entry)
+                RampOn::Entry(key) => entry_target(&*host, key)
                     .is_some_and(|target| target.write(TableValue::Number(value))),
             };
             if !written || last {
@@ -451,14 +433,10 @@ impl Ramps {
     }
 }
 
-/// Where entry `entry` of the table at `module` writes, while that table
-/// plays `plan`.
-fn entry_target(
-    host: &impl BeatHost,
-    module: usize,
-    plan: u64,
-    entry: usize,
-) -> Option<&TableTarget> {
-    let table = host.table(module).filter(|table| table.plan() == plan)?;
-    Some(&table.entry(entry)?.target)
+/// Where table entry `key` writes, while its module plays that table and
+/// that plan.
+fn entry_target(host: &impl BeatHost, key: EntryKey) -> Option<&TableTarget> {
+    let table = host.table(key.module)?;
+    let playing = table.id() == key.table && table.plan() == key.plan;
+    Some(&table.entry(key.entry).filter(|_| playing)?.target)
 }
