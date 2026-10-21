@@ -320,6 +320,7 @@ mod cache;
 mod catalog;
 mod closure;
 mod storage;
+mod used;
 
 use cache::Hashing;
 pub use catalog::ContentCatalog;

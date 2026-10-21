@@ -131,6 +131,11 @@ fn running_invention_tracks_runtime_module_mutations() {
         .list_modules()
         .into_iter()
         .any(|module| module.id == "osc_live"));
+    // Live edits install as compiled: the audio thread never had to rebuild.
+    assert!(running
+        .status()
+        .diagnostics
+        .is_some_and(|diagnostics| diagnostics.graph_rebuild_count == 0));
 
     running.stop();
 }

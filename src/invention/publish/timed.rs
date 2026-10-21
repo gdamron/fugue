@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use indexmap::IndexMap;
 
 use super::change::BuiltModule;
+use super::rebind;
 use super::watch::{condition_of, Part};
 use super::{publisher, LiveGraph, Mirrors, PreparedChange, Publisher, Refused};
 use crate::control_request::{BeatSpec, BeatTime, RequestId, When};
@@ -92,16 +93,28 @@ impl LiveGraph {
     #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
     pub(crate) fn commit_when(
         &self,
-        prepared: PreparedChange,
+        mut prepared: PreparedChange,
         time: EditTime<'_>,
         ttl: Option<u64>,
         retain: impl FnOnce(&mut RuntimeState) + Send + 'static,
     ) -> Result<RequestId, GraphCommandError> {
         self.reclaim();
         let mut publisher = self.lock();
-        let result = self.resolve_edit_time(&publisher, &prepared, time);
-        let when = match result {
-            Ok(when) => when,
+        if prepared.base_generation != publisher.generation() {
+            drop(publisher);
+            drop(prepared);
+            return Err(GraphCommandError::TopologyMoved);
+        }
+        // Under the publisher, where a schedule write records itself, as a
+        // commit packs them: each survivor re-resolves the schedule it will
+        // be playing, handed over as the edit lands and recorded only once
+        // it is adopted. A write racing it while it waits cancels it (see
+        // `Publisher::timed_races`).
+        let result = self
+            .resolve_edit_time(&publisher, &prepared, time)
+            .and_then(|when| Ok((when, rebind::pack(&mut prepared)?)));
+        let (when, packed) = match result {
+            Ok(resolved) => resolved,
             Err(error) => {
                 drop(publisher);
                 drop(prepared);
@@ -113,7 +126,7 @@ impl LiveGraph {
         // log, locked before the submission, as a write is (see `watch`).
         let mut pending = self.pending.lock().unwrap();
         pending.settle();
-        match publisher.publish_timed(prepared, when, ttl, (Box::new(retain), port)) {
+        match publisher.publish_timed(prepared, when, ttl, (Box::new(retain), port, packed)) {
             Ok(id) => {
                 pending.timed(id);
                 drop(pending);
@@ -182,10 +195,15 @@ fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
         published,
         retain,
         port,
+        written,
     }) = publisher.adopt()
     else {
         return;
     };
+    // Under the publisher, as a commit records them.
+    for schedule in written {
+        schedule.record();
+    }
     LiveGraph::commit_mirrors(mirrors, publisher, published, &port, retain);
 }
 

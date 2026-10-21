@@ -33,7 +33,7 @@ struct CodeConfig {
     tick_rate: f32,
 }
 
-const TYPE_ID: &str = "code";
+pub(crate) const TYPE_ID: &str = "code";
 const TICK_RATE: ConfigKey = ConfigKey::float("tick_rate");
 
 impl ModuleFactory for CodeFactory {

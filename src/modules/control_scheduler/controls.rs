@@ -218,6 +218,7 @@ impl ControlSchedulerControls {
             };
             let checked = Checked {
                 generation,
+                targets: target_module_ids(&spec),
                 record: Box::new(record),
             };
             match self.declared.write_payload_checked(
@@ -317,6 +318,16 @@ impl ControlSchedulerControls {
     /// The surface its `schedule` writes go through.
     pub(crate) fn declared(&self) -> &DeclaredSurface {
         &self.declared
+    }
+
+    /// The id of the schedule last recorded as handed on.
+    pub(crate) fn recorded(&self) -> u64 {
+        self.shared.state.lock().unwrap().recorded
+    }
+
+    /// The id of the schedule the scheduler reports adopting last.
+    pub(crate) fn adopted(&self) -> u64 {
+        self.shared.adopted.load(Ordering::Acquire)
     }
 
     /// Takes every lock these controls take, for a test showing the
