@@ -191,6 +191,12 @@ impl SamplePlayerControls {
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
             Err(TryLockError::WouldBlock) => return None,
         };
+        // Nothing staged: a swap that took the sample staged before its
+        // version moved leaves the version still to catch up with, and the
+        // replaced sample parked. That is no reason to retry.
+        if swap.pending.is_none() {
+            return Some(false);
+        }
         // `retired` is empty whenever `pending` is full: the staging write
         // empties it, and only one swap follows each staging. Should that
         // ever not hold, wait for a control thread rather than free here.

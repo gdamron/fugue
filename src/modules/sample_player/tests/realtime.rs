@@ -140,6 +140,24 @@ fn a_stop_written_while_a_replacement_waits_stays_stopped() {
 }
 
 #[test]
+fn a_swap_with_nothing_staged_is_done_while_the_replaced_sample_waits() {
+    let (controls, _player, first) = one_shot(&[[0.2, 0.0]; 8]);
+    let mut current = None;
+    assert_eq!(controls.try_swap(&mut current), Some(true));
+
+    // A swap can take a sample staged before its version moves; the block
+    // after sees the version moved, with nothing staged and the replaced
+    // sample still parked. Retrying would keep the player replacing.
+    let second = write_test_wav(44_100, 1, &[[0.7, 0.0]; 8]);
+    controls.set_asset(second.to_str().unwrap()).unwrap();
+    assert_eq!(controls.try_swap(&mut current), Some(true));
+    assert_eq!(controls.try_swap(&mut current), Some(false));
+
+    let _ = std::fs::remove_file(first);
+    let _ = std::fs::remove_file(second);
+}
+
+#[test]
 fn replacing_a_sample_frees_nothing_on_the_audio_thread() {
     let (controls, mut player, first) = one_shot(&[[0.2, 0.0]; 8]);
     controls.set_play(true);
