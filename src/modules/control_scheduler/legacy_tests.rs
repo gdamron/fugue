@@ -247,7 +247,7 @@ fn a_write_lands_while_control_threads_hold_every_lock_left() {
                 || player.hold_swap_lock(),
                 || {
                     while_held(
-                        || instrument.hold_swaps(),
+                        || instrument.hold_swap_lock(),
                         || {
                             while_held(
                                 || cells.shared.sequences.lock().unwrap(),
