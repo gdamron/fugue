@@ -73,6 +73,10 @@ pub(crate) struct CompiledTopology {
     pub(crate) out_prev: Vec<Vec<f32>>,
     pub(crate) out_counts: Vec<usize>,
     pub(crate) block_capacity: usize,
+    /// Each module's ordering-only edges, by id, as compiled: the modules
+    /// whose controls it writes and those an order puts after it (see
+    /// [`TopologyFacts::control_targets`]).
+    pub(crate) ordering: Vec<Vec<String>>,
 }
 
 impl CompiledTopology {
@@ -89,6 +93,7 @@ impl CompiledTopology {
         std::mem::swap(&mut self.out_prev, &mut graph.out_prev);
         std::mem::swap(&mut self.out_counts, &mut graph.out_counts);
         std::mem::swap(&mut self.block_capacity, &mut graph.block_capacity);
+        std::mem::swap(&mut self.ordering, &mut graph.ordering);
         // Its modules or routes changed: their tables are found again.
         graph.tables_stale = true;
     }
@@ -128,9 +133,10 @@ pub(crate) fn compile_topology(
     // in the same block. These edges join the adjacency for the DFS and
     // SCC passes but compile no routes; a resulting cycle simply becomes
     // a feedback group, processed sample-by-sample.
+    let ordering: Vec<Vec<String>> = (0..n).map(|m| facts.control_targets(m)).collect();
     for (from_idx, edges_from) in downstream.iter_mut().enumerate() {
-        for target in facts.control_targets(from_idx) {
-            let Some(to_idx) = facts.index_of(&target) else {
+        for target in &ordering[from_idx] {
+            let Some(to_idx) = facts.index_of(target) else {
                 continue;
             };
             edges_from.push(to_idx);
@@ -264,6 +270,41 @@ pub(crate) fn compile_topology(
         out_prev,
         out_counts,
         block_capacity,
+        ordering,
+    }
+}
+
+/// A graph's own modules with the ordering edges its topology was
+/// published with, which a recompile in place keeps (see
+/// [`SignalGraph::recompile`]).
+struct Published<'a> {
+    modules: &'a IndexMap<String, ModuleInstance>,
+    ordering: &'a [Vec<String>],
+}
+
+impl TopologyFacts for Published<'_> {
+    fn module_count(&self) -> usize {
+        self.modules.module_count()
+    }
+
+    fn index_of(&self, id: &str) -> Option<usize> {
+        self.modules.index_of(id)
+    }
+
+    fn input_index(&self, module: usize, port: &str) -> Option<usize> {
+        self.modules.input_index(module, port)
+    }
+
+    fn output_index(&self, module: usize, port: &str) -> Option<usize> {
+        self.modules.output_index(module, port)
+    }
+
+    fn output_count(&self, module: usize) -> usize {
+        self.modules.output_count(module)
+    }
+
+    fn control_targets(&self, module: usize) -> Vec<String> {
+        self.ordering.get(module).cloned().unwrap_or_default()
     }
 }
 
@@ -278,12 +319,25 @@ impl SignalGraph {
     /// across a block size change or an install that fell back to
     /// recompiling. Otherwise every input is reset.
     ///
+    /// A topology a publication installed keeps the ordering edges it was
+    /// compiled with from the publisher's mirror, the orders conditions
+    /// wait on among them, rather than read each module's control targets
+    /// again, so it stays the topology the mirror describes (FUG-391).
+    ///
     /// Allocates: called before a live graph moves to the audio thread, by
     /// offline render, and as the audio thread's fallback when a block size
     /// change outdates the compiled buffers.
     pub(crate) fn recompile(&mut self) {
-        let mut topology =
-            compile_topology(&self.modules, &self.edges, &self.sinks, self.block_size);
+        let (modules, edges, sinks) = (&self.modules, &self.edges, &self.sinks);
+        let published = Published {
+            modules,
+            ordering: &self.ordering,
+        };
+        let mut topology = if self.published && self.ordering.len() == modules.len() {
+            compile_topology(&published, edges, sinks, self.block_size)
+        } else {
+            compile_topology(modules, edges, sinks, self.block_size)
+        };
         topology.swap_with(self);
         // `topology` now holds the previous derived state.
         let previous = &topology.connected_in_ports;
@@ -293,6 +347,29 @@ impl SignalGraph {
             self.reset_module_inputs(mi, was.map(Vec::as_slice));
         }
         self.topo_dirty = false;
+    }
+
+    /// Recompiles in place when module `module_id` now writes other
+    /// modules' controls than the topology was compiled with, as an offline
+    /// `schedule` write can leave a scheduler: a live one publishes the
+    /// topology recompiled (FUG-388). The modules and routes stay, so each
+    /// keeps its feedback carry, as a live recompile's survivors do. A
+    /// topology already due to recompile is left to. Allocates: offline.
+    pub(crate) fn recompile_if_retargeted(&mut self, module_id: &str) {
+        let Some((index, _, instance)) = self.modules.get_full(module_id) else {
+            return;
+        };
+        let targets = instance.module().control_targets();
+        if self.topo_dirty || self.ordering.get(index) == Some(&targets) {
+            return;
+        }
+        let carry = std::mem::take(&mut self.out_prev);
+        self.recompile();
+        for (now, was) in self.out_prev.iter_mut().zip(&carry) {
+            if now.len() == was.len() {
+                now.copy_from_slice(was);
+            }
+        }
     }
 
     /// Brings module `mi`'s inputs in line with the graph's connectivity.
