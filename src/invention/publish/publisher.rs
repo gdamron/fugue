@@ -123,8 +123,8 @@ pub(crate) struct Publisher {
     timed: Option<timed::Waiting>,
     /// Whether `timed` holds one, for the reclaimer to read without a lock.
     timed_flag: Arc<AtomicBool>,
-    /// The generation the latest timed edit was adopted as, 0 before any.
-    timed_adopted: u64,
+    /// What the latest timed edits adopted touched.
+    adopted: timed::LastAdopted,
     /// What became of each recent timed edit.
     ledger: Ledger,
 }
@@ -170,7 +170,7 @@ impl Publisher {
             closed: false,
             timed: None,
             timed_flag: Arc::new(AtomicBool::new(false)),
-            timed_adopted: 0,
+            adopted: timed::LastAdopted::default(),
             ledger: Ledger::default(),
         };
         let ends = LinkEnds {
