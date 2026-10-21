@@ -344,14 +344,13 @@ impl ControlScheduler {
         let playing = self.legacy.as_ref().map(Arc::as_ptr);
         let replaced = (old.legacy.iter()).filter(|writes| Some(Arc::as_ptr(writes)) != playing);
         for writes in old.draining.iter().chain(replaced) {
-            if writes.waiting() == 0 {
+            if writes.waiting() > 0 && self.draining.len() < self.draining.capacity() {
+                self.draining.push(writes.clone());
                 continue;
             }
-            if self.draining.len() < self.draining.capacity() {
-                self.draining.push(writes.clone());
-            } else {
-                writes.drop_waiting();
-            }
+            // Retired: whatever it had waiting is dropped, counted.
+            writes.drop_waiting();
+            self.ctrl.add_refused(writes.take_refused());
         }
     }
 
@@ -521,8 +520,13 @@ impl Module for ControlScheduler {
         }
         // Mirror the step counter into the controls at block rate.
         self.ctrl.set_step(self.current_step);
+        let mut refused = 0;
         for writes in self.draining.iter().chain(&self.legacy) {
             writes.age(frames as u32, self.retry_limit);
+            refused += writes.take_refused();
+        }
+        if refused > 0 {
+            self.ctrl.add_refused(refused);
         }
         true
     }
@@ -590,6 +594,8 @@ impl Module for ControlScheduler {
     fn get_control(&self, key: &str) -> Result<f32, String> {
         match key {
             "step" => Ok(self.current_step as f32),
+            "refused_writes" => Ok(self.ctrl.refused_writes() as f32),
+            "crowded_ramps" => Ok(self.ctrl.crowded_ramps() as f32),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -661,6 +667,10 @@ impl BeatTable for ControlScheduler {
         for writes in self.draining.iter().chain(&self.legacy) {
             writes.retry();
         }
+    }
+
+    fn crowded(&self) {
+        self.ctrl.count_crowded();
     }
 }
 

@@ -444,3 +444,33 @@ fn two_ramps_waiting_behind_a_note_leave_room_for_its_note_off() {
     block(&mut scheduler, 0.0);
     assert_eq!(queued_notes(&instrument), [(64, true), (64, false)]);
 }
+
+#[test]
+fn writes_that_never_land_are_counted_in_a_control() {
+    use crate::ControlSurface;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let mut scheduler = scheduler(
+        vec![entry(1, "melody", "degree.1", ScheduleValue::Number(5.0))],
+        &directory,
+    );
+    block(&mut scheduler, 1.0);
+    block(&mut scheduler, 0.0);
+    // Held through more than 10 ms of blocks: the value gives up.
+    let mut gates = [0.0; 10];
+    gates[0] = 1.0;
+    let held = while_held(&locking.melody.table, || {
+        gates.map(|gate| block(&mut scheduler, gate))
+    });
+    assert_eq!(held, [(0, 0); 10]);
+    assert_eq!(locking.melody.degree(1), Ok(2), "never landed");
+    let ctrl = scheduler.controls().clone();
+    assert_eq!(ctrl.refused_writes(), 1);
+    assert_eq!(
+        ctrl.get_control("refused_writes"),
+        Ok(ControlValue::Number(1.0))
+    );
+    assert_eq!(Module::get_control(&scheduler, "refused_writes"), Ok(1.0));
+    assert!(ctrl.set_control("refused_writes", 0.0.into()).is_err());
+    assert_eq!(ctrl.crowded_ramps(), 0);
+}

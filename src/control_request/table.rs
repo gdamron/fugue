@@ -178,6 +178,10 @@ pub(crate) trait BeatTable {
     /// entries due then write.
     fn retry_legacy(&self) {}
 
+    /// Counts one of its entries' ramps finding no room, as the drain's
+    /// `Ramps::crowded` does, for its module to show.
+    fn crowded(&self) {}
+
     /// The input its clock's gate comes in on: the clock output connected
     /// there sets the length of a step.
     fn clock_input(&self) -> &str;

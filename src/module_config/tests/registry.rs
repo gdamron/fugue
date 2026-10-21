@@ -37,6 +37,8 @@ const CONTROLS_NOT_READ_FROM_CONFIG: &[(&str, &str, &str)] = &[
         "an action: a write releases a note",
     ),
     ("control_scheduler", "step", "read-only playhead"),
+    ("control_scheduler", "refused_writes", "read-only telemetry"),
+    ("control_scheduler", "crowded_ramps", "read-only telemetry"),
 ];
 
 /// Types the harness cannot build: they need what a test has not got.

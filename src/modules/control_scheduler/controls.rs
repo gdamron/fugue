@@ -5,10 +5,11 @@
 //! scheduler whole by its surface's route (a request on a live graph), so
 //! the audio thread neither locks nor allocates to adopt it. What it was
 //! last written as, and the attachment it resolves through, stay here
-//! behind a lock only control threads take. `step` is read-only, mirrored
-//! from the audio thread through an atomic.
+//! behind a lock only control threads take. `step`, `refused_writes` and
+//! `crowded_ramps` are read-only, mirrored from the audio thread through
+//! atomics.
 
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::control_request::{
@@ -31,6 +32,12 @@ pub(crate) type SurfaceDirectory = Arc<Mutex<SurfaceMap>>;
 
 pub(super) const SCHEDULE: ControlIndex = ControlIndex(0);
 
+const REFUSED_DESCRIPTION: &str = "Read-only: how many scheduled writes to legacy controls \
+    never landed (refused, finding no room to wait, or waiting too long)";
+
+const CROWDED_DESCRIPTION: &str = "Read-only: how many ramps found no room, and jumped to \
+    their value instead";
+
 const SCHEDULE_DESCRIPTION: &str = "Schedule as JSON: [{at_step, module, control, value, \
     ramp_steps?}] (at_step = clock rising-edge count, first edge = step 0)";
 
@@ -51,6 +58,9 @@ pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
 /// Controls:
 /// - `schedule` - The schedule as JSON (writable during playback)
 /// - `step` - Read-only: current step index (-1 before the first clock edge)
+/// - `refused_writes` - Read-only: scheduled writes to legacy controls that
+///   never landed
+/// - `crowded_ramps` - Read-only: ramps the drain found no room for
 #[derive(Clone)]
 pub struct ControlSchedulerControls {
     declared: Arc<DeclaredSurface>,
@@ -62,6 +72,10 @@ struct Shared {
     /// Current step index maintained by the audio thread (-1 before the
     /// first gate edge).
     step: AtomicI64,
+    /// Running counts the audio thread adds to (see
+    /// `LegacyWrites::refused` and `BeatTable::crowded`).
+    refused_writes: AtomicU32,
+    crowded_ramps: AtomicU32,
     /// The id of the schedule the scheduler adopted last (see
     /// `ResolvedSchedule::id`), stored by the audio thread.
     adopted: AtomicU64,
@@ -128,6 +142,8 @@ impl ControlSchedulerControls {
             cells,
             shared: Arc::new(Shared {
                 step: AtomicI64::new(-1),
+                refused_writes: AtomicU32::new(0),
+                crowded_ramps: AtomicU32::new(0),
                 adopted: AtomicU64::new(0),
                 state: Mutex::new(ScheduleState {
                     spec,
@@ -289,6 +305,26 @@ impl ControlSchedulerControls {
         self.shared.step.store(step, Ordering::Relaxed);
     }
 
+    /// How many scheduled writes to legacy controls never landed.
+    pub fn refused_writes(&self) -> u32 {
+        self.shared.refused_writes.load(Ordering::Relaxed)
+    }
+
+    /// How many of the schedule's ramps found no room and jumped.
+    pub fn crowded_ramps(&self) -> u32 {
+        self.shared.crowded_ramps.load(Ordering::Relaxed)
+    }
+
+    /// Counts `count` more writes that never landed. Audio thread.
+    pub(crate) fn add_refused(&self, count: u32) {
+        (self.shared.refused_writes).fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// Counts a ramp that found no room. Audio thread.
+    pub(crate) fn count_crowded(&self) {
+        self.shared.crowded_ramps.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Reports that the scheduler adopted schedule `id`. Audio thread.
     pub(crate) fn set_adopted(&self, id: u64) {
         self.shared.adopted.store(id, Ordering::Release);
@@ -355,6 +391,12 @@ impl ControlSurface for ControlSchedulerControls {
             )
             .with_range(-1.0, f32::MAX)
             .with_default(self.step() as f32),
+            ControlMeta::number("refused_writes", REFUSED_DESCRIPTION)
+                .with_range(0.0, f32::MAX)
+                .with_default(self.refused_writes() as f32),
+            ControlMeta::number("crowded_ramps", CROWDED_DESCRIPTION)
+                .with_range(0.0, f32::MAX)
+                .with_default(self.crowded_ramps() as f32),
         ]
     }
 
@@ -362,6 +404,8 @@ impl ControlSurface for ControlSchedulerControls {
         match key {
             "schedule" => Ok(self.schedule_json().into()),
             "step" => Ok((self.step() as f32).into()),
+            "refused_writes" => Ok((self.refused_writes() as f32).into()),
+            "crowded_ramps" => Ok((self.crowded_ramps() as f32).into()),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -373,7 +417,9 @@ impl ControlSurface for ControlSchedulerControls {
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
             "schedule" => self.set_schedule_json(value.as_string()?),
-            "step" => Err("Control 'step' is read-only".to_string()),
+            "step" | "refused_writes" | "crowded_ramps" => {
+                Err(format!("Control '{key}' is read-only"))
+            }
             _ => Err(format!("Unknown control: {}", key)),
         }
     }
@@ -397,7 +443,7 @@ impl ControlSurface for ControlSchedulerControls {
                 let own_id = self.own_id();
                 resolve_schedule(&spec, own_id.as_deref().unwrap_or(""), surfaces).map(drop)
             }
-            "step" => crate::traits::read_only(key),
+            "step" | "refused_writes" | "crowded_ramps" => crate::traits::read_only(key),
             _ => Err(format!("Unknown control: {}", key)),
         }
     }

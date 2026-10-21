@@ -210,6 +210,7 @@ impl LegacyControls {
             slots: (0..RETRY_CAPACITY).map(|_| Slot::default()).collect(),
             waiting: AtomicUsize::new(0),
             refused: EventCounter::new(),
+            taken: AtomicU32::new(0),
         })
     }
 }
@@ -227,6 +228,8 @@ pub(crate) struct LegacyWrites {
     slots: Box<[Slot]>,
     waiting: AtomicUsize,
     refused: EventCounter,
+    /// `refused`'s count as [`LegacyWrites::take_refused`] last took it.
+    taken: AtomicU32,
 }
 
 /// Its lanes go back to their gates: whatever it had waiting holds no
@@ -274,6 +277,13 @@ impl LegacyWrites {
     /// refused.
     pub(crate) fn refused(&self) -> &EventCounter {
         &self.refused
+    }
+
+    /// How many writes were counted [`refused`](Self::refused) since the
+    /// last call. One thread takes them: the one writing through it.
+    pub(crate) fn take_refused(&self) -> u32 {
+        let count = self.refused.count();
+        count.wrapping_sub(self.taken.swap(count, Ordering::Relaxed))
     }
 
     /// How many writes wait.

@@ -1,7 +1,7 @@
 //! A table of automation for tests (see `crate::control_request::BeatTable`):
 //! entries on number controls in cells of their own, gated on `clock`.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::control_request::{
@@ -16,6 +16,8 @@ pub(crate) struct TestTable {
     pub(crate) played: AtomicBool,
     /// The step the drain last told it.
     pub(crate) step: AtomicI64,
+    /// Its entries' ramps that found no room.
+    pub(crate) crowded: AtomicU32,
 }
 
 impl TestTable {
@@ -26,6 +28,7 @@ impl TestTable {
             entries,
             played: AtomicBool::new(false),
             step: AtomicI64::new(-1),
+            crowded: AtomicU32::new(0),
         }
     }
 }
@@ -57,6 +60,17 @@ impl BeatTable for TestTable {
 
     fn set_step(&self, step: i64) {
         self.step.store(step, Ordering::Relaxed);
+    }
+
+    fn retry_legacy(&self) {
+        let writes = (self.entries.iter()).find_map(|entry| entry.target.legacy_writes());
+        if let Some(writes) = writes {
+            writes.retry();
+        }
+    }
+
+    fn crowded(&self) {
+        self.crowded.fetch_add(1, Ordering::Relaxed);
     }
 }
 

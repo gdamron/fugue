@@ -10,6 +10,8 @@ use crate::control_request::hold::Rank;
 use crate::control_request::ramps::Ramps;
 use crate::control_request::request::Source;
 use crate::test_support::table::{entry, number, TestTable};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 /// The table's id; it is at module 2, its clock at module 0.
 const TABLE: usize = 7;
@@ -255,6 +257,12 @@ fn a_ramp_entry_glides_to_land_on_its_end_step_or_writes_with_no_room() {
     let a_seen: Vec<_> = seen.iter().filter(|&&(_, of, _)| of == 0).collect();
     assert!(a_seen[1].0 > 127, "it leaves a where it stands at step 1");
     assert_eq!(**a_seen.last().unwrap(), (383, 0, 1.0), "landing on step 3");
+    let crowded = &host.table.as_ref().unwrap().crowded;
+    assert_eq!(
+        crowded.load(Ordering::Relaxed),
+        1,
+        "its table counts the jump"
+    );
     assert!(a_seen
         .windows(2)
         .all(|pair| pair[0].2 < pair[1].2 || pair[0].0 == 0));
@@ -352,6 +360,46 @@ fn a_table_whose_module_plays_another_table_writes_nothing() {
     let mut seen = Vec::with_capacity(16);
     play(&mut drain, &mut host, 256, &[&level], &mut seen);
     assert_eq!(seen, [(0, 0, 0.0)]);
+}
+
+#[test]
+fn a_note_waiting_for_its_instrument_lands_before_the_drain_plays_the_next() {
+    use crate::control_request::{while_held, LegacyControls, TableEntry, TableValue};
+    use crate::module_config::tests::registry::eight_frame_wav;
+    use crate::modules::sample_instrument::ZoneSpec;
+    use crate::modules::SampleInstrumentControls;
+    let zone = ZoneSpec {
+        root_note: 60,
+        key_low: 0,
+        key_high: 127,
+        asset: eight_frame_wav().to_string(),
+        level: 1.0,
+        loop_spec: None,
+    };
+    let (instrument, _) = SampleInstrumentControls::new(48_000, 0.1, vec![zone]).unwrap();
+    let surface: Arc<dyn crate::ControlSurface + Send + Sync> = Arc::new(instrument.clone());
+    let mut controls = LegacyControls::default();
+    let keys = ["note_on", "note_off"].map(|key| (controls.index(&surface, key), key));
+    let writes = controls.build();
+    let entries = (keys.iter().enumerate())
+        .map(|(step, &(index, key))| TableEntry {
+            step: step as u64,
+            ramp_steps: 0,
+            value: TableValue::Number(64.0),
+            target: writes.target(index, &surface, key),
+        })
+        .collect();
+    let mut host = host(BEFORE_START, entries);
+    let mut drain = drain(1.0, 4);
+    let mut seen = Vec::new();
+    // Step 0's note_on finds the queue held: only the drain tries it again.
+    while_held(instrument.pending_notes(), || {
+        play(&mut drain, &mut host, 1, &[], &mut seen);
+    });
+    play(&mut drain, &mut host, 512, &[], &mut seen);
+    let pending = instrument.pending_notes().lock().unwrap();
+    let notes: Vec<_> = pending.iter().map(|event| (event.note, event.on)).collect();
+    assert_eq!(notes, [(64, true), (64, false)], "no stuck note");
 }
 
 #[test]
