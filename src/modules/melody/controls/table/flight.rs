@@ -36,7 +36,11 @@ impl DegreeTable {
         }
         let epoch = self.epoch.fetch_add(1, Ordering::SeqCst);
         let count = &self.writes[(epoch & 1) as usize];
+        #[cfg(test)]
+        let waiting = std::time::Instant::now();
         while count.load(Ordering::SeqCst) != 0 {
+            #[cfg(test)]
+            super::tests::still_waiting(waiting, "the writes in flight");
             std::thread::yield_now();
         }
     }

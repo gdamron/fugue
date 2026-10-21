@@ -14,8 +14,8 @@ use crate::ControlSurface;
 mod reference;
 mod support;
 
-pub(super) use support::between_loads;
 use support::*;
+pub(super) use support::{between_loads, still_waiting};
 
 /// The table `scale` and `weights` make, set one after the other.
 fn table_of(scale: &[i32], weights: Option<&[f32]>) -> (Vec<i32>, Vec<f32>) {

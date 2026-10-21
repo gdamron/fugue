@@ -44,9 +44,9 @@ impl DegreeSnapshot {
                 weights: [0.0; MAX_DEGREES],
             }),
         };
-        while !snapshot.copy(ctrl) {
-            std::thread::yield_now();
-        }
+        let scratch = &mut *snapshot.scratch;
+        let count = (ctrl.table).read_into_waiting(&mut scratch.degrees, &mut scratch.weights);
+        snapshot.take(count);
         snapshot
     }
 
@@ -74,12 +74,18 @@ impl DegreeSnapshot {
         else {
             return false;
         };
+        self.take(count);
+        true
+    }
+
+    /// Takes the first `count` degrees and weights copied to the scratch.
+    fn take(&mut self, count: usize) {
+        let scratch = &*self.scratch;
         self.degree_count = count;
         self.weight_count = count;
         self.degrees[..count].copy_from_slice(&scratch.degrees[..count]);
         self.weights[..count].copy_from_slice(&scratch.weights[..count]);
         self.total_weight = self.weights[..count].iter().sum();
-        true
     }
 
     /// Returns `true` if no degrees are allowed.
