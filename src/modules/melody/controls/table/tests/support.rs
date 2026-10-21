@@ -18,8 +18,9 @@ thread_local! {
 
 /// Called by the table where another thread's change can land: between a
 /// degrees' header load and a weights' generation load, between a weights'
-/// generation load and a count load, after a position write lands and
-/// before it bumps the version, and after a copy reads each position.
+/// generation load and a count load, before a position write lands (its
+/// version bumped), after it lands and before it bumps the version again,
+/// and after a copy reads each position.
 pub(in super::super) fn between_loads() {
     let run = BETWEEN_LOADS.with(|hook| {
         let mut hook = hook.borrow_mut();
@@ -94,8 +95,8 @@ pub(super) fn landed_write(
     let (holding, holds) = mpsc::channel();
     let controls = controls.clone();
     let write = std::thread::spawn(move || {
-        // Past the header load, to the landing.
-        between_loads_after(1, move || {
+        // Past the header load and the landing, to after it.
+        between_loads_after(2, move || {
             holding.send(()).unwrap();
             let _ = held.recv_timeout(PATIENCE);
         });
@@ -103,6 +104,41 @@ pub(super) fn landed_write(
     });
     holds.recv_timeout(PATIENCE).expect("the write lands");
     (write, release)
+}
+
+/// Writes `value` to degree position `index` on another thread, held up
+/// about to land, its version bumped: once `step` sends, it lands and is
+/// held up again, saying so on `landed`, until `step` sends again or
+/// drops. Returns the write, `step` and `landed`.
+pub(super) fn landing_write(
+    controls: &MelodyControls,
+    index: usize,
+    value: i32,
+) -> (
+    std::thread::JoinHandle<bool>,
+    mpsc::Sender<()>,
+    mpsc::Receiver<()>,
+) {
+    let (step, steps) = mpsc::channel::<()>();
+    let (holding, holds) = mpsc::channel();
+    let (landing, landed) = mpsc::channel();
+    let controls = controls.clone();
+    let write = std::thread::spawn(move || {
+        // Past the header load, to before the landing.
+        between_loads_after(1, move || {
+            holding.send(()).unwrap();
+            let _ = steps.recv_timeout(PATIENCE);
+            between_the_next_loads(move || {
+                landing.send(()).unwrap();
+                let _ = steps.recv_timeout(PATIENCE);
+            });
+        });
+        controls.table.write_degree(index, value)
+    });
+    holds
+        .recv_timeout(PATIENCE)
+        .expect("the write is about to land");
+    (write, step, landed)
 }
 
 /// Waits (up to [`PATIENCE`]) until `thread` finishes, and joins it.

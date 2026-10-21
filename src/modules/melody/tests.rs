@@ -231,8 +231,19 @@ fn test_next_note_does_not_wait_on_a_whole_table_edit() {
     // this deadlocked the audio thread; now the table as published is used.
     let controls = melody.controls().clone();
     let editing = controls.table.editing();
-    assert_eq!(melody.next_note().midi_note, 67);
+    assert_eq!(without_waiting(move || melody.next_note().midi_note), 67);
     drop(editing);
+}
+
+/// Runs `read` on another thread and returns what it read, failing rather
+/// than hanging should it wait on a lock this thread holds.
+pub(super) fn without_waiting<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'static) -> T {
+    let (sent, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || sent.send(read()));
+    let patience = std::time::Duration::from_secs(10);
+    received
+        .recv_timeout(patience)
+        .expect("the read waited on a lock this thread holds")
 }
 
 #[test]
