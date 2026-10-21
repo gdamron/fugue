@@ -44,6 +44,7 @@ mod registry;
 #[cfg(test)]
 pub(crate) mod tests;
 mod timed;
+mod timed_chain;
 mod timed_status;
 mod timed_swap;
 // Submitted to by the front doors FUG-317 builds.

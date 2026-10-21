@@ -60,6 +60,9 @@ pub(crate) enum CancelCause {
     /// A schedule written to a scheduler whose schedule this edit
     /// re-resolves, or which writes a module this edit rebuilds or removes.
     ScheduleWrite { module_id: String },
+    /// The request queue had no room for the control writes it chains as
+    /// it lands; the caller was refused (`QueueFull`).
+    Unchained,
 }
 
 /// A timed edit's state, with where it landed or will land.

@@ -47,6 +47,9 @@ pub(crate) struct Waiting {
     /// Authored control writes made while it waits to modules it keeps,
     /// recorded again once `retain` has run (see [`Publisher::fold_timed`]).
     folded: Vec<(String, String, ControlValue)>,
+    /// The controls of modules it keeps that it writes as it lands (see
+    /// [`Publisher::chain_timed`]): an authored write to one is not folded.
+    chained: Vec<(String, String)>,
 }
 
 /// A timed edit the audio thread landed, adopted by the publisher: what it
@@ -69,6 +72,11 @@ impl Publisher {
     /// is adopted. Refused with nothing queued as [`Self::publish`]
     /// refuses a change, when the change edits nothing, or while another
     /// timed edit waits (`ControlError`).
+    ///
+    /// `before` runs once every check has passed, with the id the edit is
+    /// about to be queued with: requests submitted there that wait on it
+    /// applying are queued ahead of it, so none can miss it. Refused, with
+    /// the edit not queued, when `before` refuses (having queued nothing).
     #[allow(clippy::result_large_err)]
     pub(crate) fn publish_timed(
         &mut self,
@@ -76,6 +84,7 @@ impl Publisher {
         when: When,
         ttl: Option<u64>,
         (retain, port, packed): (Retain, RequestPort, Packed),
+        before: impl FnOnce(RequestId) -> Result<(), GraphCommandError>,
     ) -> Result<RequestId, Refused> {
         let refuse = |error, change| Err(Refused { error, change });
         let control = |message: &str| GraphCommandError::ControlError(message.into());
@@ -89,9 +98,17 @@ impl Publisher {
             let waiting = "A timed edit already waits; try again once it lands";
             return refuse(control(waiting), prepared);
         }
-        let Some(mut publication) = prepared.publication.take() else {
+        if prepared.publication.is_none() {
             return refuse(control("Only a structural edit can be timed"), prepared);
-        };
+        }
+        if !self.requests.has_room() {
+            return refuse(GraphCommandError::QueueFull, prepared);
+        }
+        let id = self.requests.take_id();
+        if let Err(error) = before(id) {
+            return refuse(error, prepared);
+        }
+        let mut publication = prepared.publication.take().expect("checked above");
         publication.map_survivors(self.mirror.modules.keys().map(String::as_str));
         publication.generation = self.generation + 1;
         let fate = Fate::default();
@@ -100,7 +117,9 @@ impl Publisher {
         edit.target.module_idx = TIMED_EDIT_MODULE;
         edit.when = when;
         edit.ttl = ttl;
-        let id = match self.requests.submit(edit) {
+        // `before` left room for it while submissions are serialized, as
+        // they are under the publisher.
+        let id = match self.requests.submit_as(id, edit) {
             Ok(id) => id,
             Err(QueueFull(edit)) => {
                 let RequestValue::Edit(payload) = edit.value else {
@@ -119,6 +138,7 @@ impl Publisher {
             port,
             packed,
             folded: Vec::new(),
+            chained: Vec::new(),
         }));
         Ok(id)
     }
@@ -235,9 +255,23 @@ impl Publisher {
         let Some(waiting) = self.timed.as_mut() else {
             return;
         };
+        let chained = |(module, control): &(String, String)| module == module_id && control == key;
+        if waiting.chained.iter().any(chained) {
+            // It writes the control itself as it lands, last: what plays
+            // then, and what its document records.
+            return;
+        }
         let folded = &mut waiting.folded;
         folded.retain(|(module, control, _)| module != module_id || control != key);
         folded.push((module_id.to_string(), key.to_string(), value.clone()));
+    }
+
+    /// Notes the controls of modules it keeps that the timed edit waiting
+    /// writes as it lands, so authored writes to them are not folded in.
+    pub(crate) fn chain_timed(&mut self, chained: Vec<(String, String)>) {
+        if let Some(waiting) = self.timed.as_mut() {
+            waiting.chained = chained;
+        }
     }
 
     /// Every recent timed edit's status (see `timed_status`).

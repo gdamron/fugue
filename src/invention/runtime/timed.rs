@@ -193,5 +193,8 @@ fn cancelled(cause: &CancelCause) -> String {
         CancelCause::ScheduleWrite { module_id } => {
             format!("cancelled: a schedule written to {module_id}, which this edit re-resolves")
         }
+        CancelCause::Unchained => {
+            "cancelled: the request queue had no room for the control writes it makes".to_string()
+        }
     }
 }

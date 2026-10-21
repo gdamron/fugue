@@ -45,7 +45,9 @@ impl LiveGraph {
             let prepared = change.prepare()?;
             // The swap's document change is the module's, which adopting
             // it records (see `commit_mirrors`): nothing more to retain.
-            match self.commit_built_when(prepared, Some(&registry), time, ttl, |_| {}) {
+            let committed =
+                self.commit_built_when(prepared, Some(&registry), time, ttl, |_| {}, &[]);
+            match committed {
                 // Another commit published, or adopted another registry,
                 // since `begin`.
                 Err(GraphCommandError::TopologyMoved) if attempt < BUILD_ATTEMPTS => attempt += 1,

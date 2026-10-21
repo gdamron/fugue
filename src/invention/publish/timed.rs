@@ -172,13 +172,15 @@ impl LiveGraph {
         ttl: Option<u64>,
         retain: impl FnOnce(&mut RuntimeState) + Send + 'static,
     ) -> Result<RequestId, GraphCommandError> {
-        self.commit_built_when(prepared, None, time, ttl, retain)
+        self.commit_built_when(prepared, None, time, ttl, retain, &[])
     }
 
     /// [`Self::commit_when`] for a change whose modules were built against
     /// `built_with`: refused `TopologyMoved` when a commit has adopted
     /// another registry since, so no edit queues an instance of a
-    /// superseded definition.
+    /// superseded definition. `writes` (module, control, value) to modules
+    /// it keeps play from the sample it lands on (see `timed_chain`).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_built_when(
         &self,
         mut prepared: PreparedChange,
@@ -186,6 +188,7 @@ impl LiveGraph {
         time: EditTime<'_>,
         ttl: Option<u64>,
         retain: impl FnOnce(&mut RuntimeState) + Send + 'static,
+        writes: &[(String, String, ControlValue)],
     ) -> Result<RequestId, GraphCommandError> {
         self.reclaim();
         let mut publisher = self.lock();
@@ -202,8 +205,9 @@ impl LiveGraph {
         // `Publisher::timed_races`).
         let result = self
             .resolve_edit_time(&publisher, &prepared, time)
-            .and_then(|when| Ok((when, rebind::pack(&mut prepared)?)));
-        let ((when, beat), packed) = match result {
+            .and_then(|when| Ok((when, self.resolve_chain(&publisher, writes)?)))
+            .and_then(|resolved| Ok((resolved, rebind::pack(&mut prepared)?)));
+        let (((when, beat), chain), packed) = match result {
             Ok(resolved) => resolved,
             Err(error) => {
                 drop(publisher);
@@ -216,17 +220,33 @@ impl LiveGraph {
         // log, locked before the submission, as a write is (see `watch`).
         let mut pending = self.pending.lock().unwrap();
         pending.settle();
-        match publisher.publish_timed(prepared, when, ttl, (Box::new(retain), port, packed)) {
+        let mut submitted = (Vec::new(), false);
+        // The writes are queued ahead of the edit, so the audio thread has
+        // them waiting when it lands, however soon.
+        let before = |id| {
+            pending.timed(id);
+            submitted = self.submit_chain(&mut pending, id, chain)?;
+            Ok(())
+        };
+        let parts = (Box::new(retain) as _, port, packed);
+        match publisher.publish_timed(prepared, when, ttl, parts, before) {
             Ok(id) => {
-                pending.timed(id);
+                let (chained, short) = submitted;
+                publisher.chain_timed(chained);
                 let sample = match time {
                     EditTime::AtSample(sample) => Some(sample),
                     _ => None,
                 };
                 publisher.ledger().queued(id, sample, beat);
+                if short {
+                    publisher.cancel_timed(|| CancelCause::Unchained);
+                }
                 drop(pending);
                 drop(publisher);
                 self.settle();
+                if short {
+                    return Err(GraphCommandError::QueueFull);
+                }
                 Ok(id)
             }
             Err(Refused { error, change }) => {

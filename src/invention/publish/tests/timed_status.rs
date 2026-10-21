@@ -49,6 +49,30 @@ fn queue(rig: &Rig, remove: bool, ttl: Option<u64>) -> RequestId {
     rig.live.commit_when(prepared, time, ttl, retain).unwrap()
 }
 
+/// [`queue`] rebuilding `osc1`, writing osc2's frequency to `frequency` as
+/// it lands.
+fn queue_writing(rig: &Rig, frequency: f32) -> RequestId {
+    let square = rig.build(
+        "osc1",
+        "oscillator",
+        serde_json::json!({ "waveform": "square" }),
+    );
+    let mut change = rig.live.begin();
+    change.upsert("osc1", square);
+    let prepared = change.prepare().unwrap();
+    let document = rig.live.state.lock().unwrap().document.clone();
+    let retain = move |state: &mut RuntimeState| state.document = document;
+    let time = EditTime::AtSample(LANDING);
+    let write = (
+        "osc2".to_string(),
+        "frequency".to_string(),
+        ControlValue::Number(frequency),
+    );
+    rig.live
+        .commit_built_when(prepared, None, time, None, retain, &[write])
+        .unwrap()
+}
+
 fn state_of(rig: &Rig, id: RequestId) -> EditState {
     rig.live.timed_status(id).unwrap().state
 }
@@ -252,6 +276,28 @@ fn a_write_to_a_module_replaced_before_it_is_recorded_is_made_again() {
     let state = rig.live.state.lock().unwrap();
     let config = &state.modules["osc1"].config;
     assert_eq!(config.get("frequency"), None, "{config}");
+}
+
+#[test]
+fn an_authored_write_a_landing_overtakes_is_made_again() {
+    let mut rig = Rig::new(BASE);
+    let id = queue_writing(&rig, 440.0);
+    let seen = rig.live.generation();
+    let value = ControlValue::Number(660.0);
+    let door = front_door(&rig);
+    door.set_control_transient("osc2", "frequency", value.clone())
+        .unwrap();
+    // The write plays, then the edit lands, writing 440 as it does.
+    rig.render(BLOCKS);
+    let recorded_it = rig.live.record_authored("osc2", "frequency", &value, seen);
+    assert!(!recorded_it, "the caller writes again, so it plays last");
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
+
+    write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
+    rig.render(1);
+    let playing = rig.live.control_surfaces.lock().unwrap()["osc2"].clone();
+    assert_eq!(playing.get_control("frequency").unwrap(), value);
+    assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
 }
 
 #[test]
