@@ -18,15 +18,15 @@ use crate::modules::{
 use crate::ControlValue;
 
 /// The locking families' controls, kept to hold their locks.
-struct Locking {
-    melody: MelodyControls,
+pub(super) struct Locking {
+    pub(super) melody: MelodyControls,
     player: SamplePlayerControls,
-    instrument: SampleInstrumentControls,
+    pub(super) instrument: SampleInstrumentControls,
     cells: CellSequencerControls,
 }
 
 impl Locking {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let wav = eight_frame_wav();
         let zone = ZoneSpec {
             root_note: 60,
@@ -50,7 +50,7 @@ impl Locking {
 
     /// A directory of every legacy family: the atomic ones fresh, the
     /// locking ones these.
-    fn directory(&self) -> SurfaceDirectory {
+    pub(super) fn directory(&self) -> SurfaceDirectory {
         let mut map: IndexMap<String, ControlSurfaceInstance> = IndexMap::new();
         for type_id in [
             "adsr",
@@ -73,7 +73,12 @@ impl Locking {
     }
 }
 
-fn entry(at_step: u64, module: &str, control: &str, value: ScheduleValue) -> ScheduleEntry {
+pub(super) fn entry(
+    at_step: u64,
+    module: &str,
+    control: &str,
+    value: ScheduleValue,
+) -> ScheduleEntry {
     ScheduleEntry {
         at_step,
         module: module.into(),
@@ -91,7 +96,10 @@ fn ramp(module: &str, control: &str, to: f32) -> ScheduleEntry {
 }
 
 /// A scheduler over `directory` running `entries`.
-fn scheduler(entries: Vec<ScheduleEntry>, directory: &SurfaceDirectory) -> ControlScheduler {
+pub(super) fn scheduler(
+    entries: Vec<ScheduleEntry>,
+    directory: &SurfaceDirectory,
+) -> ControlScheduler {
     let controls = ControlSchedulerControls::new(entries);
     controls.attach("sched", directory).unwrap();
     let mut scheduler = ControlScheduler::new(48_000, controls);
@@ -100,7 +108,7 @@ fn scheduler(entries: Vec<ScheduleEntry>, directory: &SurfaceDirectory) -> Contr
 }
 
 /// One block with the clock at `gate`, counted.
-fn block(scheduler: &mut ControlScheduler, gate: f32) -> (usize, usize) {
+pub(super) fn block(scheduler: &mut ControlScheduler, gate: f32) -> (usize, usize) {
     scheduler.set_input("clock", gate).unwrap();
     let (_, allocs, frees) = allocator_events(|| scheduler.process(64));
     (allocs, frees)
@@ -163,7 +171,7 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
 }
 
 /// The instrument's queued note events, as (note, on).
-fn queued_notes(instrument: &SampleInstrumentControls) -> Vec<(u8, bool)> {
+pub(super) fn queued_notes(instrument: &SampleInstrumentControls) -> Vec<(u8, bool)> {
     let pending = instrument.pending_notes().lock().unwrap();
     pending.iter().map(|event| (event.note, event.on)).collect()
 }

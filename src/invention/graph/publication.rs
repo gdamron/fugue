@@ -438,7 +438,8 @@ impl SignalGraph {
     /// sample-identical across the install as long as the edit leaves its
     /// per-sample order (and so its delayed edge) as it was. Last, each
     /// survivor takes the payloads the publication carries for it (see
-    /// [`Handover`]).
+    /// [`Handover`]), and each instance removed or replaced is told it left
+    /// (see [`Module::leave`]).
     fn install(&mut self, publication: &mut Publication) {
         let mut moved = 0;
         for (id, instance) in self.modules.iter_mut() {
@@ -475,6 +476,10 @@ impl SignalGraph {
         }
         self.reset_installed_inputs(publication, moved);
         self.hand_over(publication);
+        // What is left in the old map has left the running graph.
+        for (_, departed) in publication.modules.iter_mut() {
+            departed.module_mut().leave();
+        }
     }
 
     /// Whether the running module at `old` in the retired map and the

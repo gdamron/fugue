@@ -11,7 +11,9 @@
 //! and a new one goes straight to the surface only while none waits at all.
 //!
 //! A lane is claimed on a control thread as a schedule is built, and given
-//! back when it is dropped: its writes then hold no other back. Tickets
+//! back when it is dropped: its writes then hold no other back. A scheduler
+//! an edit removes is freed only later, off the audio thread, so it drops
+//! what it has waiting as it leaves the graph (see `Module::leave`). Tickets
 //! need not land in order to be given back, so a write dropped from the
 //! middle (one that waited too long) never holds the others up.
 

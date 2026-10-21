@@ -535,6 +535,15 @@ impl Module for ControlScheduler {
         self.ctrl.target_module_ids()
     }
 
+    /// Removed or replaced, it tries its waiting writes one last time and
+    /// drops the rest: they no longer hold any other schedule's back.
+    fn leave(&mut self) {
+        if let Some(legacy) = &self.legacy {
+            legacy.retry();
+            legacy.drop_waiting();
+        }
+    }
+
     #[allow(private_interfaces)]
     fn beat_table(&self) -> Option<&dyn BeatTable> {
         Some(self)
@@ -661,6 +670,8 @@ impl ControlScheduler {
 
 #[cfg(test)]
 mod declared_tests;
+#[cfg(test)]
+mod departed_tests;
 #[cfg(test)]
 mod legacy_tests;
 #[cfg(test)]

@@ -457,6 +457,12 @@ impl Module for DevelopmentModule {
         true
     }
 
+    fn leave(&mut self) {
+        for module in &mut self.graph.modules {
+            module.module_mut().leave();
+        }
+    }
+
     fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
         self.controls.as_ref().map(DevelopmentControls::declared)
     }
