@@ -519,6 +519,11 @@ impl DeclaredSurface {
                 // hold, at a sample that never passes, would refuse every
                 // later write to the control. The edit is cancelled instead.
                 let clocked = port.settler.is_none();
+                // The log is locked before anything is submitted, the copy
+                // included, so neither's outcome can be received before
+                // the write is recorded.
+                let mut pending = port.pending.lock().unwrap();
+                pending.settle();
                 let kept = match (&request.value, authored) {
                     (RequestValue::Value(raw), Some(key)) if clocked => {
                         let module = (port.module_id.as_str(), key);
@@ -527,10 +532,6 @@ impl DeclaredSurface {
                     _ => None,
                 };
                 let (safe, copy) = (kept.map(|(safe, _)| safe), kept.and_then(|(_, copy)| copy));
-                // The log is locked before the submission, so its outcome
-                // cannot be received before the write is recorded.
-                let mut pending = port.pending.lock().unwrap();
-                pending.settle();
                 let id = match port.requests.submit(request) {
                     Ok(id) => id,
                     // Never, as `keep_authored` kept it only with room for
