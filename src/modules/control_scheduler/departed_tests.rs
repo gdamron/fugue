@@ -26,9 +26,10 @@ fn a_removed_scheduler_s_waiting_note_holds_no_other_scheduler_s_back() {
     });
     assert_eq!((allocs, frees), (0, 0), "left");
     // Never processed again, it is not freed yet either: the other's note
-    // still lands at once.
+    // still lands at once, just after the removed one's, made before it
+    // and left at the gate, as main's waiting write would have landed.
     assert_eq!(block(&mut staying, 1.0), (0, 0));
-    assert_eq!(queued_notes(&locking.instrument), [(67, true)]);
+    assert_eq!(queued_notes(&locking.instrument), [(64, true), (67, true)]);
 }
 
 #[test]
@@ -52,4 +53,34 @@ fn a_removed_scheduler_s_waiting_note_lands_as_it_leaves_if_it_can() {
     });
     removed.leave();
     assert_eq!(queued_notes(&locking.instrument), [(64, true), (64, false)]);
+}
+
+#[test]
+fn a_note_off_a_removed_scheduler_made_behind_another_s_note_on_still_lands() {
+    use ScheduleValue::Number;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let note = |control| vec![entry(1, "sample_instrument", control, Number(64.0))];
+    let mut playing = scheduler(note("note_on"), &directory);
+    let mut removed = scheduler(note("note_off"), &directory);
+    for gate in [1.0, 0.0] {
+        block(&mut playing, gate);
+        block(&mut removed, gate);
+    }
+    // The note_on finds the queue held; the note_off, made after it by the
+    // other scheduler, waits behind it.
+    while_held(locking.instrument.pending_notes(), || {
+        block(&mut playing, 1.0);
+        block(&mut removed, 1.0);
+    });
+    // The edit removing the second installs before the first retries.
+    let ((), allocs, frees) = allocator_events(|| removed.leave());
+    assert_eq!((allocs, frees), (0, 0), "left");
+    assert_eq!(queued_notes(&locking.instrument), [], "behind the note_on");
+    assert_eq!(block(&mut playing, 0.0), (0, 0));
+    assert_eq!(
+        queued_notes(&locking.instrument),
+        [(64, true), (64, false)],
+        "no stuck note"
+    );
 }

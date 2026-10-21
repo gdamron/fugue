@@ -535,12 +535,13 @@ impl Module for ControlScheduler {
         self.ctrl.target_module_ids()
     }
 
-    /// Removed or replaced, it tries its waiting writes one last time and
-    /// drops the rest: they no longer hold any other schedule's back.
+    /// Removed or replaced, it tries its waiting writes one last time,
+    /// leaves the events still waiting at their surfaces' gates for the
+    /// schedules still writing there to land in turn, and drops the rest.
+    /// Its lanes then hold no other schedule's writes back.
     fn leave(&mut self) {
         if let Some(legacy) = &self.legacy {
-            legacy.retry();
-            legacy.drop_waiting();
+            legacy.abandon();
         }
     }
 

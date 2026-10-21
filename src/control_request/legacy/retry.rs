@@ -42,6 +42,7 @@ use crate::control_request::EventCounter;
 use crate::ControlSurface;
 
 mod gate;
+mod orphans;
 use gate::{Gate, IDLE};
 
 /// The most writes one schedule keeps waiting.
@@ -57,6 +58,8 @@ struct Control {
     group: usize,
     /// Whether a write is an event, never merged.
     event: bool,
+    /// The number its surface's gate names `key` by.
+    name: u32,
 }
 
 /// A surface a schedule writes: the order its writes there keep with
@@ -64,6 +67,7 @@ struct Control {
 struct Group {
     gate: Arc<Gate>,
     lane: usize,
+    surface: Surface,
 }
 
 /// A write's wait before its first retry: not yet aged.
@@ -91,14 +95,9 @@ struct Slot {
 
 impl Slot {
     fn load(&self) -> Kept {
-        let bits = self.value.load(Ordering::Relaxed);
-        let value = match bits >> 32 {
-            0 => TableValue::Number(f32::from_bits(bits as u32)),
-            _ => TableValue::Bool(bits & 1 == 1),
-        };
         Kept {
             index: self.index(),
-            value,
+            value: bits_value(self.value.load(Ordering::Relaxed)),
             waited: self.waited.load(Ordering::Relaxed),
             ticket: self.ticket.load(Ordering::Relaxed),
         }
@@ -116,11 +115,22 @@ impl Slot {
     }
 
     fn set_value(&self, value: TableValue) {
-        let bits = match value {
-            TableValue::Number(number) => number.to_bits() as u64,
-            TableValue::Bool(flag) => 1 << 32 | flag as u64,
-        };
-        self.value.store(bits, Ordering::Relaxed);
+        self.value.store(value_bits(value), Ordering::Relaxed);
+    }
+}
+
+/// A value as bits an atomic holds: a number's, or a boolean's with bit 32.
+fn value_bits(value: TableValue) -> u64 {
+    match value {
+        TableValue::Number(number) => number.to_bits() as u64,
+        TableValue::Bool(flag) => 1 << 32 | flag as u64,
+    }
+}
+
+fn bits_value(bits: u64) -> TableValue {
+    match bits >> 32 {
+        0 => TableValue::Number(f32::from_bits(bits as u32)),
+        _ => TableValue::Bool(bits & 1 == 1),
     }
 }
 
@@ -177,7 +187,11 @@ impl LegacyControls {
             let group = group.unwrap_or_else(|| {
                 let gate = Gate::of(surface);
                 let lane = gate.claim();
-                groups.push(Group { gate, lane });
+                groups.push(Group {
+                    gate,
+                    lane,
+                    surface: surface.clone(),
+                });
                 surfaces.push(surface);
                 surfaces.len() - 1
             });
@@ -186,6 +200,7 @@ impl LegacyControls {
                 key: key.clone(),
                 group,
                 event: surface.scheduled_event(key),
+                name: groups[group].gate.orphans.name(key),
             });
         }
         Arc::new(LegacyWrites {
@@ -316,6 +331,7 @@ impl LegacyWrites {
     pub(crate) fn retry(&self) {
         let waiting = self.waiting();
         if waiting == 0 {
+            self.land_orphans();
             return;
         }
         self.hide();
@@ -332,6 +348,7 @@ impl LegacyWrites {
             }
         }
         self.waiting.store(kept, Ordering::Relaxed);
+        self.land_orphans();
     }
 
     /// Ages every waiting write by `samples`, dropping (and counting) those
