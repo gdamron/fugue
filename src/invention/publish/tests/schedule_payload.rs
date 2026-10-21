@@ -57,12 +57,12 @@ const INNER: &str = r#"{
 const NEXT: &str = r#"[{ "at_step": 1, "module": "o", "control": "frequency", "value": 330.0 }]"#;
 
 /// One block with `id`'s clock input at `level`, counted.
-fn clocked(rig: &mut Rig, id: &str, level: f32) -> (usize, usize) {
+pub(super) fn clocked(rig: &mut Rig, id: &str, level: f32) -> (usize, usize) {
     rig.live.write_input(id, "clock", level).unwrap();
     counted_block(rig)
 }
 
-fn scheduler(rig: &Rig) -> ControlSchedulerControls {
+pub(super) fn scheduler(rig: &Rig) -> ControlSchedulerControls {
     let surface = rig.live.control_surfaces.lock().unwrap()["sched"].clone();
     let controls = surface.as_any().unwrap();
     controls

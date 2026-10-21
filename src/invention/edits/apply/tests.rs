@@ -16,6 +16,7 @@ mod commit;
 mod config_refusals;
 mod real_modules;
 mod refusals;
+mod scheduled_targets;
 mod scripted;
 
 use scripted::{Scripted, SCRIPTED};

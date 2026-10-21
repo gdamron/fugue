@@ -61,7 +61,12 @@ impl RunningInvention {
             .iter()
             .map(build)
             .collect::<Result<Vec<_>, _>>()?;
-        let change = self.stage_plan(base_generation, &plan, swapped, added)?;
+        let finals = batch.candidate.final_writes();
+        let writes = finals.iter().map(|candidate| {
+            let write = &candidate.write;
+            (write.module_id.as_str(), write.key.as_str(), &write.value)
+        });
+        let change = self.stage_plan(base_generation, &plan, swapped, added, writes)?;
         // Survivors are written only at the commit; their throwaway copies
         // already hold the batch's writes.
         let mut directory = change.surfaces.clone();

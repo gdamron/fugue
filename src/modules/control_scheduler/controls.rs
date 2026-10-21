@@ -21,6 +21,9 @@ use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 use super::resolved::{target_module_ids, ResolvedSchedule};
 use super::schedule::{parse_schedule_json, resolve_schedule, ScheduleEntry, SurfaceMap};
 
+mod rebind;
+pub(crate) use rebind::{Rebind, Written};
+
 /// Shared directory of module control surfaces, owned by the runtime. The
 /// scheduler holds a [`Weak`] reference so surfaces referenced by resolved
 /// entries never keep the whole directory alive.
@@ -71,7 +74,8 @@ struct Shared {
 struct ScheduleState {
     /// The schedule as declared (config/JSON form). On a live graph, a
     /// write records it under the publisher, as it submits its payload, so
-    /// a graph change sees the schedule the scheduler will be playing.
+    /// a graph change sees the schedule the scheduler will be playing (see
+    /// `ControlSchedulerControls::rebind`).
     spec: Vec<ScheduleEntry>,
     /// Module ids the schedule last resolved targets.
     targets: Vec<String>,

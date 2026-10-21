@@ -173,6 +173,8 @@ pub(crate) struct GraphChange {
     /// dropped in place, so a change edited under the publisher lock can
     /// drop them after releasing it.
     discarded: Vec<BuiltModule>,
+    /// What surviving schedulers re-resolve for.
+    rescheduling: Rescheduling,
     block_size: usize,
 }
 
@@ -192,6 +194,7 @@ impl GraphChange {
             edits: 0,
             built: IndexMap::new(),
             discarded: Vec::new(),
+            rescheduling: Rescheduling::default(),
             block_size,
         }
     }
@@ -249,6 +252,7 @@ impl GraphChange {
         if let Some(replaced) = self.built.insert(id.to_string(), module) {
             self.discarded.push(replaced);
         }
+        self.rescheduling.touched.insert(id.to_string());
         self.edits += 1;
     }
 
@@ -266,6 +270,7 @@ impl GraphChange {
             }
             self.mirror.remove(id);
             self.surfaces.shift_remove(id);
+            self.rescheduling.touched.insert(id.to_string());
             self.edits += 1;
         }
     }
@@ -302,16 +307,20 @@ impl GraphChange {
     }
 
     /// Attaches new schedulers against the directory as the change will
-    /// leave it, prepares each new instance for publication (see
+    /// leave it, checks that surviving schedulers targeting a module the
+    /// change rebuilds or removes still resolve (see [`Rescheduling`]),
+    /// prepares each new instance for publication (see
     /// [`crate::Module::prepare_for_publication`]), then compiles the
     /// complete next topology. Fails, with nothing visible changed, when a
-    /// schedule cannot resolve.
+    /// schedule cannot resolve, a survivor's included.
     pub(crate) fn prepare(mut self) -> Result<PreparedChange, GraphCommandError> {
         self.attach()?;
         Ok(self.compile())
     }
 
-    /// The fallible part of [`Self::prepare`]: attaches new schedulers.
+    /// The fallible part of [`Self::prepare`]: attaches new schedulers and
+    /// checks surviving ones, which the commit re-resolves again under the
+    /// publisher.
     /// On failure the change, and every instance it built, is still the
     /// caller's to drop where it chooses.
     pub(crate) fn attach(&mut self) -> Result<(), GraphCommandError> {
@@ -330,7 +339,9 @@ impl GraphChange {
             attach_from_handle_resolving(id, handle, &self.directory, &self.surfaces)
                 .map_err(GraphCommandError::ModuleBuildFailed)?;
         }
-        Ok(())
+        self.rescheduling
+            .rebinds(&self.surfaces, &self.built)
+            .map(drop)
     }
 
     /// The rest of [`Self::prepare`], once [`Self::attach`] has succeeded:
@@ -343,6 +354,7 @@ impl GraphChange {
                 mirror: self.mirror,
                 surfaces: self.surfaces,
                 built: self.built,
+                rescheduling: Rescheduling::default(),
                 publication: None,
             };
         }
@@ -375,6 +387,7 @@ impl GraphChange {
             mirror: self.mirror,
             surfaces: self.surfaces,
             built: self.built,
+            rescheduling: self.rescheduling,
             publication: Some(publication),
         }
     }
@@ -398,6 +411,9 @@ pub(crate) struct PreparedChange {
     /// validating control writes that land with it.
     pub(crate) surfaces: SurfaceMap,
     pub(crate) built: IndexMap<String, BuiltModule>,
+    /// What surviving schedulers re-resolve for, which the commit does
+    /// under the publisher.
+    pub(crate) rescheduling: Rescheduling,
     /// The compiled next topology; `None` when the change edits nothing.
     pub(crate) publication: Option<Box<Publication>>,
 }
@@ -500,6 +516,7 @@ fn build_publication(
         topology,
         remap: SurvivorRemap::default(),
         generation: 0,
+        handovers: Vec::new(),
         fate: None,
     })
 }
@@ -507,6 +524,8 @@ fn build_publication(
 // Used by `publish::watch`, which the front doors FUG-317 builds submit to.
 #[cfg_attr(not(test), allow(dead_code))]
 mod order;
+mod rebind;
+pub(crate) use rebind::Rescheduling;
 #[cfg(test)]
 mod tests;
 mod timelines;

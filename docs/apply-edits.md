@@ -239,7 +239,7 @@ These refusals carry no `edit` detail:
 | Code | When |
 | --- | --- |
 | `invalid_request` | The batch is empty or holds more than 256 edits; the ticket is missing or malformed. |
-| `module_build_failed` | Every edit applied, but the edited invention does not build, or its new graph could not be prepared. No single edit is to blame (for example, removing a module a `control_scheduler` still targets). |
+| `module_build_failed` | Every edit applied, but the edited invention does not build, or its new graph could not be prepared. No single edit is to blame (for example, removing a module a `control_scheduler` still targets, without writing the scheduler a `schedule` that no longer does). |
 | `revision_conflict` | `expected_revision` did not match, or the ticket was issued by another daemon session. |
 | `mutation_expired` | A retried ticket is older than the daemon's recovery ledger remembers. |
 | `audio_thread_stopped` | Nothing is running, or the audio thread stopped. Load an invention first. |
