@@ -259,3 +259,18 @@ fn a_recompile_hands_a_scheduler_its_unadopted_schedule() {
     assert_eq!(sched.adopted(), sched.recorded());
     assert_eq!(sched_b.adopted(), sched_b.recorded());
 }
+
+/// A step falling on the install's sample plays the new schedule's entry
+/// there, as a request applied before the beats would: here step 0, the
+/// schedule written before the first block.
+#[test]
+fn a_retarget_plays_an_entry_on_the_install_sample_as_loaded() {
+    let new = serde_json::json!([at(0, "clock", "bpm", 211.0)]);
+    for fillers in [0, CURSOR_CAPACITY] {
+        let loaded = rig(fillers, new.clone()).render(BLOCKS);
+        let mut live = rig(fillers, serde_json::json!([at(0, "dial", "level", 0.5)]));
+        write(&live, "sched", "schedule", new.to_string().into());
+        let live = live.render(BLOCKS);
+        assert_eq!(first_change(&live, &loaded), None, "{fillers} fillers");
+    }
+}

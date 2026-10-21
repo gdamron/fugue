@@ -7,15 +7,16 @@
 //! write whose targets differ from those the installed topology was
 //! compiled with publishes that topology recompiled: the same modules and
 //! routes, in the order a document loading the new schedule would run
-//! them. The schedule travels in that publication, handed over as it
-//! installs (see `graph::publication::handover`), not as a request behind
-//! it, which the audio thread could drain a block later: the new schedule
-//! never plays in the old order, nor the old one in the new. Any other
-//! scheduler whose last schedule write it has not adopted yet (one refused
-//! for want of room, or still queued) is handed that schedule as well,
-//! since the recompile orders it by that schedule's targets. A write
-//! leaving every module's targets as compiled publishes nothing and goes
-//! as a request.
+//! them. The schedule travels in that publication, handed over with the
+//! requests due as it installs (see `Handover::with_requests`), not as a
+//! request beside it, which the audio thread could drain a block apart:
+//! the new schedule never plays in the old order, nor the old one in the
+//! new, and an entry on the install's sample plays as a request's would.
+//! Any other scheduler whose last schedule write it has not adopted yet
+//! (one refused for want of room, or still queued) is handed that schedule
+//! as well, since the recompile orders it by that schedule's targets. A
+//! write leaving every module's targets as compiled publishes nothing and
+//! goes as a request.
 //!
 //! The recompile is skipped while a timed edit waits, since publishing
 //! would cancel it, and while edits back up with no reclaimer thread, as
@@ -106,7 +107,7 @@ impl Retarget {
         let module_idx = prepared.mirror.modules.get_index_of(id);
         match (prepared.publication.as_mut(), module_idx) {
             (Some(publication), Some(module_idx)) => {
-                let handover = Handover::new(module_idx, control, payload);
+                let handover = Handover::with_requests(module_idx, control, payload);
                 publication.handovers.push(handover);
             }
             _ => {
@@ -160,7 +161,7 @@ fn hand_unsettled(prepared: &mut PreparedChange, id: &str) -> Option<Vec<Written
             continue;
         };
         let module_idx = prepared.mirror.modules.get_index_of(&rebind.id)?;
-        let handover = Handover::new(module_idx, Rebind::CONTROL, rebind.payload);
+        let handover = Handover::with_requests(module_idx, Rebind::CONTROL, rebind.payload);
         publication.handovers.push(handover);
         written.push(rebind.written);
     }
