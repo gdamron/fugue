@@ -135,6 +135,14 @@ fn number(directory: &SurfaceDirectory, module: &str, control: &str) -> f32 {
 /// Runs `f` while a thread calls `work` over and over, as a control thread
 /// busy with the same module would.
 fn while_busy<R>(work: impl Fn() + Sync, f: impl FnOnce() -> R) -> R {
+    /// Stops the worker however `f` ends, so a failing assertion fails the
+    /// test rather than hanging it.
+    struct Stop<'a>(&'a AtomicBool);
+    impl Drop for Stop<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
     let done = AtomicBool::new(false);
     std::thread::scope(|scope| {
         scope.spawn(|| {
@@ -142,10 +150,15 @@ fn while_busy<R>(work: impl Fn() + Sync, f: impl FnOnce() -> R) -> R {
                 work();
             }
         });
-        let result = f();
-        done.store(true, Ordering::Release);
-        result
+        let _stop = Stop(&done);
+        f()
     })
+}
+
+#[test]
+fn a_failure_while_busy_stops_the_worker() {
+    let failed = std::panic::catch_unwind(|| while_busy(|| {}, || panic!("a failed assertion")));
+    assert!(failed.is_err());
 }
 
 #[test]
