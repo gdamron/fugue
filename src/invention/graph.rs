@@ -40,6 +40,7 @@ use indexmap::IndexMap;
 use std::sync::Arc;
 
 use crate::control_request::Transport;
+use crate::modules::AudioDiagnostics;
 use crate::{GraphModule, MAX_BLOCK};
 
 use super::runtime::ModuleInstance;
@@ -188,6 +189,13 @@ pub(crate) struct SignalGraph {
     pub(crate) out_counts: Vec<usize>,
     /// Allocated per-port frame capacity of `out_bufs` (equals `block_size`).
     pub(crate) block_capacity: usize,
+    /// Each module's ordering-only edges as compiled (see
+    /// [`CompiledTopology::ordering`]).
+    pub(crate) ordering: Vec<Vec<String>>,
+    /// Whether a publication installed the topology, compiled from the
+    /// publisher's mirror: a recompile in place then keeps its ordering
+    /// (see [`Self::recompile`]). A command applied in place forgets it.
+    pub(crate) published: bool,
     /// Configurable processing block size in frames (always `<= MAX_BLOCK`).
     pub(crate) block_size: usize,
     /// Flag indicating topology changed and derived state needs recomputation.
@@ -195,12 +203,19 @@ pub(crate) struct SignalGraph {
     /// The modules or their routes changed since the request drain last
     /// looked for the modules' tables (see `beats`).
     pub(crate) tables_stale: bool,
+    /// The publication of an immediate edit while the requests due as it
+    /// installs apply (see `requests`); none otherwise.
+    pub(crate) installing: Option<Box<Publication>>,
     /// An offline render's graph that a new render replaced: no module is
     /// added to it or removed from it again (see `declared::retire_offline`).
     pub(crate) retired: bool,
     /// Observers of the mixed master output (peak meter, spectrum tap), fed
     /// once per block for off-thread samplers to read.
     pub(crate) master: MasterObservers,
+    /// The audio backend's diagnostics, where an install that falls back to
+    /// recompiling on the audio thread is counted. `None` for offline render
+    /// and backends without diagnostics.
+    pub(crate) diagnostics: Option<Arc<AudioDiagnostics>>,
 }
 
 impl SignalGraph {
@@ -234,11 +249,15 @@ impl SignalGraph {
             out_prev: Vec::new(),
             out_counts: Vec::new(),
             block_capacity: 0,
+            ordering: Vec::new(),
+            published: false,
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
             tables_stale: true,
+            installing: None,
             retired: false,
             master,
+            diagnostics: None,
         }
     }
 
@@ -261,6 +280,7 @@ impl SignalGraph {
 
     /// Applies a single command to a graph no audio thread owns. Allocates.
     pub(crate) fn apply_command(&mut self, cmd: GraphCommand) {
+        self.published = false;
         match cmd {
             GraphCommand::AddModule { module_id, module } => {
                 let is_sink = matches!(module, GraphModule::Sink(_));

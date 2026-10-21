@@ -60,6 +60,18 @@ pub(crate) trait BeatHost {
         None
     }
 
+    /// Whether an edit installing at this sample, once what is due here
+    /// has applied, keeps the table of the module at `module_idx` playing:
+    /// the table then plays after it, on the graph it installs, so an
+    /// entry due here, or a ramp's write, reaches a target it rebuilds
+    /// (FUG-413), and the tables it keeps still write in module order. An edit a condition
+    /// makes due only as this sample's entries write comes after them:
+    /// they play on the graph it replaces.
+    fn defers(&self, module_idx: usize) -> bool {
+        let _ = module_idx;
+        false
+    }
+
     /// Applies `value` as the pending store's `apply` does, of `standing`
     /// (none for an event): `Err` is what it reports instead.
     fn apply(
