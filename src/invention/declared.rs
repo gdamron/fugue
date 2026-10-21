@@ -43,7 +43,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use super::graph::{GraphCommand, SignalGraph};
 use super::publish::{
-    check_offline, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler,
+    check_offline, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
 };
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
@@ -519,25 +519,38 @@ impl DeclaredSurface {
                 // hold, at a sample that never passes, would refuse every
                 // later write to the control. The edit is cancelled instead.
                 let clocked = port.settler.is_none();
-                let safe = match (&request.value, authored) {
+                let kept = match (&request.value, authored) {
                     (RequestValue::Value(raw), Some(key)) if clocked => {
                         let module = (port.module_id.as_str(), key);
                         publisher.keep_authored(module, target, (*raw, event), &port.requests)
                     }
                     _ => None,
                 };
+                let (safe, copy) = (kept.map(|(safe, _)| safe), kept.and_then(|(_, copy)| copy));
                 // The log is locked before the submission, so its outcome
                 // cannot be received before the write is recorded.
                 let mut pending = port.pending.lock().unwrap();
                 pending.settle();
-                let Ok(id) = port.requests.submit(request) else {
+                let id = match port.requests.submit(request) {
+                    Ok(id) => id,
                     // Never, as `keep_authored` kept it only with room for
                     // this write too, but a write kept and not made is not
-                    // to play.
-                    if safe.is_some() {
-                        publisher.cancel_timed(|| CancelCause::Unchained);
-                    }
-                    return Err(QUEUE_FULL.into());
+                    // to play: the edit is cancelled, the copy with it.
+                    // Landed already, the copy plays: it is the write.
+                    Err(_) => match (copy, authored) {
+                        (Some(copy), Some(key)) => {
+                            let cause = || CancelCause::AuthoredWrite {
+                                module_id: port.module_id.clone(),
+                                key: key.to_string(),
+                                touches: Touched::Written,
+                            };
+                            if publisher.cancel_timed(cause) {
+                                return Err(QUEUE_FULL.into());
+                            }
+                            copy
+                        }
+                        _ => return Err(QUEUE_FULL.into()),
+                    },
                 };
                 // Under the publisher's lock, so reads report the last write
                 // submitted.
@@ -554,6 +567,10 @@ impl DeclaredSurface {
                         beat: None,
                         automated,
                     };
+                    // The copy applying, too, is this write's.
+                    if let Some(copy) = copy.filter(|copy| *copy != id) {
+                        pending.submitted(copy, write.clone());
+                    }
                     pending.submitted(id, write);
                 }
                 drop(pending);

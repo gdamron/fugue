@@ -350,16 +350,20 @@ impl Publisher {
     /// Readies an authored write of `raw` to control `key` of `module_id`
     /// (at `target`, in the graph that is playing), about to be queued,
     /// against the timed edit waiting, and returns the edit it is safe from
-    /// (see [`Self::timed_overtook`]). One landed already: the write follows
-    /// its writes. One that writes the control as it lands: the write is
-    /// kept over it, a copy chained to the landing as the edit's own write
-    /// is, at the same rank. The audio thread meets requests in the order
-    /// they are queued and applies those waiting on a condition in the
-    /// order it received them, and at one sample, of equal rank, the later
-    /// wins: the copy, queued after the edit and so after its write (and
-    /// after any copy kept before), plays at the landing, and the edit's
-    /// value never sounds (see [`Ledger::kept`]). At the same rank, its
-    /// hold is the author's own, refusing no later write a plain one would
+    /// (see [`Self::timed_overtook`]) with the id of the copy it queued, if
+    /// any. One landed already: the write follows its writes. One that
+    /// writes the control as it lands: the write is kept over it, a copy
+    /// chained to the landing as the edit's own write is, at the same rank.
+    /// The audio thread meets requests in the order they are queued and
+    /// applies those waiting on a condition in the order it received them,
+    /// and at one sample, of equal rank, the later wins: the copy, queued
+    /// after the edit and so after its write, replaces it (and any copy
+    /// kept before) as it reaches the audio thread, holding one slot
+    /// however long a drag. So the copy plays at the landing, and the
+    /// edit's value never sounds when the copy reaches the audio thread
+    /// before the landing; held back past it, the copy plays as soon as it
+    /// does (see [`Ledger::kept`]). At the same rank, its hold is the
+    /// author's own, refusing no later write a plain one would
     /// not. `None`, with nothing queued, when neither: none waits, it does
     /// not write the control, or the write cannot be kept (an event, the
     /// requests waiting on conditions are full, or `requests`, the sender
@@ -371,10 +375,10 @@ impl Publisher {
         target: ControlTarget,
         (raw, event): (RtValue, bool),
         requests: &RequestSender,
-    ) -> Option<RequestId> {
+    ) -> Option<(RequestId, Option<RequestId>)> {
         let waiting = self.timed.as_ref()?;
         match waiting.fate.settled() {
-            Some(true) => return Some(waiting.id),
+            Some(true) => return Some((waiting.id, None)),
             Some(false) => return None,
             None => {}
         }
@@ -390,9 +394,9 @@ impl Publisher {
         let id = waiting.id;
         let mut kept = Request::new(target, RequestValue::Value(raw));
         kept.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).expect("one part"));
-        requests.submit(kept).ok()?;
+        let copy = requests.submit(kept).ok()?;
         self.ledger.kept(id, format!("{module_id}.{key}"));
-        Some(id)
+        Some((id, Some(copy)))
     }
 
     /// Every recent timed edit's status (see `timed_status`).
