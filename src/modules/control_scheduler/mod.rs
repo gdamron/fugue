@@ -633,6 +633,8 @@ impl ControlScheduler {
 #[cfg(test)]
 mod declared_tests;
 #[cfg(test)]
+mod legacy_tests;
+#[cfg(test)]
 mod payload_tests;
 #[cfg(test)]
 mod tests;

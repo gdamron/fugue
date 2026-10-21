@@ -4,14 +4,18 @@
 //! trigger from atomics once per block, and takes a staged sample with
 //! `try_lock`, only after `swap_version` moved (the counter pattern from
 //! `sample_kit`). When a contended `try_lock` fails, the swap lands on a
-//! later block.
+//! later block. A scheduler's writes (`play`, `loop`, the ratios) are
+//! stores to those atomics.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 
 use crate::atomic::AtomicF32;
+use crate::audio_thread::debug_assert_control_thread;
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
 use crate::{ControlMeta, ControlSurface, ControlValue};
+
+mod scheduled;
 
 #[derive(Clone)]
 pub struct SamplePlayerControls {
@@ -108,10 +112,12 @@ impl SamplePlayerControls {
     }
 
     pub fn asset(&self) -> String {
+        debug_assert_control_thread("reading a sample player's asset");
         self.shared.asset.lock().unwrap().clone()
     }
 
     pub fn set_asset(&self, asset: &str) -> Result<(), String> {
+        debug_assert_control_thread("loading a sample player's asset");
         let target = resolve_source(asset)?;
         let sample = load_cached_sample(&target, self.sample_rate)?;
         if self.elastic {
@@ -298,5 +304,19 @@ impl ControlSurface for SamplePlayerControls {
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    #[allow(private_interfaces)]
+    fn set_scheduled(
+        &self,
+        key: &str,
+        value: crate::control_request::TableValue,
+    ) -> Result<(), crate::control_request::LegacyRefusal> {
+        self.scheduled_write(key, value)
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, crate::control_request::LegacyRefusal> {
+        self.scheduled_read(key)
     }
 }

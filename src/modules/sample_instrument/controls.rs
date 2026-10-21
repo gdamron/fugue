@@ -241,6 +241,13 @@ impl SampleInstrumentControls {
         }
     }
 
+    /// Holds the staged-swap lock, as a control thread mid-`set_asset`
+    /// would.
+    #[cfg(test)]
+    pub(crate) fn hold_swaps(&self) -> std::sync::MutexGuard<'_, Vec<Option<ZoneAudio>>> {
+        self.inner.pending_swaps.lock().unwrap()
+    }
+
     fn zone(&self, index: usize) -> Result<&ZoneState, String> {
         self.inner
             .zones
