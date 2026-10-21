@@ -3,8 +3,9 @@
 //! queued: the edit lands without its value ever sounding, and says so. What plays and what is recorded are the
 //! author's value whenever the audio thread takes the write: before the
 //! landing, after it, or held back by a full pending store. When it cannot
-//! be kept (no room for requests waiting on conditions), the whole edit is
-//! cancelled instead, as before.
+//! be kept (no room for requests waiting on conditions, or for the copy and
+//! the write both), the whole edit is cancelled instead, as before; a write
+//! refused outright leaves the edit alone.
 
 use super::timed_status::{front_door, queue_writing, recorded, state_of, write, BLOCKS, LANDING};
 use super::*;
@@ -248,4 +249,66 @@ fn a_write_that_cannot_be_kept_cancels_the_edit() {
     };
     assert_eq!(state, EditState::Cancelled(cause));
     assert!(kept(&rig, id).is_empty());
+}
+
+/// Fills the queue through osc1's surface, as performed writes do, and
+/// says how many it took: all it can, or `count`.
+fn fill(rig: &Rig, count: Option<usize>) -> usize {
+    let door = front_door(rig);
+    let mut made = 0;
+    while count.is_none_or(|count| made < count) {
+        let value = ControlValue::Number(300.0);
+        if door
+            .set_control_transient("osc1", "frequency", value)
+            .is_err()
+        {
+            break;
+        }
+        made += 1;
+    }
+    made
+}
+
+/// With no room for the write, it is refused and the edit is left alone,
+/// with nothing kept; with room for the write and not a copy too, it is
+/// made, not kept, and the edit is cancelled. Never a copy without the
+/// write.
+#[test]
+fn a_write_with_no_room_for_a_copy_is_not_kept() {
+    let mut full = Rig::new(BASE);
+    let id = queue_writing(&full, 440.0);
+    let room = fill(&full, None);
+    let value = ControlValue::Number(660.0);
+    let door = front_door(&full);
+    let refused = door.set_control_with_intent(
+        "osc2",
+        "frequency",
+        value.clone(),
+        ControlWriteIntent::Author,
+    );
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(state_of(&full, id), EditState::Queued, "left alone");
+    assert!(kept(&full, id).is_empty());
+    full.render(BLOCKS);
+    assert_eq!(state_of(&full, id), EditState::Adopted);
+    full.render(1);
+    let edits = ControlValue::Number(440.0);
+    assert_eq!(playing(&full, "osc2", "frequency"), edits);
+    let (document, _) = recorded(&full, "osc2", "frequency");
+    assert_ne!(document, 660.0, "the refused write is not recorded");
+
+    let mut one = Rig::new(BASE);
+    let id = queue_writing(&one, 440.0);
+    assert_eq!(fill(&one, Some(room - 1)), room - 1);
+    write(&one, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
+    assert!(kept(&one, id).is_empty());
+    let cause = CancelCause::AuthoredWrite {
+        module_id: "osc2".to_string(),
+        key: "frequency".to_string(),
+        touches: Touched::Written,
+    };
+    assert_eq!(state_of(&one, id), EditState::Cancelled(cause));
+    one.render(BLOCKS);
+    assert_eq!(playing(&one, "osc2", "frequency"), value);
+    assert_eq!(recorded(&one, "osc2", "frequency"), (660.0, 660.0));
 }
