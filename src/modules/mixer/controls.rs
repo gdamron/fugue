@@ -1,6 +1,7 @@
 //! Thread-safe controls for the Mixer module.
 
 use crate::atomic::AtomicF32;
+use crate::control_request::{scheduled_index, scheduled_number, LegacyRefusal, TableValue};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 use super::MAX_CHANNELS;
@@ -193,5 +194,48 @@ impl ControlSurface for MixerControls {
         }
 
         Err(format!("Unknown control: {}", key))
+    }
+
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        let value = scheduled_number(value)?;
+        match self.scheduled_key(key)? {
+            MixerKey::Master => self.set_master(value),
+            MixerKey::Level(index) => self.set_level(index, value),
+            MixerKey::Pan(index) => self.set_pan(index, value),
+        }
+        Ok(())
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        Ok(match self.scheduled_key(key)? {
+            MixerKey::Master => self.master(),
+            MixerKey::Level(index) => self.level(index),
+            MixerKey::Pan(index) => self.pan(index),
+        })
+    }
+}
+
+/// A mixer control a schedule writes.
+enum MixerKey {
+    Master,
+    Level(usize),
+    Pan(usize),
+}
+
+impl MixerControls {
+    /// `key` as one of this mixer's controls, parsed without allocating.
+    fn scheduled_key(&self, key: &str) -> Result<MixerKey, LegacyRefusal> {
+        let channel = |prefix| scheduled_index(key, prefix).filter(|&i| i < self.channels);
+        if key == "master" {
+            Ok(MixerKey::Master)
+        } else if let Some(index) = channel("level.") {
+            Ok(MixerKey::Level(index))
+        } else if let Some(index) = channel("pan.") {
+            Ok(MixerKey::Pan(index))
+        } else {
+            Err(LegacyRefusal::Unsupported)
+        }
     }
 }

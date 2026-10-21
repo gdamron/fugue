@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::atomic::AtomicF32;
+use crate::control_request::{scheduled_index, scheduled_number, LegacyRefusal, TableValue};
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
 use crate::traits::{check_finite, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
@@ -277,6 +278,22 @@ impl ControlSurface for SampleKitControls {
         Err(format!("Unknown control: {}", key))
     }
 
+    /// Only a slot's `level.<i>`: `play` and `asset.<i>` are strings to a
+    /// schedule, and `key.<i>` is fixed at build time.
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        let value = scheduled_number(value)?;
+        let index = self.scheduled_slot(key)?;
+        // The slot exists: the setter cannot fail (and format an error).
+        self.set_level(index, value)
+            .map_err(|_| LegacyRefusal::Unsupported)
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        Ok(self.level(self.scheduled_slot(key)?))
+    }
+
     /// Checks the slot and the value's shape; whether a new asset loads is
     /// only known by loading it, on set.
     fn validate_control(
@@ -301,6 +318,15 @@ impl ControlSurface for SampleKitControls {
             return check_finite(key, value.as_number()?);
         }
         Err(format!("Unknown control: {}", key))
+    }
+}
+
+impl SampleKitControls {
+    /// The slot a schedule's `level.<i>` names, parsed without allocating.
+    fn scheduled_slot(&self, key: &str) -> Result<usize, LegacyRefusal> {
+        scheduled_index(key, "level.")
+            .filter(|&index| index < self.slot_count())
+            .ok_or(LegacyRefusal::Unsupported)
     }
 }
 

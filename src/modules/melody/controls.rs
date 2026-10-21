@@ -3,7 +3,10 @@
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::control_request::{LegacyRefusal, TableValue};
 use crate::{ControlMeta, ControlSurface, ControlValue};
+
+mod scheduled;
 
 /// Maximum number of scale degrees a melody can choose between.
 ///
@@ -91,6 +94,42 @@ impl DegreeTable {
             self.degrees.push(degree);
             self.weights.push(weight);
         }
+    }
+
+    /// Sets the number of active positions (clamped to 1 to
+    /// [`MAX_DEGREES`]), returning whether it changed.
+    fn set_count(&mut self, count: usize) -> bool {
+        let count = count.clamp(1, MAX_DEGREES);
+        if self.count == count {
+            return false;
+        }
+        self.count = count;
+        self.recompute();
+        true
+    }
+
+    /// Writes the degree at active position `index` (clamped to ±127),
+    /// returning false for a position past the count.
+    fn write_degree(&mut self, index: usize, value: i32) -> bool {
+        if index >= self.degrees.len() {
+            return false;
+        }
+        let value = value.clamp(-127, 127);
+        self.written_degrees[index] = Some(value);
+        self.degrees[index] = value;
+        true
+    }
+
+    /// Writes the weight at active position `index` (clamped to 0-10),
+    /// returning false for a position past the count.
+    fn write_weight(&mut self, index: usize, value: f32) -> bool {
+        if index >= self.weights.len() {
+            return false;
+        }
+        let value = value.clamp(0.0, 10.0);
+        self.written_weights[index] = Some(value);
+        self.weights[index] = value;
+        true
     }
 
     fn out_of_range(&self, what: &str, index: usize) -> String {
@@ -245,15 +284,11 @@ impl MelodyControls {
     /// Shrinking hides the positions past the count; growing shows them again
     /// as they were. Positions past the base scale repeat it from the start.
     pub fn set_degree_count(&self, count: usize) {
-        let count = count.clamp(1, MAX_DEGREES);
         // A ramp writes the count every sample; only a change is an edit.
         let mut table = self.table.lock().unwrap();
-        if table.count == count {
-            return;
+        if table.set_count(count) {
+            self.table_version.fetch_add(1, Ordering::Release);
         }
-        table.count = count;
-        table.recompute();
-        self.table_version.fetch_add(1, Ordering::Release);
     }
 
     /// Gets the scale degree at active position `index`.
@@ -269,13 +304,10 @@ impl MelodyControls {
     /// Sets the scale degree at active position `index` (clamped to ±127).
     pub fn set_degree(&self, index: usize, value: i32) -> Result<(), String> {
         self.edit_table(|table| {
-            if index >= table.degrees.len() {
-                return Err(table.out_of_range("Degree", index));
-            }
-            let value = value.clamp(-127, 127);
-            table.written_degrees[index] = Some(value);
-            table.degrees[index] = value;
-            Ok(())
+            table
+                .write_degree(index, value)
+                .then_some(())
+                .ok_or_else(|| table.out_of_range("Degree", index))
         })
     }
 
@@ -292,13 +324,10 @@ impl MelodyControls {
     /// Sets the note weight at active position `index` (clamped to 0-10).
     pub fn set_note_weight(&self, index: usize, value: f32) -> Result<(), String> {
         self.edit_table(|table| {
-            if index >= table.weights.len() {
-                return Err(table.out_of_range("Weight", index));
-            }
-            let value = value.clamp(0.0, 10.0);
-            table.written_weights[index] = Some(value);
-            table.weights[index] = value;
-            Ok(())
+            table
+                .write_weight(index, value)
+                .then_some(())
+                .ok_or_else(|| table.out_of_range("Weight", index))
         })
     }
 
@@ -430,5 +459,15 @@ impl ControlSurface for MelodyControls {
                 Err(format!("Unknown control: {}", key))
             }
         }
+    }
+
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        self.scheduled_write(key, value)
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        self.scheduled_read(key)
     }
 }

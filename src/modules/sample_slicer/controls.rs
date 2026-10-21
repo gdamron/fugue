@@ -5,6 +5,7 @@
 //! so slices can be tempo-fit without chipmunking.
 
 use crate::atomic::AtomicF32;
+use crate::control_request::{scheduled_number, LegacyRefusal, TableValue};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 #[derive(Clone)]
@@ -81,5 +82,25 @@ impl ControlSurface for SampleSlicerControls {
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        let value = scheduled_number(value)?;
+        match key {
+            "time_ratio" => self.set_time_ratio(value),
+            "pitch_ratio" => self.set_pitch_ratio(value),
+            _ => return Err(LegacyRefusal::Unsupported),
+        }
+        Ok(())
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        match key {
+            "time_ratio" => Ok(self.time_ratio()),
+            "pitch_ratio" => Ok(self.pitch_ratio()),
+            _ => Err(LegacyRefusal::Unsupported),
+        }
     }
 }
