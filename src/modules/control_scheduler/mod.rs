@@ -426,7 +426,7 @@ impl ControlScheduler {
             // Ramp: sample the control's current value as the start point.
             // Resolution validated the control is numeric; if the target
             // changed shape since, skip rather than misbehave.
-            let Some(from) = entry.current_number() else {
+            let Some(from) = entry.current_number(&self.draining) else {
                 continue;
             };
             let TableValue::Number(to) = entry.entry.value else {
@@ -559,6 +559,15 @@ impl Module for ControlScheduler {
         self.ctrl.target_module_ids()
     }
 
+    /// Removed or replaced, it tries its waiting writes one last time and
+    /// drops the rest: they no longer hold any other schedule's back.
+    fn leave(&mut self) {
+        for writes in self.draining.iter().chain(&self.legacy) {
+            writes.retry();
+            writes.drop_waiting();
+        }
+    }
+
     #[allow(private_interfaces)]
     fn beat_table(&self) -> Option<&dyn BeatTable> {
         Some(self)
@@ -663,6 +672,10 @@ impl BeatTable for ControlScheduler {
         self.told_step.store(step, Ordering::Relaxed);
     }
 
+    fn draining(&self) -> &[Arc<LegacyWrites>] {
+        &self.draining
+    }
+
     fn retry_legacy(&self) {
         for writes in self.draining.iter().chain(&self.legacy) {
             writes.retry();
@@ -691,6 +704,8 @@ impl ControlScheduler {
 
 #[cfg(test)]
 mod declared_tests;
+#[cfg(test)]
+mod departed_tests;
 #[cfg(test)]
 mod legacy_tests;
 #[cfg(test)]

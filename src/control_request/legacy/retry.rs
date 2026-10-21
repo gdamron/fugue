@@ -32,7 +32,9 @@
 //!   alias, so one alias busy waits alone: the others take the write once.
 //! - **Adoption.** A schedule replaced keeps trying its waiting writes
 //!   until they land, ahead of its successor's (the scheduler keeps it, see
-//!   `ControlScheduler::adopt`).
+//!   `ControlScheduler::adopt`), and a ramp the successor starts on one of
+//!   their controls starts where they will leave it. A scheduler removed
+//!   drops what it has waiting (see `Module::leave`).
 //!
 //! Its state is atomics, so it is `Sync`, but one thread at a time writes
 //! through it: the audio thread, or an offline render's.
@@ -308,22 +310,20 @@ impl LegacyWrites {
     }
 
     /// Reads target `index`'s number where a ramp starts, from the first
-    /// control it reaches: the latest number this schedule has waiting to
-    /// be written there, as it will be once it lands (the setter's rounding
-    /// aside), else the control's own. `None` for one holding none, or one
+    /// control it reaches: the latest number waiting to be written there,
+    /// as it will be once it lands (the setter's rounding aside), by this
+    /// schedule or else by those in `before` (the ones it replaced, oldest
+    /// first); else the control's own. `None` for one holding none, or one
     /// its surface could not read (counted).
-    pub(crate) fn read(&self, index: usize) -> Option<f32> {
+    pub(crate) fn read(&self, index: usize, before: &[Arc<LegacyWrites>]) -> Option<f32> {
         let leaf = *self.reached(index).first()?;
-        let waiting = (self.slots[..self.waiting()].iter().rev())
-            .map(Slot::load)
-            .find_map(|kept| match kept.value {
-                TableValue::Number(number) if kept.index == leaf => Some(number),
-                _ => None,
-            });
+        let control = &self.controls[leaf];
+        let waiting = self
+            .waiting_number(|kept| kept == leaf)
+            .or_else(|| (before.iter().rev()).find_map(|writes| writes.waiting_for(control)));
         if waiting.is_some() {
             return waiting;
         }
-        let control = &self.controls[leaf];
         match control.surface.get_scheduled(&control.key) {
             Ok(number) => Some(number),
             Err(LegacyRefusal::Unsupported) => None,
@@ -332,6 +332,24 @@ impl LegacyWrites {
                 None
             }
         }
+    }
+
+    /// The latest number waiting for the control `leaf` says is it.
+    fn waiting_number(&self, leaf: impl Fn(usize) -> bool) -> Option<f32> {
+        (self.slots[..self.waiting()].iter().rev())
+            .map(Slot::load)
+            .find_map(|kept| match kept.value {
+                TableValue::Number(number) if leaf(kept.index) => Some(number),
+                _ => None,
+            })
+    }
+
+    /// The latest number waiting for another schedule's `control`.
+    fn waiting_for(&self, control: &Control) -> Option<f32> {
+        self.waiting_number(|leaf| {
+            let mine = &self.controls[leaf];
+            same(&mine.surface, &control.surface) && mine.key == control.key
+        })
     }
 
     /// Tries every waiting write again, in order: one landing lets the

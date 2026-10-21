@@ -565,6 +565,19 @@ pub trait Module: Send {
         false
     }
 
+    /// Lets go of anything a running module could be waiting on, now that
+    /// this instance has left the running graph: an edit removed or
+    /// replaced it, and it will not process again. A scheduler's writes
+    /// still waiting to land, say, would otherwise hold back every other
+    /// scheduler's to the same surface until the instance is freed.
+    ///
+    /// Runs on the audio thread as the edit installs, after the instance's
+    /// last block and after any replacement has
+    /// [inherited](Module::inherit) from it. It must not allocate, free,
+    /// lock or block. The default does nothing.
+    #[doc(hidden)]
+    fn leave(&mut self) {}
+
     /// This module's declared controls and the cells it publishes their
     /// values to, once it takes control requests. A module that
     /// returns `None` keeps the legacy `set_control` path.

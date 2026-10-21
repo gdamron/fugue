@@ -13,6 +13,7 @@ use crate::spsc::Ring;
 use crate::ModuleRegistry;
 
 mod landing;
+mod leaving;
 mod never_waits;
 
 const SAMPLE_RATE: u32 = 48_000;
