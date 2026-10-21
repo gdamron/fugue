@@ -105,6 +105,11 @@
 //! module, is not held off by it. A reload's control changes on a
 //! surviving module are a user's writes, and hold as any does.
 //!
+//! A ramp in beats runs on only while its control's hold is its own, so
+//! any write taking the control ends it, and one applying at the same
+//! sample and rank ends it directly (see `control_request::ramps`): automation's next
+//! event replaces it.
+//!
 //! # Sample accuracy by splitting the block
 //!
 //! `process_block` runs a block as segments bounded by the due times of
@@ -150,7 +155,8 @@ pub(crate) struct RequestDrain {
     /// a full queue. Edits do not count against it.
     pub(super) pop_limit: usize,
     pub(crate) pending: PendingStore,
-    /// Requests timed in beats (see [`super::beats`]).
+    /// Requests timed in beats, and the ramps they start (see
+    /// [`super::beats`]).
     pub(crate) watches: Watches,
     /// Requests timed by a condition (see [`super::conditions`]).
     pub(crate) conditions: Conditions,
@@ -594,10 +600,17 @@ impl SignalGraph {
             .conditions
             .start(now, drain.installed, &*self, outcomes);
         self.apply_conditions(drain, None, now);
+        let ramps = &mut drain.watches.ramps;
         drain
             .pending
             .apply_due(now, drain.installed, |target, standing, value, retirer| {
-                self.apply_ranked(target, standing, value, retirer)
+                let applied = self.apply_ranked(target, standing, value, retirer);
+                // At a ramp's own rank and sample, it leaves the hold as the
+                // ramp took it: end the ramp here.
+                if applied.is_ok() {
+                    ramps.supersede(target, &*self);
+                }
+                applied
             });
         // What those requests applying met applies with them, before beats
         // are placed: it may move a clock (a tempo). So may what the beats
