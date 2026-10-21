@@ -17,6 +17,10 @@ use crate::control_request::LegacyWrites;
 /// The next [`ResolvedSchedule::id`]. Zero is never handed out.
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// The most replaced schedules a scheduler keeps trying the waiting
+/// writes of.
+pub(super) const DRAINING: usize = 4;
+
 /// A resolved schedule and the ramps it runs.
 pub(crate) struct ResolvedSchedule {
     /// Sorted by `at_step`, ties in schedule order.
@@ -27,6 +31,10 @@ pub(crate) struct ResolvedSchedule {
     /// Its legacy targets' writes, those waiting included; `None` when it
     /// has no legacy target.
     pub(super) legacy: Option<Arc<LegacyWrites>>,
+    /// Room for the replaced schedules' writes still waiting to land, kept
+    /// trying by the scheduler (see `ControlScheduler::adopt`); handed back
+    /// holding those it replaces.
+    pub(super) draining: Vec<Arc<LegacyWrites>>,
     /// Tells this schedule from every other: the scheduler reports the one
     /// it adopted last, so a control thread can tell whether the schedule
     /// it recorded is the one playing.
@@ -52,6 +60,7 @@ impl ResolvedSchedule {
             entries,
             ramps: Vec::with_capacity(ramp_count),
             legacy,
+            draining: Vec::with_capacity(DRAINING),
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             retarget: false,
         }

@@ -18,17 +18,21 @@
 //!   melody's `degree_count` before a `degree.N`) is not lost. An event
 //!   ([`crate::ControlSurface::scheduled_event`]: a note, a play) is never
 //!   merged: each waits its turn.
-//! - **Bound.** At most [`RETRY_CAPACITY`] writes wait. Each is tried again
-//!   at least once, and then for at most the scheduler's limit (10 ms of
-//!   samples). A write past either is dropped and counted in
-//!   [`LegacyWrites::refused`], as is one its surface refuses outright (a
-//!   control it has not got, a value it does not take).
+//! - **Bound.** At most [`RETRY_CAPACITY`] writes wait, the last
+//!   [`EVENT_ROOM`] of them events only. A value finding no room gives way
+//!   to its control's newer write after all, if no event to its surface came
+//!   between them; else it is dropped. A value is tried again at least once,
+//!   and then for at most the scheduler's limit (10 ms of samples). An event
+//!   waits as long as it takes, and is dropped only for want of room. A
+//!   write dropped is counted in [`LegacyWrites::refused`], as is one its
+//!   surface refuses outright (a control it has not got, a value it does
+//!   not take).
 //! - **Fan-out.** A development's control reaching several aliases (see
 //!   [`crate::ControlSurface::scheduled_aliases`]) is written alias by
 //!   alias, so one alias busy waits alone: the others take the write once.
-//! - **Adoption.** A new schedule takes over the old one's waiting writes
-//!   to the controls it still reaches, ahead of its own (see
-//!   [`LegacyWrites::take_waiting`]).
+//! - **Adoption.** A schedule replaced keeps trying its waiting writes
+//!   until they land, ahead of its successor's (the scheduler keeps it, see
+//!   `ControlScheduler::adopt`).
 //!
 //! Its state is atomics, so it is `Sync`, but one thread at a time writes
 //! through it: the audio thread, or an offline render's.
@@ -47,6 +51,10 @@ use gate::{Gate, IDLE};
 /// The most writes one schedule keeps waiting.
 pub(crate) const RETRY_CAPACITY: usize = 32;
 
+/// The waiting room only events may take: a ramp waiting never crowds out
+/// the `note_off` after it.
+const EVENT_ROOM: usize = 8;
+
 type Surface = Arc<dyn ControlSurface + Send + Sync>;
 
 /// One legacy control a schedule writes, and the surface it is on.
@@ -55,7 +63,7 @@ struct Control {
     key: String,
     /// The same for every control on one surface: its writes keep order.
     group: usize,
-    /// Whether a write is an event, never merged.
+    /// Whether a write is an event, never merged nor given up on.
     event: bool,
 }
 
@@ -164,6 +172,12 @@ impl LegacyControls {
             self.leaves.len() - 1
         });
         self.fanout.push(leaf);
+    }
+
+    /// Whether no target was indexed: the schedule writes no legacy
+    /// control, and needs no [`LegacyWrites`].
+    pub(crate) fn is_empty(&self) -> bool {
+        self.targets.is_empty()
     }
 
     /// The schedule's writes, with room for those that wait, and a lane at
@@ -334,16 +348,17 @@ impl LegacyWrites {
         self.waiting.store(kept, Ordering::Relaxed);
     }
 
-    /// Ages every waiting write by `samples`, dropping (and counting) those
-    /// that have waited longer than `limit`. A write kept since the last
-    /// ageing is not aged yet: however long the block, it is tried again.
+    /// Ages every waiting write by `samples`, dropping (and counting) the
+    /// values that have waited longer than `limit`. A write kept since the
+    /// last ageing is not aged yet: however long the block, it is tried
+    /// again. An event is never dropped for its wait.
     pub(crate) fn age(&self, samples: u32, limit: u32) {
-        self.retain(|_, waited| {
+        self.retain(|control, waited| {
             *waited = match *waited {
                 FRESH => 0,
                 waited => waited.saturating_add(samples).min(FRESH - 1),
             };
-            let keep = *waited <= limit;
+            let keep = control.event || *waited <= limit;
             if !keep {
                 self.refused.record();
             }
@@ -364,25 +379,34 @@ impl LegacyWrites {
     }
 
     /// Keeps a write to try again: a value in place of its control's latest
-    /// waiting one when nothing was kept on its surface since (an event's
-    /// never gives way), else after every write waiting, with a new ticket.
+    /// waiting one when nothing was kept on its surface since, or, with
+    /// no room left for values, when no event was; else after every write
+    /// waiting, with a new ticket.
     fn keep(&self, index: usize, value: TableValue) {
         let control = &self.controls[index];
         let group = &self.groups[control.group];
         let waiting = self.waiting();
+        let room = match control.event {
+            true => RETRY_CAPACITY,
+            false => RETRY_CAPACITY - EVENT_ROOM,
+        };
         if !control.event {
             let latest = (self.slots[..waiting].iter().rev()).find(|slot| slot.index() == index);
-            if let Some(slot) = latest.filter(|slot| group.gate.is_last(slot.load().ticket)) {
-                slot.set_value(value);
-                return;
+            if let Some(slot) = latest {
+                let ticket = slot.load().ticket;
+                let crowded = waiting >= room && !group.gate.event_after(ticket);
+                if group.gate.is_last(ticket) || crowded {
+                    slot.set_value(value);
+                    return;
+                }
             }
         }
-        let Some(slot) = self.slots.get(waiting) else {
+        if waiting >= room {
             self.refused.record();
             return;
-        };
+        }
         let ticket = group.gate.ticket(control.event);
-        slot.store(Kept {
+        self.slots[waiting].store(Kept {
             index,
             value,
             waited: FRESH,
@@ -392,45 +416,7 @@ impl LegacyWrites {
         self.waiting.store(waiting + 1, Ordering::Relaxed);
     }
 
-    /// Takes over `old`'s waiting writes, as the schedule replacing it:
-    /// those to a control this one reaches go ahead of its own, in order,
-    /// keeping their tickets; the rest are dropped and counted, as are any
-    /// finding no room.
-    pub(crate) fn take_waiting(&self, old: &LegacyWrites) {
-        let leaf = |slot: &Slot| {
-            let control = &old.controls[slot.index()];
-            (self.controls.iter())
-                .position(|ours| same(&ours.surface, &control.surface) && ours.key == control.key)
-        };
-        let theirs = &old.slots[..old.waiting()];
-        let carried = theirs.iter().filter(|slot| leaf(slot).is_some()).count();
-        let lost = theirs.len() - carried;
-        let mine = self.waiting();
-        let kept = mine.min(RETRY_CAPACITY - carried);
-        for i in (0..kept).rev() {
-            self.slots[carried + i].store(self.slots[i].load());
-        }
-        let mut at = 0;
-        for slot in theirs {
-            if let Some(index) = leaf(slot) {
-                self.slots[at].store(Kept {
-                    index,
-                    ..slot.load()
-                });
-                at += 1;
-            }
-        }
-        self.waiting.store(carried + kept, Ordering::Relaxed);
-        old.waiting.store(0, Ordering::Relaxed);
-        old.hide();
-        self.retain(|_, _| true);
-        for _ in 0..lost + mine - kept {
-            self.refused.record();
-        }
-    }
-
-    /// Drops every waiting write, counted: its schedule is replaced by one
-    /// writing no legacy control.
+    /// Drops every waiting write, counted.
     pub(crate) fn drop_waiting(&self) {
         self.retain(|_, _| {
             self.refused.record();

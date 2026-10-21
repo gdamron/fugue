@@ -307,12 +307,13 @@ pub(crate) fn resolve_schedule(
             None => Err(legacy.index(surface, &entry.control)),
         });
     }
-    let writes = legacy.build();
+    let writes = (!legacy.is_empty()).then(|| legacy.build());
     for (entry, target) in entries.iter().zip(targets) {
         let target = match target {
             Ok(automation) => TableTarget::Declared(automation),
             Err(index) => {
                 let surface = &surfaces[entry.module.as_str()];
+                let writes = writes.as_ref().expect("a legacy target was indexed");
                 writes.target(index, surface, &entry.control)
             }
         };

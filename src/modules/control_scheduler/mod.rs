@@ -239,9 +239,11 @@ pub struct ControlScheduler {
     /// ramp entry in it, so pushes never allocate on the audio thread.
     ramps: Vec<ActiveRamp>,
     /// The schedule's legacy writes, keeping those a busy surface refused
-    /// to try again (see `LegacyWrites`), and how many samples one may wait
-    /// before it is dropped: 10 ms.
+    /// to try again (see `LegacyWrites`); those of the schedules it
+    /// replaced still waiting to land, oldest first; and how many samples
+    /// a value may wait before it is dropped: 10 ms.
     legacy: Option<Arc<LegacyWrites>>,
+    draining: Vec<Arc<LegacyWrites>>,
     retry_limit: u32,
 
     /// Duration of one step in samples, measured between gate edges.
@@ -282,6 +284,7 @@ impl ControlScheduler {
             current_step: -1,
             ramps: Vec::new(),
             legacy: None,
+            draining: Vec::new(),
             retry_limit: sample_rate / 100,
             step_duration_samples: sample_rate / 2, // Default ~120 BPM
             samples_since_gate: 0,
@@ -311,16 +314,13 @@ impl ControlScheduler {
     /// than moves, so it allocates, frees and locks nothing.
     fn adopt(&mut self, mut next: Box<ResolvedSchedule>) -> Box<ResolvedSchedule> {
         self.ctrl.set_adopted(next.id);
-        // A write still waiting has a last try; then the new schedule takes
-        // over those to the controls it still reaches (a note_off to an
-        // instrument it keeps lands), and the rest are dropped, counted.
+        // A write still waiting has a last try; those that still wait keep
+        // trying, ahead of the new schedule's writes to their surfaces, so a
+        // note_off lands whatever the new schedule writes.
         self.retry_legacy();
-        match (&self.legacy, &next.legacy) {
-            (Some(old), Some(new)) if !Arc::ptr_eq(old, new) => new.take_waiting(old),
-            (Some(old), None) => old.drop_waiting(),
-            _ => {}
-        }
         std::mem::swap(&mut self.legacy, &mut next.legacy);
+        std::mem::swap(&mut self.draining, &mut next.draining);
+        self.keep_draining(&next);
         if next.retarget && same_plan(&self.entries, &next.entries) {
             // The same entries, re-resolved: only their targets change, so
             // the step and every ramp in flight (by entry index) carry on.
@@ -333,6 +333,26 @@ impl ControlScheduler {
         self.ramps.clear();
         self.skip_played();
         next
+    }
+
+    /// Keeps trying the writes still waiting in `old`, the schedule just
+    /// replaced, and in those it kept trying, oldest first, in the room the
+    /// new schedule reserved (see `ResolvedSchedule::draining`). Writes
+    /// finding none are dropped, counted. Clones, so it frees nothing:
+    /// `old` holds every one still, to be retired off the audio thread.
+    fn keep_draining(&mut self, old: &ResolvedSchedule) {
+        let playing = self.legacy.as_ref().map(Arc::as_ptr);
+        let replaced = (old.legacy.iter()).filter(|writes| Some(Arc::as_ptr(writes)) != playing);
+        for writes in old.draining.iter().chain(replaced) {
+            if writes.waiting() == 0 {
+                continue;
+            }
+            if self.draining.len() < self.draining.capacity() {
+                self.draining.push(writes.clone());
+            } else {
+                writes.drop_waiting();
+            }
+        }
     }
 
     /// Moves the cursor past every entry at or before the current step:
@@ -501,8 +521,8 @@ impl Module for ControlScheduler {
         }
         // Mirror the step counter into the controls at block rate.
         self.ctrl.set_step(self.current_step);
-        if let Some(legacy) = &self.legacy {
-            legacy.age(frames as u32, self.retry_limit);
+        for writes in self.draining.iter().chain(&self.legacy) {
+            writes.age(frames as u32, self.retry_limit);
         }
         true
     }
@@ -638,8 +658,8 @@ impl BeatTable for ControlScheduler {
     }
 
     fn retry_legacy(&self) {
-        if let Some(legacy) = &self.legacy {
-            legacy.retry();
+        for writes in self.draining.iter().chain(&self.legacy) {
+            writes.retry();
         }
     }
 }

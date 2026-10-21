@@ -145,7 +145,7 @@ fn a_waiting_value_gives_way_to_a_newer_one_and_an_event_never_does() {
 }
 
 #[test]
-fn a_write_past_the_room_or_the_wait_is_dropped_and_counted() {
+fn an_event_waits_until_it_lands_or_finds_no_room() {
     let voice = Arc::new(Voice::default());
     let (writes, [_, _, on, _]) = one(&voice);
     voice.busy.store(true, Ordering::Relaxed);
@@ -157,15 +157,63 @@ fn a_write_past_the_room_or_the_wait_is_dropped_and_counted() {
     assert_eq!((allocs, frees), (0, 0));
     assert_eq!(writes.waiting(), RETRY_CAPACITY);
     assert_eq!(writes.refused().count(), 1, "no room for the last");
-    // 10 ms at 48 kHz in blocks of 128: kept in the first block, then the
-    // fourth block's wait is 512.
-    for _ in 0..4 {
+    // 10 ms at 48 kHz in blocks of 128, many times over: a note waits on.
+    for _ in 0..20 {
         writes.age(128, 480);
     }
     assert_eq!(writes.waiting(), RETRY_CAPACITY);
+    voice.busy.store(false, Ordering::Relaxed);
+    writes.retry();
+    assert_eq!(voice.landed().len(), RETRY_CAPACITY);
+}
+
+#[test]
+fn a_value_waiting_past_the_limit_is_dropped_and_counted() {
+    let voice = Arc::new(Voice::default());
+    let (writes, [level, _, _, off]) = one(&voice);
+    voice.busy.store(true, Ordering::Relaxed);
+    writes.write(level, n(1.0));
+    writes.write(off, n(60.0));
+    // Kept in the first block, then the fourth block's wait is 512.
+    for _ in 0..4 {
+        writes.age(128, 480);
+    }
+    assert_eq!(writes.waiting(), 2);
     writes.age(128, 480);
-    assert_eq!(writes.waiting(), 0, "waited past the limit");
-    assert_eq!(writes.refused().count(), 1 + RETRY_CAPACITY as u32);
+    assert_eq!((writes.waiting(), writes.refused().count()), (1, 1));
+    voice.busy.store(false, Ordering::Relaxed);
+    writes.retry();
+    assert_eq!(voice.landed(), [("note_off", 60.0)]);
+}
+
+#[test]
+fn values_crowding_the_room_never_crowd_out_the_note_off_after_them() {
+    let voice = Arc::new(Voice::default());
+    let (writes, [level, tone, _, off]) = one(&voice);
+    voice.busy.store(true, Ordering::Relaxed);
+    let (_, allocs, frees) = allocator_events(|| {
+        // Two ramps at once: neither's writes are ever the surface's last.
+        for value in 0..100 {
+            writes.write(level, n(value as f32));
+            writes.write(tone, n(value as f32));
+        }
+        writes.write(off, n(60.0));
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(
+        writes.refused().count(),
+        0,
+        "each ramp's newest took its place"
+    );
+    voice.busy.store(false, Ordering::Relaxed);
+    writes.retry();
+    let landed = voice.landed();
+    assert_eq!(landed.len(), RETRY_CAPACITY - EVENT_ROOM + 1);
+    assert_eq!(
+        landed[landed.len() - 3..],
+        [("level", 99.0), ("tone", 99.0), ("note_off", 60.0)],
+        "each ramp's last value, then the note off"
+    );
 }
 
 #[test]
@@ -179,18 +227,18 @@ fn a_write_its_surface_refuses_outright_is_counted_never_kept() {
 #[test]
 fn a_write_kept_late_in_a_long_block_is_tried_again_before_it_gives_up() {
     let voice = Arc::new(Voice::default());
-    let (writes, [.., off]) = one(&voice);
+    let (writes, [level, ..]) = one(&voice);
     voice.busy.store(true, Ordering::Relaxed);
-    writes.write(off, n(60.0));
+    writes.write(level, n(1.0));
     // A 1024-frame block ends, longer than the limit: not aged yet.
     writes.age(1024, 480);
     assert_eq!(writes.waiting(), 1);
     voice.busy.store(false, Ordering::Relaxed);
     writes.retry();
-    assert_eq!(voice.landed(), [("note_off", 60.0)]);
+    assert_eq!(voice.landed(), [("level", 1.0)]);
     // Still busy at its retry, a block later it gives up.
     voice.busy.store(true, Ordering::Relaxed);
-    writes.write(off, n(62.0));
+    writes.write(level, n(2.0));
     writes.age(1024, 480);
     writes.retry();
     writes.age(1024, 480);
@@ -208,8 +256,8 @@ fn a_ramp_starts_from_the_value_waiting_to_land() {
     assert_eq!((read, allocs, frees), (Some(12.0), 0, 0));
 }
 
-/// A development's control fanning out to `voices`' `note_on`.
-struct Fan(Vec<Arc<Voice>>);
+/// A development's control writing through to `aliases`, whatever its key.
+struct Fan(Vec<(Arc<Voice>, &'static str)>);
 
 impl ControlSurface for Fan {
     fn controls(&self) -> Vec<ControlMeta> {
@@ -224,19 +272,27 @@ impl ControlSurface for Fan {
         Ok(())
     }
 
-    fn scheduled_aliases(&self, key: &str) -> Option<Vec<(Surface, String)>> {
-        let voice = |voice: &Arc<Voice>| (voice.clone() as Surface, key.to_string());
-        Some(self.0.iter().map(voice).collect())
+    fn scheduled_aliases(&self, _key: &str) -> Option<Vec<(Surface, String)>> {
+        let alias = |(voice, key): &(Arc<Voice>, &str)| (voice.clone() as Surface, key.to_string());
+        Some(self.0.iter().map(alias).collect())
     }
+}
+
+/// A schedule's write to a development's control fanning out to `aliases`,
+/// and to `voice`'s note_off.
+fn fanned(aliases: Vec<(Arc<Voice>, &'static str)>) -> (Arc<LegacyWrites>, usize, usize) {
+    let voice: Surface = aliases[0].0.clone();
+    let fan: Surface = Arc::new(Fan(aliases));
+    let mut controls = LegacyControls::default();
+    let fanned = controls.index(&fan, "any");
+    let off = controls.index(&voice, "note_off");
+    (controls.build(), fanned, off)
 }
 
 #[test]
 fn a_fanned_out_write_waits_only_for_the_alias_that_is_busy() {
     let (free, busy) = (Arc::new(Voice::default()), Arc::new(Voice::default()));
-    let fan: Surface = Arc::new(Fan(vec![free.clone(), busy.clone()]));
-    let mut controls = LegacyControls::default();
-    let on = controls.index(&fan, "note_on");
-    let writes = controls.build();
+    let (writes, on, _) = fanned(vec![(free.clone(), "note_on"), (busy.clone(), "note_on")]);
     busy.busy.store(true, Ordering::Relaxed);
     writes.write(on, n(60.0));
     writes.retry();
@@ -249,28 +305,22 @@ fn a_fanned_out_write_waits_only_for_the_alias_that_is_busy() {
 }
 
 #[test]
-fn a_new_schedule_takes_over_the_waits_to_controls_it_still_reaches() {
-    let (voice, gone) = (Arc::new(Voice::default()), Arc::new(Voice::default()));
-    let (old, indices) = writes(&[&voice, &gone]);
-    let ([_, _, on, off], [gone_level, ..]) = (indices[0], indices[1]);
-    let (new, [level, ..]) = one(&voice);
+fn a_ramp_fanning_out_to_two_controls_of_one_module_leaves_room_for_its_note_off() {
+    let voice = Arc::new(Voice::default());
+    let (writes, fanned, off) = fanned(vec![(voice.clone(), "level"), (voice.clone(), "tone")]);
     voice.busy.store(true, Ordering::Relaxed);
-    gone.busy.store(true, Ordering::Relaxed);
-    old.write(on, n(60.0));
-    old.write(off, n(60.0));
-    old.write(gone_level, n(1.0));
-    new.write(level, n(7.0));
-    let (_, allocs, frees) = allocator_events(|| new.take_waiting(&old));
-    assert_eq!((allocs, frees), (0, 0));
-    assert_eq!((old.waiting(), new.waiting()), (0, 3));
-    assert_eq!(new.refused().count(), 1, "the write to a surface it lost");
+    for value in 0..100 {
+        writes.write(fanned, n(value as f32));
+    }
+    writes.write(off, n(60.0));
     voice.busy.store(false, Ordering::Relaxed);
-    new.retry();
+    writes.retry();
+    let landed = voice.landed();
     assert_eq!(
-        voice.landed(),
-        [("note_on", 60.0), ("note_off", 60.0), ("level", 7.0)],
-        "the old schedule's first: no stuck note"
+        landed[landed.len() - 3..],
+        [("level", 99.0), ("tone", 99.0), ("note_off", 60.0)]
     );
+    assert_eq!(writes.refused().count(), 0);
 }
 
 #[test]

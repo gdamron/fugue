@@ -332,6 +332,46 @@ fn a_write_another_waiting_one_needs_is_not_merged_away() {
 }
 
 #[test]
+fn a_note_off_waiting_when_its_schedule_is_replaced_still_lands() {
+    use super::resolved::ResolvedSchedule;
+    use super::schedule::resolve_schedule;
+    use crate::payload::Payload;
+    use ScheduleValue::Number;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let mut scheduler = scheduler(
+        vec![
+            entry(1, "sample_instrument", "note_on", Number(64.0)),
+            entry(2, "sample_instrument", "note_off", Number(64.0)),
+        ],
+        &directory,
+    );
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        block(&mut scheduler, gate);
+    }
+    // The new schedule writes the melody only: the instrument is not its.
+    let surfaces = directory.lock().unwrap().clone();
+    let melody = vec![entry(0, "melody", "degree.0", Number(3.0))];
+    let next = ResolvedSchedule::new(resolve_schedule(&melody, "sched", &surfaces).unwrap());
+    let next = Payload::owned(Box::new(next));
+    // Step 2's note_off finds the queue held, and is still waiting when the
+    // new schedule is adopted.
+    let (old, allocs, frees) = while_held(locking.instrument.pending_notes(), || {
+        block(&mut scheduler, 1.0);
+        allocator_events(|| scheduler.apply_payload(SCHEDULE, next))
+    });
+    assert_eq!((allocs, frees), (0, 0), "adopted");
+    drop(old);
+    assert_eq!(block(&mut scheduler, 0.0), (0, 0), "released");
+    assert_eq!(
+        queued_notes(&locking.instrument),
+        [(64, true), (64, false)],
+        "no stuck note"
+    );
+    assert_eq!(scheduler.draining[0].refused().count(), 0);
+}
+
+#[test]
 fn two_schedulers_notes_to_one_instrument_land_in_the_order_they_were_made() {
     use ScheduleValue::Number;
     let locking = Locking::new();
@@ -359,4 +399,48 @@ fn two_schedulers_notes_to_one_instrument_land_in_the_order_they_were_made() {
         [(64, true), (64, false)],
         "no stuck note"
     );
+}
+
+#[test]
+fn two_ramps_waiting_behind_a_note_leave_room_for_its_note_off() {
+    use ScheduleValue::Number;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let wav = eight_frame_wav();
+    let zone = |root_note| ZoneSpec {
+        root_note,
+        key_low: root_note,
+        key_high: root_note,
+        asset: wav.to_string(),
+        level: 1.0,
+        loop_spec: None,
+    };
+    let (instrument, _) =
+        SampleInstrumentControls::new(48_000, 0.1, vec![zone(60), zone(64)]).unwrap();
+    let surface: ControlSurfaceInstance = Arc::new(instrument.clone());
+    directory.lock().unwrap().insert("zones".into(), surface);
+    let ramp = |control, to| ScheduleEntry {
+        ramp_steps: Some(4),
+        ..entry(1, "zones", control, Number(to))
+    };
+    let mut scheduler = scheduler(
+        vec![
+            ramp("level.0", 0.5),
+            ramp("level.1", 0.25),
+            entry(2, "zones", "note_on", Number(64.0)),
+            entry(3, "zones", "note_off", Number(64.0)),
+        ],
+        &directory,
+    );
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        block(&mut scheduler, gate);
+    }
+    // Steps 2 and 3 play with the queue held: both ramps write behind the
+    // note_on every sample.
+    let held = while_held(instrument.pending_notes(), || {
+        [1.0, 0.0, 1.0].map(|gate| block(&mut scheduler, gate))
+    });
+    assert_eq!(held, [(0, 0); 3]);
+    block(&mut scheduler, 0.0);
+    assert_eq!(queued_notes(&instrument), [(64, true), (64, false)]);
 }
