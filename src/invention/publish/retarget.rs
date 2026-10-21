@@ -10,7 +10,10 @@
 //! them. The schedule travels in that publication, handed over as it
 //! installs (see `graph::publication::handover`), not as a request behind
 //! it, which the audio thread could drain a block later: the new schedule
-//! never plays in the old order, nor the old one in the new. A write
+//! never plays in the old order, nor the old one in the new. Any other
+//! scheduler whose last schedule write it has not adopted yet (one refused
+//! for want of room, or still queued) is handed that schedule as well,
+//! since the recompile orders it by that schedule's targets. A write
 //! leaving every module's targets as compiled publishes nothing and goes
 //! as a request.
 //!
@@ -20,13 +23,23 @@
 //! change.
 
 use std::any::Any;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use super::change::SurfaceMap;
 use super::{PendingLog, PreparedChange, Publisher, Reclaimer, Refused};
 use crate::control_request::{ControlIndex, RequestSender};
 use crate::invention::graph::Handover;
+use crate::modules::control_scheduler::{Rebind, Written};
+use crate::modules::ControlSchedulerControls;
 use crate::payload::Payload;
+
+/// A recompile ready to publish (see [`Retarget::prepare`]).
+pub(crate) struct Recompile {
+    prepared: PreparedChange,
+    /// The schedules it hands other schedulers, to record once published.
+    written: Vec<Written>,
+}
 
 /// What a declared surface's live writes recompile the topology with.
 #[derive(Clone)]
@@ -53,22 +66,28 @@ impl Retarget {
 
     /// Under `publisher`: the topology recompiled with module `id` writing
     /// `targets`, or `None` when it needs none or cannot publish one now
-    /// (see the module docs).
+    /// (see the module docs), or another scheduler's schedule no longer
+    /// resolves.
     pub(crate) fn prepare(
         &self,
         publisher: &Publisher,
         id: &str,
         targets: Vec<String>,
-    ) -> Option<PreparedChange> {
+    ) -> Option<Recompile> {
         let directory = self.directory.upgrade()?;
         if publisher.timed_waiting() || self.backlogged(publisher) {
             return None;
         }
         let mut change = super::change_against(publisher, directory, &self.requests);
-        change.retarget(id, targets).then(|| change.compile())
+        if !change.retarget(id, targets) {
+            return None;
+        }
+        let mut prepared = change.compile();
+        let written = hand_unsettled(&mut prepared, id)?;
+        Some(Recompile { prepared, written })
     }
 
-    /// Publishes `prepared`, from [`Self::prepare`] for module `id`, under
+    /// Publishes `recompile`, from [`Self::prepare`] for module `id`, under
     /// `publisher`, handing `payload` to the module's `control` as it
     /// installs. Returns what is left to free once the guard is released,
     /// or the refusal, with nothing published.
@@ -76,9 +95,13 @@ impl Retarget {
         &self,
         publisher: &mut Publisher,
         pending: &Mutex<PendingLog>,
-        (mut prepared, id): (PreparedChange, &str),
+        (recompile, id): (Recompile, &str),
         (control, payload): (ControlIndex, Payload),
     ) -> Result<Box<dyn Any>, (String, Box<dyn Any>)> {
+        let Recompile {
+            mut prepared,
+            written,
+        } = recompile;
         // A survivor, so the mirror has it, in the publication's order.
         let module_idx = prepared.mirror.modules.get_index_of(id);
         match (prepared.publication.as_mut(), module_idx) {
@@ -99,6 +122,9 @@ impl Retarget {
             Ok(published) => {
                 debug_assert!(published.built.is_empty(), "a recompile builds nothing");
                 log().unlogged();
+                for schedule in written {
+                    schedule.record();
+                }
                 Ok(Box::new(published))
             }
             Err(Refused { error, change }) => Err((error.to_string(), Box::new(change))),
@@ -112,4 +138,31 @@ impl Retarget {
             && publisher.audio_alive()
             && super::backlogged(publisher, &self.reclaimer)
     }
+}
+
+/// Hands every scheduler but `id` whose last schedule write it has not
+/// adopted that schedule as `prepared` installs, as a change rebinding it
+/// does (see `ControlSchedulerControls::rebind`). Returns the schedules to
+/// record, or `None` when one no longer resolves.
+fn hand_unsettled(prepared: &mut PreparedChange, id: &str) -> Option<Vec<Written>> {
+    let publication = prepared.publication.as_mut()?;
+    let mut written = Vec::new();
+    for (other, surface) in &prepared.surfaces {
+        let any = surface.as_any();
+        let controls = any.and_then(|any| any.downcast_ref::<ControlSchedulerControls>());
+        let Some(controls) = controls.filter(|_| other != id) else {
+            continue;
+        };
+        let Some(rebind) = controls
+            .rebind(None, &HashSet::new(), &prepared.surfaces)
+            .ok()?
+        else {
+            continue;
+        };
+        let module_idx = prepared.mirror.modules.get_index_of(&rebind.id)?;
+        let handover = Handover::new(module_idx, Rebind::CONTROL, rebind.payload);
+        publication.handovers.push(handover);
+        written.push(rebind.written);
+    }
+    Some(written)
 }

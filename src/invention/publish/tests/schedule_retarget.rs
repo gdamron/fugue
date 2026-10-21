@@ -5,10 +5,10 @@
 
 use super::migrated::{block_while_held, write};
 use super::request_beats::render_counted;
-use super::schedule_payload::scheduler;
 use super::*;
 use crate::control_request::CURSOR_CAPACITY;
 use crate::invention::publish::timed::EditTime;
+use crate::modules::ControlSchedulerControls;
 use crate::test_support::dial::{DialFactory, DIAL};
 
 const DOCUMENT: &str = r#"{
@@ -168,7 +168,7 @@ fn a_recompile_installs_with_no_lock_taken_and_nothing_allocated() {
     let mut rig = rig(0, serde_json::json!([at(2, "dial", "level", 0.5)]));
     render_counted(&mut rig, 4);
     write(&rig, "sched", "schedule", tempo().to_string().into());
-    let controls = scheduler(&rig);
+    let controls = controls_of(&rig, "sched");
     // Every lock a control thread takes is held while it installs.
     let (allocs, frees) = block_while_held(&mut rig, || controls.held()).unwrap();
     assert_eq!((allocs, frees), (0, 0));
@@ -180,26 +180,82 @@ fn a_recompile_installs_with_no_lock_taken_and_nothing_allocated() {
 /// installs the recompile adopts it.
 #[test]
 fn the_block_installing_a_recompile_adopts_its_schedule() {
+    let mut rig = rig(0, serde_json::json!([at(2, "dial", "level", 0.5)]));
+    render_counted(&mut rig, 1);
+    fill_pending(&mut rig);
+    let generation = rig.live.generation();
+    write(&rig, "sched", "schedule", tempo().to_string().into());
+    assert_eq!(rig.live.generation(), generation + 1);
+    let controls = controls_of(&rig, "sched");
+    assert_ne!(controls.adopted(), controls.recorded(), "not yet installed");
+    render_counted(&mut rig, 1);
+    assert_eq!(controls.adopted(), controls.recorded());
+}
+
+/// Fills the rig's pending store with far-future writes to the dial, so a
+/// request queued behind them is refused for want of room.
+fn fill_pending(rig: &mut Rig) {
     use super::requests::submit;
     use crate::control_request::When;
     use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
-    let mut rig = rig(0, serde_json::json!([at(2, "dial", "level", 0.5)]));
-    render_counted(&mut rig, 1);
     let far = rig.graph.current_sample + 1_000_000;
     let mut next = 0;
     for _ in 0..PENDING_REQUEST_CAPACITY / REQUEST_QUEUE_CAPACITY {
         for _ in 0..REQUEST_QUEUE_CAPACITY {
-            submit(&rig, "dial", 0, 0.25, When::AtSample(far + next));
+            submit(rig, "dial", 0, 0.25, When::AtSample(far + next));
             next += 1;
         }
-        render_counted(&mut rig, 1);
+        render_counted(rig, 1);
     }
     assert!(rig.graph.requests.as_ref().unwrap().pending.is_full());
-    let generation = rig.live.generation();
-    write(&rig, "sched", "schedule", tempo().to_string().into());
-    assert_eq!(rig.live.generation(), generation + 1);
-    let controls = scheduler(&rig);
-    assert_ne!(controls.adopted(), controls.recorded(), "not yet installed");
+}
+
+/// A scheduler's controls by id.
+fn controls_of(rig: &Rig, id: &str) -> ControlSchedulerControls {
+    let surface = rig.live.control_surfaces.lock().unwrap()[id].clone();
+    let controls = surface.as_any().unwrap();
+    controls
+        .downcast_ref::<ControlSchedulerControls>()
+        .unwrap()
+        .clone()
+}
+
+/// A recompile orders every scheduler by its last schedule written, so it
+/// hands each one that has not adopted its last its schedule too: here
+/// one retargeted while a timed edit waited, its request refused.
+#[test]
+fn a_recompile_hands_a_scheduler_its_unadopted_schedule() {
+    let mut rig = rig(0, serde_json::json!([at(2, "dial", "level", 0.5)]));
+    let d2 = rig.build("d2", DIAL, serde_json::json!({}));
+    let config = serde_json::json!({ "schedule": [at(2, "dial", "level", 0.75)] });
+    let sched_b = rig.build("sched_b", "control_scheduler", config);
+    rig.live
+        .edit(|change| {
+            change.upsert("d2", d2);
+            change.upsert("sched_b", sched_b);
+            change.connect(edge("clock", "beat", "sched_b", "clock"))
+        })
+        .unwrap();
     render_counted(&mut rig, 1);
-    assert_eq!(controls.adopted(), controls.recorded());
+    fill_pending(&mut rig);
+    // A timed swap of d2 waits, so retargeting sched recompiles nothing,
+    // and its request is refused.
+    let mut change = rig.live.begin();
+    change.upsert("d2", rig.build("d2", DIAL, serde_json::json!({})));
+    let prepared = change.prepare().unwrap();
+    let far = EditTime::AtSample(48_000 * 60);
+    rig.live.commit_when(prepared, far, None, |_| {}).unwrap();
+    write(&rig, "sched", "schedule", tempo().to_string().into());
+    render_counted(&mut rig, 1);
+    let sched = controls_of(&rig, "sched");
+    assert_ne!(sched.adopted(), sched.recorded(), "refused");
+    // Retargeted onto d2, sched_b cancels the swap and recompiles.
+    let onto_d2 = serde_json::json!([at(2, "d2", "level", 0.75)]);
+    write(&rig, "sched_b", "schedule", onto_d2.to_string().into());
+    assert!(!rig.live.publisher().lock().unwrap().timed_waiting());
+    assert_eq!(compiled_targets(&rig, "sched"), ["clock"]);
+    render_counted(&mut rig, 1);
+    let sched_b = controls_of(&rig, "sched_b");
+    assert_eq!(sched.adopted(), sched.recorded());
+    assert_eq!(sched_b.adopted(), sched_b.recorded());
 }
