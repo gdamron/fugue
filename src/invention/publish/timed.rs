@@ -9,6 +9,7 @@
 //! is recorded when it lands, as the publisher adopts it: at the next call
 //! that takes the publisher.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use indexmap::IndexMap;
@@ -70,6 +71,7 @@ impl LiveGraph {
     /// [`Adopter`]).
     pub(super) fn adopter(&self) -> Adopter {
         Adopter {
+            waiting: self.publisher.lock().unwrap().timed_flag(),
             publisher: Arc::downgrade(&self.publisher),
             surfaces: Arc::downgrade(&self.control_surfaces),
             ports: Arc::downgrade(&self.module_ports),
@@ -191,6 +193,9 @@ fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
 /// whether or not anything else takes the publisher. Holds the live graph
 /// weakly, so the thread never keeps it alive.
 pub(super) struct Adopter {
+    /// Whether a timed edit waits: checked first, so a tick costs one
+    /// atomic load while none does.
+    waiting: Arc<AtomicBool>,
     publisher: Weak<Mutex<Publisher>>,
     surfaces: Weak<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     ports: Weak<Mutex<IndexMap<String, ModulePorts>>>,
@@ -199,6 +204,9 @@ pub(super) struct Adopter {
 
 impl Adopter {
     pub(super) fn tick(&self) {
+        if !self.waiting.load(Ordering::Relaxed) {
+            return;
+        }
         let Some(publisher) = self.publisher.upgrade() else {
             return;
         };
