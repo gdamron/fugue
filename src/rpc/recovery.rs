@@ -51,7 +51,13 @@
 //! command, so it is refused with [`RpcErrorCode::MutationExpired`] rather than
 //! risk running twice. Evicting a command that changed nothing leaves the
 //! horizon alone, so a run of refusals at one revision cannot expire the
-//! tickets minted there.
+//! tickets minted there. A queued timed edit (see [`RecordedOutcome`]) may
+//! change state later, so it moves the horizon too, but it is kept past
+//! older outcomes while the revision it ran at is still current. Once its
+//! request ends without being adopted, the daemon says so
+//! ([`MutationLedger::request_unchanged`]) and it counts as a command that
+//! changed nothing, so a run of timed edits that expire at one revision
+//! cannot expire the tickets minted there either.
 //!
 //! In practice a retry expires only when more than
 //! [`MUTATION_LEDGER_CAPACITY`] ticketed edits ran between the ticket's
@@ -159,10 +165,12 @@ impl RpcRequestPayload {
 }
 
 impl RpcCommand {
-    /// The replay rule for this command. Authoring commands need a ticket;
-    /// reads and saves resend freely; everything else is never replayed.
+    /// The replay rule for this command. Authoring commands need a ticket,
+    /// timed structural edits included: replaying one answers with the
+    /// request it queued, never a second request. Reads and saves resend
+    /// freely; everything else is never replayed.
     pub fn replay_policy(&self) -> ReplayPolicy {
-        if self.advances_revision() {
+        if self.advances_revision() || self.is_timed() {
             return ReplayPolicy::ResendWithTicket;
         }
         match self {
@@ -178,6 +186,7 @@ impl RpcCommand {
             | Self::DescribeModuleTypes(_)
             | Self::DescribeModule(_)
             | Self::ExportRequestLog { .. }
+            | Self::GetRequest { .. }
             // Fenced to the session it names, so a replacement refuses it.
             | Self::FlushSession { .. } => ReplayPolicy::Resend,
             // Performance writes (see the module docs), installs, and shutdown,
@@ -239,6 +248,9 @@ pub struct PendingMutation {
 enum RecordedOutcome {
     Committed(RuntimeRevision),
     Rejected(Box<RpcResponsePayload>),
+    /// A timed edit queued: the reply naming its request, replayed as it
+    /// was sent. The request's state now is for the client to ask.
+    Queued(Box<RpcResponsePayload>),
 }
 
 #[derive(Debug)]
@@ -339,7 +351,9 @@ impl MutationLedger {
                     mutation_id: entry.id.clone(),
                     committed_at: revision.clone(),
                 },
-                RecordedOutcome::Rejected(payload) => (**payload).clone(),
+                RecordedOutcome::Rejected(payload) | RecordedOutcome::Queued(payload) => {
+                    (**payload).clone()
+                }
             })));
         }
         if self
@@ -375,7 +389,8 @@ impl MutationLedger {
         response: &RpcResponsePayload,
         after: RuntimeRevision,
     ) {
-        let advanced = after.revision > pending.executed_at;
+        let current = after.revision;
+        let mut advanced = current > pending.executed_at;
         let outcome = match response {
             RpcResponsePayload::Error(error) => {
                 RecordedOutcome::Rejected(Box::new(RpcResponsePayload::Error(bounded_error(error))))
@@ -385,10 +400,27 @@ impl MutationLedger {
                 truncate(&mut error.message);
                 RecordedOutcome::Rejected(Box::new(RpcResponsePayload::ContentError { error }))
             }
+            RpcResponsePayload::Request(_) => {
+                // It changes state when it lands, after it is recorded.
+                advanced = true;
+                RecordedOutcome::Queued(Box::new(response.clone()))
+            }
             _ => RecordedOutcome::Committed(after),
         };
         if self.entries.len() == self.capacity {
-            if let Some(evicted) = self.entries.pop_front() {
+            // A queued edit that ran at the revision still current, and may
+            // still change state, goes last: evicting it would move the
+            // horizon to that revision and expire every ticket minted there,
+            // until something else advanced it. Once the revision moves on,
+            // or its request ends unadopted, it goes in turn. Adoption
+            // advances the revision, so few are ever held back.
+            let stranding = |entry: &LedgerEntry| {
+                matches!(entry.outcome, RecordedOutcome::Queued(_))
+                    && entry.advanced
+                    && entry.executed_at >= current
+            };
+            let oldest = self.entries.iter().position(|entry| !stranding(entry));
+            if let Some(evicted) = self.entries.remove(oldest.unwrap_or(0)) {
                 if evicted.advanced {
                     self.horizon = Some(
                         self.horizon
@@ -404,6 +436,23 @@ impl MutationLedger {
             advanced,
             outcome,
         });
+    }
+
+    /// Notes that the timed edit queued as `request_id` (the id its reply
+    /// named) ended without being adopted: refused, expired or cancelled. It
+    /// changed nothing, so evicting it leaves the horizon alone. Its reply is
+    /// still replayed while it is recorded. Not every request was ticketed,
+    /// so an id the ledger does not hold is ignored.
+    pub fn request_unchanged(&mut self, request_id: &str) {
+        let queued = |entry: &&mut LedgerEntry| match &entry.outcome {
+            RecordedOutcome::Queued(reply) => {
+                matches!(&**reply, RpcResponsePayload::Request(status) if status.id == request_id)
+            }
+            _ => false,
+        };
+        if let Some(entry) = self.entries.iter_mut().rev().find(queued) {
+            entry.advanced = false;
+        }
     }
 
     /// How many outcomes are currently recorded.
