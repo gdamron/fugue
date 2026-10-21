@@ -5,32 +5,25 @@
 //! observes atomics and, when staged work exists, takes one short lock
 //! gated behind a version counter (the pattern from `SampleKitControls`).
 //!
-//! Notes reach the audio thread through a bounded lock-free queue. Every
-//! producer (a control thread's `note_on`, a scheduler's entry on the audio
-//! thread) pushes without waiting, and the module pops what is queued at
-//! the top of each block. Control threads leave [`SCHEDULED_RESERVE`] slots
-//! free, so however fast they send notes, a scheduled note finds room.
+//! Notes reach the audio thread through lock-free queues ([`notes`]): a
+//! control thread's `note_on` and a scheduler's entry push without
+//! waiting, and the module pops what is queued at the top of each block.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::atomic::AtomicF32;
 use crate::audio_thread::debug_assert_control_thread;
-use crate::control_request::{bounded, LegacyRefusal, QueueConsumer, QueueProducer, TableValue};
+use crate::control_request::{LegacyRefusal, TableValue};
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
 use crate::traits::{check_finite, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
+mod notes;
 mod scheduled;
 
-/// How many note events the queue holds between two blocks.
-pub(crate) const NOTE_CAPACITY: usize = 256;
-
-/// Queue slots a control thread's note leaves free for scheduled notes.
-pub(crate) const SCHEDULED_RESERVE: u64 = 64;
-
-/// The audio thread's end of an instrument's note queue.
-pub(crate) type NoteQueue = QueueConsumer<NoteEvent>;
+use notes::{note_queues, NoteSenders};
+pub(crate) use notes::{NoteQueues, NOTE_CAPACITY};
 
 /// One keymap zone as authored in config: a sample, the note it was
 /// recorded at, the key range it covers, and an optional sustain loop.
@@ -67,13 +60,6 @@ pub(crate) struct ZoneAudio {
     pub loop_region: Option<ScaledLoop>,
 }
 
-/// A note request, popped per block by the audio thread.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct NoteEvent {
-    pub note: u8,
-    pub on: bool,
-}
-
 #[derive(Clone)]
 pub struct SampleInstrumentControls {
     inner: Arc<InstrumentInner>,
@@ -87,8 +73,8 @@ struct InstrumentInner {
     /// thread locks only when this counter moved.
     swaps_version: AtomicU64,
     pending_swaps: Mutex<Vec<Option<ZoneAudio>>>,
-    /// Note events for the audio thread, from any thread.
-    notes: QueueProducer<NoteEvent>,
+    /// Note events for the audio thread.
+    notes: NoteSenders,
 }
 
 struct ZoneState {
@@ -108,12 +94,12 @@ impl SampleInstrumentControls {
     /// Builds controls from parsed zone specs, loading every referenced
     /// sample (decode + resample + loop scaling happen here, off the audio
     /// thread). Returns the controls, each zone's playable audio in zone
-    /// order, and the note queue's audio-thread end.
+    /// order, and the note queues' audio-thread end.
     pub(crate) fn new(
         sample_rate: u32,
         release: f32,
         specs: Vec<ZoneSpec>,
-    ) -> Result<(Self, Vec<ZoneAudio>, NoteQueue), String> {
+    ) -> Result<(Self, Vec<ZoneAudio>, NoteQueues), String> {
         let mut audio = Vec::with_capacity(specs.len());
         let mut zones = Vec::with_capacity(specs.len());
         for (index, spec) in specs.into_iter().enumerate() {
@@ -131,7 +117,7 @@ impl SampleInstrumentControls {
         }
 
         let pending = (0..zones.len()).map(|_| None).collect();
-        let (notes, queue) = bounded(NOTE_CAPACITY);
+        let (notes, queues) = note_queues();
         let controls = Self {
             inner: Arc::new(InstrumentInner {
                 sample_rate,
@@ -142,7 +128,7 @@ impl SampleInstrumentControls {
                 notes,
             }),
         };
-        Ok((controls, audio, queue))
+        Ok((controls, audio, queues))
     }
 
     pub fn zone_count(&self) -> usize {
@@ -210,19 +196,10 @@ impl SampleInstrumentControls {
         self.push_note(parse_note(value)?, false)
     }
 
-    /// Queues a control thread's note, leaving [`SCHEDULED_RESERVE`] slots
-    /// free for scheduled notes.
     fn push_note(&self, note: u8, on: bool) -> Result<(), String> {
-        let notes = &self.inner.notes;
-        (notes.leaves(SCHEDULED_RESERVE) && notes.try_push(NoteEvent { note, on }).is_ok())
+        (self.inner.notes.send(note, on))
             .then_some(())
             .ok_or_else(|| "Too many pending note events".to_string())
-    }
-
-    /// Queues a note from any thread, returning false when the queue is
-    /// full. Lock-free and allocation-free.
-    fn queue_note(&self, note: u8, on: bool) -> bool {
-        self.inner.notes.try_push(NoteEvent { note, on }).is_ok()
     }
 
     /// Audio thread: the current swap counter, checked once per block.

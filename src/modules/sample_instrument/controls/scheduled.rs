@@ -1,9 +1,8 @@
 //! An instrument's legacy controls as a scheduler writes them, on the
 //! audio thread (see [`crate::ControlSurface::set_scheduled`]).
 //!
-//! A note is pushed onto the lock-free note queue, using the slots control
-//! threads leave free: refused only when even those are taken, and the
-//! scheduler counts it.
+//! A note is pushed onto the schedulers' own lock-free note queue: refused
+//! only when that is full, and the scheduler counts it.
 
 use super::{indexed_key, midi_note, release_ok, SampleInstrumentControls};
 use crate::control_request::{scheduled_number, LegacyRefusal, TableValue};
@@ -25,7 +24,7 @@ impl SampleInstrumentControls {
             }
             "note_on" | "note_off" => {
                 let note = midi_note(value).ok_or(LegacyRefusal::Invalid)?;
-                (self.queue_note(note, key == "note_on"))
+                (self.inner.notes.schedule(note, key == "note_on"))
                     .then_some(())
                     .ok_or(LegacyRefusal::Full)
             }
@@ -63,7 +62,7 @@ impl SampleInstrumentControls {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{ZoneSpec, NOTE_CAPACITY, SCHEDULED_RESERVE};
+    use super::super::{ZoneSpec, NOTE_CAPACITY};
     use super::*;
     use crate::alloc_counter::allocator_events;
     use crate::audio_thread::AudioThreadScope;
@@ -85,18 +84,15 @@ mod tests {
     }
 
     #[test]
-    fn a_scheduled_note_finds_the_room_control_threads_leave() {
+    fn a_scheduled_note_finds_room_however_many_control_threads_send() {
         let controls = instrument();
         let note = ControlValue::Number(64.0);
-        let mut sent = 0;
-        while controls.note_on(&note).is_ok() {
-            sent += 1;
-        }
-        assert_eq!(sent, NOTE_CAPACITY - SCHEDULED_RESERVE as usize);
+        let sent = std::iter::repeat_with(|| controls.note_on(&note).is_ok());
+        assert_eq!(sent.take_while(|&queued| queued).count(), NOTE_CAPACITY);
         let scheduled = TableValue::Number(67.0);
         let _audio = AudioThreadScope::enter();
         let ((), allocs, frees) = allocator_events(|| {
-            for _ in sent..NOTE_CAPACITY {
+            for _ in 0..NOTE_CAPACITY {
                 assert_eq!(controls.set_scheduled("note_on", scheduled), Ok(()));
             }
             let full = controls.set_scheduled("note_off", scheduled);

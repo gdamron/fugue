@@ -68,7 +68,7 @@ use crate::Module;
 pub use self::controls::{LoopSpec, SampleInstrumentControls, ZoneSpec};
 pub use self::voice::MAX_VOICES;
 
-use self::controls::{NoteQueue, ZoneAudio, NOTE_CAPACITY};
+use self::controls::{NoteQueues, ZoneAudio, NOTE_CAPACITY};
 use self::voice::{note_from_freq, resolve_zone, Voice, ZoneRuntime, DECLICK_SECONDS};
 
 mod controls;
@@ -277,7 +277,7 @@ pub struct SampleInstrument {
     levels: Vec<f32>,
     swap_scratch: Vec<Option<ZoneAudio>>,
     /// Note events from control threads and schedulers.
-    notes: NoteQueue,
+    notes: NoteQueues,
     /// Allocation ordinal handed to the next note-on (steal-oldest order).
     next_started: u64,
     sample_rate: f32,
@@ -291,7 +291,7 @@ impl SampleInstrument {
     pub(crate) fn new_with_controls(
         controls: SampleInstrumentControls,
         zone_audio: Vec<ZoneAudio>,
-        notes: NoteQueue,
+        notes: NoteQueues,
         voices: usize,
         sample_rate: u32,
     ) -> Self {
@@ -447,10 +447,10 @@ impl Module for SampleInstrument {
         // Release fade slope, from the control read once per block.
         let release_step = 1.0 / (self.ctrl.release().max(1e-3) * self.sample_rate);
 
-        // Queued note events, in the order they were sent. At most one
-        // queue's worth per block, so a producer sending as fast as this
+        // Queued note events, in the order they were sent. At most both
+        // queues' worth per block, so a producer sending as fast as this
         // pops cannot hold the block here.
-        for _ in 0..NOTE_CAPACITY {
+        for _ in 0..2 * NOTE_CAPACITY {
             let Some(event) = self.notes.pop() else {
                 break;
             };
