@@ -11,22 +11,34 @@ use crate::module_config::tests::registry::{base_config, eight_frame_wav, UNBUIL
 use crate::ControlValue;
 
 /// Runs `f` while another thread holds what `hold` takes (a lock's guard),
-/// as a control thread editing the state it guards would.
+/// as a control thread editing the state it guards would. Fails the test
+/// when `f` does not finish while the guard is held: the holder lets go
+/// after two seconds, so a blocked `f` can finish, and is caught.
 pub(crate) fn while_held<G, R>(hold: impl FnOnce() -> G + Send, f: impl FnOnce() -> R) -> R {
     let (held, holding) = std::sync::mpsc::channel();
     let (done, finished) = std::sync::mpsc::channel::<()>();
-    std::thread::scope(|scope| {
-        scope.spawn(move || {
+    let (result, waited) = std::thread::scope(|scope| {
+        let holder = scope.spawn(move || {
             let guard = hold();
             held.send(()).unwrap();
-            let _ = finished.recv_timeout(std::time::Duration::from_secs(2));
+            let waited = finished.recv_timeout(std::time::Duration::from_secs(2));
             drop(guard);
+            waited.is_err()
         });
         holding.recv().unwrap();
         let result = f();
         let _ = done.send(());
-        result
-    })
+        (result, holder.join().unwrap())
+    });
+    assert!(!waited, "blocked until the holder let go");
+    result
+}
+
+#[test]
+#[should_panic(expected = "blocked until the holder let go")]
+fn while_held_fails_what_waits_on_the_lock_it_holds() {
+    let lock = std::sync::Mutex::new(());
+    while_held(|| lock.lock().unwrap(), || drop(lock.lock().unwrap()));
 }
 
 /// Every built-in type with controls either declares them or is listed,
