@@ -411,13 +411,12 @@ impl LegacyWrites {
             self.slots[i].store(self.slots[i + 1].load());
         }
         self.waiting.store(waiting - 1, Ordering::Relaxed);
+        // Straight from one head to the next: never hidden in between.
         let group = &self.groups[removed];
-        group.gate.show(group.lane, IDLE);
         let first = (self.slots[..waiting - 1].iter())
             .find(|slot| self.controls[slot.index()].group == removed);
-        if let Some(slot) = first {
-            self.show(group, slot.load().ticket);
-        }
+        let head = first.map_or(IDLE, |slot| slot.load().ticket);
+        group.gate.show(group.lane, head);
     }
 
     /// Keeps the waiting writes `keep` says to, in order.
