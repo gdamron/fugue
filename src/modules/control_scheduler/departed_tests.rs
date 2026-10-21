@@ -84,3 +84,29 @@ fn a_note_off_a_removed_scheduler_made_behind_another_s_note_on_still_lands() {
         "no stuck note"
     );
 }
+
+#[test]
+fn a_note_off_the_only_scheduler_left_waiting_lands_once_it_is_freed() {
+    use ScheduleValue::Number;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let notes = vec![
+        entry(1, "sample_instrument", "note_on", Number(64.0)),
+        entry(2, "sample_instrument", "note_off", Number(64.0)),
+    ];
+    let mut removed = scheduler(notes, &directory);
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        block(&mut removed, gate);
+    }
+    // Step 2's note_off finds the queue held, and it still is as the edit
+    // removing the scheduler installs: no other schedule writes there.
+    let ((), allocs, frees) = while_held(locking.instrument.pending_notes(), || {
+        block(&mut removed, 1.0);
+        allocator_events(|| removed.leave())
+    });
+    assert_eq!((allocs, frees), (0, 0), "left");
+    assert_eq!(queued_notes(&locking.instrument), [(64, true)]);
+    // Reclaimed off the audio thread, it lands the note_off: no stuck note.
+    drop(removed);
+    assert_eq!(queued_notes(&locking.instrument), [(64, true), (64, false)]);
+}

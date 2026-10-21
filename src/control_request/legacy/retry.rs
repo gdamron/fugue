@@ -200,7 +200,7 @@ impl LegacyControls {
                 key: key.clone(),
                 group,
                 event: surface.scheduled_event(key),
-                name: groups[group].gate.orphans.name(key),
+                name: groups[group].gate.orphans.name(surface, key),
             });
         }
         Arc::new(LegacyWrites {
