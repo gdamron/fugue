@@ -98,7 +98,7 @@ fn gate(onsets: &[usize], len: usize) -> Vec<f32> {
     signal
 }
 
-fn store() -> (PendingStore, OutcomeReceiver) {
+pub(super) fn store() -> (PendingStore, OutcomeReceiver) {
     let queue = crate::payload::RetireQueue::with_capacity(4);
     let (sender, outcomes) = outcome_channel(64);
     let store = PendingStore::new(4, Retirer::new(queue, 8), sender);
@@ -106,7 +106,7 @@ fn store() -> (PendingStore, OutcomeReceiver) {
 }
 
 /// Request `id` for the target, when `parts` are all met.
-fn request(id: u64, parts: &[Predicate]) -> Request {
+pub(super) fn request(id: u64, parts: &[Predicate]) -> Request {
     let target = ControlTarget {
         generation: INSTALLED,
         module_idx: TARGET,
@@ -119,19 +119,24 @@ fn request(id: u64, parts: &[Predicate]) -> Request {
 }
 
 /// A table of `capacity` and its slots.
-fn table(capacity: usize) -> (Conditions, Arc<WatchSlots>) {
+pub(super) fn table(capacity: usize) -> (Conditions, Arc<WatchSlots>) {
     let slots = Arc::new(WatchSlots::default());
     (Conditions::new(capacity, Arc::clone(&slots)), slots)
 }
 
 /// Inserts `request` as the drain would, its slot taken at submission.
-fn insert(table: &mut Conditions, slots: &WatchSlots, request: Request, store: &mut PendingStore) {
+pub(super) fn insert(
+    table: &mut Conditions,
+    slots: &WatchSlots,
+    request: Request,
+    store: &mut PendingStore,
+) {
     slots.take();
     assert_eq!(Conditions::check(&request), Ok(()));
     table.insert(request, &mut store.outcomes);
 }
 
-fn log(outcomes: &OutcomeReceiver) -> Vec<(u64, Outcome)> {
+pub(super) fn log(outcomes: &OutcomeReceiver) -> Vec<(u64, Outcome)> {
     std::iter::from_fn(|| outcomes.try_recv())
         .map(|(id, outcome)| (id.0, outcome))
         .collect()

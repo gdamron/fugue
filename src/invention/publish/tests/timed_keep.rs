@@ -1,14 +1,18 @@
 //! An authored write to a control a timed edit writes as it lands, made
 //! while the edit waits, is kept over the edit's own write as the write is
-//! queued: the edit lands without its value ever sounding, and says so. What plays and what is recorded are the
-//! author's value whenever the audio thread takes the write: before the
-//! landing, after it, or held back by a full pending store. When it cannot
+//! queued, and the edit says so. Its value never sounds when the copy is
+//! taken before the landing, and a drag holds one copy, not one a write.
+//! What plays and what is recorded are the author's value whenever the
+//! audio thread takes the write: before the landing, after it, or held
+//! back by a full pending store, and the copy applying is the write's
+//! own, never counted lost. When it cannot
 //! be kept (no room for requests waiting on conditions, or for the copy and
 //! the write both), the whole edit is cancelled instead, as before; a write
 //! refused outright leaves the edit alone.
 
 use super::timed_status::{front_door, queue_writing, recorded, state_of, write, BLOCKS, LANDING};
 use super::*;
+use crate::control_request::CONDITION_CAPACITY;
 use crate::control_request::{
     Condition, Predicate, Request, RequestId, RequestValue, RtValue, When,
 };
@@ -336,4 +340,65 @@ fn a_write_with_no_room_for_a_copy_is_not_kept() {
     one.render(BLOCKS);
     assert_eq!(playing(&one, "osc2", "frequency"), value);
     assert_eq!(recorded(&one, "osc2", "frequency"), (660.0, 660.0));
+}
+
+/// As [`queue_writing`], landing a hundred blocks ahead.
+fn queue_writing_far(rig: &Rig, frequency: f32) -> RequestId {
+    let square = rig.build(
+        "osc1",
+        "oscillator",
+        serde_json::json!({ "waveform": "square" }),
+    );
+    let mut change = rig.live.begin();
+    change.upsert("osc1", square);
+    let prepared = change.prepare().unwrap();
+    let document = rig.live.state.lock().unwrap().document.clone();
+    let retain = move |state: &mut RuntimeState| state.document = document;
+    let time = EditTime::AtSample(64 * 100 + 9);
+    let frequency = ControlValue::Number(frequency);
+    let write = ("osc2".to_string(), "frequency".to_string(), frequency);
+    rig.live
+        .commit_built_when(prepared, None, time, None, retain, &[write])
+        .unwrap()
+}
+
+/// A slider dragged over a control the edit writes: each write's copy
+/// replaces the last, so the drag holds one slot however long it runs, and
+/// the edit waits on, landing with the drag's last value.
+#[test]
+fn a_drag_on_a_kept_control_holds_one_slot_and_keeps_the_edit() {
+    let mut rig = Rig::new(BASE);
+    let id = queue_writing_far(&rig, 440.0);
+    let author = ControlWriteIntent::Author;
+    let drag = CONDITION_CAPACITY + 16;
+    for i in 0..drag {
+        write(&rig, "osc2", "frequency", 500.0 + i as f32, author);
+        rig.render(1);
+        assert_eq!(state_of(&rig, id), EditState::Queued, "after write {i}");
+        assert_eq!(rig.live.requests.watch_slots().taken(), 1, "write {i}");
+    }
+    rig.render(110 - drag);
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
+    let last = 500.0 + (drag - 1) as f32;
+    assert_eq!(
+        playing(&rig, "osc2", "frequency"),
+        ControlValue::Number(last)
+    );
+    assert_eq!(
+        recorded(&rig, "osc2", "frequency"),
+        (last as f64, last as f64)
+    );
+}
+
+/// The copy applying at the landing is logged as the write's, not lost.
+#[test]
+fn a_kept_copy_is_not_counted_lost() {
+    let mut rig = Rig::new(BASE);
+    let id = queue_writing_far(&rig, 440.0);
+    write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
+    rig.render(110);
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
+    assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
+    let log = rig.live.request_log();
+    assert_eq!(log.lost, 0, "{log:?}");
 }
