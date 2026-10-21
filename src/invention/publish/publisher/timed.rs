@@ -54,9 +54,6 @@ pub(crate) struct Waiting {
     /// The controls of modules it keeps that it writes as it lands (see
     /// [`Publisher::chain_timed`]).
     chained: Vec<(String, String)>,
-    /// The priority the latest authored write it keeps was chained at (see
-    /// [`Publisher::keep_authored`]); its own writes are at 0.
-    kept: i16,
 }
 
 /// How many recent adoptions [`Adoptions`] remembers.
@@ -169,7 +166,6 @@ impl Publisher {
             packed,
             folded: Vec::new(),
             chained: Vec::new(),
-            kept: 0,
         }));
         Ok(id)
     }
@@ -355,15 +351,19 @@ impl Publisher {
     /// against the timed edit waiting, and returns the edit it is safe from
     /// (see [`Self::timed_overtook`]). One landed already: the write follows
     /// its writes. One that writes the control as it lands: the write is
-    /// kept over it, chained to the landing first at a priority above the
-    /// edit's own write and any kept before, so whatever order they apply
-    /// in there, the author's value plays and the edit's never sounds (see
-    /// [`Ledger::kept`]). `None`, with nothing queued, when neither: none
-    /// waits, it does not write the control, or the write cannot be kept
-    /// (an event, the priorities ran out, or the requests waiting on
-    /// conditions are full, or `requests`, the sender the write goes
-    /// through, has no room for both), and an edit writing the control is
-    /// cancelled as the write is recorded.
+    /// kept over it, a copy chained to the landing as the edit's own write
+    /// is, at the same rank. The audio thread meets requests in the order
+    /// they are queued and applies those waiting on a condition in the
+    /// order it received them, and at one sample, of equal rank, the later
+    /// wins: the copy, queued after the edit and so after its write (and
+    /// after any copy kept before), plays at the landing, and the edit's
+    /// value never sounds (see [`Ledger::kept`]). At the same rank, its
+    /// hold is the author's own, refusing no later write a plain one would
+    /// not. `None`, with nothing queued, when neither: none waits, it does
+    /// not write the control, or the write cannot be kept (an event, the
+    /// requests waiting on conditions are full, or `requests`, the sender
+    /// the write goes through, has no room for both), and an edit writing
+    /// the control is cancelled as the write is recorded.
     pub(crate) fn keep_authored(
         &mut self,
         (module_id, key): (&str, &str),
@@ -381,7 +381,6 @@ impl Publisher {
         if event || !waiting.chained.iter().any(chained) {
             return None;
         }
-        let priority = waiting.kept.checked_add(1)?;
         // Room for the write itself after it, through the same sender (and
         // its reserve), so a kept write is always made.
         if requests.watchers_full() || !requests.has_room_for(2) {
@@ -390,11 +389,7 @@ impl Publisher {
         let id = waiting.id;
         let mut kept = Request::new(target, RequestValue::Value(raw));
         kept.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).expect("one part"));
-        kept.priority = priority;
         requests.submit(kept).ok()?;
-        if let Some(waiting) = self.timed.as_mut() {
-            waiting.kept = priority;
-        }
         self.ledger.kept(id, format!("{module_id}.{key}"));
         Some(id)
     }
