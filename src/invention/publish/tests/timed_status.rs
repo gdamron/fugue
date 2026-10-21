@@ -298,12 +298,10 @@ fn an_authored_write_a_landing_overtakes_is_made_again() {
         .unwrap();
     // The write plays, then the edit lands, writing 440 as it does.
     rig.render(BLOCKS);
-    let recorded_it = rig
-        .live
-        .record_authored("osc2", "frequency", &value, (seen, false));
+    let recorded_it = rig.live.record_authored("osc2", "frequency", &value, seen);
     assert_eq!(
         recorded_it,
-        Authored::Raced,
+        Authored::Overtaken,
         "the caller writes again, so it plays last"
     );
     assert_eq!(state_of(&rig, id), EditState::Adopted);
@@ -403,15 +401,12 @@ fn an_authored_write_to_a_control_the_edit_writes_cancels_it() {
     assert_eq!(state_of(&rig, id), EditState::Queued);
 
     write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
-    let cause = CancelCause::AuthoredWrite {
-        module_id: "osc2".to_string(),
-        key: "frequency".to_string(),
-        touches: Touched::Written,
-    };
-    assert_eq!(state_of(&rig, id), EditState::Cancelled(cause));
     // The write waits until the osc1 writes ahead of it are due and free
-    // the store; nothing lands before it now.
+    // the store; nothing lands before it now. Read through the runtime
+    // first, as a caller would, so whatever landed is adopted: what is
+    // recorded and what plays then fail on their own if they differ.
     rig.render(20);
+    let state = state_of(&rig, id);
     let (document, _) = recorded(&rig, "osc2", "frequency");
     assert_eq!(document, 660.0);
     rig.render(1_600);
@@ -421,6 +416,12 @@ fn an_authored_write_to_a_control_the_edit_writes_cancels_it() {
         ControlValue::Number(660.0)
     );
     assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
+    let cause = CancelCause::AuthoredWrite {
+        module_id: "osc2".to_string(),
+        key: "frequency".to_string(),
+        touches: Touched::Written,
+    };
+    assert_eq!(state, EditState::Cancelled(cause));
 }
 
 /// An edit adopted before its outcome arrives is announced adopted once:

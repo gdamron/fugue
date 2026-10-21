@@ -37,8 +37,9 @@ pub(crate) enum Authored {
     /// Recorded: what plays.
     Recorded,
     /// Not recorded: a timed edit landed after the write and rebuilt or
-    /// removed its module (or re-resolved its schedule), so what plays may
-    /// not be the write. It is to be made again.
+    /// removed its module (or re-resolved its schedule), or wrote the
+    /// control itself, so what plays may not be the write. It is to be
+    /// made again.
     Overtaken,
 }
 
@@ -141,8 +142,8 @@ impl LiveGraph {
     /// [`Authored::Overtaken`], with nothing recorded, when a timed edit
     /// adopted since `seen` may have landed after the write and replaced
     /// what it wrote (see [`Publisher::timed_overtook`]): the caller makes
-    /// it again. One adopted since that touched neither the module nor its
-    /// schedule leaves the write playing, so it is recorded, as it is when
+    /// it again. One adopted since that touched neither the module, its
+    /// schedule nor the control leaves the write playing, so it is recorded, as it is when
     /// only untimed changes were published since `seen` (they publish
     /// nothing after the write reaches the audio thread).
     pub(crate) fn record_authored(
@@ -170,7 +171,7 @@ impl LiveGraph {
                 self.adopt(&mut publisher);
             }
         }
-        if publisher.timed_overtook(seen, module_id) == Some(true) {
+        if publisher.timed_overtook(seen, module_id, key) == Some(true) {
             return Authored::Overtaken;
         }
         publisher.fold_timed(module_id, key, value);

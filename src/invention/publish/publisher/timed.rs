@@ -64,6 +64,8 @@ pub(crate) struct LastAdopted {
     /// The modules the latest rebuilt or removed, or whose schedule it
     /// re-resolved as it landed.
     modules: HashSet<String>,
+    /// The controls of modules it kept that it wrote as it landed.
+    controls: Vec<(String, String)>,
 }
 
 /// A timed edit the audio thread landed, adopted by the publisher: what it
@@ -209,6 +211,7 @@ impl Publisher {
             generation: self.generation,
             before: self.adopted.generation,
             modules: removed.chain(built).chain(rebound).cloned().collect(),
+            controls: waiting.chained,
         };
         Some(Adopted {
             id: waiting.id,
@@ -256,14 +259,20 @@ impl Publisher {
     /// Whether a timed edit adopted after generation `seen` may have
     /// overtaken an authored write to control `key` of `module_id` made
     /// while `seen` was the latest: landing after it, the edit rebuilt or
-    /// removed the module, or re-resolved its schedule. `None` when none
-    /// was adopted since; `Some(true)`, to be safe, when more than one was.
-    pub(crate) fn timed_overtook(&self, seen: u64, module_id: &str) -> Option<bool> {
+    /// removed the module, re-resolved its schedule, or wrote the control.
+    /// `None` when none was adopted since; `Some(true)`, to be safe, when
+    /// more than one was.
+    pub(crate) fn timed_overtook(&self, seen: u64, module_id: &str, key: &str) -> Option<bool> {
         let adopted = &self.adopted;
         if adopted.generation <= seen {
             return None;
         }
-        Some(adopted.before > seen || adopted.modules.contains(module_id))
+        let wrote = |(module, control): &(String, String)| module == module_id && control == key;
+        Some(
+            adopted.before > seen
+                || adopted.modules.contains(module_id)
+                || adopted.controls.iter().any(wrote),
+        )
     }
 
     /// The id of the timed edit waiting, if any.
