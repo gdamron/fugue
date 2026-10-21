@@ -173,3 +173,118 @@ fn test_factory() {
     assert!(result.control_surface.is_some());
     assert!(result.sink.is_none());
 }
+
+/// A wet-only reverb fed a sustained 220 Hz sine, one sample at a time.
+struct Sustained {
+    reverb: Reverb,
+    phase: f32,
+    /// The last two outputs, oldest first.
+    last: [f32; 2],
+}
+
+impl Sustained {
+    const SAMPLE_RATE: u32 = 44100;
+
+    /// Settled for two seconds at `room_size`.
+    fn new(room_size: f32) -> Self {
+        let mut reverb = Reverb::new(Self::SAMPLE_RATE);
+        reverb.set_control("wet", 1.0).unwrap();
+        reverb.set_control("dry", 0.0).unwrap();
+        reverb.set_control("room_size", room_size).unwrap();
+        let mut sustained = Self {
+            reverb,
+            phase: 0.0,
+            last: [0.0; 2],
+        };
+        sustained.settle();
+        sustained
+    }
+
+    fn settle(&mut self) {
+        self.largest_kink(2 * Self::SAMPLE_RATE as usize);
+    }
+
+    /// The largest change of the left output's sample-to-sample step over
+    /// `frames`. A sine's step changes slowly, by a thousandth of its
+    /// amplitude per sample at 220 Hz; a jump changes it by the whole jump.
+    fn largest_kink(&mut self, frames: usize) -> f32 {
+        let mut largest = 0.0f32;
+        for _ in 0..frames {
+            let input = 0.5 * (self.phase * std::f32::consts::TAU).sin();
+            self.phase += 220.0 / Self::SAMPLE_RATE as f32;
+            self.phase -= self.phase.floor();
+            self.reverb.set_input("audio_left", input).unwrap();
+            self.reverb.process(1);
+            let out = self.reverb.get_output("audio_left").unwrap();
+            let [older, old] = self.last;
+            largest = largest.max(((out - old) - (old - older)).abs());
+            self.last = [old, out];
+        }
+        largest
+    }
+
+    fn set_room_size(&mut self, room_size: f32) {
+        self.reverb.set_control("room_size", room_size).unwrap();
+    }
+}
+
+/// A tenth of a second: longer than a crossfade.
+const WINDOW: usize = 4410;
+
+/// How far a change's kinks may exceed those of the sine settled at either
+/// end. Sweeping the room moves the comb resonances, so the sine may swell
+/// a little on the way (under twice as large); reading new offsets at once
+/// kinks the output 25 to 250 times further.
+const CLICK_RATIO: f32 = 4.0;
+
+/// Asserts that `changing`, the largest kink while the room changes, is no
+/// larger than the sine settled before the change and after it allows.
+fn assert_no_click(case: &str, before: f32, changing: f32, sustained: &mut Sustained) {
+    sustained.settle();
+    let after = sustained.largest_kink(WINDOW);
+    let limit = CLICK_RATIO * before.max(after);
+    assert!(
+        changing <= limit,
+        "{case}: a kink of {changing} while the room changed, against {before} before \
+         and {after} after"
+    );
+}
+
+#[test]
+fn room_size_step_does_not_click() {
+    for (from, to) in [(0.2, 0.9), (0.9, 0.2), (0.3, 0.6)] {
+        let mut sustained = Sustained::new(from);
+        let before = sustained.largest_kink(WINDOW);
+        sustained.set_room_size(to);
+        let changing = sustained.largest_kink(WINDOW);
+        assert_no_click(&format!("{from} to {to}"), before, changing, &mut sustained);
+    }
+}
+
+#[test]
+fn room_size_changes_mid_crossfade_do_not_click() {
+    let mut sustained = Sustained::new(0.2);
+    let before = sustained.largest_kink(WINDOW);
+    let mut changing = 0.0f32;
+    for room_size in [0.9, 0.4, 0.7] {
+        sustained.set_room_size(room_size);
+        changing = changing.max(sustained.largest_kink(300));
+    }
+    changing = changing.max(sustained.largest_kink(WINDOW));
+    assert_no_click("retargeted mid-fade", before, changing, &mut sustained);
+}
+
+#[test]
+fn automated_room_size_does_not_zipper() {
+    let mut sustained = Sustained::new(0.2);
+    let before = sustained.largest_kink(WINDOW);
+    // A one-second ramp to 0.8, written every 32 samples.
+    let writes = Sustained::SAMPLE_RATE as usize / 32;
+    let mut changing = 0.0f32;
+    for write in 1..=writes {
+        sustained.set_room_size(0.2 + 0.6 * write as f32 / writes as f32);
+        changing = changing.max(sustained.largest_kink(32));
+    }
+    changing = changing.max(sustained.largest_kink(WINDOW));
+    assert_no_click("ramped", before, changing, &mut sustained);
+}
