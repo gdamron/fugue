@@ -505,3 +505,6 @@ impl DegreeTable {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
