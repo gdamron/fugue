@@ -62,7 +62,7 @@ impl SampleInstrumentControls {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{ZoneSpec, NOTE_CAPACITY};
+    use super::super::{ZoneSpec, LANES, NOTE_CAPACITY};
     use super::*;
     use crate::alloc_counter::allocator_events;
     use crate::audio_thread::AudioThreadScope;
@@ -88,32 +88,63 @@ mod tests {
             .0
     }
 
-    #[test]
-    fn a_note_held_up_behind_a_push_takes_no_voice_a_later_note_took() {
+    /// An instrument with `voices` voices, and which notes it is sounding.
+    fn sounding_with(
+        voices: usize,
+    ) -> (
+        SampleInstrumentControls,
+        SampleInstrument,
+        impl Fn(&SampleInstrument) -> Vec<u8>,
+    ) {
         let (controls, audio, queues) =
             SampleInstrumentControls::new(48_000, 0.1, vec![zone()]).unwrap();
-        let mut instrument =
-            SampleInstrument::new_with_controls(controls.clone(), audio, queues, 1, 48_000);
+        let instrument =
+            SampleInstrument::new_with_controls(controls.clone(), audio, queues, voices, 48_000);
         let sounding = |instrument: &SampleInstrument| -> Vec<u8> {
             let voices = instrument.voices.iter().filter(|voice| voice.active);
-            voices.map(|voice| voice.note).collect()
+            let mut notes: Vec<u8> = voices.map(|voice| voice.note).collect();
+            notes.sort_unstable();
+            notes
         };
+        (controls, instrument, sounding)
+    }
+
+    #[test]
+    fn a_control_thread_held_up_mid_push_holds_up_no_other_note() {
+        let (controls, mut instrument, sounding) = sounding_with(1);
         // One voice. A control thread is preempted mid-push; another sends
-        // a note on behind it, then a scheduler's note on plays.
+        // a note on meanwhile, then a scheduler's note on plays: in the
+        // order sent, 60 sounds and 64 steals its voice.
         let publish = controls.held_up_note();
         controls.note_on(&ControlValue::Number(60.0)).unwrap();
         let scheduled = controls.set_scheduled("note_on", TableValue::Number(64.0));
         assert_eq!(scheduled, Ok(()));
         instrument.process(1);
         assert_eq!(sounding(&instrument), [64]);
-        // Sent in order, 60 would have sounded, then been stolen by 64.
+        // The held-up push lands a block later.
         publish(72, false);
         instrument.process(1);
         assert_eq!(sounding(&instrument), [64]);
-        // Once caught up, notes take voices as ever.
         controls.note_on(&ControlValue::Number(67.0)).unwrap();
         instrument.process(1);
         assert_eq!(sounding(&instrument), [67]);
+    }
+
+    #[test]
+    fn notes_sent_past_a_held_up_push_take_voices_in_the_order_sent() {
+        let (controls, mut instrument, sounding) = sounding_with(2);
+        // Two voices: 60, then 64, then 67 steals the oldest, 60.
+        let publish = controls.held_up_note();
+        controls.note_on(&ControlValue::Number(60.0)).unwrap();
+        let scheduled = controls.set_scheduled("note_on", TableValue::Number(64.0));
+        assert_eq!(scheduled, Ok(()));
+        instrument.process(1);
+        assert_eq!(sounding(&instrument), [60, 64]);
+        publish(72, false);
+        instrument.process(1);
+        controls.note_on(&ControlValue::Number(67.0)).unwrap();
+        instrument.process(1);
+        assert_eq!(sounding(&instrument), [64, 67]);
     }
 
     #[test]
@@ -121,7 +152,8 @@ mod tests {
         let controls = instrument();
         let note = ControlValue::Number(64.0);
         let sent = std::iter::repeat_with(|| controls.note_on(&note).is_ok());
-        assert_eq!(sent.take_while(|&queued| queued).count(), NOTE_CAPACITY);
+        let queued = sent.take_while(|&queued| queued).count();
+        assert_eq!(queued, LANES * NOTE_CAPACITY);
         let scheduled = TableValue::Number(67.0);
         let _audio = AudioThreadScope::enter();
         let ((), allocs, frees) = allocator_events(|| {
