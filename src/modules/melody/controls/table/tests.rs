@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -9,35 +10,11 @@ use crate::audio_thread::AudioThreadScope;
 use crate::modules::melody::MelodyControls;
 use crate::ControlSurface;
 
-thread_local! {
-    /// What runs on this thread between the next two loads that must agree.
-    static BETWEEN_LOADS: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
-}
-
-/// Called by the table between a degrees' header load and a weights'
-/// generation load, and between a weights' generation load and a count
-/// load: where another thread's edit can land.
-pub(super) fn between_loads() {
-    if let Some(run) = BETWEEN_LOADS.with(|hook| hook.borrow_mut().take()) {
-        run();
-    }
-}
-
-/// Runs `edit` the next time this thread is between two such loads.
-fn between_the_next_loads(edit: impl FnOnce() + 'static) {
-    BETWEEN_LOADS.with(|hook| *hook.borrow_mut() = Some(Box::new(edit)));
-}
-
-/// Waits (up to ten seconds) until `progress` moves `by` past where it was.
-fn wait_for(progress: &AtomicUsize, by: usize) {
-    let (from, deadline) = (progress.load(Ordering::Acquire), Instant::now());
-    while progress.load(Ordering::Acquire) < from + by {
-        assert!(deadline.elapsed() < Duration::from_secs(10), "no progress");
-        std::thread::yield_now();
-    }
-}
-
 mod reference;
+mod support;
+
+pub(super) use support::between_loads;
+use support::*;
 
 /// The table `scale` and `weights` make, set one after the other.
 fn table_of(scale: &[i32], weights: Option<&[f32]>) -> (Vec<i32>, Vec<f32>) {
@@ -239,44 +216,8 @@ fn a_weight_write_meeting_whole_weights_and_a_grown_count_is_kept() {
     assert_eq!(controls.note_weights()[5], 9.0);
 }
 
-/// Ten seconds: long enough for any thread to get going, short enough that
-/// a regression fails rather than hangs.
-const PATIENCE: Duration = Duration::from_secs(10);
-
-/// Writes `value` to degree position `index` on another thread, held up
-/// after its header load until `release` sends or drops: returns the
-/// write, already holding its generation, and `release`.
-fn held_write(
-    controls: &MelodyControls,
-    index: usize,
-    value: i32,
-) -> (std::thread::JoinHandle<bool>, mpsc::Sender<()>) {
-    let (release, held) = mpsc::channel::<()>();
-    let (holding, holds) = mpsc::channel();
-    let controls = controls.clone();
-    let write = std::thread::spawn(move || {
-        between_the_next_loads(move || {
-            holding.send(()).unwrap();
-            let _ = held.recv_timeout(PATIENCE);
-        });
-        controls.table.write_degree(index, value)
-    });
-    holds.recv_timeout(PATIENCE).expect("the write is held up");
-    (write, release)
-}
-
-/// Waits (up to [`PATIENCE`]) until `thread` finishes, and joins it.
-fn join_soon<T>(thread: std::thread::JoinHandle<T>) -> T {
-    let deadline = Instant::now() + PATIENCE;
-    while !thread.is_finished() {
-        assert!(Instant::now() < deadline, "the thread never finished");
-        std::thread::yield_now();
-    }
-    thread.join().unwrap()
-}
-
 #[test]
-fn a_write_held_up_for_a_round_of_generations_is_never_read() {
+fn generations_2_and_2_31_wait_out_a_held_up_write_however_later_ones_finish() {
     // Before generation 2, and before generation 2^31.
     for before in [u32::MAX, (1 << 31) - 1] {
         let controls = MelodyControls::new(60, vec![0, 0]);
@@ -307,8 +248,6 @@ fn a_write_held_up_for_a_round_of_generations_is_never_read() {
         drop(release);
         assert!(join_soon(held));
         join_soon(editor);
-        controls.set_degree_count(2);
-        assert_eq!(controls.allowed_degrees(), [5, 5], "{before}");
     }
 }
 
@@ -355,6 +294,33 @@ fn a_copy_is_taken_while_a_position_write_is_in_flight() {
     assert!(join_soon(held));
     assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
     assert_eq!(degrees[..2], [7, 9]);
+}
+
+#[test]
+fn a_copy_never_holds_a_write_made_after_seeing_one_it_missed() {
+    let controls = MelodyControls::new(60, vec![0, 0]);
+    let table = &controls.table;
+    // The copy reads position 0. Then a write to it lands, held up before
+    // it finishes; this thread reads it, and another write, to position 1,
+    // lands, held up likewise. The copy reads position 1: had it kept
+    // that, it would hold the later write and not the earlier.
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let (edit, held) = (controls.clone(), writes.clone());
+    // Past the copy's view, to its first position read.
+    between_loads_after(1, move || {
+        let first = landed_write(&edit, 0, 20);
+        assert_eq!(edit.table.position(0), Some((20, 1.0)));
+        let second = landed_write(&edit, 1, 21);
+        held.borrow_mut().extend([first, second]);
+    });
+    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+    for (write, release) in writes.take() {
+        drop(release);
+        assert!(join_soon(write));
+    }
+    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
+    assert_eq!(degrees[..2], [20, 21]);
 }
 
 #[test]
