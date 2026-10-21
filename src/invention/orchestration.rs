@@ -295,7 +295,9 @@ impl RuntimeSnapshot {
         // again, so it plays last and what is recorded is what plays. A
         // payload (a schedule) is made once: making it again is not the same
         // as making it once. A write is recorded only when this returns Ok,
-        // so the caller's event follows every value recorded.
+        // so the caller's event follows every value recorded. Authored
+        // writers take turns, so the last recorded is the last made.
+        let _authoring = live.authoring();
         let attempts = if self.is_payload(module_id, key) {
             1
         } else {
