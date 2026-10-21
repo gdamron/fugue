@@ -14,9 +14,11 @@
 //!
 //! An order publishes on its own, so it is added only while a compile now
 //! is the one installed: while every module writes the controls it wrote
-//! when the topology was last published. A scheduler retargeted live
-//! writes others, yet the installed topology still orders it by the old
-//! ones (FUG-388); a compile now would order it anew.
+//! when the topology was last published. A live schedule write that
+//! retargets its scheduler publishes the topology recompiled first (see
+//! `publish::retarget`), so this holds again, except while that recompile
+//! is skipped (a timed edit waiting, edits backed up) until the next
+//! change compiles.
 
 use indexmap::IndexMap;
 
@@ -61,15 +63,35 @@ impl GraphChange {
         true
     }
 
-    /// Each module's control targets as its surface reports them now, or
-    /// as a schedule the change writes to it does (see
-    /// `Rescheduling::targets`): what the change compiles with.
+    /// Recompiles the topology with module `id` writing `targets`, as a
+    /// live write of its schedule leaves it, so the scheduler runs ahead
+    /// of the modules it now writes (FUG-388). Edits nothing, and returns
+    /// false, when the topology installed was compiled with every module
+    /// writing what it writes then.
+    pub(crate) fn retarget(&mut self, id: &str, targets: Vec<String>) -> bool {
+        if !self.contains(id) {
+            return false;
+        }
+        self.retargets.insert(id.to_string(), targets);
+        if self.targets_now() == self.mirror.targets {
+            self.retargets.shift_remove(id);
+            return false;
+        }
+        self.edits += 1;
+        true
+    }
+
+    /// Each module's control targets as a live schedule write leaves them
+    /// (see [`Self::retarget`]), as a schedule the change writes to it
+    /// does (see `Rescheduling::targets`), or as its surface reports them
+    /// now: what the change compiles with.
     pub(super) fn targets_now(&self) -> Targets {
         let mut scheduled = self.rescheduling.targets(&self.surfaces);
         let targets = self.mirror.modules.keys().map(|id| {
             let surface = self.surfaces.get(id);
-            let targets = scheduled
-                .remove(id)
+            let targets = self.retargets.get(id).cloned();
+            let targets = targets
+                .or_else(|| scheduled.remove(id))
                 .or_else(|| surface.map(|surface| surface.control_targets()));
             (id.clone(), targets.unwrap_or_default())
         });

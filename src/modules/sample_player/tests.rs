@@ -3,6 +3,8 @@ use crate::{ControlSurface, ControlValue};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod realtime;
+
 /// Process-unique suffix so parallel tests never collide on a temp path.
 /// (The resample cache is keyed by path, so a reused path would otherwise
 /// serve a stale buffer.)
@@ -162,14 +164,7 @@ fn test_sample_player_resamples_on_load() {
         Some(false),
     )
     .unwrap();
-    let sample_len = controls
-        .shared
-        .lock()
-        .unwrap()
-        .pending_sample
-        .as_ref()
-        .unwrap()
-        .len();
+    let sample_len = controls.pending_sample().unwrap().len();
     assert!(
         sample_len >= 7,
         "expected resampled buffer, got {}",
@@ -270,14 +265,8 @@ fn test_sample_player_caches_resampled_buffer() {
     let first = SamplePlayerControls::new(44_100, Some(source), Some(false), Some(false)).unwrap();
     let second = SamplePlayerControls::new(44_100, Some(source), Some(false), Some(false)).unwrap();
 
-    let first_buf = first.shared.lock().unwrap().pending_sample.clone().unwrap();
-    let second_buf = second
-        .shared
-        .lock()
-        .unwrap()
-        .pending_sample
-        .clone()
-        .unwrap();
+    let first_buf = first.pending_sample().unwrap();
+    let second_buf = second.pending_sample().unwrap();
 
     // Same source + target rate must hand back the same cached Arc.
     assert!(Arc::ptr_eq(&first_buf, &second_buf));
@@ -305,7 +294,7 @@ fn test_factory_accepts_asset_path_object() {
             .clone()
     };
     assert_eq!(controls.asset(), path.to_string_lossy());
-    assert!(controls.shared.lock().unwrap().pending_sample.is_some());
+    assert!(controls.pending_sample().is_some());
 
     let _ = std::fs::remove_file(path);
 }
@@ -374,7 +363,7 @@ fn test_set_asset_resolves_package_ref() {
     });
 
     assert_eq!(controls.asset(), "fugue.test.kit@1.0.0:kick.wav");
-    assert!(controls.shared.lock().unwrap().pending_sample.is_some());
+    assert!(controls.pending_sample().is_some());
 }
 
 /// A stereo ramp at least one FLAC block (16 frames) long.
@@ -400,14 +389,12 @@ fn test_sample_player_loads_flac() {
     )
     .unwrap();
 
-    let shared = controls.shared.lock().unwrap();
-    let sample = shared.pending_sample.as_ref().unwrap();
+    let sample = controls.pending_sample().unwrap();
     assert_eq!(sample.len(), frames.len());
     for (index, frame) in frames.iter().enumerate() {
         assert!((sample.left[index] - frame[0]).abs() < 1e-3);
         assert!((sample.right[index] - frame[1]).abs() < 1e-3);
     }
-    drop(shared);
 
     let _ = std::fs::remove_file(path);
 }
@@ -429,11 +416,9 @@ fn test_sample_player_detects_flac_by_header() {
     )
     .unwrap();
 
-    let shared = controls.shared.lock().unwrap();
-    let sample = shared.pending_sample.as_ref().unwrap();
+    let sample = controls.pending_sample().unwrap();
     assert_eq!(sample.len(), frames.len());
     assert!((sample.left[5] - frames[5][0]).abs() < 1e-3);
-    drop(shared);
 
     let _ = std::fs::remove_file(path);
 }
@@ -542,13 +527,11 @@ fn test_elastic_set_asset_precomputes_analysis() {
         SamplePlayerControls::with_mode(44_100, Some(path.to_str().unwrap()), None, None, true)
             .unwrap();
 
-    let shared = controls.shared.lock().unwrap();
-    let sample = shared.pending_sample.as_ref().unwrap();
+    let sample = controls.pending_sample().unwrap();
     assert!(
         sample.cached_elastic_analysis().is_some(),
         "elastic set_asset must leave the analysis ready for the audio thread"
     );
-    drop(shared);
 
     let _ = std::fs::remove_file(path);
 }
