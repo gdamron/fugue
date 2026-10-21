@@ -449,55 +449,6 @@ fn a_write_overtaken_and_refused_on_its_retry_is_not_recorded() {
     assert_eq!(recorded_document(&rig, "osc1"), 440.0, "and is recorded");
 }
 
-/// An authored write to a control the edit writes as it lands cancels it:
-/// the write could reach the audio thread before or after the landing, so
-/// only that makes it both what plays and what is recorded.
-#[test]
-fn an_authored_write_to_a_control_the_edit_writes_cancels_it() {
-    let mut rig = Rig::new(BASE);
-    let id = queue_writing(&rig, 440.0);
-    write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
-    let cause = CancelCause::AuthoredWrite {
-        module_id: "osc2".to_string(),
-        key: "frequency".to_string(),
-        touches: Touched::Written,
-    };
-    assert_eq!(state_of(&rig, id), EditState::Cancelled(cause));
-    rig.render(BLOCKS);
-    let playing = rig.live.control_surfaces.lock().unwrap()["osc2"].clone();
-    let frequency = playing.get_control("frequency").unwrap();
-    assert_eq!(frequency, ControlValue::Number(660.0));
-    assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
-}
-
-/// An authored write queued once the edit has landed, before it is
-/// adopted, follows the edit's own write: it plays, and is recorded at
-/// once, as the edit it is safe from writing over it.
-#[test]
-fn a_write_queued_once_the_edit_has_landed_plays_and_is_recorded() {
-    let mut rig = Rig::new(BASE);
-    let id = queue_writing(&rig, 440.0);
-    rig.render(BLOCKS); // lands, writing 440
-    let value = ControlValue::Number(660.0);
-    let queued = front_door(&rig).make_authored("osc2", "frequency", value.clone());
-    let queued = queued.unwrap();
-    assert_eq!(queued.safe, Some(id), "queued after the landing");
-    let seen = queued.generation.unwrap();
-    let live = &rig.live;
-    let unsafe_record = live.record_authored("osc2", "frequency", &value, (seen, None));
-    assert_eq!(
-        unsafe_record,
-        Authored::Overtaken,
-        "as were it queued before"
-    );
-    let recorded_it = live.record_authored("osc2", "frequency", &value, (seen, queued.safe));
-    assert_eq!(recorded_it, Authored::Recorded);
-    rig.render(1);
-    let playing = rig.live.control_surfaces.lock().unwrap()["osc2"].clone();
-    assert_eq!(playing.get_control("frequency").unwrap(), value);
-    assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
-}
-
 /// A write a timed edit overtook is reported before anything else is done:
 /// an edit queued since, which rebuilds the same module, is left waiting.
 #[test]

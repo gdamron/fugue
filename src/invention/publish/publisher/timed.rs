@@ -15,7 +15,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::{Published, Publisher, Refused};
-use crate::control_request::{QueueFull, Request, RequestId, RequestValue, When};
+use crate::control_request::{
+    Condition, ControlTarget, Predicate, QueueFull, Request, RequestId, RequestValue, RtValue, When,
+};
 use crate::invention::declared::RequestPort;
 use crate::invention::graph::{Fate, TIMED_EDIT_MODULE};
 use crate::invention::publish::change::{BuiltModule, PreparedChange, TopologyMirror};
@@ -51,6 +53,9 @@ pub(crate) struct Waiting {
     /// The controls of modules it keeps that it writes as it lands (see
     /// [`Publisher::chain_timed`]).
     chained: Vec<(String, String)>,
+    /// The priority the latest authored write it keeps was chained at (see
+    /// [`Publisher::keep_authored`]); its own writes are at 0.
+    kept: i16,
 }
 
 /// How many recent adoptions [`Adoptions`] remembers.
@@ -163,6 +168,7 @@ impl Publisher {
             packed,
             folded: Vec::new(),
             chained: Vec::new(),
+            kept: 0,
         }));
         Ok(id)
     }
@@ -275,8 +281,8 @@ impl Publisher {
     /// at `seen`: landing after it, the edit rebuilt or removed the module,
     /// re-resolved its schedule, or wrote the control. Not by writing the
     /// control, though, when it is `safe`: the edit the write was queued
-    /// after it landed (see [`Self::timed_safe`]). True, to be safe, when
-    /// one adopted since is forgotten.
+    /// after or kept over (see [`Self::keep_authored`]). True, to be safe,
+    /// when one adopted since is forgotten.
     pub(crate) fn timed_overtook(
         &self,
         seen: u64,
@@ -335,20 +341,58 @@ impl Publisher {
     }
 
     /// Notes the controls of modules it keeps that the timed edit waiting
-    /// writes as it lands, so an authored write to one cancels it (see
-    /// `LiveGraph::record_authored`).
+    /// writes as it lands, so an authored write to one is kept over it
+    /// (see [`Self::keep_authored`]).
     pub(crate) fn chain_timed(&mut self, chained: Vec<(String, String)>) {
         if let Some(waiting) = self.timed.as_mut() {
             waiting.chained = chained;
         }
     }
 
-    /// The timed edit an authored write about to be queued is safe from
-    /// (see [`Self::timed_overtook`]): the one waiting, once it has landed,
-    /// as the write follows its writes.
-    pub(crate) fn timed_safe(&self) -> Option<RequestId> {
+    /// Readies an authored write of `raw` to control `key` of `module_id`
+    /// (at `target`, in the graph that is playing), about to be queued,
+    /// against the timed edit waiting, and returns the edit it is safe from
+    /// (see [`Self::timed_overtook`]). One landed already: the write follows
+    /// its writes. One that writes the control as it lands: the write is
+    /// kept over it, chained to the landing first at a priority above the
+    /// edit's own write and any kept before, so whatever order they apply
+    /// in there, the author's value plays and the edit's never sounds (see
+    /// [`Ledger::kept`]). `None`, with nothing queued, when neither: none
+    /// waits, it does not write the control, or the write cannot be kept
+    /// (an event, the priorities ran out, or the request queue or the
+    /// requests waiting on conditions are full), and an edit writing the
+    /// control is cancelled as the write is recorded.
+    pub(crate) fn keep_authored(
+        &mut self,
+        (module_id, key): (&str, &str),
+        target: ControlTarget,
+        (raw, event): (RtValue, bool),
+    ) -> Option<RequestId> {
         let waiting = self.timed.as_ref()?;
-        (waiting.fate.settled() == Some(true)).then_some(waiting.id)
+        match waiting.fate.settled() {
+            Some(true) => return Some(waiting.id),
+            Some(false) => return None,
+            None => {}
+        }
+        let chained = |(module, control): &(String, String)| module == module_id && control == key;
+        if event || !waiting.chained.iter().any(chained) {
+            return None;
+        }
+        let priority = waiting.kept.checked_add(1)?;
+        // Room for the write itself after it, so a kept write is made.
+        if self.requests.watchers_full() || !self.requests.has_room_for(2) {
+            return None;
+        }
+        let id = waiting.id;
+        let mut kept = Request::new(target, RequestValue::Value(raw));
+        kept.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).expect("one part"));
+        kept.priority = priority;
+        self.requests.submit(kept).ok()?;
+        if let Some(waiting) = self.timed.as_mut() {
+            waiting.kept = priority;
+        }
+        self.ledger.kept(id, format!("{module_id}.{key}"));
+        Some(id)
     }
 
     /// Every recent timed edit's status (see `timed_status`).

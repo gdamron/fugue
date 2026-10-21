@@ -144,9 +144,10 @@ impl LiveGraph {
     ///
     /// Otherwise a timed edit waiting that rebuilds or removes the module
     /// is cancelled, and the edit reports why, as is one that writes the
-    /// control as it lands: the write may reach the audio thread before or
-    /// after the edit lands, so only that makes the write what plays, and
-    /// what is recorded. One that keeps the module folds the
+    /// control as it lands but did not keep the write over its own (see
+    /// [`Publisher::keep_authored`]): the write may reach the audio thread
+    /// before or after the edit lands, so only that makes the write what
+    /// plays, and what is recorded. One that keeps the module folds the
     /// write into its own document, so the write is recorded again as the
     /// edit is adopted.
     pub(crate) fn record_authored(
