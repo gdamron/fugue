@@ -121,6 +121,16 @@ impl Payload {
         }
     }
 
+    /// The value, read in place, when the payload holds a `T`.
+    /// Allocation- and free-free.
+    pub(crate) fn peek<T: 'static>(&self) -> Option<&T> {
+        match &self.0 {
+            Some(Erased::Shared(value)) => value.downcast_ref::<T>(),
+            Some(Erased::Owned(value)) => value.downcast_ref::<T>(),
+            None => None,
+        }
+    }
+
     /// The payload as the typed handle a module keeps, or the payload back
     /// when it holds another type or an owned value. Allocation- and
     /// free-free.

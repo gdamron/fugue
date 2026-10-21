@@ -118,6 +118,13 @@ impl Fate {
 #[derive(Debug)]
 pub(crate) struct FateGuard(Fate);
 
+impl FateGuard {
+    /// Whether the publisher cancelled the edit. Audio thread.
+    pub(crate) fn cancelled(&self) -> bool {
+        self.0 .0.load(Ordering::Acquire) == CANCELLED
+    }
+}
+
 impl Drop for FateGuard {
     fn drop(&mut self) {
         self.0.settle(DROPPED);
