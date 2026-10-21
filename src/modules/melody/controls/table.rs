@@ -237,6 +237,7 @@ impl DegreeTable {
     /// [`Self::position`], taking the edit lock should its retries run out.
     /// Control thread.
     pub(crate) fn position_or_wait(&self, index: usize) -> Option<(i32, f32)> {
+        debug_assert_control_thread("reading a melody position, waiting on edits");
         let read = self.consistent(READ_ATTEMPTS, false, |view| view.position(index));
         read.unwrap_or_else(|| {
             let _whole = self.whole();
@@ -425,33 +426,51 @@ impl DegreeTable {
 
     /// Restores degrees and weights written to single positions, active or
     /// not. Under the edit lock no edit moves the generations, so these
-    /// writes need not be marked in flight.
+    /// writes need not be marked in flight. They land as one: counted
+    /// landing from before the first to after the last, so no copy is kept
+    /// between two of them.
     pub(crate) fn restore_written(
         &self,
         degrees: impl IntoIterator<Item = (usize, i32)>,
         weights: impl IntoIterator<Item = (usize, f32)>,
     ) {
         self.edit(|table| {
-            let generation = table.degrees_generation();
-            for (index, value) in degrees.into_iter().filter(|(i, _)| *i < MAX_DEGREES) {
-                let bits = value.clamp(-127, 127) as u32;
-                let slot = &table.written_degrees[index];
-                table.write(slot, generation, || table.degrees_generation(), bits);
-            }
-            let generation = table.weights_generation();
-            for (index, value) in weights.into_iter().filter(|(i, _)| *i < MAX_DEGREES) {
-                let bits = value.clamp(0.0, 10.0).to_bits();
-                let slot = &table.written_weights[index];
-                table.write(slot, generation, || table.weights_generation(), bits);
-            }
+            table.landing_as_one(|| {
+                let generation = table.degrees_generation();
+                for (index, value) in degrees.into_iter().filter(|(i, _)| *i < MAX_DEGREES) {
+                    let bits = value.clamp(-127, 127) as u32;
+                    let slot = &table.written_degrees[index];
+                    table.write(slot, generation, || table.degrees_generation(), bits);
+                }
+                let generation = table.weights_generation();
+                for (index, value) in weights.into_iter().filter(|(i, _)| *i < MAX_DEGREES) {
+                    let bits = value.clamp(0.0, 10.0).to_bits();
+                    let slot = &table.written_weights[index];
+                    table.write(slot, generation, || table.weights_generation(), bits);
+                }
+            })
         });
+    }
+
+    /// Runs `writes`, counted landing throughout (see [`Self::write`]), so
+    /// a copy is kept before them all or after them all.
+    fn landing_as_one(&self, writes: impl FnOnce()) {
+        self.landing.fetch_add(1, Ordering::SeqCst);
+        self.changed();
+        writes();
+        self.landing.fetch_sub(1, Ordering::SeqCst);
+        self.changed();
     }
 
     /// Copies the active degrees and weights into `degrees` and `weights`,
     /// returning how many, or `None` when an edit was published or a
     /// position write was landing or finished during the copy: keep the
-    /// copy before.
-    /// Never waits.
+    /// copy before. Never waits.
+    ///
+    /// So while a writer is landing, or a control thread preempted mid-edit
+    /// holds one up, every copy is refused, and the audio thread plays on
+    /// from the last table it kept: stale until the writer finishes, but
+    /// whole, as when the old `try_lock` found the table locked.
     pub(crate) fn read_into(
         &self,
         degrees: &mut [i32; MAX_DEGREES],
