@@ -1,0 +1,223 @@
+//! A timed edit that rebuilds a module a surviving scheduler targets hands
+//! the scheduler its schedule re-resolved against the edit as it lands, so
+//! the schedule plays on to the new instance from the landing sample. The
+//! handover is recorded only once the edit is adopted: one refused, expired
+//! or cancelled records nothing and leaves the scheduler bound as before. A
+//! schedule write racing the edit while it waits cancels it, as a change
+//! publishing does.
+
+use super::request_beats::{outcomes_of, render_counted, Twin};
+use super::schedule_payload::scheduler;
+use super::scheduler_beats::{beat_samples, blocks, level, rig_on};
+use super::*;
+use crate::control_request::{BeatSpec, Outcome, Refusal, RequestId, Timeline};
+use crate::invention::declared::STALE;
+use crate::invention::publish::timed::EditTime;
+use crate::test_support::dial::DIAL;
+
+/// A tempo with fractional samples per beat at 48 kHz.
+const BPM: f64 = 97.0;
+
+const DOCUMENT: &str = r#"{
+    "version": "1.0.0",
+    "modules": [{ "id": "dac", "type": "dac", "config": { "soft_clip": false } }],
+    "connections": []
+}"#;
+
+/// The level the schedule sets at `step`.
+fn value(step: usize) -> f32 {
+    0.1 * step as f32
+}
+
+/// A clock at `BPM` stepping a scheduler that sets the dial's level at
+/// each of steps 1 to 6; the dial (level 0.25) reaches the unclipped dac.
+fn stepped() -> Rig {
+    let schedule: Vec<_> = (1..=6)
+        .map(|step| level(step as u32, value(step)))
+        .collect();
+    rig_on(DOCUMENT, BPM, serde_json::json!(schedule), ("dial", "out"))
+}
+
+/// Queues a swap of the dial for a new instance (level 0.25) at `time`,
+/// refused once `ttl` samples have passed.
+fn swap_dial(
+    rig: &Rig,
+    time: EditTime<'_>,
+    ttl: Option<u64>,
+) -> Result<RequestId, GraphCommandError> {
+    let mut change = rig.live.begin();
+    change.upsert("dial", rig.build("dial", DIAL, serde_json::json!({})));
+    let prepared = change.prepare().unwrap();
+    rig.live.commit_when(prepared, time, ttl, |_| {})
+}
+
+/// Whether `out` holds each step's level through its beat, from `from`
+/// to step 6.
+fn plays_steps(out: &[f32], beats: &[usize], from: usize) -> bool {
+    (from..=6).all(|step| {
+        out[beats[step]..beats[step + 1]]
+            .iter()
+            .all(|&level| level == value(step))
+    })
+}
+
+/// On a beat between two steps: from the landing sample the new instance
+/// plays, and every later step's entry reaches it.
+///
+/// An entry due on the landing sample itself still applies to the instance
+/// replaced: the drain plays what is due at a landing sample before the
+/// edit installs (see `graph::publication::landing`).
+#[test]
+fn a_timed_swap_at_a_beat_plays_the_schedule_on_to_the_new_instance() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let controls = scheduler(&rig);
+    let recorded = controls.recorded();
+    // From the clock's beat 0, as the drain takes it in the first block.
+    let time = EditTime::Beat {
+        clock: "clock",
+        spec: BeatSpec::After(2.5),
+    };
+    let id = swap_dial(&rig, time, None).unwrap();
+    // Waiting: nothing recorded yet.
+    assert_eq!(controls.recorded(), recorded);
+    let out = render_counted(&mut rig, blocks(BPM, 7.0));
+
+    let mut twin = Twin::new(BPM);
+    let lands = twin.until(|clock| clock.position() >= 2.5) as usize;
+    let landed = Outcome::Applied { at: lands as u64 };
+    assert_eq!(outcomes_of(&mut rig, id), [(id, landed)]);
+    assert!(out[..beats[1]].iter().all(|&level| level == 0.25));
+    assert!(out[beats[2]..lands].iter().all(|&level| level == value(2)));
+    assert!(out[lands..beats[3]].iter().all(|&level| level == 0.25));
+    assert!(plays_steps(&out, &beats, 3), "the schedule plays on");
+    // Adopted: the handover is recorded as the schedule the scheduler
+    // adopted.
+    rig.live.adopt_landed();
+    assert_ne!(controls.recorded(), recorded);
+    assert_eq!(controls.recorded(), controls.adopted());
+}
+
+/// Landing mid-step, the new instance holds its own level until the next
+/// step, as an immediate swap's does, and plays every step after it.
+#[test]
+fn a_timed_swap_mid_step_plays_the_next_step_on_the_new_instance() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let lands = beats[2] + 100;
+    let id = swap_dial(&rig, EditTime::AtSample(lands as u64), None).unwrap();
+    let out = render_counted(&mut rig, blocks(BPM, 7.0));
+    let landed = Outcome::Applied { at: lands as u64 };
+    assert_eq!(outcomes_of(&mut rig, id), [(id, landed)]);
+    assert!(out[beats[2]..lands].iter().all(|&level| level == value(2)));
+    assert!(out[lands..beats[3]].iter().all(|&level| level == 0.25));
+    assert!(plays_steps(&out, &beats, 3));
+}
+
+/// Expired before it is due, the edit is refused: nothing recorded, and
+/// the schedule plays on the dial it was bound to.
+#[test]
+fn an_expired_timed_swap_records_and_rebinds_nothing() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let controls = scheduler(&rig);
+    let (recorded, generation) = (controls.recorded(), rig.live.generation());
+    let id = swap_dial(&rig, EditTime::AtSample(beats[3] as u64), Some(64)).unwrap();
+    let out = render_counted(&mut rig, blocks(BPM, 7.0));
+    let refused = Outcome::Refused(Refusal::Expired);
+    assert_eq!(outcomes_of(&mut rig, id), [(id, refused)]);
+    assert_eq!(rig.live.generation(), generation, "nothing adopted");
+    assert_eq!(controls.recorded(), recorded);
+    assert!(plays_steps(&out, &beats, 1));
+}
+
+/// A stale edit is refused with nothing queued; one cancelled by a change
+/// published while it waits records nothing either.
+#[test]
+fn a_stale_or_cancelled_timed_swap_records_and_rebinds_nothing() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let controls = scheduler(&rig);
+    let recorded = controls.recorded();
+
+    let mut change = rig.live.begin();
+    change.upsert("dial", rig.build("dial", DIAL, serde_json::json!({})));
+    let stale = change.prepare().unwrap();
+    let lfo = rig.build("lfo", "lfo", serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("lfo", lfo);
+            Ok(())
+        })
+        .unwrap();
+    let time = EditTime::AtSample(beats[3] as u64);
+    let error = rig.live.commit_when(stale, time, None, |_| {}).unwrap_err();
+    assert!(matches!(error, GraphCommandError::TopologyMoved), "{error}");
+    assert_eq!(controls.recorded(), recorded);
+
+    let id = swap_dial(&rig, time, None).unwrap();
+    let spare = rig.build("spare", "lfo", serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("spare", spare);
+            Ok(())
+        })
+        .unwrap();
+    let out = render_counted(&mut rig, blocks(BPM, 7.0));
+    let refused = Outcome::Refused(Refusal::TargetGone);
+    assert_eq!(outcomes_of(&mut rig, id), [(id, refused)]);
+    assert_eq!(controls.recorded(), recorded);
+    assert!(plays_steps(&out, &beats, 1));
+}
+
+/// A schedule written to the scheduler while the edit waits replaces the
+/// schedule the edit re-resolved, so it cancels the edit, as a change
+/// publishing does, and plays on the graph that is playing.
+#[test]
+fn a_schedule_written_while_a_timed_swap_waits_cancels_it() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let controls = scheduler(&rig);
+    let id = swap_dial(&rig, EditTime::AtSample(beats[3] as u64), None).unwrap();
+    let rewritten: Vec<_> = (1..=6)
+        .map(|step| level(step as u32, value(7 - step)))
+        .collect();
+    controls
+        .set_schedule_json(&serde_json::json!(rewritten).to_string())
+        .unwrap();
+    assert!(!rig.live.publisher().lock().unwrap().timed_waiting());
+    let out = render_counted(&mut rig, blocks(BPM, 7.0));
+    let refused = Outcome::Refused(Refusal::TargetGone);
+    assert_eq!(outcomes_of(&mut rig, id), [(id, refused)]);
+    let heard = (1..=6).all(|step| {
+        out[beats[step]..beats[step + 1]]
+            .iter()
+            .all(|&level| level == value(7 - step))
+    });
+    assert!(heard, "the write plays on the dial it resolved");
+    assert_eq!(controls.recorded(), controls.adopted());
+}
+
+/// Once the edit has landed, a schedule resolved against the graph it
+/// replaced is stale until the edit is adopted, then resolves against it.
+#[test]
+fn a_schedule_written_after_a_timed_swap_lands_waits_for_its_adoption() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let controls = scheduler(&rig);
+    let lands = beats[2] + 100;
+    swap_dial(&rig, EditTime::AtSample(lands as u64), None).unwrap();
+    render_counted(&mut rig, lands / 64 + 1);
+    // Landed, not adopted: the write takes the publisher without adopting.
+    let json = serde_json::json!([level(3, 0.9)]).to_string();
+    assert_eq!(controls.set_schedule_json(&json), Err(STALE.to_string()));
+    rig.live.adopt_landed();
+    controls.set_schedule_json(&json).unwrap();
+    let out = render_counted(&mut rig, beats[4] / 64 + 1 - (lands / 64 + 1));
+    let start = (lands / 64 + 1) * 64;
+    let step3 = &out[beats[3] - start..beats[4] - start];
+    assert!(
+        step3.iter().all(|&level| level == 0.9),
+        "on the new instance"
+    );
+}
