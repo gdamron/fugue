@@ -192,13 +192,14 @@ impl SamplePlayerControls {
     /// control thread to drop. Returns `None` when the lock was busy, so the
     /// caller retries on a later block; `Some(swapped)` otherwise.
     ///
-    /// On a swap, `transport` is read again under the lock: `play` as it
-    /// stood once the swapped-in sample was staged (a stop written before it
-    /// included), with no later sample staged before the read.
+    /// On a swap, `refresh` runs under the lock, to read again what the
+    /// block read before it: `play` and `loop` as they stood once the
+    /// swapped-in sample was staged (a stop written before it included),
+    /// with no later sample staged before the read.
     pub(crate) fn try_swap(
         &self,
         current: &mut Option<Arc<SampleData>>,
-        transport: &mut u64,
+        refresh: impl FnOnce(),
     ) -> Option<bool> {
         let mut swap = match self.shared.swap.try_lock() {
             Ok(swap) => swap,
@@ -221,7 +222,7 @@ impl SamplePlayerControls {
             return Some(false);
         };
         swap.retired = current.replace(sample);
-        *transport = self.transport();
+        refresh();
         Some(true)
     }
 
@@ -229,6 +230,12 @@ impl SamplePlayerControls {
     #[cfg(test)]
     pub(crate) fn hold_swap_lock(&self) -> std::sync::MutexGuard<'_, SampleSwap> {
         self.shared.swap.lock().unwrap()
+    }
+
+    /// Whether the swap lock is held now.
+    #[cfg(test)]
+    pub(crate) fn swap_lock_held(&self) -> bool {
+        matches!(self.shared.swap.try_lock(), Err(TryLockError::WouldBlock))
     }
 
     /// The staged sample not yet taken by the audio thread.
