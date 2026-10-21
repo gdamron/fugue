@@ -37,6 +37,13 @@ pub(in super::super) fn between_loads() {
     }
 }
 
+/// Called by the table each time it waits on another thread (for `what`):
+/// fails once it has waited [`PATIENCE`] since `waiting`, so a regression
+/// that leaves it waiting for good fails the test rather than hanging it.
+pub(in super::super) fn still_waiting(waiting: Instant, what: &str) {
+    assert!(waiting.elapsed() < PATIENCE, "waited too long for {what}");
+}
+
 /// Runs `edit` the next time this thread calls [`between_loads`].
 pub(super) fn between_the_next_loads(edit: impl FnOnce() + 'static) {
     between_loads_after(0, edit);
