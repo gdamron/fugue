@@ -66,7 +66,8 @@ impl Handover {
 impl SignalGraph {
     /// Applies each of `publication`'s handovers made
     /// [`Handover::with_requests`] to the running module it names, which
-    /// survives it: the graph is the one the publication replaces. One
+    /// survives it: the graph is the one the publication replaces, and the
+    /// id finds the instance [`Self::install`] moves into its slot. One
     /// naming anything else is left for [`Self::hand_over`].
     /// Allocation-, free- and lock-free.
     pub(in crate::invention::graph) fn hand_over_with_requests(

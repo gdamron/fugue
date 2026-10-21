@@ -262,7 +262,8 @@ fn a_recompile_hands_a_scheduler_its_unadopted_schedule() {
 
 /// A step falling on the install's sample plays the new schedule's entry
 /// there, as a request applied before the beats would: here step 0, the
-/// schedule written before the first block.
+/// schedule written before the first block. (A self-played scheduler
+/// adopts it before it processes either way; it is kept as a guard.)
 #[test]
 fn a_retarget_plays_an_entry_on_the_install_sample_as_loaded() {
     let new = serde_json::json!([at(0, "clock", "bpm", 211.0)]);
