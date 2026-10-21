@@ -164,6 +164,15 @@ pub(super) fn landing_write(
     (write, step, landed)
 }
 
+/// Stops a stress test's writer when dropped, however the test ends.
+pub(super) struct Stop(pub(super) std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for Stop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 /// Waits (up to [`PATIENCE`]) until `thread` finishes, and joins it.
 pub(super) fn join_soon<T>(thread: std::thread::JoinHandle<T>) -> T {
     let deadline = Instant::now() + PATIENCE;
