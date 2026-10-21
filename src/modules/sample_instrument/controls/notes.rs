@@ -22,6 +22,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{bounded, QueueConsumer, QueueProducer};
 
 /// How many note events each lane holds between two blocks.
@@ -108,6 +109,7 @@ impl NoteSenders {
     /// through [`SEND_ATTEMPTS`] looks, yielding between them. Lock-free
     /// and allocation-free.
     pub(in crate::modules::sample_instrument) fn send(&self, note: u8, on: bool) -> bool {
+        debug_assert_control_thread("sending a sample instrument note");
         for _ in 0..SEND_ATTEMPTS {
             let mut contended = false;
             for lane in &self.lanes {
