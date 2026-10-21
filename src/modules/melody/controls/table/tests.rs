@@ -67,23 +67,27 @@ fn a_copy_taken_while_whole_scales_are_set_is_always_one_of_them() {
         })
     };
     wait_for(&edits, 1);
-    let (mut degrees, mut weights_read) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
-    let (mut taken, mut refused) = (0, 0);
-    let (started, deadline) = (edits.load(Ordering::Acquire), Instant::now());
-    while taken < 5_000 || edits.load(Ordering::Acquire) < started + 500 {
-        assert!(deadline.elapsed() < Duration::from_secs(10), "no edits");
-        let Some(count) = controls.table.read_into(&mut degrees, &mut weights_read) else {
-            refused += 1;
-            continue;
-        };
-        taken += 1;
-        let copied = (&degrees[..count], &weights_read[..count]);
-        assert!(
-            tables.iter().any(|(d, w)| (&d[..], &w[..]) == copied),
-            "a table no whole edit made: {copied:?}"
-        );
-    }
-    done.store(true, Ordering::Release);
+    let stop = Stop(done);
+    let (taken, refused) = without_waiting(move || {
+        let (mut degrees, mut weights_read) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+        let (mut taken, mut refused) = (0, 0);
+        let (started, deadline) = (edits.load(Ordering::Acquire), Instant::now());
+        while taken < 5_000 || edits.load(Ordering::Acquire) < started + 500 {
+            assert!(deadline.elapsed() < Duration::from_secs(10), "no edits");
+            let Some(count) = controls.table.read_into(&mut degrees, &mut weights_read) else {
+                refused += 1;
+                continue;
+            };
+            taken += 1;
+            let copied = (&degrees[..count], &weights_read[..count]);
+            assert!(
+                tables.iter().any(|(d, w)| (&d[..], &w[..]) == copied),
+                "a table no whole edit made: {copied:?}"
+            );
+        }
+        (taken, refused)
+    });
+    drop(stop);
     join_soon(writer);
     eprintln!("copies taken {taken}, refused mid-edit {refused}");
 }
@@ -449,26 +453,29 @@ fn a_copy_never_holds_a_later_position_write_without_an_earlier_one() {
         })
     };
     wait_for(&writes, 1);
-    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
-    let mut taken = 0;
-    let (started, deadline) = (writes.load(Ordering::Acquire), Instant::now());
-    while taken < 20_000 || writes.load(Ordering::Acquire) < started + 5_000 {
-        assert!(deadline.elapsed() < Duration::from_secs(10), "no writes");
-        if controls
-            .table
-            .read_into(&mut degrees, &mut weights)
-            .is_none()
-        {
-            continue;
+    let stop = Stop(done);
+    without_waiting(move || {
+        let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+        let mut taken = 0;
+        let (started, deadline) = (writes.load(Ordering::Acquire), Instant::now());
+        while taken < 20_000 || writes.load(Ordering::Acquire) < started + 5_000 {
+            assert!(deadline.elapsed() < Duration::from_secs(10), "no writes");
+            if controls
+                .table
+                .read_into(&mut degrees, &mut weights)
+                .is_none()
+            {
+                continue;
+            }
+            taken += 1;
+            // Position 0 is written first: it leads position 1 by one value,
+            // or has wrapped round to -127 from 127.
+            let [first, second] = [degrees[0], degrees[1]];
+            let held = first == second || first == second + 1 || (first, second) == (-127, 127);
+            assert!(held, "a table that never was: [{first}, {second}]");
         }
-        taken += 1;
-        // Position 0 is written first: it leads position 1 by one value, or
-        // has wrapped round to -127 from 127.
-        let [first, second] = [degrees[0], degrees[1]];
-        let held = first == second || first == second + 1 || (first, second) == (-127, 127);
-        assert!(held, "a table that never was: [{first}, {second}]");
-    }
-    done.store(true, Ordering::Release);
+    });
+    drop(stop);
     join_soon(writer);
 }
 
