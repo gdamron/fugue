@@ -511,6 +511,7 @@ impl DeclaredSurface {
                             self.show(index, shown, None);
                             if let Some(checked) = checked {
                                 (checked.record)();
+                                graph.recompile_if_retargeted(&module_id);
                             }
                         }
                         applied
