@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use super::*;
 use crate::alloc_counter::allocator_events;
 use crate::audio_thread::AudioThreadScope;
+use crate::modules::melody::tests::without_waiting;
 use crate::modules::melody::MelodyControls;
 use crate::ControlSurface;
 
@@ -127,14 +128,16 @@ fn a_position_reads_on_the_audio_thread_without_a_lock() {
     let controls = MelodyControls::new(60, vec![0, 2, 4]);
     controls.set_note_weight(1, 3.0).unwrap();
     let _editing = controls.table.editing();
-    let audio = AudioThreadScope::enter();
-    let (read, allocs, frees) = allocator_events(|| {
-        [
-            controls.get_control("degree.1"),
-            controls.get_control("note_weight.1"),
-        ]
+    let reader = controls.clone();
+    let (read, allocs, frees) = without_waiting(move || {
+        let _audio = AudioThreadScope::enter();
+        allocator_events(|| {
+            [
+                reader.get_control("degree.1"),
+                reader.get_control("note_weight.1"),
+            ]
+        })
     });
-    drop(audio);
     assert_eq!((allocs, frees), (0, 0));
     assert_eq!(read, [Ok(2.0.into()), Ok(3.0.into())]);
 }
@@ -266,12 +269,15 @@ fn a_read_meeting_an_editor_preempted_mid_edit_reads_the_table_before_it() {
     let next = next_generation(table.weights_generation());
     let weight = 5.0f32.to_bits();
     table.weights[buffer(next)].entries[0].store(weight, Ordering::Relaxed);
-    let audio = AudioThreadScope::enter();
-    let read: Vec<_> = (0..4).map(|i| table.position(i)).collect();
-    let mut degrees = [0; MAX_DEGREES];
-    let mut weights = [0.0; MAX_DEGREES];
-    let copied = table.read_into(&mut degrees, &mut weights);
-    drop(audio);
+    let reader = controls.clone();
+    let (read, copied, degrees, weights) = without_waiting(move || {
+        let _audio = AudioThreadScope::enter();
+        let read: Vec<_> = (0..4).map(|i| reader.table.position(i)).collect();
+        let mut degrees = [0; MAX_DEGREES];
+        let mut weights = [0.0; MAX_DEGREES];
+        let copied = reader.table.read_into(&mut degrees, &mut weights);
+        (read, copied, degrees, weights)
+    });
     let before = [(0, 3.0), (2, 1.0), (0, 3.0), (2, 1.0)];
     assert_eq!(read, before.map(Some));
     assert_eq!(copied, Some(4));
@@ -321,6 +327,36 @@ fn a_copy_never_holds_a_write_made_after_seeing_one_it_missed() {
     }
     assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
     assert_eq!(degrees[..2], [20, 21]);
+}
+
+#[test]
+fn a_copy_begun_while_a_position_write_is_landing_is_refused() {
+    let controls = MelodyControls::new(60, vec![0, 0]);
+    let table = &controls.table;
+    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+    // Two writes about to land, their versions bumped. Were copies taken
+    // now, one could read position 0 before the first lands and position
+    // 1 after the second, and another both between: each would hold one
+    // write and not the other, in opposite orders.
+    let (first, land_first, first_landed) = landing_write(&controls, 0, 10);
+    let (second, land_second, second_landed) = landing_write(&controls, 1, 20);
+    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+    land_first.send(()).unwrap();
+    first_landed
+        .recv_timeout(PATIENCE)
+        .expect("the first write lands");
+    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+    land_second.send(()).unwrap();
+    second_landed
+        .recv_timeout(PATIENCE)
+        .expect("the second write lands");
+    // Both landed, neither finished: none is landing, so a copy is the
+    // table as it stands.
+    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
+    assert_eq!(degrees[..2], [10, 20]);
+    drop((land_first, land_second));
+    assert!(join_soon(first));
+    assert!(join_soon(second));
 }
 
 #[test]

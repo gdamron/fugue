@@ -32,11 +32,10 @@
 //! generations is not mistaken for one that saw none. Edits run on control
 //! threads, one at a time; a control thread preempted mid-edit holds up no
 //! reader. A position write bumps the version before it lands and after,
-//! and a copy of the whole table is kept only when the version did not
-//! move during it. A write that only lands during it, started before and
-//! finished after, may or may not be in it; any write made after seeing
-//! that one land started during the copy, so the copy is a table that was,
-//! never one write and not another made after it.
+//! and counts itself landing in between. A copy of the whole table is kept
+//! only when no write was landing as it began and the version did not move
+//! during it, so no write lands during a copy that is kept: it is the table
+//! as it stood, and two copies never see two writes in opposite orders.
 //!
 //! Generations are 32 bits, so they come back round. A position write is
 //! marked in flight, in the current epoch, from before it reads the
@@ -51,6 +50,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::audio_thread::debug_assert_control_thread;
 
+mod flight;
 mod parts;
 use parts::*;
 
@@ -86,6 +86,8 @@ pub(crate) struct DegreeTable {
     epoch: AtomicU64,
     /// Position writes in flight, per epoch parity.
     writes: [AtomicU64; 2],
+    /// Position writes between their first version bump and landing.
+    landing: AtomicU64,
     /// Bumped after every publish of a generation, so a reader tells a
     /// generation come back round from one that never moved.
     published: AtomicU64,
@@ -158,6 +160,7 @@ impl DegreeTable {
             written_weights: std::array::from_fn(|_| AtomicU64::new(0)),
             epoch: AtomicU64::new(0),
             writes: [AtomicU64::new(0), AtomicU64::new(0)],
+            landing: AtomicU64::new(0),
             published: AtomicU64::new(0),
             version: AtomicU64::new(0),
             editing: Mutex::new(()),
@@ -191,10 +194,9 @@ impl DegreeTable {
 
     /// Calls `read` with a view of the table, and returns what it read once
     /// nothing was published during it (so the view is the table as it
-    /// stood between the two), and, for a `whole` copy, the version did not
-    /// move during it: `None` if either did, every time of `attempts`. A
-    /// write that only lands during the copy may or may not be in it; it
-    /// orders after the copy or before.
+    /// stood between the two), and, for a `whole` copy, no position write
+    /// was landing as it began and the version did not move during it (so
+    /// none landed during it): `None` otherwise, every time of `attempts`.
     fn consistent<R>(
         &self,
         attempts: usize,
@@ -204,6 +206,9 @@ impl DegreeTable {
         for _ in 0..attempts {
             let published = self.published.load(Ordering::SeqCst);
             let version = self.version.load(Ordering::SeqCst);
+            if whole && self.landing.load(Ordering::SeqCst) != 0 {
+                continue;
+            }
             let view = self.view();
             let value = read(&view);
             fence(Ordering::Acquire);
@@ -278,40 +283,6 @@ impl DegreeTable {
         changed
     }
 
-    /// Marks a position write in flight, in the current epoch, until the
-    /// guard drops. Taken before the write reads the generation it checks
-    /// against, so an edit about to publish that generation again waits it
-    /// out. Never waits: a retry means an edit moved the epoch meanwhile.
-    fn in_flight(&self) -> InFlight<'_> {
-        loop {
-            let epoch = self.epoch.load(Ordering::SeqCst);
-            let count = &self.writes[(epoch & 1) as usize];
-            count.fetch_add(1, Ordering::SeqCst);
-            if self.epoch.load(Ordering::SeqCst) == epoch {
-                return InFlight(count);
-            }
-            // Marked after the epoch moved on: an edit may be waiting on
-            // this count, and need not wait for this write.
-            count.fetch_sub(1, Ordering::SeqCst);
-        }
-    }
-
-    /// Waits until every position write marked in flight so far has
-    /// finished, should publishing `generation` call for it: moves the
-    /// epoch on, so writes from now on mark the other count, and waits for
-    /// the one before to empty. Control thread, under the edit lock; writes
-    /// never wait for an edit, so this ends.
-    fn drain_before(&self, generation: u32) {
-        if !drains(generation) {
-            return;
-        }
-        let epoch = self.epoch.fetch_add(1, Ordering::SeqCst);
-        let count = &self.writes[(epoch & 1) as usize];
-        while count.load(Ordering::SeqCst) != 0 {
-            std::thread::yield_now();
-        }
-    }
-
     /// Publishes a generation with `store`, and counts the publish for
     /// readers to re-check.
     fn publish(&self, store: impl FnOnce()) {
@@ -325,10 +296,13 @@ impl DegreeTable {
     /// generation. Lock-free: a retry means another write landed. Call in
     /// flight (see [`Self::in_flight`]), or under the edit lock.
     fn write(&self, slot: &AtomicU64, generation: u32, now: impl Fn() -> u32, bits: u32) {
-        // Before it lands, so a copy it lands during and that a write
-        // made after seeing it lands in is refused; and after, so a copy
-        // taken before it lands is taken again.
+        // Landing, and the version moved before it lands, so a copy it
+        // lands during is refused, whether begun before the bump or after;
+        // and after, so a copy taken before it lands is taken again.
+        self.landing.fetch_add(1, Ordering::SeqCst);
         self.changed();
+        #[cfg(test)]
+        tests::between_loads();
         let mut seen = slot.load(Ordering::SeqCst);
         while now() == generation {
             let value = tagged(generation, bits);
@@ -337,6 +311,7 @@ impl DegreeTable {
                 Err(current) => seen = current,
             }
         }
+        self.landing.fetch_sub(1, Ordering::SeqCst);
         #[cfg(test)]
         tests::between_loads();
         self.changed();
@@ -479,7 +454,8 @@ impl DegreeTable {
 
     /// Copies the active degrees and weights into `degrees` and `weights`,
     /// returning how many, or `None` when an edit was published or a
-    /// position write finished during the copy: keep the copy before.
+    /// position write was landing or finished during the copy: keep the
+    /// copy before.
     /// Never waits.
     pub(crate) fn read_into(
         &self,
@@ -512,16 +488,6 @@ impl DegreeTable {
         let count = self.count();
         self.header
             .store(header(generation, count), Ordering::SeqCst);
-    }
-}
-
-/// A position write in flight (see [`DegreeTable::in_flight`]): the count
-/// it is marked in.
-struct InFlight<'a>(&'a AtomicU64);
-
-impl Drop for InFlight<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
