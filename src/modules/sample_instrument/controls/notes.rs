@@ -220,6 +220,23 @@ mod tests {
     }
 
     #[test]
+    fn a_note_stamped_before_a_block_and_pushed_after_plays_the_block_after() {
+        let (senders, mut queues) = note_queues();
+        // A control thread stamps a note on in the first lane and is
+        // preempted before it pushes, across a whole block; another
+        // thread's note plays meanwhile.
+        senders.lanes[0].taken.store(true, Ordering::Relaxed);
+        let preempted = senders.event(60, true);
+        assert!(senders.send(62, true));
+        assert_eq!(notes(&mut queues), [(62, true)]);
+        senders.lanes[0].queue.try_push(preempted).unwrap();
+        senders.lanes[0].taken.store(false, Ordering::Relaxed);
+        assert!(senders.send(64, true));
+        let expected = [(60, true), (64, true)];
+        assert_eq!(notes(&mut queues), expected, "as though sent then");
+    }
+
+    #[test]
     fn draining_allocates_nothing() {
         let (senders, mut queues) = note_queues();
         for note in 0..LANES * NOTE_CAPACITY {

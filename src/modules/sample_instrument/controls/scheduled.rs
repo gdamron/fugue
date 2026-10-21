@@ -121,10 +121,10 @@ mod tests {
         assert_eq!(scheduled, Ok(()));
         instrument.process(1);
         assert_eq!(sounding(&instrument), [64]);
-        // The held-up push lands a block later.
-        publish(72, false);
+        // The held-up push lands a block later, and takes the voice.
+        publish(72, true);
         instrument.process(1);
-        assert_eq!(sounding(&instrument), [64]);
+        assert_eq!(sounding(&instrument), [72]);
         controls.note_on(&ControlValue::Number(67.0)).unwrap();
         instrument.process(1);
         assert_eq!(sounding(&instrument), [67]);

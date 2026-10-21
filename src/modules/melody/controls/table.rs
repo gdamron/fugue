@@ -31,9 +31,12 @@
 //! counter the reader re-checks, so a read outlasting a whole round of
 //! generations is not mistaken for one that saw none. Edits run on control
 //! threads, one at a time; a control thread preempted mid-edit holds up no
-//! reader. A copy of the whole table is kept only when no change finished
-//! during it (each bumps the version after it lands): it is a table that
-//! was, never one write and not another that finished before it.
+//! reader. A position write bumps the version before it lands and after,
+//! and a copy of the whole table is kept only when the version did not
+//! move during it. A write that only lands during it, started before and
+//! finished after, may or may not be in it; any write made after seeing
+//! that one land started during the copy, so the copy is a table that was,
+//! never one write and not another made after it.
 //!
 //! Generations are 32 bits, so they come back round. A position write is
 //! marked in flight, in the current epoch, from before it reads the
@@ -188,10 +191,10 @@ impl DegreeTable {
 
     /// Calls `read` with a view of the table, and returns what it read once
     /// nothing was published during it (so the view is the table as it
-    /// stood between the two), and, for a `whole` copy, no change finished
-    /// during it: `None` if one did, every time of `attempts`. A write in
-    /// flight but not finished may or may not be in the copy; it orders
-    /// after the copy or before.
+    /// stood between the two), and, for a `whole` copy, the version did not
+    /// move during it: `None` if either did, every time of `attempts`. A
+    /// write that only lands during the copy may or may not be in it; it
+    /// orders after the copy or before.
     fn consistent<R>(
         &self,
         attempts: usize,
@@ -318,8 +321,12 @@ impl DegreeTable {
     /// from it: then the write came before the edit that moved it, and is
     /// forgotten with the rest. Never replaces a value of a later
     /// generation. Lock-free: a retry means another write landed. Call in
-    /// flight (see [`Self::in_flight`]).
+    /// flight (see [`Self::in_flight`]), or under the edit lock.
     fn write(&self, slot: &AtomicU64, generation: u32, now: impl Fn() -> u32, bits: u32) {
+        // Before it lands, so a copy it lands during and that a write
+        // made after seeing it lands in is refused; and after, so a copy
+        // taken before it lands is taken again.
+        self.changed();
         let mut seen = slot.load(Ordering::SeqCst);
         while now() == generation {
             let value = tagged(generation, bits);
@@ -328,6 +335,8 @@ impl DegreeTable {
                 Err(current) => seen = current,
             }
         }
+        #[cfg(test)]
+        tests::between_loads();
         self.changed();
     }
 
@@ -480,6 +489,8 @@ impl DegreeTable {
             for i in 0..count {
                 degrees[i] = view.degree(i);
                 weights[i] = view.weight(i);
+                #[cfg(test)]
+                tests::between_loads();
             }
             count
         })
