@@ -442,7 +442,9 @@ impl MutationLedger {
     /// named) ended without being adopted: refused, expired or cancelled. It
     /// changed nothing, so evicting it leaves the horizon alone. Its reply is
     /// still replayed while it is recorded. Not every request was ticketed,
-    /// so an id the ledger does not hold is ignored.
+    /// so an id the ledger does not hold is ignored. A request id is unique
+    /// only within one running invention, so a ledger that outlives a run
+    /// must be given ids that also name the run (as the daemon's do).
     pub fn request_unchanged(&mut self, request_id: &str) {
         let queued = |entry: &&mut LedgerEntry| match &entry.outcome {
             RecordedOutcome::Queued(reply) => {
