@@ -459,6 +459,7 @@ impl SignalGraph {
         std::mem::swap(&mut self.sinks, &mut publication.sinks);
         std::mem::swap(&mut self.edges, &mut publication.edges);
         publication.topology.swap_with(self);
+        self.published = true;
 
         // A survivor missing from the running map (which the publisher's
         // mirror rules out) or buffers sized for another block size fall back
@@ -466,9 +467,14 @@ impl SignalGraph {
         // indexes a placeholder's missing ports. Recompiling resets every
         // carry, so the fallback copies none. It keeps the inputs, though:
         // the module order is already the installed one, so it resets only
-        // ports whose connectivity it changes.
+        // ports whose connectivity it changes. Recompiling allocates on the
+        // audio thread, so each fallback is counted in the backend's
+        // `AudioDiagnostics` for status readers.
         if moved != expected || self.block_capacity != self.block_size.clamp(1, MAX_BLOCK) {
             self.topo_dirty = true;
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.record_graph_rebuild();
+            }
         } else {
             self.carry_survivors(publication);
             self.carry_inherited(publication);
