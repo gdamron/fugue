@@ -23,7 +23,9 @@ priority.
   `src/modules/mixer/controls.rs` for the pattern.
 - Use pre-allocated buffers for DSP
 - Prefer `f32` math for audio-rate signals (SIMD-friendly)
-- Reset phase accumulators using `%=` to prevent drift
+- Wrap phase accumulators with `phase -= phase.floor()` (sign-safe under
+  negative or through-zero FM, drift-free, and cheaper than `%`, which keeps
+  the sign and is an `fmodf` call)
 - Use `Send` marker for thread-safe types
 - Cache results of expensive math (`powf`, `exp`, `log`, `sin`, `cos`,
   `tan`) instead of recomputing per sample. Prefer a precomputed lookup
