@@ -173,6 +173,11 @@ fn a_write_finding_its_lock_held_is_dropped_without_waiting() {
             entry(1, "sample_player", "loop", Bool(true)),
             entry(1, "sample_instrument", "note_on", Number(64.0)),
             entry(1, "cell_sequencer", "select_cell", Number(2.0)),
+            // A ramp starting while the table is held still starts.
+            ScheduleEntry {
+                ramp_steps: Some(1),
+                ..entry(1, "melody", "note_weight.0", Number(3.0))
+            },
             entry(2, "melody", "degree.2", Number(9.0)),
         ],
         &directory,
@@ -198,4 +203,5 @@ fn a_write_finding_its_lock_held_is_dropped_without_waiting() {
     assert_eq!(block(&mut scheduler, 0.0), (0, 0));
     assert_eq!(block(&mut scheduler, 1.0), (0, 0), "step 2");
     assert_eq!(locking.melody.degree(2), Ok(9));
+    assert_eq!(locking.melody.note_weight(0), Ok(3.0), "the ramp landed");
 }
