@@ -84,6 +84,9 @@ pub(crate) struct LiveGraph {
     /// Renders a zero-length block after each change, for a backend that
     /// never renders on its own (see [`crate::NullBackend`]).
     settler: Option<Settler>,
+    /// Held across an authored write and its record (see
+    /// [`Self::authoring`]).
+    authoring: Arc<Mutex<()>>,
 }
 
 /// Settles a live graph whose backend never renders on its own, so that
@@ -218,6 +221,7 @@ impl LiveGraph {
             module_ports,
             registry: LiveRegistry::new(registry),
             settler,
+            authoring: Arc::default(),
         };
         // Every module the graph starts with runs from here on.
         let port = live.port();
@@ -265,6 +269,16 @@ impl LiveGraph {
     fn backlogged(&self, publisher: &Publisher) -> bool {
         let unfreed = publisher.generation() - self.reclaimer.freed();
         unfreed > publisher::RETIRE_CAPACITY as u64
+    }
+
+    /// Serializes authored writes, each held from making the write to
+    /// recording it, so the last recorded is the last made: what plays (the
+    /// last made, and of the writes a timed edit keeps, the last chained)
+    /// is what the document records. Taken before any other lock, never
+    /// under one; control threads only.
+    pub(crate) fn authoring(&self) -> std::sync::MutexGuard<'_, ()> {
+        let authoring = self.authoring.lock();
+        authoring.unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Publications made so far. A change prepared from state read before
