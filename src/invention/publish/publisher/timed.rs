@@ -16,7 +16,8 @@ use std::sync::Arc;
 
 use super::{Published, Publisher, Refused};
 use crate::control_request::{
-    Condition, ControlTarget, Predicate, QueueFull, Request, RequestId, RequestValue, RtValue, When,
+    Condition, ControlTarget, Predicate, QueueFull, Request, RequestId, RequestSender,
+    RequestValue, RtValue, When,
 };
 use crate::invention::declared::RequestPort;
 use crate::invention::graph::{Fate, TIMED_EDIT_MODULE};
@@ -359,14 +360,16 @@ impl Publisher {
     /// in there, the author's value plays and the edit's never sounds (see
     /// [`Ledger::kept`]). `None`, with nothing queued, when neither: none
     /// waits, it does not write the control, or the write cannot be kept
-    /// (an event, the priorities ran out, or the request queue or the
-    /// requests waiting on conditions are full), and an edit writing the
-    /// control is cancelled as the write is recorded.
+    /// (an event, the priorities ran out, or the requests waiting on
+    /// conditions are full, or `requests`, the sender the write goes
+    /// through, has no room for both), and an edit writing the control is
+    /// cancelled as the write is recorded.
     pub(crate) fn keep_authored(
         &mut self,
         (module_id, key): (&str, &str),
         target: ControlTarget,
         (raw, event): (RtValue, bool),
+        requests: &RequestSender,
     ) -> Option<RequestId> {
         let waiting = self.timed.as_ref()?;
         match waiting.fate.settled() {
@@ -379,15 +382,16 @@ impl Publisher {
             return None;
         }
         let priority = waiting.kept.checked_add(1)?;
-        // Room for the write itself after it, so a kept write is made.
-        if self.requests.watchers_full() || !self.requests.has_room_for(2) {
+        // Room for the write itself after it, through the same sender (and
+        // its reserve), so a kept write is always made.
+        if requests.watchers_full() || !requests.has_room_for(2) {
             return None;
         }
         let id = waiting.id;
         let mut kept = Request::new(target, RequestValue::Value(raw));
         kept.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).expect("one part"));
         kept.priority = priority;
-        self.requests.submit(kept).ok()?;
+        requests.submit(kept).ok()?;
         if let Some(waiting) = self.timed.as_mut() {
             waiting.kept = priority;
         }

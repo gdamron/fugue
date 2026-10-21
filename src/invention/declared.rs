@@ -463,7 +463,7 @@ impl DeclaredSurface {
                 let safe = match (&request.value, authored) {
                     (RequestValue::Value(raw), Some(key)) => {
                         let module = (port.module_id.as_str(), key);
-                        publisher.keep_authored(module, target, (*raw, event))
+                        publisher.keep_authored(module, target, (*raw, event), &port.requests)
                     }
                     _ => None,
                 };
@@ -472,8 +472,9 @@ impl DeclaredSurface {
                 let mut pending = port.pending.lock().unwrap();
                 pending.settle();
                 let Ok(id) = port.requests.submit(request) else {
-                    // Never, as `keep_authored` left room, but a write kept
-                    // and not made is not to play.
+                    // Never, as `keep_authored` kept it only with room for
+                    // this write too, but a write kept and not made is not
+                    // to play.
                     if safe.is_some() {
                         publisher.cancel_timed(|| CancelCause::Unchained);
                     }
