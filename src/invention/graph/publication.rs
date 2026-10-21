@@ -459,6 +459,7 @@ impl SignalGraph {
         std::mem::swap(&mut self.sinks, &mut publication.sinks);
         std::mem::swap(&mut self.edges, &mut publication.edges);
         publication.topology.swap_with(self);
+        self.published = true;
 
         // A survivor missing from the running map (which the publisher's
         // mirror rules out) or buffers sized for another block size fall back

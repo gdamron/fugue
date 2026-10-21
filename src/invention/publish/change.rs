@@ -185,6 +185,9 @@ pub(crate) struct GraphChange {
     discarded: Vec<BuiltModule>,
     /// What surviving schedulers re-resolve for.
     rescheduling: Rescheduling,
+    /// Control targets a live schedule write leaves its scheduler writing
+    /// (see [`Self::retarget`]), ahead of its surface reporting them.
+    retargets: order::Targets,
     block_size: usize,
 }
 
@@ -205,6 +208,7 @@ impl GraphChange {
             built: IndexMap::new(),
             discarded: Vec::new(),
             rescheduling: Rescheduling::default(),
+            retargets: order::Targets::new(),
             block_size,
         }
     }
