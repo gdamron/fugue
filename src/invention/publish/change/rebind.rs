@@ -60,6 +60,11 @@ impl Rescheduling {
 }
 
 impl Rescheduling {
+    /// The ids an upsert or a remove touched.
+    pub(crate) fn into_touched(self) -> HashSet<String> {
+        self.touched
+    }
+
     /// The modules each scheduler the change writes a schedule to will
     /// target, by id, so the change compiles its process order against the
     /// schedule that lands with it. A schedule that does not parse is left
