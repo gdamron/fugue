@@ -279,3 +279,24 @@ fn orders_go_with_the_first_change_once_no_condition_waits() {
     unplug(&rig, "dial");
     assert!(watches(&rig).is_empty());
 }
+
+/// A block size change recompiles in place on the audio thread: it keeps
+/// the orders the topology was published with, so a condition waiting on
+/// one still applies on its exact sample (FUG-391).
+#[test]
+fn a_block_size_change_keeps_the_orders_installed() {
+    let oracle = rig(false).render(200);
+    let mut rig = rig(false);
+    assert!(order(&rig, "clock", "dial"));
+    let id = submit_on_beat(&rig, 2);
+    let mut out = render_counted(&mut rig, 1);
+    rig.graph.set_block_size(128);
+    out.extend(rig.render(199));
+    let beat = nth_beat(&oracle, 2);
+    assert_ne!(beat % 64, 0, "the beat falls inside a block");
+    assert_eq!(first_change(&out, &oracle), beat);
+    assert_eq!(
+        outcomes_of(&mut rig, id),
+        [(id, Outcome::Applied { at: beat })]
+    );
+}

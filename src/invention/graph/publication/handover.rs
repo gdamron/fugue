@@ -48,9 +48,9 @@ impl Handover {
     /// A handover of `payload` to a module the publication keeps as it is
     /// running, applied as a request submitted just before the edit would
     /// be: after the requests due at the install's sample, before any beat
-    /// then plays, as the edit's publication is taken. So a schedule
-    /// handed over plays its entries at that sample, not the one it
-    /// replaces.
+    /// then plays, as the edit's publication is taken. So the schedule it
+    /// replaces plays nothing at that sample, and a schedule handed over
+    /// before its first beat plays its step 0 there.
     pub(crate) fn with_requests(
         module_idx: usize,
         control: ControlIndex,

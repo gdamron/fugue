@@ -188,6 +188,13 @@ pub(crate) struct SignalGraph {
     pub(crate) out_counts: Vec<usize>,
     /// Allocated per-port frame capacity of `out_bufs` (equals `block_size`).
     pub(crate) block_capacity: usize,
+    /// Each module's ordering-only edges as compiled (see
+    /// [`CompiledTopology::ordering`]).
+    pub(crate) ordering: Vec<Vec<String>>,
+    /// Whether a publication installed the topology, compiled from the
+    /// publisher's mirror: a recompile in place then keeps its ordering
+    /// (see [`Self::recompile`]). A command applied in place forgets it.
+    pub(crate) published: bool,
     /// Configurable processing block size in frames (always `<= MAX_BLOCK`).
     pub(crate) block_size: usize,
     /// Flag indicating topology changed and derived state needs recomputation.
@@ -234,6 +241,8 @@ impl SignalGraph {
             out_prev: Vec::new(),
             out_counts: Vec::new(),
             block_capacity: 0,
+            ordering: Vec::new(),
+            published: false,
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
             tables_stale: true,
@@ -261,6 +270,7 @@ impl SignalGraph {
 
     /// Applies a single command to a graph no audio thread owns. Allocates.
     pub(crate) fn apply_command(&mut self, cmd: GraphCommand) {
+        self.published = false;
         match cmd {
             GraphCommand::AddModule { module_id, module } => {
                 let is_sink = matches!(module, GraphModule::Sink(_));

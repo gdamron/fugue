@@ -31,10 +31,15 @@ fn tempo() -> serde_json::Value {
 /// playing `schedule`; the clock's beat and a dial (level 0.25) reach the
 /// dac. Past the drain's room, `sched` plays its schedule itself.
 fn rig(fillers: usize, schedule: serde_json::Value) -> Rig {
+    rig_at(97.0, fillers, schedule)
+}
+
+/// [`rig`] with the clock at `bpm`.
+fn rig_at(bpm: f32, fillers: usize, schedule: serde_json::Value) -> Rig {
     let mut rig = Rig::new(DOCUMENT);
     rig.registry.register(DialFactory);
     rig.adopt_registry();
-    let clock = rig.build("clock", "clock", serde_json::json!({ "bpm": 97.0 }));
+    let clock = rig.build("clock", "clock", serde_json::json!({ "bpm": bpm }));
     let dial = rig.build("dial", DIAL, serde_json::json!({}));
     let empty = serde_json::json!({ "schedule": [] });
     let fillers: Vec<_> = (0..fillers)
@@ -182,7 +187,7 @@ fn a_recompile_installs_with_no_lock_taken_and_nothing_allocated() {
 fn the_block_installing_a_recompile_adopts_its_schedule() {
     let mut rig = rig(0, serde_json::json!([at(2, "dial", "level", 0.5)]));
     render_counted(&mut rig, 1);
-    fill_pending(&mut rig);
+    fill_pending(&mut rig, "dial");
     let generation = rig.live.generation();
     write(&rig, "sched", "schedule", tempo().to_string().into());
     assert_eq!(rig.live.generation(), generation + 1);
@@ -192,9 +197,10 @@ fn the_block_installing_a_recompile_adopts_its_schedule() {
     assert_eq!(controls.adopted(), controls.recorded());
 }
 
-/// Fills the rig's pending store with far-future writes to the dial, so a
-/// request queued behind them is refused for want of room.
-fn fill_pending(rig: &mut Rig) {
+/// Fills the rig's pending store with far-future writes to `module`'s
+/// first control, so a request queued behind them is refused for want of
+/// room.
+fn fill_pending(rig: &mut Rig, module: &str) {
     use super::requests::submit;
     use crate::control_request::When;
     use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
@@ -202,7 +208,7 @@ fn fill_pending(rig: &mut Rig) {
     let mut next = 0;
     for _ in 0..PENDING_REQUEST_CAPACITY / REQUEST_QUEUE_CAPACITY {
         for _ in 0..REQUEST_QUEUE_CAPACITY {
-            submit(rig, "dial", 0, 0.25, When::AtSample(far + next));
+            submit(rig, module, 0, 0.25, When::AtSample(far + next));
             next += 1;
         }
         render_counted(rig, 1);
@@ -237,7 +243,7 @@ fn a_recompile_hands_a_scheduler_its_unadopted_schedule() {
         })
         .unwrap();
     render_counted(&mut rig, 1);
-    fill_pending(&mut rig);
+    fill_pending(&mut rig, "dial");
     // A timed swap of d2 waits, so retargeting sched recompiles nothing,
     // and its request is refused.
     let mut change = rig.live.begin();
@@ -260,9 +266,9 @@ fn a_recompile_hands_a_scheduler_its_unadopted_schedule() {
     assert_eq!(sched_b.adopted(), sched_b.recorded());
 }
 
-/// A step falling on the install's sample plays the new schedule's entry
-/// there, as a request applied before the beats would: here step 0, the
-/// schedule written before the first block. (A self-played scheduler
+/// A schedule written before the first block plays its step 0 on the
+/// install's sample, as a request applied before the beats would, and the
+/// one it replaces plays nothing there. (A self-played scheduler
 /// adopts it before it processes either way; it is kept as a guard.)
 #[test]
 fn a_retarget_plays_an_entry_on_the_install_sample_as_loaded() {
@@ -274,4 +280,69 @@ fn a_retarget_plays_an_entry_on_the_install_sample_as_loaded() {
         let live = live.render(BLOCKS);
         assert_eq!(first_change(&live, &loaded), None, "{fillers} fillers");
     }
+}
+
+/// Renders `rig` up to `sample`, in blocks of 64 and then what is left.
+fn render_to(rig: &mut Rig, sample: u64) -> Vec<f32> {
+    let blocks = (sample - rig.graph.current_sample) as usize / 64;
+    let mut out = render_counted(rig, blocks);
+    let rest = (sample - rig.graph.current_sample) as usize;
+    let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+    rig.graph
+        .process_block(&mut left[..rest], &mut right[..rest]);
+    out.extend_from_slice(&left[..rest]);
+    out
+}
+
+/// A schedule a recompile hands another scheduler replaces its old one
+/// before the beats on the install's sample play, as a request applied
+/// there would: the old one's entry on that step never plays (nor the new
+/// one's: the step has passed).
+#[test]
+fn a_handed_schedule_replaces_the_old_on_the_install_sample() {
+    let level = |step, value| serde_json::json!([at(step, "dial", "level", value)]);
+    let onto_d2 = serde_json::json!([at(4, "d2", "level", 0.75)]);
+    let play = |sched: serde_json::Value, sched_b: serde_json::Value| {
+        let mut rig = rig(0, sched);
+        let d2 = rig.build("d2", DIAL, serde_json::json!({}));
+        let config = serde_json::json!({ "schedule": sched_b });
+        let sched_b = rig.build("sched_b", "control_scheduler", config);
+        rig.live
+            .edit(|change| {
+                change.upsert("d2", d2);
+                change.upsert("sched_b", sched_b);
+                change.connect(edge("clock", "beat", "sched_b", "clock"))
+            })
+            .unwrap();
+        render_counted(&mut rig, 1);
+        rig
+    };
+    // Where step 4 falls: the old schedule's entry there.
+    let unchanged = play(level(20, 0.5), level(20, 0.25)).render(BLOCKS);
+    let old = play(level(4, 0.5), level(20, 0.25)).render(BLOCKS);
+    // Each rendered from the second block.
+    let step = 64 + first_change(&old, &unchanged).unwrap() as u64;
+    let mut loaded = play(level(5, 0.75), onto_d2.clone());
+    let mut live = play(level(4, 0.5), level(20, 0.25));
+    // sched's write keeps its targets: a request, refused for want of
+    // room (writes to d2 fill it, which reach nothing heard); sched_b's
+    // retarget then recompiles, handing it over.
+    fill_pending(&mut live, "d2");
+    write(
+        &live,
+        "sched",
+        "schedule",
+        level(5, 0.75).to_string().into(),
+    );
+    let start = live.graph.current_sample;
+    render_to(&mut loaded, start);
+    let mut heard = render_to(&mut live, step);
+    let sched = controls_of(&live, "sched");
+    assert_ne!(sched.adopted(), sched.recorded(), "refused");
+    let generation = live.live.generation();
+    write(&live, "sched_b", "schedule", onto_d2.to_string().into());
+    assert_eq!(live.live.generation(), generation + 1, "recompiled");
+    heard.extend(render_counted(&mut live, 750));
+    let oracle = render_to(&mut loaded, start + heard.len() as u64);
+    assert_eq!(first_change(&heard, &oracle), None);
 }
