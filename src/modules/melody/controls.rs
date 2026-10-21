@@ -138,9 +138,10 @@ impl MelodyControls {
         self.table.set_count(count);
     }
 
-    /// Gets the scale degree at active position `index`. Never waits.
+    /// Gets the scale degree at active position `index`. Waits only if whole
+    /// edits outrun every retry of a lock-free read.
     pub fn degree(&self, index: usize) -> Result<i32, String> {
-        (self.table.position(index))
+        (self.table.position_or_wait(index))
             .map(|(degree, _)| degree)
             .ok_or_else(|| self.out_of_range("Degree", index))
     }
@@ -152,9 +153,10 @@ impl MelodyControls {
             .ok_or_else(|| self.out_of_range("Degree", index))
     }
 
-    /// Gets the note weight at active position `index`. Never waits.
+    /// Gets the note weight at active position `index`. Waits only if whole
+    /// edits outrun every retry of a lock-free read.
     pub fn note_weight(&self, index: usize) -> Result<f32, String> {
-        (self.table.position(index))
+        (self.table.position_or_wait(index))
             .map(|(_, weight)| weight)
             .ok_or_else(|| self.out_of_range("Weight", index))
     }

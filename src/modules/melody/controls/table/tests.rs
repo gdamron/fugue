@@ -237,7 +237,7 @@ fn a_position_write_racing_a_whole_scale_lands_before_it_or_after_it() {
 fn a_position_reads_on_the_audio_thread_without_a_lock() {
     let controls = MelodyControls::new(60, vec![0, 2, 4]);
     controls.set_note_weight(1, 3.0).unwrap();
-    let _whole = controls.table.writing();
+    let _writing = controls.table.writing();
     let audio = AudioThreadScope::enter();
     let (read, allocs, frees) = allocator_events(|| {
         [
@@ -248,4 +248,146 @@ fn a_position_reads_on_the_audio_thread_without_a_lock() {
     drop(audio);
     assert_eq!((allocs, frees), (0, 0));
     assert_eq!(read, [Ok(2.0.into()), Ok(3.0.into())]);
+}
+
+#[test]
+fn a_stale_write_never_replaces_one_made_after_a_whole_edit() {
+    let controls = MelodyControls::new(60, vec![0]);
+    let table = &controls.table;
+    // A write that read the table before the scale was set, and stores
+    // only after a write made since.
+    let before = table.header.load(Ordering::Acquire);
+    controls.set_allowed_degrees(vec![0, 7]);
+    controls.set_degree(0, 5).unwrap();
+    assert!(table.write_degree_as_of(before, 0, 11));
+    assert_eq!(controls.allowed_degrees(), [5, 7]);
+    // Weights likewise.
+    let before = table.weights_generation();
+    controls.set_note_weights(vec![1.0, 1.0]);
+    controls.set_note_weight(0, 4.0).unwrap();
+    assert!(table.write_weight_as_of(before, 0, 9.0));
+    assert_eq!(controls.note_weights(), [4.0, 1.0]);
+}
+
+#[test]
+fn a_read_meeting_an_editor_preempted_mid_edit_reads_the_table_before_it() {
+    let controls = MelodyControls::new(60, vec![0, 2]);
+    controls.set_degree_count(4);
+    controls.set_note_weights(vec![3.0]);
+    let table = &controls.table;
+    // An editor setting [7, 9, 11, 13] with weights [5.0], preempted after
+    // its first entries.
+    let _whole = table.whole();
+    let next = next_generation(table.degrees_generation());
+    table.scales[buffer(next)].entries[0].store(7, Ordering::Relaxed);
+    table.scales[buffer(next)].len.store(4, Ordering::Relaxed);
+    let next = next_generation(table.weights_generation());
+    let weight = 5.0f32.to_bits();
+    table.weights[buffer(next)].entries[0].store(weight, Ordering::Relaxed);
+    let audio = AudioThreadScope::enter();
+    let read: Vec<_> = (0..4).map(|i| table.position(i)).collect();
+    let mut degrees = [0; MAX_DEGREES];
+    let mut weights = [0.0; MAX_DEGREES];
+    let copied = table.read_into(&mut degrees, &mut weights);
+    drop(audio);
+    let before = [(0, 3.0), (2, 1.0), (0, 3.0), (2, 1.0)];
+    assert_eq!(read, before.map(Some));
+    assert_eq!(copied, Some(4));
+    assert_eq!(degrees[..4], [0, 2, 0, 2]);
+    assert_eq!(weights[..4], [3.0, 1.0, 3.0, 1.0]);
+}
+
+#[test]
+fn a_copy_is_not_taken_while_a_position_write_is_in_flight() {
+    let controls = MelodyControls::new(60, vec![0, 0]);
+    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+    let writing = controls.table.writing();
+    assert_eq!(controls.table.read_into(&mut degrees, &mut weights), None);
+    drop(writing);
+    assert_eq!(
+        controls.table.read_into(&mut degrees, &mut weights),
+        Some(2)
+    );
+}
+
+#[test]
+fn a_copy_never_holds_a_later_position_write_without_an_earlier_one() {
+    let controls = MelodyControls::new(60, vec![0, 0]);
+    let done = Arc::new(AtomicBool::new(false));
+    let writer = {
+        let (controls, done) = (controls.clone(), done.clone());
+        std::thread::spawn(move || {
+            while !done.load(Ordering::Acquire) {
+                for value in -127..=127 {
+                    controls.set_degree(0, value).unwrap();
+                    controls.set_degree(1, value).unwrap();
+                }
+            }
+        })
+    };
+    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+    let mut taken = 0;
+    while taken < 20_000 {
+        if controls
+            .table
+            .read_into(&mut degrees, &mut weights)
+            .is_none()
+        {
+            continue;
+        }
+        taken += 1;
+        // Position 0 is written first: it leads position 1 by one value, or
+        // has wrapped round to -127 from 127.
+        let [first, second] = [degrees[0], degrees[1]];
+        let held = first == second || first == second + 1 || (first, second) == (-127, 127);
+        assert!(held, "a table that never was: [{first}, {second}]");
+    }
+    done.store(true, Ordering::Release);
+    writer.join().unwrap();
+}
+
+#[test]
+fn generations_alternate_buffers_and_skip_never_written_round_the_wrap() {
+    assert_eq!(next_generation(1), 2);
+    assert_eq!(next_generation(u32::MAX), 2);
+    for generation in [1, 2, u32::MAX - 1, u32::MAX] {
+        let next = next_generation(generation);
+        assert_ne!(next, 0);
+        assert_ne!(buffer(next), buffer(generation));
+    }
+}
+
+#[test]
+fn a_forgotten_write_stays_forgotten_when_its_generation_comes_back_round() {
+    let controls = MelodyControls::new(60, vec![0, 2]);
+    let table = &controls.table;
+    // Near the wrap: generation u32::MAX - 1 (buffer 0, as 2 is).
+    let near = header(u32::MAX - 1, 2);
+    table.scales[0].set(&[0, 2]);
+    table.header.store(near, Ordering::Release);
+    table
+        .weights_generation
+        .store(u32::MAX - 1, Ordering::Release);
+    controls.set_degree(0, 9).unwrap();
+    controls.set_note_weight(0, 6.0).unwrap();
+    // Two whole edits round the wrap; a write stored by a writer that
+    // checked the generation before the first and stored after it.
+    controls.set_allowed_degrees(vec![0, 2]);
+    controls.set_note_weights(vec![]);
+    let stale = tagged(u32::MAX, 4);
+    table.written_degrees[1].store(stale, Ordering::Release);
+    controls.set_allowed_degrees(vec![0, 2]);
+    controls.set_note_weights(vec![]);
+    assert_eq!(generation_of(table.header.load(Ordering::Acquire)), 2);
+    // The generations come back round: nothing written then is read.
+    for generation in [u32::MAX - 1, u32::MAX] {
+        table.header.store(header(generation, 2), Ordering::Release);
+        table.scales[buffer(generation)].set(&[0, 2]);
+        table
+            .weights_generation
+            .store(generation, Ordering::Release);
+        table.weights[buffer(generation)].set(&[]);
+        assert_eq!(controls.allowed_degrees(), [0, 2]);
+        assert_eq!(controls.note_weights(), [1.0, 1.0]);
+    }
 }
