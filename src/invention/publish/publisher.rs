@@ -1,7 +1,7 @@
 //! The single control-thread publisher of a live graph's topology.
 
 use indexmap::IndexMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
@@ -120,6 +120,8 @@ pub(crate) struct Publisher {
     closed: bool,
     /// A timed edit queued and not yet adopted (see `timed`).
     timed: Option<timed::Waiting>,
+    /// Whether `timed` holds one, for the reclaimer to read without a lock.
+    timed_flag: Arc<AtomicBool>,
 }
 
 impl Publisher {
@@ -162,6 +164,7 @@ impl Publisher {
             applied,
             closed: false,
             timed: None,
+            timed_flag: Arc::new(AtomicBool::new(false)),
         };
         let ends = LinkEnds {
             requests: requests.reserving(EDIT_RESERVE as u64),
