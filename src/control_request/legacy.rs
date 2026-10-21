@@ -8,7 +8,6 @@
 pub(crate) const LEGACY_CONTROLS: &[&str] = &[
     "adsr",
     "cell_sequencer",
-    "control_scheduler",
     "filter",
     "lfo",
     "melody",

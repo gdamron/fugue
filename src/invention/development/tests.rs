@@ -135,7 +135,7 @@ fn an_added_development_with_a_schedule_starts_without_allocating() {
             config: json!({ "schedule": schedule(0, "o", 220.0) }),
         }])
         .expect("the batch commits");
-    // Publication prepared the inner scheduler: it adopted its schedule off
+    // Publication bound the inner scheduler: it took its schedule off
     // the audio thread, so its first blocks have nothing to allocate.
     for block in 0..2 {
         let ((), allocs, frees) = allocator_events(|| pump.block());
@@ -145,11 +145,11 @@ fn an_added_development_with_a_schedule_starts_without_allocating() {
 }
 
 #[test]
-fn an_inner_schedule_write_costs_the_audio_thread_what_a_top_level_one_does() {
+fn a_live_schedule_write_costs_the_audio_thread_nothing_inside_a_development_or_out() {
     // The same live write, to a scheduler inside a development and to one at
-    // the top: the block that adopts it pays the same, and later blocks
-    // nothing. (Adoption itself allocating is pre-existing for every
-    // scheduler; a development adds nothing to it.)
+    // the top: the schedule is resolved on this thread and handed over
+    // whole, so the block that adopts it allocates and frees nothing, nor
+    // do later ones.
     let mut top: Invention = serde_json::from_value(pattern()).unwrap();
     top.modules.push(crate::ModuleSpec {
         id: "dac".into(),
@@ -157,17 +157,15 @@ fn an_inner_schedule_write_costs_the_audio_thread_what_a_top_level_one_does() {
         config: json!({}),
     });
     let inner = document(json!([{ "id": "lead", "type": "pattern" }]));
-    let mut costs = Vec::new();
     for (document, module) in [(top, "sched"), (inner, "lead")] {
         let (running, pump) = start(document);
         pump.render(2);
         running
             .set_control(module, "schedule", schedule(5, "o", 330.0).into())
             .unwrap();
-        let ((), allocs, frees) = allocator_events(|| pump.block());
-        let ((), later_allocs, later_frees) = allocator_events(|| pump.block());
-        assert_eq!((later_allocs, later_frees), (0, 0), "{module}");
-        costs.push((allocs, frees));
+        for block in 0..2 {
+            let ((), allocs, frees) = allocator_events(|| pump.block());
+            assert_eq!((allocs, frees), (0, 0), "{module}, block {block}");
+        }
     }
-    assert_eq!(costs[0], costs[1]);
 }

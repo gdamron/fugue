@@ -98,7 +98,7 @@ fn setup(
     let ctrl = ControlSchedulerControls::new(parse_schedule_json(schedule_json).unwrap());
     ctrl.attach("sched", &directory).unwrap();
     let mut scheduler = ControlScheduler::new(48_000, ctrl);
-    scheduler.prepare_for_publication();
+    scheduler.settle();
     let knob = Knob {
         level: 1.0,
         voices: 0,

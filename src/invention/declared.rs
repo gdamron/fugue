@@ -160,6 +160,21 @@ impl DeclaredSurface {
         }
     }
 
+    /// Writes payload control `key` with a payload built by its module's
+    /// own surface rather than a codec (one whose building needs more than
+    /// the value written), reading back as `shown`. Control thread.
+    pub(crate) fn write_payload(
+        &self,
+        key: &str,
+        payload: Payload,
+        shown: ControlValue,
+    ) -> Result<(), String> {
+        let (index, _) = self
+            .payload_decl(key)
+            .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
+        self.deliver(index, Write::Payload(payload, shown))
+    }
+
     /// Whether `key` is a payload control.
     pub(crate) fn is_payload(&self, key: &str) -> bool {
         self.payload_decl(key).is_some()

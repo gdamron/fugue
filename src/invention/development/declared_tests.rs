@@ -311,7 +311,7 @@ fn a_scheduled_ramp_on_a_legacy_only_key_allocates_nothing() {
     let controls = ControlSchedulerControls::new(vec![entry]);
     controls.attach("sched", &directory).unwrap();
     let mut scheduler = ControlScheduler::new(48_000, controls);
-    scheduler.prepare_for_publication();
+    scheduler.settle();
     for gate in [1.0, 0.0, 1.0, 0.0] {
         scheduler.set_input("clock", gate).unwrap();
         let (_, allocs, frees) = allocator_events(|| scheduler.process(64));

@@ -77,6 +77,11 @@
 //!
 //! Schedules are plain JSON data, so they can be spliced in via `$asset`
 //! references and replaced during playback through the `schedule` control.
+//! A replacement is resolved on a control thread and handed to the scheduler
+//! whole, as a payload request: the audio thread adopts it between blocks
+//! without allocating, freeing or locking, and the schedule it replaces is
+//! retired off the audio thread. Entries at or before the current step have
+//! had their boundary; only later ones fire.
 //!
 //! # Tempo maps
 //!
@@ -104,6 +109,10 @@
 //! entries merge with any explicit `schedule`. Patch the same clock output
 //! that drives the sequencers into this module's `clock` input.
 
+use std::sync::Arc;
+
+use crate::control_request::{ControlCells, ControlIndex, ControlTable, Refusal};
+use crate::payload::{Payload, Retired};
 use crate::traits::ControlMeta;
 use crate::Module;
 
@@ -120,8 +129,11 @@ mod controls;
 mod factory;
 mod inputs;
 mod outputs;
+mod resolved;
 mod schedule;
 
+use controls::{SCHEDULE, TABLE};
+use resolved::ResolvedSchedule;
 use schedule::ResolvedEntry;
 
 /// Module type id, shared with the runtime attachment points.
@@ -173,18 +185,19 @@ pub struct ControlScheduler {
     #[allow(dead_code)] // Reserved (e.g. wall-clock schedule positions).
     sample_rate: u32,
     ctrl: ControlSchedulerControls,
+    /// The declared `schedule` control's cells (see [`Module::declared`]).
+    cells: Arc<ControlCells>,
 
     /// Adopted schedule, preloaded and sorted by `at` (audio-thread owned;
-    /// re-adopted when the controls' version changes).
+    /// handed over whole by the `schedule` payload, see [`resolved`]).
     entries: Vec<ResolvedEntry>,
-    entries_version: u64,
     /// Next schedule entry to fire.
     cursor: usize,
     /// Current step index; -1 before the first gate edge.
     current_step: i64,
 
-    /// Ramps in flight. Capacity is reserved at adoption for every ramp entry
-    /// in the schedule, so pushes never allocate on the audio thread.
+    /// Ramps in flight. Capacity is reserved with the schedule for every
+    /// ramp entry in it, so pushes never allocate on the audio thread.
     ramps: Vec<ActiveRamp>,
 
     /// Duration of one step in samples, measured between gate edges.
@@ -201,13 +214,15 @@ pub struct ControlScheduler {
 }
 
 impl ControlScheduler {
-    /// Creates a new scheduler sharing the given controls.
+    /// Creates a new scheduler sharing the given controls. It plays nothing
+    /// until its resolved schedule is handed to it, which binding its
+    /// controls does once they are attached.
     pub fn new(sample_rate: u32, controls: ControlSchedulerControls) -> Self {
         Self {
             sample_rate,
+            cells: controls.cells(),
             ctrl: controls,
             entries: Vec::new(),
-            entries_version: 0,
             cursor: 0,
             current_step: -1,
             ramps: Vec::new(),
@@ -226,30 +241,22 @@ impl ControlScheduler {
         &self.ctrl
     }
 
-    /// Adopts a changed schedule from the controls (event-rate: gated by the
-    /// version counter, so playback never locks or allocates steady-state).
-    fn adopt_schedule_if_changed(&mut self) {
-        let version = self.ctrl.version();
-        if version == self.entries_version {
-            return;
-        }
-        self.entries = self.ctrl.resolved_snapshot();
-        self.entries_version = version;
+    /// Plays `next` from here on, handing back the schedule it replaces in
+    /// `next`'s box. Ramps in flight are abandoned, holding their last
+    /// written value; entries at or before the current step have had their
+    /// boundary, so only later ones fire. Swaps rather than moves, so it
+    /// allocates, frees and locks nothing.
+    fn adopt(&mut self, mut next: Box<ResolvedSchedule>) -> Box<ResolvedSchedule> {
+        std::mem::swap(&mut self.entries, &mut next.entries);
+        std::mem::swap(&mut self.ramps, &mut next.ramps);
         self.ramps.clear();
-        let ramp_count = self
-            .entries
-            .iter()
-            .filter(|entry| entry.ramp_steps > 0)
-            .count();
-        self.ramps = Vec::with_capacity(ramp_count);
-        // Entries at or before the current step have had their boundary
-        // already; only future boundaries fire.
         self.cursor = if self.current_step < 0 {
             0
         } else {
             let step = self.current_step as u64;
             self.entries.partition_point(|entry| entry.at_step <= step)
         };
+        next
     }
 
     /// Restarts the schedule: the next gate edge is step 0 again and every
@@ -392,7 +399,6 @@ impl Module for ControlScheduler {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        self.adopt_schedule_if_changed();
         for i in 0..frames {
             self.process_sample(i);
         }
@@ -429,11 +435,26 @@ impl Module for ControlScheduler {
         self.ctrl.target_module_ids()
     }
 
-    /// Adopts the schedule resolved at attachment (locking and allocating
-    /// here, off the audio thread) and reserves its ramps, so the first block
-    /// after publication finds the version already current.
-    fn prepare_for_publication(&mut self) {
-        self.adopt_schedule_if_changed();
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    /// Takes a resolved schedule whole (see [`resolved`]); the one it
+    /// replaces goes back to be retired off the audio thread.
+    #[allow(private_interfaces)]
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        if control != SCHEDULE {
+            return Err((Refusal::Unsupported, payload));
+        }
+        match payload.take_owned::<ResolvedSchedule>() {
+            Ok(next) => Ok(self.adopt(next).into()),
+            Err(payload) => Err((Refusal::Invalid, payload)),
+        }
     }
 
     fn controls(&self) -> Vec<ControlMeta> {
@@ -454,6 +475,23 @@ impl Module for ControlScheduler {
 }
 
 #[cfg(test)]
+impl ControlScheduler {
+    /// Hands the scheduler what its controls were written since the last
+    /// call, as binding them to run does, leaving them taking writes for
+    /// the next: a unit test's stand-in for a graph's request drain.
+    pub(crate) fn settle(&mut self) {
+        use crate::ControlSurface;
+        let ctrl = self.ctrl.clone();
+        ctrl.bind(
+            crate::invention::declared::Route::Building(Vec::new()),
+            self,
+        );
+    }
+}
+
+#[cfg(test)]
 mod declared_tests;
+#[cfg(test)]
+mod payload_tests;
 #[cfg(test)]
 mod tests;
