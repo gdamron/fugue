@@ -16,6 +16,8 @@
 //! publication, which [`SignalGraph::land_timed_edit`] installs at that
 //! segment start, after every request due at the same sample has applied
 //! to the graph it replaces, as an immediate edit does at a block start.
+//! A table it rebinds to a target it rebuilds plays after it, so a step
+//! falling on the landing sample reaches the new instance (FUG-413).
 //! Segments run as blocks of their own, so an install between two is the
 //! install a block start makes, carries and all.
 //!
@@ -123,6 +125,11 @@ impl Drop for FateGuard {
 }
 
 impl AudioLink {
+    /// The timed edit taken this segment start, until it installs.
+    pub(in crate::invention::graph) fn landing(&self) -> Option<&Publication> {
+        self.landed.as_deref()
+    }
+
     /// The generation a bridge maps from, with the bridge.
     pub(super) fn bridge(&self) -> Option<(u64, &Publication)> {
         let bridge = self.bridge.as_deref()?;

@@ -75,6 +75,16 @@ impl BeatHost for SignalGraph {
         instance.module().beat_table()
     }
 
+    /// An immediate edit's publication, or a timed edit's taken this
+    /// sample, rebinding the module's table at its install.
+    fn defers(&self, module_idx: usize) -> bool {
+        let landing = self.link.as_ref().and_then(|link| link.landing());
+        self.installing
+            .as_deref()
+            .or(landing)
+            .is_some_and(|publication| publication.rebinds(module_idx))
+    }
+
     fn apply(
         &mut self,
         target: &ControlTarget,

@@ -296,8 +296,7 @@ fn render_to(rig: &mut Rig, sample: u64) -> Vec<f32> {
 
 /// A schedule a recompile hands another scheduler replaces its old one
 /// before the beats on the install's sample play, as a request applied
-/// there would: the old one's entry on that step never plays (nor the new
-/// one's: the step has passed).
+/// there would: the step due there plays once, from the new schedule.
 #[test]
 fn a_handed_schedule_replaces_the_old_on_the_install_sample() {
     let level = |step, value| serde_json::json!([at(step, "dial", "level", value)]);
@@ -322,7 +321,7 @@ fn a_handed_schedule_replaces_the_old_on_the_install_sample() {
     let old = play(level(4, 0.5), level(20, 0.25)).render(BLOCKS);
     // Each rendered from the second block.
     let step = 64 + first_change(&old, &unchanged).unwrap() as u64;
-    let mut loaded = play(level(5, 0.75), onto_d2.clone());
+    let mut loaded = play(level(4, 0.75), onto_d2.clone());
     let mut live = play(level(4, 0.5), level(20, 0.25));
     // sched's write keeps its targets: a request, refused for want of
     // room (writes to d2 fill it, which reach nothing heard); sched_b's
@@ -332,7 +331,7 @@ fn a_handed_schedule_replaces_the_old_on_the_install_sample() {
         &live,
         "sched",
         "schedule",
-        level(5, 0.75).to_string().into(),
+        level(4, 0.75).to_string().into(),
     );
     let start = live.graph.current_sample;
     render_to(&mut loaded, start);
@@ -345,4 +344,31 @@ fn a_handed_schedule_replaces_the_old_on_the_install_sample() {
     heard.extend(render_counted(&mut live, 750));
     let oracle = render_to(&mut loaded, start + heard.len() as u64);
     assert_eq!(first_change(&heard, &oracle), None);
+}
+
+/// Where step 4 falls: where a schedule writing the dial there first
+/// differs from one that never does.
+fn step_four(fillers: usize) -> u64 {
+    let mut quiet = rig(fillers, serde_json::json!([at(20, "dial", "level", 0.5)]));
+    let mut old = rig(fillers, serde_json::json!([at(4, "dial", "level", 0.5)]));
+    first_change(&old.render(BLOCKS), &quiet.render(BLOCKS)).unwrap() as u64
+}
+
+/// Retargeted mid-play so the recompile installs on a step's sample, the
+/// step plays once, from the new schedule: the old one's entry never
+/// plays, and the new one's does, as loaded.
+#[test]
+fn a_retarget_installing_on_a_step_plays_it_from_the_new_schedule() {
+    let new = serde_json::json!([at(4, "clock", "bpm", 211.0)]);
+    for fillers in [0, CURSOR_CAPACITY] {
+        let step = step_four(fillers);
+        let loaded = rig(fillers, new.clone()).render(BLOCKS);
+        let mut live = rig(fillers, serde_json::json!([at(4, "dial", "level", 0.5)]));
+        let mut heard = render_to(&mut live, step);
+        let generation = live.live.generation();
+        write(&live, "sched", "schedule", new.to_string().into());
+        assert_eq!(live.live.generation(), generation + 1, "recompiled");
+        heard.extend(render_counted(&mut live, BLOCKS - heard.len() / 64));
+        assert_eq!(first_change(&heard, &loaded), None, "{fillers} fillers");
+    }
 }

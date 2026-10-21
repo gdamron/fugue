@@ -60,6 +60,15 @@ pub(crate) trait BeatHost {
         None
     }
 
+    /// Whether an edit installing at this sample, once what is due here
+    /// has applied, rebinds the table of the module at `module_idx` to a
+    /// target it rebuilds: the table then plays after it, so an entry due
+    /// here reaches the new instance.
+    fn defers(&self, module_idx: usize) -> bool {
+        let _ = module_idx;
+        false
+    }
+
     /// Applies `value` as the pending store's `apply` does, of `standing`
     /// (none for an event): `Err` is what it reports instead.
     fn apply(

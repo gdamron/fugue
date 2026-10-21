@@ -202,6 +202,9 @@ pub(crate) struct SignalGraph {
     /// The modules or their routes changed since the request drain last
     /// looked for the modules' tables (see `beats`).
     pub(crate) tables_stale: bool,
+    /// The publication of an immediate edit while the requests due as it
+    /// installs apply (see `requests`); none otherwise.
+    pub(crate) installing: Option<Box<Publication>>,
     /// An offline render's graph that a new render replaced: no module is
     /// added to it or removed from it again (see `declared::retire_offline`).
     pub(crate) retired: bool,
@@ -246,6 +249,7 @@ impl SignalGraph {
             block_size: crate::DEFAULT_BLOCK_SIZE,
             topo_dirty: true,
             tables_stale: true,
+            installing: None,
             retired: false,
             master,
         }
