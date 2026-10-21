@@ -48,7 +48,7 @@ pub(crate) struct Waiting {
     /// recorded again once `retain` has run (see [`Publisher::fold_timed`]).
     folded: Vec<(String, String, ControlValue)>,
     /// The controls of modules it keeps that it writes as it lands (see
-    /// [`Publisher::chain_timed`]): an authored write to one is not folded.
+    /// [`Publisher::chain_timed`]): an authored write to one cancels it.
     chained: Vec<(String, String)>,
 }
 
@@ -181,6 +181,7 @@ impl Publisher {
         let waiting = self.timed.take()?;
         self.set_timed(None); // for the flag: `take` cleared `timed`
         self.generation += 1;
+        self.timed_adopted = self.generation;
         // Releases every request and write queued before it to the audio
         // thread, which then knows nothing is tagged older (see `landing`).
         self.published.store(self.generation, Ordering::Release);
@@ -228,6 +229,11 @@ impl Publisher {
         true
     }
 
+    /// Whether a timed edit was adopted after generation `seen`.
+    pub(crate) fn timed_adopted_since(&self, seen: u64) -> bool {
+        self.timed_adopted > seen
+    }
+
     /// The id of the timed edit waiting, if any.
     pub(crate) fn timed_id(&self) -> Option<RequestId> {
         self.timed.as_ref().map(|waiting| waiting.id)
@@ -255,19 +261,23 @@ impl Publisher {
         let Some(waiting) = self.timed.as_mut() else {
             return;
         };
-        let chained = |(module, control): &(String, String)| module == module_id && control == key;
-        if waiting.chained.iter().any(chained) {
-            // It writes the control itself as it lands, last: what plays
-            // then, and what its document records.
-            return;
-        }
         let folded = &mut waiting.folded;
         folded.retain(|(module, control, _)| module != module_id || control != key);
         folded.push((module_id.to_string(), key.to_string(), value.clone()));
     }
 
+    /// Whether the timed edit waiting writes control `key` of `module_id`
+    /// as it lands (see [`Self::chain_timed`]).
+    pub(crate) fn timed_chains(&self, module_id: &str, key: &str) -> bool {
+        self.timed.as_ref().is_some_and(|waiting| {
+            let chained =
+                |(module, control): &(String, String)| module == module_id && control == key;
+            waiting.chained.iter().any(chained)
+        })
+    }
+
     /// Notes the controls of modules it keeps that the timed edit waiting
-    /// writes as it lands, so authored writes to them are not folded in.
+    /// writes as it lands, so an authored write to one cancels it.
     pub(crate) fn chain_timed(&mut self, chained: Vec<(String, String)>) {
         if let Some(waiting) = self.timed.as_mut() {
             waiting.chained = chained;

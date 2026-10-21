@@ -146,6 +146,8 @@ pub struct RequestLanding {
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct RequestStatus {
     /// Names the request in `GetRequest` and in `RequestChanged` events.
+    /// Unique only within one running invention: a host that keeps
+    /// requests across runs must qualify it with the run.
     pub id: String,
     pub state: RequestState,
     #[serde(default)]

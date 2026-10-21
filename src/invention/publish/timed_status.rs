@@ -50,12 +50,12 @@ pub(crate) enum CancelCause {
     /// Another change to the graph or the document committed first: a
     /// structural edit, a swap, a reload or an edit batch.
     Commit,
-    /// An authored write to a control of a module this edit rebuilds, or
-    /// removes when `removed`.
+    /// An authored write to a control this edit `touches`: one of a module
+    /// it removes or rebuilds, or one it writes as it lands.
     AuthoredWrite {
         module_id: String,
         key: String,
-        removed: bool,
+        touches: Touched,
     },
     /// A schedule written to a scheduler whose schedule this edit
     /// re-resolves, or which writes a module this edit rebuilds or removes.
@@ -65,6 +65,17 @@ pub(crate) enum CancelCause {
     Unchained,
     /// The invention it was queued on is stopping.
     Stopping,
+}
+
+/// What a timed edit does to a control an authored write cancelled it for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Touched {
+    /// It removes the control's module.
+    Removed,
+    /// It rebuilds the control's module.
+    Rebuilt,
+    /// It writes the control as it lands.
+    Written,
 }
 
 /// A timed edit's state, with where it landed or will land.
@@ -123,7 +134,8 @@ impl Ledger {
 
     /// Records the audio thread's outcome for edit `id`. One cancelled or
     /// adopted keeps its state (a cancelled edit is refused `TargetGone`
-    /// once due), taking only the sample it landed on.
+    /// once due), taking only the sample it landed on, quietly: its final
+    /// state was announced once, and a read shows the sample.
     pub(crate) fn outcome(&mut self, id: RequestId, outcome: Outcome) {
         let Some(status) = self.status_mut(id) else {
             return;
@@ -135,9 +147,10 @@ impl Ledger {
                 if let Outcome::AppliedLate { due, .. } = outcome {
                     status.due = Some(due);
                 }
-                if open {
-                    status.state = EditState::Landed;
+                if !open {
+                    return;
                 }
+                status.state = EditState::Landed;
             }
             Outcome::Refused(Refusal::Expired) if open => status.state = EditState::Expired,
             Outcome::Refused(refusal) if open => status.state = EditState::Refused(refusal),
