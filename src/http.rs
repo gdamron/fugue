@@ -13,11 +13,16 @@
 //!   `Location` such as `?download=1`. POST doesn't follow redirects; the
 //!   provider APIs that use it never redirect.
 //! - Connecting times out after 30 s (`ureq` 3 has no connect timeout by
-//!   default).
+//!   default). A server that accepts and then stalls can't hang the caller
+//!   either: the response headers must arrive within 5 minutes and the whole
+//!   call, body included, must finish within 30.
+//! - Every request goes through one process-wide `Agent`, so repeat calls to
+//!   a host reuse its pooled connection instead of a fresh TLS handshake.
 //! - [`read_text`] caps the decoded body at 10 MB and replaces invalid UTF-8,
 //!   like `ureq` 2's `into_string`.
 
 use std::io::Read;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use ureq::http::{header::LOCATION, Response, StatusCode};
@@ -31,14 +36,31 @@ pub(crate) const MAX_TEXT_BODY_BYTES: u64 = 10 * 1024 * 1024;
 /// `ureq` 2's default connect timeout.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Longest wait for the response headers once the request is sent. Sized
+/// for a non-streaming LLM reply, the slowest legitimate caller.
+const RECV_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// Longest a whole call may take, body included, so a download that stalls
+/// part-way fails instead of blocking forever. Sized for a large sample
+/// pack on a slow link.
+const GLOBAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
 /// `ureq` 2's default redirect limit.
 const MAX_REDIRECTS: usize = 5;
 
-fn agent() -> Agent {
+/// The process-wide agent; its connection pool is shared by every caller.
+fn agent() -> &'static Agent {
+    static AGENT: OnceLock<Agent> = OnceLock::new();
+    AGENT.get_or_init(|| build_agent(RECV_RESPONSE_TIMEOUT))
+}
+
+fn build_agent(recv_response: Duration) -> Agent {
     Agent::config_builder()
         .http_status_as_error(false)
         .max_redirects(0)
         .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_recv_response(Some(recv_response))
+        .timeout_global(Some(GLOBAL_TIMEOUT))
         .build()
         .into()
 }
@@ -57,7 +79,10 @@ fn is_followed_redirect(status: StatusCode) -> bool {
 
 /// Issues a GET request, following redirects; 4xx/5xx responses become `Err`.
 pub(crate) fn get(url: &str) -> Result<Response<Body>, String> {
-    let agent = agent();
+    get_with(agent(), url)
+}
+
+fn get_with(agent: &Agent, url: &str) -> Result<Response<Body>, String> {
     let mut target = parse(url)?;
     for _ in 0..=MAX_REDIRECTS {
         let response = agent
@@ -270,6 +295,37 @@ mod tests {
         let (url, paths) = serve_redirect("../other/snare.wav");
         get(&url).unwrap();
         assert_eq!(paths.recv().unwrap(), "/other/snare.wav");
+    }
+
+    #[test]
+    fn shared_agent_bounds_every_stall() {
+        let timeouts = agent().config().timeouts();
+        assert_eq!(timeouts.connect, Some(CONNECT_TIMEOUT));
+        assert_eq!(timeouts.recv_response, Some(RECV_RESPONSE_TIMEOUT));
+        assert_eq!(timeouts.global, Some(GLOBAL_TIMEOUT));
+        assert!(std::ptr::eq(agent(), agent()));
+    }
+
+    #[test]
+    fn a_server_that_never_answers_times_out_naming_the_url() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Accept, read the request, then hold the connection open silently.
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = held.recv();
+            }
+        });
+        let url = format!("http://{addr}/stalled.wav");
+        let started = std::time::Instant::now();
+        let err = get_with(&build_agent(Duration::from_millis(200)), &url).unwrap_err();
+        drop(release);
+        assert!(err.starts_with(&format!("{url}: ")), "{err}");
+        assert!(err.contains("timeout"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     #[test]
