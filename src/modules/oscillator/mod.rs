@@ -232,7 +232,9 @@ impl Oscillator {
 
         self.phase += modulated_freq / self.sample_rate as f32;
         // Through-zero FM makes the step negative; `%` keeps the sign, so
-        // wrap with `floor` to hold the phase in [0, 1) either way.
+        // wrap with `floor` to hold the phase in [0, 1] either way (a tiny
+        // negative phase rounds up to exactly 1.0, which every waveform
+        // still maps into [-1, 1]).
         self.phase -= self.phase.floor();
 
         let amp_scale = if am_amount > 0.0 {
