@@ -11,12 +11,18 @@
 //! segment (a scheduler running sample by sample in a feedback group) is
 //! seen at the next segment start: the request then applies there, late,
 //! and says so ([`Outcome::AppliedLate`]). It never applies early.
+//!
+//! A request carrying a ramp starts it at its beat, in the graph's ramps
+//! (see [`super::ramps`]).
 
 use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
-use super::request::{BeatSpec, ControlTarget, Request, RequestValue, When};
+use super::ramps::{Ramps, RAMP_CAPACITY};
+use super::request::{BeatSpec, ControlTarget, Request, RequestValue, RtValue, When};
 use super::timeline::Timeline;
 use crate::payload::Retirer;
+
+mod ramp;
 
 /// What watches need of the graph: its modules' timelines, and applying a
 /// request as a sample-timed one is applied.
@@ -28,6 +34,11 @@ pub(crate) trait BeatHost {
     /// effect after it, so the beat a request applies on is still reached
     /// there.
     fn latch(&mut self, module_idx: usize);
+
+    /// The number `target`'s control holds at this sample, automation
+    /// written before it included, or `None` for one holding no number:
+    /// where a ramp starts.
+    fn current(&mut self, target: &ControlTarget) -> Option<f32>;
 
     /// Whether the latest write to take `target`'s control was one of
     /// `standing`: none since took it, nor freed it for automation's next
@@ -178,12 +189,15 @@ fn missed_at(timeline: &dyn Timeline, target: f64, now: u64) -> u64 {
 /// samples for as long as it runs.
 pub(crate) const MIN_REPEAT_STEP: f32 = 1.0 / 64.0;
 
-/// Requests waiting for a beat, in receipt order. Single-threaded (the
-/// audio thread), allocated once on a control thread and never grown.
+/// Requests waiting for a beat, in receipt order, and apart from them the
+/// ramps they start. Single-threaded (the audio thread), allocated once on
+/// a control thread and never grown.
 pub(crate) struct Watches {
     entries: Vec<Watch>,
     /// The watches it holds at most (the Vec may have more room).
     limit: usize,
+    /// Ramps running, in a table of their own (see [`Ramps`]).
+    pub(crate) ramps: Ramps,
 }
 
 impl Watches {
@@ -192,6 +206,7 @@ impl Watches {
         Self {
             entries: Vec::with_capacity(capacity),
             limit: capacity,
+            ramps: Ramps::new(RAMP_CAPACITY),
         }
     }
 
@@ -199,8 +214,9 @@ impl Watches {
         self.entries.len()
     }
 
+    /// Whether no watch waits and no ramp runs.
     pub(crate) fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.is_empty() && self.ramps.is_empty()
     }
 
     pub(crate) fn is_full(&self) -> bool {
@@ -210,14 +226,22 @@ impl Watches {
     /// Refuses a beat no clock can reach (a span or grid that is not
     /// finite, a negative span, a grid step that is not positive), a
     /// repeating grid finer than [`MIN_REPEAT_STEP`], and a repeating
-    /// payload, which applies once.
+    /// payload, which applies once. A ramp must be finite and positive and
+    /// write a finite number, once: one on an event, a payload, another
+    /// value or a repeating grid is refused.
     pub(crate) fn check(request: &Request) -> Result<(), Refusal> {
         let When::Beat(beat) = request.when else {
             return Err(Refusal::Unsupported);
         };
-        // Nothing starts a ramp yet.
-        if beat.ramp.is_some() {
-            return Err(Refusal::Unsupported);
+        if let Some(beats) = beat.ramp {
+            let repeats = matches!(beat.spec, BeatSpec::Grid { repeat: true, .. });
+            match request.value {
+                _ if request.event || repeats => return Err(Refusal::Unsupported),
+                RequestValue::Value(RtValue::F32(to))
+                    if to.is_finite() && beats.is_finite() && beats > 0.0 => {}
+                RequestValue::Value(RtValue::F32(_)) => return Err(Refusal::Invalid),
+                _ => return Err(Refusal::Unsupported),
+            }
         }
         match beat.spec {
             BeatSpec::After(beats) if beats.is_finite() && beats >= 0.0 => Ok(()),
@@ -241,12 +265,14 @@ impl Watches {
 
     /// Stores `request`, timed on `clock` (both in its target's
     /// generation), or settles it refused ([`Refusal::PendingFull`]) when
-    /// full. [`Self::check`] has passed it. Allocation- and free-free.
+    /// full, or when it carries a ramp the ramps have no room for.
+    /// [`Self::check`] has passed it. Allocation- and free-free.
     pub(crate) fn insert(&mut self, request: Request, clock: usize, outcomes: &mut Outcomes) {
         let When::Beat(beat) = request.when else {
             return outcomes.settle(request, Outcome::Refused(Refusal::Unsupported));
         };
-        if self.is_full() {
+        let no_ramp_room = beat.ramp.is_some() && !self.ramps.has_room(self.ramps_waiting());
+        if self.is_full() || no_ramp_room {
             return outcomes.settle(request, Outcome::Refused(Refusal::PendingFull));
         }
         let goal = match beat.spec {
@@ -271,12 +297,13 @@ impl Watches {
         });
     }
 
-    /// The clocks of the watches in the `installed` generation.
+    /// The clocks of the watches and ramps in the `installed` generation.
     pub(crate) fn clocks(&self, installed: u64) -> impl Iterator<Item = usize> + '_ {
         self.entries
             .iter()
             .filter(move |watch| watch.request.target.generation == installed)
             .map(|watch| watch.clock)
+            .chain(self.ramps.clocks(installed))
     }
 
     /// Maps every watch resolved against a generation older than
@@ -313,6 +340,8 @@ impl Watches {
             };
             self.end(i, outcomes, Outcome::Refused(refusal));
         }
+        // A ramp maps with its target and clock: one gone ends it.
+        self.ramps.remap(installed, map);
     }
 
     /// Removes watch `i`, settling it with `outcome`, unless it repeats and
@@ -417,7 +446,12 @@ impl Watches {
             if due == now {
                 host.latch(watch.clock);
             }
+            if matches!(watch.request.when, When::Beat(time) if time.ramp.is_some()) {
+                self.start_ramp(i, (beat, due, now), host, outcomes);
+                continue;
+            }
             let standing = Standing::of(&watch.request, due);
+            let target = watch.request.target;
             if let (true, RequestValue::Value(value)) = (watch.repeats(), &watch.request.value) {
                 let value = RequestValue::Value(*value);
                 let result = host.apply(
@@ -432,6 +466,10 @@ impl Watches {
                     self.end(i, outcomes, outcome(result));
                     continue;
                 }
+                if result.is_ok() {
+                    self.ramps.supersede(&target, &*host);
+                }
+                let watch = &mut self.entries[i];
                 // Settled at the first beat it applied on only: the
                 // outcome queue holds one per request, and a repeat runs
                 // on.
@@ -451,6 +489,9 @@ impl Watches {
             } = self.entries.remove(i).request;
             let payload = value.is_payload();
             let result = host.apply(&target, standing, value, &mut outcomes.retirer);
+            if result.is_ok() {
+                self.ramps.supersede(&target, &*host);
+            }
             outcomes.record(id, payload, outcome(result));
         }
         (applied, wait)

@@ -75,6 +75,10 @@ impl BeatHost for Host {
         self.latched.push(module_idx);
     }
 
+    fn current(&mut self, _target: &ControlTarget) -> Option<f32> {
+        Some(0.0)
+    }
+
     fn kept(&self, _target: &ControlTarget, _standing: Standing) -> bool {
         true
     }
@@ -521,4 +525,5 @@ fn a_grid_follows_the_clock_s_new_beat_0_after_a_reset() {
     assert_eq!(log(&outcomes), [(7, Outcome::Applied { at: 128 })]);
 }
 
+mod ramp;
 mod ramps;

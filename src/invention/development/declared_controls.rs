@@ -327,6 +327,23 @@ impl DevelopmentControls {
             module.for_each_alias(alias.index, f);
         }
     }
+
+    /// Where `control` stands through its first alias, to the leaf (see
+    /// [`crate::Module::alias_value`]): that alias's pending automation,
+    /// else its value. Audio thread.
+    pub(super) fn alias_value(
+        &self,
+        modules: &[GraphModule],
+        control: ControlIndex,
+    ) -> Option<RtValue> {
+        let alias = self.aliases.get(usize::from(control.0))?.first()?;
+        let module = modules.get(alias.module)?.module();
+        if let Some(value) = module.alias_value(alias.index) {
+            return Some(value);
+        }
+        let (_, cells) = module.declared()?;
+        (cells.automation.written(alias.index)).or_else(|| cells.load(alias.index))
+    }
 }
 
 impl DevelopmentControls {

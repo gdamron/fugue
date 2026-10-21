@@ -14,7 +14,7 @@ use crate::invention::graph::{MasterObservers, SignalGraph};
 use crate::test_support::dial::DialFactory;
 
 /// A development factory over `definition`, with dials registered.
-fn factory(name: &str, definition: serde_json::Value) -> DevelopmentFactory {
+pub(super) fn factory(name: &str, definition: serde_json::Value) -> DevelopmentFactory {
     let mut registry = ModuleRegistry::default();
     registry.register(DialFactory);
     DevelopmentFactory {
@@ -47,7 +47,7 @@ fn mixed() -> serde_json::Value {
 
 /// Two dials behind one exposed `level` (and `pulse` on the first, and
 /// `b_level` on the second alone), each to its own output.
-fn pair() -> DevelopmentFactory {
+pub(super) fn pair() -> DevelopmentFactory {
     let definition = json!({
         "version": "1.0.0",
         "modules": [{ "id": "a", "type": "dial" }, { "id": "b", "type": "dial" }],
@@ -67,11 +67,13 @@ fn pair() -> DevelopmentFactory {
 }
 
 /// The development built with `config`, running alone in an offline graph.
-fn running(config: serde_json::Value) -> (Arc<Mutex<SignalGraph>>, ControlSurfaceInstance) {
+pub(super) fn running(
+    config: serde_json::Value,
+) -> (Arc<Mutex<SignalGraph>>, ControlSurfaceInstance) {
     running_from(pair(), config)
 }
 
-fn running_from(
+pub(super) fn running_from(
     factory: DevelopmentFactory,
     config: serde_json::Value,
 ) -> (Arc<Mutex<SignalGraph>>, ControlSurfaceInstance) {

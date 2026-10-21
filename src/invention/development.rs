@@ -27,6 +27,8 @@ mod declared_tests;
 #[cfg(test)]
 mod payload_tests;
 #[cfg(test)]
+mod ramp_tests;
+#[cfg(test)]
 mod tests;
 
 use compiled_graph::{
@@ -487,6 +489,12 @@ impl Module for DevelopmentModule {
         if let Some(controls) = &self.controls {
             controls.for_each_alias(&self.graph.modules, control, f);
         }
+    }
+
+    fn alias_value(&self, control: ControlIndex) -> Option<RtValue> {
+        self.controls
+            .as_ref()?
+            .alias_value(&self.graph.modules, control)
     }
 
     /// Prepares every inner module, so a scheduler inside a development

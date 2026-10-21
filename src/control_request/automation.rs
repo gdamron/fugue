@@ -60,7 +60,8 @@ impl AutomationSlots {
         }
     }
 
-    fn written(&self, index: ControlIndex) -> Option<RtValue> {
+    /// The latest write to `index` waiting for the module to process.
+    pub(crate) fn written(&self, index: ControlIndex) -> Option<RtValue> {
         let word = self
             .slots
             .get(usize::from(index.0))?
