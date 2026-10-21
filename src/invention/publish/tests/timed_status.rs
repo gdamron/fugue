@@ -98,3 +98,22 @@ fn a_structural_commit_cancels_a_waiting_edit_and_says_so() {
         Some(&serde_json::json!("sine"))
     );
 }
+
+/// An edit adopted before its outcome arrives is announced adopted once:
+/// the sample it landed on fills in quietly, for reads.
+#[test]
+fn a_landing_sample_after_adoption_is_not_announced_again() {
+    use crate::control_request::Outcome;
+    use crate::invention::publish::timed_status::Ledger;
+    let mut ledger = Ledger::default();
+    let id = RequestId(7);
+    ledger.queued(id, None, None);
+    ledger.adopted(id, Committed::default());
+    let announced: Vec<_> = ledger.take_changes().into_iter().map(|s| s.state).collect();
+    assert_eq!(announced, [EditState::Adopted]);
+
+    ledger.outcome(id, Outcome::Applied { at: 4_096 });
+    assert!(ledger.take_changes().is_empty(), "announced once");
+    let read = ledger.status(id).unwrap();
+    assert_eq!((read.state, read.sample), (EditState::Adopted, Some(4_096)));
+}

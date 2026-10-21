@@ -111,7 +111,8 @@ impl Ledger {
 
     /// Records the audio thread's outcome for edit `id`. One cancelled or
     /// adopted keeps its state (a cancelled edit is refused `TargetGone`
-    /// once due), taking only the sample it landed on.
+    /// once due), taking only the sample it landed on, quietly: its final
+    /// state was announced once, and a read shows the sample.
     pub(crate) fn outcome(&mut self, id: RequestId, outcome: Outcome) {
         let Some(status) = self.status_mut(id) else {
             return;
@@ -123,9 +124,10 @@ impl Ledger {
                 if let Outcome::AppliedLate { due, .. } = outcome {
                     status.due = Some(due);
                 }
-                if open {
-                    status.state = EditState::Landed;
+                if !open {
+                    return;
                 }
+                status.state = EditState::Landed;
             }
             Outcome::Refused(Refusal::Expired) if open => status.state = EditState::Expired,
             Outcome::Refused(refusal) if open => status.state = EditState::Refused(refusal),
