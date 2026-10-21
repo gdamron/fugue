@@ -76,14 +76,14 @@ mod tests {
         let number = TableValue::Number(1.0);
         let table_keys = ["degree_count", "degree.0", "note_weight.0"];
         // A control thread mid-way through an edit of the whole table.
-        let writing = controls.table.writing();
+        let editing = controls.table.editing();
         let (landed, allocs, frees) = allocator_events(|| {
             let _audio = AudioThreadScope::enter();
             let writes = table_keys.map(|key| controls.set_scheduled(key, number));
             let reads = table_keys.map(|key| controls.get_scheduled(key));
             (writes, reads)
         });
-        drop(writing);
+        drop(editing);
         assert_eq!((allocs, frees), (0, 0));
         assert_eq!(landed.0, [Ok(()); 3]);
         assert_eq!(landed.1, [Ok(1.0), Ok(1.0), Ok(1.0)]);

@@ -228,14 +228,11 @@ fn test_next_note_does_not_wait_on_a_whole_table_edit() {
     melody.controls().set_allowed_degrees(vec![7]);
 
     // A control thread mid-way through an edit of the whole table. Once
-    // this deadlocked the audio thread; now the stale degrees are used.
+    // this deadlocked the audio thread; now the table as published is used.
     let controls = melody.controls().clone();
-    let writing = controls.table.writing();
-    let stale = melody.next_note();
-    assert_ne!(stale.midi_note, 67, "stale table has no degree 7");
-    drop(writing);
-
+    let editing = controls.table.editing();
     assert_eq!(melody.next_note().midi_note, 67);
+    drop(editing);
 }
 
 #[test]

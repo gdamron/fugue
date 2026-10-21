@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -149,7 +149,7 @@ fn a_position_write_racing_a_whole_scale_lands_before_it_or_after_it() {
 fn a_position_reads_on_the_audio_thread_without_a_lock() {
     let controls = MelodyControls::new(60, vec![0, 2, 4]);
     controls.set_note_weight(1, 3.0).unwrap();
-    let _writing = controls.table.writing();
+    let _editing = controls.table.editing();
     let audio = AudioThreadScope::enter();
     let (read, allocs, frees) = allocator_events(|| {
         [
@@ -239,40 +239,77 @@ fn a_weight_write_meeting_whole_weights_and_a_grown_count_is_kept() {
     assert_eq!(controls.note_weights()[5], 9.0);
 }
 
+/// Ten seconds: long enough for any thread to get going, short enough that
+/// a regression fails rather than hangs.
+const PATIENCE: Duration = Duration::from_secs(10);
+
+/// Writes `value` to degree position `index` on another thread, held up
+/// after its header load until `release` sends or drops: returns the
+/// write, already holding its generation, and `release`.
+fn held_write(
+    controls: &MelodyControls,
+    index: usize,
+    value: i32,
+) -> (std::thread::JoinHandle<bool>, mpsc::Sender<()>) {
+    let (release, held) = mpsc::channel::<()>();
+    let (holding, holds) = mpsc::channel();
+    let controls = controls.clone();
+    let write = std::thread::spawn(move || {
+        between_the_next_loads(move || {
+            holding.send(()).unwrap();
+            let _ = held.recv_timeout(PATIENCE);
+        });
+        controls.table.write_degree(index, value)
+    });
+    holds.recv_timeout(PATIENCE).expect("the write is held up");
+    (write, release)
+}
+
+/// Waits (up to [`PATIENCE`]) until `thread` finishes, and joins it.
+fn join_soon<T>(thread: std::thread::JoinHandle<T>) -> T {
+    let deadline = Instant::now() + PATIENCE;
+    while !thread.is_finished() {
+        assert!(Instant::now() < deadline, "the thread never finished");
+        std::thread::yield_now();
+    }
+    thread.join().unwrap()
+}
+
 #[test]
 fn a_write_held_up_for_a_round_of_generations_is_never_read() {
-    let controls = MelodyControls::new(60, vec![0, 0]);
-    let table = &controls.table;
-    controls.set_allowed_degrees(vec![0, 0]);
-    std::thread::scope(|scope| {
-        // A write checks position 1 against generation 2, and is held up
-        // (released should this panic, as `release` drops).
-        let (release, held) = std::sync::mpsc::channel::<()>();
-        let (holding, holds) = std::sync::mpsc::channel();
-        let writer = scope.spawn(move || {
-            between_the_next_loads(move || {
-                holding.send(()).unwrap();
-                let _ = held.recv();
-            });
-            table.write_degree(1, 9)
-        });
-        holds.recv().unwrap();
-        // A round of whole scales later, generation 2 comes back with one
-        // position: had the write gone ahead, position 1 would show it
-        // once the count grows again.
-        table.jump_to(u32::MAX);
-        let editor = scope.spawn(|| controls.set_allowed_degrees(vec![5]));
-        let deadline = Instant::now() + Duration::from_millis(200);
-        while !editor.is_finished() && Instant::now() < deadline {
+    // Before generation 2, and before generation 2^31.
+    for before in [u32::MAX, (1 << 31) - 1] {
+        let controls = MelodyControls::new(60, vec![0, 0]);
+        let table = &controls.table;
+        // A round of whole scales later, generation `before` holds two
+        // positions; a write checks position 1 against it, and is held
+        // up.
+        table.jump_to(before);
+        let (held, release) = held_write(&controls, 1, 9);
+        // The next generation comes with one position: had the write gone
+        // ahead after it, position 1 would show it once the count grows
+        // again, a round later.
+        let epoch = table.epoch.load(Ordering::SeqCst);
+        let editor = {
+            let controls = controls.clone();
+            std::thread::spawn(move || controls.set_allowed_degrees(vec![5]))
+        };
+        let deadline = Instant::now() + PATIENCE;
+        while table.epoch.load(Ordering::SeqCst) == epoch {
+            assert!(Instant::now() < deadline, "the edit never waited");
             std::thread::yield_now();
         }
-        assert!(!editor.is_finished(), "generation 2 waits out the write");
-        release.send(()).unwrap();
-        assert!(writer.join().unwrap());
-        editor.join().unwrap();
-    });
-    controls.set_degree_count(2);
-    assert_eq!(controls.allowed_degrees(), [5, 5]);
+        // A write starting and finishing meanwhile does not stand in for
+        // the one held up.
+        assert!(table.write_degree(0, 3));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!editor.is_finished(), "{before}: the edit waits it out");
+        drop(release);
+        assert!(join_soon(held));
+        join_soon(editor);
+        controls.set_degree_count(2);
+        assert_eq!(controls.allowed_degrees(), [5, 5], "{before}");
+    }
 }
 
 #[test]
@@ -304,16 +341,57 @@ fn a_read_meeting_an_editor_preempted_mid_edit_reads_the_table_before_it() {
 }
 
 #[test]
-fn a_copy_is_not_taken_while_a_position_write_is_in_flight() {
+fn a_copy_is_taken_while_a_position_write_is_in_flight() {
     let controls = MelodyControls::new(60, vec![0, 0]);
+    let table = &controls.table;
     let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
-    let writing = controls.table.writing();
-    assert_eq!(controls.table.read_into(&mut degrees, &mut weights), None);
-    drop(writing);
-    assert_eq!(
-        controls.table.read_into(&mut degrees, &mut weights),
-        Some(2)
-    );
+    // A write held up in flight holds up no copy, nor a scheduled write
+    // finishing meanwhile: the copy holds that one.
+    let (held, release) = held_write(&controls, 1, 9);
+    assert!(table.write_degree(0, 7));
+    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
+    assert_eq!(degrees[..2], [7, 0]);
+    drop(release);
+    assert!(join_soon(held));
+    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
+    assert_eq!(degrees[..2], [7, 9]);
+}
+
+#[test]
+fn a_copy_during_which_a_position_write_finishes_is_refused() {
+    let controls = MelodyControls::new(60, vec![0, 0]);
+    let table = &controls.table;
+    let edit = controls.clone();
+    between_the_next_loads(move || edit.set_degree(1, 5).unwrap());
+    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
+    assert_eq!(degrees[..2], [0, 5]);
+}
+
+#[test]
+fn a_read_outlasting_a_round_of_generations_is_refused() {
+    let controls = MelodyControls::new(60, vec![1, 1]);
+    let table = &controls.table;
+    // Between the read's header load and its weights load, two whole scales
+    // rewrite the buffer it reads, and the generation comes back round to
+    // the one it loaded, as a round of them would.
+    let generation = table.degrees_generation();
+    let edit = controls.clone();
+    between_the_next_loads(move || {
+        edit.set_allowed_degrees(vec![2, 2]);
+        edit.set_allowed_degrees(vec![2, 2]);
+        edit.table.jump_to(generation);
+    });
+    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+    let edit = controls.clone();
+    between_the_next_loads(move || {
+        edit.set_allowed_degrees(vec![3, 3]);
+        edit.set_allowed_degrees(vec![3, 3]);
+        edit.table.jump_to(generation);
+    });
+    assert_eq!(table.consistent(1, false, |view| view.position(0)), None);
 }
 
 #[test]
