@@ -24,6 +24,7 @@ use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
 use crate::modules::control_scheduler::Written;
 use crate::payload::Payload;
+use crate::ControlValue;
 use indexmap::IndexMap;
 
 /// Runs on the runtime state as a timed edit is adopted: records what it
@@ -43,6 +44,9 @@ pub(crate) struct Waiting {
     /// The schedules it hands surviving schedulers as it lands, recorded
     /// once it is adopted; a refused one records nothing.
     packed: Packed,
+    /// Authored control writes made while it waits to modules it keeps,
+    /// recorded again once `retain` has run (see [`Publisher::fold_timed`]).
+    folded: Vec<(String, String, ControlValue)>,
 }
 
 /// A timed edit the audio thread landed, adopted by the publisher: what it
@@ -54,6 +58,8 @@ pub(crate) struct Adopted {
     pub(crate) port: RequestPort,
     /// The schedules it handed surviving schedulers, to record now.
     pub(crate) written: Vec<Written>,
+    /// Authored writes folded into it, to record after `retain`.
+    pub(crate) folded: Vec<(String, String, ControlValue)>,
 }
 
 impl Publisher {
@@ -113,6 +119,7 @@ impl Publisher {
             retain,
             port,
             packed,
+            folded: Vec::new(),
         }));
         Ok(id)
     }
@@ -168,6 +175,7 @@ impl Publisher {
             retain: waiting.retain,
             port: waiting.port,
             written: waiting.packed.written,
+            folded: waiting.folded,
         })
     }
 
@@ -205,6 +213,33 @@ impl Publisher {
     #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
     pub(crate) fn timed_id(&self) -> Option<RequestId> {
         self.timed.as_ref().map(|waiting| waiting.id)
+    }
+
+    /// What the timed edit waiting, if any, does to module `id`: removes
+    /// it (`Some(true)`) or rebuilds it (`Some(false)`). `None` when it
+    /// keeps it, or none waits.
+    pub(crate) fn timed_replaces(&self, id: &str) -> Option<bool> {
+        let waiting = self.timed.as_ref()?;
+        if !self.mirror.modules.contains_key(id) {
+            return None;
+        }
+        if !waiting.mirror.modules.contains_key(id) {
+            return Some(true);
+        }
+        waiting.built.contains_key(id).then_some(false)
+    }
+
+    /// Folds an authored write to a module the timed edit waiting keeps
+    /// into it, so its retained document records the write again as it is
+    /// adopted rather than lose it. The last write to each control stands.
+    /// Nothing when none waits.
+    pub(crate) fn fold_timed(&mut self, module_id: &str, key: &str, value: &ControlValue) {
+        let Some(waiting) = self.timed.as_mut() else {
+            return;
+        };
+        let folded = &mut waiting.folded;
+        folded.retain(|(module, control, _)| module != module_id || control != key);
+        folded.push((module_id.to_string(), key.to_string(), value.clone()));
     }
 
     /// Every recent timed edit's status (see `timed_status`).

@@ -15,6 +15,10 @@ use std::sync::{Arc, Mutex};
 use super::declared::{add_offline, remove_offline};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
+/// How many times an authored write is made when a change is published or
+/// adopted between making it and recording it.
+const WRITE_ATTEMPTS: usize = 3;
+
 /// Read/write orchestration surface shared by live and render runtimes.
 pub trait OrchestrationRuntime {
     /// Returns the current runtime status.
@@ -276,12 +280,29 @@ impl RuntimeSnapshot {
         // (see FUG-240). set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
         let value = self.coerced(module_id, key, value)?;
-        self.set_control_transient(module_id, key, value.clone())?;
-        self.state
-            .lock()
-            .unwrap()
-            .record_authored_control(module_id, key, &value);
-        Ok(value)
+        let Some(live) = &self.live else {
+            self.set_control_transient(module_id, key, value.clone())?;
+            let mut state = self.state.lock().unwrap();
+            state.record_authored_control(module_id, key, &value);
+            return Ok(value);
+        };
+        // Written first, so a write refused changes nothing, then recorded
+        // under the publisher: a timed edit waiting takes the write into its
+        // own document or, when it rebuilds or removes the module, is
+        // cancelled. When a change was published or adopted in between (a
+        // timed edit landing, which may write this control as it lands or
+        // replace the module), the write is made again, so it plays last
+        // and what is recorded is what plays.
+        for _ in 0..WRITE_ATTEMPTS {
+            let seen = live.generation();
+            self.set_control_transient(module_id, key, value.clone())?;
+            if live.record_authored(module_id, key, &value, seen) {
+                return Ok(value);
+            }
+        }
+        Err(GraphCommandError::ControlError(format!(
+            "the graph changed each time {module_id}.{key} was written; write it again"
+        )))
     }
 
     /// Whether `key` of `module_id` is a declared event control.

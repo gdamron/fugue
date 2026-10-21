@@ -399,7 +399,7 @@ impl LiveGraph {
         retain: impl FnOnce(&mut RuntimeState),
     ) -> Result<Committed, GraphCommandError> {
         self.reclaim();
-        self.commit_locked(self.lock(), prepared, retain)
+        self.commit_locked(self.lock(), prepared, Some(retain))
     }
 
     /// [`Self::commit_with`], also adopting `registry`, when given, as the
@@ -418,10 +418,14 @@ impl LiveGraph {
         self.reclaim();
         let publisher = self.lock();
         // `retain` runs only when the change commits, under the publisher.
-        let result = self.commit_locked(publisher, prepared, |state| {
-            superseded = registry.map(|registry| self.registry.replace(registry));
-            retain(state);
-        });
+        let result = self.commit_locked(
+            publisher,
+            prepared,
+            Some(|state: &mut RuntimeState| {
+                superseded = registry.map(|registry| self.registry.replace(registry));
+                retain(state);
+            }),
+        );
         // The previous registry drops off the publisher's lock.
         drop(superseded);
         result
@@ -460,7 +464,7 @@ impl LiveGraph {
             return Err(error);
         }
         let discarded = change.take_discarded();
-        let result = self.commit_locked(publisher, change.compile(), |_| {});
+        let result = self.commit_locked(publisher, change.compile(), None::<fn(&mut _)>);
         // Modules the edit displaced drop off the lock too.
         drop(discarded);
         result
@@ -471,11 +475,17 @@ impl LiveGraph {
     /// never commits work planned against a topology that has moved.
     /// Whatever the change or the publication leaves to free is dropped
     /// after the guard is released.
+    ///
+    /// A change with `retain` records a document of its own: even empty, it
+    /// cancels a timed edit waiting, whose document would replace it as it
+    /// is adopted (`TopologyMoved`, nothing changed, when that edit landed
+    /// meanwhile). An empty change without, such as removing a module that
+    /// is not there, changes nothing and cancels nothing.
     fn commit_locked(
         &self,
         mut publisher: MutexGuard<'_, Publisher>,
         mut prepared: PreparedChange,
-        retain: impl FnOnce(&mut RuntimeState),
+        retain: Option<impl FnOnce(&mut RuntimeState)>,
     ) -> Result<Committed, GraphCommandError> {
         if prepared.base_generation != publisher.generation() {
             drop(publisher);
@@ -490,6 +500,15 @@ impl LiveGraph {
             .unwrap_or_else(PoisonError::into_inner)
             .edited();
         if prepared.is_empty() {
+            let Some(retain) = retain else {
+                drop(publisher);
+                return Ok(Committed::default());
+            };
+            if !publisher.cancel_timed(|| CancelCause::Commit) {
+                drop(publisher);
+                drop(prepared);
+                return Err(GraphCommandError::TopologyMoved);
+            }
             retain(&mut self.state.lock().unwrap());
             drop(publisher);
             return Ok(Committed::default());
@@ -522,6 +541,11 @@ impl LiveGraph {
         for schedule in written {
             schedule.record();
         }
+        let retain = |state: &mut RuntimeState| {
+            if let Some(retain) = retain {
+                retain(state);
+            }
+        };
         let committed = self.commit_published(&publisher, published, &self.port(), retain);
         drop(publisher);
         self.settle();
