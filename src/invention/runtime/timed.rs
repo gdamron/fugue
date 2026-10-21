@@ -172,10 +172,29 @@ fn kept(kept: &[String], queued: bool) -> Option<String> {
         return None;
     }
     let lands = if queued { "lands" } else { "landed" };
+    let them = if kept.len() == 1 { "it" } else { "them" };
     let controls = kept.join(", ");
     Some(format!(
-        "kept authored {controls}: it {lands} without its own write to them"
+        "kept authored {controls}: the edit {lands} without writing {them}"
     ))
+}
+
+#[cfg(test)]
+#[test]
+fn a_kept_write_is_named_while_queued_and_once_landed() {
+    let one = ["osc.waveform".to_string()];
+    let said = kept(&one, true).unwrap();
+    assert_eq!(
+        said,
+        "kept authored osc.waveform: the edit lands without writing it"
+    );
+    let two = ["osc.waveform".to_string(), "fx.cutoff".to_string()];
+    let said = kept(&two, false).unwrap();
+    assert_eq!(
+        said,
+        "kept authored osc.waveform, fx.cutoff: the edit landed without writing them"
+    );
+    assert_eq!(kept(&[], false), None);
 }
 
 fn refused(refusal: Refusal) -> String {
