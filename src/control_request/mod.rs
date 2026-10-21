@@ -87,7 +87,7 @@ pub(crate) use event::{EventCounter, EventCursor};
 pub(crate) use hold::Rank;
 pub(crate) use hold::{admits_hold, kept_hold, take_hold, FrameScope, Standing};
 pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
-pub(crate) use legacy::LEGACY_CONTROLS;
+pub(crate) use legacy::{scheduled_number, LegacyRefusal, LEGACY_CONTROLS};
 pub(crate) use local::{local_controls, local_get, local_set};
 pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
 pub(crate) use pending::{expired, Outcome, Outcomes, PendingStore, Refusal};

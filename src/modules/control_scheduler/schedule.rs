@@ -10,7 +10,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::control_request::{TableEntry, TableTarget, TableValue};
+use crate::control_request::{EventCounter, TableEntry, TableTarget, TableValue};
 use crate::module_config::serde_whole;
 use crate::{ControlSurface, ControlValue};
 
@@ -251,6 +251,8 @@ pub(crate) fn resolve_schedule(
     surfaces: &SurfaceMap,
 ) -> Result<Vec<ResolvedEntry>, String> {
     let mut resolved = Vec::with_capacity(entries.len());
+    // Shared by the schedule's legacy targets: their writes refused.
+    let refused = Arc::new(EventCounter::new());
     for entry in entries {
         if entry.module == own_id {
             return Err(format!(
@@ -299,10 +301,7 @@ pub(crate) fn resolve_schedule(
         }
         let target = match automation {
             Some(automation) => TableTarget::Declared(automation),
-            None => TableTarget::Legacy {
-                surface: surface.clone(),
-                control: entry.control.clone(),
-            },
+            None => TableTarget::legacy(surface.clone(), entry.control.clone(), refused.clone()),
         };
         resolved.push(ResolvedEntry {
             module: entry.module.clone(),

@@ -29,6 +29,8 @@ mod payload_tests;
 #[cfg(test)]
 mod ramp_tests;
 #[cfg(test)]
+mod scheduled_tests;
+#[cfg(test)]
 mod tests;
 
 use compiled_graph::{

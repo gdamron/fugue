@@ -7,7 +7,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::control_request::{
-    Automation, BeatTable, ControlCells, ControlIndex, ControlTable, Refusal, RtValue, Timeline,
+    Automation, BeatTable, ControlCells, ControlIndex, ControlTable, LegacyRefusal, Refusal,
+    RtValue, TableValue, Timeline,
 };
 use crate::invention::declared::{Declaration, Route};
 use crate::invention::timelines::Enclosure;
@@ -233,6 +234,38 @@ pub trait ControlSurface: Send + Sync {
     #[doc(hidden)]
     fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
         self.set_control(key, value)
+    }
+
+    /// Writes legacy control `key` as a scheduler's table does, on the
+    /// audio thread: what [`Self::set_control`] would write, allocation-,
+    /// free- and lock-free, never waiting on a lock a control thread may
+    /// hold. What it cannot write so it refuses, with a `Copy` reason.
+    ///
+    /// The default is the setter itself, as a scheduler always wrote: every
+    /// type in `LEGACY_CONTROLS`, and a development forwarding to one,
+    /// overrides it (the catalog test in `control_request::legacy` checks
+    /// them).
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        let value = match value {
+            TableValue::Number(number) => ControlValue::Number(number),
+            TableValue::Bool(flag) => ControlValue::Bool(flag),
+        };
+        self.set_control(key, value)
+            .map_err(|_| LegacyRefusal::Unsupported)
+    }
+
+    /// Reads legacy control `key`'s number where a scheduled ramp starts,
+    /// on the audio thread, as [`Self::set_scheduled`] writes: refused for
+    /// a control holding no number. The default is the getter itself.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        match self.get_control(key) {
+            Ok(ControlValue::Number(number)) => Ok(number),
+            _ => Err(LegacyRefusal::Unsupported),
+        }
     }
 
     /// Builds payload control `key`'s write of `value`: the payload and

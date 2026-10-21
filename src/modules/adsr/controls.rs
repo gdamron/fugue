@@ -1,6 +1,7 @@
 //! Thread-safe controls for the ADSR envelope generator.
 
 use crate::atomic::AtomicF32;
+use crate::control_request::{scheduled_number, LegacyRefusal, TableValue};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 /// Thread-safe controls for the ADSR envelope generator.
@@ -123,5 +124,29 @@ impl ControlSurface for AdsrControls {
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        let value = scheduled_number(value)?;
+        match key {
+            "attack" => self.set_attack(value),
+            "decay" => self.set_decay(value),
+            "sustain" => self.set_sustain(value),
+            "release" => self.set_release(value),
+            _ => return Err(LegacyRefusal::Unsupported),
+        }
+        Ok(())
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        match key {
+            "attack" => Ok(self.attack()),
+            "decay" => Ok(self.decay()),
+            "sustain" => Ok(self.sustain()),
+            "release" => Ok(self.release()),
+            _ => Err(LegacyRefusal::Unsupported),
+        }
     }
 }
