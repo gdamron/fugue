@@ -76,12 +76,15 @@ mod tests {
     fn a_scheduled_cell_selection_lands_while_the_bank_is_held() {
         let controls = CellSequencerControls::new();
         controls.set_cells_json("[[60], [62], [64]]").unwrap();
-        let (written, allocs, frees) = while_held(&controls.shared.sequences, || {
-            allocator_events(|| {
-                let selected = controls.set_scheduled("select_cell", TableValue::Number(9.0));
-                (selected, controls.get_scheduled("cell_count"))
-            })
-        });
+        let (written, allocs, frees) = while_held(
+            || controls.shared.sequences.lock().unwrap(),
+            || {
+                allocator_events(|| {
+                    let selected = controls.set_scheduled("select_cell", TableValue::Number(9.0));
+                    (selected, controls.get_scheduled("cell_count"))
+                })
+            },
+        );
         assert_eq!((allocs, frees), (0, 0));
         assert_eq!(written, (Ok(()), Ok(3.0)));
         assert_eq!(controls.selected_cell(), 2, "clamped to the bank");

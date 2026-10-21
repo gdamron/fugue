@@ -88,7 +88,7 @@ pub(crate) use hold::Rank;
 pub(crate) use hold::{admits_hold, kept_hold, take_hold, FrameScope, Standing};
 pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
 #[cfg(test)]
-pub(crate) use legacy::tests::scheduled_surface;
+pub(crate) use legacy::tests::{scheduled_surface, while_held};
 pub(crate) use legacy::{
     scheduled_bool, scheduled_index, scheduled_number, LegacyRefusal, LEGACY_CONTROLS,
 };

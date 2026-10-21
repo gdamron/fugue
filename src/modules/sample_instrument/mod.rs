@@ -68,7 +68,7 @@ use crate::Module;
 pub use self::controls::{LoopSpec, SampleInstrumentControls, ZoneSpec};
 pub use self::voice::MAX_VOICES;
 
-use self::controls::{NoteEvent, ZoneAudio, MAX_PENDING_NOTES};
+use self::controls::{NoteQueue, ZoneAudio, NOTE_CAPACITY};
 use self::voice::{note_from_freq, resolve_zone, Voice, ZoneRuntime, DECLICK_SECONDS};
 
 mod controls;
@@ -102,14 +102,20 @@ impl ModuleFactory for SampleInstrumentFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let (specs, voices, release) = parse_config(config)?;
-        let (controls, zone_audio) = SampleInstrumentControls::new(sample_rate, release, specs)?;
+        let (controls, zone_audio, notes) =
+            SampleInstrumentControls::new(sample_rate, release, specs)?;
         // A recorded `level.N` write is later than the zone's authored
         // level, so it wins; a `root_note.N` is refused, as a live write is.
         crate::factory::apply_control_keys(&controls, config, |key| {
             key.starts_with("level.") || key.starts_with("root_note.")
         })?;
-        let instrument =
-            SampleInstrument::new_with_controls(controls.clone(), zone_audio, voices, sample_rate);
+        let instrument = SampleInstrument::new_with_controls(
+            controls.clone(),
+            zone_audio,
+            notes,
+            voices,
+            sample_rate,
+        );
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(instrument)),
@@ -266,18 +272,18 @@ pub struct SampleInstrument {
     outputs: outputs::SampleInstrumentOutputs,
     zones: Vec<ZoneRuntime>,
     voices: Vec<Voice>,
-    /// Per-block scratch, sized once at build: zone levels, staged swaps,
-    /// and drained control-thread note events.
+    /// Per-block scratch, sized once at build: zone levels and staged
+    /// swaps.
     levels: Vec<f32>,
     swap_scratch: Vec<Option<ZoneAudio>>,
-    note_scratch: Vec<NoteEvent>,
+    /// Note events from control threads and schedulers.
+    notes: NoteQueue,
     /// Allocation ordinal handed to the next note-on (steal-oldest order).
     next_started: u64,
     sample_rate: f32,
     /// Per-frame decay of a stolen voice's declick ramp, fixed at build.
     declick_step: f32,
     last_swaps_version: u64,
-    last_notes_version: u64,
     last_gate: f32,
 }
 
@@ -285,6 +291,7 @@ impl SampleInstrument {
     pub(crate) fn new_with_controls(
         controls: SampleInstrumentControls,
         zone_audio: Vec<ZoneAudio>,
+        notes: NoteQueue,
         voices: usize,
         sample_rate: u32,
     ) -> Self {
@@ -317,12 +324,11 @@ impl SampleInstrument {
                 .collect(),
             levels,
             swap_scratch: (0..zone_count).map(|_| None).collect(),
-            note_scratch: Vec::with_capacity(MAX_PENDING_NOTES),
+            notes,
             next_started: 0,
             sample_rate: sample_rate as f32,
             declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
             last_swaps_version: 0,
-            last_notes_version: 0,
             last_gate: 0.0,
         }
     }
@@ -441,19 +447,17 @@ impl Module for SampleInstrument {
         // Release fade slope, from the control read once per block.
         let release_step = 1.0 / (self.ctrl.release().max(1e-3) * self.sample_rate);
 
-        // Control-thread note events, observed once per block.
-        let notes_version = self.ctrl.notes_version();
-        if notes_version != self.last_notes_version {
-            self.last_notes_version = notes_version;
-            self.note_scratch.clear();
-            self.ctrl.take_note_events(&mut self.note_scratch);
-            for i in 0..self.note_scratch.len() {
-                let event = self.note_scratch[i];
-                if event.on {
-                    self.note_on(Note::new(event.note).frequency(), 1.0);
-                } else {
-                    self.note_off(event.note, release_step, false);
-                }
+        // Queued note events, in the order they were sent. At most one
+        // queue's worth per block, so a producer sending as fast as this
+        // pops cannot hold the block here.
+        for _ in 0..NOTE_CAPACITY {
+            let Some(event) = self.notes.pop() else {
+                break;
+            };
+            if event.on {
+                self.note_on(Note::new(event.note).frequency(), 1.0);
+            } else {
+                self.note_off(event.note, release_step, false);
             }
         }
 

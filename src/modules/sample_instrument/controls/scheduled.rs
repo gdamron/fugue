@@ -1,17 +1,16 @@
 //! An instrument's legacy controls as a scheduler writes them, on the
 //! audio thread (see [`crate::ControlSurface::set_scheduled`]).
 //!
-//! A note takes the pending queue's lock without waiting: when a control
-//! thread holds it (queueing a note of its own), the note is refused as
-//! busy, and the scheduler counts it, as it does one finding the queue
-//! full.
+//! A note is pushed onto the lock-free note queue, using the slots control
+//! threads leave free: refused only when even those are taken, and the
+//! scheduler counts it.
 
 use super::{indexed_key, midi_note, release_ok, SampleInstrumentControls};
-use crate::control_request::{scheduled_number, try_scheduled, LegacyRefusal, TableValue};
+use crate::control_request::{scheduled_number, LegacyRefusal, TableValue};
 
 impl SampleInstrumentControls {
-    /// What `set_control` writes, refused rather than waiting on the note
-    /// queue or formatting an error.
+    /// What `set_control` writes, refused rather than formatting an
+    /// error.
     pub(super) fn scheduled_write(
         &self,
         key: &str,
@@ -26,8 +25,7 @@ impl SampleInstrumentControls {
             }
             "note_on" | "note_off" => {
                 let note = midi_note(value).ok_or(LegacyRefusal::Invalid)?;
-                let pending = try_scheduled(&self.inner.pending_notes)?;
-                (self.queue_note(pending, note, key == "note_on"))
+                (self.queue_note(note, key == "note_on"))
                     .then_some(())
                     .ok_or(LegacyRefusal::Full)
             }
@@ -65,12 +63,12 @@ impl SampleInstrumentControls {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{ZoneSpec, MAX_PENDING_NOTES};
+    use super::super::{ZoneSpec, NOTE_CAPACITY, SCHEDULED_RESERVE};
     use super::*;
     use crate::alloc_counter::allocator_events;
-    use crate::control_request::while_held;
+    use crate::audio_thread::AudioThreadScope;
     use crate::module_config::tests::registry::eight_frame_wav;
-    use crate::ControlSurface;
+    use crate::{ControlSurface, ControlValue};
 
     fn instrument() -> SampleInstrumentControls {
         let zone = ZoneSpec {
@@ -87,36 +85,29 @@ mod tests {
     }
 
     #[test]
-    fn a_scheduled_note_finding_the_queue_held_or_full_is_refused_without_waiting() {
+    fn a_scheduled_note_finds_the_room_control_threads_leave() {
         let controls = instrument();
-        let version = controls.notes_version();
-        let note = TableValue::Number(64.0);
-        let (written, allocs, frees) = while_held(&controls.inner.pending_notes, || {
-            allocator_events(|| {
-                let notes = ["note_on", "note_off"].map(|key| controls.set_scheduled(key, note));
-                (
-                    notes,
-                    controls.set_scheduled("level.0", TableValue::Number(0.5)),
-                )
-            })
-        });
-        assert_eq!((allocs, frees), (0, 0));
-        assert_eq!(written.0, [Err(LegacyRefusal::Busy); 2]);
-        assert_eq!(written.1, Ok(()), "an atomic control needs no lock");
-        assert_eq!(controls.notes_version(), version, "nothing queued");
-        // Released, the queue takes notes until it is full.
+        let note = ControlValue::Number(64.0);
+        let mut sent = 0;
+        while controls.note_on(&note).is_ok() {
+            sent += 1;
+        }
+        assert_eq!(sent, NOTE_CAPACITY - SCHEDULED_RESERVE as usize);
+        let scheduled = TableValue::Number(67.0);
+        let _audio = AudioThreadScope::enter();
         let ((), allocs, frees) = allocator_events(|| {
-            for _ in 0..MAX_PENDING_NOTES {
-                assert_eq!(controls.set_scheduled("note_on", note), Ok(()));
+            for _ in sent..NOTE_CAPACITY {
+                assert_eq!(controls.set_scheduled("note_on", scheduled), Ok(()));
             }
-            let full = controls.set_scheduled("note_on", note);
+            let full = controls.set_scheduled("note_off", scheduled);
             assert_eq!(full, Err(LegacyRefusal::Full));
             let invalid = controls.set_scheduled("note_off", TableValue::Number(200.0));
             assert_eq!(invalid, Err(LegacyRefusal::Invalid));
             let release = controls.set_scheduled("release", TableValue::Number(-1.0));
             assert_eq!(release, Err(LegacyRefusal::Invalid));
+            let level = controls.set_scheduled("level.0", TableValue::Number(0.5));
+            assert_eq!(level, Ok(()));
         });
         assert_eq!((allocs, frees), (0, 0));
-        assert_eq!(controls.notes_version(), version + MAX_PENDING_NOTES as u64);
     }
 }
