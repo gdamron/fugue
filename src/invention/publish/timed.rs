@@ -36,12 +36,10 @@ use crate::ModuleRegistry;
 pub(crate) enum Authored {
     /// Recorded: what plays.
     Recorded,
-    /// Not recorded: a timed edit landed after the write, so it is to be
-    /// made again.
-    Raced,
-    /// Recorded on the last attempt, though a timed edit landed after the
-    /// write: what plays may differ.
-    RecordedRaced,
+    /// Not recorded: a timed edit landed after the write and rebuilt or
+    /// removed its module (or re-resolved its schedule), so what plays may
+    /// not be the write. It is to be made again.
+    Overtaken,
 }
 
 /// When a timed edit lands, resolved against the graph that is playing.
@@ -140,19 +138,19 @@ impl LiveGraph {
     /// control alone folds the write into its own document instead, so the
     /// write is recorded again as the edit is adopted.
     ///
-    /// [`Authored::Raced`], with nothing recorded, when a timed edit was
-    /// adopted since `seen`: it may have landed after the write, replacing
-    /// the module or writing the control as it landed, so what plays may
-    /// not be the write. The caller writes again, unless this is its `last`
-    /// attempt: then the write is recorded anyway, as it is when only
-    /// untimed changes were published since `seen` (they publish nothing
-    /// after the write reaches the audio thread).
+    /// [`Authored::Overtaken`], with nothing recorded, when a timed edit
+    /// adopted since `seen` may have landed after the write and replaced
+    /// what it wrote (see [`Publisher::timed_overtook`]): the caller makes
+    /// it again. One adopted since that touched neither the module nor its
+    /// schedule leaves the write playing, so it is recorded, as it is when
+    /// only untimed changes were published since `seen` (they publish
+    /// nothing after the write reaches the audio thread).
     pub(crate) fn record_authored(
         &self,
         module_id: &str,
         key: &str,
         value: &ControlValue,
-        (seen, last): (u64, bool),
+        seen: u64,
     ) -> Authored {
         let mut publisher = self.lock();
         let touches = match publisher.timed_replaces(module_id) {
@@ -172,18 +170,13 @@ impl LiveGraph {
                 self.adopt(&mut publisher);
             }
         }
-        let raced = publisher.timed_adopted_since(seen);
-        if raced && !last {
-            return Authored::Raced;
+        if publisher.timed_overtook(seen, module_id) == Some(true) {
+            return Authored::Overtaken;
         }
         publisher.fold_timed(module_id, key, value);
         let mut state = self.state.lock().unwrap();
         state.record_authored_control(module_id, key, value);
-        if raced {
-            Authored::RecordedRaced
-        } else {
-            Authored::Recorded
-        }
+        Authored::Recorded
     }
 
     /// Queues `prepared` to land at `time`, refused once `ttl` samples have
