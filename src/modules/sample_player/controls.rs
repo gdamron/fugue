@@ -3,6 +3,9 @@
 use std::sync::{Arc, Mutex};
 
 use crate::atomic::AtomicF32;
+use crate::control_request::{
+    scheduled_bool, scheduled_number, try_scheduled, LegacyRefusal, TableValue,
+};
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
@@ -24,6 +27,16 @@ pub(crate) struct SamplePlayerShared {
     pub(crate) loop_enabled: bool,
     pub(crate) play_trigger: u64,
     pub(crate) pending_sample: Option<Arc<SampleData>>,
+}
+
+impl SamplePlayerShared {
+    /// Starts or stops playback; starting (again) retriggers it.
+    fn set_play(&mut self, play: bool) {
+        self.play = play;
+        if play {
+            self.play_trigger = self.play_trigger.wrapping_add(1);
+        }
+    }
 }
 
 impl SamplePlayerControls {
@@ -100,11 +113,7 @@ impl SamplePlayerControls {
     }
 
     pub fn set_play(&self, play: bool) {
-        let mut shared = self.shared.lock().unwrap();
-        shared.play = play;
-        if play {
-            shared.play_trigger = shared.play_trigger.wrapping_add(1);
-        }
+        self.shared.lock().unwrap().set_play(play);
     }
 
     pub fn loop_enabled(&self) -> bool {
@@ -197,5 +206,60 @@ impl ControlSurface for SamplePlayerControls {
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    /// `play` and `loop` take the shared state's lock without waiting: a
+    /// control thread holding it refuses the write as busy.
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        match key {
+            "play" => try_scheduled(&self.shared)?.set_play(scheduled_bool(value)?),
+            "loop" => try_scheduled(&self.shared)?.loop_enabled = scheduled_bool(value)?,
+            "pitch_ratio" => self.set_pitch_ratio(scheduled_number(value)?),
+            "time_ratio" if self.elastic => self.set_time_ratio(scheduled_number(value)?),
+            _ => return Err(LegacyRefusal::Unsupported),
+        }
+        Ok(())
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        match key {
+            "pitch_ratio" => Ok(self.pitch_ratio()),
+            "time_ratio" if self.elastic => Ok(self.time_ratio()),
+            _ => Err(LegacyRefusal::Unsupported),
+        }
+    }
+}
+
+#[cfg(test)]
+mod scheduled_tests {
+    use super::*;
+    use crate::alloc_counter::allocator_events;
+    use crate::control_request::while_held;
+
+    #[test]
+    fn a_scheduled_write_to_held_playback_state_is_refused_without_waiting() {
+        let controls = SamplePlayerControls::with_mode(48_000, None, None, None, true).unwrap();
+        let on = TableValue::Bool(true);
+        let (written, allocs, frees) = while_held(&controls.shared, || {
+            allocator_events(|| {
+                let flags = ["play", "loop"].map(|key| controls.set_scheduled(key, on));
+                (
+                    flags,
+                    controls.set_scheduled("time_ratio", TableValue::Number(2.0)),
+                )
+            })
+        });
+        assert_eq!((allocs, frees), (0, 0));
+        assert_eq!(written.0, [Err(LegacyRefusal::Busy); 2]);
+        assert_eq!(written.1, Ok(()), "an atomic control needs no lock");
+        assert_eq!(controls.time_ratio(), 2.0);
+        assert!(!controls.play() && !controls.loop_enabled());
+        // Released, starting playback retriggers it, as the setter does.
+        let trigger = controls.shared.lock().unwrap().play_trigger;
+        assert_eq!(controls.set_scheduled("play", on), Ok(()));
+        assert!(controls.play());
+        assert_eq!(controls.shared.lock().unwrap().play_trigger, trigger + 1);
     }
 }

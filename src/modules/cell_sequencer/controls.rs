@@ -9,8 +9,11 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize,
 use std::sync::{Arc, Mutex};
 
 use crate::atomic::AtomicF32;
+use crate::control_request::{LegacyRefusal, TableValue};
 use crate::traits::{check_listed_control, read_only, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
+
+mod scheduled;
 
 use super::{
     parse_sequence_bank_json, Step, DEFAULT_GATE_LENGTH, DEFAULT_GRACE_DURATION,
@@ -59,6 +62,9 @@ pub(crate) struct CellSequencerShared {
     /// control so live surfaces can observe the end without graph access.
     pub(crate) ended: AtomicBool,
     pub(crate) sequences: Mutex<Vec<Vec<Step>>>,
+    /// The number of cells in `sequences`, stored with it (under its lock),
+    /// so a scheduled `select_cell` clamps against it without the lock.
+    pub(crate) bank_len: AtomicUsize,
 }
 
 impl CellSequencerControls {
@@ -82,6 +88,7 @@ impl CellSequencerControls {
         sequences: Vec<Vec<Step>>,
     ) -> Self {
         let selected_cell = clamp_sequence_index(selected_cell, sequences.len());
+        let bank_len = AtomicUsize::new(sequences.len());
         Self {
             shared: Arc::new(CellSequencerShared {
                 root_note: AtomicU8::new(root_note.min(127)),
@@ -100,6 +107,7 @@ impl CellSequencerControls {
                 grace_on_beat: AtomicBool::new(false),
                 ended: AtomicBool::new(false),
                 sequences: Mutex::new(sequences),
+                bank_len,
             }),
         }
     }
@@ -255,6 +263,7 @@ impl CellSequencerControls {
         let mut bank = self.shared.sequences.lock().unwrap();
         *bank = cells;
         let len = bank.len();
+        self.shared.bank_len.store(len, Ordering::Relaxed);
         let selected = self.shared.selected_cell.load(Ordering::Relaxed);
         self.shared
             .selected_cell
@@ -442,6 +451,16 @@ impl ControlSurface for CellSequencerControls {
             "loop_count" | "cell" | "cell_count" | "ended" => read_only(key),
             _ => check_listed_control(&self.controls(), key, value),
         }
+    }
+
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        self.scheduled_write(key, value)
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        self.scheduled_read(key)
     }
 }
 

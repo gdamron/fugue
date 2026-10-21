@@ -6,12 +6,15 @@
 //! gated behind a version counter (the pattern from `SampleKitControls`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::atomic::AtomicF32;
+use crate::control_request::{LegacyRefusal, TableValue};
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
 use crate::traits::{check_finite, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
+
+mod scheduled;
 
 /// Upper bound on control-thread note events staged per block. Both the
 /// pending queue and the audio thread's drain scratch are sized to this,
@@ -129,6 +132,9 @@ impl SampleInstrumentControls {
                 pending_notes: Mutex::new(Vec::with_capacity(MAX_PENDING_NOTES)),
             }),
         };
+        // Some platforms' locks allocate on their first use: take it here,
+        // on the control thread, rather than at a scheduled note's.
+        drop(controls.inner.pending_notes.lock());
         Ok((controls, audio))
     }
 
@@ -196,14 +202,22 @@ impl SampleInstrumentControls {
     }
 
     fn push_note(&self, note: u8, on: bool) -> Result<(), String> {
-        let mut pending = self.inner.pending_notes.lock().unwrap();
+        let pending = self.inner.pending_notes.lock().unwrap();
+        self.queue_note(pending, note, on)
+            .then_some(())
+            .ok_or_else(|| "Too many pending note events".to_string())
+    }
+
+    /// Queues a note event in `pending`, the locked queue, returning false
+    /// when it is full.
+    fn queue_note(&self, mut pending: MutexGuard<'_, Vec<NoteEvent>>, note: u8, on: bool) -> bool {
         if pending.len() >= MAX_PENDING_NOTES {
-            return Err("Too many pending note events".to_string());
+            return false;
         }
         pending.push(NoteEvent { note, on });
         drop(pending);
         self.inner.notes_version.fetch_add(1, Ordering::Release);
-        Ok(())
+        true
     }
 
     /// Audio thread: the current swap counter, checked once per block.
@@ -239,6 +253,12 @@ impl SampleInstrumentControls {
         }
     }
 
+    /// The note queue's lock, for a test to hold as a control thread would.
+    #[cfg(test)]
+    pub(crate) fn pending_notes(&self) -> &Mutex<Vec<NoteEvent>> {
+        &self.inner.pending_notes
+    }
+
     fn zone(&self, index: usize) -> Result<&ZoneState, String> {
         self.inner
             .zones
@@ -262,11 +282,13 @@ fn parse_note(value: &ControlValue) -> Result<u8, String> {
     if !number.is_finite() {
         return Err(format!("Invalid note {}", number));
     }
+    midi_note(number).ok_or_else(|| format!("Note {} is outside MIDI range 0..=127", number))
+}
+
+/// `number`, rounded, as a MIDI note; `None` past MIDI's range.
+fn midi_note(number: f32) -> Option<u8> {
     let note = number.round();
-    if !(0.0..=127.0).contains(&note) {
-        return Err(format!("Note {} is outside MIDI range 0..=127", number));
-    }
-    Ok(note as u8)
+    (0.0..=127.0).contains(&note).then_some(note as u8)
 }
 
 /// Resolves an authored ref through the shared decoded-buffer cache and
@@ -402,6 +424,16 @@ impl ControlSurface for SampleInstrumentControls {
         Err(format!("Unknown control: {}", key))
     }
 
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        self.scheduled_write(key, value)
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        self.scheduled_read(key)
+    }
+
     /// Checks the zone and the value's shape; whether a new asset loads is
     /// only known by loading it, and a full note queue only by queueing.
     fn validate_control(
@@ -435,10 +467,15 @@ impl ControlSurface for SampleInstrumentControls {
 }
 
 fn check_release(release: f32) -> Result<(), String> {
-    if !release.is_finite() || release <= 0.0 {
+    if !release_ok(release) {
         return Err("'release' must be a positive number of seconds".to_string());
     }
     Ok(())
+}
+
+/// Whether `release` is a positive number of seconds.
+fn release_ok(release: f32) -> bool {
+    release.is_finite() && release > 0.0
 }
 
 /// Parses hierarchical control keys like `level.3` into the zone index.

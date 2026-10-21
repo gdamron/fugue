@@ -47,6 +47,14 @@ pub(crate) fn scheduled_number(value: TableValue) -> Result<f32, LegacyRefusal> 
     }
 }
 
+/// `value` as a boolean, or refused: a number.
+pub(crate) fn scheduled_bool(value: TableValue) -> Result<bool, LegacyRefusal> {
+    match value {
+        TableValue::Bool(flag) => Ok(flag),
+        TableValue::Number(_) => Err(LegacyRefusal::Unsupported),
+    }
+}
+
 /// The index of a key such as `level.3` under `prefix` (`"level."`),
 /// parsed without allocating.
 pub(crate) fn scheduled_index(key: &str, prefix: &str) -> Option<usize> {
