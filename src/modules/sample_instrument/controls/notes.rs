@@ -11,7 +11,9 @@
 //! module drains both queues and plays what it drained in stamp order: the
 //! order the notes were sent in, even when two control threads' pushes
 //! finish out of that order. A control thread's note still being pushed
-//! plays a block later.
+//! plays a block later, unless a note sent after it for the same pitch has
+//! played by then: that later note is what was meant last, so the earlier
+//! one is dropped rather than left to undo it.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -42,6 +44,9 @@ pub(crate) struct NoteQueues {
     scheduled: QueueConsumer<NoteEvent>,
     /// One block's events, sized for both queues full.
     drained: Vec<NoteEvent>,
+    /// Per pitch, the stamp after the last event played: anything stamped
+    /// before it is stale.
+    played: [u64; 256],
 }
 
 /// An instrument's note queues. Allocates: control thread.
@@ -57,6 +62,7 @@ pub(in crate::modules::sample_instrument) fn note_queues() -> (NoteSenders, Note
         sent: sent_queue,
         scheduled: scheduled_queue,
         drained: Vec::with_capacity(2 * NOTE_CAPACITY),
+        played: [0; 256],
     };
     (senders, queues)
 }
@@ -81,9 +87,10 @@ impl NoteSenders {
 }
 
 impl NoteQueues {
-    /// Everything queued, earliest sent first: at most a queue's worth from
-    /// each, so producers sending as fast as this drains cannot hold the
-    /// block here. Wait-free and allocation-free.
+    /// Everything queued, earliest sent first, less any note a later one
+    /// for its pitch has already played past: at most a queue's worth from
+    /// each queue, so producers sending as fast as this drains cannot hold
+    /// the block here. Wait-free and allocation-free.
     pub(crate) fn drain(&mut self) -> &[NoteEvent] {
         self.drained.clear();
         for queue in [&mut self.sent, &mut self.scheduled] {
@@ -95,6 +102,13 @@ impl NoteQueues {
         // In place, so allocation-free; stamps are unique, so the order is
         // too.
         self.drained.sort_unstable_by_key(|event| event.stamp);
+        let played = &mut self.played;
+        self.drained.retain(|event| {
+            let next = &mut played[usize::from(event.note)];
+            let fresh = event.stamp >= *next;
+            *next = (*next).max(event.stamp + 1);
+            fresh
+        });
         &self.drained
     }
 
@@ -159,6 +173,24 @@ mod tests {
         assert_eq!(notes(&mut queues), [(64, true)]);
         publish(senders.event(60, true));
         assert_eq!(notes(&mut queues), [(60, true)], "a block later");
+    }
+
+    #[test]
+    fn a_note_held_up_behind_a_push_never_undoes_a_later_one_for_its_pitch() {
+        let (senders, mut queues) = note_queues();
+        // A control thread claims a position and is preempted; another
+        // sends a note on behind it, and a scheduler's note off for the
+        // same pitch plays.
+        let publish = senders.sent.claim().unwrap();
+        assert!(senders.send(60, true));
+        assert!(senders.schedule(60, false));
+        assert_eq!(notes(&mut queues), [(60, false)]);
+        // Once the push lands, the held-up note on would sound a note the
+        // note off meant to end.
+        publish(senders.event(72, true));
+        assert_eq!(notes(&mut queues), [(72, true)], "60 stays off");
+        assert!(senders.send(60, true));
+        assert_eq!(notes(&mut queues), [(60, true)], "a later note on plays");
     }
 
     #[test]
