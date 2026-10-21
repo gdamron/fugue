@@ -70,7 +70,6 @@ impl Publisher {
     /// refuses a change, when the change edits nothing, or while another
     /// timed edit waits (`ControlError`).
     #[allow(clippy::result_large_err)]
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
     pub(crate) fn publish_timed(
         &mut self,
         mut prepared: PreparedChange,
@@ -210,7 +209,6 @@ impl Publisher {
     }
 
     /// The id of the timed edit waiting, if any.
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
     pub(crate) fn timed_id(&self) -> Option<RequestId> {
         self.timed.as_ref().map(|waiting| waiting.id)
     }

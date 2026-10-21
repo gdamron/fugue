@@ -13,6 +13,7 @@ mod editing;
 mod non_finite;
 #[cfg(feature = "spectrogram")]
 mod spectrum;
+mod timed;
 
 struct TickBackend {
     sample_rate: u32,

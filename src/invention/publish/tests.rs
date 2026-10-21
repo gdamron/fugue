@@ -42,6 +42,7 @@ mod timed_edits;
 mod timed_publisher;
 mod timed_rebind;
 mod timed_status;
+mod timed_swap;
 mod timelines;
 mod writes;
 
