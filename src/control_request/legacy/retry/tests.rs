@@ -359,6 +359,32 @@ fn a_schedule_dropped_holds_no_other_s_writes_back() {
     assert_eq!(voice.landed(), [("note_off", 60.0)]);
 }
 
+#[test]
+fn a_value_crowded_out_of_room_still_lands_after_another_schedule_s_older_one() {
+    let voice = Arc::new(Voice::default());
+    let ((first, [level, tone, ..]), (second, [other, ..])) = (one(&voice), one(&voice));
+    voice.busy.store(true, Ordering::Relaxed);
+    // Two ramps at once fill the first schedule's room for values.
+    for value in 0..(RETRY_CAPACITY - EVENT_ROOM) / 2 {
+        first.write(level, n(value as f32));
+        first.write(tone, n(value as f32));
+    }
+    second.write(other, n(9.0));
+    let (_, allocs, frees) = allocator_events(|| first.write(level, n(12.0)));
+    assert_eq!((allocs, frees), (0, 0));
+    voice.busy.store(false, Ordering::Relaxed);
+    for _ in 0..2 {
+        first.retry();
+        second.retry();
+    }
+    let levels: Vec<f32> = (voice.landed().into_iter())
+        .filter_map(|(key, value)| (key == "level").then_some(value))
+        .collect();
+    assert_eq!(levels[levels.len() - 2..], [9.0, 12.0], "the newest last");
+    assert_eq!((first.waiting(), second.waiting()), (0, 0));
+    assert_eq!(first.refused().count() + second.refused().count(), 0);
+}
+
 /// A schedule's writes to one voice.
 fn one(voice: &Arc<Voice>) -> (Arc<LegacyWrites>, [usize; 4]) {
     let (writes, indices) = writes(&[voice]);
