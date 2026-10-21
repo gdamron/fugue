@@ -39,19 +39,22 @@
 //!
 //! [`When::Condition`]: super::When::Condition
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use self::parts::{arm, latch, read_controls};
+use self::parts::{arm, latch, read_controls, waits_on};
 use super::chains::Chains;
 use super::condition::{Condition, Predicate, MAX_PARTS};
 use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
-use super::request::{ControlIndex, ControlTarget, Request, RequestValue, When};
+use super::request::{ControlIndex, ControlTarget, Request, RequestId, RequestValue, When};
 use crate::payload::Retirer;
 
 /// The most requests timed by a condition one graph keeps waiting.
 pub(crate) const CONDITION_CAPACITY: usize = 64;
+
+/// How many of the latest timed edits cancelled [`WatchSlots`] remembers.
+const CANCELLED: usize = 4;
 
 /// Counts the requests timed by a condition that are submitted and not
 /// yet settled, shared by a request channel's senders and its drain.
@@ -61,9 +64,16 @@ pub(crate) const CONDITION_CAPACITY: usize = 64;
 /// queued and the drain releases a request only after removing it, so the
 /// count never falls below what the drain holds; a reader on a control
 /// thread may see a release late, which only refuses conservatively.
+///
+/// It also carries the latest timed edits cancelled while they waited, so
+/// what waits on one applying is refused ([`Refusal::ChainBroken`]) at the
+/// drain's next segment start, and its slot released then, rather than when
+/// the edit was due: bars away, or never for an edit timed by a condition.
 #[derive(Debug, Default)]
 pub(crate) struct WatchSlots {
     taken: AtomicUsize,
+    cancelled: [AtomicU64; CANCELLED],
+    next_cancelled: AtomicUsize,
 }
 
 impl WatchSlots {
@@ -87,6 +97,18 @@ impl WatchSlots {
 
     pub(crate) fn taken(&self) -> usize {
         self.taken.load(Ordering::Relaxed)
+    }
+
+    /// Control thread: notes that timed edit `id` was cancelled, so never
+    /// applies (its fate settled so, once).
+    pub(crate) fn cancel(&self, id: RequestId) {
+        let at = self.next_cancelled.fetch_add(1, Ordering::Relaxed) % CANCELLED;
+        self.cancelled[at].store(id.0, Ordering::Release);
+    }
+
+    /// The latest timed edits cancelled (0: none). Allocation-free.
+    fn cancelled(&self) -> [u64; CANCELLED] {
+        std::array::from_fn(|at| self.cancelled[at].load(Ordering::Acquire))
     }
 }
 
@@ -257,9 +279,20 @@ impl Conditions {
         host: &impl ConditionHost,
         outcomes: &mut Outcomes,
     ) {
+        let cancelled = self.slots.cancelled();
         let mut i = 0;
         while i < self.entries.len() {
             let entry = &mut self.entries[i];
+            // A timed edit cancelled while its condition waits never lands,
+            // nor does what waits on one, whatever graph it is tagged for.
+            if cancelled.contains(&entry.request.id.0) && entry.request.value.is_edit() {
+                self.end(i, outcomes, Refusal::TargetGone.into());
+                continue;
+            }
+            if waits_on(entry, &cancelled) {
+                self.end(i, outcomes, Refusal::ChainBroken.into());
+                continue;
+            }
             if entry.request.target.generation != installed {
                 i += 1;
                 continue;
