@@ -42,7 +42,7 @@ use indexmap::IndexMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use super::graph::{GraphCommand, SignalGraph};
-use super::publish::{check_offline, PendingLog, PendingWrite, Publisher, Settler};
+use super::publish::{check_offline, PendingLog, PendingWrite, Publisher, Retarget, Settler};
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
@@ -85,6 +85,9 @@ pub(crate) struct RequestPort {
     /// Settles each request once submitted, when the backend never renders
     /// on its own (see `LiveGraph::link`).
     pub(crate) settler: Option<Settler>,
+    /// Recompiles the topology ahead of a write changing what its module
+    /// writes (see [`Checked::targets`]).
+    pub(crate) retarget: Retarget,
 }
 
 impl RequestPort {
@@ -149,7 +152,10 @@ pub(crate) struct Checked<'a> {
     pub(crate) generation: Option<u64>,
     /// The modules the payload writes: a timed edit waiting that rebuilds
     /// or removes one, or that re-resolved the payload this write
-    /// replaces, is cancelled (see `Publisher::timed_races`).
+    /// replaces, is cancelled (see `Publisher::timed_races`). On a live
+    /// graph, a topology compiled with the module writing others is
+    /// recompiled with these and published just ahead of the write (see
+    /// `publish::retarget`).
     pub(crate) targets: Vec<String>,
     /// Records the write where it commits: under the publisher on a live
     /// graph, so a graph change sees every write submitted before it
@@ -382,7 +388,7 @@ impl DeclaredSurface {
                 let target = publisher
                     .control_target(&port.module_id, index)
                     .map_err(|error| error.to_string())?;
-                let (value, shown, checked) = match write {
+                let (value, shown, mut checked) = match write {
                     Write::Value(value) => (RequestValue::Value(value), None, None),
                     Write::Payload(payload, shown, checked) => {
                         (RequestValue::Payload(payload), Some(shown), checked)
@@ -406,6 +412,46 @@ impl DeclaredSurface {
                         }
                     }
                 }
+                // A write retargeting its module travels in the topology
+                // recompiled for it (see `publish::retarget`).
+                let recompile = match &mut checked {
+                    Some(checked) => {
+                        let targets = std::mem::take(&mut checked.targets);
+                        port.retarget.prepare(&publisher, &port.module_id, targets)
+                    }
+                    None => None,
+                };
+                let value = match (recompile, value) {
+                    (Some(prepared), RequestValue::Payload(payload)) => {
+                        let change = (prepared, port.module_id.as_str());
+                        let handed = (index, payload);
+                        let published =
+                            port.retarget
+                                .publish(&mut publisher, &port.pending, change, handed);
+                        let published = match published {
+                            Ok(published) => published,
+                            Err((error, refused)) => {
+                                drop(publisher);
+                                drop(refused);
+                                return Err(error);
+                            }
+                        };
+                        if let Some(shown) = shown {
+                            self.show(index, shown, None);
+                        }
+                        if let Some(checked) = checked {
+                            (checked.record)();
+                        }
+                        // What the recompile replaced is freed off the lock.
+                        drop(publisher);
+                        drop(published);
+                        if let Some(settler) = &port.settler {
+                            settler.settle();
+                        }
+                        return Ok(());
+                    }
+                    (_, value) => value,
+                };
                 // A payload is listed pending by its read-back and counted
                 // unlogged once applied: the session log cannot carry it yet
                 // (see `PendingWrite::raw`).
