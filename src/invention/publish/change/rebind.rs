@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::{BuiltModule, GraphChange, SurfaceMap};
 use crate::invention::runtime::GraphCommandError;
-use crate::modules::control_scheduler::Rebind;
+use crate::modules::control_scheduler::{schedule_targets, Rebind};
 use crate::modules::ControlSchedulerControls;
 
 /// What a change does that surviving schedulers re-resolve for.
@@ -56,6 +56,26 @@ impl Rescheduling {
             rebinds.extend(rebind);
         }
         Ok(rebinds)
+    }
+}
+
+impl Rescheduling {
+    /// The modules each scheduler the change writes a schedule to will
+    /// target, by id, so the change compiles its process order against the
+    /// schedule that lands with it. A schedule that does not parse is left
+    /// out; the write refuses it.
+    pub(super) fn targets(&self, surfaces: &SurfaceMap) -> HashMap<String, Vec<String>> {
+        self.schedules
+            .iter()
+            .filter(|(id, _)| {
+                surfaces.get(*id).is_some_and(|surface| {
+                    surface
+                        .as_any()
+                        .is_some_and(|any| any.is::<ControlSchedulerControls>())
+                })
+            })
+            .filter_map(|(id, json)| Some((id.clone(), schedule_targets(json)?)))
+            .collect()
     }
 }
 

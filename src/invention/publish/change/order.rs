@@ -61,11 +61,16 @@ impl GraphChange {
         true
     }
 
-    /// Each module's control targets as its surface reports them now.
+    /// Each module's control targets as its surface reports them now, or
+    /// as a schedule the change writes to it does (see
+    /// `Rescheduling::targets`): what the change compiles with.
     pub(super) fn targets_now(&self) -> Targets {
+        let mut scheduled = self.rescheduling.targets(&self.surfaces);
         let targets = self.mirror.modules.keys().map(|id| {
             let surface = self.surfaces.get(id);
-            let targets = surface.map(|surface| surface.control_targets());
+            let targets = scheduled
+                .remove(id)
+                .or_else(|| surface.map(|surface| surface.control_targets()));
             (id.clone(), targets.unwrap_or_default())
         });
         targets.collect()

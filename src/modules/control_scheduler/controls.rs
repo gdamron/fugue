@@ -8,7 +8,7 @@
 //! behind a lock only control threads take. `step` is read-only, mirrored
 //! from the audio thread through an atomic.
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::control_request::{
@@ -62,6 +62,9 @@ struct Shared {
     /// Current step index maintained by the audio thread (-1 before the
     /// first gate edge).
     step: AtomicI64,
+    /// The id of the schedule the scheduler adopted last (see
+    /// `ResolvedSchedule::id`), stored by the audio thread.
+    adopted: AtomicU64,
     /// Control threads only.
     state: Mutex<ScheduleState>,
     /// Held across a whole `schedule` write, so concurrent writes reach
@@ -79,6 +82,10 @@ struct ScheduleState {
     spec: Vec<ScheduleEntry>,
     /// Module ids the schedule last resolved targets.
     targets: Vec<String>,
+    /// The id of the schedule last handed on with `spec`: until the
+    /// scheduler reports adopting it, it may still be playing an earlier
+    /// one (a request in flight, or refused).
+    recorded: u64,
     /// Runtime attachment: the scheduler's module id and the directory used
     /// to resolve schedule updates.
     attachment: Option<Attachment>,
@@ -93,6 +100,12 @@ impl ScheduleState {
     fn record(&mut self, spec: Vec<ScheduleEntry>) {
         self.targets = target_module_ids(&spec);
         self.spec = spec;
+    }
+
+    /// Records `spec` as the schedule, handed on as schedule `id`.
+    fn record_handed(&mut self, spec: Vec<ScheduleEntry>, id: u64) {
+        self.record(spec);
+        self.recorded = id;
     }
 }
 
@@ -115,9 +128,11 @@ impl ControlSchedulerControls {
             cells,
             shared: Arc::new(Shared {
                 step: AtomicI64::new(-1),
+                adopted: AtomicU64::new(0),
                 state: Mutex::new(ScheduleState {
                     spec,
                     targets: Vec::new(),
+                    recorded: 0,
                     attachment: None,
                     unattached_id: None,
                 }),
@@ -158,14 +173,13 @@ impl ControlSchedulerControls {
         let _writing = self.shared.writing.lock().unwrap();
         let spec = self.shared.state.lock().unwrap().spec.clone();
         let resolved = resolve_schedule(&spec, own_id, surfaces)?;
-        let targets = target_module_ids(&spec);
-        self.deliver(resolved, &spec)?;
+        let id = self.deliver(resolved, &spec)?;
         let mut state = self.shared.state.lock().unwrap();
         state.attachment = Some(Attachment {
             own_id: own_id.to_string(),
             directory: Arc::downgrade(directory),
         });
-        state.targets = targets;
+        state.record_handed(spec, id);
         Ok(())
     }
 
@@ -195,10 +209,16 @@ impl ControlSchedulerControls {
                 self.shared.state.lock().unwrap().record(spec);
                 return Ok(());
             };
-            let payload = Payload::owned(Box::new(ResolvedSchedule::new(resolved)));
+            let schedule = ResolvedSchedule::new(resolved);
+            let id = schedule.id;
+            let payload = Payload::owned(Box::new(schedule));
+            let record = || {
+                let mut state = self.shared.state.lock().unwrap();
+                state.record_handed(spec.clone(), id);
+            };
             let checked = Checked {
                 generation,
-                record: Box::new(|| self.shared.state.lock().unwrap().record(spec.clone())),
+                record: Box::new(record),
             };
             match self.declared.write_payload_checked(
                 "schedule",
@@ -233,15 +253,19 @@ impl ControlSchedulerControls {
         resolve_schedule(spec, &own_id, &surfaces).map(Some)
     }
 
-    /// Hands `resolved` to the scheduler by its surface's route.
+    /// Hands `resolved` to the scheduler by its surface's route, returning
+    /// the id of the schedule handed on.
     fn deliver(
         &self,
         resolved: Vec<super::schedule::ResolvedEntry>,
         spec: &[ScheduleEntry],
-    ) -> Result<(), String> {
-        let payload = Payload::owned(Box::new(ResolvedSchedule::new(resolved)));
+    ) -> Result<u64, String> {
+        let schedule = ResolvedSchedule::new(resolved);
+        let id = schedule.id;
+        let payload = Payload::owned(Box::new(schedule));
         self.declared
-            .write_payload("schedule", payload, spec_json(spec).into())
+            .write_payload("schedule", payload, spec_json(spec).into())?;
+        Ok(id)
     }
 
     /// Returns the schedule as JSON text.
@@ -262,6 +286,11 @@ impl ControlSchedulerControls {
 
     pub(crate) fn set_step(&self, step: i64) {
         self.shared.step.store(step, Ordering::Relaxed);
+    }
+
+    /// Reports that the scheduler adopted schedule `id`. Audio thread.
+    pub(crate) fn set_adopted(&self, id: u64) {
+        self.shared.adopted.store(id, Ordering::Release);
     }
 
     /// The id the scheduler checks its own schedule against.
