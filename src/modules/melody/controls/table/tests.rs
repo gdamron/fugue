@@ -9,7 +9,6 @@ use crate::alloc_counter::allocator_events;
 use crate::audio_thread::AudioThreadScope;
 use crate::modules::melody::tests::without_waiting;
 use crate::modules::melody::MelodyControls;
-use crate::ControlSurface;
 
 mod reference;
 mod support;
@@ -81,7 +80,7 @@ fn a_copy_taken_while_whole_scales_are_set_is_always_one_of_them() {
         );
     }
     done.store(true, Ordering::Release);
-    writer.join().unwrap();
+    join_soon(writer);
     eprintln!("copies taken {taken}, refused mid-edit {refused}");
 }
 
@@ -131,15 +130,31 @@ fn a_position_reads_on_the_audio_thread_without_a_lock() {
     let reader = controls.clone();
     let (read, allocs, frees) = without_waiting(move || {
         let _audio = AudioThreadScope::enter();
-        allocator_events(|| {
-            [
-                reader.get_control("degree.1"),
-                reader.get_control("note_weight.1"),
-            ]
-        })
+        allocator_events(|| reader.table.position(1))
     });
     assert_eq!((allocs, frees), (0, 0));
-    assert_eq!(read, [Ok(2.0.into()), Ok(3.0.into())]);
+    assert_eq!(read, Some((2, 3.0)));
+}
+
+#[test]
+fn a_position_read_meeting_an_edit_every_attempt_gives_up_without_a_lock() {
+    let controls = MelodyControls::new(60, vec![0, 2, 4]);
+    let _editing = controls.table.editing();
+    let reader = controls.clone();
+    let read = without_waiting(move || {
+        // A count change published between the loads of every attempt,
+        // while a control thread holds the edit lock.
+        let edit = reader.clone();
+        between_each_of_the_next_loads(2 * READ_ATTEMPTS, move || {
+            let table = &edit.table;
+            table.set_count(if table.count() == 2 { 3 } else { 2 });
+        });
+        let _audio = AudioThreadScope::enter();
+        let read = reader.table.position(1);
+        between_each_of_the_next_loads(0, || ());
+        read
+    });
+    assert_eq!(read, None);
 }
 
 #[test]
@@ -436,7 +451,7 @@ fn a_copy_never_holds_a_later_position_write_without_an_earlier_one() {
         assert!(held, "a table that never was: [{first}, {second}]");
     }
     done.store(true, Ordering::Release);
-    writer.join().unwrap();
+    join_soon(writer);
 }
 
 #[test]
