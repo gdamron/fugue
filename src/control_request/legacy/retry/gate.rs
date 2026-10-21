@@ -19,7 +19,7 @@
 //! need not land in order to be given back, so a write dropped from the
 //! middle (one that waited too long) never holds the others up.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
 use super::orphans::Orphans;
@@ -76,6 +76,10 @@ pub(super) struct Gate {
     /// The ticket of the last event kept, zero for none.
     last_event: AtomicU64,
     lanes: Lanes,
+    /// Audio-thread passes begun and ended that hide lanes' heads before
+    /// showing them again (see [`Self::settled_earliest`]).
+    begun: AtomicU64,
+    ended: AtomicU64,
     /// Events left waiting by schedules gone.
     pub(super) orphans: Orphans,
 }
@@ -101,16 +105,16 @@ fn gates() -> MutexGuard<'static, Gates> {
     GATES.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Lands, in ticket order, the events kept at gates no schedule writes any
-/// more, and lets go of the gates that then keep none. One whose surface
-/// is still busy or full keeps the rest for the next call. A schedule
-/// building meanwhile waits, so it never writes the surface before them.
-/// Control thread, on the reclaimer's cadence: never waits on a surface.
+/// Lands, in ticket order, the events kept at gates the last schedule
+/// freed let go of, once no live schedule's earlier write waits there,
+/// and lets go of the gates that then keep none. One whose surface is
+/// still busy or full keeps the rest for the next call. A schedule built
+/// but not yet playing holds nothing back: it has nothing waiting, and
+/// what it writes once playing waits behind them. Control thread, on the
+/// reclaimer's cadence: never waits on a surface or the audio thread.
 pub(crate) fn land_left_events() {
     gates().held.retain(|gate| {
-        if Arc::strong_count(gate) == 1 {
-            gate.orphans.land_left();
-        }
+        gate.orphans.land(|| gate.settled_earliest());
         gate.orphans.kept() > 0
     });
 }
@@ -183,14 +187,38 @@ impl Gate {
     /// The earliest ticket a live schedule has waiting, or [`IDLE`].
     pub(super) fn lanes_earliest(&self) -> u64 {
         (self.lanes.iter())
-            .map(|lane| lane.head.load(Ordering::Relaxed))
+            .map(|lane| lane.head.load(Ordering::Acquire))
             .min()
             .unwrap_or(IDLE)
     }
 
+    /// Begins a pass that hides lane heads and shows them again. Audio
+    /// thread.
+    pub(super) fn begin(&self) {
+        self.begun.fetch_add(1, Ordering::Relaxed);
+        fence(Ordering::Release);
+    }
+
+    /// Ends a pass begun.
+    pub(super) fn end(&self) {
+        self.ended.fetch_add(1, Ordering::Release);
+    }
+
+    /// [`Self::lanes_earliest`], read off the audio thread: `None` while
+    /// a pass may have a head hidden.
+    pub(super) fn settled_earliest(&self) -> Option<u64> {
+        let begun = self.begun.load(Ordering::Acquire);
+        if self.ended.load(Ordering::Acquire) != begun {
+            return None;
+        }
+        let earliest = self.lanes_earliest();
+        fence(Ordering::Acquire);
+        (self.begun.load(Ordering::Relaxed) == begun).then_some(earliest)
+    }
+
     /// Shows `ticket` as lane `lane`'s earliest waiting, or [`IDLE`].
     pub(super) fn show(&self, lane: usize, ticket: u64) {
-        self.lane(lane).head.store(ticket, Ordering::Relaxed);
+        self.lane(lane).head.store(ticket, Ordering::Release);
     }
 
     /// Lane `lane`'s earliest ticket waiting, or [`IDLE`].
