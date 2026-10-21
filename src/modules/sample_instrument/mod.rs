@@ -333,7 +333,11 @@ impl SampleInstrument {
         }
     }
 
-    fn note_on(&mut self, freq: f32, velocity: f32) {
+    /// Starts a note sent at `sent`. With `steals_before`, a late note's
+    /// stamp, it takes no voice a note sent after it holds, and is dropped
+    /// when every voice is so held: sent in order, it would have been
+    /// stolen by then.
+    fn note_on(&mut self, freq: f32, velocity: f32, sent: u64, steals_before: Option<u64>) {
         if !freq.is_finite() || freq <= 0.0 {
             return;
         }
@@ -343,7 +347,9 @@ impl SampleInstrument {
         };
         let ratio = f64::from(freq) / f64::from(self.zones[zone_index].root_freq);
 
-        let slot = self.claim_voice(note);
+        let Some(slot) = self.claim_voice(note, steals_before) else {
+            return;
+        };
         // Taking over a sounding voice would cut its waveform mid-cycle;
         // hand the old note to the crossfade slot so it rings out instead.
         if self.voices[slot].active {
@@ -359,6 +365,7 @@ impl SampleInstrument {
             velocity,
             self.next_started,
         );
+        self.voices[slot].sent = sent;
         self.next_started = self.next_started.wrapping_add(1);
     }
 
@@ -366,7 +373,8 @@ impl SampleInstrument {
     /// sounding retriggers its own voice, so distinct notes sharing a
     /// sparse zone never choke each other. Otherwise an idle voice, then
     /// steal-oldest (preferring voices already releasing).
-    fn claim_voice(&self, note: u8) -> usize {
+    fn claim_voice(&self, note: u8, steals_before: Option<u64>) -> Option<usize> {
+        let may_take = |voice: &Voice| steals_before.is_none_or(|sent| voice.sent < sent);
         let mut idle = None;
         let mut oldest_releasing: Option<(usize, u64)> = None;
         let mut oldest: Option<(usize, u64)> = None;
@@ -376,7 +384,10 @@ impl SampleInstrument {
                 continue;
             }
             if voice.note == note {
-                return index;
+                return may_take(voice).then_some(index);
+            }
+            if !may_take(voice) {
+                continue;
             }
             if !voice.held
                 && oldest_releasing
@@ -389,9 +400,10 @@ impl SampleInstrument {
                 oldest = Some((index, voice.started));
             }
         }
-        idle.or(oldest_releasing.map(|(index, _)| index))
-            .or(oldest.map(|(index, _)| index))
-            .unwrap_or(0)
+        let claimed = idle
+            .or(oldest_releasing.map(|(index, _)| index))
+            .or(oldest.map(|(index, _)| index));
+        claimed.or(steals_before.is_none().then_some(0))
     }
 
     /// Releases the held voice keyed by `note`. With `fallback_newest`
@@ -451,7 +463,9 @@ impl Module for SampleInstrument {
         for index in 0..self.notes.drain().len() {
             let event = self.notes.drained(index);
             if event.on {
-                self.note_on(Note::new(event.note).frequency(), 1.0);
+                let steals_before = event.late.then_some(event.stamp);
+                let freq = Note::new(event.note).frequency();
+                self.note_on(freq, 1.0, event.stamp, steals_before);
             } else {
                 self.note_off(event.note, release_step, false);
             }
@@ -465,7 +479,8 @@ impl Module for SampleInstrument {
         for i in 0..frames {
             let gate = self.inputs.gate(i);
             if gate > 0.5 && self.last_gate <= 0.5 {
-                self.note_on(self.inputs.frequency(i), self.inputs.velocity(i));
+                let (freq, velocity) = (self.inputs.frequency(i), self.inputs.velocity(i));
+                self.note_on(freq, velocity, u64::MAX, None);
             } else if gate <= 0.5 && self.last_gate > 0.5 {
                 self.note_off(note_from_freq(self.inputs.frequency(i)), release_step, true);
             }

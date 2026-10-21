@@ -30,7 +30,10 @@ pub(crate) struct CellSequencerShared {
     pub(crate) root_note: AtomicU8,
     pub(crate) step_count: AtomicUsize,
     pub(crate) gate_length: AtomicF32,
-    pub(crate) selected_cell: AtomicUsize,
+    /// The bank's length and the selected cell, packed (see [`selection`]),
+    /// so a bank replacement and a selection, from any thread, each move
+    /// both at once and never undo the other.
+    pub(crate) selection: AtomicU64,
     /// When true, the effective cycle length follows the selected cell's own
     /// length instead of the manual `step_count` control, so switching to a
     /// cell of a different length needs no accompanying `step_count` write
@@ -62,9 +65,11 @@ pub(crate) struct CellSequencerShared {
     /// control so live surfaces can observe the end without graph access.
     pub(crate) ended: AtomicBool,
     pub(crate) sequences: Mutex<Vec<Vec<Step>>>,
-    /// The number of cells in `sequences`, stored with it (under its lock),
-    /// so a scheduled `select_cell` clamps against it without the lock.
-    pub(crate) bank_len: AtomicUsize,
+}
+
+/// A bank of `len` cells with `cell` selected (clamped into it), packed.
+fn selection(len: usize, cell: usize) -> u64 {
+    (len as u64) << 32 | clamp_sequence_index(cell, len) as u64
 }
 
 impl CellSequencerControls {
@@ -88,13 +93,13 @@ impl CellSequencerControls {
         sequences: Vec<Vec<Step>>,
     ) -> Self {
         let selected_cell = clamp_sequence_index(selected_cell, sequences.len());
-        let bank_len = AtomicUsize::new(sequences.len());
+        let packed = selection(sequences.len(), selected_cell);
         Self {
             shared: Arc::new(CellSequencerShared {
                 root_note: AtomicU8::new(root_note.min(127)),
                 step_count: AtomicUsize::new(step_count.clamp(1, MAX_STEPS)),
                 gate_length: AtomicF32::new(gate_length.clamp(0.0, 1.0)),
-                selected_cell: AtomicUsize::new(selected_cell),
+                selection: AtomicU64::new(packed),
                 follow_cell_length: AtomicBool::new(false),
                 wait_for_cycle_end: AtomicBool::new(wait_for_cycle_end),
                 sequence_bank_version: AtomicU64::new(0),
@@ -107,7 +112,6 @@ impl CellSequencerControls {
                 grace_on_beat: AtomicBool::new(false),
                 ended: AtomicBool::new(false),
                 sequences: Mutex::new(sequences),
-                bank_len,
             }),
         }
     }
@@ -142,14 +146,27 @@ impl CellSequencerControls {
 
     /// The cell the `select_cell` control names.
     pub fn selected_cell(&self) -> usize {
-        self.shared.selected_cell.load(Ordering::Relaxed)
+        self.shared.selection.load(Ordering::Acquire) as u32 as usize
     }
 
+    /// Selects `selected_cell` of the bank as it stands. Any thread,
+    /// lock-free.
     pub fn set_selected_cell(&self, selected_cell: usize) {
-        let len = self.shared.sequences.lock().unwrap().len();
-        self.shared
-            .selected_cell
-            .store(clamp_sequence_index(selected_cell, len), Ordering::Relaxed);
+        self.reselect(|len, _| selection(len, selected_cell));
+    }
+
+    /// The number of cells in the bank. Any thread, lock-free.
+    pub(crate) fn bank_len(&self) -> usize {
+        (self.shared.selection.load(Ordering::Acquire) >> 32) as usize
+    }
+
+    /// Moves the selection from what `next` makes of the bank's length and
+    /// the selected cell, as they stand together.
+    fn reselect(&self, next: impl Fn(usize, usize) -> u64) {
+        let selection = &self.shared.selection;
+        let _ = selection.fetch_update(Ordering::AcqRel, Ordering::Acquire, |packed| {
+            Some(next((packed >> 32) as usize, packed as u32 as usize))
+        });
     }
 
     /// Whether the cycle length follows the selected cell's own length rather
@@ -263,11 +280,7 @@ impl CellSequencerControls {
         let mut bank = self.shared.sequences.lock().unwrap();
         *bank = cells;
         let len = bank.len();
-        self.shared.bank_len.store(len, Ordering::Relaxed);
-        let selected = self.shared.selected_cell.load(Ordering::Relaxed);
-        self.shared
-            .selected_cell
-            .store(clamp_sequence_index(selected, len), Ordering::Relaxed);
+        self.reselect(|_, cell| selection(len, cell));
         self.shared
             .sequence_bank_version
             .fetch_add(1, Ordering::Relaxed);

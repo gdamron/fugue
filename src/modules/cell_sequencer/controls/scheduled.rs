@@ -1,16 +1,10 @@
 //! A cell sequencer's legacy controls as a scheduler writes them, on the
 //! audio thread (see [`crate::ControlSurface::set_scheduled`]): atomics
-//! only. `select_cell` clamps against the bank's stored length rather than
-//! locking the bank for it, so no write waits or is refused as busy.
-//!
-//! A bank swapped while a write clamps against the old length may leave
-//! `select_cell` past the new bank's end for an instant; the audio thread
-//! normalizes the selection wherever it reads it, as it does for the
-//! control thread's writes.
+//! only. `select_cell` clamps against the bank's length, packed with the
+//! selection, rather than locking the bank for it, so no write waits or is
+//! refused as busy, and a bank replaced meanwhile lands before or after it.
 
-use std::sync::atomic::Ordering;
-
-use super::{clamp_sequence_index, CellSequencerControls};
+use super::CellSequencerControls;
 use crate::control_request::{scheduled_bool, scheduled_number, LegacyRefusal, TableValue};
 
 impl CellSequencerControls {
@@ -30,11 +24,7 @@ impl CellSequencerControls {
                     "root_note" => self.set_root_note(value as u8),
                     "step_count" => self.set_step_count(value as usize),
                     "gate_length" => self.set_gate_length(value),
-                    "select_cell" => {
-                        let len = self.shared.bank_len.load(Ordering::Relaxed);
-                        let cell = clamp_sequence_index(value.max(0.0) as usize, len);
-                        self.shared.selected_cell.store(cell, Ordering::Relaxed);
-                    }
+                    "select_cell" => self.set_selected_cell(value.max(0.0) as usize),
                     "grace_duration" => self.set_grace_duration(value),
                     "grace_velocity" => self.set_grace_velocity(value),
                     "next_cell" if value > 0.5 => self.request_next_cell(),
@@ -58,7 +48,7 @@ impl CellSequencerControls {
             "grace_velocity" => self.grace_velocity(),
             "loop_count" => self.loop_count() as f32,
             "cell" => self.cell() as f32,
-            "cell_count" => self.shared.bank_len.load(Ordering::Relaxed) as f32,
+            "cell_count" => self.bank_len() as f32,
             "next_cell" => 0.0,
             _ => return Err(LegacyRefusal::Unsupported),
         })
@@ -97,5 +87,37 @@ mod tests {
         assert_eq!(controls.selected_cell(), 0);
         let read_only = controls.set_scheduled("cell", TableValue::Number(1.0));
         assert_eq!(read_only, Err(LegacyRefusal::Unsupported));
+    }
+
+    /// Races a scheduled `select_cell` of 2 against replacing a bank of
+    /// three with `cells`, `rounds` times, returning each round's selection.
+    fn race_selection_with(cells: &'static str, rounds: usize) -> Vec<usize> {
+        let barrier = std::sync::Barrier::new(2);
+        (0..rounds)
+            .map(|_| {
+                let controls = CellSequencerControls::new();
+                controls.set_cells_json("[[60], [62], [64]]").unwrap();
+                std::thread::scope(|scope| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        controls.set_cells_json(cells).unwrap();
+                    });
+                    barrier.wait();
+                    let selected = controls.set_scheduled("select_cell", TableValue::Number(2.0));
+                    assert_eq!(selected, Ok(()));
+                });
+                controls.selected_cell()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_scheduled_selection_racing_a_bank_replacement_lands_before_or_after_it() {
+        // Either order selects cell 2 of a bank of three.
+        let selected = race_selection_with("[[61], [63], [65]]", 2_000);
+        assert!(selected.iter().all(|&cell| cell == 2), "{selected:?}");
+        // Either order leaves a bank of one with its only cell selected.
+        let selected = race_selection_with("[[61]]", 2_000);
+        assert!(selected.iter().all(|&cell| cell == 0), "{selected:?}");
     }
 }

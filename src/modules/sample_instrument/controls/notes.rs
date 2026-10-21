@@ -13,7 +13,9 @@
 //! finish out of that order. A control thread's note still being pushed
 //! plays a block later, unless a note sent after it for the same pitch has
 //! played by then: that later note is what was meant last, so the earlier
-//! one is dropped rather than left to undo it.
+//! one is dropped rather than left to undo it. A note that plays after
+//! notes sent later than it is marked late, so the module can keep it from
+//! taking a voice one of them took.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -27,8 +29,10 @@ pub(crate) const NOTE_CAPACITY: usize = 256;
 pub(crate) struct NoteEvent {
     pub note: u8,
     pub on: bool,
+    /// Played after a note sent later than it (see the module docs).
+    pub late: bool,
     /// When it was sent, among every note sent to this instrument.
-    stamp: u64,
+    pub stamp: u64,
 }
 
 /// The sending ends, held by the controls.
@@ -47,6 +51,9 @@ pub(crate) struct NoteQueues {
     /// Per pitch, the stamp after the last event played: anything stamped
     /// before it is stale.
     played: [u64; 256],
+    /// The stamp after the newest event played: anything stamped before it
+    /// is late.
+    newest: u64,
 }
 
 /// An instrument's note queues. Allocates: control thread.
@@ -63,6 +70,7 @@ pub(in crate::modules::sample_instrument) fn note_queues() -> (NoteSenders, Note
         scheduled: scheduled_queue,
         drained: Vec::with_capacity(2 * NOTE_CAPACITY),
         played: [0; 256],
+        newest: 0,
     };
     (senders, queues)
 }
@@ -80,9 +88,22 @@ impl NoteSenders {
         self.scheduled.try_push(self.event(note, on)).is_ok()
     }
 
+    /// Claims a place for a control thread's note and returns what pushes
+    /// it, as a control thread preempted mid-push would.
+    #[cfg(test)]
+    pub(in crate::modules::sample_instrument) fn held_up(&self) -> impl FnOnce(u8, bool) + '_ {
+        let publish = self.sent.claim().unwrap();
+        move |note, on| publish(self.event(note, on))
+    }
+
     fn event(&self, note: u8, on: bool) -> NoteEvent {
         let stamp = self.stamps.fetch_add(1, Ordering::Relaxed);
-        NoteEvent { note, on, stamp }
+        NoteEvent {
+            note,
+            on,
+            late: false,
+            stamp,
+        }
     }
 }
 
@@ -102,11 +123,14 @@ impl NoteQueues {
         // In place, so allocation-free; stamps are unique, so the order is
         // too.
         self.drained.sort_unstable_by_key(|event| event.stamp);
-        let played = &mut self.played;
-        self.drained.retain(|event| {
+        let (played, newest) = (&mut self.played, &mut self.newest);
+        let before = *newest;
+        self.drained.retain_mut(|event| {
             let next = &mut played[usize::from(event.note)];
             let fresh = event.stamp >= *next;
             *next = (*next).max(event.stamp + 1);
+            event.late = event.stamp < before;
+            *newest = (*newest).max(event.stamp + 1);
             fresh
         });
         &self.drained
