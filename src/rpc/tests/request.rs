@@ -59,27 +59,12 @@ fn rpc_commands_round_trip_json() {
             preserve_connections: true,
             timing: Default::default(),
         },
-        RpcCommand::SwapModule {
-            id: "osc".to_string(),
-            module_type: "lfo".to_string(),
-            config: serde_json::json!({}),
-            preserve_connections: true,
-            timing: EditTiming {
-                when: Some(EditWhen::NextBar {
-                    beats_per_bar: 3.0,
-                    clock: Some("clock".to_string()),
-                }),
-                ttl_ms: Some(2_000),
-            },
-        },
         RpcCommand::ReloadInvention {
             invention: Box::new(test_invention()),
             source_path: Some("/tmp/invention.json".to_string()),
             frozen: true,
-            timing: EditTiming {
-                when: Some(EditWhen::AtSample { sample: 48_000 }),
-                ttl_ms: None,
-            },
+            // A timed reload is refused on this build's wire.
+            timing: EditTiming::default(),
         },
         RpcCommand::GetRequest {
             id: "3-17".to_string(),

@@ -57,7 +57,7 @@ pub(crate) use pending::{PendingLog, PendingWrite};
 pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
-pub(crate) use timed::EditTime;
+pub(crate) use timed::{Authored, EditTime};
 pub(crate) use timed_status::{CancelCause, EditState, EditStatus};
 
 /// How many times an edit that builds a module ([`LiveGraph::add_module`],
