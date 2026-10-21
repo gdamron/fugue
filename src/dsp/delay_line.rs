@@ -24,9 +24,10 @@ impl DelayLine {
     pub fn read(&self, offset: usize) -> f32 {
         let len = self.buffer.len();
         debug_assert!(offset <= len, "delay offset {offset} exceeds length {len}");
-        // `index + len - offset` lies in `[0, 2 * len)`, so one conditional
-        // subtract wraps it without an integer divide per read.
-        let pos = self.index + len - offset;
+        // With `offset` clamped to `len`, `index + len - offset` lies in
+        // `[0, 2 * len)`, so one conditional subtract wraps it without an
+        // integer divide per read.
+        let pos = self.index + len - offset.min(len);
         let pos = if pos >= len { pos - len } else { pos };
         self.buffer[pos]
     }
