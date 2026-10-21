@@ -11,7 +11,7 @@ const MAX_DEPTH: usize = 64;
 
 /// A `code` module's script can set a module's `asset` control to any package
 /// ref at runtime (`setControl`), which no document walk can see.
-const SCRIPT_TYPE: &str = "code";
+const SCRIPT_TYPE: &str = crate::modules::code::TYPE_ID;
 
 /// What the walk has found so far: package ids, and the development files
 /// already read, so a cycle or a shared development is walked once.
