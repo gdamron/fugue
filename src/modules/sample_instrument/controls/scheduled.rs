@@ -67,20 +67,53 @@ mod tests {
     use crate::alloc_counter::allocator_events;
     use crate::audio_thread::AudioThreadScope;
     use crate::module_config::tests::registry::eight_frame_wav;
+    use crate::modules::sample_instrument::SampleInstrument;
+    use crate::Module;
     use crate::{ControlSurface, ControlValue};
 
-    fn instrument() -> SampleInstrumentControls {
-        let zone = ZoneSpec {
+    fn zone() -> ZoneSpec {
+        ZoneSpec {
             root_note: 60,
             key_low: 0,
             key_high: 127,
             asset: eight_frame_wav().to_string(),
             level: 1.0,
             loop_spec: None,
-        };
-        SampleInstrumentControls::new(48_000, 0.1, vec![zone])
+        }
+    }
+
+    fn instrument() -> SampleInstrumentControls {
+        SampleInstrumentControls::new(48_000, 0.1, vec![zone()])
             .unwrap()
             .0
+    }
+
+    #[test]
+    fn a_note_held_up_behind_a_push_takes_no_voice_a_later_note_took() {
+        let (controls, audio, queues) =
+            SampleInstrumentControls::new(48_000, 0.1, vec![zone()]).unwrap();
+        let mut instrument =
+            SampleInstrument::new_with_controls(controls.clone(), audio, queues, 1, 48_000);
+        let sounding = |instrument: &SampleInstrument| -> Vec<u8> {
+            let voices = instrument.voices.iter().filter(|voice| voice.active);
+            voices.map(|voice| voice.note).collect()
+        };
+        // One voice. A control thread is preempted mid-push; another sends
+        // a note on behind it, then a scheduler's note on plays.
+        let publish = controls.held_up_note();
+        controls.note_on(&ControlValue::Number(60.0)).unwrap();
+        let scheduled = controls.set_scheduled("note_on", TableValue::Number(64.0));
+        assert_eq!(scheduled, Ok(()));
+        instrument.process(1);
+        assert_eq!(sounding(&instrument), [64]);
+        // Sent in order, 60 would have sounded, then been stolen by 64.
+        publish(72, false);
+        instrument.process(1);
+        assert_eq!(sounding(&instrument), [64]);
+        // Once caught up, notes take voices as ever.
+        controls.note_on(&ControlValue::Number(67.0)).unwrap();
+        instrument.process(1);
+        assert_eq!(sounding(&instrument), [67]);
     }
 
     #[test]

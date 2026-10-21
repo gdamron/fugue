@@ -79,6 +79,9 @@ pub(crate) struct Voice {
     pub release_step: f32,
     /// Allocation ordinal for steal-oldest.
     pub started: u64,
+    /// When its note was sent, among the instrument's queued notes; a gate
+    /// note counts as sent after all of them.
+    pub sent: u64,
     /// The note this voice was playing before it was stolen, still being
     /// read so the take-over crossfades rather than cutting. `fade_amp` is
     /// its gain frozen at the steal (velocity * zone gain * release).
@@ -105,6 +108,7 @@ impl Voice {
             release_gain: 1.0,
             release_step: 0.0,
             started: 0,
+            sent: 0,
             fade_sample: None,
             fade_position: 0.0,
             fade_ratio: 1.0,

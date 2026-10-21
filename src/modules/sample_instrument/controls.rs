@@ -22,10 +22,10 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 mod notes;
 mod scheduled;
 
-use notes::{note_queues, NoteSenders};
 pub(crate) use notes::NoteQueues;
 #[cfg(test)]
 pub(crate) use notes::NOTE_CAPACITY;
+use notes::{note_queues, NoteSenders};
 
 /// One keymap zone as authored in config: a sample, the note it was
 /// recorded at, the key range it covers, and an optional sustain loop.
@@ -196,6 +196,12 @@ impl SampleInstrumentControls {
     /// Requests a note release from the control thread.
     pub fn note_off(&self, value: &ControlValue) -> Result<(), String> {
         self.push_note(parse_note(value)?, false)
+    }
+
+    /// A control thread's note push, preempted (see `NoteSenders::held_up`).
+    #[cfg(test)]
+    pub(crate) fn held_up_note(&self) -> impl FnOnce(u8, bool) + '_ {
+        self.inner.notes.held_up()
     }
 
     fn push_note(&self, note: u8, on: bool) -> Result<(), String> {
