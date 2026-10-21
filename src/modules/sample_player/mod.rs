@@ -15,6 +15,7 @@ use crate::modules::sample_loading::elastic_mode_from_config;
 use crate::Module;
 
 pub use self::controls::SamplePlayerControls;
+use self::controls::{transport_play, transport_trigger};
 
 mod controls;
 mod inputs;
@@ -106,6 +107,7 @@ pub struct SamplePlayer {
     last_play_input: f32,
     last_play_trigger: u64,
     last_control_play: bool,
+    last_swap_version: u64,
     pending_start_gate: bool,
 }
 
@@ -125,6 +127,7 @@ impl SamplePlayer {
             last_play_input: 0.0,
             last_play_trigger: 0,
             last_control_play: false,
+            last_swap_version: 0,
             pending_start_gate: false,
         }
     }
@@ -154,19 +157,34 @@ impl Module for SamplePlayer {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        // Control-rate state read once per block.
-        let (control_play, play_trigger, loop_control, pending_sample) = {
-            let mut shared = self.ctrl.shared.lock().unwrap();
-            (
-                shared.play,
-                shared.play_trigger,
-                shared.loop_enabled,
-                shared.pending_sample.take(),
-            )
-        };
+        // Control-rate state read once per block, from atomics.
+        let mut transport = self.ctrl.transport();
+        let mut loop_control = self.ctrl.loop_enabled();
 
-        if let Some(sample) = pending_sample {
-            self.sample = Some(sample);
+        // A staged sample swap: the lock is tried only when the version
+        // moved, and never waited on. A busy lock retries next block.
+        let swap_version = self.ctrl.swap_version();
+        let swapped = swap_version != self.last_swap_version
+            && match self.ctrl.try_swap(&mut self.sample, || {
+                // Read again with the sample swapped in, as staged.
+                transport = self.ctrl.transport();
+                loop_control = self.ctrl.loop_enabled();
+            }) {
+                Some(swapped) => {
+                    self.last_swap_version = swap_version;
+                    swapped
+                }
+                None => false,
+            };
+        let mut control_play = transport_play(transport);
+        let play_trigger = transport_trigger(transport);
+
+        // A replacement still staged, its swap deferred: the sample playing
+        // now is on its way out, so its end leaves `play` on for the
+        // replacement to start with. A stop written meanwhile still stops.
+        let replacing = swap_version != self.last_swap_version;
+
+        if swapped {
             self.position = 0.0;
             self.playing = control_play;
             self.pending_start_gate = self.playing;
@@ -233,8 +251,9 @@ impl Module for SamplePlayer {
                             } else {
                                 self.playing = false;
                                 reader.reset(0.0);
-                                if control_play {
-                                    self.ctrl.set_play(false);
+                                // A `play` written since the top of the block wins.
+                                if control_play && !replacing && self.ctrl.end_play(transport) {
+                                    control_play = false;
                                     self.last_control_play = false;
                                 }
                             }
@@ -256,8 +275,9 @@ impl Module for SamplePlayer {
                             } else {
                                 self.playing = false;
                                 self.position = 0.0;
-                                if control_play {
-                                    self.ctrl.set_play(false);
+                                // A `play` written since the top of the block wins.
+                                if control_play && !replacing && self.ctrl.end_play(transport) {
+                                    control_play = false;
                                     self.last_control_play = false;
                                 }
                             }
