@@ -565,6 +565,7 @@ impl Module for ControlScheduler {
         for writes in self.draining.iter().chain(&self.legacy) {
             writes.retry();
             writes.drop_waiting();
+            self.ctrl.add_refused(writes.take_refused());
         }
     }
 

@@ -25,6 +25,7 @@ fn a_removed_scheduler_s_waiting_note_holds_no_other_scheduler_s_back() {
         allocator_events(|| removed.leave())
     });
     assert_eq!((allocs, frees), (0, 0), "left");
+    assert_eq!(removed.controls().refused_writes(), 1, "dropped, counted");
     // Never processed again, it is not freed yet either: the other's note
     // still lands at once.
     assert_eq!(block(&mut staying, 1.0), (0, 0));
