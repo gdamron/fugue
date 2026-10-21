@@ -201,7 +201,10 @@ Workspace content never shadows a package, even when its title matches.
 
 For authored dependency requirements, reuse existing package selection: an
 installed satisfying lock pin wins, otherwise the highest satisfying installed
-version. A frozen load fails on a missing/mismatched pin. Catalog references
+version. A frozen load fails on a missing/mismatched pin. It byte-hashes only
+the locked packages the invention reaches (audio refs, development refs and
+their locked dependencies), never every installed package, and verifies them
+all when that set cannot be determined. Catalog references
 always pin exact versions and cannot fall forward to another installed version.
 Listing/detail/import never install packages or contact a registry implicitly.
 
