@@ -5,12 +5,14 @@
 //! `Module::control_targets`), and joins a feedback group with one that
 //! drives it, but only as the topology was compiled. So a live `schedule`
 //! write whose targets differ from those the installed topology was
-//! compiled with publishes that topology recompiled first: the same
-//! modules and routes, in the order a document loading the new schedule
-//! would run them. The write is then submitted behind it, in the same
-//! queue, so the audio thread never plays the new schedule in the old
-//! order. A write leaving every module's targets as compiled publishes
-//! nothing.
+//! compiled with publishes that topology recompiled: the same modules and
+//! routes, in the order a document loading the new schedule would run
+//! them. The schedule travels in that publication, handed over as it
+//! installs (see `graph::publication::handover`), not as a request behind
+//! it, which the audio thread could drain a block later: the new schedule
+//! never plays in the old order, nor the old one in the new. A write
+//! leaving every module's targets as compiled publishes nothing and goes
+//! as a request.
 //!
 //! The recompile is skipped while a timed edit waits, since publishing
 //! would cancel it, and while edits back up with no reclaimer thread, as
@@ -22,7 +24,9 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use super::change::SurfaceMap;
 use super::{PendingLog, PreparedChange, Publisher, Reclaimer, Refused};
-use crate::control_request::RequestSender;
+use crate::control_request::{ControlIndex, RequestSender};
+use crate::invention::graph::Handover;
+use crate::payload::Payload;
 
 /// What a declared surface's live writes recompile the topology with.
 #[derive(Clone)]
@@ -31,73 +35,70 @@ pub(crate) struct Retarget {
     /// keeps the directory holding it alive.
     directory: Weak<Mutex<SurfaceMap>>,
     reclaimer: Arc<Reclaimer>,
-    /// The queue surfaces submit to, refusing a request unless the room
-    /// for one more edit stays free after it: whether a write still fits
-    /// once its recompile has taken a slot.
-    after_edit: RequestSender,
+    requests: RequestSender,
 }
 
 impl Retarget {
     pub(super) fn new(
         directory: &Arc<Mutex<SurfaceMap>>,
         reclaimer: &Arc<Reclaimer>,
-        after_edit: RequestSender,
+        requests: &RequestSender,
     ) -> Self {
         Self {
             directory: Arc::downgrade(directory),
             reclaimer: Arc::clone(reclaimer),
-            after_edit,
+            requests: requests.clone(),
         }
     }
 
     /// Under `publisher`: the topology recompiled with module `id` writing
     /// `targets`, or `None` when it needs none or cannot publish one now
-    /// (see the module docs). Refuses, with nothing changed, when the write
-    /// would not fit in the queue behind the recompile.
+    /// (see the module docs).
     pub(crate) fn prepare(
         &self,
         publisher: &Publisher,
         id: &str,
         targets: Vec<String>,
-    ) -> Result<Option<PreparedChange>, String> {
-        let Some(directory) = self.directory.upgrade() else {
-            return Ok(None);
-        };
+    ) -> Option<PreparedChange> {
+        let directory = self.directory.upgrade()?;
         if publisher.timed_waiting() || self.backlogged(publisher) {
-            return Ok(None);
+            return None;
         }
-        let mut change = super::change_against(publisher, directory, &self.after_edit);
-        if !change.retarget(id, targets) {
-            return Ok(None);
-        }
-        if !self.has_room() {
-            return Err("The control request queue is full; try again".into());
-        }
-        Ok(Some(change.compile()))
+        let mut change = super::change_against(publisher, directory, &self.requests);
+        change.retarget(id, targets).then(|| change.compile())
     }
 
-    /// Whether a write would still fit in the queue once a recompile ahead
-    /// of it has taken a slot.
-    pub(crate) fn has_room(&self) -> bool {
-        self.after_edit.has_room()
-    }
-
-    /// Publishes `prepared` under `publisher`. Returns what is left to free
-    /// once the guard is released, or the refusal (nothing published).
+    /// Publishes `prepared`, from [`Self::prepare`] for module `id`, under
+    /// `publisher`, handing `payload` to the module's `control` as it
+    /// installs. Returns what is left to free once the guard is released,
+    /// or the refusal, with nothing published.
     pub(crate) fn publish(
         &self,
         publisher: &mut Publisher,
         pending: &Mutex<PendingLog>,
-        prepared: PreparedChange,
+        (mut prepared, id): (PreparedChange, &str),
+        (control, payload): (ControlIndex, Payload),
     ) -> Result<Box<dyn Any>, (String, Box<dyn Any>)> {
-        // Under the publisher, as a commit records itself.
-        pending
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .edited();
+        // A survivor, so the mirror has it, in the publication's order.
+        let module_idx = prepared.mirror.modules.get_index_of(id);
+        match (prepared.publication.as_mut(), module_idx) {
+            (Some(publication), Some(module_idx)) => {
+                let handover = Handover::new(module_idx, control, payload);
+                publication.handovers.push(handover);
+            }
+            _ => {
+                let refused = "The graph changed while this write was prepared; try again";
+                return Err((refused.into(), Box::new((prepared, payload))));
+            }
+        }
+        // Under the publisher, as a commit records itself; the write
+        // reaches the graph without a request.
+        let log = || pending.lock().unwrap_or_else(PoisonError::into_inner);
+        log().edited();
         match publisher.publish(prepared) {
             Ok(published) => {
                 debug_assert!(published.built.is_empty(), "a recompile builds nothing");
+                log().unlogged();
                 Ok(Box::new(published))
             }
             Err(Refused { error, change }) => Err((error.to_string(), Box::new(change))),

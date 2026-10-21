@@ -385,7 +385,7 @@ impl DeclaredSurface {
                 if !publisher.audio_alive() {
                     return Err("The audio thread has stopped".into());
                 }
-                let mut target = publisher
+                let target = publisher
                     .control_target(&port.module_id, index)
                     .map_err(|error| error.to_string())?;
                 let (value, shown, mut checked) = match write {
@@ -403,9 +403,8 @@ impl DeclaredSurface {
                 if let Some(checked) = &checked {
                     if publisher.timed_races(&port.module_id, &checked.targets) {
                         // Sure of its room first, so a full queue never
-                        // cancels the edit, as a change publishing is: room
-                        // for the recompile it may publish too.
-                        if !port.retarget.has_room() {
+                        // cancels the edit, as a change publishing is.
+                        if !port.requests.has_room() {
                             return Err(QUEUE_FULL.into());
                         }
                         if !publisher.cancel_timed() {
@@ -413,38 +412,46 @@ impl DeclaredSurface {
                         }
                     }
                 }
-                // Ahead of the write, so the audio thread never plays it in
-                // the order compiled for the targets it replaces.
-                let recompiled = match &mut checked {
+                // A write retargeting its module travels in the topology
+                // recompiled for it (see `publish::retarget`).
+                let recompile = match &mut checked {
                     Some(checked) => {
                         let targets = std::mem::take(&mut checked.targets);
-                        port.retarget
-                            .prepare(&publisher, &port.module_id, targets)?
+                        port.retarget.prepare(&publisher, &port.module_id, targets)
                     }
                     None => None,
                 };
-                let recompiled = match recompiled {
-                    Some(prepared) => {
-                        match port
-                            .retarget
-                            .publish(&mut publisher, &port.pending, prepared)
-                        {
-                            Ok(published) => Some(published),
+                let value = match (recompile, value) {
+                    (Some(prepared), RequestValue::Payload(payload)) => {
+                        let change = (prepared, port.module_id.as_str());
+                        let handed = (index, payload);
+                        let published =
+                            port.retarget
+                                .publish(&mut publisher, &port.pending, change, handed);
+                        let published = match published {
+                            Ok(published) => published,
                             Err((error, refused)) => {
                                 drop(publisher);
                                 drop(refused);
                                 return Err(error);
                             }
+                        };
+                        if let Some(shown) = shown {
+                            self.show(index, shown, None);
                         }
+                        if let Some(checked) = checked {
+                            (checked.record)();
+                        }
+                        // What the recompile replaced is freed off the lock.
+                        drop(publisher);
+                        drop(published);
+                        if let Some(settler) = &port.settler {
+                            settler.settle();
+                        }
+                        return Ok(());
                     }
-                    None => None,
+                    (_, value) => value,
                 };
-                if recompiled.is_some() {
-                    // A recompile moves no module: the write still resolves.
-                    target = publisher
-                        .control_target(&port.module_id, index)
-                        .map_err(|error| error.to_string())?;
-                }
                 // A payload is listed pending by its read-back and counted
                 // unlogged once applied: the session log cannot carry it yet
                 // (see `PendingWrite::raw`).
@@ -487,8 +494,6 @@ impl DeclaredSurface {
                 // request one of them queues meanwhile applies in the same
                 // block or theirs.
                 drop(publisher);
-                // What the recompile replaced is freed off the lock too.
-                drop(recompiled);
                 if let Some(settler) = &port.settler {
                     settler.settle();
                 }

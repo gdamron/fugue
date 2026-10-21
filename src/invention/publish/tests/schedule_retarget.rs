@@ -174,3 +174,32 @@ fn a_recompile_installs_with_no_lock_taken_and_nothing_allocated() {
     assert_eq!((allocs, frees), (0, 0));
     render_counted(&mut rig, BLOCKS);
 }
+
+/// The schedule travels in the recompile's publication: with the pending
+/// store full, so a request behind the edit would wait, the block that
+/// installs the recompile adopts it.
+#[test]
+fn the_block_installing_a_recompile_adopts_its_schedule() {
+    use super::requests::submit;
+    use crate::control_request::When;
+    use crate::invention::publish::publisher::{PENDING_REQUEST_CAPACITY, REQUEST_QUEUE_CAPACITY};
+    let mut rig = rig(0, serde_json::json!([at(2, "dial", "level", 0.5)]));
+    render_counted(&mut rig, 1);
+    let far = rig.graph.current_sample + 1_000_000;
+    let mut next = 0;
+    for _ in 0..PENDING_REQUEST_CAPACITY / REQUEST_QUEUE_CAPACITY {
+        for _ in 0..REQUEST_QUEUE_CAPACITY {
+            submit(&rig, "dial", 0, 0.25, When::AtSample(far + next));
+            next += 1;
+        }
+        render_counted(&mut rig, 1);
+    }
+    assert!(rig.graph.requests.as_ref().unwrap().pending.is_full());
+    let generation = rig.live.generation();
+    write(&rig, "sched", "schedule", tempo().to_string().into());
+    assert_eq!(rig.live.generation(), generation + 1);
+    let controls = scheduler(&rig);
+    assert_ne!(controls.adopted(), controls.recorded(), "not yet installed");
+    render_counted(&mut rig, 1);
+    assert_eq!(controls.adopted(), controls.recorded());
+}

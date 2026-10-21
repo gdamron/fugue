@@ -377,11 +377,7 @@ impl LiveGraph {
             pending: self.pending.clone(),
             module_id: String::new(),
             settler: self.settler.clone(),
-            retarget: Retarget::new(
-                &self.control_surfaces,
-                &self.reclaimer,
-                self.requests.reserving(publisher::EDIT_RESERVE as u64 + 1),
-            ),
+            retarget: Retarget::new(&self.control_surfaces, &self.reclaimer, &self.requests),
         }
     }
 
