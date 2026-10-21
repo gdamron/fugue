@@ -16,9 +16,9 @@ use std::sync::{Arc, Mutex};
 use super::declared::{add_offline, remove_offline};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
-mod authored;
+pub(crate) mod authored;
 
-use authored::{write_authored, Written, WRITE_ATTEMPTS};
+use authored::{write_authored, WRITE_ATTEMPTS};
 
 /// Read/write orchestration surface shared by live and render runtimes.
 pub trait OrchestrationRuntime {
@@ -290,29 +290,25 @@ impl RuntimeSnapshot {
         // Written first, so a write refused changes nothing, then recorded
         // under the publisher: a timed edit waiting takes the write into its
         // own document or, when it rebuilds or removes the module, is
-        // cancelled. When a timed edit was adopted in between (it may write
-        // this control as it lands, or replace the module), the write is
-        // made again, so it plays last and what is recorded is what plays.
-        // A payload (a schedule) is made once: making it again is not the
-        // same as making it once. A write made is always recorded.
+        // cancelled. When a timed edit adopted in between overtook the write
+        // (landed after it and replaced the module), the write is made
+        // again, so it plays last and what is recorded is what plays. A
+        // payload (a schedule) is made once: making it again is not the same
+        // as making it once. A write is recorded only when this returns Ok,
+        // so the caller's event follows every value recorded.
         let attempts = if self.is_payload(module_id, key) {
             1
         } else {
             WRITE_ATTEMPTS
         };
-        let written = write_authored(
+        write_authored(
             attempts,
+            (module_id, key),
             || live.generation(),
             || self.set_control_transient(module_id, key, value.clone()),
-            |seen, last| live.record_authored(module_id, key, &value, (seen, last)),
+            |seen| live.record_authored(module_id, key, &value, seen),
         )?;
-        if written == Written::Recorded {
-            return Ok(value);
-        }
-        Err(GraphCommandError::ControlError(format!(
-            "{module_id}.{key} was written and recorded, but a timed edit landed as it was \
-             written, and may have written it or replaced {module_id}: read it back"
-        )))
+        Ok(value)
     }
 
     /// Whether `key` of `module_id` is a declared payload control (a

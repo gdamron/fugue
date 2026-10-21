@@ -3,6 +3,11 @@
 //! request waiting on the edit applying, so it plays from the edit's
 //! sample and never before, and is refused with it (`ChainBroken`) when
 //! the edit is cancelled, refused or expires.
+//!
+//! An authored write to one of those controls while the edit waits is kept
+//! over it ([`LiveGraph::keep_authored`]): chained to the landing too, at a
+//! higher priority, so the edit lands without its own write to that one
+//! control and the author's value plays on.
 
 use super::{LiveGraph, PendingLog, PendingWrite, Publisher};
 use crate::control_request::{
@@ -125,5 +130,54 @@ impl LiveGraph {
             chained.push((module_id, key));
         }
         Ok((chained, false))
+    }
+
+    /// Keeps an authored write of `value` to control `key` of `module_id`,
+    /// one the timed edit waiting writes as it lands, over the edit's own:
+    /// chains the same write to the landing at a priority above it (and
+    /// above any kept before), so whatever order the two apply in there,
+    /// the author's value plays. The write itself plays now. Runs under
+    /// the publisher, while the edit has not landed: should it land before
+    /// this write is queued, the write applies as soon as it arrives, after
+    /// the edit's. False, with nothing queued, when it cannot be kept (the
+    /// edit has landed, the control is an event, the request queue or the
+    /// requests waiting on conditions are full): the caller cancels the
+    /// edit instead.
+    pub(super) fn keep_authored(
+        &self,
+        publisher: &mut Publisher,
+        module_id: &str,
+        key: &str,
+        value: &ControlValue,
+    ) -> bool {
+        let Some((edit, priority)) = publisher.timed_keeping() else {
+            return false;
+        };
+        if self.requests.watch_slots().full() {
+            return false;
+        }
+        let write = {
+            let surfaces = self.control_surfaces.lock().unwrap();
+            let declared = surfaces
+                .get(module_id)
+                .and_then(|surface| surface.as_any())
+                .and_then(|any| any.downcast_ref::<DeclaredSurface>());
+            match declared.map(|declared| declared.resolve_write(key, value)) {
+                Some(Ok(write)) if !write.event => write,
+                _ => return false,
+            }
+        };
+        let Ok(target) = publisher.control_target(module_id, write.index) else {
+            return false;
+        };
+        let mut request = Request::new(target, RequestValue::Value(write.raw));
+        request.when =
+            When::Condition(Condition::all(&[Predicate::Applied(edit)]).expect("one part"));
+        request.priority = priority;
+        if self.requests.submit(request).is_err() {
+            return false;
+        }
+        publisher.kept_timed(module_id, key);
+        true
     }
 }
