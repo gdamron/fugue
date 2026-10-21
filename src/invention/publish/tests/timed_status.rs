@@ -8,7 +8,7 @@ use super::*;
 use crate::control_request::RequestId;
 use crate::invention::orchestration::RuntimeSnapshot;
 use crate::invention::publish::timed::EditTime;
-use crate::invention::publish::{CancelCause, EditState};
+use crate::invention::publish::{Authored, CancelCause, EditState};
 use crate::{ControlValue, ControlWriteIntent};
 
 /// Blocks before a timed edit at [`LANDING`] has landed.
@@ -270,8 +270,14 @@ fn a_write_to_a_module_replaced_before_it_is_recorded_is_made_again() {
         .unwrap();
     // The edit lands after the write reached the oscillator it replaces.
     rig.render(BLOCKS);
-    let recorded_it = rig.live.record_authored("osc1", "frequency", &value, seen);
-    assert!(!recorded_it, "the caller writes again, to the one playing");
+    let recorded = rig
+        .live
+        .record_authored("osc1", "frequency", &value, (seen, false));
+    assert_eq!(
+        recorded,
+        Authored::Raced,
+        "the caller writes again, to the one playing"
+    );
     assert_eq!(state_of(&rig, id), EditState::Adopted);
     let state = rig.live.state.lock().unwrap();
     let config = &state.modules["osc1"].config;
@@ -317,4 +323,80 @@ fn an_authored_write_after_the_edit_lands_reaches_the_module_playing() {
     let document = state.document.as_ref().unwrap();
     let osc1 = document.modules.iter().find(|spec| spec.id == "osc1");
     assert_eq!(osc1.unwrap().config["frequency"], 330.0);
+}
+
+/// An edit adopted before its outcome arrives is announced adopted once:
+/// the sample it landed on fills in quietly, for reads.
+#[test]
+fn a_landing_sample_after_adoption_is_not_announced_again() {
+    use crate::control_request::Outcome;
+    use crate::invention::publish::timed_status::Ledger;
+    let mut ledger = Ledger::default();
+    let id = RequestId(7);
+    ledger.queued(id, None, None);
+    ledger.adopted(id, Committed::default());
+    let announced: Vec<_> = ledger.take_changes().into_iter().map(|s| s.state).collect();
+    assert_eq!(announced, [EditState::Adopted]);
+
+    ledger.outcome(id, Outcome::Applied { at: 4_096 });
+    assert!(ledger.take_changes().is_empty(), "announced once");
+    let read = ledger.status(id).unwrap();
+    assert_eq!((read.state, read.sample), (EditState::Adopted, Some(4_096)));
+}
+
+/// Only a timed edit landing after a write makes it be written again: an
+/// untimed change published meanwhile was resolved before the write
+/// reached the audio thread, so the write is what plays.
+#[test]
+fn an_untimed_change_between_a_write_and_its_record_does_not_write_it_again() {
+    let mut rig = Rig::new(BASE);
+    let seen = rig.live.generation();
+    let value = ControlValue::Number(330.0);
+    front_door(&rig)
+        .set_control_transient("osc2", "frequency", value.clone())
+        .unwrap();
+    let saw = rig.build(
+        "osc1",
+        "oscillator",
+        serde_json::json!({ "waveform": "saw" }),
+    );
+    let mut change = rig.live.begin();
+    change.upsert("osc1", saw);
+    rig.live.commit(change.prepare().unwrap()).unwrap();
+    assert!(rig.live.generation() > seen);
+
+    let recorded = rig
+        .live
+        .record_authored("osc2", "frequency", &value, (seen, false));
+    assert_eq!(recorded, Authored::Recorded);
+    rig.render(1);
+    assert_eq!(recorded_document(&rig, "osc2"), 330.0);
+}
+
+/// A write a timed edit raced each time is still recorded on the last
+/// attempt, and the caller is told: it was made, and plays until the edit
+/// lands on it.
+#[test]
+fn a_last_attempt_records_the_write_though_a_timed_edit_landed_after_it() {
+    let mut rig = Rig::new(BASE);
+    let id = queue(&rig, false, None);
+    let seen = rig.live.generation();
+    let value = ControlValue::Number(330.0);
+    front_door(&rig)
+        .set_control_transient("osc1", "frequency", value.clone())
+        .unwrap();
+    rig.render(BLOCKS);
+    let recorded = rig
+        .live
+        .record_authored("osc1", "frequency", &value, (seen, true));
+    assert_eq!(recorded, Authored::RecordedRaced);
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
+    assert_eq!(recorded_document(&rig, "osc1"), 330.0);
+}
+
+fn recorded_document(rig: &Rig, id: &str) -> f64 {
+    let state = rig.live.state.lock().unwrap();
+    let document = state.document.as_ref().unwrap();
+    let spec = document.modules.iter().find(|spec| spec.id == id).unwrap();
+    spec.config["frequency"].as_f64().unwrap()
 }
