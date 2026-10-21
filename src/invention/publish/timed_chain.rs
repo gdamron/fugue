@@ -5,9 +5,10 @@
 //! the edit is cancelled, refused or expires.
 //!
 //! An authored write to one of those controls while the edit waits is kept
-//! over it ([`Publisher::keep_authored`]): chained to the landing too, at a
-//! higher priority, so the edit lands without its own write to that one
-//! control sounding and the author's value plays on.
+//! over it ([`Publisher::keep_authored`]): chained to the landing too, at
+//! the same rank and queued after the edit's own write, so it wins there,
+//! the edit lands without its own write to that one control sounding, and
+//! the author's value plays on.
 
 use super::{LiveGraph, PendingLog, PendingWrite, Publisher};
 use crate::control_request::{

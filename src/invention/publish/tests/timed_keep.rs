@@ -151,6 +151,31 @@ fn a_write_queued_once_the_edit_has_landed_plays_and_is_recorded() {
     assert!(kept(&rig, id).is_empty(), "nothing to keep it over");
 }
 
+/// A kept write holds at the author's own rank: a request chained to the
+/// edit after it has landed, and resolving to the landing sample, still
+/// plays, as it would were nothing kept.
+#[test]
+fn a_kept_write_refuses_no_later_request_chained_to_the_landing() {
+    let mut rig = Rig::new(BASE);
+    let id = queue_writing(&rig, 440.0);
+    write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
+    assert_eq!(kept(&rig, id), ["osc2.frequency"]);
+    rig.render(BLOCKS);
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
+    let mut request = Request::new(
+        frequency_target(&rig, "osc2"),
+        RequestValue::Value(RtValue::F32(700.0)),
+    );
+    let landed = Condition::all(&[Predicate::Applied(id)]).unwrap();
+    request.when = When::Condition(landed);
+    rig.live.requests.submit(request).unwrap();
+    rig.render(2);
+    assert_eq!(
+        playing(&rig, "osc2", "frequency"),
+        ControlValue::Number(700.0)
+    );
+}
+
 /// However late the audio thread takes the write: here the pending store
 /// is full through the landing sample, so the write plays after the
 /// edit's own value. What plays and what is recorded are the write.
