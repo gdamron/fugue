@@ -43,6 +43,7 @@ use crate::ControlSurface;
 
 mod gate;
 mod orphans;
+pub(crate) use gate::land_left_events;
 use gate::{Gate, IDLE};
 
 /// The most writes one schedule keeps waiting.
@@ -236,6 +237,7 @@ impl Drop for LegacyWrites {
     fn drop(&mut self) {
         for group in self.groups.iter() {
             group.gate.release(group.lane);
+            Gate::hold_kept(&group.gate);
         }
     }
 }
