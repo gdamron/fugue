@@ -330,3 +330,33 @@ fn a_write_another_waiting_one_needs_is_not_merged_away() {
     let writes = scheduler.legacy.as_ref().unwrap();
     assert_eq!(writes.refused().count(), 0);
 }
+
+#[test]
+fn two_schedulers_notes_to_one_instrument_land_in_the_order_they_were_made() {
+    use ScheduleValue::Number;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let note = |control| vec![entry(1, "sample_instrument", control, Number(64.0))];
+    let mut first = scheduler(note("note_on"), &directory);
+    let mut second = scheduler(note("note_off"), &directory);
+    for gate in [1.0, 0.0] {
+        block(&mut first, gate);
+        block(&mut second, gate);
+    }
+    // The first's note_on finds the queue held; the second's note_off,
+    // made after it, finds it free.
+    while_held(locking.instrument.pending_notes(), || {
+        block(&mut first, 1.0)
+    });
+    assert_eq!(block(&mut second, 1.0), (0, 0));
+    assert_eq!(queued_notes(&locking.instrument), [], "behind the note_on");
+    for gate in [0.0, 0.0] {
+        assert_eq!(block(&mut first, gate), (0, 0));
+        assert_eq!(block(&mut second, gate), (0, 0));
+    }
+    assert_eq!(
+        queued_notes(&locking.instrument),
+        [(64, true), (64, false)],
+        "no stuck note"
+    );
+}

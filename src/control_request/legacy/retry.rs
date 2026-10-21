@@ -8,13 +8,14 @@
 //! control thread, and tries it again at the start of every segment the
 //! scheduler or the drain plays, until it lands: a block or so late.
 //!
-//! - **Order.** A surface's writes land in the order they were made: while
-//!   one waits, every later write to that surface waits behind it, so a
-//!   `note_off` never lands before its `note_on`.
+//! - **Order.** A surface's writes land in the order they were made, from
+//!   whichever schedules made them: while one waits, every later write to
+//!   that surface waits behind it, so a `note_off` never lands before its
+//!   `note_on`, even one another scheduler made (see [`gate`]).
 //! - **Coalescing.** A value's waiting write gives way to a newer one to the
 //!   same control when no other write to its surface came between them, so
 //!   a ramp waiting takes one slot, and a write another depends on (a
-//!   melody's `degree_count` before a `degree.N`) is never lost. An event
+//!   melody's `degree_count` before a `degree.N`) is not lost. An event
 //!   ([`crate::ControlSurface::scheduled_event`]: a note, a play) is never
 //!   merged: each waits its turn.
 //! - **Bound.** At most [`RETRY_CAPACITY`] writes wait. Each is tried again
@@ -40,6 +41,9 @@ use crate::control_request::table::{TableTarget, TableValue};
 use crate::control_request::EventCounter;
 use crate::ControlSurface;
 
+mod gate;
+use gate::{Gate, IDLE};
+
 /// The most writes one schedule keeps waiting.
 pub(crate) const RETRY_CAPACITY: usize = 32;
 
@@ -51,39 +55,72 @@ struct Control {
     key: String,
     /// The same for every control on one surface: its writes keep order.
     group: usize,
+    /// Whether a write is an event, never merged.
+    event: bool,
+}
+
+/// A surface a schedule writes: the order its writes there keep with
+/// every other schedule's, and the schedule's lane in it.
+struct Group {
+    gate: Arc<Gate>,
+    lane: usize,
 }
 
 /// A write's wait before its first retry: not yet aged.
 const FRESH: u32 = u32::MAX;
 
-/// A write waiting: its control, value and the samples it has waited.
+/// A write waiting: its control, value, the samples it has waited and its
+/// ticket at its surface's gate.
+#[derive(Clone, Copy)]
+struct Kept {
+    index: usize,
+    value: TableValue,
+    waited: u32,
+    ticket: u64,
+}
+
+/// Room for one [`Kept`] write.
 #[derive(Default)]
 struct Slot {
     control: AtomicU32,
     /// The value's bits, and whether it is a boolean (bit 32).
     value: AtomicU64,
     waited: AtomicU32,
+    ticket: AtomicU64,
 }
 
 impl Slot {
-    fn load(&self) -> (usize, TableValue, u32) {
+    fn load(&self) -> Kept {
         let bits = self.value.load(Ordering::Relaxed);
         let value = match bits >> 32 {
             0 => TableValue::Number(f32::from_bits(bits as u32)),
             _ => TableValue::Bool(bits & 1 == 1),
         };
-        let control = self.control.load(Ordering::Relaxed) as usize;
-        (control, value, self.waited.load(Ordering::Relaxed))
+        Kept {
+            index: self.index(),
+            value,
+            waited: self.waited.load(Ordering::Relaxed),
+            ticket: self.ticket.load(Ordering::Relaxed),
+        }
     }
 
-    fn store(&self, control: usize, value: TableValue, waited: u32) {
+    fn index(&self) -> usize {
+        self.control.load(Ordering::Relaxed) as usize
+    }
+
+    fn store(&self, kept: Kept) {
+        self.control.store(kept.index as u32, Ordering::Relaxed);
+        self.set_value(kept.value);
+        self.waited.store(kept.waited, Ordering::Relaxed);
+        self.ticket.store(kept.ticket, Ordering::Relaxed);
+    }
+
+    fn set_value(&self, value: TableValue) {
         let bits = match value {
             TableValue::Number(number) => number.to_bits() as u64,
             TableValue::Bool(flag) => 1 << 32 | flag as u64,
         };
-        self.control.store(control as u32, Ordering::Relaxed);
         self.value.store(bits, Ordering::Relaxed);
-        self.waited.store(waited, Ordering::Relaxed);
     }
 }
 
@@ -129,26 +166,31 @@ impl LegacyControls {
         self.fanout.push(leaf);
     }
 
-    /// The schedule's writes, with room for those that wait. Allocates.
+    /// The schedule's writes, with room for those that wait, and a lane at
+    /// the gate of every surface they reach. Allocates and locks.
     pub(crate) fn build(self) -> Arc<LegacyWrites> {
-        let mut surfaces: Vec<*const ()> = Vec::new();
-        let controls = (self.leaves.into_iter())
-            .map(|(surface, key)| {
-                let at = Arc::as_ptr(&surface) as *const ();
-                let group = surfaces.iter().position(|&seen| seen == at);
-                let group = group.unwrap_or_else(|| {
-                    surfaces.push(at);
-                    surfaces.len() - 1
-                });
-                Control {
-                    surface,
-                    key,
-                    group,
-                }
-            })
-            .collect();
+        let mut surfaces: Vec<&Surface> = Vec::new();
+        let mut groups = Vec::new();
+        let mut controls = Vec::with_capacity(self.leaves.len());
+        for (surface, key) in &self.leaves {
+            let group = surfaces.iter().position(|seen| same(seen, surface));
+            let group = group.unwrap_or_else(|| {
+                let gate = Gate::of(surface);
+                let lane = gate.claim();
+                groups.push(Group { gate, lane });
+                surfaces.push(surface);
+                surfaces.len() - 1
+            });
+            controls.push(Control {
+                surface: surface.clone(),
+                key: key.clone(),
+                group,
+                event: surface.scheduled_event(key),
+            });
+        }
         Arc::new(LegacyWrites {
-            controls,
+            controls: controls.into(),
+            groups: groups.into(),
             targets: self.targets.into(),
             fanout: self.fanout.into(),
             slots: (0..RETRY_CAPACITY).map(|_| Slot::default()).collect(),
@@ -165,10 +207,22 @@ pub(crate) struct LegacyWrites {
     controls: Box<[Control]>,
     targets: Box<[(usize, usize)]>,
     fanout: Box<[usize]>,
+    /// The surfaces they are on.
+    groups: Box<[Group]>,
     /// The writes waiting, in the order they were made: `slots[..waiting]`.
     slots: Box<[Slot]>,
     waiting: AtomicUsize,
     refused: EventCounter,
+}
+
+/// Its lanes go back to their gates: whatever it had waiting holds no
+/// other schedule's writes back.
+impl Drop for LegacyWrites {
+    fn drop(&mut self) {
+        for group in self.groups.iter() {
+            group.gate.release(group.lane);
+        }
+    }
 }
 
 /// What became of one attempt at a write.
@@ -214,39 +268,32 @@ impl LegacyWrites {
     }
 
     /// Writes `value` to every control target `index` reaches, or keeps it
-    /// to try again: behind any write to its surface still waiting, or when
-    /// the surface is busy.
+    /// to try again: behind any write to its surface still waiting, from
+    /// any schedule, or when the surface is busy.
     pub(crate) fn write(&self, index: usize, value: TableValue) {
         let reached = self.reached(index);
         if reached.is_empty() {
             self.refused.record();
         }
         for &leaf in reached {
-            self.write_leaf(leaf, value);
-        }
-    }
-
-    fn write_leaf(&self, index: usize, value: TableValue) {
-        let group = self.controls[index].group;
-        let behind = self.slots[..self.waiting()]
-            .iter()
-            .any(|slot| self.controls[slot.load().0].group == group);
-        if behind || self.attempt(index, value) == Attempt::Waits {
-            self.keep(index, value);
+            let gate = &self.groups[self.controls[leaf].group].gate;
+            if gate.earliest() != IDLE || self.attempt(leaf, value) == Attempt::Waits {
+                self.keep(leaf, value);
+            }
         }
     }
 
     /// Reads target `index`'s number where a ramp starts, from the first
-    /// control it reaches: the latest number waiting to be written there,
-    /// as it will be once it lands (the setter's rounding aside), else the
-    /// control's own. `None` for one holding none, or one its surface could
-    /// not read (counted).
+    /// control it reaches: the latest number this schedule has waiting to
+    /// be written there, as it will be once it lands (the setter's rounding
+    /// aside), else the control's own. `None` for one holding none, or one
+    /// its surface could not read (counted).
     pub(crate) fn read(&self, index: usize) -> Option<f32> {
         let leaf = *self.reached(index).first()?;
         let waiting = (self.slots[..self.waiting()].iter().rev())
             .map(Slot::load)
-            .find_map(|(other, value, _)| match value {
-                TableValue::Number(number) if other == leaf => Some(number),
+            .find_map(|kept| match kept.value {
+                TableValue::Number(number) if kept.index == leaf => Some(number),
                 _ => None,
             });
         if waiting.is_some() {
@@ -264,17 +311,23 @@ impl LegacyWrites {
     }
 
     /// Tries every waiting write again, in order: one landing lets the
-    /// next to its surface try; one still waiting holds the rest back.
+    /// next to its surface try; one still waiting, here or in another
+    /// schedule, holds the later ones back.
     pub(crate) fn retry(&self) {
         let waiting = self.waiting();
+        if waiting == 0 {
+            return;
+        }
+        self.hide();
         let mut kept = 0;
         for i in 0..waiting {
-            let (index, value, waited) = self.slots[i].load();
-            let group = self.controls[index].group;
-            let held =
-                (self.slots[..kept].iter()).any(|slot| self.controls[slot.load().0].group == group);
-            if held || self.attempt(index, value) == Attempt::Waits {
-                self.slots[kept].store(index, value, waited);
+            let write = self.slots[i].load();
+            let group = &self.groups[self.controls[write.index].group];
+            // Those kept already in this pass show their tickets.
+            let first = write.ticket < group.gate.earliest();
+            if !first || self.attempt(write.index, write.value) == Attempt::Waits {
+                self.slots[kept].store(write);
+                self.show(group, write.ticket);
                 kept += 1;
             }
         }
@@ -310,18 +363,17 @@ impl LegacyWrites {
         }
     }
 
-    /// Keeps a write to try again: in place of its surface's latest waiting
-    /// write when that is a value of the same control (an event's never
-    /// gives way), else after every write waiting.
+    /// Keeps a write to try again: a value in place of its control's latest
+    /// waiting one when nothing was kept on its surface since (an event's
+    /// never gives way), else after every write waiting, with a new ticket.
     fn keep(&self, index: usize, value: TableValue) {
         let control = &self.controls[index];
+        let group = &self.groups[control.group];
         let waiting = self.waiting();
-        let latest = (self.slots[..waiting].iter().rev())
-            .find(|slot| self.controls[slot.load().0].group == control.group);
-        if let Some(slot) = latest {
-            let (other, _, waited) = slot.load();
-            if other == index && !control.surface.scheduled_event(&control.key) {
-                slot.store(index, value, waited);
+        if !control.event {
+            let latest = (self.slots[..waiting].iter().rev()).find(|slot| slot.index() == index);
+            if let Some(slot) = latest.filter(|slot| group.gate.is_last(slot.load().ticket)) {
+                slot.set_value(value);
                 return;
             }
         }
@@ -329,16 +381,24 @@ impl LegacyWrites {
             self.refused.record();
             return;
         };
-        slot.store(index, value, FRESH);
+        let ticket = group.gate.ticket(control.event);
+        slot.store(Kept {
+            index,
+            value,
+            waited: FRESH,
+            ticket,
+        });
+        self.show(group, ticket);
         self.waiting.store(waiting + 1, Ordering::Relaxed);
     }
 
     /// Takes over `old`'s waiting writes, as the schedule replacing it:
-    /// those to a control this one reaches go ahead of its own, in order;
-    /// the rest are dropped and counted, as are any finding no room.
+    /// those to a control this one reaches go ahead of its own, in order,
+    /// keeping their tickets; the rest are dropped and counted, as are any
+    /// finding no room.
     pub(crate) fn take_waiting(&self, old: &LegacyWrites) {
         let leaf = |slot: &Slot| {
-            let control = &old.controls[slot.load().0];
+            let control = &old.controls[slot.index()];
             (self.controls.iter())
                 .position(|ours| same(&ours.surface, &control.surface) && ours.key == control.key)
         };
@@ -348,19 +408,22 @@ impl LegacyWrites {
         let mine = self.waiting();
         let kept = mine.min(RETRY_CAPACITY - carried);
         for i in (0..kept).rev() {
-            let (index, value, waited) = self.slots[i].load();
-            self.slots[carried + i].store(index, value, waited);
+            self.slots[carried + i].store(self.slots[i].load());
         }
         let mut at = 0;
         for slot in theirs {
             if let Some(index) = leaf(slot) {
-                let (_, value, waited) = slot.load();
-                self.slots[at].store(index, value, waited);
+                self.slots[at].store(Kept {
+                    index,
+                    ..slot.load()
+                });
                 at += 1;
             }
         }
         self.waiting.store(carried + kept, Ordering::Relaxed);
         old.waiting.store(0, Ordering::Relaxed);
+        old.hide();
+        self.retain(|_, _| true);
         for _ in 0..lost + mine - kept {
             self.refused.record();
         }
@@ -376,17 +439,38 @@ impl LegacyWrites {
     }
 
     /// Keeps the waiting writes `keep` says to, in order.
-    fn retain(&self, mut keep: impl FnMut(usize, &mut u32) -> bool) {
+    fn retain(&self, mut keep: impl FnMut(&Control, &mut u32) -> bool) {
         let waiting = self.waiting();
+        if waiting == 0 {
+            return;
+        }
+        self.hide();
         let mut kept = 0;
         for i in 0..waiting {
-            let (index, value, mut waited) = self.slots[i].load();
-            if keep(index, &mut waited) {
-                self.slots[kept].store(index, value, waited);
+            let mut write = self.slots[i].load();
+            let control = &self.controls[write.index];
+            if keep(control, &mut write.waited) {
+                self.slots[kept].store(write);
+                self.show(&self.groups[control.group], write.ticket);
                 kept += 1;
             }
         }
         self.waiting.store(kept, Ordering::Relaxed);
+    }
+
+    /// Shows the gate `ticket` waiting, unless an earlier one of this
+    /// schedule's is shown there already.
+    fn show(&self, group: &Group, ticket: u64) {
+        if group.gate.shown(group.lane) == IDLE {
+            group.gate.show(group.lane, ticket);
+        }
+    }
+
+    /// Shows every gate nothing of this schedule's waiting.
+    fn hide(&self) {
+        for group in self.groups.iter() {
+            group.gate.show(group.lane, IDLE);
+        }
     }
 }
 

@@ -6,7 +6,7 @@ use crate::alloc_counter::allocator_events;
 use crate::{ControlMeta, ControlValue};
 
 /// A legacy surface whose lock a test holds (`busy`), logging what lands:
-/// `level` a value, `note_on` and `note_off` events.
+/// `level` and `tone` values, `note_on` and `note_off` events.
 #[derive(Default)]
 struct Voice {
     busy: AtomicBool,
@@ -14,7 +14,7 @@ struct Voice {
     landed: AtomicUsize,
 }
 
-const KEYS: [&str; 3] = ["level", "note_on", "note_off"];
+const KEYS: [&str; 4] = ["level", "tone", "note_on", "note_off"];
 
 impl Voice {
     /// What landed, in order: (key, value).
@@ -59,9 +59,9 @@ impl ControlSurface for Voice {
     }
 }
 
-/// A schedule's writes to `voices`' level, note_on and note_off, by
-/// voice: `[level, note_on, note_off]`.
-fn writes(voices: &[&Arc<Voice>]) -> (Arc<LegacyWrites>, Vec<[usize; 3]>) {
+/// A schedule's writes to `voices`' controls, by voice: `[level, tone,
+/// note_on, note_off]`.
+fn writes(voices: &[&Arc<Voice>]) -> (Arc<LegacyWrites>, Vec<[usize; 4]>) {
     let mut controls = LegacyControls::default();
     let indices = (voices.iter())
         .map(|voice| {
@@ -79,7 +79,7 @@ fn n(value: f32) -> TableValue {
 #[test]
 fn a_write_finding_its_surface_busy_lands_when_tried_again() {
     let voice = Arc::new(Voice::default());
-    let (writes, [level, on, _]) = one(&voice);
+    let (writes, [level, _, on, _]) = one(&voice);
     voice.busy.store(true, Ordering::Relaxed);
     let (_, allocs, frees) = allocator_events(|| {
         writes.write(on, n(60.0));
@@ -100,7 +100,7 @@ fn a_write_finding_its_surface_busy_lands_when_tried_again() {
 fn a_later_write_to_a_surface_waits_behind_its_earlier_one() {
     let (voice, other) = (Arc::new(Voice::default()), Arc::new(Voice::default()));
     let (writes, indices) = writes(&[&voice, &other]);
-    let ([_, on, off], [other_level, ..]) = (indices[0], indices[1]);
+    let ([_, _, on, off], [other_level, ..]) = (indices[0], indices[1]);
     voice.busy.store(true, Ordering::Relaxed);
     writes.write(on, n(60.0));
     voice.busy.store(false, Ordering::Relaxed);
@@ -118,7 +118,7 @@ fn a_later_write_to_a_surface_waits_behind_its_earlier_one() {
 #[test]
 fn a_waiting_value_gives_way_to_a_newer_one_and_an_event_never_does() {
     let voice = Arc::new(Voice::default());
-    let (writes, [level, on, off]) = one(&voice);
+    let (writes, [level, _, on, off]) = one(&voice);
     voice.busy.store(true, Ordering::Relaxed);
     for value in [1.0, 2.0, 3.0] {
         writes.write(level, n(value)); // a ramp, waiting
@@ -147,7 +147,7 @@ fn a_waiting_value_gives_way_to_a_newer_one_and_an_event_never_does() {
 #[test]
 fn a_write_past_the_room_or_the_wait_is_dropped_and_counted() {
     let voice = Arc::new(Voice::default());
-    let (writes, [_, on, _]) = one(&voice);
+    let (writes, [_, _, on, _]) = one(&voice);
     voice.busy.store(true, Ordering::Relaxed);
     let (_, allocs, frees) = allocator_events(|| {
         for note in 0..=RETRY_CAPACITY {
@@ -179,7 +179,7 @@ fn a_write_its_surface_refuses_outright_is_counted_never_kept() {
 #[test]
 fn a_write_kept_late_in_a_long_block_is_tried_again_before_it_gives_up() {
     let voice = Arc::new(Voice::default());
-    let (writes, [_, _, off]) = one(&voice);
+    let (writes, [.., off]) = one(&voice);
     voice.busy.store(true, Ordering::Relaxed);
     writes.write(off, n(60.0));
     // A 1024-frame block ends, longer than the limit: not aged yet.
@@ -252,7 +252,7 @@ fn a_fanned_out_write_waits_only_for_the_alias_that_is_busy() {
 fn a_new_schedule_takes_over_the_waits_to_controls_it_still_reaches() {
     let (voice, gone) = (Arc::new(Voice::default()), Arc::new(Voice::default()));
     let (old, indices) = writes(&[&voice, &gone]);
-    let ([_, on, off], [gone_level, ..]) = (indices[0], indices[1]);
+    let ([_, _, on, off], [gone_level, ..]) = (indices[0], indices[1]);
     let (new, [level, ..]) = one(&voice);
     voice.busy.store(true, Ordering::Relaxed);
     gone.busy.store(true, Ordering::Relaxed);
@@ -273,8 +273,44 @@ fn a_new_schedule_takes_over_the_waits_to_controls_it_still_reaches() {
     );
 }
 
+#[test]
+fn a_write_waits_behind_another_schedule_s_earlier_one_to_its_surface() {
+    let voice = Arc::new(Voice::default());
+    let ((first, [_, _, on, _]), (second, [level, _, _, off])) = (one(&voice), one(&voice));
+    voice.busy.store(true, Ordering::Relaxed);
+    first.write(on, n(60.0));
+    voice.busy.store(false, Ordering::Relaxed);
+    let (_, allocs, frees) = allocator_events(|| {
+        // Free now, but behind the first schedule's note_on.
+        second.write(off, n(60.0));
+        second.write(level, n(3.0));
+        second.retry();
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert!(voice.landed().is_empty(), "no note_off before its note_on");
+    first.retry();
+    second.retry();
+    assert_eq!(
+        voice.landed(),
+        [("note_on", 60.0), ("note_off", 60.0), ("level", 3.0)]
+    );
+    assert_eq!((first.waiting(), second.waiting()), (0, 0));
+}
+
+#[test]
+fn a_schedule_dropped_holds_no_other_s_writes_back() {
+    let voice = Arc::new(Voice::default());
+    let ((first, [_, _, on, _]), (second, [.., off])) = (one(&voice), one(&voice));
+    voice.busy.store(true, Ordering::Relaxed);
+    first.write(on, n(60.0));
+    voice.busy.store(false, Ordering::Relaxed);
+    drop(first);
+    second.write(off, n(60.0));
+    assert_eq!(voice.landed(), [("note_off", 60.0)]);
+}
+
 /// A schedule's writes to one voice.
-fn one(voice: &Arc<Voice>) -> (Arc<LegacyWrites>, [usize; 3]) {
+fn one(voice: &Arc<Voice>) -> (Arc<LegacyWrites>, [usize; 4]) {
     let (writes, indices) = writes(&[voice]);
     (writes, indices[0])
 }
