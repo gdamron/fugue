@@ -8,6 +8,7 @@ use crate::alloc_counter::allocator_events;
 use crate::control_request::{Request, RequestSender};
 use crate::invention::graph::compile::compile_topology;
 use crate::invention::graph::{link_requests, MasterObservers};
+use crate::modules::AudioDiagnostics;
 use crate::payload::Payload;
 use crate::spsc::Ring;
 use crate::ModuleRegistry;
@@ -192,6 +193,8 @@ fn carry(graph: &SignalGraph, id: &str) -> Vec<f32> {
 #[test]
 fn installing_a_publication_neither_allocates_nor_frees() {
     let mut graph = base_graph();
+    let diagnostics = Arc::new(AudioDiagnostics::new());
+    graph.diagnostics = Some(diagnostics.clone());
     let ends = link(&mut graph, 4);
     render(&mut graph, 2);
     let dac_carry = carry(&graph, "dac");
@@ -201,6 +204,7 @@ fn installing_a_publication_neither_allocates_nor_frees() {
     let ((), allocs, frees) = allocator_events(|| graph.ensure_process_order());
     assert_eq!((allocs, frees), (0, 0), "installing touched the allocator");
     assert!(!graph.topo_dirty, "installing fell back to recompiling");
+    assert_eq!(diagnostics.snapshot().graph_rebuild_count, 0);
     assert_eq!(ids(&graph), ["osc1", "dac", "osc3"]);
     // The surviving dac's carry came across (at a new index); the rebuilt
     // osc1 and the new osc3 start from zero.
@@ -327,6 +331,8 @@ fn edits_queued_before_a_block_install_in_order_within_it() {
 #[test]
 fn a_survivor_missing_from_the_running_graph_falls_back_to_recompiling() {
     let mut graph = base_graph();
+    let diagnostics = Arc::new(AudioDiagnostics::new());
+    graph.diagnostics = Some(diagnostics.clone());
     let ends = link(&mut graph, 4);
     ends.publish(publication(
         vec![
@@ -340,6 +346,8 @@ fn a_survivor_missing_from_the_running_graph_falls_back_to_recompiling() {
     // The fallback compiled from the instances, so the placeholder's
     // missing ports route nothing instead of being indexed.
     assert!(!graph.topo_dirty);
+    // The rebuild on the audio thread is counted for status readers.
+    assert_eq!(diagnostics.snapshot().graph_rebuild_count, 1);
     let ghost = graph.modules.get_index_of("ghost").unwrap();
     assert!(graph
         .compiled_routes

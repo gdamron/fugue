@@ -169,9 +169,9 @@ fn an_order_running_a_writers_loop_earlier_is_not_added() {
     assert!(rig.render(2_000) == oracle, "unchanged while it waits");
 }
 
-/// sched_b, retargeted live to write clock2's tempo and d2's level, now
-/// writes after sched_a by the installed topology, though a compile would
-/// run it, with clock2 and sched_a, ahead (FUG-388).
+/// sched_b, retargeted live to write clock2's tempo and d2's level, which
+/// publishes the topology recompiled to run it, with clock2 and sched_a,
+/// ahead (FUG-388).
 fn retargeted_live() -> Rig {
     let rig = rig(false);
     let schedule = |at: serde_json::Value| serde_json::json!({ "schedule": at });
@@ -197,18 +197,18 @@ fn retargeted_live() -> Rig {
 }
 
 #[test]
-fn an_order_after_a_live_retarget_is_not_added() {
-    // An order publishing the compile above would reorder the writers. It
-    // is refused, so the graph plays as it would with none asked for.
+fn an_order_after_a_live_retarget_is_added() {
+    // The installed topology is the one a compile now makes, so an order
+    // is judged on its own, and the graph plays as with none asked for.
     // (Which writer lands is not this test's: played by the drain, the two
     // schedulers' writes at one sample land in module order.)
     let mut oracle = retargeted_live();
     oracle.render(200);
     let mut rig = retargeted_live();
     let generation = rig.live.generation();
-    assert!(!order(&rig, "clock", "dial"), "the writers would move");
-    assert_eq!(rig.live.generation(), generation, "nothing published");
-    assert!(!watches(&rig).contains(&("clock".to_string(), "dial".to_string())));
+    assert!(order(&rig, "clock", "dial"));
+    assert_eq!(rig.live.generation(), generation + 1, "the order alone");
+    assert!(watches(&rig).contains(&("clock".to_string(), "dial".to_string())));
     rig.render(200);
     assert_eq!(read(&rig, "d2", "level"), read(&oracle, "d2", "level"));
 }
@@ -241,15 +241,12 @@ pub(super) fn retargeted_onto_a_later_module() -> Rig {
 }
 
 #[test]
-fn an_order_after_a_retarget_onto_a_later_module_is_not_added() {
-    // Installed, sched_b runs after d2, so its writes land a block late. A
-    // compile now runs it before d2, with the writers still in the same
-    // order, so an order publishing that compile moves those writes.
+fn an_order_after_a_retarget_onto_a_later_module_is_added() {
+    // The retarget published the recompile running sched_b before d2, so
+    // the order moves nothing.
     let oracle = retargeted_onto_a_later_module().render(200);
     let mut rig = retargeted_onto_a_later_module();
-    let generation = rig.live.generation();
-    assert!(!order(&rig, "clock", "dial"), "sched_b would move");
-    assert_eq!(rig.live.generation(), generation);
+    assert!(order(&rig, "clock", "dial"));
     assert!(rig.render(200) == oracle, "unchanged");
 }
 
@@ -281,4 +278,25 @@ fn orders_go_with_the_first_change_once_no_condition_waits() {
     assert_eq!(rig.live.requests.watch_slots().taken(), 0);
     unplug(&rig, "dial");
     assert!(watches(&rig).is_empty());
+}
+
+/// A block size change recompiles in place on the audio thread: it keeps
+/// the orders the topology was published with, so a condition waiting on
+/// one still applies on its exact sample (FUG-391).
+#[test]
+fn a_block_size_change_keeps_the_orders_installed() {
+    let oracle = rig(false).render(200);
+    let mut rig = rig(false);
+    assert!(order(&rig, "clock", "dial"));
+    let id = submit_on_beat(&rig, 2);
+    let mut out = render_counted(&mut rig, 1);
+    rig.graph.set_block_size(128);
+    out.extend(rig.render(199));
+    let beat = nth_beat(&oracle, 2);
+    assert_ne!(beat % 64, 0, "the beat falls inside a block");
+    assert_eq!(first_change(&out, &oracle), beat);
+    assert_eq!(
+        outcomes_of(&mut rig, id),
+        [(id, Outcome::Applied { at: beat })]
+    );
 }
