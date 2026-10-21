@@ -1,73 +1,67 @@
 //! A melody's legacy controls as a scheduler writes them, on the audio
-//! thread (see [`crate::ControlSurface::set_scheduled`]).
-//!
-//! The degree table's controls take its lock without waiting: when a
-//! control thread holds it (an edit, or `controls()` listing the table),
-//! the write is refused as busy, and the scheduler counts it. They are read
-//! from the table's mirror, never refused, so a ramp always has its start.
+//! thread (see [`crate::ControlSurface::set_scheduled`]): every one is a
+//! store into its atomic, the degree table's included (see
+//! [`super::DegreeTable`]), so none waits and none is refused for a lock.
 
-use std::sync::MutexGuard;
-
-use super::{DegreeTable, MelodyControls};
-use crate::control_request::{
-    scheduled_index, scheduled_number, try_scheduled, LegacyRefusal, TableValue,
-};
+use super::MelodyControls;
+use crate::control_request::{scheduled_index, scheduled_number, LegacyRefusal, TableValue};
 
 impl MelodyControls {
-    /// The degree table, if no other thread holds it.
-    fn try_table(&self) -> Result<MutexGuard<'_, DegreeTable>, LegacyRefusal> {
-        try_scheduled(&self.table)
-    }
-
-    /// What `set_control` writes, refused rather than waiting on the table.
+    /// What `set_control` writes, formatting no error.
     pub(super) fn scheduled_write(
         &self,
         key: &str,
         value: TableValue,
     ) -> Result<(), LegacyRefusal> {
         let value = scheduled_number(value)?;
-        match key {
-            "root_note" => self.set_root_note(value as u8),
-            "seed" => self.set_seed(value.max(0.0) as u64),
+        let written = match key {
+            "root_note" => {
+                self.set_root_note(value as u8);
+                true
+            }
+            "seed" => {
+                self.set_seed(value.max(0.0) as u64);
+                true
+            }
             "degree_count" => {
-                let mut table = self.try_table()?;
-                if table.set_count(value as usize) {
-                    self.publish(&table);
-                }
+                self.table.set_count(value as usize);
+                true
             }
             _ => {
-                let mut table = self.try_table()?;
-                let written = if let Some(index) = scheduled_index(key, "degree.") {
-                    table.write_degree(index, value as i32)
+                if let Some(index) = scheduled_index(key, "degree.") {
+                    self.table.write_degree(index, value as i32)
                 } else if let Some(index) = scheduled_index(key, "note_weight.") {
-                    table.write_weight(index, value)
+                    self.table.write_weight(index, value)
                 } else {
                     return Err(LegacyRefusal::Unsupported);
-                };
-                if !written {
-                    return Err(LegacyRefusal::Invalid);
                 }
-                self.publish(&table);
             }
-        }
-        Ok(())
+        };
+        written.then_some(()).ok_or(LegacyRefusal::Invalid)
     }
 
-    /// What `get_control` reads, from the mirror rather than the table.
+    /// What `get_control` reads, formatting no error.
     pub(super) fn scheduled_read(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        let table = &self.table;
         match key {
             "root_note" => Ok(self.root_note() as f32),
             "seed" => Ok(self.seed().unwrap_or(0) as f32),
-            "degree_count" => Ok(self.mirror.count() as f32),
+            "degree_count" => Ok(table.count() as f32),
             _ => {
-                let read = if let Some(index) = scheduled_index(key, "degree.") {
-                    self.mirror.degree(index).map(|degree| degree as f32)
+                let (index, degree) = if let Some(index) = scheduled_index(key, "degree.") {
+                    (index, true)
                 } else if let Some(index) = scheduled_index(key, "note_weight.") {
-                    self.mirror.weight(index)
+                    (index, false)
                 } else {
                     return Err(LegacyRefusal::Unsupported);
                 };
-                read.ok_or(LegacyRefusal::Invalid)
+                if index >= table.count() {
+                    return Err(LegacyRefusal::Invalid);
+                }
+                Ok(match degree {
+                    true => table.degree_at(index) as f32,
+                    false => table.weight_at(index),
+                })
             }
         }
     }
@@ -77,44 +71,69 @@ impl MelodyControls {
 mod tests {
     use super::*;
     use crate::alloc_counter::allocator_events;
-    use crate::control_request::while_held;
+    use crate::audio_thread::AudioThreadScope;
     use crate::ControlSurface;
 
     #[test]
-    fn a_scheduled_write_to_a_held_degree_table_is_refused_without_waiting() {
+    fn a_scheduled_write_to_the_degree_table_lands_mid_edit_without_a_lock() {
         let controls = MelodyControls::new(60, vec![0, 2, 4]);
         let version = controls.table_version();
         let number = TableValue::Number(1.0);
         let table_keys = ["degree_count", "degree.0", "note_weight.0"];
-        let (refused, allocs, frees) = while_held(&controls.table, || {
-            allocator_events(|| {
-                let writes = table_keys.map(|key| controls.set_scheduled(key, number));
-                let reads = table_keys.map(|key| controls.get_scheduled(key));
-                let root = controls.set_scheduled("root_note", TableValue::Number(62.0));
-                (writes, reads, root)
-            })
+        // A control thread mid-way through an edit of the whole table.
+        let writing = controls.table.writing();
+        let (landed, allocs, frees) = allocator_events(|| {
+            let _audio = AudioThreadScope::enter();
+            let writes = table_keys.map(|key| controls.set_scheduled(key, number));
+            let reads = table_keys.map(|key| controls.get_scheduled(key));
+            (writes, reads)
         });
+        drop(writing);
         assert_eq!((allocs, frees), (0, 0));
-        assert_eq!(refused.0, [Err(LegacyRefusal::Busy); 3]);
-        assert_eq!(
-            refused.1,
-            [Ok(3.0), Ok(0.0), Ok(1.0)],
-            "read from the mirror"
-        );
-        assert_eq!(refused.2, Ok(()), "an atomic control needs no lock");
-        assert_eq!(controls.root_note(), 62);
-        assert_eq!(controls.table_version(), version, "nothing published");
-        // Released, the table takes the write.
-        assert_eq!(
-            controls.set_scheduled("degree.0", TableValue::Number(5.0)),
-            Ok(())
-        );
-        assert_eq!(controls.degree(0), Ok(5));
+        assert_eq!(landed.0, [Ok(()); 3]);
+        assert_eq!(landed.1, [Ok(1.0), Ok(1.0), Ok(1.0)]);
         assert!(controls.table_version() > version);
+        assert_eq!(controls.degree(0), Ok(1));
         assert_eq!(
             controls.set_scheduled("degree.7", number),
             Err(LegacyRefusal::Invalid),
             "a position past the count"
         );
+    }
+
+    #[test]
+    fn scheduled_writes_and_the_notes_they_shape_take_no_control_lock() {
+        use crate::modules::melody::MelodyGenerator;
+        use crate::Module;
+        let controls = MelodyControls::new(60, vec![0, 2, 4]);
+        let mut melody = MelodyGenerator::new(controls.clone());
+        let keys = [
+            "degree_count",
+            "degree.4",
+            "note_weight.4",
+            "root_note",
+            "seed",
+        ];
+        let values = [5.0, 7.0, 10.0, 62.0, 3.0];
+        // On the audio thread, a control-only lock (the table's, for an edit
+        // of many entries) would panic in a debug build.
+        let (frequency, allocs, frees) = allocator_events(|| {
+            let _audio = AudioThreadScope::enter();
+            for (key, value) in keys.into_iter().zip(values) {
+                assert_eq!(
+                    controls.set_scheduled(key, TableValue::Number(value)),
+                    Ok(())
+                );
+            }
+            for gate in [1.0, 0.0] {
+                melody.set_input("gate", gate).unwrap();
+                melody.process(1);
+            }
+            melody.get_output("frequency").unwrap()
+        });
+        assert_eq!((allocs, frees), (0, 0));
+        assert!(frequency > 0.0);
+        assert_eq!(controls.allowed_degrees(), [0, 2, 4, 0, 7]);
+        assert_eq!(controls.note_weight(4), Ok(10.0));
     }
 }

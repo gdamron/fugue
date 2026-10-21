@@ -223,17 +223,17 @@ fn test_seed_control_surface_round_trip() {
 }
 
 #[test]
-fn test_next_note_does_not_block_on_held_control_lock() {
+fn test_next_note_does_not_wait_on_a_whole_table_edit() {
     let mut melody = seeded_melody(5);
     melody.controls().set_allowed_degrees(vec![7]);
 
-    // A control thread mid-edit holds the table lock. Previously this
-    // deadlocked the audio thread; now the stale degrees are used.
+    // A control thread mid-way through an edit of the whole table. Once
+    // this deadlocked the audio thread; now the stale degrees are used.
     let controls = melody.controls().clone();
-    let guard = controls.table.lock().unwrap();
+    let writing = controls.table.writing();
     let stale = melody.next_note();
     assert_ne!(stale.midi_note, 67, "stale table has no degree 7");
-    drop(guard);
+    drop(writing);
 
     assert_eq!(melody.next_note().midi_note, 67);
 }
