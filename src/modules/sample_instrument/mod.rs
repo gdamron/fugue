@@ -272,10 +272,8 @@ pub struct SampleInstrument {
     outputs: outputs::SampleInstrumentOutputs,
     zones: Vec<ZoneRuntime>,
     voices: Vec<Voice>,
-    /// Per-block scratch, sized once at build: zone levels and staged
-    /// swaps.
+    /// Per-block scratch, sized once at build: zone levels.
     levels: Vec<f32>,
-    swap_scratch: Vec<Option<ZoneAudio>>,
     /// Note events from control threads and schedulers.
     notes: NoteQueues,
     /// Allocation ordinal handed to the next note-on (steal-oldest order).
@@ -323,7 +321,6 @@ impl SampleInstrument {
                 .map(|_| Voice::new())
                 .collect(),
             levels,
-            swap_scratch: (0..zone_count).map(|_| None).collect(),
             notes,
             next_started: 0,
             sample_rate: sample_rate as f32,
@@ -430,18 +427,15 @@ impl Module for SampleInstrument {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        // Staged zone swaps (`asset.<i>` control): the lock is taken only
-        // when the version counter moved. Sounding voices latched the old
-        // buffer's Arc and finish on it; new notes get the new one.
+        // Staged zone swaps (`asset.<i>` control): the lock is tried only
+        // when the version counter moved, and a busy lock defers the swaps
+        // to a later block. Sounding voices latched the old buffer's Arc
+        // and finish on it; new notes get the new one.
         let swaps_version = self.ctrl.swaps_version();
-        if swaps_version != self.last_swaps_version {
+        if swaps_version != self.last_swaps_version
+            && (self.ctrl).try_take_swaps(self.zones.iter_mut().map(|zone| &mut zone.audio))
+        {
             self.last_swaps_version = swaps_version;
-            self.ctrl.take_swaps(&mut self.swap_scratch);
-            for (zone, staged) in self.zones.iter_mut().zip(self.swap_scratch.iter_mut()) {
-                if let Some(audio) = staged.take() {
-                    zone.audio = audio;
-                }
-            }
         }
 
         // Release fade slope, from the control read once per block.

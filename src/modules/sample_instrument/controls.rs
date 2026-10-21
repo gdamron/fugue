@@ -10,7 +10,7 @@
 //! waiting, and the module pops what is queued at the top of each block.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 
 use crate::atomic::AtomicF32;
 use crate::audio_thread::debug_assert_control_thread;
@@ -71,12 +71,28 @@ struct InstrumentInner {
     sample_rate: u32,
     release: AtomicF32,
     zones: Vec<ZoneState>,
-    /// Bumped after staging an asset swap in `pending_swaps`; the audio
-    /// thread locks only when this counter moved.
+    /// Bumped after staging an asset swap in `swaps`; the audio thread
+    /// tries the lock only when this counter moved.
     swaps_version: AtomicU64,
-    pending_swaps: Mutex<Vec<Option<ZoneAudio>>>,
+    swaps: Mutex<ZoneSwaps>,
     /// Note events for the audio thread.
     notes: NoteSenders,
+}
+
+/// Zone audio on its way in and out, zone-indexed.
+struct ZoneSwaps {
+    /// Staged by `set_asset`, for the audio thread to swap in.
+    pending: Vec<Option<ZoneAudio>>,
+    /// What the audio thread swapped out. The next `set_asset` drops it, so
+    /// the audio thread never frees a sample. Until then it stays in memory
+    /// (usually shared with the sample cache anyway).
+    retired: Vec<Option<ZoneAudio>>,
+}
+
+impl ZoneSwaps {
+    fn empty(zones: usize) -> Vec<Option<ZoneAudio>> {
+        (0..zones).map(|_| None).collect()
+    }
 }
 
 struct ZoneState {
@@ -118,7 +134,10 @@ impl SampleInstrumentControls {
             });
         }
 
-        let pending = (0..zones.len()).map(|_| None).collect();
+        let swaps = ZoneSwaps {
+            pending: ZoneSwaps::empty(zones.len()),
+            retired: ZoneSwaps::empty(zones.len()),
+        };
         let (notes, queues) = note_queues();
         let controls = Self {
             inner: Arc::new(InstrumentInner {
@@ -126,7 +145,7 @@ impl SampleInstrumentControls {
                 release: AtomicF32::new(release),
                 zones,
                 swaps_version: AtomicU64::new(0),
-                pending_swaps: Mutex::new(pending),
+                swaps: Mutex::new(swaps),
                 notes,
             }),
         };
@@ -182,9 +201,16 @@ impl SampleInstrumentControls {
         debug_assert_control_thread("loading a sample instrument's asset");
         let zone = self.zone(index)?;
         let audio = load_zone_audio(asset, zone.loop_spec.as_ref(), self.inner.sample_rate)?;
+        let emptied = ZoneSwaps::empty(self.inner.zones.len());
         *zone.asset.lock().unwrap() = asset.to_string();
-        self.inner.pending_swaps.lock().unwrap()[index] = Some(audio);
+        let (replaced, retired) = {
+            let mut swaps = self.inner.swaps.lock().unwrap();
+            let replaced = swaps.pending[index].replace(audio);
+            (replaced, std::mem::replace(&mut swaps.retired, emptied))
+        };
         self.inner.swaps_version.fetch_add(1, Ordering::Release);
+        // Dropped here, off the audio thread and outside the swap lock.
+        drop((replaced, retired));
         Ok(())
     }
 
@@ -215,15 +241,44 @@ impl SampleInstrumentControls {
         self.inner.swaps_version.load(Ordering::Acquire)
     }
 
-    /// Audio thread: moves staged swaps into `into` (zone-indexed). Called
-    /// only after `swaps_version` moved, so the lock is rarely taken.
-    pub(crate) fn take_swaps(&self, into: &mut [Option<ZoneAudio>]) {
-        let mut pending = self.inner.pending_swaps.lock().unwrap();
-        for (target, staged) in into.iter_mut().zip(pending.iter_mut()) {
+    /// Audio thread: swaps each zone's staged audio into `zones` (in zone
+    /// order), parking what it replaces for a control thread to drop.
+    /// Called only after `swaps_version` moved. Never waits: returns false,
+    /// for the caller to try again on a later block, when the lock is busy
+    /// or a zone's replaced audio is still parked.
+    pub(crate) fn try_take_swaps<'a>(
+        &self,
+        zones: impl IntoIterator<Item = &'a mut ZoneAudio>,
+    ) -> bool {
+        let mut swaps = match self.inner.swaps.try_lock() {
+            Ok(swaps) => swaps,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return false,
+        };
+        let ZoneSwaps { pending, retired } = &mut *swaps;
+        let mut done = true;
+        for ((current, staged), parked) in zones.into_iter().zip(pending).zip(retired) {
+            if staged.is_none() {
+                continue;
+            }
+            // `set_asset` empties every parked slot as it stages, and one
+            // swap follows each staging, so this should never be full:
+            // should it be, wait for a control thread rather than free here.
+            if parked.is_some() {
+                done = false;
+                continue;
+            }
             if let Some(audio) = staged.take() {
-                *target = Some(audio);
+                *parked = Some(std::mem::replace(current, audio));
             }
         }
+        done
+    }
+
+    /// Holds the swap lock, as a control thread mid-`set_asset` would.
+    #[cfg(test)]
+    pub(crate) fn hold_swap_lock(&self) -> impl Drop + '_ {
+        self.inner.swaps.lock().unwrap()
     }
 
     fn zone(&self, index: usize) -> Result<&ZoneState, String> {
