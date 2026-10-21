@@ -49,6 +49,22 @@ pub(super) fn between_the_next_loads(edit: impl FnOnce() + 'static) {
     between_loads_after(0, edit);
 }
 
+/// Runs `edit` at each of this thread's next `times` calls of
+/// [`between_loads`].
+pub(super) fn between_each_of_the_next_loads(times: usize, edit: impl Fn() + 'static) {
+    fn arm(times: usize, edit: std::rc::Rc<dyn Fn()>) {
+        if times == 0 {
+            BETWEEN_LOADS.with(|hook| hook.borrow_mut().take());
+            return;
+        }
+        between_the_next_loads(move || {
+            edit();
+            arm(times - 1, edit);
+        });
+    }
+    arm(times, std::rc::Rc::new(edit));
+}
+
 /// Runs `edit` once this thread has let `pass` calls of [`between_loads`]
 /// go by.
 pub(super) fn between_loads_after(pass: usize, edit: impl FnOnce() + 'static) {
