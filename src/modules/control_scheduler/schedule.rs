@@ -41,7 +41,8 @@ impl From<ScheduleValue> for TableValue {
 /// `at_step` counts steps: rising edges of the scheduler's `clock` input,
 /// with the first edge being step 0 — the same numbering the sequencers use.
 /// The step granularity is whatever clock output the scheduler is patched to
-/// (e.g. the clock's `beat`, or `beat_x4` for quarter beats). Positions in
+/// (e.g. the clock's `beat`, or `beat_x4` for quarter beats); at an
+/// invention's top level it must be a clock's gate output. Positions in
 /// beats or bars compile down to steps in whatever produces the schedule.
 /// Step counts accept a JSON integer or a float that is exactly whole, and
 /// an unknown field (such as a misspelt `ramp_steps`) is refused.

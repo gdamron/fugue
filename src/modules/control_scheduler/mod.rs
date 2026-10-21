@@ -14,7 +14,9 @@
 //!
 //! In an invention's top level the graph's request drain plays the
 //! schedule in place, on the clock's position (see
-//! `crate::control_request::BeatTable`): step 0 falls on the clock's first
+//! `crate::control_request::BeatTable`). There `clock` takes one clock's
+//! gate output, or nothing: a scheduler on any other signal, or on several,
+//! is refused at load and by an edit. Then step 0 falls on the clock's first
 //! gate past where it stood when the drain first saw the schedule (beat 0
 //! for a clock not yet started), whatever the block boundaries, and a
 //! tempo an entry writes moves the next steps at once. When the clock
@@ -210,7 +212,7 @@ fn ramp_value(from: f32, to: f32, progress: f32) -> f32 {
 /// # Inputs
 ///
 /// - `clock` - Clock input (a gate of the clock output patched here is a
-///   step)
+///   step; at the top level, only a clock's gate output is accepted)
 /// - `reset` - Reset input (inside a development, a rising edge restarts
 ///   the schedule from step 0; at the top level the clock's reset does)
 ///
