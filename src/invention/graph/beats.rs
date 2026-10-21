@@ -4,7 +4,7 @@
 //! too (see [`crate::control_request::BeatTable`]), each on the clock
 //! output connected to its clock input.
 
-use super::SignalGraph;
+use super::{Publication, RoutingConnection, SignalGraph};
 use crate::control_request::{
     kept_hold, take_automation, BeatHost, BeatTable, ControlTarget, Outcome, Outcomes,
     RequestValue, RtValue, Standing, StepClock, Timeline, Watches,
@@ -76,13 +76,16 @@ impl BeatHost for SignalGraph {
     }
 
     /// An immediate edit's publication, or a timed edit's taken this
-    /// sample, rebinding the module's table at its install.
+    /// sample, rebinding the module's table at its install and keeping it
+    /// on its clock, so the drain plays it after the install too.
     fn defers(&self, module_idx: usize) -> bool {
         let landing = self.link.as_ref().and_then(|link| link.landing());
         self.installing
             .as_deref()
             .or(landing)
-            .is_some_and(|publication| publication.rebinds(module_idx))
+            .is_some_and(|publication| {
+                publication.rebinds(module_idx) && self.keeps_clock(publication, module_idx)
+            })
     }
 
     fn apply(
@@ -97,6 +100,31 @@ impl BeatHost for SignalGraph {
 }
 
 impl SignalGraph {
+    /// Whether `publication` keeps the module at `module_idx` stepping on
+    /// the clock output it steps on now, of the same clock: the only
+    /// source on its table's clock input, the clock surviving. One whose
+    /// clock it unplugs or replaces plays its table before the install,
+    /// on the graph that clock steps. Allocation-free.
+    fn keeps_clock(&self, publication: &Publication, module_idx: usize) -> bool {
+        let Some((id, instance)) = self.modules.get_index(module_idx) else {
+            return false;
+        };
+        let Some(table) = instance.module().beat_table() else {
+            return false;
+        };
+        let input = table.clock_input();
+        let now = only_source(&self.edges, id, input);
+        let next = only_source(&publication.edges, id, input);
+        let (Some(now), Some(next)) = (now, next) else {
+            return false;
+        };
+        let survives = self
+            .modules
+            .get_index_of(&now.from_module)
+            .is_some_and(|clock| publication.remap.get(clock).is_some());
+        survives && now.from_module == next.from_module && now.from_port == next.from_port
+    }
+
     /// Applies every watch due at the current sample, after the requests
     /// due then, then writes every ramp running its value there, and
     /// returns how many samples until the next watch may be due or ramp
@@ -202,5 +230,20 @@ impl SignalGraph {
         let (module, _, instance) = self.modules.get_full(id)?;
         let (id, beats) = instance.module().gate_beats(port)?;
         Some(StepClock { module, id, beats })
+    }
+}
+
+/// The only route in `edges` into `module`'s `port`, if exactly one.
+fn only_source<'a>(
+    edges: &'a [RoutingConnection],
+    module: &str,
+    port: &str,
+) -> Option<&'a RoutingConnection> {
+    let mut sources = edges
+        .iter()
+        .filter(|edge| edge.to_module == module && edge.to_port == port);
+    match (sources.next(), sources.next()) {
+        (Some(edge), None) => Some(edge),
+        _ => None,
     }
 }

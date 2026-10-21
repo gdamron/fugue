@@ -62,8 +62,10 @@ pub(crate) trait BeatHost {
 
     /// Whether an edit installing at this sample, once what is due here
     /// has applied, rebinds the table of the module at `module_idx` to a
-    /// target it rebuilds: the table then plays after it, so an entry due
-    /// here reaches the new instance.
+    /// target it rebuilds, keeping it on its clock: the table then plays
+    /// after it, so an entry due here reaches the new instance. An edit a
+    /// condition makes due only as this sample's entries write comes after
+    /// them: they play on the graph it replaces.
     fn defers(&self, module_idx: usize) -> bool {
         let _ = module_idx;
         false

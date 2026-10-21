@@ -6,6 +6,7 @@
 //! schedule write racing the edit while it waits cancels it, as a change
 //! publishing does.
 
+use super::migrated::{read, write};
 use super::request_beats::{outcomes_of, render_counted};
 use super::schedule_payload::scheduler;
 use super::scheduler_beats::{beat_samples, blocks, level, rig_on};
@@ -14,6 +15,7 @@ use crate::control_request::{BeatSpec, Outcome, Refusal, RequestId};
 use crate::invention::declared::STALE;
 use crate::invention::publish::timed::EditTime;
 use crate::test_support::dial::DIAL;
+use crate::ControlValue;
 
 /// A tempo with fractional samples per beat at 48 kHz.
 const BPM: f64 = 97.0;
@@ -253,4 +255,44 @@ fn a_schedule_written_after_a_timed_swap_lands_waits_for_its_adoption() {
         step3.iter().all(|&level| level == 0.9),
         "on the new instance"
     );
+}
+
+/// An edit swapping one of a scheduler's targets and unplugging its clock
+/// on a step's sample leaves the scheduler off the drain: the step plays
+/// before it installs, as one only unplugging the clock does, so its
+/// entry on the target kept lands.
+#[test]
+fn a_swap_unplugging_the_clock_on_a_step_plays_it_before_the_install() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let d2 = rig.build("d2", DIAL, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("d2", d2);
+            Ok(())
+        })
+        .unwrap();
+    let schedule = serde_json::json!([level(3, 0.3), at_d2(3, 0.6)]);
+    write(&rig, "sched", "schedule", schedule.to_string().into());
+    let lands = beats[3];
+    let out = render_counted(&mut rig, lands / 64);
+    let rest = lands - out.len();
+    let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+    rig.graph
+        .process_block(&mut left[..rest], &mut right[..rest]);
+    let dial = rig.build("dial", DIAL, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("dial", dial);
+            change.disconnect(edge("clock", "beat", "sched", "clock"));
+            Ok(())
+        })
+        .unwrap();
+    render_counted(&mut rig, 1);
+    assert_eq!(read(&rig, "d2", "level"), ControlValue::Number(0.6));
+}
+
+/// An entry at `step` setting d2's level to `value`.
+fn at_d2(step: u32, value: f32) -> serde_json::Value {
+    serde_json::json!({ "at_step": step, "module": "d2", "control": "level", "value": value })
 }
