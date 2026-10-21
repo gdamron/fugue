@@ -30,7 +30,7 @@ fn at(step: u32, module: &str, control: &str, value: serde_json::Value) -> serde
     serde_json::json!({ "at_step": step, "module": module, "control": control, "value": value })
 }
 
-fn level(step: u32, value: f32) -> serde_json::Value {
+pub(super) fn level(step: u32, value: f32) -> serde_json::Value {
     at(step, "dial", "level", value.into())
 }
 
@@ -41,7 +41,12 @@ fn rig(bpm: f64, schedule: serde_json::Value, heard: (&str, &str)) -> Rig {
 }
 
 /// [`rig`], on `document`.
-fn rig_on(document: &str, bpm: f64, schedule: serde_json::Value, heard: (&str, &str)) -> Rig {
+pub(super) fn rig_on(
+    document: &str,
+    bpm: f64,
+    schedule: serde_json::Value,
+    heard: (&str, &str),
+) -> Rig {
     let mut rig = Rig::new(document);
     rig.registry.register(DialFactory);
     rig.adopt_registry();
@@ -62,7 +67,7 @@ fn rig_on(document: &str, bpm: f64, schedule: serde_json::Value, heard: (&str, &
 }
 
 /// The sample each of beats `0..beats` falls on at `bpm`.
-fn beat_samples(bpm: f64, beats: u32) -> Vec<usize> {
+pub(super) fn beat_samples(bpm: f64, beats: u32) -> Vec<usize> {
     let mut twin = Twin::new(bpm);
     let mut samples = vec![0];
     for beat in 1..beats {
@@ -73,7 +78,7 @@ fn beat_samples(bpm: f64, beats: u32) -> Vec<usize> {
 }
 
 /// Blocks of 64 through beat `beats` at `bpm`.
-fn blocks(bpm: f64, beats: f64) -> usize {
+pub(super) fn blocks(bpm: f64, beats: f64) -> usize {
     (beats * 48_000.0 * 60.0 / bpm / 64.0) as usize + 2
 }
 

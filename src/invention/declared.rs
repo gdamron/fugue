@@ -147,6 +147,10 @@ pub(crate) struct Checked<'a> {
     /// stamp with any other is refused as [`STALE`], since a graph change
     /// may have replaced what the payload resolved.
     pub(crate) generation: Option<u64>,
+    /// The modules the payload writes: a timed edit waiting that rebuilds
+    /// or removes one, or that re-resolved the payload this write
+    /// replaces, is cancelled (see `Publisher::timed_races`).
+    pub(crate) targets: Vec<String>,
     /// Records the write where it commits: under the publisher on a live
     /// graph, so a graph change sees every write submitted before it
     /// recorded, and none after.
@@ -156,6 +160,8 @@ pub(crate) struct Checked<'a> {
 /// A live payload write built against a directory a graph change has
 /// replaced since: build it again.
 pub(crate) const STALE: &str = "The graph changed while this write was prepared; try again";
+
+const QUEUE_FULL: &str = "The control request queue is full; try again";
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl DeclaredSurface {
@@ -366,7 +372,7 @@ impl DeclaredSurface {
                     .publisher
                     .upgrade()
                     .ok_or("The audio thread has stopped")?;
-                let publisher = publisher.lock().unwrap();
+                let mut publisher = publisher.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Live(_)))?;
                 // A kept controller can outlive the audio graph: never queue
                 // a request nothing will drain.
@@ -388,6 +394,18 @@ impl DeclaredSurface {
                 {
                     return Err(STALE.into());
                 }
+                if let Some(checked) = &checked {
+                    if publisher.timed_races(&port.module_id, &checked.targets) {
+                        // Sure of its room first, so a full queue never
+                        // cancels the edit, as a change publishing is.
+                        if !port.requests.has_room() {
+                            return Err(QUEUE_FULL.into());
+                        }
+                        if !publisher.cancel_timed() {
+                            return Err(STALE.into());
+                        }
+                    }
+                }
                 // A payload is listed pending by its read-back and counted
                 // unlogged once applied: the session log cannot carry it yet
                 // (see `PendingWrite::raw`).
@@ -404,10 +422,7 @@ impl DeclaredSurface {
                 // cannot be received before the write is recorded.
                 let mut pending = port.pending.lock().unwrap();
                 pending.settle();
-                let id = port
-                    .requests
-                    .submit(request)
-                    .map_err(|_| "The control request queue is full; try again")?;
+                let id = port.requests.submit(request).map_err(|_| QUEUE_FULL)?;
                 // Under the publisher's lock, so reads report the last write
                 // submitted.
                 if let Some(shown) = shown {

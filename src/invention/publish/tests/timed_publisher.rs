@@ -11,7 +11,11 @@ use crate::invention::publish::publisher::{EDIT_RESERVE, REQUEST_QUEUE_CAPACITY}
 /// Queues `prepared` to land `when`, refused once `ttl` samples pass.
 fn time(rig: &Rig, prepared: PreparedChange, when: When, ttl: Option<u64>) -> RequestId {
     let mut publisher = rig.live.publisher().lock().unwrap();
-    let retain = (Box::new(|_: &mut RuntimeState| {}) as _, rig.live.port());
+    let retain = (
+        Box::new(|_: &mut RuntimeState| {}) as _,
+        rig.live.port(),
+        Default::default(),
+    );
     let Ok(id) = publisher.publish_timed(prepared, when, ttl, retain) else {
         panic!("the timed edit was refused");
     };
@@ -172,7 +176,11 @@ fn what_cannot_be_timed_is_refused_with_nothing_queued() {
     let rig = Rig::new(BASE);
     let mut publisher = rig.live.publisher().lock().unwrap();
     let refusal = |prepared, publisher: &mut Publisher| {
-        let retain = (Box::new(|_: &mut RuntimeState| {}) as _, rig.live.port());
+        let retain = (
+            Box::new(|_: &mut RuntimeState| {}) as _,
+            rig.live.port(),
+            Default::default(),
+        );
         let refused = publisher.publish_timed(prepared, When::AfterSamples(10), None, retain);
         refused
             .map(|_| ())
