@@ -68,7 +68,7 @@ use crate::Module;
 pub use self::controls::{LoopSpec, SampleInstrumentControls, ZoneSpec};
 pub use self::voice::MAX_VOICES;
 
-use self::controls::{NoteQueues, ZoneAudio, NOTE_CAPACITY};
+use self::controls::{NoteQueues, ZoneAudio};
 use self::voice::{note_from_freq, resolve_zone, Voice, ZoneRuntime, DECLICK_SECONDS};
 
 mod controls;
@@ -447,13 +447,9 @@ impl Module for SampleInstrument {
         // Release fade slope, from the control read once per block.
         let release_step = 1.0 / (self.ctrl.release().max(1e-3) * self.sample_rate);
 
-        // Queued note events, in the order they were sent. At most both
-        // queues' worth per block, so a producer sending as fast as this
-        // pops cannot hold the block here.
-        for _ in 0..2 * NOTE_CAPACITY {
-            let Some(event) = self.notes.pop() else {
-                break;
-            };
+        // Queued note events, in the order they were sent.
+        for index in 0..self.notes.drain().len() {
+            let event = self.notes.drained(index);
             if event.on {
                 self.note_on(Note::new(event.note).frequency(), 1.0);
             } else {

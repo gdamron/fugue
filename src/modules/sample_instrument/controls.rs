@@ -23,7 +23,9 @@ mod notes;
 mod scheduled;
 
 use notes::{note_queues, NoteSenders};
-pub(crate) use notes::{NoteQueues, NOTE_CAPACITY};
+pub(crate) use notes::NoteQueues;
+#[cfg(test)]
+pub(crate) use notes::NOTE_CAPACITY;
 
 /// One keymap zone as authored in config: a sample, the note it was
 /// recorded at, the key range it covers, and an optional sustain loop.
