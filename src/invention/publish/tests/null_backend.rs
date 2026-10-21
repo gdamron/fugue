@@ -437,3 +437,57 @@ fn a_settle_whose_render_panics_unwinds_rather_than_hangs() {
         "the render's panic reaches the settle"
     );
 }
+
+/// On a graph with no clock an authored write to a control a waiting
+/// timed edit writes as it lands is not kept over it (the copy would hold
+/// the control at a sample that never passes, refusing every later
+/// write): the edit is cancelled, and later writes play and are recorded.
+#[test]
+fn a_clockless_graph_cancels_an_edit_rather_than_keep_a_write_over_it() {
+    use crate::invention::orchestration::RuntimeSnapshot;
+    use crate::invention::publish::timed::EditTime;
+    use crate::invention::publish::{CancelCause, EditState, Touched};
+    let (live, _backend, _render) = null_linked(OSCILLATOR);
+    let mut change = live.begin();
+    change.disconnect(edge("osc", "audio", "dac", "audio"));
+    let prepared = change.prepare().unwrap();
+    let write = (
+        "osc".to_string(),
+        "frequency".to_string(),
+        ControlValue::Number(440.0),
+    );
+    let time = EditTime::AtSample(1_000_000);
+    let id = live
+        .commit_built_when(prepared, None, time, None, |_| {}, &[write])
+        .unwrap();
+    let door = RuntimeSnapshot {
+        state: Arc::clone(&live.state),
+        control_surfaces: Arc::clone(&live.control_surfaces),
+        event_sink: Default::default(),
+        live: Some(live.clone()),
+    };
+    let author = crate::ControlWriteIntent::Author;
+    for frequency in [660.0, 700.0] {
+        let value = ControlValue::Number(frequency);
+        door.set_control_with_intent("osc", "frequency", value.clone(), author)
+            .unwrap();
+        assert_eq!(door.get_control("osc", "frequency").unwrap(), value);
+        let state = live.state.lock().unwrap();
+        let spec = state
+            .document
+            .as_ref()
+            .unwrap()
+            .modules
+            .iter()
+            .find(|spec| spec.id == "osc");
+        assert_eq!(spec.unwrap().config["frequency"], frequency);
+    }
+    let status = live.timed_status(id).unwrap();
+    assert!(status.kept.is_empty());
+    let cause = CancelCause::AuthoredWrite {
+        module_id: "osc".to_string(),
+        key: "frequency".to_string(),
+        touches: Touched::Written,
+    };
+    assert_eq!(status.state, EditState::Cancelled(cause));
+}

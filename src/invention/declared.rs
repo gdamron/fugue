@@ -460,8 +460,12 @@ impl DeclaredSurface {
                 request.event = event;
                 let automated = request.source == Source::Automation;
                 let generation = Some(publisher.generation());
+                // Never kept on a graph with no clock: there the copy's
+                // hold, at a sample that never passes, would refuse every
+                // later write to the control. The edit is cancelled instead.
+                let clocked = port.settler.is_none();
                 let safe = match (&request.value, authored) {
-                    (RequestValue::Value(raw), Some(key)) => {
+                    (RequestValue::Value(raw), Some(key)) if clocked => {
                         let module = (port.module_id.as_str(), key);
                         publisher.keep_authored(module, target, (*raw, event), &port.requests)
                     }
