@@ -22,6 +22,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{bounded, QueueConsumer, QueueProducer};
 
 /// How many note events each lane holds between two blocks.
@@ -36,6 +37,10 @@ pub(crate) const LANES: usize = 4;
 /// another push, which lasts nanoseconds unless its thread is preempted;
 /// a send never waits on threads that do not resume.
 const SEND_ATTEMPTS: usize = 1024;
+
+/// Places at the end of the scheduler's lane that only a note off may take,
+/// so a schedule crowding its lane with note ons can still release them.
+pub(crate) const NOTE_OFF_RESERVE: u64 = 16;
 
 /// A note request, popped per block by the audio thread.
 #[derive(Debug, Clone, Copy)]
@@ -108,6 +113,7 @@ impl NoteSenders {
     /// through [`SEND_ATTEMPTS`] looks, yielding between them. Lock-free
     /// and allocation-free.
     pub(in crate::modules::sample_instrument) fn send(&self, note: u8, on: bool) -> bool {
+        debug_assert_control_thread("sending a sample instrument note");
         for _ in 0..SEND_ATTEMPTS {
             let mut contended = false;
             for lane in &self.lanes {
@@ -132,9 +138,14 @@ impl NoteSenders {
         false
     }
 
-    /// Queues a scheduler's note, returning false when its lane is full.
-    /// Audio thread; lock-free and allocation-free.
+    /// Queues a scheduler's note, returning false when its lane is full,
+    /// or, for a note on, when it would take one of the last
+    /// [`NOTE_OFF_RESERVE`] places. Audio thread (one scheduler pushes at a
+    /// time, so the reserve is exact); lock-free and allocation-free.
     pub(in crate::modules::sample_instrument) fn schedule(&self, note: u8, on: bool) -> bool {
+        if on && !self.scheduled.leaves(NOTE_OFF_RESERVE) {
+            return false;
+        }
         self.scheduled.try_push(self.event(note, on)).is_ok()
     }
 
@@ -245,6 +256,22 @@ mod tests {
     }
 
     #[test]
+    fn a_scheduled_note_off_finds_room_note_ons_cannot_take() {
+        let (senders, mut queues) = note_queues();
+        let mut ons = 0;
+        while senders.schedule(60, true) {
+            ons += 1;
+        }
+        let reserve = NOTE_OFF_RESERVE as usize;
+        assert_eq!(ons, NOTE_CAPACITY - reserve);
+        for _ in 0..reserve {
+            assert!(senders.schedule(60, false), "a note off has room");
+        }
+        assert!(!senders.schedule(60, false), "the lane is full");
+        assert_eq!(queues.drain().len(), NOTE_CAPACITY);
+    }
+
+    #[test]
     fn draining_allocates_nothing() {
         let (senders, mut queues) = note_queues();
         for note in 0..LANES * NOTE_CAPACITY {
@@ -311,8 +338,12 @@ mod tests {
         let sent = std::iter::repeat_with(|| senders.send(72, true));
         let queued = sent.take_while(|&queued| queued).count();
         assert_eq!(queued, LANES * NOTE_CAPACITY);
-        for _ in 0..NOTE_CAPACITY {
+        let reserve = NOTE_OFF_RESERVE as usize;
+        for _ in 0..NOTE_CAPACITY - reserve {
             assert!(senders.schedule(64, true));
+        }
+        for _ in 0..reserve {
+            assert!(senders.schedule(64, false));
         }
         assert!(!senders.schedule(64, false), "its own lane full");
         assert_eq!(notes(&mut queues).len(), (LANES + 1) * NOTE_CAPACITY);

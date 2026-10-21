@@ -60,6 +60,17 @@ pub struct AudioDiagnosticsSnapshot {
     /// it, e.g. because the output device went away.
     #[serde(default)]
     pub stream_restart_count: u64,
+    /// Number of times the audio thread rebuilt the graph's compiled
+    /// topology because an installed edit could not be trusted as compiled.
+    /// Each rebuild allocates on the audio thread and likely costs one late
+    /// block, so this is expected to stay at zero.
+    #[serde(default)]
+    pub graph_rebuild_count: u64,
+    /// Number of scheduled writes and ramp starts to legacy controls their
+    /// modules refused (a full note queue, say), summed over the schedulers
+    /// in the graph now. Filled in by the runtime; zero from the backend.
+    #[serde(default)]
+    pub scheduled_writes_refused: u64,
 }
 
 /// Why the audio host reported a stream error other than an xrun.
@@ -121,6 +132,7 @@ pub struct AudioDiagnostics {
     stream_error_count: AtomicU64,
     last_stream_error: AtomicU8,
     stream_restart_count: AtomicU64,
+    graph_rebuild_count: AtomicU64,
     /// Reference point for `last_callback_ns`.
     epoch: Instant,
     /// Nanoseconds from `epoch` to the latest callback, plus one; zero means
@@ -144,6 +156,7 @@ impl AudioDiagnostics {
             stream_error_count: AtomicU64::new(0),
             last_stream_error: AtomicU8::new(0),
             stream_restart_count: AtomicU64::new(0),
+            graph_rebuild_count: AtomicU64::new(0),
             epoch: Instant::now(),
             last_callback_ns: AtomicU64::new(0),
             output_latency_ns: AtomicU64::new(0),
@@ -182,6 +195,12 @@ impl AudioDiagnostics {
     /// Records that the output stream was rebuilt.
     pub fn record_stream_restart(&self) {
         self.stream_restart_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records that the audio thread rebuilt the graph's compiled topology.
+    #[inline]
+    pub(crate) fn record_graph_rebuild(&self) {
+        self.graph_rebuild_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Marks that the device asked for audio at `at`.
@@ -252,6 +271,8 @@ impl AudioDiagnostics {
                 .last_callback_age_ns(Instant::now())
                 .map(|ns| ns_to_ms(ns as f64)),
             stream_restart_count: self.stream_restart_count.load(Ordering::Relaxed),
+            graph_rebuild_count: self.graph_rebuild_count.load(Ordering::Relaxed),
+            scheduled_writes_refused: 0,
         }
     }
 
@@ -389,5 +410,6 @@ mod tests {
         assert_eq!(snapshot.last_stream_error, None);
         assert_eq!(snapshot.last_callback_age_ms, None);
         assert_eq!(snapshot.stream_restart_count, 0);
+        assert_eq!(snapshot.graph_rebuild_count, 0);
     }
 }

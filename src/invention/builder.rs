@@ -518,7 +518,7 @@ pub(crate) fn resolve_json_assets(
     Ok(())
 }
 
-fn resolve_development_path(
+pub(crate) fn resolve_development_path(
     source_path: Option<&Path>,
     path: &str,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
