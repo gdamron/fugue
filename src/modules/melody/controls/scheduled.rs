@@ -3,9 +3,9 @@
 //!
 //! The degree table's controls take its lock without waiting: when a
 //! control thread holds it (an edit, or `controls()` listing the table),
-//! the write is refused as busy, and the scheduler counts it.
+//! the write is refused as busy, and the scheduler counts it. They are read
+//! from the table's mirror, never refused, so a ramp always has its start.
 
-use std::sync::atomic::Ordering;
 use std::sync::MutexGuard;
 
 use super::{DegreeTable, MelodyControls};
@@ -32,7 +32,7 @@ impl MelodyControls {
             "degree_count" => {
                 let mut table = self.try_table()?;
                 if table.set_count(value as usize) {
-                    self.table_version.fetch_add(1, Ordering::Release);
+                    self.publish(&table);
                 }
             }
             _ => {
@@ -47,24 +47,23 @@ impl MelodyControls {
                 if !written {
                     return Err(LegacyRefusal::Invalid);
                 }
-                self.table_version.fetch_add(1, Ordering::Release);
+                self.publish(&table);
             }
         }
         Ok(())
     }
 
-    /// What `get_control` reads, refused rather than waiting on the table.
+    /// What `get_control` reads, from the mirror rather than the table.
     pub(super) fn scheduled_read(&self, key: &str) -> Result<f32, LegacyRefusal> {
         match key {
             "root_note" => Ok(self.root_note() as f32),
             "seed" => Ok(self.seed().unwrap_or(0) as f32),
-            "degree_count" => Ok(self.try_table()?.degrees.len() as f32),
+            "degree_count" => Ok(self.mirror.count() as f32),
             _ => {
-                let table = self.try_table()?;
                 let read = if let Some(index) = scheduled_index(key, "degree.") {
-                    table.degrees.get(index).map(|&degree| degree as f32)
+                    self.mirror.degree(index).map(|degree| degree as f32)
                 } else if let Some(index) = scheduled_index(key, "note_weight.") {
-                    table.weights.get(index).copied()
+                    self.mirror.weight(index)
                 } else {
                     return Err(LegacyRefusal::Unsupported);
                 };
@@ -90,14 +89,18 @@ mod tests {
         let (refused, allocs, frees) = while_held(&controls.table, || {
             allocator_events(|| {
                 let writes = table_keys.map(|key| controls.set_scheduled(key, number));
-                let reads = table_keys.map(|key| controls.get_scheduled(key).map(drop));
+                let reads = table_keys.map(|key| controls.get_scheduled(key));
                 let root = controls.set_scheduled("root_note", TableValue::Number(62.0));
                 (writes, reads, root)
             })
         });
         assert_eq!((allocs, frees), (0, 0));
         assert_eq!(refused.0, [Err(LegacyRefusal::Busy); 3]);
-        assert_eq!(refused.1, [Err(LegacyRefusal::Busy); 3]);
+        assert_eq!(
+            refused.1,
+            [Ok(3.0), Ok(0.0), Ok(1.0)],
+            "read from the mirror"
+        );
         assert_eq!(refused.2, Ok(()), "an atomic control needs no lock");
         assert_eq!(controls.root_note(), 62);
         assert_eq!(controls.table_version(), version, "nothing published");

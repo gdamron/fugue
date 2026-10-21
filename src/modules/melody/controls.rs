@@ -6,7 +6,10 @@ use std::sync::{Arc, Mutex};
 use crate::control_request::{LegacyRefusal, TableValue};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
+mod mirror;
 mod scheduled;
+
+use mirror::TableMirror;
 
 /// Maximum number of scale degrees a melody can choose between.
 ///
@@ -165,6 +168,8 @@ pub struct MelodyControls {
     /// Bumped (while holding `table`) after every table edit; the audio
     /// thread re-copies the table when it observes a change.
     pub(crate) table_version: Arc<AtomicU64>,
+    /// The table as a scheduler reads it, without the lock.
+    pub(crate) mirror: Arc<TableMirror>,
     /// RNG seed value; only meaningful when `seed_version > 0`.
     pub(crate) seed_value: Arc<AtomicU64>,
     /// Bumped on every `set_seed`; `0` means "never seeded" (entropy RNG).
@@ -180,9 +185,11 @@ impl MelodyControls {
     /// [`MAX_DEGREES`] degrees are kept.
     pub fn new(root_note: u8, mut allowed_degrees: Vec<i32>) -> Self {
         allowed_degrees.truncate(MAX_DEGREES);
+        let table = DegreeTable::new(allowed_degrees);
         Self {
             root_note: Arc::new(AtomicU8::new(root_note)),
-            table: Arc::new(Mutex::new(DegreeTable::new(allowed_degrees))),
+            mirror: Arc::new(TableMirror::new(&table)),
+            table: Arc::new(Mutex::new(table)),
             table_version: Arc::new(AtomicU64::new(0)),
             seed_value: Arc::new(AtomicU64::new(0)),
             seed_version: Arc::new(AtomicU64::new(0)),
@@ -231,8 +238,15 @@ impl MelodyControls {
     fn edit_table<R>(&self, edit: impl FnOnce(&mut DegreeTable) -> R) -> R {
         let mut table = self.table.lock().unwrap();
         let result = edit(&mut table);
-        self.table_version.fetch_add(1, Ordering::Release);
+        self.publish(&table);
         result
+    }
+
+    /// Publishes an edit of `table`, which the caller still holds, to the
+    /// audio thread's copy and to the scheduler's mirror.
+    fn publish(&self, table: &DegreeTable) {
+        self.mirror.publish(table);
+        self.table_version.fetch_add(1, Ordering::Release);
     }
 
     /// Gets the active scale degrees.
@@ -287,7 +301,7 @@ impl MelodyControls {
         // A ramp writes the count every sample; only a change is an edit.
         let mut table = self.table.lock().unwrap();
         if table.set_count(count) {
-            self.table_version.fetch_add(1, Ordering::Release);
+            self.publish(&table);
         }
     }
 
