@@ -81,7 +81,7 @@ impl RuntimeSnapshot {
             return Ok(Queued::default());
         };
         declared
-            .set_control_queued(key, value, true)
+            .set_control_queued(key, value)
             .map_err(GraphCommandError::ControlError)
     }
 }

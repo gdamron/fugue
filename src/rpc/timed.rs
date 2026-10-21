@@ -173,9 +173,7 @@ pub struct RequestStatus {
     pub state: RequestState,
     #[serde(default)]
     pub landing: RequestLanding,
-    /// Why it was refused, expired or cancelled. For one queued, landed or
-    /// adopted, the authored writes it keeps over its own: "kept authored
-    /// osc.waveform: the edit landed without writing it".
+    /// Why it was refused, expired or cancelled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// Modules it added or rebuilt, once adopted.

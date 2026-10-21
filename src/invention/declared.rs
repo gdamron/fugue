@@ -125,7 +125,7 @@ struct Written {
 /// What a write saw as it was queued for the live graph, under the
 /// publisher's lock (see `LiveGraph::record_authored`): its generation
 /// then, `None` when the module is not live, and the timed edit the write
-/// is safe from (see `Publisher::keep_authored`).
+/// is safe from (see `Publisher::timed_safe`).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Queued {
     pub(crate) generation: Option<u64>,
@@ -208,7 +208,7 @@ impl DeclaredSurface {
         let (index, _) = self
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
-        self.deliver(index, Write::Payload(payload, shown, None), None)
+        self.deliver(index, Write::Payload(payload, shown, None))
             .map(drop)
     }
 
@@ -226,27 +226,24 @@ impl DeclaredSurface {
         let (index, _) = self
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
-        self.deliver(index, Write::Payload(payload, shown, Some(checked)), None)
+        self.deliver(index, Write::Payload(payload, shown, Some(checked)))
             .map(drop)
     }
 
     /// [`ControlSurface::set_control`], saying what the write saw as it
-    /// was queued. An `authored` write to a live module is kept over a
-    /// timed edit waiting that writes the control as it lands (see
-    /// `Publisher::keep_authored`). Control thread.
+    /// was queued. Control thread.
     pub(crate) fn set_control_queued(
         &self,
         key: &str,
         value: ControlValue,
-        authored: bool,
     ) -> Result<Queued, String> {
         if let Some(prepared) = self.prepare(key, &value) {
             let (index, payload, shown) = prepared?;
-            return self.deliver(index, Write::Payload(payload, shown, None), None);
+            return self.deliver(index, Write::Payload(payload, shown, None));
         }
         let index = self.index(key)?;
         let value = self.table.coerce(index, &value)?;
-        self.deliver(index, Write::Value(value), authored.then_some(key))
+        self.deliver(index, Write::Value(value))
     }
 
     /// The live graph's publisher generation, read under its lock (so
@@ -357,13 +354,7 @@ impl DeclaredSurface {
             .ok_or_else(|| format!("Unknown control: {key}"))
     }
 
-    /// `authored` names the control an authored write is to, as written.
-    fn deliver(
-        &self,
-        index: ControlIndex,
-        write: Write,
-        authored: Option<&str>,
-    ) -> Result<Queued, String> {
+    fn deliver(&self, index: ControlIndex, write: Write) -> Result<Queued, String> {
         let (event, clamp) = match self.table.decl(index) {
             Some((decl, _)) => (decl.event, decl.clamp.filter(|_| self.clamps)),
             None => (false, None),
@@ -412,6 +403,8 @@ impl DeclaredSurface {
                     .ok_or("The audio thread has stopped")?;
                 let mut publisher = publisher.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Live(_)))?;
+                let generation = Some(publisher.generation());
+                let safe = publisher.timed_safe();
                 // A kept controller can outlive the audio graph: never queue
                 // a request nothing will drain.
                 if !publisher.audio_alive() {
@@ -459,26 +452,11 @@ impl DeclaredSurface {
                 let mut request = Request::new(target, value);
                 request.event = event;
                 let automated = request.source == Source::Automation;
-                let generation = Some(publisher.generation());
-                let safe = match (&request.value, authored) {
-                    (RequestValue::Value(raw), Some(key)) => {
-                        let module = (port.module_id.as_str(), key);
-                        publisher.keep_authored(module, target, (*raw, event))
-                    }
-                    _ => None,
-                };
                 // The log is locked before the submission, so its outcome
                 // cannot be received before the write is recorded.
                 let mut pending = port.pending.lock().unwrap();
                 pending.settle();
-                let Ok(id) = port.requests.submit(request) else {
-                    // Never, as `keep_authored` left room, but a write kept
-                    // and not made is not to play.
-                    if safe.is_some() {
-                        publisher.cancel_timed(|| CancelCause::Unchained);
-                    }
-                    return Err(QUEUE_FULL.into());
-                };
+                let id = port.requests.submit(request).map_err(|_| QUEUE_FULL)?;
                 // Under the publisher's lock, so reads report the last write
                 // submitted.
                 if let Some(shown) = shown {
@@ -577,7 +555,7 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        self.set_control_queued(key, value, false).map(drop)
+        self.set_control_queued(key, value).map(drop)
     }
 
     fn validate_control(

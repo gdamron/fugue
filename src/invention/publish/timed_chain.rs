@@ -3,11 +3,6 @@
 //! request waiting on the edit applying, so it plays from the edit's
 //! sample and never before, and is refused with it (`ChainBroken`) when
 //! the edit is cancelled, refused or expires.
-//!
-//! An authored write to one of those controls while the edit waits is kept
-//! over it ([`Publisher::keep_authored`]): chained to the landing too, at a
-//! higher priority, so the edit lands without its own write to that one
-//! control sounding and the author's value plays on.
 
 use super::{LiveGraph, PendingLog, PendingWrite, Publisher};
 use crate::control_request::{

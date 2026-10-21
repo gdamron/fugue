@@ -135,11 +135,10 @@ fn grid(every: f32, offset: f32) -> BeatSpec {
 
 /// `status` in the wire's terms.
 pub(crate) fn wire_status(status: EditStatus) -> RequestStatus {
-    let kept = kept(&status.kept, status.state == EditState::Queued);
     let (state, reason) = match status.state {
-        EditState::Queued => (RequestState::Queued, kept),
-        EditState::Landed => (RequestState::Landed, kept),
-        EditState::Adopted => (RequestState::Adopted, kept),
+        EditState::Queued => (RequestState::Queued, None),
+        EditState::Landed => (RequestState::Landed, None),
+        EditState::Adopted => (RequestState::Adopted, None),
         EditState::Expired => {
             let reason = "its ttl passed before its time came".to_string();
             (RequestState::Expired, Some(reason))
@@ -163,38 +162,6 @@ pub(crate) fn wire_status(status: EditStatus) -> RequestStatus {
         built: status.built,
         removed: status.removed,
     }
-}
-
-/// The authored writes an edit `kept` over its own, said for one `queued`
-/// or one that has landed.
-fn kept(kept: &[String], queued: bool) -> Option<String> {
-    if kept.is_empty() {
-        return None;
-    }
-    let lands = if queued { "lands" } else { "landed" };
-    let them = if kept.len() == 1 { "it" } else { "them" };
-    let controls = kept.join(", ");
-    Some(format!(
-        "kept authored {controls}: the edit {lands} without writing {them}"
-    ))
-}
-
-#[cfg(test)]
-#[test]
-fn a_kept_write_is_named_while_queued_and_once_landed() {
-    let one = ["osc.waveform".to_string()];
-    let said = kept(&one, true).unwrap();
-    assert_eq!(
-        said,
-        "kept authored osc.waveform: the edit lands without writing it"
-    );
-    let two = ["osc.waveform".to_string(), "fx.cutoff".to_string()];
-    let said = kept(&two, false).unwrap();
-    assert_eq!(
-        said,
-        "kept authored osc.waveform, fx.cutoff: the edit landed without writing them"
-    );
-    assert_eq!(kept(&[], false), None);
 }
 
 fn refused(refusal: Refusal) -> String {
