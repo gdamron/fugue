@@ -55,13 +55,8 @@ impl MelodyControls {
                 } else {
                     return Err(LegacyRefusal::Unsupported);
                 };
-                if index >= table.count() {
-                    return Err(LegacyRefusal::Invalid);
-                }
-                Ok(match degree {
-                    true => table.degree_at(index) as f32,
-                    false => table.weight_at(index),
-                })
+                let (at, weight) = table.position(index).ok_or(LegacyRefusal::Invalid)?;
+                Ok(if degree { at as f32 } else { weight })
             }
         }
     }
