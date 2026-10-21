@@ -32,6 +32,12 @@
 //! writes are counted as they start and finish, so a copy of the whole
 //! table is taken only when none was in flight or landed during it: it is
 //! always a table that was, never half of one write and not the next.
+//!
+//! Generations are 32 bits, so they come back round. A position write is
+//! counted from before it reads the generation it checks against, and an
+//! edit waits out the writes in flight twice a round, before publishing
+//! generation 2 and generation 2^31: a write still holding a generation
+//! when it is published again would have to outlast one of those waits.
 
 use std::sync::atomic::{fence, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -66,6 +72,12 @@ fn header(generation: u32, count: usize) -> u64 {
 /// written, and always of the other parity, which picks the other buffer.
 fn next_generation(generation: u32) -> u32 {
     generation.checked_add(1).unwrap_or(2)
+}
+
+/// Whether publishing `generation` waits out the writes in flight: twice a
+/// round, half a round apart (see the module docs).
+fn drains(generation: u32) -> bool {
+    generation == 2 || generation == 1 << 31
 }
 
 /// Which of two buffers `generation` reads its base from.
@@ -336,12 +348,33 @@ impl DegreeTable {
         changed
     }
 
+    /// Counts a position write in flight until the guard drops. Taken
+    /// before the write reads the generation it checks against, so an edit
+    /// about to publish that generation again waits it out.
+    fn in_flight(&self) -> InFlight<'_> {
+        self.writes_started.fetch_add(1, Ordering::SeqCst);
+        InFlight(self)
+    }
+
+    /// Waits until every position write started so far has finished, should
+    /// publishing `generation` call for it. Control thread, under the edit
+    /// lock; writes never wait for an edit, so this ends.
+    fn drain_before(&self, generation: u32) {
+        if !drains(generation) {
+            return;
+        }
+        let started = self.writes_started.load(Ordering::SeqCst);
+        while self.writes_finished.load(Ordering::Acquire) < started {
+            std::thread::yield_now();
+        }
+    }
+
     /// Writes `bits` to `slot` in `generation`, unless `now` has moved on
     /// from it: then the write came before the edit that moved it, and is
     /// forgotten with the rest. Never replaces a value of a later
-    /// generation. Lock-free: a retry means another write landed.
+    /// generation. Lock-free: a retry means another write landed. Call in
+    /// flight (see [`Self::in_flight`]).
     fn write(&self, slot: &AtomicU64, generation: u32, now: impl Fn() -> u32, bits: u32) {
-        self.writes_started.fetch_add(1, Ordering::AcqRel);
         let mut seen = slot.load(Ordering::Acquire);
         while now() == generation {
             let value = tagged(generation, bits);
@@ -350,7 +383,6 @@ impl DegreeTable {
                 Err(current) => seen = current,
             }
         }
-        self.writes_finished.fetch_add(1, Ordering::Release);
         self.changed();
     }
 
@@ -365,7 +397,11 @@ impl DegreeTable {
     /// Writes the degree at active position `index` (clamped to ±127),
     /// returning false for a position past the count. Any thread.
     pub(crate) fn write_degree(&self, index: usize, value: i32) -> bool {
-        self.write_degree_as_of(self.header.load(Ordering::Acquire), index, value)
+        let _in_flight = self.in_flight();
+        let header = self.header.load(Ordering::SeqCst);
+        #[cfg(test)]
+        tests::between_loads();
+        self.write_degree_as_of(header, index, value)
     }
 
     /// [`Self::write_degree`], checked against and tagged with `header`.
@@ -389,8 +425,9 @@ impl DegreeTable {
     pub(crate) fn write_weight(&self, index: usize, value: f32) -> bool {
         // The weights' generation and the count as they stood together, so
         // a write checked against that count is tagged with that generation.
+        let _in_flight = self.in_flight();
         loop {
-            let generation = self.weights_generation();
+            let generation = self.weights_generation.load(Ordering::SeqCst);
             #[cfg(test)]
             tests::between_loads();
             let count = self.count();
@@ -437,8 +474,9 @@ impl DegreeTable {
             // Under the edit lock no other edit moves the generation; a
             // count set meanwhile is set before this scale.
             let next = next_generation(table.degrees_generation());
+            table.drain_before(next);
             table.scales[buffer(next)].set(&bits);
-            (table.header).store(header(next, bits.len()), Ordering::Release);
+            (table.header).store(header(next, bits.len()), Ordering::SeqCst);
             forget(&table.written_degrees, next);
         });
     }
@@ -450,8 +488,9 @@ impl DegreeTable {
         let bits: Vec<u32> = weights.iter().map(|weight| weight.to_bits()).collect();
         self.edit(|table| {
             let next = next_generation(table.weights_generation());
+            table.drain_before(next);
             table.weights[buffer(next)].set(&bits);
-            (table.weights_generation).store(next, Ordering::Release);
+            (table.weights_generation).store(next, Ordering::SeqCst);
             forget(&table.written_weights, next);
         });
     }
@@ -464,6 +503,7 @@ impl DegreeTable {
         weights: impl IntoIterator<Item = (usize, f32)>,
     ) {
         self.edit(|table| {
+            let _in_flight = table.in_flight();
             let generation = table.degrees_generation();
             for (index, value) in degrees.into_iter().filter(|(i, _)| *i < MAX_DEGREES) {
                 let bits = value.clamp(-127, 127) as u32;
@@ -501,22 +541,28 @@ impl DegreeTable {
     /// Holds off whole edits and marks a position write in flight until the
     /// guard is dropped, for tests of readers and writers that meet both.
     #[cfg(test)]
-    pub(crate) fn writing(&self) -> impl Drop + '_ {
-        struct Writing<'a> {
-            table: &'a DegreeTable,
-            _whole: MutexGuard<'a, ()>,
-        }
-        impl Drop for Writing<'_> {
-            fn drop(&mut self) {
-                self.table.writes_finished.fetch_add(1, Ordering::Release);
-            }
-        }
-        let _whole = self.whole();
-        self.writes_started.fetch_add(1, Ordering::AcqRel);
-        Writing {
-            table: self,
-            _whole,
-        }
+    pub(crate) fn writing(&self) -> impl Sized + '_ {
+        // In order: the write finishes, then edits may start.
+        let whole = self.whole();
+        (self.in_flight(), whole)
+    }
+
+    /// Moves the degrees' generation straight to `generation`, as if a
+    /// round of whole scales had been set, none waiting out writes.
+    #[cfg(test)]
+    fn jump_to(&self, generation: u32) {
+        let count = self.count();
+        self.header
+            .store(header(generation, count), Ordering::SeqCst);
+    }
+}
+
+/// A position write in flight (see [`DegreeTable::in_flight`]).
+struct InFlight<'a>(&'a DegreeTable);
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.writes_finished.fetch_add(1, Ordering::Release);
     }
 }
 

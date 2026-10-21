@@ -3,9 +3,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rand::rngs::StdRng;
-use rand::{RngExt, SeedableRng};
-
 use super::*;
 use crate::alloc_counter::allocator_events;
 use crate::audio_thread::AudioThreadScope;
@@ -40,171 +37,35 @@ fn wait_for(progress: &AtomicUsize, by: usize) {
     }
 }
 
-/// Main's degree table, recomputed whole under its lock after every edit:
-/// the reference the atomic table must match.
-struct Reference {
-    degrees: Vec<i32>,
-    weights: Vec<f32>,
-    scale: Vec<i32>,
-    scale_weights: Vec<f32>,
-    count: usize,
-    written_degrees: [Option<i32>; MAX_DEGREES],
-    written_weights: [Option<f32>; MAX_DEGREES],
-}
+mod reference;
 
-impl Reference {
-    fn new(mut scale: Vec<i32>) -> Self {
-        scale.truncate(MAX_DEGREES);
-        let mut table = Self {
-            degrees: Vec::new(),
-            weights: Vec::new(),
-            count: scale.len(),
-            scale,
-            scale_weights: Vec::new(),
-            written_degrees: [None; MAX_DEGREES],
-            written_weights: [None; MAX_DEGREES],
-        };
-        table.recompute();
-        table
+/// The table `scale` and `weights` make, set one after the other.
+fn table_of(scale: &[i32], weights: Option<&[f32]>) -> (Vec<i32>, Vec<f32>) {
+    let controls = MelodyControls::new(60, scale.to_vec());
+    if let Some(weights) = weights {
+        controls.set_note_weights(weights.to_vec());
     }
-
-    fn recompute(&mut self) {
-        let n = self.scale.len();
-        self.degrees = (0..self.count)
-            .map(|i| {
-                (self.written_degrees[i]).unwrap_or(if n == 0 { 0 } else { self.scale[i % n] })
-            })
-            .collect();
-        self.weights = (0..self.count)
-            .map(|i| {
-                (self.written_weights[i])
-                    .or_else(|| self.scale_weights.get(i).copied())
-                    .or_else(|| {
-                        (n > 0)
-                            .then(|| self.scale_weights.get(i % n).copied())
-                            .flatten()
-                    })
-                    .unwrap_or(1.0)
-            })
-            .collect();
-    }
-
-    fn apply(&mut self, op: &Op) -> bool {
-        match op {
-            Op::Scale(degrees) => {
-                self.scale = degrees.iter().copied().take(MAX_DEGREES).collect();
-                self.count = self.scale.len();
-                self.written_degrees = [None; MAX_DEGREES];
-            }
-            Op::Weights(weights) => {
-                self.scale_weights = weights.clone();
-                self.written_weights = [None; MAX_DEGREES];
-            }
-            Op::Count(count) => self.count = (*count).clamp(1, MAX_DEGREES),
-            Op::Degree(index, value) if *index < self.count => {
-                self.written_degrees[*index] = Some((*value).clamp(-127, 127));
-            }
-            Op::Weight(index, value) if *index < self.count => {
-                self.written_weights[*index] = Some(value.clamp(0.0, 10.0));
-            }
-            Op::Degree(..) | Op::Weight(..) => return false,
-            Op::Restore(index, degree, weight) => {
-                if *index < MAX_DEGREES {
-                    self.written_degrees[*index] = Some((*degree).clamp(-127, 127));
-                    self.written_weights[*index] = Some(weight.clamp(0.0, 10.0));
-                }
-            }
-        }
-        self.recompute();
-        true
-    }
-}
-
-#[derive(Debug)]
-enum Op {
-    Scale(Vec<i32>),
-    Weights(Vec<f32>),
-    Count(usize),
-    Degree(usize, i32),
-    Weight(usize, f32),
-    Restore(usize, i32, f32),
-}
-
-fn apply(controls: &MelodyControls, op: &Op) -> bool {
-    match op {
-        Op::Scale(degrees) => controls.set_allowed_degrees(degrees.clone()),
-        Op::Weights(weights) => controls.set_note_weights(weights.clone()),
-        Op::Count(count) => controls.set_degree_count(*count),
-        Op::Degree(index, value) => return controls.set_degree(*index, *value).is_ok(),
-        Op::Weight(index, value) => return controls.set_note_weight(*index, *value).is_ok(),
-        Op::Restore(index, degree, weight) => {
-            controls.restore_written([(*index, *degree)], [(*index, *weight)]);
-        }
-    }
-    true
-}
-
-fn random_op(rng: &mut StdRng) -> Op {
-    let index = |rng: &mut StdRng| rng.random_range(0..MAX_DEGREES + 8);
-    match rng.random_range(0..6) {
-        0 => Op::Scale(
-            (0..rng.random_range(0..=MAX_DEGREES + 20))
-                .map(|_| rng.random_range(-200..=200))
-                .collect(),
-        ),
-        1 => Op::Weights(
-            (0..rng.random_range(0..=MAX_DEGREES + 20))
-                .map(|_| rng.random_range(-2.0..12.0))
-                .collect(),
-        ),
-        2 => Op::Count(rng.random_range(0..=MAX_DEGREES + 20)),
-        3 => Op::Degree(index(rng), rng.random_range(-200..=200)),
-        4 => Op::Weight(index(rng), rng.random_range(-2.0..12.0)),
-        _ => Op::Restore(
-            index(rng),
-            rng.random_range(-200..=200),
-            rng.random_range(-2.0..12.0),
-        ),
-    }
-}
-
-fn bits(weights: &[f32]) -> Vec<u32> {
-    weights.iter().map(|weight| weight.to_bits()).collect()
-}
-
-#[test]
-fn the_atomic_table_plays_what_the_locked_one_did_under_random_edits() {
-    let mut rng = StdRng::seed_from_u64(0x0393);
-    for _ in 0..200 {
-        let scale: Vec<i32> = (0..rng.random_range(0..12))
-            .map(|_| rng.random_range(-24..=24))
-            .collect();
-        let (controls, mut reference) = (
-            MelodyControls::new(60, scale.clone()),
-            Reference::new(scale),
-        );
-        for _ in 0..40 {
-            let op = random_op(&mut rng);
-            assert_eq!(apply(&controls, &op), reference.apply(&op), "{op:?}");
-            assert_eq!(controls.allowed_degrees(), reference.degrees, "{op:?}");
-            assert_eq!(
-                bits(&controls.note_weights()),
-                bits(&reference.weights),
-                "{op:?}"
-            );
-            assert_eq!(controls.degree_count(), reference.count);
-        }
-    }
+    (controls.allowed_degrees(), controls.note_weights())
 }
 
 #[test]
 fn a_copy_taken_while_whole_scales_are_set_is_always_one_of_them() {
+    // Three, of different lengths and values, so each buffer is rewritten
+    // with different contents as the generations alternate between two.
     let scales = [
         (0..MAX_DEGREES as i32).collect::<Vec<_>>(),
         vec![1, 3, 6, 8, 10],
+        vec![2, 4, 5, 7, 9, 11, 12],
     ];
-    let controls = MelodyControls::new(60, scales[1].clone());
-    let weights = [vec![2.0; MAX_DEGREES], vec![0.5; 5]];
+    let weights = [vec![2.0; MAX_DEGREES], vec![0.5; 5], vec![3.0, 4.0, 5.0]];
+    // The writer sets weights k, then scale k: every table it passes
+    // through, whole.
+    let mut tables = vec![table_of(&scales[2], None)];
+    for k in 0..3 {
+        tables.push(table_of(&scales[(k + 2) % 3], Some(&weights[k])));
+        tables.push(table_of(&scales[k], Some(&weights[k])));
+    }
+    let controls = MelodyControls::new(60, scales[2].clone());
     let (done, edits) = (
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicUsize::new(0)),
@@ -213,12 +74,12 @@ fn a_copy_taken_while_whole_scales_are_set_is_always_one_of_them() {
         let (controls, done, edits) = (controls.clone(), done.clone(), edits.clone());
         let (scales, weights) = (scales.clone(), weights.clone());
         std::thread::spawn(move || {
-            for which in (0..2).cycle() {
+            for k in (0..3).cycle() {
                 if done.load(Ordering::Acquire) {
                     break;
                 }
-                controls.set_note_weights(weights[which].clone());
-                controls.set_allowed_degrees(scales[which].clone());
+                controls.set_note_weights(weights[k].clone());
+                controls.set_allowed_degrees(scales[k].clone());
                 edits.fetch_add(1, Ordering::Release);
                 std::thread::yield_now();
             }
@@ -235,18 +96,32 @@ fn a_copy_taken_while_whole_scales_are_set_is_always_one_of_them() {
             continue;
         };
         taken += 1;
-        let copied = &degrees[..count];
+        let copied = (&degrees[..count], &weights_read[..count]);
         assert!(
-            scales.iter().any(|scale| scale[..] == *copied),
-            "half of one scale and half of another: {copied:?}"
+            tables.iter().any(|(d, w)| (&d[..], &w[..]) == copied),
+            "a table no whole edit made: {copied:?}"
         );
-        for weight in &weights_read[..count] {
-            assert!([2.0, 0.5, 1.0].contains(weight), "a torn weight: {weight}");
-        }
     }
     done.store(true, Ordering::Release);
     writer.join().unwrap();
     eprintln!("copies taken {taken}, refused mid-edit {refused}");
+}
+
+#[test]
+fn a_copy_whose_buffer_is_rewritten_under_it_is_refused() {
+    let controls = MelodyControls::new(60, vec![1, 2, 3]);
+    // Between the copy's header load and its read, two whole scales: the
+    // second rewrites the buffer the copy's generation reads.
+    let edit = controls.clone();
+    between_the_next_loads(move || {
+        edit.set_allowed_degrees(vec![4, 5]);
+        edit.set_allowed_degrees(vec![6, 7, 8, 9]);
+    });
+    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+    let table = &controls.table;
+    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(4));
+    assert_eq!(degrees[..4], [6, 7, 8, 9]);
 }
 
 #[test]
@@ -350,6 +225,9 @@ fn a_copy_meeting_a_count_change_and_whole_weights_is_a_table_that_was() {
 #[test]
 fn a_weight_write_meeting_whole_weights_and_a_grown_count_is_kept() {
     let controls = MelodyControls::new(60, vec![0]);
+    // Past generation 2, whose edit waits out writes in flight, this one
+    // included.
+    controls.set_note_weights(vec![]);
     // Between the write's generation load and its count load, whole
     // weights are set and the count grows to take position 5.
     let edit = controls.clone();
@@ -359,6 +237,42 @@ fn a_weight_write_meeting_whole_weights_and_a_grown_count_is_kept() {
     });
     controls.set_note_weight(5, 9.0).unwrap();
     assert_eq!(controls.note_weights()[5], 9.0);
+}
+
+#[test]
+fn a_write_held_up_for_a_round_of_generations_is_never_read() {
+    let controls = MelodyControls::new(60, vec![0, 0]);
+    let table = &controls.table;
+    controls.set_allowed_degrees(vec![0, 0]);
+    std::thread::scope(|scope| {
+        // A write checks position 1 against generation 2, and is held up
+        // (released should this panic, as `release` drops).
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (holding, holds) = std::sync::mpsc::channel();
+        let writer = scope.spawn(move || {
+            between_the_next_loads(move || {
+                holding.send(()).unwrap();
+                let _ = held.recv();
+            });
+            table.write_degree(1, 9)
+        });
+        holds.recv().unwrap();
+        // A round of whole scales later, generation 2 comes back with one
+        // position: had the write gone ahead, position 1 would show it
+        // once the count grows again.
+        table.jump_to(u32::MAX);
+        let editor = scope.spawn(|| controls.set_allowed_degrees(vec![5]));
+        let deadline = Instant::now() + Duration::from_millis(200);
+        while !editor.is_finished() && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(!editor.is_finished(), "generation 2 waits out the write");
+        release.send(()).unwrap();
+        assert!(writer.join().unwrap());
+        editor.join().unwrap();
+    });
+    controls.set_degree_count(2);
+    assert_eq!(controls.allowed_degrees(), [5, 5]);
 }
 
 #[test]
