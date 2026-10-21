@@ -283,13 +283,18 @@ impl Conditions {
         let mut i = 0;
         while i < self.entries.len() {
             let entry = &mut self.entries[i];
-            if entry.request.target.generation != installed {
-                i += 1;
-                continue;
-            }
-            // A timed edit cancelled while its condition waits never lands.
+            // A timed edit cancelled while its condition waits never lands,
+            // nor does what waits on one, whatever graph it is tagged for.
             if cancelled.contains(&entry.request.id.0) && entry.request.value.is_edit() {
                 self.end(i, outcomes, Refusal::TargetGone.into());
+                continue;
+            }
+            if waits_on(entry, &cancelled) {
+                self.end(i, outcomes, Refusal::ChainBroken.into());
+                continue;
+            }
+            if entry.request.target.generation != installed {
+                i += 1;
                 continue;
             }
             if expired(&entry.request, now) {
@@ -303,7 +308,7 @@ impl Conditions {
             entry.armed = true;
             read_controls(entry, now, host);
             latch(entry, &outcomes.chains);
-            if entry.broken || waits_on(entry, &cancelled) {
+            if entry.broken {
                 self.end(i, outcomes, Refusal::ChainBroken.into());
                 continue;
             }
