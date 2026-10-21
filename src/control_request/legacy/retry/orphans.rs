@@ -2,18 +2,23 @@
 //! their surface's gate for the schedules still writing it to land in turn.
 //!
 //! A scheduler an edit removes (see `Module::leave`) stops trying its
-//! waiting writes. Its values are dropped, but an event another schedule's
-//! earlier write still holds back (a `note_off` behind another scheduler's
-//! `note_on`) was made before the edit, and would have landed on main. So
-//! it keeps its ticket at the gate, in room of the gate's own, and the next
-//! schedule writing that surface to retry lands it once every earlier
-//! ticket has, ahead of every later one.
+//! waiting writes. Its values are dropped, but its events (a `note_off`,
+//! perhaps behind another scheduler's `note_on`) were made before the
+//! edit, and would have landed on main. So each keeps its ticket at the
+//! gate, in room of the gate's own, and the next schedule writing that
+//! surface to retry lands it once every earlier ticket has, ahead of every
+//! later one. When no schedule writes the surface any more, the gate goes
+//! with the last of them, freed off the audio thread, and lands what it
+//! still keeps then, through the setter, as main's waiting write would
+//! have: late, but never lost while the graph reclaims what it retires.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use super::gate::IDLE;
-use super::{bits_value, value_bits, LegacyRefusal, LegacyWrites};
+use super::{bits_value, value_bits, LegacyRefusal, LegacyWrites, Surface};
+use crate::control_request::table::TableValue;
+use crate::ControlValue;
 
 /// The events one gate keeps for schedules gone.
 const ROOM: usize = 8;
@@ -56,14 +61,18 @@ pub(super) struct Orphans {
     room: [Orphan; ROOM],
     kept: AtomicUsize,
     keys: Keys,
+    /// The surface, for what is still kept when the gate goes.
+    surface: OnceLock<Surface>,
     /// Control threads only: one names a key at a time.
     naming: Mutex<()>,
 }
 
 impl Orphans {
-    /// The number naming `key`. Control thread: may lock and allocate.
-    pub(super) fn name(&self, key: &str) -> u32 {
+    /// The number naming `surface`'s `key`. Control thread: may lock and
+    /// allocate.
+    pub(super) fn name(&self, surface: &Surface, key: &str) -> u32 {
         let _naming = self.naming.lock().unwrap_or_else(PoisonError::into_inner);
+        self.surface.get_or_init(|| surface.clone());
         let mut keys = &self.keys;
         let mut base = 0;
         loop {
@@ -131,10 +140,22 @@ impl Orphans {
     }
 }
 
-/// Its events go with it: the audio thread need no longer look for them.
+/// The last schedule writing the surface is gone, freed off the audio
+/// thread: what is still kept lands now, in order, through the setter, which
+/// may wait for the surface's lock as main's write did.
 impl Drop for Orphans {
     fn drop(&mut self) {
-        KEPT.fetch_sub(*self.kept.get_mut(), Ordering::Relaxed);
+        while let Some((at, _)) = self.first() {
+            if let Some(surface) = self.surface.get() {
+                let key = self.key(self.room[at].key.load(Ordering::Relaxed));
+                let value = match bits_value(self.room[at].value.load(Ordering::Relaxed)) {
+                    TableValue::Number(number) => ControlValue::Number(number),
+                    TableValue::Bool(flag) => ControlValue::Bool(flag),
+                };
+                let _ = surface.set_control(key, value);
+            }
+            self.clear(at);
+        }
     }
 }
 

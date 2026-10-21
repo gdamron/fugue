@@ -159,7 +159,7 @@ impl LegacyControls {
                 group,
                 event: surface.scheduled_event(key),
                 resizes: surface.scheduled_resizes(key),
-                name: groups[group].gate.orphans.name(key),
+                name: groups[group].gate.orphans.name(surface, key),
             });
         }
         Arc::new(LegacyWrites {
