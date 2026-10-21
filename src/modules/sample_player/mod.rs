@@ -158,22 +158,22 @@ impl Module for SamplePlayer {
 
     fn process(&mut self, frames: usize) -> bool {
         // Control-rate state read once per block, from atomics.
-        let transport = self.ctrl.transport();
-        let mut control_play = transport_play(transport);
-        let play_trigger = transport_trigger(transport);
+        let mut transport = self.ctrl.transport();
         let loop_control = self.ctrl.loop_enabled();
 
         // A staged sample swap: the lock is tried only when the version
         // moved, and never waited on. A busy lock retries next block.
         let swap_version = self.ctrl.swap_version();
         let swapped = swap_version != self.last_swap_version
-            && match self.ctrl.try_swap(&mut self.sample) {
+            && match self.ctrl.try_swap(&mut self.sample, &mut transport) {
                 Some(swapped) => {
                     self.last_swap_version = swap_version;
                     swapped
                 }
                 None => false,
             };
+        let mut control_play = transport_play(transport);
+        let play_trigger = transport_trigger(transport);
 
         // A replacement still staged, its swap deferred: the sample playing
         // now is on its way out, so its end leaves `play` on for the
