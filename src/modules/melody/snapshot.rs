@@ -220,20 +220,16 @@ mod tests {
     }
 
     #[test]
-    fn sync_keeps_its_copy_while_a_control_thread_edits_the_whole_table() {
+    fn sync_copies_the_published_table_while_a_control_thread_edits_the_whole_table() {
         let ctrl = MelodyControls::new(60, vec![0, 2, 4]);
         let mut snapshot = DegreeSnapshot::new(&ctrl);
         ctrl.set_allowed_degrees(vec![11]);
 
-        let writing = ctrl.table.writing();
-        // Mid-edit: keep the stale copy rather than wait.
-        assert!(!snapshot.sync(&ctrl));
-        assert_eq!(snapshot.degrees[..snapshot.degree_count], [0, 2, 4]);
-        drop(writing);
-
-        // The pending change is applied on the next uncontended sync.
+        // Mid-edit: the copy is of the table as published, without waiting.
+        let editing = ctrl.table.editing();
         assert!(snapshot.sync(&ctrl));
         assert_eq!(snapshot.degrees[..snapshot.degree_count], [11]);
+        drop(editing);
     }
 
     #[test]
