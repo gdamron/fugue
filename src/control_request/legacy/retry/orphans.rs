@@ -104,7 +104,8 @@ impl Orphans {
 
     /// The earliest ticket kept, or [`IDLE`].
     pub(super) fn earliest(&self) -> u64 {
-        match self.kept.load(Ordering::Relaxed) {
+        // Acquire: none kept means every one cleared has landed.
+        match self.kept.load(Ordering::Acquire) {
             0 => IDLE,
             _ => self.first().map_or(IDLE, |(_, ticket)| ticket),
         }
@@ -178,7 +179,7 @@ impl Orphans {
 
     fn clear(&self, at: usize) {
         self.room[at].ticket.store(IDLE, Ordering::Release);
-        self.kept.fetch_sub(1, Ordering::Relaxed);
+        self.kept.fetch_sub(1, Ordering::Release);
         KEPT.fetch_sub(1, Ordering::Relaxed);
     }
 }
