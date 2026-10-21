@@ -16,7 +16,7 @@ use indexmap::IndexMap;
 
 use super::change::BuiltModule;
 use super::rebind;
-use super::timed_status::{CancelCause, EditStatus};
+use super::timed_status::{CancelCause, EditStatus, Touched};
 use super::watch::{condition_of, Part};
 use super::{
     publisher, Committed, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher, Refused,
@@ -132,10 +132,13 @@ impl LiveGraph {
     /// Records an authored write to control `key` of `module_id`, made
     /// while generation `seen` was the latest, in the retained document.
     /// Runs under the publisher, so no timed edit can be adopted in
-    /// between. A timed edit waiting that rebuilds or removes the module is
-    /// cancelled, and the edit reports why. One that keeps the module folds
-    /// the write into its own document instead, so the write is recorded
-    /// again as the edit is adopted.
+    /// between. A timed edit waiting that rebuilds or removes the module,
+    /// or writes the control itself as it lands, is cancelled, and the edit
+    /// reports why: the write may reach the audio thread before or after
+    /// the edit lands, so only cancelling it makes the write what plays,
+    /// and what is recorded. One that keeps the module and leaves the
+    /// control alone folds the write into its own document instead, so the
+    /// write is recorded again as the edit is adopted.
     ///
     /// [`Authored::Raced`], with nothing recorded, when a timed edit was
     /// adopted since `seen`: it may have landed after the write, replacing
@@ -152,11 +155,18 @@ impl LiveGraph {
         (seen, last): (u64, bool),
     ) -> Authored {
         let mut publisher = self.lock();
-        if let Some(removed) = publisher.timed_replaces(module_id) {
+        let touches = match publisher.timed_replaces(module_id) {
+            Some(true) => Some(Touched::Removed),
+            Some(false) => Some(Touched::Rebuilt),
+            None => publisher
+                .timed_chains(module_id, key)
+                .then_some(Touched::Written),
+        };
+        if let Some(touches) = touches {
             let cause = || CancelCause::AuthoredWrite {
                 module_id: module_id.to_string(),
                 key: key.to_string(),
-                removed,
+                touches,
             };
             if !publisher.cancel_timed(cause) {
                 self.adopt(&mut publisher);
@@ -260,13 +270,16 @@ impl LiveGraph {
                     _ => None,
                 };
                 publisher.ledger().queued(id, sample, beat);
-                if short {
-                    publisher.cancel_timed(|| CancelCause::Unchained);
-                }
+                // Short of its chain only if a submission raced this one
+                // outside the publisher, which none does: then the edit is
+                // cancelled, refusing the writes queued with it. One that
+                // landed already is adopted as it is, and reported as what
+                // it is, never as refused.
+                let unchained = short && publisher.cancel_timed(|| CancelCause::Unchained);
                 drop(pending);
                 drop(publisher);
                 self.settle();
-                if short {
+                if unchained {
                     return Err(GraphCommandError::QueueFull);
                 }
                 Ok(id)

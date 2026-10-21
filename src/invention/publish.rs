@@ -59,7 +59,7 @@ pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use timed::{Authored, EditTime};
-pub(crate) use timed_status::{CancelCause, EditState, EditStatus};
+pub(crate) use timed_status::{CancelCause, EditState, EditStatus, Touched};
 
 /// How many times an edit that builds a module ([`LiveGraph::add_module`],
 /// [`LiveGraph::swap_module`]) builds it when commits keep adopting new
