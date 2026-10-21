@@ -4,7 +4,7 @@
 use super::legacy_tests::{block, entry, queued_notes, scheduler, Locking};
 use super::*;
 use crate::alloc_counter::allocator_events;
-use crate::control_request::while_held;
+use crate::control_request::{land_left_events, while_held};
 
 #[test]
 fn a_removed_scheduler_s_waiting_note_holds_no_other_scheduler_s_back() {
@@ -136,14 +136,56 @@ fn a_note_off_the_only_scheduler_left_waiting_lands_once_it_is_freed() {
         block(&mut removed, gate);
     }
     // Step 2's note_off finds the queue held, and it still is as the edit
-    // removing the scheduler installs: no other schedule writes there.
-    let ((), allocs, frees) = while_held(locking.instrument.pending_notes(), || {
+    // removing the scheduler installs, and as the reclaimer frees it: no
+    // other schedule writes there.
+    let queue = locking.instrument.pending_notes();
+    let ((), allocs, frees) = while_held(queue, || {
         block(&mut removed, 1.0);
-        allocator_events(|| removed.leave())
+        let left = allocator_events(|| removed.leave());
+        drop(removed);
+        land_left_events();
+        left
     });
     assert_eq!((allocs, frees), (0, 0), "left");
-    assert_eq!(queued_notes(&locking.instrument), [(64, true)]);
-    // Reclaimed off the audio thread, it lands the note_off: no stuck note.
-    drop(removed);
+    assert_eq!(queued_notes(&locking.instrument), [(64, true)], "held");
+    // The reclaimer's next pass lands it: no stuck note.
+    land_left_events();
     assert_eq!(queued_notes(&locking.instrument), [(64, true), (64, false)]);
+}
+
+#[test]
+fn a_new_scheduler_s_note_lands_after_the_note_off_a_freed_one_left() {
+    use ScheduleValue::Number;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let notes = vec![
+        entry(1, "sample_instrument", "note_on", Number(64.0)),
+        entry(2, "sample_instrument", "note_off", Number(64.0)),
+    ];
+    let mut removed = scheduler(notes, &directory);
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        block(&mut removed, gate);
+    }
+    // Step 2's note_off is left as the scheduler goes, and still held as
+    // it is freed. Before the reclaimer's next pass, an edit adds another
+    // that plays the note again: its gate is the one holding the note_off.
+    let again = vec![entry(1, "sample_instrument", "note_on", Number(64.0))];
+    let mut again = while_held(locking.instrument.pending_notes(), || {
+        block(&mut removed, 1.0);
+        removed.leave();
+        drop(removed);
+        let mut again = scheduler(again, &directory);
+        for gate in [1.0, 0.0, 1.0] {
+            block(&mut again, gate);
+        }
+        again
+    });
+    for gate in [0.0, 0.0] {
+        block(&mut again, gate);
+    }
+    assert_eq!(
+        queued_notes(&locking.instrument),
+        [(64, true), (64, false), (64, true)],
+        "the note off first"
+    );
 }

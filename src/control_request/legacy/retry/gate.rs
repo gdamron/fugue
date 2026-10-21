@@ -20,7 +20,7 @@
 //! middle (one that waited too long) never holds the others up.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
 use super::orphans::Orphans;
 use super::Surface;
@@ -80,25 +80,67 @@ pub(super) struct Gate {
     pub(super) orphans: Orphans,
 }
 
-/// Every surface's gate, by the surface's address. Control threads only.
+/// Every surface's gate, by the surface's address, and the gates held for
+/// events left when no schedule writes their surface any more (see
+/// [`super::orphans`]). Control threads only.
 ///
 /// A gate lives while a schedule writing its surface does, and so does
-/// the surface, so a live entry's address is still its surface's.
-static GATES: Mutex<Vec<(usize, Weak<Gate>)>> = Mutex::new(Vec::new());
+/// the surface, so a live entry's address is still its surface's. A held
+/// gate keeps its surface too.
+struct Gates {
+    all: Vec<(usize, Weak<Gate>)>,
+    held: Vec<Arc<Gate>>,
+}
+
+static GATES: Mutex<Gates> = Mutex::new(Gates {
+    all: Vec::new(),
+    held: Vec::new(),
+});
+
+fn gates() -> MutexGuard<'static, Gates> {
+    GATES.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Lands, in ticket order, the events kept at gates no schedule writes any
+/// more, and lets go of the gates that then keep none. One whose surface
+/// is still busy or full keeps the rest for the next call. A schedule
+/// building meanwhile waits, so it never writes the surface before them.
+/// Control thread, on the reclaimer's cadence: never waits on a surface.
+pub(crate) fn land_left_events() {
+    gates().held.retain(|gate| {
+        if Arc::strong_count(gate) == 1 {
+            gate.orphans.land_left();
+        }
+        gate.orphans.kept() > 0
+    });
+}
 
 impl Gate {
     /// The gate of `surface`, shared by every schedule writing it. Control
     /// thread: allocates and locks.
     pub(super) fn of(surface: &Surface) -> Arc<Gate> {
         let at = Arc::as_ptr(surface) as *const () as usize;
-        let mut gates = GATES.lock().unwrap_or_else(PoisonError::into_inner);
-        gates.retain(|(_, gate)| gate.strong_count() > 0);
-        let live = (gates.iter()).find_map(|(of, gate)| (*of == at).then(|| gate.upgrade())?);
+        let mut gates = gates();
+        gates.all.retain(|(_, gate)| gate.strong_count() > 0);
+        let live = (gates.all.iter()).find_map(|(of, gate)| (*of == at).then(|| gate.upgrade())?);
         live.unwrap_or_else(|| {
             let gate = Arc::new(Gate::default());
-            gates.push((at, Arc::downgrade(&gate)));
+            gates.all.push((at, Arc::downgrade(&gate)));
             gate
         })
+    }
+
+    /// Holds `gate` while it keeps events, as a schedule writing its surface
+    /// is freed: that may be the last (see [`land_left_events`]). Control
+    /// thread.
+    pub(super) fn hold_kept(gate: &Arc<Gate>) {
+        if gate.orphans.kept() == 0 {
+            return;
+        }
+        let mut gates = gates();
+        if !gates.held.iter().any(|held| Arc::ptr_eq(held, gate)) {
+            gates.held.push(gate.clone());
+        }
     }
 
     /// Claims a lane, chaining more when every one is taken. Control

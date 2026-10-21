@@ -51,6 +51,7 @@ use crate::ControlSurface;
 mod gate;
 mod orphans;
 mod slot;
+pub(crate) use gate::land_left_events;
 use gate::{Gate, IDLE};
 use slot::{bits_value, value_bits, Kept, Slot, FRESH};
 
@@ -195,6 +196,7 @@ impl Drop for LegacyWrites {
     fn drop(&mut self) {
         for group in self.groups.iter() {
             group.gate.release(group.lane);
+            Gate::hold_kept(&group.gate);
         }
     }
 }

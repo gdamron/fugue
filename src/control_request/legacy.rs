@@ -4,7 +4,7 @@ use super::table::TableValue;
 
 mod retry;
 
-pub(crate) use retry::{LegacyControls, LegacyWrites, RETRY_CAPACITY};
+pub(crate) use retry::{land_left_events, LegacyControls, LegacyWrites, RETRY_CAPACITY};
 
 /// Module types whose controls still take the legacy path: a control
 /// surface whose setters write shared state the module reads, instead of a
