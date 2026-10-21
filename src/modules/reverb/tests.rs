@@ -237,7 +237,7 @@ const WINDOW: usize = 4410;
 /// kinks the output 25 to 250 times further.
 const CLICK_RATIO: f32 = 4.0;
 
-/// Asserts that `changing`, the largest kink while the room changes, is no
+/// Asserts that `changing`, the largest kink during a change, is no
 /// larger than the sine settled before the change and after it allows.
 fn assert_no_click(case: &str, before: f32, changing: f32, sustained: &mut Sustained) {
     sustained.settle();
@@ -245,7 +245,7 @@ fn assert_no_click(case: &str, before: f32, changing: f32, sustained: &mut Susta
     let limit = CLICK_RATIO * before.max(after);
     assert!(
         changing <= limit,
-        "{case}: a kink of {changing} while the room changed, against {before} before \
+        "{case}: a kink of {changing} during the change, against {before} before \
          and {after} after"
     );
 }
@@ -259,6 +259,15 @@ fn room_size_step_does_not_click() {
         let changing = sustained.largest_kink(WINDOW);
         assert_no_click(&format!("{from} to {to}"), before, changing, &mut sustained);
     }
+}
+
+#[test]
+fn decay_step_does_not_click() {
+    let mut sustained = Sustained::new(0.5);
+    let before = sustained.largest_kink(WINDOW);
+    sustained.reverb.set_control("decay", 0.95).unwrap();
+    let changing = sustained.largest_kink(WINDOW);
+    assert_no_click("decay 0.5 to 0.95", before, changing, &mut sustained);
 }
 
 #[test]

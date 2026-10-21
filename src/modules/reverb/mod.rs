@@ -151,7 +151,8 @@ fn compute_alpha(rt60: f32, sample_rate: u32) -> f32 {
 ///
 /// - `room_size` - Room size (0.0–1.0, maps to 1–100m, default 0.5). A change
 ///   crossfades to the new room over 30 ms, so it can be automated.
-/// - `decay` - Reverb decay time (0.0–1.0, maps to RT60 0.2–15s, default 0.5)
+/// - `decay` - Reverb decay time (0.0–1.0, maps to RT60 0.2–15s, default 0.5),
+///   crossfaded like `room_size`
 /// - `damping` - High-frequency damping (0.0–1.0, default 0.5)
 /// - `wet` - Wet signal level (0.0–1.0, default 0.33)
 /// - `dry` - Dry signal level (0.0–1.0, default 1.0)
@@ -276,7 +277,7 @@ impl Reverb {
         let dry = self.dry;
         let width = self.width;
         let s = self.retuning.next_weight();
-        let (old, new) = (*self.retuning.from(), *self.retuning.to());
+        let (old, new) = (self.retuning.from(), self.retuning.to());
 
         let input_l = self.inputs.left(i);
         let input_r = if self.inputs.right_active() {
@@ -300,7 +301,7 @@ impl Reverb {
             tuning.tap_gains[i] * self.tap_delay.read(tuning.tap_positions[i])
         };
         let early: [f32; FDN_ORDER] =
-            std::array::from_fn(|i| blend(s, || tap(&old, i), tap(&new, i)));
+            std::array::from_fn(|i| blend(s, || tap(old, i), tap(new, i)));
 
         // 4. Write into tap delay
         self.tap_delay.write_and_advance(z);
@@ -312,7 +313,7 @@ impl Reverb {
         let d: [f32; FDN_ORDER] = std::array::from_fn(|i| {
             let line = &self.fdn_delays[i];
             let read = |tuning: &Tuning| tuning.fdn_gains[i] * line.read(tuning.fdn_lens[i]);
-            let raw = blend(s, || read(&old), read(&new));
+            let raw = blend(s, || read(old), read(new));
             self.fdn_dampers[i].tick(raw, fdn_damping)
         });
 

@@ -34,9 +34,10 @@ pub(super) struct Tuning {
 /// summed to more than one (equal-power peaks at √2) would lift the loop gain
 /// above unity mid-fade, which a long decay or freeze would hear as a swell.
 /// A sum of one keeps the loop no louder than either tuning alone; the price
-/// is a dip of at most 3 dB in the middle of the fade, where the two tails
-/// are unrelated. The smoothstep starts and ends with zero slope, so the fade
-/// itself adds no corner to the waveform.
+/// is a dip in the middle of the fade, where the two tails are unrelated: at
+/// most 3 dB for one pass, but it compounds round the loop, so a frozen tail
+/// fades a little with each change of room. The smoothstep starts and ends
+/// with zero slope, so the fade itself adds no corner to the waveform.
 ///
 /// A new tuning arriving mid-fade waits for the fade to finish rather than
 /// cutting it short, which would jump. Only the latest waiting tuning is
@@ -46,26 +47,30 @@ pub(super) struct Retuning {
     from: Tuning,
     to: Tuning,
     waiting: Option<Tuning>,
-    /// Progress through the fade: 0 at its start, 1 once settled on `to`.
-    progress: f32,
+    /// Samples left in the fade under way: 0 once settled on `to`.
+    remaining: u32,
+    /// Samples in one fade, and its reciprocal.
+    frames: u32,
     step: f32,
 }
 
 impl Retuning {
     /// Settled on `tuning`, with fades lasting [`FADE_SECONDS`].
     pub(super) fn settled(tuning: Tuning, sample_rate: u32) -> Self {
+        let frames = ((FADE_SECONDS * sample_rate as f32).round() as u32).max(1);
         Self {
             from: tuning,
             to: tuning,
             waiting: None,
-            progress: 1.0,
-            step: 1.0 / (FADE_SECONDS * sample_rate as f32).max(1.0),
+            remaining: 0,
+            frames,
+            step: 1.0 / frames as f32,
         }
     }
 
     /// Fades to `tuning`, after any fade under way.
     pub(super) fn retarget(&mut self, tuning: Tuning) {
-        if self.progress < 1.0 {
+        if self.remaining > 0 {
             self.waiting = Some(tuning);
         } else if tuning != self.to {
             self.start(tuning);
@@ -75,19 +80,18 @@ impl Retuning {
     fn start(&mut self, tuning: Tuning) {
         self.from = self.to;
         self.to = tuning;
-        self.progress = 0.0;
+        self.remaining = self.frames;
     }
 
     /// Advances one sample and returns the weight of [`Self::to`] against
     /// [`Self::from`] for it: 1 once settled, so `from` need not be read.
     #[inline]
     pub(super) fn next_weight(&mut self) -> f32 {
-        if self.progress >= 1.0 {
+        if self.remaining == 0 {
             return 1.0;
         }
-        self.progress += self.step;
-        if self.progress >= 1.0 {
-            self.progress = 1.0;
+        self.remaining -= 1;
+        if self.remaining == 0 {
             self.from = self.to;
             match self.waiting.take() {
                 // This sample is all `to`, which is where the next fade
@@ -96,7 +100,7 @@ impl Retuning {
                 _ => return 1.0,
             }
         }
-        let t = self.progress;
+        let t = 1.0 - self.remaining as f32 * self.step;
         t * t * (3.0 - 2.0 * t)
     }
 
