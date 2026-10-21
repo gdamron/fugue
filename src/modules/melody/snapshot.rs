@@ -1,15 +1,21 @@
 //! Audio-thread copy of the melody's degree table.
 
-use std::sync::TryLockError;
+use super::controls::{MelodyControls, MAX_DEGREES};
 
-use super::controls::{DegreeTable, MelodyControls, MAX_DEGREES};
+/// Degrees and their weights, as copied.
+struct Degrees {
+    degrees: [i32; MAX_DEGREES],
+    weights: [f32; MAX_DEGREES],
+}
 
 /// Pre-allocated copy of the allowed degrees and their weights.
 ///
 /// Owned by the audio thread. [`DegreeSnapshot::sync`] refreshes it from
-/// [`MelodyControls`] only when the table version changed, using `try_lock`
-/// so it never blocks; if a control thread holds the lock, the previous copy
-/// is kept and the sync is retried on the next call.
+/// [`MelodyControls`] only when the table version changed, copying into a
+/// second buffer and taking it only when no edit of many entries wrote
+/// during the copy: it never waits, and never plays half of one scale and
+/// half of another. Otherwise the previous copy is kept and the sync is
+/// retried on the next call.
 pub(super) struct DegreeSnapshot {
     degrees: [i32; MAX_DEGREES],
     degree_count: usize,
@@ -18,11 +24,13 @@ pub(super) struct DegreeSnapshot {
     /// Sum of the weights of the degrees in play.
     total_weight: f32,
     version: u64,
+    /// Where a sync copies before it knows the copy is whole.
+    scratch: Box<Degrees>,
 }
 
 impl DegreeSnapshot {
-    /// Builds a snapshot of the current table. Blocks on the lock, so call
-    /// it at construction time, not from the audio thread.
+    /// Builds a snapshot of the current table. Control thread: waits for an
+    /// edit of many entries to finish.
     pub(super) fn new(ctrl: &MelodyControls) -> Self {
         let mut snapshot = Self {
             degrees: [0; MAX_DEGREES],
@@ -31,37 +39,46 @@ impl DegreeSnapshot {
             weight_count: 0,
             total_weight: 0.0,
             version: ctrl.table_version(),
+            scratch: Box::new(Degrees {
+                degrees: [0; MAX_DEGREES],
+                weights: [0.0; MAX_DEGREES],
+            }),
         };
-        let table = ctrl.table.lock().unwrap_or_else(|e| e.into_inner());
-        snapshot.copy_from(&table);
+        let _whole = ctrl.table.whole();
+        snapshot.copy(ctrl);
         snapshot
     }
 
-    /// Re-copies the table if it changed. Lock-free unless the version moved,
-    /// and never blocks. Returns `true` if the snapshot was refreshed.
+    /// Re-copies the table if it changed. Never waits. Returns `true` if
+    /// the snapshot was refreshed.
     pub(super) fn sync(&mut self, ctrl: &MelodyControls) -> bool {
-        // Read the version before locking: an edit that lands in between is
+        // Read the version before copying: an edit that lands in between is
         // copied now and caught again by the next version check.
         let version = ctrl.table_version();
         if version == self.version {
             return false;
         }
-        let table = match ctrl.table.try_lock() {
-            Ok(table) => table,
-            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-            Err(TryLockError::WouldBlock) => return false,
-        };
-        self.copy_from(&table);
+        if !self.copy(ctrl) {
+            return false;
+        }
         self.version = version;
         true
     }
 
-    fn copy_from(&mut self, table: &DegreeTable) {
-        self.degree_count = table.degrees.len().min(MAX_DEGREES);
-        self.degrees[..self.degree_count].copy_from_slice(&table.degrees[..self.degree_count]);
-        self.weight_count = table.weights.len().min(MAX_DEGREES);
-        self.weights[..self.weight_count].copy_from_slice(&table.weights[..self.weight_count]);
-        self.total_weight = table.weights.iter().sum();
+    fn copy(&mut self, ctrl: &MelodyControls) -> bool {
+        let scratch = &mut *self.scratch;
+        let Some(count) = ctrl
+            .table
+            .read_into(&mut scratch.degrees, &mut scratch.weights)
+        else {
+            return false;
+        };
+        self.degree_count = count;
+        self.weight_count = count;
+        self.degrees[..count].copy_from_slice(&scratch.degrees[..count]);
+        self.weights[..count].copy_from_slice(&scratch.weights[..count]);
+        self.total_weight = self.weights[..count].iter().sum();
+        true
     }
 
     /// Returns `true` if no degrees are allowed.
@@ -202,16 +219,16 @@ mod tests {
     }
 
     #[test]
-    fn sync_does_not_block_while_a_control_thread_holds_the_lock() {
+    fn sync_keeps_its_copy_while_a_control_thread_edits_the_whole_table() {
         let ctrl = MelodyControls::new(60, vec![0, 2, 4]);
         let mut snapshot = DegreeSnapshot::new(&ctrl);
         ctrl.set_allowed_degrees(vec![11]);
 
-        let guard = ctrl.table.lock().unwrap();
-        // Contended: keep the stale copy rather than wait.
+        let writing = ctrl.table.writing();
+        // Mid-edit: keep the stale copy rather than wait.
         assert!(!snapshot.sync(&ctrl));
         assert_eq!(snapshot.degrees[..snapshot.degree_count], [0, 2, 4]);
-        drop(guard);
+        drop(writing);
 
         // The pending change is applied on the next uncontended sync.
         assert!(snapshot.sync(&ctrl));
