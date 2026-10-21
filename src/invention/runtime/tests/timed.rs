@@ -147,6 +147,34 @@ fn a_swap_another_edit_overtakes_is_cancelled_with_the_reason() {
 }
 
 #[test]
+fn a_swap_waiting_as_the_invention_stops_is_cancelled_and_never_lands() {
+    let (running, audio) = start();
+    let queued = swap_fx(&running, next_bar(), None).unwrap();
+    running.settle_requests();
+    let cancelled = running.request_status(&queued.id).unwrap();
+    assert_eq!(cancelled.state, RequestState::Cancelled);
+    assert!(cancelled.reason.unwrap().contains("stopping"));
+    audio.render(PAST_TWO_BARS);
+    assert_eq!(state_of(&running, &queued.id), RequestState::Cancelled);
+    let state = running.state.lock().unwrap();
+    assert_eq!(state.modules["fx"].config["cutoff"], 400.0, "kept");
+}
+
+#[test]
+fn a_swap_landed_as_the_invention_stops_is_adopted_into_the_document() {
+    let (running, audio) = start();
+    audio.render(100);
+    let at = EditWhen::AtSample { sample: 6400 };
+    let queued = swap_fx(&running, at, None).unwrap();
+    audio.render(PAST_TWO_BARS);
+    running.settle_requests();
+    assert_eq!(state_of(&running, &queued.id), RequestState::Adopted);
+    let document = running.document().unwrap();
+    let fx = document.modules.iter().find(|m| m.id == "fx").unwrap();
+    assert_eq!(fx.config["cutoff"], 2000.0);
+}
+
+#[test]
 fn a_time_that_can_never_come_is_refused_with_nothing_queued() {
     let (running, _audio) = start();
     let not_a_clock = EditWhen::AfterBeats {

@@ -63,6 +63,8 @@ pub(crate) enum CancelCause {
     /// The request queue had no room for the control writes it chains as
     /// it lands; the caller was refused (`QueueFull`).
     Unchained,
+    /// The invention it was queued on is stopping.
+    Stopping,
 }
 
 /// A timed edit's state, with where it landed or will land.

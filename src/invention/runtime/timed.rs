@@ -73,6 +73,14 @@ impl RunningInvention {
         changes.into_iter().map(wire_status).collect()
     }
 
+    /// Settles the timed edit waiting, if any, before the invention stops
+    /// or its state is saved for the last time: cancels it, or adopts it
+    /// when it has already landed, so that the document read next holds
+    /// everything that played and nothing lands after.
+    pub fn settle_requests(&self) {
+        self.live.settle_timed();
+    }
+
     /// The handles of the modules timed request `id` built, once it is
     /// adopted; taken once.
     pub fn request_handles(&self, id: &str) -> Option<InventionHandles> {
@@ -213,6 +221,9 @@ fn cancelled(cause: &CancelCause) -> String {
         }
         CancelCause::Unchained => {
             "cancelled: the request queue had no room for the control writes it makes".to_string()
+        }
+        CancelCause::Stopping => {
+            "cancelled: the invention it was queued on is stopping".to_string()
         }
     }
 }
