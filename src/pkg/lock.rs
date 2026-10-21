@@ -300,43 +300,61 @@ mod fs_ops {
         /// Verify every locked package is present under `packages_dir` and its
         /// contents still hash to the recorded integrity. The canonical install
         /// location `packages_dir/<id>/<version>` is used, so the lockfile is
-        /// portable across machines.
+        /// portable across machines. Frozen loads verify only the packages an
+        /// invention uses (see [`Lockfile::verify_packages`]); this checks all.
         pub fn verify(&self, packages_dir: &Path) -> Result<(), LockError> {
-            let mut problems = Vec::new();
-            for (id, package) in &self.packages {
-                let dir = packages_dir.join(id).join(&package.version);
-                if !dir.is_dir() {
-                    problems.push(format!(
-                        "{id}@{} is not installed (expected {})",
-                        package.version,
-                        dir.display()
-                    ));
-                    continue;
-                }
-                if package.integrity.is_empty() {
-                    problems.push(format!(
-                        "{id}@{} has no integrity hash; run `fugue install` to refresh the lockfile",
-                        package.version
-                    ));
-                    continue;
-                }
-                match compute_integrity(&dir) {
-                    Ok(actual) if actual == package.integrity => {}
-                    Ok(actual) => problems.push(format!(
-                        "{id}@{} integrity mismatch (expected {}, got {actual})",
-                        package.version, package.integrity
-                    )),
-                    Err(err) => problems.push(format!(
-                        "{id}@{}: failed to hash installed contents: {err}",
-                        package.version
-                    )),
-                }
-            }
+            self.verify_ids(packages_dir, self.packages.keys().map(String::as_str))
+        }
+
+        /// Verify the locked packages named by `ids` (ids the lockfile does
+        /// not lock are skipped), aggregating every problem into one error.
+        pub(super) fn verify_ids<'a>(
+            &self,
+            packages_dir: &Path,
+            ids: impl IntoIterator<Item = &'a str>,
+        ) -> Result<(), LockError> {
+            let problems: Vec<String> = ids
+                .into_iter()
+                .filter_map(|id| {
+                    let package = self.packages.get(id)?;
+                    verify_package(id, package, packages_dir)
+                })
+                .collect();
             if problems.is_empty() {
                 Ok(())
             } else {
                 Err(LockError { problems })
             }
+        }
+    }
+
+    /// One locked package's problem, if any: not installed at its canonical
+    /// location, missing its integrity hash, or hashing to something else.
+    fn verify_package(id: &str, package: &LockedPackage, packages_dir: &Path) -> Option<String> {
+        let dir = packages_dir.join(id).join(&package.version);
+        if !dir.is_dir() {
+            return Some(format!(
+                "{id}@{} is not installed (expected {})",
+                package.version,
+                dir.display()
+            ));
+        }
+        if package.integrity.is_empty() {
+            return Some(format!(
+                "{id}@{} has no integrity hash; run `fugue install` to refresh the lockfile",
+                package.version
+            ));
+        }
+        match compute_integrity(&dir) {
+            Ok(actual) if actual == package.integrity => None,
+            Ok(actual) => Some(format!(
+                "{id}@{} integrity mismatch (expected {}, got {actual})",
+                package.version, package.integrity
+            )),
+            Err(err) => Some(format!(
+                "{id}@{}: failed to hash installed contents: {err}",
+                package.version
+            )),
         }
     }
 
@@ -406,6 +424,9 @@ mod fs_ops {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use fs_ops::{compute_integrity, integrity_files};
+
+#[cfg(not(target_arch = "wasm32"))]
+mod scoped;
 
 #[cfg(test)]
 mod tests {
