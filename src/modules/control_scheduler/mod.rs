@@ -712,4 +712,6 @@ mod legacy_tests;
 #[cfg(test)]
 mod payload_tests;
 #[cfg(test)]
+mod room_tests;
+#[cfg(test)]
 mod tests;
