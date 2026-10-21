@@ -177,7 +177,7 @@ impl Lfo {
 
         // Advance phase
         self.phase += effective_freq / self.sample_rate as f32;
-        self.phase %= 1.0;
+        self.phase -= self.phase.floor();
 
         sample
     }
