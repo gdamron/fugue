@@ -345,3 +345,40 @@ fn tables_on_one_control_keep_their_order_across_a_swap_on_a_step() {
         assert_eq!(heard, expected, "timed: {timed}");
     }
 }
+
+/// A ramp of the dial's level from step 1 arriving at 1.0 on step 3, the
+/// sample a swap of the dial installs at, immediately or timed: its last
+/// write reaches the new instance, which holds 1.0 from there (FUG-413).
+#[test]
+fn a_swap_on_a_ramp_s_arrival_lands_its_end_on_the_new_instance() {
+    let beats = beat_samples(BPM, 8);
+    let ramp = serde_json::json!([
+        { "at_step": 1, "module": "dial", "control": "level", "value": 1.0, "ramp_steps": 2 }
+    ]);
+    for timed in [false, true] {
+        let mut rig = rig_on(DOCUMENT, BPM, ramp.clone(), ("dial", "out"));
+        let lands = beats[3];
+        let mut out = if timed {
+            swap_dial(&rig, EditTime::AtSample(lands as u64), None).unwrap();
+            Vec::new()
+        } else {
+            let mut out = render_counted(&mut rig, lands / 64);
+            let rest = lands - out.len();
+            let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+            rig.graph
+                .process_block(&mut left[..rest], &mut right[..rest]);
+            out.extend_from_slice(&left[..rest]);
+            let dial = rig.build("dial", DIAL, serde_json::json!({}));
+            rig.live
+                .edit(|change| {
+                    change.upsert("dial", dial);
+                    Ok(())
+                })
+                .unwrap();
+            out
+        };
+        out.extend(render_counted(&mut rig, blocks(BPM, 5.0) - out.len() / 64));
+        let held = &out[lands..beats[5]];
+        assert!(held.iter().all(|&level| level == 1.0), "timed: {timed}");
+    }
+}
