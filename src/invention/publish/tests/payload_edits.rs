@@ -212,6 +212,7 @@ fn submit_on_clock(rig: &Rig, values: &[f32], spec: BeatSpec) -> RequestId {
     request.when = When::Beat(BeatTime {
         clock: clock.module_idx as u32,
         spec,
+        ramp: None,
     });
     rig.live.requests.submit(request).unwrap()
 }

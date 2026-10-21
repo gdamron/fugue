@@ -197,6 +197,7 @@ fn a_beat_request_logs_its_sample_and_musical_time() {
     let when = When::Beat(BeatTime {
         clock,
         spec: BeatSpec::After(1.0),
+        ramp: None,
     });
     submit_logged(
         &rig,
@@ -234,7 +235,11 @@ fn a_repeating_grid_makes_the_log_inexact() {
         offset: 0.0,
         repeat: true,
     };
-    let when = When::Beat(BeatTime { clock, spec });
+    let when = When::Beat(BeatTime {
+        clock,
+        spec,
+        ramp: None,
+    });
     submit_logged(&rig, ("dial", "level"), RtValue::F32(0.5), when, Some(beat));
     rig.render(24_000 / 64 * 3);
     let log = rig.live.request_log();

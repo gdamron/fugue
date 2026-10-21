@@ -81,7 +81,11 @@ fn submit_unnamed(rig: &Rig, module_id: &str, value: f32, spec: BeatSpec) -> Req
     let target = publisher.control_target(module_id, LEVEL).unwrap();
     let clock = publisher.beat_clock(module_id, None).unwrap();
     let mut request = Request::new(target, RequestValue::Value(RtValue::F32(value)));
-    request.when = When::Beat(BeatTime { clock, spec });
+    request.when = When::Beat(BeatTime {
+        clock,
+        spec,
+        ramp: None,
+    });
     rig.live.requests.submit(request).unwrap()
 }
 

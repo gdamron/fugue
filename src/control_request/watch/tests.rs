@@ -113,6 +113,7 @@ fn request(id: u64, module_idx: usize, beats: f32) -> Request {
     request.when = When::Beat(BeatTime {
         clock: 0,
         spec: BeatSpec::After(beats),
+        ramp: None,
     });
     request.id = RequestId(id);
     request
@@ -269,6 +270,7 @@ fn a_watch_is_refused_when_its_ttl_runs_out_or_its_clock_keeps_no_timeline() {
     on_no_clock.when = When::Beat(BeatTime {
         clock: 5,
         spec: BeatSpec::After(4.0),
+        ramp: None,
     });
     watches.insert(on_no_clock, 5, &mut store.outcomes);
     let mut host = Host::at(0.0, 0.001);
@@ -333,6 +335,7 @@ fn on_grid(id: u64, every: f32, offset: f32, repeat: bool) -> Request {
             offset,
             repeat,
         },
+        ramp: None,
     });
     request
 }
@@ -509,3 +512,5 @@ fn a_grid_follows_the_clock_s_new_beat_0_after_a_reset() {
     assert_eq!(pass, (true, None));
     assert_eq!(log(&outcomes), [(7, Outcome::Applied { at: 128 })]);
 }
+
+mod ramps;

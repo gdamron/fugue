@@ -160,6 +160,7 @@ impl LiveGraph {
             EditTime::Beat { clock, spec } => When::Beat(BeatTime {
                 clock: publisher.beat_clock(clock, Some(clock))?,
                 spec,
+                ramp: None,
             }),
             EditTime::Condition(parts) => {
                 if self.requests.watchers_full() {

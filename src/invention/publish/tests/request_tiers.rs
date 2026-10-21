@@ -237,6 +237,7 @@ fn a_beat_lost_to_a_higher_tier_is_only_that_beat() {
         request.when = When::Beat(BeatTime {
             clock: clock.module_idx as u32,
             spec: grid,
+            ramp: None,
         });
         request.source = Source::Script;
         rig.live.requests.submit(request).unwrap()

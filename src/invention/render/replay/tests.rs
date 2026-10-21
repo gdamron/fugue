@@ -43,7 +43,13 @@ fn live_session() -> (RequestLog, Output) {
         out.left.extend(left);
         out.right.extend(right);
     };
-    let beats = |spec| When::Beat(BeatTime { clock, spec });
+    let beats = |spec| {
+        When::Beat(BeatTime {
+            clock,
+            spec,
+            ramp: None,
+        })
+    };
 
     play(100);
     let perform = ControlWriteIntent::Perform;
