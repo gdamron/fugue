@@ -224,6 +224,11 @@ impl Cursors {
     ) -> (bool, Option<u64>) {
         let (mut any, mut wait) = (false, None::<u64>);
         for cursor in &mut self.entries {
+            // Played after the install instead, on the graph it installs
+            // (FUG-413).
+            if host.defers(cursor.module) {
+                continue;
+            }
             let fired = fire(cursor, now, &*host, ramps);
             // The next sample stays where the clock now predicts, so an
             // entry writing its tempo lands its following steps there.

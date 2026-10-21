@@ -132,6 +132,10 @@ fn a_full_request_queue_still_hands_the_scheduler_its_rebound_schedule() {
 /// A schedule written between a change's preparation and its commit that
 /// targets a module the change removes is caught at the commit, under the
 /// publisher, and the change refused with nothing changed.
+///
+/// Retargeted, the scheduler publishes the topology recompiled first (see
+/// `publish::retarget`), so the commit is refused as moved; when that
+/// recompile is skipped, the change packing the schedule refuses it.
 #[test]
 fn a_schedule_retargeted_onto_a_module_a_prepared_change_removes_refuses_it() {
     let doc = STEPS.replace(
@@ -147,11 +151,10 @@ fn a_schedule_retargeted_onto_a_module_a_prepared_change_removes_refuses_it() {
     let onto_p = r#"[{ "at_step": 1, "module": "p", "control": "frequency", "value": 55.0 }]"#;
     write(&rig, "sched", "schedule", onto_p.into());
     let before = rig.generation_and_applied();
-    let Err(GraphCommandError::ModuleBuildFailed(message)) = rig.live.commit_with(prepared, |_| {})
-    else {
-        panic!("refused");
-    };
-    assert!(message.contains("'p'"), "{message}");
+    // The write published the topology recompiled with p (FUG-388), so the
+    // change, prepared before it, is refused as moved.
+    let refused = rig.live.commit_with(prepared, |_| {});
+    assert!(matches!(refused, Err(GraphCommandError::TopologyMoved)));
     assert_eq!(rig.generation_and_applied(), before);
     assert_eq!(rig.module_ids(), ["sched", "o", "p", "dac"]);
 }
