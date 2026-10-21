@@ -18,8 +18,10 @@ use crate::control_request::{QueueFull, Request, RequestId, RequestValue, When};
 use crate::invention::declared::RequestPort;
 use crate::invention::graph::{Fate, TIMED_EDIT_MODULE};
 use crate::invention::publish::change::{BuiltModule, PreparedChange, TopologyMirror};
+use crate::invention::publish::rebind::Packed;
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
+use crate::modules::control_scheduler::Written;
 use crate::payload::Payload;
 use indexmap::IndexMap;
 
@@ -36,6 +38,9 @@ pub(crate) struct Waiting {
     retain: Retain,
     /// Where its built modules' surfaces submit once adopted.
     port: RequestPort,
+    /// The schedules it hands surviving schedulers as it lands, recorded
+    /// once it is adopted; a refused one records nothing.
+    packed: Packed,
 }
 
 /// A timed edit the audio thread landed, adopted by the publisher: what it
@@ -44,14 +49,17 @@ pub(crate) struct Adopted {
     pub(crate) published: Published,
     pub(crate) retain: Retain,
     pub(crate) port: RequestPort,
+    /// The schedules it handed surviving schedulers, to record now.
+    pub(crate) written: Vec<Written>,
 }
 
 impl Publisher {
     /// Queues `prepared` to land on the audio thread `when` (any `when`
     /// but `Now`), refused after `ttl` samples, and returns the request's
-    /// id. Refused with nothing queued as [`Self::publish`] refuses a
-    /// change, when the change edits nothing, or while another timed edit
-    /// waits (`ControlError`).
+    /// id. `packed` is what `rebind::pack` packed into it, kept until it
+    /// is adopted. Refused with nothing queued as [`Self::publish`]
+    /// refuses a change, when the change edits nothing, or while another
+    /// timed edit waits (`ControlError`).
     #[allow(clippy::result_large_err)]
     #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
     pub(crate) fn publish_timed(
@@ -59,7 +67,7 @@ impl Publisher {
         mut prepared: PreparedChange,
         when: When,
         ttl: Option<u64>,
-        (retain, port): (Retain, RequestPort),
+        (retain, port, packed): (Retain, RequestPort, Packed),
     ) -> Result<RequestId, Refused> {
         let refuse = |error, change| Err(Refused { error, change });
         let control = |message: &str| GraphCommandError::ControlError(message.into());
@@ -100,6 +108,7 @@ impl Publisher {
             built: prepared.built,
             retain,
             port,
+            packed,
         }));
         Ok(id)
     }
@@ -153,13 +162,26 @@ impl Publisher {
             },
             retain: waiting.retain,
             port: waiting.port,
+            written: waiting.packed.written,
         })
+    }
+
+    /// Whether the timed edit waiting, if any, races a payload write to
+    /// `module_id` resolved against the graph that is playing to write
+    /// `targets` (a schedule): it re-resolved the schedule the write
+    /// replaces, or it rebuilds or removes a module the write would go on
+    /// writing. Such a write publishes as a change does: it cancels the
+    /// edit ([`Self::cancel_timed`]), or is stale once the edit has landed.
+    pub(crate) fn timed_races(&self, module_id: &str, targets: &[String]) -> bool {
+        self.timed
+            .as_ref()
+            .is_some_and(|waiting| waiting.packed.races(module_id, targets))
     }
 
     /// Clears the way for a change publishing now: cancels a timed edit
     /// still waiting. False when it has landed and is not yet adopted:
     /// the change was prepared against a generation that has moved.
-    pub(super) fn cancel_timed(&mut self) -> bool {
+    pub(crate) fn cancel_timed(&mut self) -> bool {
         let Some(waiting) = &self.timed else {
             return true;
         };
