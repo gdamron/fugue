@@ -6,7 +6,8 @@
 //! (see `Publisher::keep_authored`) so holds one request, and one slot,
 //! however long the drag.
 //!
-//! Only a plain value with no ttl replaces, and only one waiting on
+//! Only a plain value with no ttl replaces or is replaced (one expiring
+//! could leave neither to apply), and only one waiting on
 //! requests applying alone: those parts are met at the same sample
 //! whenever each started waiting, which a signal's or control's are not.
 //!
@@ -47,6 +48,7 @@ impl Conditions {
         let same = |entry: &Entry| {
             !entry.broken
                 && plain(&entry.request)
+                && entry.request.expires.is_none()
                 && entry.request.target == request.target
                 && entry.condition == condition
         };
