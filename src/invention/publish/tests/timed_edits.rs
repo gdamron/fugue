@@ -210,6 +210,28 @@ fn an_edit_timed_by_a_condition_lands_by_the_segment_after_it_is_met() {
 }
 
 #[test]
+fn a_cancelled_edit_timed_by_a_condition_gives_its_slot_back_at_the_next_block() {
+    let mut rig = condition_rig(true);
+    let parts = [Part::Signal {
+        module: "clock",
+        port: "beat",
+        edge: Edge::Rising,
+        level: 0.5,
+        count: 1_000_000,
+    }];
+    let id = remove_dial(&rig, EditTime::Condition(&parts)).unwrap();
+    render_counted(&mut rig, 1);
+    assert_eq!(rig.live.requests.watch_slots().taken(), 1, "the edit");
+    // An authored write to the dial cancels the edit with nothing installed.
+    let author = crate::ControlWriteIntent::Author;
+    super::timed_status::write(&rig, "dial", "level", 0.5, author);
+    render_counted(&mut rig, 1);
+    assert_eq!(rig.live.requests.watch_slots().taken(), 0, "never met");
+    let gone = Outcome::Refused(Refusal::TargetGone);
+    assert_eq!(outcomes_of(&mut rig, id), [(id, gone)]);
+}
+
+#[test]
 fn what_cannot_be_timed_is_refused_with_nothing_queued() {
     let rig = beat_rig(120.0);
     // Edits nothing.

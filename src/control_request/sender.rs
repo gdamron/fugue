@@ -174,6 +174,12 @@ impl RequestSender {
         self.shared.watches.full()
     }
 
+    /// Notes that timed edit `id`, queued through this channel, was
+    /// cancelled (see [`WatchSlots`]).
+    pub(crate) fn cancelled(&self, id: RequestId) {
+        self.shared.watches.cancel(id);
+    }
+
     /// The count the channel's drain releases requests timed by a
     /// condition from as they settle.
     pub(crate) fn watch_slots(&self) -> Arc<WatchSlots> {
