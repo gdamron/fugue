@@ -18,6 +18,13 @@ fn time(rig: &Rig, prepared: PreparedChange, when: When, ttl: Option<u64>) -> Re
     id
 }
 
+/// The flag the reclaimer reads before taking the publisher.
+fn waiting(publisher: &Publisher) -> bool {
+    publisher
+        .timed_flag()
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A change removing `id`, prepared against the graph that is playing.
 fn removing(rig: &Rig, id: &str) -> PreparedChange {
     let publisher = rig.live.publisher().lock().unwrap();
@@ -50,6 +57,7 @@ fn a_landed_edit_is_adopted_and_until_then_the_publisher_stays_put() {
         let mut publisher = rig.live.publisher().lock().unwrap();
         assert!(publisher.adopt().is_none(), "waiting");
         assert!(publisher.timed_waiting());
+        assert!(waiting(&publisher), "the reclaimer's flag follows");
         assert_eq!(publisher.generation(), generation);
     }
 
@@ -62,6 +70,7 @@ fn a_landed_edit_is_adopted_and_until_then_the_publisher_stays_put() {
     assert!(!publisher.mirror().modules.contains_key("osc2"));
     assert_eq!(publisher.generation(), generation + 1);
     assert!(!publisher.timed_waiting());
+    assert!(!waiting(&publisher));
     assert!(publisher.adopt().is_none(), "adopted once");
 }
 
@@ -76,6 +85,7 @@ fn a_change_published_while_an_edit_waits_cancels_it() {
     let mut publisher = rig.live.publisher().lock().unwrap();
     assert!(publisher.publish(prepared).is_ok());
     assert!(!publisher.timed_waiting(), "cancelled");
+    assert!(!waiting(&publisher));
     drop(publisher);
 
     render_counted(&mut rig, 8);
@@ -152,6 +162,7 @@ fn an_edit_that_expires_is_forgotten() {
     let mut publisher = rig.live.publisher().lock().unwrap();
     assert!(publisher.adopt().is_none());
     assert!(!publisher.timed_waiting());
+    assert!(!waiting(&publisher), "forgotten, the flag too");
     drop(publisher);
     assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
 }
