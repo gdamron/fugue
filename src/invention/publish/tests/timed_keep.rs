@@ -1,19 +1,19 @@
 //! An authored write to a control a timed edit writes as it lands, made
-//! while the edit waits, is kept over the edit's own write: the edit lands
-//! without it, and says so. What plays and what is recorded are the
+//! while the edit waits, is kept over the edit's own write as the write is
+//! queued: the edit lands without its value ever sounding, and says so. What plays and what is recorded are the
 //! author's value whenever the audio thread takes the write: before the
 //! landing, after it, or held back by a full pending store. When it cannot
 //! be kept (no room for requests waiting on conditions), the whole edit is
 //! cancelled instead, as before.
 
-use super::timed_status::{queue_writing, recorded, state_of, write, BLOCKS};
+use super::timed_status::{front_door, queue_writing, recorded, state_of, write, BLOCKS, LANDING};
 use super::*;
 use crate::control_request::{
     Condition, Predicate, Request, RequestId, RequestValue, RtValue, When,
 };
 use crate::invention::declared::DeclaredSurface;
 use crate::invention::publish::timed::EditTime;
-use crate::invention::publish::{CancelCause, EditState, Touched};
+use crate::invention::publish::{Authored, CancelCause, EditState, Touched};
 use crate::{ControlValue, ControlWriteIntent};
 
 /// What `id.key` plays.
@@ -49,7 +49,13 @@ fn an_authored_write_to_a_control_the_edit_writes_is_kept_as_it_lands() {
     assert_eq!(state_of(&rig, id), EditState::Queued);
     assert_eq!(kept(&rig, id), ["osc2.frequency"]);
 
-    rig.render(BLOCKS);
+    // Block by block across the landing: the edit's 440 never plays.
+    for block in 1..BLOCKS {
+        rig.render(1);
+        let at = format!("block {block}, landing in block {}", LANDING / 64);
+        let frequency = playing(&rig, "osc2", "frequency");
+        assert_eq!(frequency, ControlValue::Number(660.0), "{at}");
+    }
     let state = state_of(&rig, id);
     rig.render(1);
     assert_eq!(
@@ -88,33 +94,60 @@ fn the_latest_of_several_kept_writes_plays() {
     assert_eq!(kept(&rig, id), ["osc2.frequency"]);
 }
 
-/// A kept write queued only once the edit has landed (it landed between
-/// the check and the write being queued) applies as soon as it arrives:
-/// after the edit's own, so it still plays.
+/// The edit landing between an authored write being queued and recorded:
+/// kept as it was queued, the write plays through the landing, and is
+/// recorded, the edit having landed without its own value sounding.
 #[test]
-fn a_kept_write_queued_after_the_edit_lands_still_plays_last() {
+fn a_write_kept_as_it_is_queued_plays_through_a_landing_before_its_record() {
     let mut rig = Rig::new(BASE);
     let id = queue_writing(&rig, 440.0);
-    let target = frequency_target(&rig, "osc2");
-    let keeping = rig.live.publisher().lock().unwrap().timed_keeping();
-    let (edit, priority) = keeping.unwrap();
-    assert_eq!((edit, priority), (id, 1));
-    rig.render(BLOCKS); // lands, writing 440
-    assert_eq!(
-        playing(&rig, "osc2", "frequency"),
-        ControlValue::Number(440.0)
-    );
+    let value = ControlValue::Number(660.0);
+    let queued = front_door(&rig).make_authored("osc2", "frequency", value.clone());
+    let queued = queued.unwrap();
+    assert_eq!(queued.safe, Some(id), "kept over the edit");
+    for block in 1..=BLOCKS {
+        rig.render(1);
+        let frequency = playing(&rig, "osc2", "frequency");
+        assert_eq!(frequency, value, "block {block}");
+    }
+    let seen = (queued.generation.unwrap(), queued.safe);
+    let recorded_it = rig.live.record_authored("osc2", "frequency", &value, seen);
+    assert_eq!(recorded_it, Authored::Recorded);
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
+    assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
+    assert_eq!(kept(&rig, id), ["osc2.frequency"]);
+}
 
-    let mut request = Request::new(target, RequestValue::Value(RtValue::F32(660.0)));
-    let condition = Condition::all(&[Predicate::Applied(edit)]).unwrap();
-    request.when = When::Condition(condition);
-    request.priority = priority;
-    rig.live.requests.submit(request).unwrap();
-    rig.render(1);
+/// An authored write queued once the edit has landed, before it is
+/// adopted, follows the edit's own write: it plays, and is recorded at
+/// once, as the edit it is safe from writing over it.
+#[test]
+fn a_write_queued_once_the_edit_has_landed_plays_and_is_recorded() {
+    let mut rig = Rig::new(BASE);
+    let id = queue_writing(&rig, 440.0);
+    rig.render(BLOCKS); // lands, writing 440
+    let value = ControlValue::Number(660.0);
+    let door = front_door(&rig);
+    let queued = door.make_authored("osc2", "frequency", value.clone());
+    let queued = queued.unwrap();
+    assert_eq!(queued.safe, Some(id), "queued after the landing");
+    let seen = queued.generation.unwrap();
+    let unsafe_record = rig
+        .live
+        .record_authored("osc2", "frequency", &value, (seen, None));
     assert_eq!(
-        playing(&rig, "osc2", "frequency"),
-        ControlValue::Number(660.0)
+        unsafe_record,
+        Authored::Overtaken,
+        "as were it queued before"
     );
+    let recorded_it = rig
+        .live
+        .record_authored("osc2", "frequency", &value, (seen, queued.safe));
+    assert_eq!(recorded_it, Authored::Recorded);
+    rig.render(1);
+    assert_eq!(playing(&rig, "osc2", "frequency"), value);
+    assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
+    assert!(kept(&rig, id).is_empty(), "nothing to keep it over");
 }
 
 /// However late the audio thread takes the write: here the pending store

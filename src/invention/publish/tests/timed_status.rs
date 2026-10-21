@@ -15,10 +15,10 @@ use crate::{ControlValue, ControlWriteIntent};
 /// Blocks before a timed edit at [`LANDING`] has landed.
 pub(super) const BLOCKS: usize = 6;
 /// Where the rig's timed edits land, from sample 0.
-const LANDING: u64 = 64 * 3 + 9;
+pub(super) const LANDING: u64 = 64 * 3 + 9;
 
 /// The runtime's control front door over the rig.
-fn front_door(rig: &Rig) -> RuntimeSnapshot {
+pub(super) fn front_door(rig: &Rig) -> RuntimeSnapshot {
     RuntimeSnapshot {
         state: Arc::clone(&rig.live.state),
         control_surfaces: Arc::clone(&rig.live.control_surfaces),
@@ -275,7 +275,9 @@ fn a_write_to_a_module_replaced_before_it_is_recorded_is_made_again() {
         .unwrap();
     // The edit lands after the write reached the oscillator it replaces.
     rig.render(BLOCKS);
-    let recorded = rig.live.record_authored("osc1", "frequency", &value, seen);
+    let recorded = rig
+        .live
+        .record_authored("osc1", "frequency", &value, (seen, None));
     assert_eq!(
         recorded,
         Authored::Overtaken,
@@ -298,7 +300,9 @@ fn an_authored_write_a_landing_overtakes_is_made_again() {
         .unwrap();
     // The write plays, then the edit lands, writing 440 as it does.
     rig.render(BLOCKS);
-    let recorded_it = rig.live.record_authored("osc2", "frequency", &value, seen);
+    let recorded_it = rig
+        .live
+        .record_authored("osc2", "frequency", &value, (seen, None));
     assert_eq!(
         recorded_it,
         Authored::Overtaken,
@@ -372,7 +376,9 @@ fn an_untimed_change_between_a_write_and_its_record_does_not_write_it_again() {
     rig.live.commit(change.prepare().unwrap()).unwrap();
     assert!(rig.live.generation() > seen);
 
-    let recorded = rig.live.record_authored("osc2", "frequency", &value, seen);
+    let recorded = rig
+        .live
+        .record_authored("osc2", "frequency", &value, (seen, None));
     assert_eq!(recorded, Authored::Recorded);
     rig.render(1);
     assert_eq!(recorded_document(&rig, "osc2"), 330.0);
@@ -390,7 +396,9 @@ fn a_timed_edit_keeping_the_module_between_a_write_and_its_record_does_not_write
         .set_control_transient("osc2", "frequency", value.clone())
         .unwrap();
     rig.render(BLOCKS);
-    let recorded = rig.live.record_authored("osc2", "frequency", &value, seen);
+    let recorded = rig
+        .live
+        .record_authored("osc2", "frequency", &value, (seen, None));
     assert_eq!(recorded, Authored::Recorded);
     assert_eq!(state_of(&rig, id), EditState::Adopted);
     rig.render(1);
@@ -425,7 +433,7 @@ fn a_write_overtaken_and_refused_on_its_retry_is_not_recorded() {
             }
             door.set_control_transient("osc1", "frequency", value.clone())?;
             rig.render(BLOCKS); // the edit lands after the write
-            Ok(())
+            Ok(crate::invention::declared::Queued::default())
         },
         |seen| live.record_authored("osc1", "frequency", &value, seen),
     );
@@ -439,6 +447,68 @@ fn a_write_overtaken_and_refused_on_its_retry_is_not_recorded() {
     let frequency = playing.get_control("frequency").unwrap();
     assert_eq!(frequency, ControlValue::Number(440.0), "the square plays");
     assert_eq!(recorded_document(&rig, "osc1"), 440.0, "and is recorded");
+}
+
+/// A write a timed edit overtook is reported before anything else is done:
+/// an edit queued since, which rebuilds the same module, is left waiting.
+#[test]
+fn an_overtaken_write_leaves_an_edit_queued_since_alone() {
+    let mut rig = Rig::new(BASE);
+    queue(&rig, false, None);
+    let seen = rig.live.generation();
+    let value = ControlValue::Number(330.0);
+    front_door(&rig)
+        .set_control_transient("osc1", "frequency", value.clone())
+        .unwrap();
+    rig.render(BLOCKS); // lands after the write
+    let saw = rig.build(
+        "osc1",
+        "oscillator",
+        serde_json::json!({ "waveform": "saw" }),
+    );
+    let mut change = rig.live.begin(); // adopts the first edit
+    change.upsert("osc1", saw);
+    let prepared = change.prepare().unwrap();
+    let time = EditTime::AtSample(LANDING + 64 * 20);
+    let later = rig.live.commit_when(prepared, time, None, |_| {}).unwrap();
+    let recorded = rig
+        .live
+        .record_authored("osc1", "frequency", &value, (seen, None));
+    assert_eq!(recorded, Authored::Overtaken);
+    assert_eq!(state_of(&rig, later), EditState::Queued, "left waiting");
+}
+
+/// A write queued once a timed edit has been adopted is recorded at once,
+/// however stale the generation read before it.
+#[test]
+fn a_write_queued_after_an_adoption_is_recorded_at_once() {
+    use crate::invention::orchestration::authored::{write_authored, WRITE_ATTEMPTS};
+    let mut rig = Rig::new(BASE);
+    let stale = rig.live.generation();
+    let id = queue(&rig, false, None);
+    rig.render(BLOCKS);
+    let live = rig.live.clone();
+    let door = front_door(&rig);
+    let value = ControlValue::Number(330.0);
+    let mut writes = 0;
+    let ended = write_authored(
+        WRITE_ATTEMPTS,
+        ("osc1", "frequency"),
+        || stale,
+        || {
+            writes += 1;
+            let adopted = live.timed_status(id).unwrap().state;
+            assert_eq!(adopted, EditState::Adopted, "adopted before the write");
+            door.make_authored("osc1", "frequency", value.clone())
+        },
+        |seen| live.record_authored("osc1", "frequency", &value, seen),
+    );
+    assert!(ended.is_ok(), "{ended:?}");
+    assert_eq!(writes, 1);
+    rig.render(1);
+    let playing = rig.live.control_surfaces.lock().unwrap()["osc1"].clone();
+    assert_eq!(playing.get_control("frequency").unwrap(), value);
+    assert_eq!(recorded_document(&rig, "osc1"), 330.0);
 }
 
 fn recorded_document(rig: &Rig, id: &str) -> f64 {

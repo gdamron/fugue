@@ -52,7 +52,7 @@ pub(crate) enum CancelCause {
     Commit,
     /// An authored write to a control this edit `touches`: one of a module
     /// it removes or rebuilds, or one it writes as it lands that it could
-    /// not keep the write over (see `LiveGraph::keep_authored`).
+    /// not keep the write over (see `Publisher::keep_authored`).
     AuthoredWrite {
         module_id: String,
         key: String,
