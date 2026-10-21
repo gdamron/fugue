@@ -3,13 +3,19 @@
 //! and from there glides its control linearly to the request's value,
 //! arriving exactly on the sample the clock reaches the ramp's end.
 //!
+//! A table's entry with a ramp (see `super::table`) runs among them too,
+//! written through the entry's own target rather than as a request.
+//!
 //! # Bounded
 //!
 //! A ramp runs in the graph's [`Ramps`], a table apart from the watches,
-//! preallocated and capped at [`RAMP_CAPACITY`]. A ramp's room is taken as
-//! its request is: one that would leave a ramp waiting or running without
-//! room is refused ([`Refusal::PendingFull`](super::Refusal::PendingFull))
-//! then, never at its beat.
+//! preallocated and capped at [`RAMP_CAPACITY`] ramps of requests, and as
+//! many of tables. A request's ramp's room is taken as its request is: one
+//! that would leave a ramp waiting or running without room is refused
+//! ([`Refusal::PendingFull`](super::Refusal::PendingFull)) then, never at
+//! its beat. A table's entry finding no room writes its value at once, a
+//! jump where the scheduler before tables glided, and is counted
+//! ([`Ramps::crowded`]) so a status can show it.
 //!
 //! # Writes
 //!
@@ -36,8 +42,12 @@
 //!
 //! [`BeatTime::ramp`]: super::BeatTime::ramp
 
+use std::sync::Arc;
+
+use super::event::EventCounter;
 use super::hold::Standing;
 use super::request::{ControlTarget, RequestValue, RtValue};
+use super::table::{TableTarget, TableValue};
 use super::timeline::Timeline;
 use super::watch::BeatHost;
 use crate::payload::Retirer;
@@ -114,35 +124,104 @@ pub(crate) fn ramp_value(from: f32, to: f32, progress: f64) -> f32 {
     value.max(from.min(to)).min(from.max(to))
 }
 
+/// What a running ramp writes, and at whose say.
+#[derive(Clone, Copy)]
+enum RampOn {
+    /// A request's ([`BeatTime::ramp`](super::BeatTime::ramp)): it writes
+    /// as the request did, at its standing, while it keeps the control's
+    /// hold.
+    Request {
+        /// In the installed generation's order.
+        target: ControlTarget,
+        /// Its request's, at the sample its beat fell on.
+        standing: Standing,
+    },
+    /// A table entry's ([`TableEntry`](super::table::TableEntry)): it
+    /// writes through the entry's own target while its table plays the
+    /// plan it started in and its writes are let through.
+    Entry(EntryKey),
+}
+
+/// A table's entry, as a ramp finds it on the graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EntryKey {
+    /// The module whose table it is, in the installed order.
+    pub(crate) module: usize,
+    /// The table's id ([`BeatTable::id`](super::table::BeatTable::id)).
+    pub(crate) table: usize,
+    /// The plan the table played when the ramp started.
+    pub(crate) plan: u64,
+    /// Its index in the table.
+    pub(crate) entry: usize,
+}
+
 /// A ramp running on its control.
 #[derive(Clone, Copy)]
 struct Running {
-    /// In the installed generation's order, as is `clock`.
-    target: ControlTarget,
+    on: RampOn,
+    /// Its clock, in the order `on`'s module is in.
     clock: usize,
-    /// Its request's, at the sample its beat fell on.
-    standing: Standing,
     ramp: BeatRamp,
     /// Another write replaced it: removed at the next step.
     ended: bool,
 }
 
-/// The ramps running on a graph, in the order they started. Single-
-/// threaded (the audio thread), allocated once on a control thread and
-/// never grown.
+impl Running {
+    fn new(on: RampOn, clock: usize, ramp: BeatRamp) -> Self {
+        Self {
+            on,
+            clock,
+            ramp,
+            ended: false,
+        }
+    }
+
+    /// Whether it runs in the `installed` generation: a table's always
+    /// does, its indices kept current as the tables are found again.
+    fn installed(&self, installed: u64) -> bool {
+        match self.on {
+            RampOn::Request { target, .. } => target.generation == installed,
+            RampOn::Entry(_) => true,
+        }
+    }
+
+    fn is_entry(&self) -> bool {
+        matches!(self.on, RampOn::Entry(_))
+    }
+}
+
+/// The ramps running on a graph, in the order they started: those of
+/// requests and those of tables, each kind capped apart. Single-threaded
+/// (the audio thread), allocated once on a control thread and never
+/// grown.
 pub(crate) struct Ramps {
     entries: Vec<Running>,
-    /// The ramps it holds at most (the Vec may have more room).
+    /// The requests' ramps it holds at most.
     limit: usize,
+    /// The tables' ramps it holds at most.
+    table_limit: usize,
+    /// Tables' ramps refused for room (see [`Ramps::crowded`]).
+    crowded: Arc<EventCounter>,
 }
 
 impl Ramps {
-    /// Room for `capacity` ramps. Allocates: control thread.
+    /// Room for `capacity` ramps of requests and as many of tables.
+    /// Allocates: control thread.
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
-            entries: Vec::with_capacity(capacity),
+            entries: Vec::with_capacity(2 * capacity),
             limit: capacity,
+            table_limit: capacity,
+            crowded: Arc::new(EventCounter::new()),
         }
+    }
+
+    /// Counts each table's ramp refused because the tables' room was full
+    /// (its entry jumped to its value). Clone it on a control thread
+    /// before the drain moves to the audio thread, and read it through an
+    /// `EventCursor`.
+    pub(crate) fn crowded(&self) -> &Arc<EventCounter> {
+        &self.crowded
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -159,17 +238,24 @@ impl Ramps {
         self.entries.iter().filter(|running| !running.ended).count()
     }
 
+    /// How many ramps of `entries` kind (tables', or requests') it holds.
+    fn count(&self, entries: bool) -> usize {
+        let kind = |running: &&Running| running.is_entry() == entries;
+        self.entries.iter().filter(kind).count()
+    }
+
     /// The clocks of the ramps in the `installed` generation.
     pub(crate) fn clocks(&self, installed: u64) -> impl Iterator<Item = usize> + '_ {
         self.entries
             .iter()
-            .filter(move |running| running.target.generation == installed)
+            .filter(move |running| running.installed(installed))
             .map(|running| running.clock)
     }
 
-    /// Whether one more ramp has room, `waiting` waiting for their beats.
+    /// Whether one more request's ramp has room, `waiting` waiting for
+    /// their beats.
     pub(crate) fn has_room(&self, waiting: usize) -> bool {
-        self.entries.len() + waiting < self.limit
+        self.count(false) + waiting < self.limit
     }
 
     /// Runs `ramp` on `target`'s control, timed on `clock`, writing at
@@ -184,31 +270,111 @@ impl Ramps {
         host: &impl BeatHost,
     ) {
         self.supersede(&target, host);
-        debug_assert!(self.entries.len() < self.limit, "a ramp's room is taken");
-        if self.entries.len() < self.limit {
-            self.entries.push(Running {
-                target,
-                clock,
-                standing,
-                ramp,
-                ended: false,
-            });
+        debug_assert!(self.count(false) < self.limit, "a ramp's room is taken");
+        if self.count(false) < self.limit {
+            let on = RampOn::Request { target, standing };
+            self.push(on, clock, ramp);
         }
     }
 
-    /// Ends every ramp on a control `target` reaches: another write
-    /// applied to it. Allocation- and free-free.
+    /// Runs `ramp` on table entry `key`, timed on `clock`: it replaces
+    /// every table's ramp on a control it reaches. Returns false, starting
+    /// none and counting it [`crowded`](Self::crowded), when the tables'
+    /// ramps have no room. Allocation-, free- and lock-free.
+    pub(crate) fn start_entry(
+        &mut self,
+        key: EntryKey,
+        clock: usize,
+        ramp: BeatRamp,
+        host: &impl BeatHost,
+    ) -> bool {
+        if let Some(target) = entry_target(host, key) {
+            self.supersede_entry(target, host);
+        }
+        // An ended ramp of a table's (one just replaced) gives up its room.
+        let ended = |running: &&mut Running| running.ended && running.is_entry();
+        if let Some(slot) = self.entries.iter_mut().find(ended) {
+            *slot = Running::new(RampOn::Entry(key), clock, ramp);
+            return true;
+        }
+        if self.count(true) >= self.table_limit {
+            self.crowded.record();
+            return false;
+        }
+        self.push(RampOn::Entry(key), clock, ramp);
+        true
+    }
+
+    fn push(&mut self, on: RampOn, clock: usize, ramp: BeatRamp) {
+        self.entries.push(Running::new(on, clock, ramp));
+    }
+
+    /// Ends every request's ramp on a control `target` reaches: another
+    /// write applied to it. (A table's ramp on a declared control ends as
+    /// a write above automation holds the control.) Allocation- and
+    /// free-free.
     pub(crate) fn supersede(&mut self, target: &ControlTarget, host: &impl BeatHost) {
         for running in &mut self.entries {
-            if host.overlaps(&running.target, target) {
+            if let RampOn::Request { target: on, .. } = &running.on {
+                if host.overlaps(on, target) {
+                    running.ended = true;
+                }
+            }
+        }
+    }
+
+    /// Ends every table's ramp on a control `target` reaches: a table's
+    /// next entry on it. Each first writes its value at the clock's next
+    /// sample, as a scheduler advanced its ramps before firing, so the
+    /// entry's own ramp leaves the control where that one reached (its end,
+    /// when it arrives there). (A request's ramp ends as the entry frees
+    /// its hold.) Allocation- and free-free.
+    pub(crate) fn supersede_entry(&mut self, target: &TableTarget, host: &impl BeatHost) {
+        for running in &mut self.entries {
+            let RampOn::Entry(key) = running.on else {
+                continue;
+            };
+            let Some(own) = entry_target(host, key).filter(|own| own.same(target)) else {
+                continue;
+            };
+            if !running.ended {
+                let reached = host.timeline(running.clock);
+                if let Some((value, _)) = reached.and_then(|at| running.ramp.next(at)) {
+                    own.write(TableValue::Number(value));
+                }
+            }
+            running.ended = true;
+        }
+    }
+
+    /// Ends every ramp of table `table`: it played again from its first
+    /// step, another plan, or went away. Allocation- and free-free.
+    pub(crate) fn end_table(&mut self, table: usize) {
+        for running in &mut self.entries {
+            if matches!(running.on, RampOn::Entry(key) if key.table == table) {
                 running.ended = true;
             }
         }
     }
 
-    /// Maps every ramp into the `installed` generation's order: `map`
-    /// gives a module's index there, or `None` when it went away, which
-    /// ends the ramp silently (it reported where it started).
+    /// Moves every ramp of table `table` to its module's index `module`
+    /// and its clock's `clock`, as the tables are found again after the
+    /// modules changed order. Allocation- and free-free.
+    pub(crate) fn retable(&mut self, table: usize, module: usize, clock: usize) {
+        for running in &mut self.entries {
+            if let RampOn::Entry(key) = &mut running.on {
+                if key.table == table {
+                    key.module = module;
+                    running.clock = clock;
+                }
+            }
+        }
+    }
+
+    /// Maps every request's ramp into the `installed` generation's order:
+    /// `map` gives a module's index there, or `None` when it went away,
+    /// which ends the ramp silently (it reported where it started). A
+    /// table's ramps move as the tables are found again.
     /// Allocation- and free-free.
     pub(crate) fn remap(
         &mut self,
@@ -216,17 +382,20 @@ impl Ramps {
         mut map: impl FnMut(u64, usize) -> Option<usize>,
     ) {
         self.entries.retain_mut(|running| {
-            let generation = running.target.generation;
+            let RampOn::Request { target, .. } = &mut running.on else {
+                return true;
+            };
+            let generation = target.generation;
             if generation >= installed {
                 return true;
             }
-            let module = map(generation, running.target.module_idx);
+            let module = map(generation, target.module_idx);
             let clock = map(generation, running.clock);
             let (Some(module), Some(clock)) = (module, clock) else {
                 return false;
             };
-            running.target.generation = installed;
-            running.target.module_idx = module;
+            target.generation = installed;
+            target.module_idx = module;
             running.clock = clock;
             true
         });
@@ -245,21 +414,24 @@ impl Ramps {
     ) -> Option<u64> {
         let mut i = 0;
         while i < self.entries.len() {
-            let running = &self.entries[i];
-            if running.target.generation != installed && !running.ended {
+            let running = self.entries[i];
+            if !running.installed(installed) && !running.ended {
                 i += 1;
                 continue;
             }
             let Running {
-                target,
+                on,
                 clock,
-                standing,
                 ramp,
                 ended,
-            } = *running;
+            } = running;
+            let kept = match on {
+                RampOn::Request { target, standing } => host.kept(&target, standing),
+                RampOn::Entry(_) => true,
+            };
             let next = (host.timeline(clock))
                 .and_then(|timeline| ramp.next(timeline))
-                .filter(|_| !ended && host.kept(&target, standing));
+                .filter(|_| !ended && kept);
             let Some((value, last)) = next else {
                 self.entries.remove(i);
                 continue;
@@ -267,9 +439,17 @@ impl Ramps {
             // Its write may be its clock's tempo: the next sample stays
             // where the clock now predicts, so a last write lands there.
             host.latch(clock);
-            let value = RequestValue::Value(RtValue::F32(value));
-            let written = host.apply(&target, Some(standing), value, retirer);
-            if written.is_err() || last {
+            let written = match on {
+                RampOn::Request { target, standing } => {
+                    let value = RequestValue::Value(RtValue::F32(value));
+                    host.apply(&target, Some(standing), value, retirer).is_ok()
+                }
+                // Dropped while a higher tier holds the control: it ends,
+                // and the table's next entry on the control takes it back.
+                RampOn::Entry(key) => entry_target(&*host, key)
+                    .is_some_and(|target| target.write(TableValue::Number(value))),
+            };
+            if !written || last {
                 self.entries.remove(i);
                 continue;
             }
@@ -277,7 +457,7 @@ impl Ramps {
         }
         let mut wait = None::<u64>;
         for running in &self.entries {
-            if running.target.generation != installed {
+            if !running.installed(installed) {
                 continue;
             }
             let samples = (host.timeline(running.clock))
@@ -289,4 +469,12 @@ impl Ramps {
         }
         wait
     }
+}
+
+/// Where table entry `key` writes, while its module plays that table and
+/// that plan.
+fn entry_target(host: &impl BeatHost, key: EntryKey) -> Option<&TableTarget> {
+    let table = host.table(key.module)?;
+    let playing = table.id() == key.table && table.plan() == key.plan;
+    Some(&table.entry(key.entry).filter(|_| playing)?.target)
 }
