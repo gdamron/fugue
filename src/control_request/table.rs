@@ -156,6 +156,11 @@ pub(crate) trait BeatTable {
 
     /// Told whether a drain plays it: until one does, its module does.
     fn set_played(&self, played: bool);
+
+    /// Told, by the drain playing it, the step its clock's next sample is
+    /// in (-1 before step 0), at every pass and on each step's sample: a
+    /// module's `step` output follows its clock's position.
+    fn set_step(&self, step: i64);
 }
 
 #[cfg(test)]

@@ -211,10 +211,11 @@ impl Cursors {
         self.entries.sort_unstable_by_key(|cursor| cursor.module);
     }
 
-    /// One pass at sample `now`: fires every entry whose step the clock's
-    /// next sample reaches (or, late, has passed). Returns whether any
-    /// fired, and how many samples until the next may, as far as the
-    /// clocks' tempi now say. Allocation- and free-free.
+    /// One pass at sample `now`: tells each table its step and fires every
+    /// entry whose step the clock's next sample reaches (or, late, has
+    /// passed). Returns whether any fired, and how many samples until the
+    /// next entry or step may, as far as the clocks' tempi now say.
+    /// Allocation- and free-free.
     pub(crate) fn pass(
         &mut self,
         now: u64,
@@ -238,7 +239,7 @@ impl Cursors {
 
 /// What a cursor's pass did: whether it fired any entry, whether one was
 /// due at this sample (latching its clock), and the samples until its
-/// next may be: `None` once it played out or its clock or table is gone.
+/// next entry or step may be: `None` once its clock or table is gone.
 #[derive(Default)]
 struct Fired {
     any: bool,
@@ -260,6 +261,13 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
         return fired;
     }
     let origin = cursor.anchor(timeline, table, ramps);
+    let next_step = report_step(table, timeline, origin, cursor.clock.beats);
+    let until = |beat| {
+        timeline
+            .samples_until(beat)
+            .map(|samples| (samples - 1).max(1))
+    };
+    fired.wait = next_step.and_then(until);
     while let Some(entry) = table.entry(cursor.next) {
         let beat = origin + entry.step as f64 * cursor.clock.beats;
         let due = if timeline.position() >= beat {
@@ -267,8 +275,7 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
         } else if timeline.position_after(1) >= beat {
             now
         } else {
-            let samples = timeline.samples_until(beat);
-            fired.wait = samples.map(|samples| (samples - 1).max(1));
+            fired.wait = fired.wait.into_iter().chain(until(beat)).min();
             return fired;
         };
         fired.any = true;
@@ -311,4 +318,80 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
         }
     }
     fired
+}
+
+/// Beyond this a step no longer counts exactly in a beat (an `f64`): a
+/// clock this far along tells the last step it can.
+const LAST_STEP: i64 = 1 << 53;
+
+/// Tells `table` the step its clock's next sample is in, counting steps
+/// of `beats` from `origin` as its entries count them. Returns the beat
+/// the next step falls on, or `None` at the last step it can count, so a
+/// clock that far along does not end every segment after one sample.
+fn report_step(
+    table: &dyn BeatTable,
+    timeline: &dyn Timeline,
+    origin: f64,
+    beats: f64,
+) -> Option<f64> {
+    let reached = timeline.position_after(1);
+    let at = |step: i64| origin + step as f64 * beats;
+    let steps = ((reached - origin) / beats).floor();
+    let mut step = if steps.is_nan() {
+        -1
+    } else {
+        steps.clamp(-1.0, LAST_STEP as f64) as i64
+    };
+    // The division may round across a boundary its entries' beats do not,
+    // by a step at most.
+    if step >= 0 && at(step) > reached {
+        step -= 1;
+    } else if step < LAST_STEP && at(step + 1) <= reached {
+        step += 1;
+    }
+    table.set_step(step);
+    (step < LAST_STEP).then(|| at(step + 1))
+}
+
+#[cfg(test)]
+mod last_step {
+    use super::*;
+    use crate::test_support::table::TestTable;
+    use std::sync::atomic::Ordering;
+
+    /// A clock far along and fast: from beat 3e17, 1e10 beats a sample.
+    struct Far;
+
+    impl Timeline for Far {
+        fn position(&self) -> f64 {
+            3e17
+        }
+
+        fn position_after(&self, samples: u64) -> f64 {
+            3e17 + samples as f64 * 1e10
+        }
+
+        fn samples_until(&self, beat: f64) -> Option<u64> {
+            let samples = ((beat - 3e17) / 1e10).ceil().max(1.0);
+            samples.is_finite().then_some(samples as u64)
+        }
+
+        fn beats_before(&self) -> u64 {
+            0
+        }
+
+        fn latch(&mut self) {}
+    }
+
+    #[test]
+    fn a_table_at_the_last_step_it_can_count_waits_on_no_step() {
+        let table = TestTable::new(1, Vec::new());
+        // A beat a step from beat 0: past 2^53 steps, so it holds the last.
+        assert_eq!(report_step(&table, &Far, 0.0, 1.0), None);
+        assert_eq!(table.step.load(Ordering::Relaxed), LAST_STEP);
+        // Short of it, the next step's beat.
+        let next = report_step(&table, &Far, 0.0, 1e9);
+        assert_eq!(table.step.load(Ordering::Relaxed), 300_000_010);
+        assert_eq!(next, Some(300_000_011.0 * 1e9));
+    }
 }

@@ -9,7 +9,6 @@ use super::request_conditions::{first_change, nth_beat, rig, submit_on_beat};
 use super::*;
 use crate::control_request::Outcome;
 use crate::test_support::dial::DIAL;
-use crate::ControlValue;
 
 fn watches(rig: &Rig) -> Vec<(String, String)> {
     let publisher = rig.live.publisher().lock().unwrap();
@@ -170,13 +169,11 @@ fn an_order_running_a_writers_loop_earlier_is_not_added() {
     assert!(rig.render(2_000) == oracle, "unchanged while it waits");
 }
 
-#[test]
-fn an_order_after_a_live_retarget_is_not_added() {
-    // sched_b, retargeted live to write clock2's tempo and d2's level, now
-    // writes after sched_a by the installed topology, though a compile
-    // would run it, with clock2 and sched_a, ahead (FUG-388). An order
-    // publishing that compile would hand d2's level to sched_a.
-    let mut rig = rig(false);
+/// sched_b, retargeted live to write clock2's tempo and d2's level, now
+/// writes after sched_a by the installed topology, though a compile would
+/// run it, with clock2 and sched_a, ahead (FUG-388).
+fn retargeted_live() -> Rig {
+    let rig = rig(false);
     let schedule = |at: serde_json::Value| serde_json::json!({ "schedule": at });
     let sched_b = schedule(serde_json::json!([step("clock", "bpm", 90.0)]));
     let sched_b = rig.build("sched_b", "control_scheduler", sched_b);
@@ -196,11 +193,24 @@ fn an_order_after_a_live_retarget_is_not_added() {
         .unwrap();
     let retarget = serde_json::json!([step("clock2", "bpm", 1100.0), step("d2", "level", 0.75)]);
     write(&rig, "sched_b", "schedule", retarget.to_string().into());
+    rig
+}
+
+#[test]
+fn an_order_after_a_live_retarget_is_not_added() {
+    // An order publishing the compile above would reorder the writers. It
+    // is refused, so the graph plays as it would with none asked for.
+    // (Which writer lands is not this test's: played by the drain, the two
+    // schedulers' writes at one sample land in module order.)
+    let mut oracle = retargeted_live();
+    oracle.render(200);
+    let mut rig = retargeted_live();
     let generation = rig.live.generation();
-    assert!(!order(&rig, "clock", "dial"), "sched_a would win");
-    assert_eq!(rig.live.generation(), generation);
+    assert!(!order(&rig, "clock", "dial"), "the writers would move");
+    assert_eq!(rig.live.generation(), generation, "nothing published");
+    assert!(!watches(&rig).contains(&("clock".to_string(), "dial".to_string())));
     rig.render(200);
-    assert_eq!(read(&rig, "d2", "level"), ControlValue::Number(0.75));
+    assert_eq!(read(&rig, "d2", "level"), read(&oracle, "d2", "level"));
 }
 
 /// sched_b, clocked by the clock, writes the dial's level; sched_a,

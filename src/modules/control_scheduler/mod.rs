@@ -7,20 +7,45 @@
 //!
 //! # Timing model
 //!
-//! The scheduler counts rising edges of its `clock` input — the same clock
-//! gate that drives the sequencers — and fires every schedule entry whose
-//! `at_step` is reached, on the exact frame of the edge. The first edge is
-//! step 0, matching sequencer numbering. Step granularity is whatever clock
-//! output is patched in (`beat` for beats, `beat_x4` for quarter beats, ...).
+//! A step is one gate of the clock output patched into `clock` — the same
+//! clock gate that drives the sequencers: `beat` for beats, `beat_x4` for
+//! quarter beats, and so on. Every schedule entry fires on the exact sample
+//! its step falls on, as a request timed in beats applies.
+//!
+//! In an invention's top level the graph's request drain plays the
+//! schedule in place, on the clock's position (see
+//! `crate::control_request::BeatTable`): step 0 falls on the clock's first
+//! gate past where it stood when the drain first saw the schedule (beat 0
+//! for a clock not yet started), whatever the block boundaries, and a
+//! tempo an entry writes moves the next steps at once. When the clock
+//! resets, the schedule plays again from step 0 on the clock's new beat 0;
+//! the `reset` input is not followed there. The `step` output follows the
+//! clock's position. When two schedulers write one control at one sample,
+//! the later module's write lands, unless the earlier one's entry only fell
+//! due there because the later one wrote its clock's tempo at that sample:
+//! it lands after the write that moved it. (A scheduler playing its
+//! schedule itself, below, writes as it processes, after every schedule
+//! the drain plays.) Module order is the order of the
+//! invention's `modules` at load: a module rebuilt in place keeps its
+//! place, and one added later, live or by a reload, goes after every
+//! other. Reordering `modules` in a reloaded document doesn't reorder the
+//! running modules, so the order is load order plus edit history.
+//!
+//! When the drain stops playing a schedule (its clock unplugged), the
+//! scheduler plays on by itself from the step the clock reached, counting
+//! gates as inside a development; a ramp then under way stops where it
+//! stands. Plugging a clock in, moving the cable to another clock output,
+//! or replacing the clock starts the schedule over: step 0 falls on that
+//! clock's next gate, and every entry plays again.
+//!
+//! Inside a development, the scheduler plays the schedule itself: it counts
+//! rising edges of its `clock` input, the first being step 0, and a rising
+//! edge on `reset` restarts the schedule from step 0.
 //!
 //! A target whose module declares its controls is written through its
 //! automation slots, which the graph applies just before the target
 //! processes (see `crate::control_request::Automation`); a legacy target
-//! through its shared control surface. Either way a change becomes visible
-//! to a target when it processes its next block. The signal graph orders the scheduler before its targets (see
-//! [`crate::Module::control_targets`]), so within a block the write is never
-//! late; scheduling the same clock that drives the scheduler (tempo
-//! automation) forms a cycle, which the graph processes sample-by-sample.
+//! through its shared control surface, with no tiers.
 //!
 //! What a target does with a change is its own: a mixer level, pan or
 //! master starts its [`GAIN_RAMP_MS`](crate::modules::mixer::GAIN_RAMP_MS)
@@ -31,14 +56,16 @@
 //! # Ramps
 //!
 //! An entry with `ramp_steps: N` leaves the control's current value at step
-//! `at_step` and arrives exactly at `value` on the boundary of step
-//! `at_step + N`,
-//! interpolating linearly in between (hairpin-style automation). Boundary
-//! values are exact: at every intermediate step boundary `at_step + k` the control
-//! is exactly `from + (to - from) * k / N`, computed in `f64` and rounded once
-//! to `f32`, whatever the measured step length. The interpolation never
-//! overflows or leaves the range between the endpoints, so a ramp between any
-//! two finite values writes only finite values.
+//! `at_step` and arrives exactly at `value` on the sample of step
+//! `at_step + N`, interpolating linearly in between (hairpin-style
+//! automation). Played by the drain, the ramp follows the clock's position
+//! and is written at the start of each processing segment (a block, or
+//! part of one); played by the scheduler itself, every sample, from the
+//! measured step length, with every step boundary `at_step + k` exactly
+//! `from + (to - from) * k / N`. Values are computed in `f64` and rounded
+//! once to `f32`, never overflow, and never leave the range between the
+//! endpoints, so a ramp between any two finite values writes only finite
+//! values.
 //!
 //! # Holds
 //!
@@ -109,9 +136,12 @@
 //! entries merge with any explicit `schedule`. Patch the same clock output
 //! that drives the sequencers into this module's `clock` input.
 
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::control_request::{ControlCells, ControlIndex, ControlTable, Refusal, TableValue};
+use crate::control_request::{
+    BeatTable, ControlCells, ControlIndex, ControlTable, Refusal, TableEntry, TableValue,
+};
 use crate::payload::{Payload, Retired};
 use crate::traits::ControlMeta;
 use crate::Module;
@@ -139,6 +169,9 @@ use schedule::ResolvedEntry;
 
 /// Module type id, shared with the runtime attachment points.
 pub const CONTROL_SCHEDULER_TYPE_ID: &str = "control_scheduler";
+
+/// The next scheduler's [`BeatTable::id`]: never reused.
+static NEXT_TABLE: AtomicUsize = AtomicUsize::new(1);
 
 /// A ramp in flight: linear interpolation of one numeric control across step
 /// boundaries. Holds an index into the adopted schedule, never owned data, so
@@ -176,8 +209,10 @@ fn ramp_value(from: f32, to: f32, progress: f32) -> f32 {
 ///
 /// # Inputs
 ///
-/// - `clock` - Clock input (a rising edge advances the step counter)
-/// - `reset` - Reset input (rising edge restarts the schedule from step 0)
+/// - `clock` - Clock input (a gate of the clock output patched here is a
+///   step)
+/// - `reset` - Reset input (inside a development, a rising edge restarts
+///   the schedule from step 0; at the top level the clock's reset does)
 ///
 /// # Outputs
 ///
@@ -210,6 +245,17 @@ pub struct ControlScheduler {
     last_gate_in: f32,
     last_reset_in: f32,
 
+    /// Its schedule as the graph's drain plays it (see [`BeatTable`]): its
+    /// id, the plan it plays (changed by every adoption but a retarget),
+    /// whether the drain plays it, and the step the drain last told it.
+    table: usize,
+    plan: u64,
+    played: AtomicBool,
+    told_step: AtomicI64,
+    /// Whether the last block followed the drain: the first it plays on
+    /// its own takes the step the drain told since.
+    followed: bool,
+
     inputs: inputs::ControlSchedulerInputs,
     outputs: outputs::ControlSchedulerOutputs,
 }
@@ -232,6 +278,11 @@ impl ControlScheduler {
             first_gate_received: false,
             last_gate_in: 0.0,
             last_reset_in: 0.0,
+            table: NEXT_TABLE.fetch_add(1, Ordering::Relaxed),
+            plan: 0,
+            played: AtomicBool::new(false),
+            told_step: AtomicI64::new(-1),
+            followed: false,
             inputs: inputs::ControlSchedulerInputs::new(),
             outputs: outputs::ControlSchedulerOutputs::new(),
         }
@@ -258,7 +309,15 @@ impl ControlScheduler {
         }
         std::mem::swap(&mut self.entries, &mut next.entries);
         std::mem::swap(&mut self.ramps, &mut next.ramps);
+        self.plan += 1;
         self.ramps.clear();
+        self.skip_played();
+        next
+    }
+
+    /// Moves the cursor past every entry at or before the current step:
+    /// those have had their boundary.
+    fn skip_played(&mut self) {
         self.cursor = if self.current_step < 0 {
             0
         } else {
@@ -266,7 +325,6 @@ impl ControlScheduler {
             self.entries
                 .partition_point(|entry| entry.at_step() <= step)
         };
-        next
     }
 
     /// Restarts the schedule: the next gate edge is step 0 again and every
@@ -407,8 +465,17 @@ impl Module for ControlScheduler {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        for i in 0..frames {
-            self.process_sample(i);
+        if self.played.load(Ordering::Relaxed) {
+            self.followed = true;
+            self.follow_drain(frames);
+        } else {
+            if std::mem::take(&mut self.followed) {
+                // The drain may have played a step since the last block.
+                self.take_told();
+            }
+            for i in 0..frames {
+                self.process_sample(i);
+            }
         }
         // Mirror the step counter into the controls at block rate.
         self.ctrl.set_step(self.current_step);
@@ -441,6 +508,11 @@ impl Module for ControlScheduler {
 
     fn control_targets(&self) -> Vec<String> {
         self.ctrl.target_module_ids()
+    }
+
+    #[allow(private_interfaces)]
+    fn beat_table(&self) -> Option<&dyn BeatTable> {
+        Some(self)
     }
 
     #[allow(private_interfaces)]
@@ -479,6 +551,65 @@ impl Module for ControlScheduler {
 
     fn set_control(&mut self, key: &str, _value: f32) -> Result<(), String> {
         Err(format!("Control '{}' is not numeric-settable", key))
+    }
+}
+
+impl ControlScheduler {
+    /// A block the drain plays the schedule in: the step is the one the
+    /// drain told, constant through the block (the drain splits blocks on
+    /// each step's sample). The gate and reset inputs are only followed,
+    /// so playing on its own again sees no stale edge.
+    fn follow_drain(&mut self, frames: usize) {
+        self.take_told();
+        for i in 0..frames {
+            self.outputs.set(i, self.current_step as f32);
+        }
+        if let Some(last) = frames.checked_sub(1) {
+            self.last_gate_in = self.inputs.clock(last);
+            self.last_reset_in = self.inputs.reset(last);
+        }
+    }
+
+    /// Takes the step the drain last told, keeping the rest as playing on
+    /// its own again needs it: the entries the drain played are skipped,
+    /// its ramps are its own, and the next gate starts measuring the step
+    /// length afresh.
+    fn take_told(&mut self) {
+        self.current_step = self.told_step.load(Ordering::Relaxed);
+        self.skip_played();
+        self.ramps.clear();
+        self.first_gate_received = false;
+        self.samples_since_gate = 0;
+    }
+}
+
+impl BeatTable for ControlScheduler {
+    fn id(&self) -> usize {
+        self.table
+    }
+
+    fn clock_input(&self) -> &str {
+        "clock"
+    }
+
+    fn plan(&self) -> u64 {
+        self.plan
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn entry(&self, index: usize) -> Option<&TableEntry> {
+        self.entries.get(index).map(|entry| &entry.entry)
+    }
+
+    fn set_played(&self, played: bool) {
+        self.played.store(played, Ordering::Relaxed);
+    }
+
+    fn set_step(&self, step: i64) {
+        self.told_step.store(step, Ordering::Relaxed);
     }
 }
 
