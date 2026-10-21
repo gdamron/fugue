@@ -5,7 +5,10 @@ use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
 use super::*;
+use crate::alloc_counter::allocator_events;
+use crate::audio_thread::AudioThreadScope;
 use crate::modules::melody::MelodyControls;
+use crate::ControlSurface;
 
 /// Main's degree table, recomputed whole under its lock after every edit:
 /// the reference the atomic table must match.
@@ -207,4 +210,42 @@ fn a_copy_taken_while_whole_scales_are_set_is_always_one_of_them() {
     done.store(true, Ordering::Release);
     writer.join().unwrap();
     eprintln!("copies taken {taken}, refused mid-edit {refused}");
+}
+
+#[test]
+fn a_position_write_racing_a_whole_scale_lands_before_it_or_after_it() {
+    let controls = MelodyControls::new(60, vec![0]);
+    let table = &controls.table;
+    // A write that read the table before the scale was set, and stores
+    // after: checked against the count then, so position 1 is refused...
+    let before = table.header.load(Ordering::Acquire);
+    controls.set_allowed_degrees(vec![0, 7]);
+    assert!(!table.write_degree_as_of(before, 1, 11));
+    // ...and position 0 lands before the scale, forgotten with the rest.
+    assert!(table.write_degree_as_of(before, 0, 11));
+    assert_eq!(controls.allowed_degrees(), [0, 7]);
+    // A write that read the table after it is kept.
+    controls.set_degree(1, 11).unwrap();
+    assert_eq!(controls.allowed_degrees(), [0, 11]);
+    // Whole weights forget written weights the same way.
+    controls.set_note_weight(1, 3.0).unwrap();
+    controls.set_note_weights(vec![2.0]);
+    assert_eq!(controls.note_weights(), [2.0, 1.0]);
+}
+
+#[test]
+fn a_position_reads_on_the_audio_thread_without_a_lock() {
+    let controls = MelodyControls::new(60, vec![0, 2, 4]);
+    controls.set_note_weight(1, 3.0).unwrap();
+    let _whole = controls.table.writing();
+    let audio = AudioThreadScope::enter();
+    let (read, allocs, frees) = allocator_events(|| {
+        [
+            controls.get_control("degree.1"),
+            controls.get_control("note_weight.1"),
+        ]
+    });
+    drop(audio);
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(read, [Ok(2.0.into()), Ok(3.0.into())]);
 }

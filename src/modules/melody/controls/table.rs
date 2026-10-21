@@ -21,8 +21,16 @@
 //! they write: the audio thread's copy ([`super::super::snapshot`]) is taken
 //! only when it was even and unchanged across the copy, so it never holds
 //! half of one scale and half of another.
+//!
+//! Setting a whole scale or whole weights forgets the values written to
+//! single positions by moving on a generation, not by clearing them: a
+//! written value counts only while it carries the current generation. The
+//! count and the degrees' generation share one atomic, so a position write
+//! checked against one count is tagged with that count's generation. A
+//! write racing a whole scale is then either before it (forgotten with the
+//! rest) or after it (kept), as under a lock, never accepted and then lost.
 
-use std::sync::atomic::{fence, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::audio_thread::debug_assert_control_thread;
@@ -32,33 +40,61 @@ use crate::audio_thread::debug_assert_control_thread;
 /// Bounds the table and the audio thread's copy of it.
 pub(crate) const MAX_DEGREES: usize = 128;
 
-/// A written value's flag: the value is in the low 32 bits.
-const WRITTEN: u64 = 1 << 32;
+/// How many times a single read retries an edit of many entries overlapping
+/// it before taking what it read.
+const READ_ATTEMPTS: usize = 4;
 
-/// The value written to one position, if any.
-fn written(slot: &AtomicU64) -> Option<u32> {
-    let bits = slot.load(Ordering::Acquire);
-    (bits & WRITTEN != 0).then_some(bits as u32)
+/// The active count, from a header (low 32 bits).
+fn count_of(header: u64) -> usize {
+    header as u32 as usize
 }
 
-fn write(slot: &AtomicU64, bits: u32) {
-    slot.store(WRITTEN | u64::from(bits), Ordering::Release);
+/// The degrees' generation, from a header (high 32 bits).
+fn generation_of(header: u64) -> u32 {
+    (header >> 32) as u32
+}
+
+fn header(generation: u32, count: usize) -> u64 {
+    u64::from(generation) << 32 | count as u64
+}
+
+/// The generation after `generation`, skipping 0, which marks a position
+/// never written.
+fn next_generation(generation: u32) -> u32 {
+    generation.checked_add(1).unwrap_or(1)
+}
+
+/// The value written to one position in `generation`, if any.
+fn written(slot: &AtomicU64, generation: u32) -> Option<u32> {
+    let bits = slot.load(Ordering::Acquire);
+    (generation_of(bits) == generation).then_some(bits as u32)
+}
+
+fn write(slot: &AtomicU64, generation: u32, bits: u32) {
+    slot.store(
+        u64::from(generation) << 32 | u64::from(bits),
+        Ordering::Release,
+    );
 }
 
 /// Scale degrees and their selection weights (see the module docs).
 pub(crate) struct DegreeTable {
-    /// Number of active positions.
-    count: AtomicUsize,
+    /// The number of active positions and the degrees' generation, packed
+    /// (see [`header`]).
+    header: AtomicU64,
     /// The base scale, as configured or set whole: `scale_len` of them.
     scale: [AtomicI32; MAX_DEGREES],
-    scale_len: AtomicUsize,
+    scale_len: AtomicU32,
     /// The base weights (`f32` bits), as configured or set whole:
     /// `weights_len` of them, which may be fewer or more than the scale's.
     scale_weights: [AtomicU32; MAX_DEGREES],
-    weights_len: AtomicUsize,
-    /// Degrees written to single positions, kept while hidden.
+    weights_len: AtomicU32,
+    /// The weights' generation.
+    weights_generation: AtomicU32,
+    /// Degrees written to single positions, each tagged with its
+    /// generation, kept while hidden.
     written_degrees: [AtomicU64; MAX_DEGREES],
-    /// Weights (`f32` bits) written to single positions, kept while hidden.
+    /// Weights (`f32` bits) written to single positions, likewise.
     written_weights: [AtomicU64; MAX_DEGREES],
     /// Bumped after every change; the audio thread re-copies the table when
     /// it observes one.
@@ -74,11 +110,12 @@ impl DegreeTable {
     pub(super) fn new(mut scale: Vec<i32>) -> Self {
         scale.truncate(MAX_DEGREES);
         Self {
-            count: AtomicUsize::new(scale.len()),
+            header: AtomicU64::new(header(1, scale.len())),
             scale: std::array::from_fn(|i| AtomicI32::new(scale.get(i).copied().unwrap_or(0))),
-            scale_len: AtomicUsize::new(scale.len()),
+            scale_len: AtomicU32::new(scale.len() as u32),
             scale_weights: std::array::from_fn(|_| AtomicU32::new(0)),
-            weights_len: AtomicUsize::new(0),
+            weights_len: AtomicU32::new(0),
+            weights_generation: AtomicU32::new(1),
             written_degrees: std::array::from_fn(|_| AtomicU64::new(0)),
             written_weights: std::array::from_fn(|_| AtomicU64::new(0)),
             version: AtomicU64::new(0),
@@ -98,27 +135,27 @@ impl DegreeTable {
 
     /// Number of active positions.
     pub(crate) fn count(&self) -> usize {
-        self.count.load(Ordering::Acquire)
+        count_of(self.header.load(Ordering::Acquire))
     }
 
-    /// The degree position `i` plays.
-    pub(crate) fn degree_at(&self, i: usize) -> i32 {
-        if let Some(bits) = written(&self.written_degrees[i]) {
+    /// The degree position `i` plays, with the degrees in `generation`.
+    fn degree_in(&self, generation: u32, i: usize) -> i32 {
+        if let Some(bits) = written(&self.written_degrees[i], generation) {
             return bits as i32;
         }
-        match self.scale_len.load(Ordering::Acquire) {
+        match self.scale_len.load(Ordering::Acquire) as usize {
             0 => 0,
             n => self.scale[i % n].load(Ordering::Relaxed),
         }
     }
 
-    /// The weight position `i` takes.
-    pub(crate) fn weight_at(&self, i: usize) -> f32 {
-        if let Some(bits) = written(&self.written_weights[i]) {
+    /// The weight position `i` takes, with the weights in `generation`.
+    fn weight_in(&self, generation: u32, i: usize) -> f32 {
+        if let Some(bits) = written(&self.written_weights[i], generation) {
             return f32::from_bits(bits);
         }
-        let given = self.weights_len.load(Ordering::Acquire);
-        let n = self.scale_len.load(Ordering::Acquire);
+        let given = self.weights_len.load(Ordering::Acquire) as usize;
+        let n = self.scale_len.load(Ordering::Acquire) as usize;
         let at = match (i < given, n) {
             (true, _) => i,
             (false, 0) => return 1.0,
@@ -128,11 +165,75 @@ impl DegreeTable {
         f32::from_bits(self.scale_weights[at].load(Ordering::Relaxed))
     }
 
+    /// Calls `read` with the header and the weights' generation, and
+    /// returns what it read once no edit of many entries overlapped it:
+    /// `None` if one did, every time of `attempts`.
+    fn consistent<R>(&self, attempts: usize, mut read: impl FnMut(u64, u32) -> R) -> Option<R> {
+        for _ in 0..attempts {
+            let sequence = self.sequence.load(Ordering::Acquire);
+            if sequence % 2 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let header = self.header.load(Ordering::Acquire);
+            let weights = self.weights_generation.load(Ordering::Acquire);
+            let value = read(header, weights);
+            fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Relaxed) == sequence {
+                return Some(value);
+            }
+        }
+        None
+    }
+
+    /// The degree and weight at active position `index`, or `None` past the
+    /// count. Any thread, never waiting: an edit of many entries that keeps
+    /// overlapping the read leaves it with the positions as they read
+    /// mid-edit, each a value the table held or is taking.
+    pub(crate) fn position(&self, index: usize) -> Option<(i32, f32)> {
+        let read = |header: u64, weights: u32| {
+            (index < count_of(header)).then(|| {
+                let degree = self.degree_in(generation_of(header), index);
+                (degree, self.weight_in(weights, index))
+            })
+        };
+        match self.consistent(READ_ATTEMPTS, &read) {
+            Some(position) => position,
+            None => {
+                let weights = self.weights_generation.load(Ordering::Acquire);
+                read(self.header.load(Ordering::Acquire), weights)
+            }
+        }
+    }
+
+    /// The active degrees, in order. Control thread.
+    pub(crate) fn degrees(&self) -> Vec<i32> {
+        let _whole = self.whole();
+        let generation = generation_of(self.header.load(Ordering::Acquire));
+        (0..self.count())
+            .map(|i| self.degree_in(generation, i))
+            .collect()
+    }
+
+    /// The active weights, in order. Control thread.
+    pub(crate) fn weights(&self) -> Vec<f32> {
+        let _whole = self.whole();
+        let generation = self.weights_generation.load(Ordering::Acquire);
+        (0..self.count())
+            .map(|i| self.weight_in(generation, i))
+            .collect()
+    }
+
     /// Sets the number of active positions (clamped to 1 to
     /// [`MAX_DEGREES`]), returning whether it changed. Any thread.
     pub(crate) fn set_count(&self, count: usize) -> bool {
         let count = count.clamp(1, MAX_DEGREES);
-        let changed = self.count.swap(count, Ordering::AcqRel) != count;
+        let previous = self
+            .header
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |was| {
+                Some(header(generation_of(was), count))
+            });
+        let changed = previous.is_ok_and(|was| count_of(was) != count);
         if changed {
             self.changed();
         }
@@ -142,10 +243,16 @@ impl DegreeTable {
     /// Writes the degree at active position `index` (clamped to ±127),
     /// returning false for a position past the count. Any thread.
     pub(crate) fn write_degree(&self, index: usize, value: i32) -> bool {
-        if index >= self.count() {
+        self.write_degree_as_of(self.header.load(Ordering::Acquire), index, value)
+    }
+
+    /// [`Self::write_degree`], checked against and tagged with `header`.
+    fn write_degree_as_of(&self, header: u64, index: usize, value: i32) -> bool {
+        if index >= count_of(header) {
             return false;
         }
-        write(&self.written_degrees[index], value.clamp(-127, 127) as u32);
+        let bits = value.clamp(-127, 127) as u32;
+        write(&self.written_degrees[index], generation_of(header), bits);
         self.changed();
         true
     }
@@ -153,13 +260,12 @@ impl DegreeTable {
     /// Writes the weight at active position `index` (clamped to 0-10),
     /// returning false for a position past the count. Any thread.
     pub(crate) fn write_weight(&self, index: usize, value: f32) -> bool {
+        let generation = self.weights_generation.load(Ordering::Acquire);
         if index >= self.count() {
             return false;
         }
-        write(
-            &self.written_weights[index],
-            value.clamp(0.0, 10.0).to_bits(),
-        );
+        let bits = value.clamp(0.0, 10.0).to_bits();
+        write(&self.written_weights[index], generation, bits);
         self.changed();
         true
     }
@@ -189,11 +295,14 @@ impl DegreeTable {
             for (slot, &degree) in table.scale.iter().zip(&degrees) {
                 slot.store(degree, Ordering::Relaxed);
             }
-            table.scale_len.store(degrees.len(), Ordering::Release);
-            table.count.store(degrees.len(), Ordering::Release);
-            for slot in &table.written_degrees {
-                slot.store(0, Ordering::Release);
-            }
+            table
+                .scale_len
+                .store(degrees.len() as u32, Ordering::Release);
+            // Under the edit lock no other edit moves the generation; a
+            // count set meanwhile is set before this scale.
+            let generation = generation_of(table.header.load(Ordering::Acquire));
+            let next = header(next_generation(generation), degrees.len());
+            table.header.store(next, Ordering::Release);
         });
     }
 
@@ -205,10 +314,11 @@ impl DegreeTable {
             for (slot, weight) in table.scale_weights.iter().zip(&weights) {
                 slot.store(weight.to_bits(), Ordering::Relaxed);
             }
-            table.weights_len.store(weights.len(), Ordering::Release);
-            for slot in &table.written_weights {
-                slot.store(0, Ordering::Release);
-            }
+            table
+                .weights_len
+                .store(weights.len() as u32, Ordering::Release);
+            let generation = table.weights_generation.load(Ordering::Acquire);
+            (table.weights_generation).store(next_generation(generation), Ordering::Release);
         });
     }
 
@@ -220,17 +330,18 @@ impl DegreeTable {
         weights: impl IntoIterator<Item = (usize, f32)>,
     ) {
         self.edit(|table| {
+            let generation = generation_of(table.header.load(Ordering::Acquire));
             for (index, value) in degrees {
                 if index < MAX_DEGREES {
-                    write(&table.written_degrees[index], value.clamp(-127, 127) as u32);
+                    let bits = value.clamp(-127, 127) as u32;
+                    write(&table.written_degrees[index], generation, bits);
                 }
             }
+            let generation = table.weights_generation.load(Ordering::Acquire);
             for (index, value) in weights {
                 if index < MAX_DEGREES {
-                    write(
-                        &table.written_weights[index],
-                        value.clamp(0.0, 10.0).to_bits(),
-                    );
+                    let bits = value.clamp(0.0, 10.0).to_bits();
+                    write(&table.written_weights[index], generation, bits);
                 }
             }
         });
@@ -244,17 +355,14 @@ impl DegreeTable {
         degrees: &mut [i32; MAX_DEGREES],
         weights: &mut [f32; MAX_DEGREES],
     ) -> Option<usize> {
-        let sequence = self.sequence.load(Ordering::Acquire);
-        if sequence % 2 == 1 {
-            return None;
-        }
-        let count = self.count().min(MAX_DEGREES);
-        for i in 0..count {
-            degrees[i] = self.degree_at(i);
-            weights[i] = self.weight_at(i);
-        }
-        fence(Ordering::Acquire);
-        (self.sequence.load(Ordering::Relaxed) == sequence).then_some(count)
+        self.consistent(1, |header, generation| {
+            let count = count_of(header).min(MAX_DEGREES);
+            for i in 0..count {
+                degrees[i] = self.degree_in(generation_of(header), i);
+                weights[i] = self.weight_in(generation, i);
+            }
+            count
+        })
     }
 
     /// Marks an edit of many entries as writing until the guard is

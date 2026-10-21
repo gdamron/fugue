@@ -95,10 +95,7 @@ impl MelodyControls {
 
     /// Gets the active scale degrees.
     pub fn allowed_degrees(&self) -> Vec<i32> {
-        let _whole = self.table.whole();
-        (0..self.table.count())
-            .map(|i| self.table.degree_at(i))
-            .collect()
+        self.table.degrees()
     }
 
     /// Sets the base scale: which degrees can be used for note selection.
@@ -112,10 +109,7 @@ impl MelodyControls {
 
     /// Gets the active note weights.
     pub fn note_weights(&self) -> Vec<f32> {
-        let _whole = self.table.whole();
-        (0..self.table.count())
-            .map(|i| self.table.weight_at(i))
-            .collect()
+        self.table.weights()
     }
 
     /// Sets the base probability weights for note selection, forgetting
@@ -142,11 +136,11 @@ impl MelodyControls {
         self.table.set_count(count);
     }
 
-    /// Gets the scale degree at active position `index`.
+    /// Gets the scale degree at active position `index`. Never waits.
     pub fn degree(&self, index: usize) -> Result<i32, String> {
-        let _whole = self.table.whole();
-        self.active(index, "Degree")?;
-        Ok(self.table.degree_at(index))
+        (self.table.position(index))
+            .map(|(degree, _)| degree)
+            .ok_or_else(|| self.out_of_range("Degree", index))
     }
 
     /// Sets the scale degree at active position `index` (clamped to ±127).
@@ -156,11 +150,11 @@ impl MelodyControls {
             .ok_or_else(|| self.out_of_range("Degree", index))
     }
 
-    /// Gets the note weight at active position `index`.
+    /// Gets the note weight at active position `index`. Never waits.
     pub fn note_weight(&self, index: usize) -> Result<f32, String> {
-        let _whole = self.table.whole();
-        self.active(index, "Weight")?;
-        Ok(self.table.weight_at(index))
+        (self.table.position(index))
+            .map(|(_, weight)| weight)
+            .ok_or_else(|| self.out_of_range("Weight", index))
     }
 
     /// Sets the note weight at active position `index` (clamped to 0-10).
@@ -168,13 +162,6 @@ impl MelodyControls {
         (self.table.write_weight(index, value))
             .then_some(())
             .ok_or_else(|| self.out_of_range("Weight", index))
-    }
-
-    fn active(&self, index: usize, what: &str) -> Result<(), String> {
-        match index < self.table.count() {
-            true => Ok(()),
-            false => Err(self.out_of_range(what, index)),
-        }
     }
 
     fn out_of_range(&self, what: &str, index: usize) -> String {
