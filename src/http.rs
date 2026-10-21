@@ -14,7 +14,7 @@
 //!   provider APIs that use it never redirect.
 //! - Connecting times out after 30 s (`ureq` 3 has no connect timeout by
 //!   default). A server that accepts and then stalls can't hang the caller
-//!   either: the response headers must arrive within 5 minutes and the whole
+//!   either: the response headers must arrive within 10 minutes and the whole
 //!   call, body included, must finish within 30.
 //! - Every request goes through one process-wide `Agent`, so repeat calls to
 //!   a host reuse its pooled connection instead of a fresh TLS handshake.
@@ -37,8 +37,9 @@ pub(crate) const MAX_TEXT_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Longest wait for the response headers once the request is sent. Sized
-/// for a non-streaming LLM reply, the slowest legitimate caller.
-const RECV_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// for a non-streaming LLM reply, the slowest legitimate caller; the
+/// Anthropic and OpenAI SDKs default to the same 10 minutes.
+const RECV_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Longest a whole call may take, body included, so a download that stalls
 /// part-way fails instead of blocking forever. Sized for a large sample
