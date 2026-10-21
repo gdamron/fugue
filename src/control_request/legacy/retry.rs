@@ -84,7 +84,6 @@ struct Control {
 struct Group {
     gate: Arc<Gate>,
     lane: usize,
-    surface: Surface,
 }
 
 /// Whether `a` and `b` are one surface.
@@ -146,11 +145,7 @@ impl LegacyControls {
             let group = group.unwrap_or_else(|| {
                 let gate = Gate::of(surface);
                 let lane = gate.claim();
-                groups.push(Group {
-                    gate,
-                    lane,
-                    surface: surface.clone(),
-                });
+                groups.push(Group { gate, lane });
                 surfaces.push(surface);
                 surfaces.len() - 1
             });
@@ -335,6 +330,7 @@ impl LegacyWrites {
             }
         }
         self.waiting.store(kept, Ordering::Relaxed);
+        self.settle();
         self.land_orphans();
     }
 
@@ -425,13 +421,12 @@ impl LegacyWrites {
             self.slots[i].store(self.slots[i + 1].load());
         }
         self.waiting.store(waiting - 1, Ordering::Relaxed);
+        // Straight from one head to the next: never hidden in between.
         let group = &self.groups[removed];
-        group.gate.show(group.lane, IDLE);
         let first = (self.slots[..waiting - 1].iter())
             .find(|slot| self.controls[slot.index()].group == removed);
-        if let Some(slot) = first {
-            self.show(group, slot.load().ticket);
-        }
+        let head = first.map_or(IDLE, |slot| slot.load().ticket);
+        group.gate.show(group.lane, head);
     }
 
     /// Keeps the waiting writes `keep` says to, in order.
@@ -452,6 +447,7 @@ impl LegacyWrites {
             }
         }
         self.waiting.store(kept, Ordering::Relaxed);
+        self.settle();
     }
 
     /// Shows the gate `ticket` waiting, unless an earlier one of this
@@ -462,10 +458,19 @@ impl LegacyWrites {
         }
     }
 
-    /// Shows every gate nothing of this schedule's waiting.
+    /// Shows every gate nothing of this schedule's waiting, for a pass to
+    /// show again what still waits: [`Self::settle`] ends it.
     fn hide(&self) {
         for group in self.groups.iter() {
+            group.gate.begin();
             group.gate.show(group.lane, IDLE);
+        }
+    }
+
+    /// Ends a pass [`Self::hide`] began: every gate shows what waits.
+    fn settle(&self) {
+        for group in self.groups.iter() {
+            group.gate.end();
         }
     }
 }
