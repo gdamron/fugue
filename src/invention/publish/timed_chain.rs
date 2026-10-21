@@ -6,9 +6,11 @@
 //!
 //! An authored write to one of those controls while the edit waits is kept
 //! over it ([`Publisher::keep_authored`]): chained to the landing too, at
-//! the same rank and queued after the edit's own write, so it wins there,
-//! the edit lands without its own write to that one control sounding, and
-//! the author's value plays on.
+//! the same rank and queued after the edit's own write, so it wins there
+//! and the author's value plays on. It replaces that write, and any copy
+//! before it, as it reaches the audio thread, so the edit's own write to
+//! that one control never sounds when the copy reaches it before the
+//! landing; held back past it, the copy plays as soon as it does.
 
 use super::{LiveGraph, PendingLog, PendingWrite, Publisher};
 use crate::control_request::{
