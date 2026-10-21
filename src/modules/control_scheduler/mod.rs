@@ -338,7 +338,9 @@ impl ControlScheduler {
     /// Keeps trying the writes still waiting in `old`, the schedule just
     /// replaced, and in those it kept trying, oldest first, in the room the
     /// new schedule reserved (see `ResolvedSchedule::draining`). Writes
-    /// finding none are dropped, counted. Clones, so it frees nothing:
+    /// finding none are given up as a removed scheduler's are (see
+    /// `LegacyWrites::abandon`): events wait at their surfaces' gates, the
+    /// rest are dropped, counted. Clones, so it frees nothing:
     /// `old` holds every one still, to be retired off the audio thread.
     fn keep_draining(&mut self, old: &ResolvedSchedule) {
         let playing = self.legacy.as_ref().map(Arc::as_ptr);
@@ -348,8 +350,9 @@ impl ControlScheduler {
                 self.draining.push(writes.clone());
                 continue;
             }
-            // Retired: whatever it had waiting is dropped, counted.
-            writes.drop_waiting();
+            // Retired: its events still waiting wait at their gates, the
+            // rest are dropped, counted.
+            writes.abandon();
             self.ctrl.add_refused(writes.take_refused());
         }
     }
@@ -559,12 +562,13 @@ impl Module for ControlScheduler {
         self.ctrl.target_module_ids()
     }
 
-    /// Removed or replaced, it tries its waiting writes one last time and
-    /// drops the rest: they no longer hold any other schedule's back.
+    /// Removed or replaced, it tries its waiting writes one last time,
+    /// leaves the events still waiting at their surfaces' gates for the
+    /// schedules still writing there to land in turn, and drops the rest.
+    /// Its lanes then hold no other schedule's writes back.
     fn leave(&mut self) {
         for writes in self.draining.iter().chain(&self.legacy) {
-            writes.retry();
-            writes.drop_waiting();
+            writes.abandon();
             self.ctrl.add_refused(writes.take_refused());
         }
     }

@@ -35,12 +35,12 @@
 //!   until they land, ahead of its successor's (the scheduler keeps it, see
 //!   `ControlScheduler::adopt`), and a ramp the successor starts on one of
 //!   their controls starts where they will leave it. A scheduler removed
-//!   drops what it has waiting (see `Module::leave`).
+//!   gives up what it has waiting (see `Module::leave` and [`orphans`]).
 //!
 //! Its state is atomics, so it is `Sync`, but one thread at a time writes
 //! through it: the audio thread, or an offline render's.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use super::LegacyRefusal;
@@ -49,7 +49,10 @@ use crate::control_request::EventCounter;
 use crate::ControlSurface;
 
 mod gate;
+mod orphans;
+mod slot;
 use gate::{Gate, IDLE};
+use slot::{bits_value, value_bits, Kept, Slot, FRESH};
 
 /// The most writes one schedule keeps waiting.
 pub(crate) const RETRY_CAPACITY: usize = 32;
@@ -71,6 +74,8 @@ struct Control {
     /// Whether a write changes which of its surface's other writes land
     /// (see [`crate::ControlSurface::scheduled_resizes`]).
     resizes: bool,
+    /// The number its surface's gate names `key` by.
+    name: u32,
 }
 
 /// A surface a schedule writes: the order its writes there keep with
@@ -78,64 +83,7 @@ struct Control {
 struct Group {
     gate: Arc<Gate>,
     lane: usize,
-}
-
-/// A write's wait before its first retry: not yet aged.
-const FRESH: u32 = u32::MAX;
-
-/// A write waiting: its control, value, the samples it has waited and its
-/// ticket at its surface's gate.
-#[derive(Clone, Copy)]
-struct Kept {
-    index: usize,
-    value: TableValue,
-    waited: u32,
-    ticket: u64,
-}
-
-/// Room for one [`Kept`] write.
-#[derive(Default)]
-struct Slot {
-    control: AtomicU32,
-    /// The value's bits, and whether it is a boolean (bit 32).
-    value: AtomicU64,
-    waited: AtomicU32,
-    ticket: AtomicU64,
-}
-
-impl Slot {
-    fn load(&self) -> Kept {
-        let bits = self.value.load(Ordering::Relaxed);
-        let value = match bits >> 32 {
-            0 => TableValue::Number(f32::from_bits(bits as u32)),
-            _ => TableValue::Bool(bits & 1 == 1),
-        };
-        Kept {
-            index: self.index(),
-            value,
-            waited: self.waited.load(Ordering::Relaxed),
-            ticket: self.ticket.load(Ordering::Relaxed),
-        }
-    }
-
-    fn index(&self) -> usize {
-        self.control.load(Ordering::Relaxed) as usize
-    }
-
-    fn store(&self, kept: Kept) {
-        self.control.store(kept.index as u32, Ordering::Relaxed);
-        self.set_value(kept.value);
-        self.waited.store(kept.waited, Ordering::Relaxed);
-        self.ticket.store(kept.ticket, Ordering::Relaxed);
-    }
-
-    fn set_value(&self, value: TableValue) {
-        let bits = match value {
-            TableValue::Number(number) => number.to_bits() as u64,
-            TableValue::Bool(flag) => 1 << 32 | flag as u64,
-        };
-        self.value.store(bits, Ordering::Relaxed);
-    }
+    surface: Surface,
 }
 
 /// Whether `a` and `b` are one surface.
@@ -197,7 +145,11 @@ impl LegacyControls {
             let group = group.unwrap_or_else(|| {
                 let gate = Gate::of(surface);
                 let lane = gate.claim();
-                groups.push(Group { gate, lane });
+                groups.push(Group {
+                    gate,
+                    lane,
+                    surface: surface.clone(),
+                });
                 surfaces.push(surface);
                 surfaces.len() - 1
             });
@@ -207,6 +159,7 @@ impl LegacyControls {
                 group,
                 event: surface.scheduled_event(key),
                 resizes: surface.scheduled_resizes(key),
+                name: groups[group].gate.orphans.name(key),
             });
         }
         Arc::new(LegacyWrites {
@@ -363,6 +316,7 @@ impl LegacyWrites {
     pub(crate) fn retry(&self) {
         let waiting = self.waiting();
         if waiting == 0 {
+            self.land_orphans();
             return;
         }
         self.hide();
@@ -379,6 +333,7 @@ impl LegacyWrites {
             }
         }
         self.waiting.store(kept, Ordering::Relaxed);
+        self.land_orphans();
     }
 
     /// Ages every waiting write by `samples`, dropping (and counting) the
@@ -412,30 +367,39 @@ impl LegacyWrites {
     }
 
     /// Keeps a write to try again: a value in place of its control's latest
-    /// waiting one when nothing was kept on its surface since, or, with
-    /// no room left for values, when no event or resize was (and it is no
-    /// resize); else after every write waiting, with a new ticket.
+    /// waiting one when nothing was kept on its surface since; else after
+    /// every write waiting, with a new ticket. With no room left for values,
+    /// a value (no resize) takes the place of its control's latest waiting
+    /// one, moved after them all, when no event or resize was kept on the
+    /// surface since: it was made after every write there, so it lands
+    /// after them, over another schedule's to the same control.
     fn keep(&self, index: usize, value: TableValue) {
         let control = &self.controls[index];
         let group = &self.groups[control.group];
-        let waiting = self.waiting();
+        let mut waiting = self.waiting();
         let room = match control.event {
             true => RETRY_CAPACITY,
             false => RETRY_CAPACITY - EVENT_ROOM,
         };
+        let mut crowded = false;
         if !control.event {
-            let latest = (self.slots[..waiting].iter().rev()).find(|slot| slot.index() == index);
-            if let Some(slot) = latest {
-                let ticket = slot.load().ticket;
-                let crowded =
-                    waiting >= room && !control.resizes && !group.gate.barrier_after(ticket);
-                if group.gate.is_last(ticket) || crowded {
-                    slot.set_value(value);
+            let latest = (0..waiting)
+                .rev()
+                .find(|&at| self.slots[at].index() == index);
+            if let Some(at) = latest {
+                let ticket = self.slots[at].load().ticket;
+                if group.gate.is_last(ticket) {
+                    self.slots[at].set_value(value);
                     return;
+                }
+                crowded = waiting >= room && !control.resizes && !group.gate.barrier_after(ticket);
+                if crowded {
+                    self.remove(at);
+                    waiting -= 1;
                 }
             }
         }
-        if waiting >= room {
+        if waiting >= room && !crowded {
             self.refused.record();
             return;
         }
@@ -450,12 +414,22 @@ impl LegacyWrites {
         self.waiting.store(waiting + 1, Ordering::Relaxed);
     }
 
-    /// Drops every waiting write, counted.
-    pub(crate) fn drop_waiting(&self) {
-        self.retain(|_, _| {
-            self.refused.record();
-            false
-        });
+    /// Takes the waiting write at `at` out, keeping the rest in order, and
+    /// shows its surface's gate the earliest of this schedule's left there.
+    fn remove(&self, at: usize) {
+        let waiting = self.waiting();
+        let removed = self.controls[self.slots[at].index()].group;
+        for i in at..waiting - 1 {
+            self.slots[i].store(self.slots[i + 1].load());
+        }
+        self.waiting.store(waiting - 1, Ordering::Relaxed);
+        let group = &self.groups[removed];
+        group.gate.show(group.lane, IDLE);
+        let first = (self.slots[..waiting - 1].iter())
+            .find(|slot| self.controls[slot.index()].group == removed);
+        if let Some(slot) = first {
+            self.show(group, slot.load().ticket);
+        }
     }
 
     /// Keeps the waiting writes `keep` says to, in order.
