@@ -185,7 +185,15 @@ impl SamplePlayerControls {
     /// staged and the lock is free. The replaced sample is parked for a
     /// control thread to drop. Returns `None` when the lock was busy, so the
     /// caller retries on a later block; `Some(swapped)` otherwise.
-    pub(crate) fn try_swap(&self, current: &mut Option<Arc<SampleData>>) -> Option<bool> {
+    ///
+    /// On a swap, `transport` is read again under the lock: `play` as it
+    /// stood once the swapped-in sample was staged (a stop written before it
+    /// included), with no later sample staged before the read.
+    pub(crate) fn try_swap(
+        &self,
+        current: &mut Option<Arc<SampleData>>,
+        transport: &mut u64,
+    ) -> Option<bool> {
         let mut swap = match self.shared.swap.try_lock() {
             Ok(swap) => swap,
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
@@ -207,6 +215,7 @@ impl SamplePlayerControls {
             return Some(false);
         };
         swap.retired = current.replace(sample);
+        *transport = self.transport();
         Some(true)
     }
 

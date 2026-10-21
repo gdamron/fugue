@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::write_test_wav;
 use crate::alloc_counter::allocator_events;
 use crate::modules::sample_loading::SampleData;
+use crate::modules::sample_player::controls::transport_play;
 use crate::modules::sample_player::{SamplePlayer, SamplePlayerControls};
 use crate::Module;
 
@@ -143,15 +144,33 @@ fn a_stop_written_while_a_replacement_waits_stays_stopped() {
 fn a_swap_with_nothing_staged_is_done_while_the_replaced_sample_waits() {
     let (controls, _player, first) = one_shot(&[[0.2, 0.0]; 8]);
     let mut current = None;
-    assert_eq!(controls.try_swap(&mut current), Some(true));
+    assert_eq!(controls.try_swap(&mut current, &mut 0), Some(true));
 
     // A swap can take a sample staged before its version moves; the block
     // after sees the version moved, with nothing staged and the replaced
     // sample still parked. Retrying would keep the player replacing.
     let second = write_test_wav(44_100, 1, &[[0.7, 0.0]; 8]);
     controls.set_asset(second.to_str().unwrap()).unwrap();
-    assert_eq!(controls.try_swap(&mut current), Some(true));
-    assert_eq!(controls.try_swap(&mut current), Some(false));
+    assert_eq!(controls.try_swap(&mut current, &mut 0), Some(true));
+    assert_eq!(controls.try_swap(&mut current, &mut 0), Some(false));
+
+    let _ = std::fs::remove_file(first);
+    let _ = std::fs::remove_file(second);
+}
+
+#[test]
+fn a_swap_reads_play_as_it_stood_once_its_sample_was_staged() {
+    let (controls, _player, first) = one_shot(&[[0.2, 0.0]; 8]);
+    let mut current = None;
+    assert_eq!(controls.try_swap(&mut current, &mut 0), Some(true));
+    controls.set_play(true);
+    // A block reads `play` on; then a stop, then a new sample.
+    let mut transport = controls.transport();
+    controls.set_play(false);
+    let second = write_test_wav(44_100, 1, &[[0.7, 0.0]; 8]);
+    controls.set_asset(second.to_str().unwrap()).unwrap();
+    assert_eq!(controls.try_swap(&mut current, &mut transport), Some(true));
+    assert!(!transport_play(transport), "the new sample starts stopped");
 
     let _ = std::fs::remove_file(first);
     let _ = std::fs::remove_file(second);
