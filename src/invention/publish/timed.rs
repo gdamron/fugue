@@ -131,13 +131,14 @@ impl LiveGraph {
     /// Records an authored write to control `key` of `module_id`, made
     /// while generation `seen` was the latest, in the retained document.
     /// Runs under the publisher, so no timed edit can be adopted in
-    /// between. A timed edit waiting that rebuilds or removes the module,
-    /// or writes the control itself as it lands, is cancelled, and the edit
-    /// reports why: the write may reach the audio thread before or after
-    /// the edit lands, so only cancelling it makes the write what plays,
-    /// and what is recorded. One that keeps the module and leaves the
-    /// control alone folds the write into its own document instead, so the
-    /// write is recorded again as the edit is adopted.
+    /// between. A timed edit waiting that rebuilds or removes the module is
+    /// cancelled, and the edit reports why. One that writes the control
+    /// itself as it lands keeps the write over its own instead (see
+    /// [`Self::keep_authored`]), and lands without it; when it cannot, it
+    /// is cancelled too: the write may reach the audio thread before or
+    /// after the edit lands, so only that makes the write what plays, and
+    /// what is recorded. One that keeps the module folds the write into its
+    /// own document, so the write is recorded again as the edit is adopted.
     ///
     /// [`Authored::Overtaken`], with nothing recorded, when a timed edit
     /// adopted since `seen` may have landed after the write and replaced
@@ -161,7 +162,9 @@ impl LiveGraph {
                 .timed_chains(module_id, key)
                 .then_some(Touched::Written),
         };
-        if let Some(touches) = touches {
+        let kept = touches == Some(Touched::Written)
+            && self.keep_authored(&mut publisher, module_id, key, value);
+        if let Some(touches) = touches.filter(|_| !kept) {
             let cause = || CancelCause::AuthoredWrite {
                 module_id: module_id.to_string(),
                 key: key.to_string(),

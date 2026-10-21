@@ -49,8 +49,11 @@ pub(crate) struct Waiting {
     /// recorded again once `retain` has run (see [`Publisher::fold_timed`]).
     folded: Vec<(String, String, ControlValue)>,
     /// The controls of modules it keeps that it writes as it lands (see
-    /// [`Publisher::chain_timed`]): an authored write to one cancels it.
+    /// [`Publisher::chain_timed`]).
     chained: Vec<(String, String)>,
+    /// The priority the latest authored write it keeps was chained at (see
+    /// [`Publisher::timed_keeping`]); its own writes are at 0.
+    kept: i16,
 }
 
 /// What the latest timed edits adopted did, for an authored write that one
@@ -155,6 +158,7 @@ impl Publisher {
             packed,
             folded: Vec::new(),
             chained: Vec::new(),
+            kept: 0,
         }));
         Ok(id)
     }
@@ -318,11 +322,37 @@ impl Publisher {
     }
 
     /// Notes the controls of modules it keeps that the timed edit waiting
-    /// writes as it lands, so an authored write to one cancels it.
+    /// writes as it lands, so an authored write to one is kept over it
+    /// (see `LiveGraph::keep_authored`).
     pub(crate) fn chain_timed(&mut self, chained: Vec<(String, String)>) {
         if let Some(waiting) = self.timed.as_mut() {
             waiting.chained = chained;
         }
+    }
+
+    /// The timed edit waiting and the priority to chain an authored write
+    /// it is to keep at: above its own writes and every write kept before,
+    /// so the latest plays as it lands whatever the order they apply in
+    /// there. `None` when none waits, it has landed or will not, or the
+    /// priorities ran out.
+    pub(crate) fn timed_keeping(&self) -> Option<(RequestId, i16)> {
+        let waiting = self.timed.as_ref()?;
+        if waiting.fate.settled().is_some() {
+            return None;
+        }
+        Some((waiting.id, waiting.kept.checked_add(1)?))
+    }
+
+    /// Notes that the timed edit waiting keeps an authored write to control
+    /// `key` of `module_id`, chained at the priority [`Self::timed_keeping`]
+    /// gave, and reports it (see [`Ledger::kept`]).
+    pub(crate) fn kept_timed(&mut self, module_id: &str, key: &str) {
+        let Some(waiting) = self.timed.as_mut() else {
+            return;
+        };
+        waiting.kept += 1;
+        let id = waiting.id;
+        self.ledger.kept(id, format!("{module_id}.{key}"));
     }
 
     /// Every recent timed edit's status (see `timed_status`).

@@ -135,10 +135,11 @@ fn grid(every: f32, offset: f32) -> BeatSpec {
 
 /// `status` in the wire's terms.
 pub(crate) fn wire_status(status: EditStatus) -> RequestStatus {
+    let kept = kept(&status.kept, status.state == EditState::Queued);
     let (state, reason) = match status.state {
-        EditState::Queued => (RequestState::Queued, None),
-        EditState::Landed => (RequestState::Landed, None),
-        EditState::Adopted => (RequestState::Adopted, None),
+        EditState::Queued => (RequestState::Queued, kept),
+        EditState::Landed => (RequestState::Landed, kept),
+        EditState::Adopted => (RequestState::Adopted, kept),
         EditState::Expired => {
             let reason = "its ttl passed before its time came".to_string();
             (RequestState::Expired, Some(reason))
@@ -162,6 +163,19 @@ pub(crate) fn wire_status(status: EditStatus) -> RequestStatus {
         built: status.built,
         removed: status.removed,
     }
+}
+
+/// The authored writes an edit `kept` over its own, said for one `queued`
+/// or one that has landed.
+fn kept(kept: &[String], queued: bool) -> Option<String> {
+    if kept.is_empty() {
+        return None;
+    }
+    let lands = if queued { "lands" } else { "landed" };
+    let controls = kept.join(", ");
+    Some(format!(
+        "kept authored {controls}: it {lands} without its own write to them"
+    ))
 }
 
 fn refused(refusal: Refusal) -> String {
