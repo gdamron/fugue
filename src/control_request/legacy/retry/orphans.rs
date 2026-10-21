@@ -7,18 +7,16 @@
 //! edit, and would have landed on main. So each keeps its ticket at the
 //! gate, in room of the gate's own, and the next schedule writing that
 //! surface to retry lands it once every earlier ticket has, ahead of every
-//! later one. When no schedule writes the surface any more, the gate goes
-//! with the last of them, freed off the audio thread, and lands what it
-//! still keeps then, through the setter, as main's waiting write would
-//! have: late, but never lost while the graph reclaims what it retires.
+//! later one. When no schedule writes the surface any more, the last one
+//! freed (off the audio thread) leaves the gate held, and the reclaimer
+//! lands what it keeps on its cadence (see `land_left_events`): late, but
+//! in order, and not lost to a surface busy or full for a while.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use super::gate::IDLE;
 use super::{bits_value, value_bits, LegacyRefusal, LegacyWrites, Surface};
-use crate::control_request::table::TableValue;
-use crate::ControlValue;
 
 /// The events one gate keeps for schedules gone.
 const ROOM: usize = 8;
@@ -133,6 +131,29 @@ impl Orphans {
         true
     }
 
+    /// How many events are kept.
+    pub(super) fn kept(&self) -> usize {
+        self.kept.load(Ordering::Relaxed)
+    }
+
+    /// Lands what is kept, in ticket order, until the surface refuses one
+    /// for now. Only while no schedule writes the surface (see
+    /// [`super::gate::land_left_events`]).
+    pub(super) fn land_left(&self) {
+        let Some(surface) = self.surface.get() else {
+            return;
+        };
+        while let Some((at, _)) = self.first() {
+            let orphan = &self.room[at];
+            let key = self.key(orphan.key.load(Ordering::Relaxed));
+            let value = bits_value(orphan.value.load(Ordering::Relaxed));
+            match surface.set_scheduled(key, value) {
+                Err(LegacyRefusal::Busy | LegacyRefusal::Full) => return,
+                _ => self.clear(at),
+            }
+        }
+    }
+
     fn clear(&self, at: usize) {
         self.room[at].ticket.store(IDLE, Ordering::Relaxed);
         self.kept.fetch_sub(1, Ordering::Relaxed);
@@ -140,22 +161,10 @@ impl Orphans {
     }
 }
 
-/// The last schedule writing the surface is gone, freed off the audio
-/// thread: what is still kept lands now, in order, through the setter, which
-/// may wait for the surface's lock as main's write did.
+/// Its events go with it: the audio thread need no longer look for them.
 impl Drop for Orphans {
     fn drop(&mut self) {
-        while let Some((at, _)) = self.first() {
-            if let Some(surface) = self.surface.get() {
-                let key = self.key(self.room[at].key.load(Ordering::Relaxed));
-                let value = match bits_value(self.room[at].value.load(Ordering::Relaxed)) {
-                    TableValue::Number(number) => ControlValue::Number(number),
-                    TableValue::Bool(flag) => ControlValue::Bool(flag),
-                };
-                let _ = surface.set_control(key, value);
-            }
-            self.clear(at);
-        }
+        KEPT.fetch_sub(*self.kept.get_mut(), Ordering::Relaxed);
     }
 }
 

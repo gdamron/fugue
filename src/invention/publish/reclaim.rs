@@ -56,11 +56,14 @@ impl Reclaimer {
     /// Frees every publication retired so far and returns how many. Each
     /// is taken under the ring's consumer lock but dropped after releasing
     /// it, because a sink may block while it finalizes. Never takes the
-    /// publisher's lock. Also frees the retired payloads, uncounted.
+    /// publisher's lock. Also frees the retired payloads, uncounted, and
+    /// lands the events removed schedulers left waiting on surfaces no
+    /// schedule writes any more.
     pub(crate) fn reclaim(&self) -> usize {
         let freed = self.retired.drain();
         self.freed.fetch_add(freed as u64, Ordering::Relaxed);
         self.payloads.drain();
+        crate::control_request::land_left_events();
         freed
     }
 

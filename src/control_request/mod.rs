@@ -90,8 +90,8 @@ pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
 #[cfg(test)]
 pub(crate) use legacy::tests::{scheduled_surface, while_held};
 pub(crate) use legacy::{
-    scheduled_bool, scheduled_index, scheduled_number, try_scheduled, LegacyControls,
-    LegacyRefusal, LegacyWrites, LEGACY_CONTROLS, RETRY_CAPACITY,
+    land_left_events, scheduled_bool, scheduled_index, scheduled_number, try_scheduled,
+    LegacyControls, LegacyRefusal, LegacyWrites, LEGACY_CONTROLS, RETRY_CAPACITY,
 };
 pub(crate) use local::{local_controls, local_get, local_set};
 pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
