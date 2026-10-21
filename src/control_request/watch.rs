@@ -29,6 +29,15 @@ pub(crate) trait BeatHost {
     /// there.
     fn latch(&mut self, module_idx: usize);
 
+    /// Whether the latest write to take `target`'s control was one of
+    /// `standing`: none since took it, nor freed it for automation's next
+    /// event. A ramp runs on only while it does.
+    fn kept(&self, target: &ControlTarget, standing: Standing) -> bool;
+
+    /// Whether `a` and `b` reach a control in common: the same, or, on a
+    /// development, an inner one both keys reach.
+    fn overlaps(&self, a: &ControlTarget, b: &ControlTarget) -> bool;
+
     /// Applies `value` as the pending store's `apply` does, of `standing`
     /// (none for an event): `Err` is what it reports instead.
     fn apply(

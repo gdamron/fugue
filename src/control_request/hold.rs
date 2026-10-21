@@ -230,6 +230,12 @@ impl Holds {
         self.set(index, encode(standing.rank, standing.due));
     }
 
+    /// Whether the latest write to take `index` was one of `standing`: no
+    /// write since took it, and automation's next event has not freed it.
+    pub(crate) fn kept(&self, index: ControlIndex, standing: Standing) -> bool {
+        self.word(index) == encode(standing.rank, standing.due)
+    }
+
     /// Whether a tier above automation holds `index`: a ramp's writes to
     /// it are dropped until automation's next event on it.
     pub(crate) fn holds_off_automation(&self, index: ControlIndex) -> bool {
@@ -290,6 +296,25 @@ pub(crate) fn take_hold<M: Module + ?Sized>(module: &M, control: ControlIndex, s
     module.for_each_alias(control, &mut |_, cells, index| {
         cells.holds.take(index, standing);
     });
+}
+
+/// Whether every hold a write of `standing` to declared `control` of
+/// `module` took ([`take_hold`]) is still its own ([`Holds::kept`]): on a
+/// development, on every inner control its key reaches too. Allocation-,
+/// free- and lock-free.
+pub(crate) fn kept_hold<M: Module + ?Sized>(
+    module: &M,
+    control: ControlIndex,
+    standing: Standing,
+) -> bool {
+    let Some((_, cells)) = module.declared() else {
+        return false;
+    };
+    let mut kept = cells.holds.kept(control, standing);
+    module.for_each_alias(control, &mut |_, cells, index| {
+        kept &= cells.holds.kept(index, standing);
+    });
+    kept
 }
 
 #[cfg(test)]
