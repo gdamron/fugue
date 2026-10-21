@@ -236,17 +236,21 @@ impl DegreeTable {
     }
 
     fn view(&self) -> View<'_> {
+        let header = self.header.load(Ordering::Acquire);
+        #[cfg(test)]
+        tests::between_loads();
         View {
             table: self,
-            header: self.header.load(Ordering::Acquire),
+            header,
             weights: self.weights_generation.load(Ordering::Acquire),
         }
     }
 
     /// Calls `read` with a view of the table, and returns what it read once
-    /// no whole edit was published during it and, for a `whole` copy, no
-    /// position write was in flight or landed during it: `None` if one
-    /// was, every time of `attempts`.
+    /// neither the header nor the weights' generation moved during it (so
+    /// the view is the table as it stood between the two), and, for a
+    /// `whole` copy, no position write was in flight or landed during it:
+    /// `None` if one did, every time of `attempts`.
     fn consistent<R>(
         &self,
         attempts: usize,
@@ -264,8 +268,7 @@ impl DegreeTable {
             let value = read(&view);
             fence(Ordering::Acquire);
             let now = self.view();
-            let published = generation_of(now.header) != generation_of(view.header)
-                || now.weights != view.weights;
+            let published = now.header != view.header || now.weights != view.weights;
             let wrote = whole && self.writes_started.load(Ordering::Relaxed) != started;
             if !published && !wrote {
                 return Some(value);
@@ -384,12 +387,23 @@ impl DegreeTable {
     /// Writes the weight at active position `index` (clamped to 0-10),
     /// returning false for a position past the count. Any thread.
     pub(crate) fn write_weight(&self, index: usize, value: f32) -> bool {
-        self.write_weight_as_of(self.weights_generation(), index, value)
+        // The weights' generation and the count as they stood together, so
+        // a write checked against that count is tagged with that generation.
+        loop {
+            let generation = self.weights_generation();
+            #[cfg(test)]
+            tests::between_loads();
+            let count = self.count();
+            if self.weights_generation() == generation {
+                return self.write_weight_as_of(generation, count, index, value);
+            }
+        }
     }
 
-    /// [`Self::write_weight`], tagged with `generation`.
-    fn write_weight_as_of(&self, generation: u32, index: usize, value: f32) -> bool {
-        if index >= self.count() {
+    /// [`Self::write_weight`], checked against `count` and tagged with
+    /// `generation`.
+    fn write_weight_as_of(&self, generation: u32, count: usize, index: usize, value: f32) -> bool {
+        if index >= count {
             return false;
         }
         let bits = value.clamp(0.0, 10.0).to_bits();
