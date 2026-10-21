@@ -238,12 +238,17 @@ fn test_next_note_does_not_wait_on_a_whole_table_edit() {
 /// Runs `read` on another thread and returns what it read, failing rather
 /// than hanging should it wait on a lock this thread holds.
 pub(super) fn without_waiting<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'static) -> T {
+    use std::sync::mpsc::RecvTimeoutError;
     let (sent, received) = std::sync::mpsc::channel();
-    std::thread::spawn(move || sent.send(read()));
-    let patience = std::time::Duration::from_secs(10);
-    received
-        .recv_timeout(patience)
-        .expect("the read waited on a lock this thread holds")
+    let worker = std::thread::spawn(move || sent.send(read()));
+    match received.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(read) => read,
+        Err(RecvTimeoutError::Timeout) => panic!("the read waited on a lock this thread holds"),
+        Err(RecvTimeoutError::Disconnected) => match worker.join() {
+            Err(panicked) => std::panic::resume_unwind(panicked),
+            Ok(_) => unreachable!("the read sends before it finishes"),
+        },
+    }
 }
 
 #[test]
