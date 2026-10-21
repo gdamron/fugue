@@ -175,6 +175,11 @@ impl Module for SamplePlayer {
                 None => false,
             };
 
+        // A replacement still staged, its swap deferred: the sample playing
+        // now is on its way out, so its end leaves `play` on for the
+        // replacement to start with. A stop written meanwhile still stops.
+        let replacing = swap_version != self.last_swap_version;
+
         if swapped {
             self.position = 0.0;
             self.playing = control_play;
@@ -243,7 +248,7 @@ impl Module for SamplePlayer {
                                 self.playing = false;
                                 reader.reset(0.0);
                                 // A `play` written since the top of the block wins.
-                                if control_play && self.ctrl.end_play(transport) {
+                                if control_play && !replacing && self.ctrl.end_play(transport) {
                                     control_play = false;
                                     self.last_control_play = false;
                                 }
@@ -267,7 +272,7 @@ impl Module for SamplePlayer {
                                 self.playing = false;
                                 self.position = 0.0;
                                 // A `play` written since the top of the block wins.
-                                if control_play && self.ctrl.end_play(transport) {
+                                if control_play && !replacing && self.ctrl.end_play(transport) {
                                     control_play = false;
                                     self.last_control_play = false;
                                 }

@@ -96,6 +96,50 @@ fn a_busy_swap_lock_defers_the_swap_instead_of_blocking() {
 }
 
 #[test]
+fn a_one_shot_ending_while_its_replacement_waits_leaves_the_replacement_playing() {
+    let (controls, mut player, first) = one_shot(&[[0.2, 0.0]; 8]);
+    controls.set_play(true);
+    player.process(1);
+    let second = write_test_wav(44_100, 1, &[[0.7, 0.0]; 8]);
+    controls.set_asset(second.to_str().unwrap()).unwrap();
+
+    // The old one-shot plays out while the swap is deferred.
+    let held = controls.hold_swap_lock();
+    player.process(16);
+    player.process(1);
+    assert_eq!(player.get_output("audio_left").unwrap(), 0.0, "ended");
+    drop(held);
+
+    player.process(1);
+    assert!((player.get_output("audio_left").unwrap() - 0.7).abs() < 1e-3);
+
+    let _ = std::fs::remove_file(first);
+    let _ = std::fs::remove_file(second);
+}
+
+#[test]
+fn a_stop_written_while_a_replacement_waits_stays_stopped() {
+    let (controls, mut player, first) = one_shot(&[[0.2, 0.0]; 8]);
+    controls.set_play(true);
+    player.process(1);
+    let second = write_test_wav(44_100, 1, &[[0.7, 0.0]; 8]);
+    controls.set_asset(second.to_str().unwrap()).unwrap();
+
+    let held = controls.hold_swap_lock();
+    player.process(16);
+    controls.set_play(false);
+    player.process(1);
+    drop(held);
+
+    player.process(4);
+    assert_eq!(player.get_output("audio_left").unwrap(), 0.0);
+    assert!(!controls.play());
+
+    let _ = std::fs::remove_file(first);
+    let _ = std::fs::remove_file(second);
+}
+
+#[test]
 fn replacing_a_sample_frees_nothing_on_the_audio_thread() {
     let (controls, mut player, first) = one_shot(&[[0.2, 0.0]; 8]);
     controls.set_play(true);
