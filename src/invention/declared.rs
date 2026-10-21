@@ -42,7 +42,7 @@ use indexmap::IndexMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use super::graph::{GraphCommand, SignalGraph};
-use super::publish::{check_offline, PendingLog, PendingWrite, Publisher, Settler};
+use super::publish::{check_offline, PendingLog, PendingWrite, Publisher, Retarget, Settler};
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
@@ -85,6 +85,9 @@ pub(crate) struct RequestPort {
     /// Settles each request once submitted, when the backend never renders
     /// on its own (see `LiveGraph::link`).
     pub(crate) settler: Option<Settler>,
+    /// Recompiles the topology ahead of a write changing what its module
+    /// writes (see [`Checked::targets`]).
+    pub(crate) retarget: Retarget,
 }
 
 impl RequestPort {
@@ -149,7 +152,10 @@ pub(crate) struct Checked<'a> {
     pub(crate) generation: Option<u64>,
     /// The modules the payload writes: a timed edit waiting that rebuilds
     /// or removes one, or that re-resolved the payload this write
-    /// replaces, is cancelled (see `Publisher::timed_races`).
+    /// replaces, is cancelled (see `Publisher::timed_races`). On a live
+    /// graph, a topology compiled with the module writing others is
+    /// recompiled with these and published just ahead of the write (see
+    /// `publish::retarget`).
     pub(crate) targets: Vec<String>,
     /// Records the write where it commits: under the publisher on a live
     /// graph, so a graph change sees every write submitted before it
@@ -379,10 +385,10 @@ impl DeclaredSurface {
                 if !publisher.audio_alive() {
                     return Err("The audio thread has stopped".into());
                 }
-                let target = publisher
+                let mut target = publisher
                     .control_target(&port.module_id, index)
                     .map_err(|error| error.to_string())?;
-                let (value, shown, checked) = match write {
+                let (value, shown, mut checked) = match write {
                     Write::Value(value) => (RequestValue::Value(value), None, None),
                     Write::Payload(payload, shown, checked) => {
                         (RequestValue::Payload(payload), Some(shown), checked)
@@ -397,14 +403,47 @@ impl DeclaredSurface {
                 if let Some(checked) = &checked {
                     if publisher.timed_races(&port.module_id, &checked.targets) {
                         // Sure of its room first, so a full queue never
-                        // cancels the edit, as a change publishing is.
-                        if !port.requests.has_room() {
+                        // cancels the edit, as a change publishing is: room
+                        // for the recompile it may publish too.
+                        if !port.retarget.has_room() {
                             return Err(QUEUE_FULL.into());
                         }
                         if !publisher.cancel_timed() {
                             return Err(STALE.into());
                         }
                     }
+                }
+                // Ahead of the write, so the audio thread never plays it in
+                // the order compiled for the targets it replaces.
+                let recompiled = match &mut checked {
+                    Some(checked) => {
+                        let targets = std::mem::take(&mut checked.targets);
+                        port.retarget
+                            .prepare(&publisher, &port.module_id, targets)?
+                    }
+                    None => None,
+                };
+                let recompiled = match recompiled {
+                    Some(prepared) => {
+                        match port
+                            .retarget
+                            .publish(&mut publisher, &port.pending, prepared)
+                        {
+                            Ok(published) => Some(published),
+                            Err((error, refused)) => {
+                                drop(publisher);
+                                drop(refused);
+                                return Err(error);
+                            }
+                        }
+                    }
+                    None => None,
+                };
+                if recompiled.is_some() {
+                    // A recompile moves no module: the write still resolves.
+                    target = publisher
+                        .control_target(&port.module_id, index)
+                        .map_err(|error| error.to_string())?;
                 }
                 // A payload is listed pending by its read-back and counted
                 // unlogged once applied: the session log cannot carry it yet
@@ -448,6 +487,8 @@ impl DeclaredSurface {
                 // request one of them queues meanwhile applies in the same
                 // block or theirs.
                 drop(publisher);
+                // What the recompile replaced is freed off the lock too.
+                drop(recompiled);
                 if let Some(settler) = &port.settler {
                     settler.settle();
                 }
