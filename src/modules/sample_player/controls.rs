@@ -1,6 +1,13 @@
 //! Thread-safe controls for the SamplePlayer module.
+//!
+//! The audio thread never blocks here. It reads `play`, `loop` and the play
+//! trigger from atomics once per block, and takes a staged sample with
+//! `try_lock`, only after `swap_version` moved (the counter pattern from
+//! `sample_kit`). When a contended `try_lock` fails, the swap lands on a
+//! later block.
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, TryLockError};
 
 use crate::atomic::AtomicF32;
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
@@ -8,7 +15,7 @@ use crate::{ControlMeta, ControlSurface, ControlValue};
 
 #[derive(Clone)]
 pub struct SamplePlayerControls {
-    pub(crate) shared: Arc<Mutex<SamplePlayerShared>>,
+    pub(crate) shared: Arc<SamplePlayerShared>,
     pitch_ratio: AtomicF32,
     time_ratio: AtomicF32,
     sample_rate: u32,
@@ -19,11 +26,37 @@ pub struct SamplePlayerControls {
 }
 
 pub(crate) struct SamplePlayerShared {
-    pub(crate) asset: String,
-    pub(crate) play: bool,
-    pub(crate) loop_enabled: bool,
-    pub(crate) play_trigger: u64,
-    pub(crate) pending_sample: Option<Arc<SampleData>>,
+    /// Bit 0 is `play`; the bits above count `play = true` writes, so every
+    /// retrigger is seen even if `play` was already on. The audio thread's
+    /// end-of-sample write is a compare-and-swap against the value it read
+    /// at the top of the block, so a retrigger or stop written meanwhile
+    /// wins over it.
+    transport: AtomicU64,
+    loop_enabled: AtomicBool,
+    /// Authored asset ref, read and written by control threads only.
+    asset: Mutex<String>,
+    /// Bumped after a sample is staged in `swap`.
+    swap_version: AtomicU64,
+    swap: Mutex<SampleSwap>,
+}
+
+#[derive(Default)]
+pub(crate) struct SampleSwap {
+    pending: Option<Arc<SampleData>>,
+    /// The sample the audio thread swapped out. The next control-thread
+    /// swap drops it, so the audio thread never frees a sample. Until then
+    /// it stays in memory (usually shared with the sample cache anyway).
+    retired: Option<Arc<SampleData>>,
+}
+
+/// The `play` bit of a transport value.
+pub(crate) fn transport_play(transport: u64) -> bool {
+    transport & 1 == 1
+}
+
+/// The play trigger count of a transport value.
+pub(crate) fn transport_trigger(transport: u64) -> u64 {
+    transport >> 1
 }
 
 impl SamplePlayerControls {
@@ -44,13 +77,13 @@ impl SamplePlayerControls {
         elastic: bool,
     ) -> Result<Self, String> {
         let controls = Self {
-            shared: Arc::new(Mutex::new(SamplePlayerShared {
-                asset: String::new(),
-                play: false,
-                loop_enabled: false,
-                play_trigger: 0,
-                pending_sample: None,
-            })),
+            shared: Arc::new(SamplePlayerShared {
+                transport: AtomicU64::new(0),
+                loop_enabled: AtomicBool::new(false),
+                asset: Mutex::new(String::new()),
+                swap_version: AtomicU64::new(0),
+                swap: Mutex::new(SampleSwap::default()),
+            }),
             pitch_ratio: AtomicF32::new(1.0),
             time_ratio: AtomicF32::new(1.0),
             sample_rate,
@@ -75,7 +108,7 @@ impl SamplePlayerControls {
     }
 
     pub fn asset(&self) -> String {
-        self.shared.lock().unwrap().asset.clone()
+        self.shared.asset.lock().unwrap().clone()
     }
 
     pub fn set_asset(&self, asset: &str) -> Result<(), String> {
@@ -87,32 +120,100 @@ impl SamplePlayerControls {
             // finds it on the SampleData via the lock-free accessor).
             sample.elastic_analysis();
         }
-        let mut shared = self.shared.lock().unwrap();
         // The authored ref stays the control value, so a saved document keeps
         // the portable form rather than this machine's cache path.
-        shared.asset = asset.to_string();
-        shared.pending_sample = Some(sample);
+        let mut asset_ref = self.shared.asset.lock().unwrap();
+        let (replaced, retired) = {
+            let mut swap = self.shared.swap.lock().unwrap();
+            (swap.pending.replace(sample), swap.retired.take())
+        };
+        *asset_ref = asset.to_string();
+        self.shared.swap_version.fetch_add(1, Ordering::Release);
+        drop(asset_ref);
+        // Dropped here, off the audio thread and outside the swap lock.
+        drop((replaced, retired));
         Ok(())
     }
 
     pub fn play(&self) -> bool {
-        self.shared.lock().unwrap().play
+        transport_play(self.transport())
     }
 
     pub fn set_play(&self, play: bool) {
-        let mut shared = self.shared.lock().unwrap();
-        shared.play = play;
         if play {
-            shared.play_trigger = shared.play_trigger.wrapping_add(1);
+            let _ = self.shared.transport.fetch_update(
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                |transport| Some((transport | 1).wrapping_add(2)),
+            );
+        } else {
+            self.shared.transport.fetch_and(!1, Ordering::AcqRel);
         }
     }
 
     pub fn loop_enabled(&self) -> bool {
-        self.shared.lock().unwrap().loop_enabled
+        self.shared.loop_enabled.load(Ordering::Acquire)
     }
 
     pub fn set_loop_enabled(&self, loop_enabled: bool) {
-        self.shared.lock().unwrap().loop_enabled = loop_enabled;
+        self.shared
+            .loop_enabled
+            .store(loop_enabled, Ordering::Release);
+    }
+
+    /// Audio thread: `play` and the play trigger, read once per block.
+    pub(crate) fn transport(&self) -> u64 {
+        self.shared.transport.load(Ordering::Acquire)
+    }
+
+    /// Audio thread: turns `play` off when a one-shot sample ends, unless a
+    /// control thread wrote `play` since `observed` was read. Returns whether
+    /// it did.
+    pub(crate) fn end_play(&self, observed: u64) -> bool {
+        self.shared
+            .transport
+            .compare_exchange(observed, observed & !1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// Audio thread: the swap counter, checked once per block.
+    pub(crate) fn swap_version(&self) -> u64 {
+        self.shared.swap_version.load(Ordering::Acquire)
+    }
+
+    /// Audio thread: exchanges `current` for the staged sample, if one is
+    /// staged and the lock is free. The replaced sample is parked for a
+    /// control thread to drop. Returns `None` when the lock was busy, so the
+    /// caller retries on a later block; `Some(swapped)` otherwise.
+    pub(crate) fn try_swap(&self, current: &mut Option<Arc<SampleData>>) -> Option<bool> {
+        let mut swap = match self.shared.swap.try_lock() {
+            Ok(swap) => swap,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        // `retired` is empty whenever `pending` is full: the staging write
+        // empties it, and only one swap follows each staging. Should that
+        // ever not hold, wait for a control thread rather than free here.
+        if swap.retired.is_some() {
+            return None;
+        }
+        let Some(sample) = swap.pending.take() else {
+            return Some(false);
+        };
+        swap.retired = current.replace(sample);
+        Some(true)
+    }
+
+    /// Holds the swap lock, as a control thread mid-`set_asset` would.
+    #[cfg(test)]
+    pub(crate) fn hold_swap_lock(&self) -> std::sync::MutexGuard<'_, SampleSwap> {
+        self.shared.swap.lock().unwrap()
+    }
+
+    /// The staged sample not yet taken by the audio thread.
+    #[cfg(test)]
+    pub(crate) fn pending_sample(&self) -> Option<Arc<SampleData>> {
+        self.shared.swap.lock().unwrap().pending.clone()
     }
 
     pub fn pitch_ratio(&self) -> f32 {
