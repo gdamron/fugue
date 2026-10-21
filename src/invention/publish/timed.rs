@@ -29,6 +29,20 @@ use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
 use crate::ControlValue;
 
+/// What became of an authored write as it was recorded (see
+/// [`LiveGraph::record_authored`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Authored {
+    /// Recorded: what plays.
+    Recorded,
+    /// Not recorded: a timed edit landed after the write, so it is to be
+    /// made again.
+    Raced,
+    /// Recorded on the last attempt, though a timed edit landed after the
+    /// write: what plays may differ.
+    RecordedRaced,
+}
+
 /// When a timed edit lands, resolved against the graph that is playing.
 #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
 #[derive(Clone, Copy, Debug)]
@@ -123,17 +137,20 @@ impl LiveGraph {
     /// the write into its own document instead, so the write is recorded
     /// again as the edit is adopted.
     ///
-    /// False, with nothing recorded, when a change was published or
-    /// adopted since `seen`: a timed edit may have landed after the write,
-    /// replacing the module or writing the control as it landed, so what
-    /// plays may not be the write. The caller writes again.
+    /// [`Authored::Raced`], with nothing recorded, when a timed edit was
+    /// adopted since `seen`: it may have landed after the write, replacing
+    /// the module or writing the control as it landed, so what plays may
+    /// not be the write. The caller writes again, unless this is its `last`
+    /// attempt: then the write is recorded anyway, as it is when only
+    /// untimed changes were published since `seen` (they publish nothing
+    /// after the write reaches the audio thread).
     pub(crate) fn record_authored(
         &self,
         module_id: &str,
         key: &str,
         value: &ControlValue,
-        seen: u64,
-    ) -> bool {
+        (seen, last): (u64, bool),
+    ) -> Authored {
         let mut publisher = self.lock();
         if let Some(removed) = publisher.timed_replaces(module_id) {
             let cause = || CancelCause::AuthoredWrite {
@@ -145,13 +162,18 @@ impl LiveGraph {
                 self.adopt(&mut publisher);
             }
         }
-        if publisher.generation() != seen {
-            return false;
+        let raced = publisher.timed_adopted_since(seen);
+        if raced && !last {
+            return Authored::Raced;
         }
         publisher.fold_timed(module_id, key, value);
         let mut state = self.state.lock().unwrap();
         state.record_authored_control(module_id, key, value);
-        true
+        if raced {
+            Authored::RecordedRaced
+        } else {
+            Authored::Recorded
+        }
     }
 
     /// Queues `prepared` to land at `time`, refused once `ttl` samples have
