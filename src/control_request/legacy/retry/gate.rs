@@ -12,14 +12,17 @@
 //!
 //! A lane is claimed on a control thread as a schedule is built, and given
 //! back when it is dropped: its writes then hold no other back. A scheduler
-//! an edit removes is freed only later, off the audio thread, so it drops
-//! what it has waiting as it leaves the graph (see `Module::leave`). Tickets
+//! an edit removes is freed only later, off the audio thread, so it gives
+//! up what it has waiting as it leaves the graph (see `Module::leave`),
+//! leaving its events here with their tickets for the schedules still
+//! writing the surface to land in turn (see [`super::orphans`]). Tickets
 //! need not land in order to be given back, so a write dropped from the
 //! middle (one that waited too long) never holds the others up.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
+use super::orphans::Orphans;
 use super::Surface;
 
 /// A lane's earliest ticket when nothing of its schedule waits.
@@ -73,6 +76,8 @@ pub(super) struct Gate {
     /// The ticket of the last event or resize kept, zero for none.
     last_barrier: AtomicU64,
     lanes: Lanes,
+    /// Events left waiting by schedules gone.
+    pub(super) orphans: Orphans,
 }
 
 /// Every surface's gate, by the surface's address. Control threads only.
@@ -127,9 +132,14 @@ impl Gate {
         lanes.expect("a lane this gate handed out")
     }
 
-    /// The earliest ticket waiting on the surface, from any schedule, or
-    /// [`IDLE`] when none waits.
+    /// The earliest ticket waiting on the surface, from any schedule or
+    /// left by one gone, or [`IDLE`] when none waits.
     pub(super) fn earliest(&self) -> u64 {
+        self.lanes_earliest().min(self.orphans.earliest())
+    }
+
+    /// The earliest ticket a live schedule has waiting, or [`IDLE`].
+    pub(super) fn lanes_earliest(&self) -> u64 {
         (self.lanes.iter())
             .map(|lane| lane.head.load(Ordering::Relaxed))
             .min()
