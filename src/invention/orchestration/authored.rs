@@ -6,63 +6,68 @@ use crate::invention::runtime::GraphCommandError;
 
 /// How many times an authored write is made when a timed edit is adopted
 /// between making it and recording it.
-pub(super) const WRITE_ATTEMPTS: usize = 3;
-
-/// How an authored write that was made and recorded ended.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum Written {
-    /// Recorded, and what plays.
-    Recorded,
-    /// Recorded on its last attempt, though a timed edit landed after it
-    /// was made: the edit may have written it or replaced its module.
-    Raced,
-}
+pub(crate) const WRITE_ATTEMPTS: usize = 3;
 
 /// Makes an authored write (`write`, reading the publisher's generation
 /// first with `generation`) and records it (`record`, given the generation
-/// seen and whether this is the last attempt), up to `attempts` times while
-/// a timed edit is adopted in between. A write made is always recorded:
-/// when making it again fails, the attempt before is recorded before the
-/// failure is returned, since it may be playing.
-pub(super) fn write_authored(
+/// seen), up to `attempts` times while a timed edit overtakes it: lands
+/// after it is made, and rebuilds or removes its module or writes the
+/// control itself (see
+/// `LiveGraph::record_authored`). A write overtaken is never recorded, as
+/// what plays may not be the write: overtaken on its last attempt, or
+/// refused when made again, it is reported to be made again
+/// (`ControlError`), with nothing recorded.
+///
+/// Concurrent authored writers to one control are not serialized, as they
+/// are not on main: the last to be recorded may not be the last to play.
+pub(crate) fn write_authored(
     attempts: usize,
+    target: (&str, &str),
     mut generation: impl FnMut() -> u64,
     mut write: impl FnMut() -> Result<(), GraphCommandError>,
-    mut record: impl FnMut(u64, bool) -> Authored,
-) -> Result<Written, GraphCommandError> {
-    let mut made = None;
+    mut record: impl FnMut(u64) -> Authored,
+) -> Result<(), GraphCommandError> {
+    debug_assert!(attempts > 0, "an authored write is made at least once");
+    let (module_id, key) = target;
+    let overtaken = || {
+        format!(
+            "{module_id}.{key} was written, but a timed edit landed after it and rebuilt or \
+             removed {module_id}, or wrote {module_id}.{key} itself, so it may not be playing; \
+             nothing was recorded: make the write again"
+        )
+    };
     for attempt in 1..=attempts {
         let seen = generation();
         if let Err(error) = write() {
-            if let Some(seen) = made {
-                record(seen, true);
+            if attempt == 1 {
+                return Err(error);
             }
-            return Err(error);
+            let refused = format!("{}, and making it again was refused: {error}", overtaken());
+            return Err(GraphCommandError::ControlError(refused));
         }
-        match record(seen, attempt == attempts) {
-            Authored::Recorded => return Ok(Written::Recorded),
-            Authored::Raced => made = Some(seen),
-            Authored::RecordedRaced => return Ok(Written::Raced),
+        if record(seen) == Authored::Recorded {
+            return Ok(());
         }
     }
-    // A last attempt is never `Raced`, so the loop returns; one attempt
-    // too few is reported as raced, never as unrecorded.
-    Ok(Written::Raced)
+    Err(GraphCommandError::ControlError(overtaken()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A write made, raced by a timed edit, then refused on its retry (the
-    /// queue full): the write made is still recorded, as the last attempt,
-    /// and the refusal returned.
+    const TARGET: (&str, &str) = ("osc1", "frequency");
+
+    /// A write overtaken by a timed edit, then refused on its retry (the
+    /// queue full): nothing is recorded, and the caller is told to make it
+    /// again.
     #[test]
-    fn a_write_made_is_recorded_though_its_retry_is_refused() {
+    fn a_write_overtaken_then_refused_is_never_recorded() {
         let mut writes = 0;
         let mut records = Vec::new();
         let ended = write_authored(
             WRITE_ATTEMPTS,
+            TARGET,
             || 7,
             || {
                 writes += 1;
@@ -71,67 +76,66 @@ mod tests {
                     _ => Err(GraphCommandError::QueueFull),
                 }
             },
-            |seen, last| {
-                records.push((seen, last));
-                if last {
-                    Authored::RecordedRaced
-                } else {
-                    Authored::Raced
-                }
+            |seen| {
+                records.push(seen);
+                Authored::Overtaken
             },
         );
-        assert!(matches!(ended, Err(GraphCommandError::QueueFull)));
-        assert_eq!(records, [(7, false), (7, true)]);
+        let Err(GraphCommandError::ControlError(message)) = ended else {
+            panic!("expected a ControlError, got {ended:?}");
+        };
+        assert!(message.contains("make the write again"), "{message}");
+        assert!(message.contains("refused"), "{message}");
+        assert_eq!(records, [7]);
     }
 
-    /// A write refused the first time is never recorded.
+    /// A write refused the first time is never recorded, and its refusal
+    /// is returned as it is.
     #[test]
     fn a_write_never_made_is_never_recorded() {
         let mut recorded = false;
         let ended = write_authored(
             WRITE_ATTEMPTS,
+            TARGET,
             || 0,
             || Err(GraphCommandError::QueueFull),
-            |_, _| {
+            |_| {
                 recorded = true;
                 Authored::Recorded
             },
         );
-        assert!(ended.is_err() && !recorded);
+        assert!(matches!(ended, Err(GraphCommandError::QueueFull)) && !recorded);
     }
 
-    /// Raced each time, the write is recorded on its last attempt and
-    /// reported raced; recorded at once, it is made once.
+    /// Overtaken each time, the write is never recorded and is reported to
+    /// be made again; recorded at once, it is made once.
     #[test]
-    fn a_write_is_made_again_only_while_raced() {
+    fn a_write_is_made_again_only_while_overtaken() {
         let mut writes = 0;
         let ended = write_authored(
             WRITE_ATTEMPTS,
+            TARGET,
             || 0,
             || {
                 writes += 1;
                 Ok(())
             },
-            |_, last| {
-                if last {
-                    Authored::RecordedRaced
-                } else {
-                    Authored::Raced
-                }
-            },
+            |_| Authored::Overtaken,
         );
-        assert_eq!((ended.unwrap(), writes), (Written::Raced, WRITE_ATTEMPTS));
+        assert!(matches!(ended, Err(GraphCommandError::ControlError(_))));
+        assert_eq!(writes, WRITE_ATTEMPTS);
 
         let mut writes = 0;
         let ended = write_authored(
             WRITE_ATTEMPTS,
+            TARGET,
             || 0,
             || {
                 writes += 1;
                 Ok(())
             },
-            |_, _| Authored::Recorded,
+            |_| Authored::Recorded,
         );
-        assert_eq!((ended.unwrap(), writes), (Written::Recorded, 1));
+        assert_eq!((ended.unwrap(), writes), ((), 1));
     }
 }

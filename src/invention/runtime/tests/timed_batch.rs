@@ -171,27 +171,40 @@ fn what_cannot_land_whole_is_refused_with_nothing_queued() {
 }
 
 /// The batch writes the oscillator's frequency as it lands: an authored
-/// write to it meanwhile cancels the batch, which says why, so the write
-/// is what plays and what the document records.
+/// write to it meanwhile is kept over the batch's own, which still lands
+/// whole otherwise and says what it kept, so the write is what plays and
+/// what the document records.
 #[test]
-fn an_authored_write_to_a_control_the_batch_writes_cancels_it() {
+fn an_authored_write_to_a_control_the_batch_writes_is_kept_over_it() {
     let (mut running, audio) = start();
     audio.render(INTO_THE_BAR);
     let queued = (running.apply_edits_at(&swap_and_retune(), &next_bar(), None)).unwrap();
+    running.take_request_changes();
     running
         .set_control("osc", "frequency", ControlValue::Number(275.0))
         .unwrap();
+    let kept = "kept authored osc.frequency: the edit lands without writing it";
+    let changed = running.take_request_changes();
+    let reasons: Vec<_> = changed
+        .iter()
+        .map(|status| status.reason.as_deref())
+        .collect();
+    assert_eq!(reasons, [Some(kept)]);
     let status = running.request_status(&queued.id).unwrap();
-    assert_eq!(status.state, RequestState::Cancelled);
-    let reason = status.reason.unwrap();
-    assert!(
-        reason.contains("osc.frequency, which this edit also writes as it lands"),
-        "{reason}"
+    assert_eq!(
+        (status.state, status.reason.as_deref()),
+        (RequestState::Queued, Some(kept))
     );
+
     audio.render(PAST_TWO_BARS);
     let playing = running.get_control("osc", "frequency").unwrap();
     assert_eq!(playing, ControlValue::Number(275.0));
     assert_eq!(frequency_of(&running), (275.0, 275.0));
+    let status = running.request_status(&queued.id).unwrap();
+    assert_eq!(status.state, RequestState::Adopted);
+    assert_eq!(status.built, ["fx"], "the swap landed");
+    let landed = "kept authored osc.frequency: the edit landed without writing it";
+    assert_eq!(status.reason.as_deref(), Some(landed));
 }
 
 /// An authored write to a control the batch leaves alone is kept, in the
