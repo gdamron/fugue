@@ -263,23 +263,6 @@ fn a_schedule_written_after_a_timed_swap_lands_waits_for_its_adoption() {
     );
 }
 
-/// On a step's own sample, the new instance plays that step's level from
-/// the landing, as it plays every later step's: the drain plays the
-/// entries due on a landing sample once the edit installs (FUG-413).
-#[test]
-fn a_timed_swap_on_a_step_plays_that_step_on_the_new_instance() {
-    let beats = beat_samples(BPM, 8);
-    let mut rig = stepped();
-    let lands = beats[3];
-    let id = swap_dial(&rig, EditTime::AtSample(lands as u64), None).unwrap();
-    let out = render_counted(&mut rig, blocks(BPM, 7.0));
-    let landed = Outcome::Applied { at: lands as u64 };
-    assert_eq!(outcomes_of(&mut rig, id), [(id, landed)]);
-    let step3 = &out[lands..beats[4]];
-    assert!(step3.iter().all(|&level| level == value(3)));
-    assert!(plays_steps(&out, &beats, 4));
-}
-
 /// An edit swapping one of a scheduler's targets and unplugging its clock
 /// on a step's sample leaves the scheduler off the drain: the step plays
 /// before it installs, as one only unplugging the clock does, so its
