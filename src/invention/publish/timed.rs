@@ -127,21 +127,23 @@ impl LiveGraph {
         sync_ledger(publisher, &mut self.pending.lock().unwrap());
     }
 
-    /// Records an authored write to control `key` of `module_id`, made
-    /// while generation `seen` was the latest, in the retained document.
-    /// Runs under the publisher, so no timed edit can be adopted in
-    /// between. A timed edit waiting that rebuilds or removes the module is
-    /// cancelled, and the edit reports why. One that keeps the module folds
-    /// the write into its own document instead, so the write is recorded
-    /// again as the edit is adopted.
+    /// Records an authored write to control `key` of `module_id`, queued
+    /// at generation `seen` (see `declared::Queued`), in the retained
+    /// document. Runs under the publisher, so no timed edit can be adopted
+    /// in between.
     ///
-    /// [`Authored::Overtaken`], with nothing recorded, when a timed edit
-    /// adopted since `seen` may have landed after the write and replaced
-    /// what it wrote (see [`Publisher::timed_overtook`]): the caller makes
-    /// it again. One adopted since that touched neither the module nor its
-    /// schedule leaves the write playing, so it is recorded, as it is when
-    /// only untimed changes were published since `seen` (they publish
-    /// nothing after the write reaches the audio thread).
+    /// [`Authored::Overtaken`], with nothing recorded and nothing else
+    /// done, when a timed edit adopted since `seen` may have landed after
+    /// the write and replaced what it wrote (see
+    /// [`Publisher::timed_overtook`]): the caller makes it again. One that
+    /// left the module alone leaves the write playing, so it is recorded,
+    /// as it is when only untimed changes were published since `seen`
+    /// (they publish nothing after the write reaches the audio thread).
+    ///
+    /// Otherwise a timed edit waiting that rebuilds or removes the module
+    /// is cancelled, and the edit reports why. One that keeps the module
+    /// folds the write into its own document instead, so the write is
+    /// recorded again as the edit is adopted.
     pub(crate) fn record_authored(
         &self,
         module_id: &str,
@@ -150,18 +152,20 @@ impl LiveGraph {
         seen: u64,
     ) -> Authored {
         let mut publisher = self.lock();
+        if publisher.timed_overtook(seen, module_id) {
+            return Authored::Overtaken;
+        }
         if let Some(removed) = publisher.timed_replaces(module_id) {
             let cause = || CancelCause::AuthoredWrite {
                 module_id: module_id.to_string(),
                 key: key.to_string(),
                 removed,
             };
+            // Landed meanwhile, after the write: adopted, it overtook it.
             if !publisher.cancel_timed(cause) {
                 self.adopt(&mut publisher);
+                return Authored::Overtaken;
             }
-        }
-        if publisher.timed_overtook(seen, module_id) == Some(true) {
-            return Authored::Overtaken;
         }
         publisher.fold_timed(module_id, key, value);
         let mut state = self.state.lock().unwrap();

@@ -10,7 +10,7 @@
 //! nothing changed), as any change prepared against a generation that has
 //! moved is.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -50,16 +50,23 @@ pub(crate) struct Waiting {
     folded: Vec<(String, String, ControlValue)>,
 }
 
-/// What the latest timed edits adopted did, for an authored write that one
-/// may have overtaken (see [`Publisher::timed_overtook`]).
+/// How many recent adoptions [`Adoptions`] remembers.
+const ADOPTIONS: usize = 8;
+
+/// What the latest timed edits adopted did, for an authored write one may
+/// have overtaken (see [`Publisher::timed_overtook`]).
 #[derive(Default)]
-pub(crate) struct LastAdopted {
-    /// The generation the latest was adopted as, 0 before any.
+pub(crate) struct Adoptions {
+    recent: VecDeque<Adoption>,
+    /// The generation of the newest adoption forgotten, 0 before any.
+    forgotten: u64,
+}
+
+struct Adoption {
+    /// The generation it was adopted as.
     generation: u64,
-    /// The generation the one before it was adopted as, 0 before any.
-    before: u64,
-    /// The modules the latest rebuilt or removed, or whose schedule it
-    /// re-resolved as it landed.
+    /// The modules it rebuilt or removed, or whose schedule it re-resolved
+    /// as it landed.
     modules: HashSet<String>,
 }
 
@@ -185,11 +192,16 @@ impl Publisher {
             .filter(|id| !self.mirror.modules.contains_key(*id));
         let built = waiting.built.keys();
         let rebound = waiting.packed.rebound.iter();
-        self.adopted = LastAdopted {
+        let modules = removed.chain(built).chain(rebound).cloned().collect();
+        self.adopted.recent.push_back(Adoption {
             generation: self.generation,
-            before: self.adopted.generation,
-            modules: removed.chain(built).chain(rebound).cloned().collect(),
-        };
+            modules,
+        });
+        if self.adopted.recent.len() > ADOPTIONS {
+            if let Some(oldest) = self.adopted.recent.pop_front() {
+                self.adopted.forgotten = oldest.generation;
+            }
+        }
         Some(Adopted {
             id: waiting.id,
             published: Published {
@@ -234,16 +246,14 @@ impl Publisher {
     }
 
     /// Whether a timed edit adopted after generation `seen` may have
-    /// overtaken an authored write to control `key` of `module_id` made
-    /// while `seen` was the latest: landing after it, the edit rebuilt or
-    /// removed the module, or re-resolved its schedule. `None` when none
-    /// was adopted since; `Some(true)`, to be safe, when more than one was.
-    pub(crate) fn timed_overtook(&self, seen: u64, module_id: &str) -> Option<bool> {
+    /// overtaken an authored write to `module_id` queued at `seen`: landing
+    /// after it, the edit rebuilt or removed the module, or re-resolved its
+    /// schedule. True, to be safe, when one adopted since is forgotten.
+    pub(crate) fn timed_overtook(&self, seen: u64, module_id: &str) -> bool {
         let adopted = &self.adopted;
-        if adopted.generation <= seen {
-            return None;
-        }
-        Some(adopted.before > seen || adopted.modules.contains(module_id))
+        adopted.forgotten > seen
+            || (adopted.recent.iter())
+                .any(|adoption| adoption.generation > seen && adoption.modules.contains(module_id))
     }
 
     /// The id of the timed edit waiting, if any.
