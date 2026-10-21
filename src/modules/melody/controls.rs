@@ -484,4 +484,8 @@ impl ControlSurface for MelodyControls {
     fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
         self.scheduled_read(key)
     }
+
+    fn scheduled_resizes(&self, key: &str) -> bool {
+        key == "degree_count"
+    }
 }

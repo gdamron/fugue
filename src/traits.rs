@@ -265,6 +265,16 @@ pub trait ControlSurface: Send + Sync {
         false
     }
 
+    /// Whether a write of legacy control `key` changes which writes the
+    /// surface's other controls take (a melody's `degree_count`, which a
+    /// `degree.N` must fall within). A value waiting for a busy surface is
+    /// never given a newer value across such a write, nor is such a
+    /// write's (see `control_request::LegacyWrites`).
+    #[doc(hidden)]
+    fn scheduled_resizes(&self, _key: &str) -> bool {
+        false
+    }
+
     /// The controls legacy control `key` writes through to, on other
     /// surfaces, when it is an alias for them (a development's fan-out);
     /// `None` for a control of this surface's own. A schedule resolves a

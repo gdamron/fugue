@@ -70,8 +70,8 @@ impl Lanes {
 pub(super) struct Gate {
     /// The last ticket handed out: zero before the first.
     last: AtomicU64,
-    /// The ticket of the last event kept, zero for none.
-    last_event: AtomicU64,
+    /// The ticket of the last event or resize kept, zero for none.
+    last_barrier: AtomicU64,
     lanes: Lanes,
 }
 
@@ -147,11 +147,11 @@ impl Gate {
     }
 
     /// A ticket for a write kept now, after every one before it; an
-    /// event's is remembered (see [`Self::event_after`]).
-    pub(super) fn ticket(&self, event: bool) -> u64 {
+    /// event's or a resize's is remembered (see [`Self::barrier_after`]).
+    pub(super) fn ticket(&self, barrier: bool) -> u64 {
         let ticket = self.last.fetch_add(1, Ordering::Relaxed) + 1;
-        if event {
-            self.last_event.store(ticket, Ordering::Relaxed);
+        if barrier {
+            self.last_barrier.store(ticket, Ordering::Relaxed);
         }
         ticket
     }
@@ -162,8 +162,9 @@ impl Gate {
         self.last.load(Ordering::Relaxed) == ticket
     }
 
-    /// Whether an event was kept on the surface after `ticket`.
-    pub(super) fn event_after(&self, ticket: u64) -> bool {
-        self.last_event.load(Ordering::Relaxed) > ticket
+    /// Whether an event or a resize was kept on the surface after
+    /// `ticket`.
+    pub(super) fn barrier_after(&self, ticket: u64) -> bool {
+        self.last_barrier.load(Ordering::Relaxed) > ticket
     }
 }

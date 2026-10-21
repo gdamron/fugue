@@ -20,8 +20,9 @@
 //!   merged: each waits its turn.
 //! - **Bound.** At most [`RETRY_CAPACITY`] writes wait, the last
 //!   [`EVENT_ROOM`] of them events only. A value finding no room gives way
-//!   to its control's newer write after all, if no event to its surface came
-//!   between them; else it is dropped. A value is tried again at least once,
+//!   to its control's newer write after all, if no event or resize (see
+//!   [`crate::ControlSurface::scheduled_resizes`]) to its surface came
+//!   between them, and it is no resize; else it is dropped. A value is tried again at least once,
 //!   and then for at most the scheduler's limit (10 ms of samples). An event
 //!   waits as long as it takes, and is dropped only for want of room. A
 //!   write dropped is counted in [`LegacyWrites::refused`], as is one its
@@ -67,6 +68,9 @@ struct Control {
     group: usize,
     /// Whether a write is an event, never merged nor given up on.
     event: bool,
+    /// Whether a write changes which of its surface's other writes land
+    /// (see [`crate::ControlSurface::scheduled_resizes`]).
+    resizes: bool,
 }
 
 /// A surface a schedule writes: the order its writes there keep with
@@ -202,6 +206,7 @@ impl LegacyControls {
                 key: key.clone(),
                 group,
                 event: surface.scheduled_event(key),
+                resizes: surface.scheduled_resizes(key),
             });
         }
         Arc::new(LegacyWrites {
@@ -398,8 +403,8 @@ impl LegacyWrites {
 
     /// Keeps a write to try again: a value in place of its control's latest
     /// waiting one when nothing was kept on its surface since, or, with
-    /// no room left for values, when no event was; else after every write
-    /// waiting, with a new ticket.
+    /// no room left for values, when no event or resize was (and it is no
+    /// resize); else after every write waiting, with a new ticket.
     fn keep(&self, index: usize, value: TableValue) {
         let control = &self.controls[index];
         let group = &self.groups[control.group];
@@ -412,7 +417,8 @@ impl LegacyWrites {
             let latest = (self.slots[..waiting].iter().rev()).find(|slot| slot.index() == index);
             if let Some(slot) = latest {
                 let ticket = slot.load().ticket;
-                let crowded = waiting >= room && !group.gate.event_after(ticket);
+                let crowded =
+                    waiting >= room && !control.resizes && !group.gate.barrier_after(ticket);
                 if group.gate.is_last(ticket) || crowded {
                     slot.set_value(value);
                     return;
@@ -423,7 +429,7 @@ impl LegacyWrites {
             self.refused.record();
             return;
         }
-        let ticket = group.gate.ticket(control.event);
+        let ticket = group.gate.ticket(control.event || control.resizes);
         self.slots[waiting].store(Kept {
             index,
             value,
