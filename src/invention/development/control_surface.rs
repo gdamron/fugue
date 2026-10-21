@@ -1,5 +1,5 @@
 use super::*;
-use crate::control_request::Automation;
+use crate::control_request::{Automation, LegacyRefusal, TableValue};
 use crate::invention::declared::{Declaration, DeclaredSurface, Route};
 use crate::modules::control_scheduler::SurfaceDirectory;
 
@@ -200,6 +200,42 @@ impl ControlSurface for DevelopmentControlSurface {
         } else {
             Err(format!("Unknown control: {}", key))
         }
+    }
+
+    /// Writes every alias of `key`, a key on the legacy path alone (a
+    /// schedule writes no other), through its own surface's scheduled
+    /// setter: allocation-, free- and lock-free, as theirs are. An alias
+    /// refusing the write leaves the others written, and the first refusal
+    /// is returned.
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        let mut found = false;
+        let mut refused = None;
+        for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
+            found = true;
+            let written = (self.surfaces.get(&control.module_id))
+                .ok_or(LegacyRefusal::Unsupported)
+                .and_then(|surface| surface.set_scheduled(&control.key, value));
+            if let Err(refusal) = written {
+                refused.get_or_insert(refusal);
+            }
+        }
+        match (found, refused) {
+            (true, None) => Ok(()),
+            (true, Some(refusal)) => Err(refusal),
+            (false, _) => Err(LegacyRefusal::Unsupported),
+        }
+    }
+
+    /// Reads `key`'s first alias, as [`Self::get_control`] does a key on
+    /// the legacy path.
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        let control = (self.controls.iter())
+            .find(|entry| entry.meta.key == key)
+            .ok_or(LegacyRefusal::Unsupported)?;
+        let surface = (self.surfaces.get(&control.module_id)).ok_or(LegacyRefusal::Unsupported)?;
+        surface.get_scheduled(&control.key)
     }
 
     fn bind(&self, route: Route, module: &mut dyn Module) {

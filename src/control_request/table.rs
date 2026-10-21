@@ -7,14 +7,19 @@
 //! tier's write holds it off until the table's next entry on it (see
 //! `super::hold`); a legacy control (one its module does not declare)
 //! through its surface's setter, as a scheduler always wrote one, with no
-//! tiers and no holds.
+//! tiers and no holds. A legacy write is allocation-, free- and lock-free
+//! too ([`crate::ControlSurface::set_scheduled`]): one its surface cannot
+//! make so, such as one finding a control thread holding the lock it
+//! needs, is refused and counted, never waited on or formatted.
 
 use std::sync::Arc;
 
 use super::automation::Automation;
 use super::cells::ControlCells;
+use super::event::EventCounter;
+use super::legacy::LegacyRefusal;
 use super::request::ControlIndex;
-use crate::{ControlSurface, ControlValue};
+use crate::ControlSurface;
 
 /// What an entry writes: a number or a boolean, so writing one allocates
 /// nothing.
@@ -29,10 +34,12 @@ pub(crate) enum TableValue {
 pub(crate) enum TableTarget {
     /// A declared control, through its automation slot.
     Declared(Automation),
-    /// A legacy control, through its surface's setter.
+    /// A legacy control, through its surface's scheduled setter.
     Legacy {
         surface: Arc<dyn ControlSurface + Send + Sync>,
         control: String,
+        /// Counts its writes and reads refused (see [`Self::refused`]).
+        refused: Arc<EventCounter>,
     },
 }
 
@@ -47,34 +54,73 @@ impl TableTarget {
         }
     }
 
+    /// A legacy control, written through `surface`'s scheduled setter,
+    /// counting refusals in `refused`. Control thread.
+    pub(crate) fn legacy(
+        surface: Arc<dyn ControlSurface + Send + Sync>,
+        control: String,
+        refused: Arc<EventCounter>,
+    ) -> Self {
+        Self::Legacy {
+            surface,
+            control,
+            refused,
+        }
+    }
+
     /// Writes `value`, returning false when a higher tier holds the
-    /// control and it was dropped. Allocation- and lock-free for a
-    /// declared control; a legacy one's setter is its own (and its error,
-    /// which may allocate, is dropped).
+    /// control and it was dropped. Allocation-, free- and lock-free: a
+    /// legacy write its surface refuses (see
+    /// [`crate::ControlSurface::set_scheduled`]) is counted, and still
+    /// returns true, as a legacy control has no holds to end a ramp on.
     pub(crate) fn write(&self, value: TableValue) -> bool {
         match (self, value) {
             (Self::Declared(target), TableValue::Number(number)) => target.write_number(number),
             (Self::Declared(target), TableValue::Bool(flag)) => target.write_bool(flag),
-            (Self::Legacy { surface, control }, value) => {
-                let value = match value {
-                    TableValue::Number(number) => ControlValue::Number(number),
-                    TableValue::Bool(flag) => ControlValue::Bool(flag),
-                };
-                let _ = surface.set_control(control, value);
+            (
+                Self::Legacy {
+                    surface,
+                    control,
+                    refused,
+                },
+                value,
+            ) => {
+                if surface.set_scheduled(control, value).is_err() {
+                    refused.record();
+                }
                 true
             }
         }
     }
 
     /// The control's number as automation last left it: where a ramp
-    /// starts. `None` for one holding no number.
+    /// starts. `None` for one holding no number, or a legacy one its
+    /// surface could not read without waiting (counted as refused).
     pub(crate) fn current(&self) -> Option<f32> {
         match self {
             Self::Declared(target) => target.current(),
-            Self::Legacy { surface, control } => match surface.get_control(control) {
-                Ok(ControlValue::Number(number)) => Some(number),
-                _ => None,
+            Self::Legacy {
+                surface,
+                control,
+                refused,
+            } => match surface.get_scheduled(control) {
+                Ok(number) => Some(number),
+                Err(LegacyRefusal::Unsupported) => None,
+                Err(_) => {
+                    refused.record();
+                    None
+                }
             },
+        }
+    }
+
+    /// Counts a legacy target's writes and ramp starts its surface
+    /// refused; `None` for a declared one. Clone it on a control thread and
+    /// read it through an `EventCursor`.
+    pub(crate) fn refused(&self) -> Option<&Arc<EventCounter>> {
+        match self {
+            Self::Declared(_) => None,
+            Self::Legacy { refused, .. } => Some(refused),
         }
     }
 
@@ -95,10 +141,13 @@ impl TableTarget {
                 shared
             }
             (
-                Self::Legacy { surface, control },
+                Self::Legacy {
+                    surface, control, ..
+                },
                 Self::Legacy {
                     surface: other,
                     control: other_control,
+                    ..
                 },
             ) => {
                 let (a, b) = (Arc::as_ptr(surface), Arc::as_ptr(other));

@@ -1,9 +1,10 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::*;
+use crate::control_request::EventCounter;
 use crate::control_request::{FrameScope, Rank, RtValue, Source, Standing};
 use crate::test_support::table::{entry, number, TestTable};
-use crate::ControlMeta;
+use crate::{ControlMeta, ControlValue};
 
 /// A legacy surface holding one number, `level`.
 #[derive(Default)]
@@ -32,10 +33,11 @@ impl ControlSurface for Knob {
 }
 
 fn legacy(surface: &Arc<Knob>, control: &str) -> TableTarget {
-    TableTarget::Legacy {
-        surface: surface.clone(),
-        control: control.to_string(),
-    }
+    TableTarget::legacy(
+        surface.clone(),
+        control.to_string(),
+        Arc::new(EventCounter::new()),
+    )
 }
 
 fn user_hold(target: &Automation, due: u64) {

@@ -1,6 +1,7 @@
 //! Thread-safe controls for the Filter.
 
 use crate::atomic::AtomicF32;
+use crate::control_request::{scheduled_number, LegacyRefusal, TableValue};
 use crate::traits::{check_listed_control, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
@@ -170,6 +171,29 @@ impl ControlSurface for FilterControls {
             _ => return Err(format!("Unknown control: {}", key)),
         }
         Ok(())
+    }
+
+    /// `filter_type` is a string: a schedule cannot write it.
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        let value = scheduled_number(value)?;
+        match key {
+            "cutoff" => self.set_cutoff(value),
+            "resonance" => self.set_resonance(value),
+            "cutoff_mod_depth" => self.set_cutoff_mod_depth(value),
+            _ => return Err(LegacyRefusal::Unsupported),
+        }
+        Ok(())
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        match key {
+            "cutoff" => Ok(self.cutoff()),
+            "resonance" => Ok(self.resonance()),
+            "cutoff_mod_depth" => Ok(self.cutoff_mod_depth()),
+            _ => Err(LegacyRefusal::Unsupported),
+        }
     }
 
     fn validate_control(
