@@ -194,6 +194,17 @@ fn a_write_kept_late_in_a_long_block_is_tried_again_before_it_gives_up() {
     assert_eq!((writes.waiting(), writes.refused().count()), (0, 1));
 }
 
+#[test]
+fn a_ramp_starts_from_the_value_waiting_to_land() {
+    let voice = Arc::new(Voice::default());
+    let (writes, [level, ..]) = one(&voice);
+    assert_eq!(writes.read(level), Some(0.0), "the surface's own");
+    voice.busy.store(true, Ordering::Relaxed);
+    writes.write(level, n(12.0));
+    let (read, allocs, frees) = allocator_events(|| writes.read(level));
+    assert_eq!((read, allocs, frees), (Some(12.0), 0, 0));
+}
+
 /// A development's control fanning out to `voices`' `note_on`.
 struct Fan(Vec<Arc<Voice>>);
 

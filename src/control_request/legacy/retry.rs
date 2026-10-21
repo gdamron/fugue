@@ -235,10 +235,22 @@ impl LegacyWrites {
     }
 
     /// Reads target `index`'s number where a ramp starts, from the first
-    /// control it reaches: `None` for one holding none, or one its surface
-    /// could not read (counted).
+    /// control it reaches: the latest number waiting to be written there,
+    /// as it will be once it lands (the setter's rounding aside), else the
+    /// control's own. `None` for one holding none, or one its surface could
+    /// not read (counted).
     pub(crate) fn read(&self, index: usize) -> Option<f32> {
-        let control = &self.controls[*self.reached(index).first()?];
+        let leaf = *self.reached(index).first()?;
+        let waiting = (self.slots[..self.waiting()].iter().rev())
+            .map(Slot::load)
+            .find_map(|(other, value, _)| match value {
+                TableValue::Number(number) if other == leaf => Some(number),
+                _ => None,
+            });
+        if waiting.is_some() {
+            return waiting;
+        }
+        let control = &self.controls[leaf];
         match control.surface.get_scheduled(&control.key) {
             Ok(number) => Some(number),
             Err(LegacyRefusal::Unsupported) => None,

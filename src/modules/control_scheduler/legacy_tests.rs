@@ -275,3 +275,32 @@ fn a_note_off_waiting_through_a_retarget_still_lands() {
         "no stuck note"
     );
 }
+
+#[test]
+fn a_ramp_after_a_write_finding_its_table_held_starts_from_that_write() {
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let mut scheduler = scheduler(
+        vec![
+            entry(1, "melody", "degree.0", ScheduleValue::Number(12.0)),
+            ScheduleEntry {
+                ramp_steps: Some(4),
+                ..entry(1, "melody", "degree.0", ScheduleValue::Number(0.0))
+            },
+        ],
+        &directory,
+    );
+    block(&mut scheduler, 1.0);
+    block(&mut scheduler, 0.0);
+    let held = while_held(&locking.melody.table, || block(&mut scheduler, 1.0));
+    assert_eq!(held, (0, 0), "step 1");
+    assert_eq!(block(&mut scheduler, 0.0), (0, 0), "released");
+    // The ramp starts at 12, not at the 0 the table held: it falls from 12.
+    let started = locking.melody.degree(0).unwrap();
+    assert!((8..=12).contains(&started), "{started}");
+    for gate in [1.0, 0.0] {
+        block(&mut scheduler, gate);
+    }
+    let falling = locking.melody.degree(0).unwrap();
+    assert!((1..started).contains(&falling), "{falling}");
+}
