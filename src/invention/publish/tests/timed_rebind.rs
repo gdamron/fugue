@@ -296,3 +296,52 @@ fn a_swap_unplugging_the_clock_on_a_step_plays_it_before_the_install() {
 fn at_d2(step: u32, value: f32) -> serde_json::Value {
     serde_json::json!({ "at_step": step, "module": "d2", "control": "level", "value": value })
 }
+
+/// Two schedulers writing d2 on one step, only the first also writing the
+/// dial a swap rebuilds there: the later one in module order still lands
+/// its write last, the install timed or not.
+#[test]
+fn tables_on_one_control_keep_their_order_across_a_swap_on_a_step() {
+    let beats = beat_samples(BPM, 8);
+    for timed in [false, true] {
+        let mut rig = stepped();
+        let d2 = rig.build("d2", DIAL, serde_json::json!({}));
+        let config = serde_json::json!({ "schedule": [] });
+        let sched_b = rig.build("sched_b", "control_scheduler", config);
+        rig.live
+            .edit(|change| {
+                change.upsert("d2", d2);
+                change.upsert("sched_b", sched_b);
+                change.connect(edge("clock", "beat", "sched_b", "clock"))
+            })
+            .unwrap();
+        let first = serde_json::json!([level(3, 0.3), at_d2(3, 0.5)]);
+        write(&rig, "sched", "schedule", first.to_string().into());
+        let last = serde_json::json!([at_d2(3, 0.75)]);
+        write(&rig, "sched_b", "schedule", last.to_string().into());
+        let lands = beats[3];
+        if timed {
+            swap_dial(&rig, EditTime::AtSample(lands as u64), None).unwrap();
+            render_counted(&mut rig, lands / 64 + 1);
+            // Read through the surfaces the landed edit installs.
+            rig.live.adopt_landed();
+        } else {
+            render_counted(&mut rig, lands / 64);
+            let rest = lands - rig.graph.current_sample as usize;
+            let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+            rig.graph
+                .process_block(&mut left[..rest], &mut right[..rest]);
+            let dial = rig.build("dial", DIAL, serde_json::json!({}));
+            rig.live
+                .edit(|change| {
+                    change.upsert("dial", dial);
+                    Ok(())
+                })
+                .unwrap();
+            render_counted(&mut rig, 1);
+        }
+        let heard = (read(&rig, "d2", "level"), read(&rig, "dial", "level"));
+        let expected = (ControlValue::Number(0.75), ControlValue::Number(0.3));
+        assert_eq!(heard, expected, "timed: {timed}");
+    }
+}

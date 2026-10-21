@@ -76,16 +76,14 @@ impl BeatHost for SignalGraph {
     }
 
     /// An immediate edit's publication, or a timed edit's taken this
-    /// sample, rebinding the module's table at its install and keeping it
-    /// on its clock, so the drain plays it after the install too.
+    /// sample, keeping the module's table on the drain (see
+    /// [`Self::keeps_table`]).
     fn defers(&self, module_idx: usize) -> bool {
         let landing = self.link.as_ref().and_then(|link| link.landing());
         self.installing
             .as_deref()
             .or(landing)
-            .is_some_and(|publication| {
-                publication.rebinds(module_idx) && self.keeps_clock(publication, module_idx)
-            })
+            .is_some_and(|publication| self.keeps_table(publication, module_idx))
     }
 
     fn apply(
@@ -100,15 +98,20 @@ impl BeatHost for SignalGraph {
 }
 
 impl SignalGraph {
-    /// Whether `publication` keeps the module at `module_idx` stepping on
-    /// the clock output it steps on now, of the same clock: the only
-    /// source on its table's clock input, the clock surviving. One whose
-    /// clock it unplugs or replaces plays its table before the install,
-    /// on the graph that clock steps. Allocation-free.
-    fn keeps_clock(&self, publication: &Publication, module_idx: usize) -> bool {
+    /// Whether `publication` keeps the table of the module at `module_idx`
+    /// on the drain as it is: the module surviving, stepping on the clock
+    /// output it steps on now (the only source on its table's clock
+    /// input), the clock surviving. The drain then plays it after the
+    /// install, with every other table it keeps, in module order. One it
+    /// removes, rebuilds or takes off its clock plays before the install,
+    /// on the graph it leaves. Allocation-free.
+    fn keeps_table(&self, publication: &Publication, module_idx: usize) -> bool {
         let Some((id, instance)) = self.modules.get_index(module_idx) else {
             return false;
         };
+        if publication.remap.get(module_idx).is_none() {
+            return false;
+        }
         let Some(table) = instance.module().beat_table() else {
             return false;
         };

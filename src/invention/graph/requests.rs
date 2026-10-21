@@ -685,7 +685,7 @@ impl SignalGraph {
         self.requests = Some(drain);
         // A timed edit due now installs once what is due with it has
         // applied; what it maps may then be due too, and the tables it
-        // rebinds play on it (see `BeatHost::defers`).
+        // keeps play on it (see `BeatHost::defers`).
         if self.land_timed_edit() {
             if let Some(mut drain) = self.requests.take() {
                 next = self.apply_due(&mut drain, now);

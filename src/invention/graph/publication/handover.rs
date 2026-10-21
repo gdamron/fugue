@@ -63,20 +63,6 @@ impl Handover {
     }
 }
 
-impl Publication {
-    /// Whether it hands the running module at `running` (in the order it
-    /// replaces) a schedule at the install, re-resolved against modules it
-    /// rebuilds: that module's table plays the sample's entries after it.
-    /// Allocation-free.
-    pub(in crate::invention::graph) fn rebinds(&self, running: usize) -> bool {
-        self.remap.get(running).is_some_and(|module_idx| {
-            self.handovers
-                .iter()
-                .any(|handover| !handover.with_requests && handover.module_idx == module_idx)
-        })
-    }
-}
-
 impl SignalGraph {
     /// Applies each of `publication`'s handovers made
     /// [`Handover::with_requests`] to the running module it names, which
