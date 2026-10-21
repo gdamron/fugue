@@ -13,6 +13,10 @@ use crate::modules::melody::MelodyControls;
 mod reference;
 mod support;
 
+// Tests whose hooks make whole edits run in `without_waiting`: a hooked
+// edit meeting a read or write that held the edit lock would deadlock the
+// test thread, which nothing else could interrupt.
+
 use support::*;
 pub(super) use support::{between_loads, still_waiting};
 
@@ -86,19 +90,21 @@ fn a_copy_taken_while_whole_scales_are_set_is_always_one_of_them() {
 
 #[test]
 fn a_copy_whose_buffer_is_rewritten_under_it_is_refused() {
-    let controls = MelodyControls::new(60, vec![1, 2, 3]);
-    // Between the copy's header load and its read, two whole scales: the
-    // second rewrites the buffer the copy's generation reads.
-    let edit = controls.clone();
-    between_the_next_loads(move || {
-        edit.set_allowed_degrees(vec![4, 5]);
-        edit.set_allowed_degrees(vec![6, 7, 8, 9]);
+    without_waiting(|| {
+        let controls = MelodyControls::new(60, vec![1, 2, 3]);
+        // Between the copy's header load and its read, two whole scales: the
+        // second rewrites the buffer the copy's generation reads.
+        let edit = controls.clone();
+        between_the_next_loads(move || {
+            edit.set_allowed_degrees(vec![4, 5]);
+            edit.set_allowed_degrees(vec![6, 7, 8, 9]);
+        });
+        let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+        let table = &controls.table;
+        assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+        assert_eq!(table.read_into(&mut degrees, &mut weights), Some(4));
+        assert_eq!(degrees[..4], [6, 7, 8, 9]);
     });
-    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
-    let table = &controls.table;
-    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
-    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(4));
-    assert_eq!(degrees[..4], [6, 7, 8, 9]);
 }
 
 #[test]
@@ -159,79 +165,85 @@ fn a_position_read_meeting_an_edit_every_attempt_gives_up_without_a_lock() {
 
 #[test]
 fn a_stale_write_never_replaces_one_made_after_a_whole_edit() {
-    let controls = MelodyControls::new(60, vec![0]);
-    let table = &controls.table;
-    // A write that checked the generation, then was preempted: meanwhile
-    // the scale is set whole and a position written. It stores after.
-    let before = table.degrees_generation();
-    let preempted = Cell::new(true);
-    let now = || {
-        if preempted.replace(false) {
-            controls.set_allowed_degrees(vec![0, 7]);
-            controls.set_degree(0, 5).unwrap();
-            return before;
-        }
-        table.degrees_generation()
-    };
-    table.write(&table.written_degrees[0], before, now, 11);
-    assert_eq!(controls.allowed_degrees(), [5, 7]);
-    // Weights likewise.
-    let before = table.weights_generation();
-    let preempted = Cell::new(true);
-    let now = || {
-        if preempted.replace(false) {
-            controls.set_note_weights(vec![1.0, 1.0]);
-            controls.set_note_weight(0, 4.0).unwrap();
-            return before;
-        }
-        table.weights_generation()
-    };
-    table.write(&table.written_weights[0], before, now, 9.0f32.to_bits());
-    assert_eq!(controls.note_weights(), [4.0, 1.0]);
+    without_waiting(|| {
+        let controls = MelodyControls::new(60, vec![0]);
+        let table = &controls.table;
+        // A write that checked the generation, then was preempted: meanwhile
+        // the scale is set whole and a position written. It stores after.
+        let before = table.degrees_generation();
+        let preempted = Cell::new(true);
+        let now = || {
+            if preempted.replace(false) {
+                controls.set_allowed_degrees(vec![0, 7]);
+                controls.set_degree(0, 5).unwrap();
+                return before;
+            }
+            table.degrees_generation()
+        };
+        table.write(&table.written_degrees[0], before, now, 11);
+        assert_eq!(controls.allowed_degrees(), [5, 7]);
+        // Weights likewise.
+        let before = table.weights_generation();
+        let preempted = Cell::new(true);
+        let now = || {
+            if preempted.replace(false) {
+                controls.set_note_weights(vec![1.0, 1.0]);
+                controls.set_note_weight(0, 4.0).unwrap();
+                return before;
+            }
+            table.weights_generation()
+        };
+        table.write(&table.written_weights[0], before, now, 9.0f32.to_bits());
+        assert_eq!(controls.note_weights(), [4.0, 1.0]);
+    });
 }
 
 #[test]
 fn a_copy_meeting_a_count_change_and_whole_weights_is_a_table_that_was() {
-    let controls = MelodyControls::new(60, vec![0, 2, 4]);
-    let table = &controls.table;
-    // Between the copy's header load and its weights load, the count
-    // shrinks and whole weights are set.
-    let edit = controls.clone();
-    between_the_next_loads(move || {
-        edit.set_degree_count(1);
-        edit.set_note_weights(vec![0.0, 0.0, 10.0]);
+    without_waiting(|| {
+        let controls = MelodyControls::new(60, vec![0, 2, 4]);
+        let table = &controls.table;
+        // Between the copy's header load and its weights load, the count
+        // shrinks and whole weights are set.
+        let edit = controls.clone();
+        between_the_next_loads(move || {
+            edit.set_degree_count(1);
+            edit.set_note_weights(vec![0.0, 0.0, 10.0]);
+        });
+        let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+        assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+        assert_eq!(table.read_into(&mut degrees, &mut weights), Some(1));
+        assert_eq!((degrees[0], weights[0]), (0, 0.0));
+        // A position read meeting the same retries, and finds it past the
+        // count.
+        controls.set_degree_count(3);
+        controls.set_note_weights(vec![]);
+        let edit = controls.clone();
+        between_the_next_loads(move || {
+            edit.set_degree_count(1);
+            edit.set_note_weights(vec![0.0, 0.0, 10.0]);
+        });
+        assert_eq!(table.position(2), None);
     });
-    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
-    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
-    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(1));
-    assert_eq!((degrees[0], weights[0]), (0, 0.0));
-    // A position read meeting the same retries, and finds it past the
-    // count.
-    controls.set_degree_count(3);
-    controls.set_note_weights(vec![]);
-    let edit = controls.clone();
-    between_the_next_loads(move || {
-        edit.set_degree_count(1);
-        edit.set_note_weights(vec![0.0, 0.0, 10.0]);
-    });
-    assert_eq!(table.position(2), None);
 }
 
 #[test]
 fn a_weight_write_meeting_whole_weights_and_a_grown_count_is_kept() {
-    let controls = MelodyControls::new(60, vec![0]);
-    // Past generation 2, whose edit waits out writes in flight, this one
-    // included.
-    controls.set_note_weights(vec![]);
-    // Between the write's generation load and its count load, whole
-    // weights are set and the count grows to take position 5.
-    let edit = controls.clone();
-    between_the_next_loads(move || {
-        edit.set_note_weights(vec![]);
-        edit.set_degree_count(6);
+    without_waiting(|| {
+        let controls = MelodyControls::new(60, vec![0]);
+        // Past generation 2, whose edit waits out writes in flight, this one
+        // included.
+        controls.set_note_weights(vec![]);
+        // Between the write's generation load and its count load, whole
+        // weights are set and the count grows to take position 5.
+        let edit = controls.clone();
+        between_the_next_loads(move || {
+            edit.set_note_weights(vec![]);
+            edit.set_degree_count(6);
+        });
+        controls.set_note_weight(5, 9.0).unwrap();
+        assert_eq!(controls.note_weights()[5], 9.0);
     });
-    controls.set_note_weight(5, 9.0).unwrap();
-    assert_eq!(controls.note_weights()[5], 9.0);
 }
 
 #[test]
@@ -319,29 +331,31 @@ fn a_copy_is_taken_while_a_position_write_is_in_flight() {
 
 #[test]
 fn a_copy_never_holds_a_write_made_after_seeing_one_it_missed() {
-    let controls = MelodyControls::new(60, vec![0, 0]);
-    let table = &controls.table;
-    // The copy reads position 0. Then a write to it lands, held up before
-    // it finishes; this thread reads it, and another write, to position 1,
-    // lands, held up likewise. The copy reads position 1: had it kept
-    // that, it would hold the later write and not the earlier.
-    let writes = Rc::new(RefCell::new(Vec::new()));
-    let (edit, held) = (controls.clone(), writes.clone());
-    // Past the copy's view, to its first position read.
-    between_loads_after(1, move || {
-        let first = landed_write(&edit, 0, 20);
-        assert_eq!(edit.table.position(0), Some((20, 1.0)));
-        let second = landed_write(&edit, 1, 21);
-        held.borrow_mut().extend([first, second]);
+    without_waiting(|| {
+        let controls = MelodyControls::new(60, vec![0, 0]);
+        let table = &controls.table;
+        // The copy reads position 0. Then a write to it lands, held up before
+        // it finishes; this thread reads it, and another write, to position 1,
+        // lands, held up likewise. The copy reads position 1: had it kept
+        // that, it would hold the later write and not the earlier.
+        let writes = Rc::new(RefCell::new(Vec::new()));
+        let (edit, held) = (controls.clone(), writes.clone());
+        // Past the copy's view, to its first position read.
+        between_loads_after(1, move || {
+            let first = landed_write(&edit, 0, 20);
+            assert_eq!(edit.table.position(0), Some((20, 1.0)));
+            let second = landed_write(&edit, 1, 21);
+            held.borrow_mut().extend([first, second]);
+        });
+        let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+        assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+        for (write, release) in writes.take() {
+            drop(release);
+            assert!(join_soon(write));
+        }
+        assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
+        assert_eq!(degrees[..2], [20, 21]);
     });
-    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
-    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
-    for (write, release) in writes.take() {
-        drop(release);
-        assert!(join_soon(write));
-    }
-    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
-    assert_eq!(degrees[..2], [20, 21]);
 }
 
 #[test]
@@ -376,39 +390,43 @@ fn a_copy_begun_while_a_position_write_is_landing_is_refused() {
 
 #[test]
 fn a_copy_during_which_a_position_write_finishes_is_refused() {
-    let controls = MelodyControls::new(60, vec![0, 0]);
-    let table = &controls.table;
-    let edit = controls.clone();
-    between_the_next_loads(move || edit.set_degree(1, 5).unwrap());
-    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
-    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
-    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
-    assert_eq!(degrees[..2], [0, 5]);
+    without_waiting(|| {
+        let controls = MelodyControls::new(60, vec![0, 0]);
+        let table = &controls.table;
+        let edit = controls.clone();
+        between_the_next_loads(move || edit.set_degree(1, 5).unwrap());
+        let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+        assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+        assert_eq!(table.read_into(&mut degrees, &mut weights), Some(2));
+        assert_eq!(degrees[..2], [0, 5]);
+    });
 }
 
 #[test]
 fn a_read_outlasting_a_round_of_generations_is_refused() {
-    let controls = MelodyControls::new(60, vec![1, 1]);
-    let table = &controls.table;
-    // Between the read's header load and its weights load, two whole scales
-    // rewrite the buffer it reads, and the generation comes back round to
-    // the one it loaded, as a round of them would.
-    let generation = table.degrees_generation();
-    let edit = controls.clone();
-    between_the_next_loads(move || {
-        edit.set_allowed_degrees(vec![2, 2]);
-        edit.set_allowed_degrees(vec![2, 2]);
-        edit.table.jump_to(generation);
+    without_waiting(|| {
+        let controls = MelodyControls::new(60, vec![1, 1]);
+        let table = &controls.table;
+        // Between the read's header load and its weights load, two whole scales
+        // rewrite the buffer it reads, and the generation comes back round to
+        // the one it loaded, as a round of them would.
+        let generation = table.degrees_generation();
+        let edit = controls.clone();
+        between_the_next_loads(move || {
+            edit.set_allowed_degrees(vec![2, 2]);
+            edit.set_allowed_degrees(vec![2, 2]);
+            edit.table.jump_to(generation);
+        });
+        let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+        assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+        let edit = controls.clone();
+        between_the_next_loads(move || {
+            edit.set_allowed_degrees(vec![3, 3]);
+            edit.set_allowed_degrees(vec![3, 3]);
+            edit.table.jump_to(generation);
+        });
+        assert_eq!(table.consistent(1, false, |view| view.position(0)), None);
     });
-    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
-    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
-    let edit = controls.clone();
-    between_the_next_loads(move || {
-        edit.set_allowed_degrees(vec![3, 3]);
-        edit.set_allowed_degrees(vec![3, 3]);
-        edit.table.jump_to(generation);
-    });
-    assert_eq!(table.consistent(1, false, |view| view.position(0)), None);
 }
 
 #[test]
