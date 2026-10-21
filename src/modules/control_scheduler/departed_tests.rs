@@ -25,7 +25,7 @@ fn a_removed_scheduler_s_waiting_note_holds_no_other_scheduler_s_back() {
         allocator_events(|| removed.leave())
     });
     assert_eq!((allocs, frees), (0, 0), "left");
-    assert_eq!(removed.controls().refused_writes(), 1, "dropped, counted");
+    assert_eq!(removed.controls().refused_writes(), 0, "left, not dropped");
     // Never processed again, it is not freed yet either: the other's note
     // still lands at once, just after the removed one's, made before it
     // and left at the gate, as main's waiting write would have landed.
@@ -121,4 +121,20 @@ fn a_note_off_a_removed_scheduler_made_behind_another_s_note_on_still_lands() {
         [(64, true), (64, false)],
         "no stuck note"
     );
+}
+
+#[test]
+fn a_removed_scheduler_counts_the_values_it_drops() {
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let degree = vec![entry(1, "melody", "degree.0", ScheduleValue::Number(5.0))];
+    let mut removed = scheduler(degree, &directory);
+    for gate in [1.0, 0.0] {
+        block(&mut removed, gate);
+    }
+    while_held(&locking.melody.table, || {
+        block(&mut removed, 1.0);
+        removed.leave();
+    });
+    assert_eq!(removed.controls().refused_writes(), 1);
 }
