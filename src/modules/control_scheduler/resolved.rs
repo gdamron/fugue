@@ -36,7 +36,10 @@ pub(crate) struct ResolvedSchedule {
 impl ResolvedSchedule {
     /// Wraps resolved `entries`, reserving their ramps. Control thread.
     pub(crate) fn new(entries: Vec<ResolvedEntry>) -> Self {
-        let ramp_count = entries.iter().filter(|entry| entry.ramp_steps > 0).count();
+        let ramp_count = entries
+            .iter()
+            .filter(|entry| entry.ramp_steps() > 0)
+            .count();
         Self {
             entries,
             ramps: Vec::with_capacity(ramp_count),
@@ -79,9 +82,9 @@ pub(super) fn target_module_ids(spec: &[ScheduleEntry]) -> Vec<String> {
 pub(super) fn same_plan(entries: &[ResolvedEntry], next: &[ResolvedEntry]) -> bool {
     entries.len() == next.len()
         && entries.iter().zip(next).all(|(entry, other)| {
-            entry.at_step == other.at_step
-                && entry.ramp_steps == other.ramp_steps
-                && entry.value == other.value
+            entry.at_step() == other.at_step()
+                && entry.ramp_steps() == other.ramp_steps()
+                && entry.entry.value == other.entry.value
                 && entry.module == other.module
                 && entry.control == other.control
         })

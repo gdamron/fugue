@@ -10,7 +10,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::control_request::Automation;
+use crate::control_request::{TableEntry, TableTarget, TableValue};
 use crate::module_config::serde_whole;
 use crate::{ControlSurface, ControlValue};
 
@@ -27,13 +27,11 @@ pub enum ScheduleValue {
     Bool(bool),
 }
 
-impl ScheduleValue {
-    /// Converts to a [`ControlValue`] without allocating.
-    #[inline]
-    pub(crate) fn to_control_value(self) -> ControlValue {
-        match self {
-            Self::Number(value) => ControlValue::Number(value),
-            Self::Bool(value) => ControlValue::Bool(value),
+impl From<ScheduleValue> for TableValue {
+    fn from(value: ScheduleValue) -> Self {
+        match value {
+            ScheduleValue::Number(value) => Self::Number(value),
+            ScheduleValue::Bool(value) => Self::Bool(value),
         }
     }
 }
@@ -196,41 +194,33 @@ fn validate_entries(entries: &[ScheduleEntry]) -> Result<(), String> {
 }
 
 /// A schedule entry resolved against the invention's control surfaces,
-/// preloaded for the audio thread.
+/// preloaded for the audio thread: the table entry it plays (see
+/// [`crate::control_request::BeatTable`]), and the control it names.
 #[derive(Clone)]
 pub(crate) struct ResolvedEntry {
-    pub(crate) at_step: u64,
     /// Target module id (kept for ordering-dependency discovery).
     pub(crate) module: String,
     pub(crate) control: String,
-    pub(crate) value: ScheduleValue,
-    /// Ramp length in steps; 0 means an immediate jump.
-    pub(crate) ramp_steps: u64,
-    pub(crate) surface: Arc<dyn ControlSurface + Send + Sync>,
-    /// The target as automation writes it, when its module declares its
-    /// controls: written without a lock, an allocation or a formatted
-    /// error. `None` keeps the legacy setter.
-    pub(crate) automation: Option<Automation>,
+    /// Its step, ramp, value, and target: the control's automation slot
+    /// when its module declares its controls (written without a lock, an
+    /// allocation or a formatted error), else its legacy setter.
+    pub(crate) entry: TableEntry,
 }
 
 impl ResolvedEntry {
+    pub(crate) fn at_step(&self) -> u64 {
+        self.entry.step
+    }
+
+    pub(crate) fn ramp_steps(&self) -> u64 {
+        self.entry.ramp_steps
+    }
+
     /// Writes `value` to the target, returning false when a higher tier
-    /// holds it and the write was dropped. Audio thread: allocation- and
-    /// lock-free for a declared target; a legacy target's setter is its
-    /// own (and its error, which may allocate, is dropped), and it has no
-    /// tiers.
+    /// holds it and the write was dropped (see `TableTarget::write`).
     #[inline]
-    pub(crate) fn write(&self, value: ScheduleValue) -> bool {
-        match (&self.automation, value) {
-            (Some(target), ScheduleValue::Number(number)) => target.write_number(number),
-            (Some(target), ScheduleValue::Bool(flag)) => target.write_bool(flag),
-            (None, value) => {
-                let _ = self
-                    .surface
-                    .set_control(&self.control, value.to_control_value());
-                true
-            }
-        }
+    pub(crate) fn write(&self, value: TableValue) -> bool {
+        self.entry.target.write(value)
     }
 
     /// Automation's next event on the target, on frame `frame` of the
@@ -238,21 +228,13 @@ impl ResolvedEntry {
     /// `Automation::begin`). A legacy target has no tiers.
     #[inline]
     pub(crate) fn begin(&self, frame: usize) {
-        if let Some(target) = &self.automation {
-            target.begin(frame);
-        }
+        self.entry.target.begin(frame);
     }
 
     /// The target's current number, where a ramp starts.
     #[inline]
     pub(crate) fn current_number(&self) -> Option<f32> {
-        match &self.automation {
-            Some(target) => target.current(),
-            None => match self.surface.get_control(&self.control) {
-                Ok(ControlValue::Number(number)) => Some(number),
-                _ => None,
-            },
-        }
+        self.entry.target.current()
     }
 }
 
@@ -314,16 +296,24 @@ pub(crate) fn resolve_schedule(
                 entry.at_step, entry.module, entry.control
             ));
         }
+        let target = match automation {
+            Some(automation) => TableTarget::Declared(automation),
+            None => TableTarget::Legacy {
+                surface: surface.clone(),
+                control: entry.control.clone(),
+            },
+        };
         resolved.push(ResolvedEntry {
-            at_step: entry.at_step,
             module: entry.module.clone(),
             control: entry.control.clone(),
-            value: entry.value,
-            ramp_steps: entry.ramp_steps.unwrap_or(0),
-            surface: surface.clone(),
-            automation,
+            entry: TableEntry {
+                step: entry.at_step,
+                ramp_steps: entry.ramp_steps.unwrap_or(0),
+                value: entry.value.into(),
+                target,
+            },
         });
     }
-    resolved.sort_by_key(|entry| entry.at_step);
+    resolved.sort_by_key(ResolvedEntry::at_step);
     Ok(resolved)
 }
