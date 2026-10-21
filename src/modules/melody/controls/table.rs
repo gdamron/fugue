@@ -244,15 +244,10 @@ impl DegreeTable {
 
     /// The active degrees and weights, in order. Control thread.
     fn copy(&self) -> (Vec<i32>, Vec<f32>) {
-        debug_assert_control_thread("copying a melody's whole degree table");
         let mut degrees = [0; MAX_DEGREES];
         let mut weights = [0.0; MAX_DEGREES];
-        loop {
-            if let Some(count) = self.read_into(&mut degrees, &mut weights) {
-                return (degrees[..count].to_vec(), weights[..count].to_vec());
-            }
-            std::thread::yield_now();
-        }
+        let count = self.read_into_waiting(&mut degrees, &mut weights);
+        (degrees[..count].to_vec(), weights[..count].to_vec())
     }
 
     /// The active degrees, in order. Control thread.
@@ -470,6 +465,26 @@ impl DegreeTable {
             }
             count
         })
+    }
+
+    /// [`Self::read_into`], trying again until a copy is kept. Control
+    /// thread: waits, yielding, while edits and position writes land.
+    pub(crate) fn read_into_waiting(
+        &self,
+        degrees: &mut [i32; MAX_DEGREES],
+        weights: &mut [f32; MAX_DEGREES],
+    ) -> usize {
+        debug_assert_control_thread("copying a melody's whole degree table");
+        #[cfg(test)]
+        let waiting = std::time::Instant::now();
+        loop {
+            if let Some(count) = self.read_into(degrees, weights) {
+                return count;
+            }
+            #[cfg(test)]
+            tests::still_waiting(waiting, "a whole copy");
+            std::thread::yield_now();
+        }
     }
 
     /// Holds off whole edits until the guard is dropped, for tests of
