@@ -43,6 +43,8 @@ pub(crate) enum EditTime<'a> {
     /// [`Self::Beat`] on the clock module `module` counts on (see
     /// `crate::invention::timelines`).
     BeatOf { module: &'a str, spec: BeatSpec },
+    /// [`Self::Beat`] on the invention's first clock.
+    FirstClock(BeatSpec),
     /// Once every one of `parts` has happened: on the sample when that is
     /// a segment start (another request applying, a control crossing),
     /// otherwise at the next segment start, reported late. Not on the wire
@@ -297,6 +299,7 @@ impl LiveGraph {
             EditTime::AfterSamples(samples) => (When::AfterSamples(samples), None),
             EditTime::Beat { clock, spec } => beat(publisher.beat_clock(clock, Some(clock))?, spec),
             EditTime::BeatOf { module, spec } => beat(publisher.beat_clock(module, None)?, spec),
+            EditTime::FirstClock(spec) => beat(publisher.first_clock()?, spec),
             EditTime::Condition(parts) => {
                 if self.requests.watchers_full() {
                     let full = "Too many requests wait on a condition; try again once some apply";

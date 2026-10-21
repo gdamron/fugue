@@ -274,6 +274,18 @@ impl Publisher {
     /// development, which a request cannot name yet.
     // The front doors that submit beat-timed requests arrive with FUG-317.
     #[cfg_attr(not(test), allow(dead_code))]
+    /// The index of the invention's first clock, the one a timed edit
+    /// batch or reload counts beats on unless it names one.
+    pub(crate) fn first_clock(&self) -> Result<u32, GraphCommandError> {
+        let mut modules = self.mirror.modules.values();
+        let clock = modules.position(|module| matches!(module.flow, Flow::Clock));
+        let none = "The invention has no clock to count beats on: time this edit in samples";
+        // Module counts are far below u32::MAX (`BeatTime` keeps it narrow).
+        clock
+            .map(|index| index as u32)
+            .ok_or_else(|| GraphCommandError::ControlError(none.into()))
+    }
+
     pub(crate) fn beat_clock(
         &self,
         module_id: &str,
