@@ -128,54 +128,56 @@ impl LiveGraph {
         sync_ledger(publisher, &mut self.pending.lock().unwrap());
     }
 
-    /// Records an authored write to control `key` of `module_id`, made
-    /// while generation `seen` was the latest, in the retained document.
-    /// Runs under the publisher, so no timed edit can be adopted in
-    /// between. A timed edit waiting that rebuilds or removes the module is
-    /// cancelled, and the edit reports why. One that writes the control
-    /// itself as it lands keeps the write over its own instead (see
-    /// [`Self::keep_authored`]), and lands without it; when it cannot, it
-    /// is cancelled too: the write may reach the audio thread before or
-    /// after the edit lands, so only that makes the write what plays, and
-    /// what is recorded. One that keeps the module folds the write into its
-    /// own document, so the write is recorded again as the edit is adopted.
+    /// Records an authored write to control `key` of `module_id`, queued
+    /// at generation `seen` and `safe` from the timed edit it names (see
+    /// `declared::Queued`), in the retained document. Runs under the
+    /// publisher, so no timed edit can be adopted in between.
     ///
-    /// [`Authored::Overtaken`], with nothing recorded, when a timed edit
-    /// adopted since `seen` may have landed after the write and replaced
-    /// what it wrote (see [`Publisher::timed_overtook`]): the caller makes
-    /// it again. One adopted since that touched neither the module, its
-    /// schedule nor the control leaves the write playing, so it is recorded, as it is when
-    /// only untimed changes were published since `seen` (they publish
-    /// nothing after the write reaches the audio thread).
+    /// [`Authored::Overtaken`], with nothing recorded and nothing else
+    /// done, when a timed edit adopted since `seen` may have landed after
+    /// the write and replaced what it wrote (see
+    /// [`Publisher::timed_overtook`]): the caller makes it again. One that
+    /// touched neither the module, its schedule nor the control leaves the
+    /// write playing, so it is recorded, as it is when only untimed changes
+    /// were published since `seen` (they publish nothing after the write
+    /// reaches the audio thread).
+    ///
+    /// Otherwise a timed edit waiting that rebuilds or removes the module
+    /// is cancelled, and the edit reports why, as is one that writes the
+    /// control as it lands but did not keep the write over its own (see
+    /// [`Publisher::keep_authored`]): the write may reach the audio thread
+    /// before or after the edit lands, so only that makes the write what
+    /// plays, and what is recorded. One that keeps the module folds the
+    /// write into its own document, so the write is recorded again as the
+    /// edit is adopted.
     pub(crate) fn record_authored(
         &self,
         module_id: &str,
         key: &str,
         value: &ControlValue,
-        seen: u64,
+        (seen, safe): (u64, Option<RequestId>),
     ) -> Authored {
         let mut publisher = self.lock();
+        if publisher.timed_overtook(seen, (module_id, key), safe) {
+            return Authored::Overtaken;
+        }
         let touches = match publisher.timed_replaces(module_id) {
             Some(true) => Some(Touched::Removed),
             Some(false) => Some(Touched::Rebuilt),
-            None => publisher
-                .timed_chains(module_id, key)
+            None => (publisher.timed_chains(module_id, key) && publisher.timed_id() != safe)
                 .then_some(Touched::Written),
         };
-        let kept = touches == Some(Touched::Written)
-            && self.keep_authored(&mut publisher, module_id, key, value);
-        if let Some(touches) = touches.filter(|_| !kept) {
+        if let Some(touches) = touches {
             let cause = || CancelCause::AuthoredWrite {
                 module_id: module_id.to_string(),
                 key: key.to_string(),
                 touches,
             };
+            // Landed meanwhile, after the write: adopted, it overtook it.
             if !publisher.cancel_timed(cause) {
                 self.adopt(&mut publisher);
+                return Authored::Overtaken;
             }
-        }
-        if publisher.timed_overtook(seen, module_id, key) == Some(true) {
-            return Authored::Overtaken;
         }
         publisher.fold_timed(module_id, key, value);
         let mut state = self.state.lock().unwrap();

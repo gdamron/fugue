@@ -46,7 +46,8 @@ use super::publish::{check_offline, CancelCause, PendingLog, PendingWrite, Publi
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
-    PayloadCodec, Refusal, Request, RequestSender, RequestValue, RtValue, Source, Writer,
+    PayloadCodec, Refusal, Request, RequestId, RequestSender, RequestValue, RtValue, Source,
+    Writer,
 };
 use crate::payload::Payload;
 use crate::traits::ControlSurfaceMap;
@@ -119,6 +120,16 @@ struct Written {
     index: ControlIndex,
     shown: ControlValue,
     staged: Option<Payload>,
+}
+
+/// What a write saw as it was queued for the live graph, under the
+/// publisher's lock (see `LiveGraph::record_authored`): its generation
+/// then, `None` when the module is not live, and the timed edit the write
+/// is safe from (see `Publisher::keep_authored`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Queued {
+    pub(crate) generation: Option<u64>,
+    pub(crate) safe: Option<RequestId>,
 }
 
 /// A write resolved for a request the live graph times itself.
@@ -197,7 +208,8 @@ impl DeclaredSurface {
         let (index, _) = self
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
-        self.deliver(index, Write::Payload(payload, shown, None))
+        self.deliver(index, Write::Payload(payload, shown, None), None)
+            .map(drop)
     }
 
     /// [`Self::write_payload`] for a payload built against the live graph's
@@ -214,7 +226,27 @@ impl DeclaredSurface {
         let (index, _) = self
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
-        self.deliver(index, Write::Payload(payload, shown, Some(checked)))
+        self.deliver(index, Write::Payload(payload, shown, Some(checked)), None)
+            .map(drop)
+    }
+
+    /// [`ControlSurface::set_control`], saying what the write saw as it
+    /// was queued. An `authored` write to a live module is kept over a
+    /// timed edit waiting that writes the control as it lands (see
+    /// `Publisher::keep_authored`). Control thread.
+    pub(crate) fn set_control_queued(
+        &self,
+        key: &str,
+        value: ControlValue,
+        authored: bool,
+    ) -> Result<Queued, String> {
+        if let Some(prepared) = self.prepare(key, &value) {
+            let (index, payload, shown) = prepared?;
+            return self.deliver(index, Write::Payload(payload, shown, None), None);
+        }
+        let index = self.index(key)?;
+        let value = self.table.coerce(index, &value)?;
+        self.deliver(index, Write::Value(value), authored.then_some(key))
     }
 
     /// The live graph's publisher generation, read under its lock (so
@@ -325,7 +357,13 @@ impl DeclaredSurface {
             .ok_or_else(|| format!("Unknown control: {key}"))
     }
 
-    fn deliver(&self, index: ControlIndex, write: Write) -> Result<(), String> {
+    /// `authored` names the control an authored write is to, as written.
+    fn deliver(
+        &self,
+        index: ControlIndex,
+        write: Write,
+        authored: Option<&str>,
+    ) -> Result<Queued, String> {
         let (event, clamp) = match self.table.decl(index) {
             Some((decl, _)) => (decl.event, decl.clamp.filter(|_| self.clamps)),
             None => (false, None),
@@ -344,7 +382,7 @@ impl DeclaredSurface {
                         if let Some(checked) = checked {
                             (checked.record)();
                         }
-                        return Ok(());
+                        return Ok(Queued::default());
                     }
                 };
                 // Held as the module will hold it once it applies it.
@@ -361,7 +399,7 @@ impl DeclaredSurface {
                 if !written.contains(&index) {
                     written.push(index);
                 }
-                return Ok(());
+                return Ok(Queued::default());
             }
             route.clone()
         };
@@ -421,11 +459,26 @@ impl DeclaredSurface {
                 let mut request = Request::new(target, value);
                 request.event = event;
                 let automated = request.source == Source::Automation;
+                let generation = Some(publisher.generation());
+                let safe = match (&request.value, authored) {
+                    (RequestValue::Value(raw), Some(key)) => {
+                        let module = (port.module_id.as_str(), key);
+                        publisher.keep_authored(module, target, (*raw, event))
+                    }
+                    _ => None,
+                };
                 // The log is locked before the submission, so its outcome
                 // cannot be received before the write is recorded.
                 let mut pending = port.pending.lock().unwrap();
                 pending.settle();
-                let id = port.requests.submit(request).map_err(|_| QUEUE_FULL)?;
+                let Ok(id) = port.requests.submit(request) else {
+                    // Never, as `keep_authored` left room, but a write kept
+                    // and not made is not to play.
+                    if safe.is_some() {
+                        publisher.cancel_timed(|| CancelCause::Unchained);
+                    }
+                    return Err(QUEUE_FULL.into());
+                };
                 // Under the publisher's lock, so reads report the last write
                 // submitted.
                 if let Some(shown) = shown {
@@ -454,7 +507,7 @@ impl DeclaredSurface {
                 if let Some(settler) = &port.settler {
                     settler.settle();
                 }
-                Ok(())
+                Ok(Queued { generation, safe })
             }
             Route::Offline { graph, module_id } => {
                 let graph = graph.upgrade().ok_or("The render has been replaced")?;
@@ -473,6 +526,7 @@ impl DeclaredSurface {
                         applied
                     }
                 }
+                .map(|()| Queued::default())
                 .map_err(|refusal| refused(&self.table, index, refusal))
             }
             Route::Inner => Err("This control is set through its development".into()),
@@ -523,13 +577,7 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        if let Some(prepared) = self.prepare(key, &value) {
-            let (index, payload, shown) = prepared?;
-            return self.deliver(index, Write::Payload(payload, shown, None));
-        }
-        let index = self.index(key)?;
-        let value = self.table.coerce(index, &value)?;
-        self.deliver(index, Write::Value(value))
+        self.set_control_queued(key, value, false).map(drop)
     }
 
     fn validate_control(
