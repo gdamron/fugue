@@ -227,14 +227,16 @@ impl ControlSurface for DevelopmentControlSurface {
         }
     }
 
-    /// Whether any alias of `key` is an event.
-    fn scheduled_event(&self, key: &str) -> bool {
-        (self.controls.iter())
+    /// The controls `key` fans out to, as [`Self::set_scheduled`] writes
+    /// them: a schedule writes each on its own.
+    fn scheduled_aliases(&self, key: &str) -> Option<Vec<(ControlSurfaceInstance, String)>> {
+        let aliases = (self.controls.iter())
             .filter(|entry| entry.meta.key == key)
-            .any(|control| {
-                (self.surfaces.get(&control.module_id))
-                    .is_some_and(|surface| surface.scheduled_event(&control.key))
-            })
+            .filter_map(|control| {
+                let surface = self.surfaces.get(&control.module_id)?;
+                Some((surface.clone(), control.key.clone()))
+            });
+        Some(aliases.collect())
     }
 
     /// Reads `key`'s first alias, as [`Self::get_control`] does a key on

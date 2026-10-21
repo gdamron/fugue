@@ -265,6 +265,18 @@ pub trait ControlSurface: Send + Sync {
         false
     }
 
+    /// The controls legacy control `key` writes through to, on other
+    /// surfaces, when it is an alias for them (a development's fan-out);
+    /// `None` for a control of this surface's own. A schedule resolves a
+    /// write to them, on a control thread, so that a busy one waits alone.
+    #[doc(hidden)]
+    fn scheduled_aliases(
+        &self,
+        _key: &str,
+    ) -> Option<Vec<(std::sync::Arc<dyn ControlSurface + Send + Sync>, String)>> {
+        None
+    }
+
     /// Reads legacy control `key`'s number where a scheduled ramp starts,
     /// on the audio thread, as [`Self::set_scheduled`] writes: refused for
     /// a control holding no number. The default is the getter itself.

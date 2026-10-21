@@ -15,10 +15,17 @@
 //!   same control, which lands as the latest would have, so a ramp waiting
 //!   takes one slot. An event ([`crate::ControlSurface::scheduled_event`]:
 //!   a note, a play) is never merged: each waits its turn.
-//! - **Bound.** At most [`RETRY_CAPACITY`] writes wait, each at most the
-//!   scheduler's limit (10 ms of samples). A write past either is dropped
-//!   and counted in [`LegacyWrites::refused`], as is one its surface
-//!   refuses outright (a control it has not got, a value it does not take).
+//! - **Bound.** At most [`RETRY_CAPACITY`] writes wait. Each is tried again
+//!   at least once, and then for at most the scheduler's limit (10 ms of
+//!   samples). A write past either is dropped and counted in
+//!   [`LegacyWrites::refused`], as is one its surface refuses outright (a
+//!   control it has not got, a value it does not take).
+//! - **Fan-out.** A development's control reaching several aliases (see
+//!   [`crate::ControlSurface::scheduled_aliases`]) is written alias by
+//!   alias, so one alias busy waits alone: the others take the write once.
+//! - **Adoption.** A new schedule takes over the old one's waiting writes
+//!   to the controls it still reaches, ahead of its own (see
+//!   [`LegacyWrites::take_waiting`]).
 //!
 //! Its state is atomics, so it is `Sync`, but one thread at a time writes
 //! through it: the audio thread, or an offline render's.
@@ -43,6 +50,9 @@ struct Control {
     /// The same for every control on one surface: its writes keep order.
     group: usize,
 }
+
+/// A write's wait before its first retry: not yet aged.
+const FRESH: u32 = u32::MAX;
 
 /// A write waiting: its control, value and the samples it has waited.
 #[derive(Default)]
@@ -75,27 +85,52 @@ impl Slot {
     }
 }
 
+/// Whether `a` and `b` are one surface.
+fn same(a: &Surface, b: &Surface) -> bool {
+    std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b))
+}
+
 /// The legacy controls one schedule writes, collected on a control thread
-/// as it resolves.
+/// as it resolves: each entry's target, and the controls it reaches.
 #[derive(Default)]
-pub(crate) struct LegacyControls(Vec<(Surface, String)>);
+pub(crate) struct LegacyControls {
+    /// Every control reached, once.
+    leaves: Vec<(Surface, String)>,
+    /// The controls each target reaches: `fanout[start..end]`.
+    targets: Vec<(usize, usize)>,
+    fanout: Vec<usize>,
+}
 
 impl LegacyControls {
-    /// The index of `key` on `surface`: the same for every entry writing it.
+    /// The index of a target writing `key` on `surface`, through to the
+    /// controls a development's aliases reach.
     pub(crate) fn index(&mut self, surface: &Surface, key: &str) -> usize {
-        let same = |(other, other_key): &(Surface, String)| {
-            std::ptr::addr_eq(Arc::as_ptr(surface), Arc::as_ptr(other)) && other_key == key
-        };
-        self.0.iter().position(same).unwrap_or_else(|| {
-            self.0.push((surface.clone(), key.to_string()));
-            self.0.len() - 1
-        })
+        let start = self.fanout.len();
+        self.reach(surface, key);
+        self.targets.push((start, self.fanout.len()));
+        self.targets.len() - 1
+    }
+
+    fn reach(&mut self, surface: &Surface, key: &str) {
+        if let Some(aliases) = surface.scheduled_aliases(key) {
+            for (inner, inner_key) in aliases {
+                self.reach(&inner, &inner_key);
+            }
+            return;
+        }
+        let at = (self.leaves.iter())
+            .position(|(other, other_key)| same(surface, other) && other_key == key);
+        let leaf = at.unwrap_or_else(|| {
+            self.leaves.push((surface.clone(), key.to_string()));
+            self.leaves.len() - 1
+        });
+        self.fanout.push(leaf);
     }
 
     /// The schedule's writes, with room for those that wait. Allocates.
     pub(crate) fn build(self) -> Arc<LegacyWrites> {
         let mut surfaces: Vec<*const ()> = Vec::new();
-        let controls = (self.0.into_iter())
+        let controls = (self.leaves.into_iter())
             .map(|(surface, key)| {
                 let at = Arc::as_ptr(&surface) as *const ();
                 let group = surfaces.iter().position(|&seen| seen == at);
@@ -112,6 +147,8 @@ impl LegacyControls {
             .collect();
         Arc::new(LegacyWrites {
             controls,
+            targets: self.targets.into(),
+            fanout: self.fanout.into(),
             slots: (0..RETRY_CAPACITY).map(|_| Slot::default()).collect(),
             waiting: AtomicUsize::new(0),
             refused: EventCounter::new(),
@@ -122,7 +159,10 @@ impl LegacyControls {
 /// A schedule's writes to its legacy controls, and those waiting to land
 /// (see the module docs). Allocation-, free- and lock-free once built.
 pub(crate) struct LegacyWrites {
+    /// The controls the schedule reaches, and what each target reaches.
     controls: Box<[Control]>,
+    targets: Box<[(usize, usize)]>,
+    fanout: Box<[usize]>,
     /// The writes waiting, in the order they were made: `slots[..waiting]`.
     slots: Box<[Slot]>,
     waiting: AtomicUsize,
@@ -138,15 +178,25 @@ enum Attempt {
 }
 
 impl LegacyWrites {
-    /// The target writing control `index`.
-    pub(crate) fn target(self: &Arc<Self>, index: usize) -> TableTarget {
-        let control = &self.controls[index];
+    /// Target `index`, writing `control` on `surface`.
+    pub(crate) fn target(
+        self: &Arc<Self>,
+        index: usize,
+        surface: &Surface,
+        control: &str,
+    ) -> TableTarget {
         TableTarget::Legacy {
-            surface: control.surface.clone(),
-            control: control.key.clone(),
+            surface: surface.clone(),
+            control: control.to_string(),
             writes: self.clone(),
             index,
         }
+    }
+
+    /// The controls target `index` reaches.
+    fn reached(&self, index: usize) -> &[usize] {
+        let (start, end) = self.targets[index];
+        &self.fanout[start..end]
     }
 
     /// Counts the writes that never landed: refused outright, finding no
@@ -161,9 +211,20 @@ impl LegacyWrites {
         self.waiting.load(Ordering::Relaxed)
     }
 
-    /// Writes `value` to control `index`, or keeps it to try again: behind
-    /// any write to its surface still waiting, or when the surface is busy.
+    /// Writes `value` to every control target `index` reaches, or keeps it
+    /// to try again: behind any write to its surface still waiting, or when
+    /// the surface is busy.
     pub(crate) fn write(&self, index: usize, value: TableValue) {
+        let reached = self.reached(index);
+        if reached.is_empty() {
+            self.refused.record();
+        }
+        for &leaf in reached {
+            self.write_leaf(leaf, value);
+        }
+    }
+
+    fn write_leaf(&self, index: usize, value: TableValue) {
         let group = self.controls[index].group;
         let behind = self.slots[..self.waiting()]
             .iter()
@@ -173,10 +234,11 @@ impl LegacyWrites {
         }
     }
 
-    /// Reads control `index`'s number where a ramp starts: `None` for one
-    /// holding none, or one its surface could not read (counted).
+    /// Reads target `index`'s number where a ramp starts, from the first
+    /// control it reaches: `None` for one holding none, or one its surface
+    /// could not read (counted).
     pub(crate) fn read(&self, index: usize) -> Option<f32> {
-        let control = &self.controls[index];
+        let control = &self.controls[*self.reached(index).first()?];
         match control.surface.get_scheduled(&control.key) {
             Ok(number) => Some(number),
             Err(LegacyRefusal::Unsupported) => None,
@@ -206,10 +268,14 @@ impl LegacyWrites {
     }
 
     /// Ages every waiting write by `samples`, dropping (and counting) those
-    /// that have waited longer than `limit`.
+    /// that have waited longer than `limit`. A write kept since the last
+    /// ageing is not aged yet: however long the block, it is tried again.
     pub(crate) fn age(&self, samples: u32, limit: u32) {
         self.retain(|_, waited| {
-            *waited = waited.saturating_add(samples);
+            *waited = match *waited {
+                FRESH => 0,
+                waited => waited.saturating_add(samples).min(FRESH - 1),
+            };
             let keep = *waited <= limit;
             if !keep {
                 self.refused.record();
@@ -242,8 +308,50 @@ impl LegacyWrites {
             self.refused.record();
             return;
         };
-        slot.store(index, value, 0);
+        slot.store(index, value, FRESH);
         self.waiting.store(waiting + 1, Ordering::Relaxed);
+    }
+
+    /// Takes over `old`'s waiting writes, as the schedule replacing it:
+    /// those to a control this one reaches go ahead of its own, in order;
+    /// the rest are dropped and counted, as are any finding no room.
+    pub(crate) fn take_waiting(&self, old: &LegacyWrites) {
+        let leaf = |slot: &Slot| {
+            let control = &old.controls[slot.load().0];
+            (self.controls.iter())
+                .position(|ours| same(&ours.surface, &control.surface) && ours.key == control.key)
+        };
+        let theirs = &old.slots[..old.waiting()];
+        let carried = theirs.iter().filter(|slot| leaf(slot).is_some()).count();
+        let lost = theirs.len() - carried;
+        let mine = self.waiting();
+        let kept = mine.min(RETRY_CAPACITY - carried);
+        for i in (0..kept).rev() {
+            let (index, value, waited) = self.slots[i].load();
+            self.slots[carried + i].store(index, value, waited);
+        }
+        let mut at = 0;
+        for slot in theirs {
+            if let Some(index) = leaf(slot) {
+                let (_, value, waited) = slot.load();
+                self.slots[at].store(index, value, waited);
+                at += 1;
+            }
+        }
+        self.waiting.store(carried + kept, Ordering::Relaxed);
+        old.waiting.store(0, Ordering::Relaxed);
+        for _ in 0..lost + mine - kept {
+            self.refused.record();
+        }
+    }
+
+    /// Drops every waiting write, counted: its schedule is replaced by one
+    /// writing no legacy control.
+    pub(crate) fn drop_waiting(&self) {
+        self.retain(|_, _| {
+            self.refused.record();
+            false
+        });
     }
 
     /// Keeps the waiting writes `keep` says to, in order.

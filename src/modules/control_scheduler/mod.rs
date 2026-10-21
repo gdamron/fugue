@@ -311,9 +311,15 @@ impl ControlScheduler {
     /// than moves, so it allocates, frees and locks nothing.
     fn adopt(&mut self, mut next: Box<ResolvedSchedule>) -> Box<ResolvedSchedule> {
         self.ctrl.set_adopted(next.id);
-        // A write still waiting has a last try; then it goes with its
-        // schedule.
+        // A write still waiting has a last try; then the new schedule takes
+        // over those to the controls it still reaches (a note_off to an
+        // instrument it keeps lands), and the rest are dropped, counted.
         self.retry_legacy();
+        match (&self.legacy, &next.legacy) {
+            (Some(old), Some(new)) if !Arc::ptr_eq(old, new) => new.take_waiting(old),
+            (Some(old), None) => old.drop_waiting(),
+            _ => {}
+        }
         std::mem::swap(&mut self.legacy, &mut next.legacy);
         if next.retarget && same_plan(&self.entries, &next.entries) {
             // The same entries, re-resolved: only their targets change, so

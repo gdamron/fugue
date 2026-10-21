@@ -154,8 +154,9 @@ fn a_write_past_the_room_or_the_wait_is_dropped_and_counted() {
     assert_eq!((allocs, frees), (0, 0));
     assert_eq!(writes.waiting(), RETRY_CAPACITY);
     assert_eq!(writes.refused().count(), 1, "no room for the last");
-    // 10 ms at 48 kHz in blocks of 128: the fourth block's wait is 512.
-    for _ in 0..3 {
+    // 10 ms at 48 kHz in blocks of 128: kept in the first block, then the
+    // fourth block's wait is 512.
+    for _ in 0..4 {
         writes.age(128, 480);
     }
     assert_eq!(writes.waiting(), RETRY_CAPACITY);
@@ -170,6 +171,92 @@ fn a_write_its_surface_refuses_outright_is_counted_never_kept() {
     let (writes, [level, ..]) = one(&voice);
     writes.write(level, TableValue::Bool(true));
     assert_eq!((writes.waiting(), writes.refused().count()), (0, 1));
+}
+
+#[test]
+fn a_write_kept_late_in_a_long_block_is_tried_again_before_it_gives_up() {
+    let voice = Arc::new(Voice::default());
+    let (writes, [_, _, off]) = one(&voice);
+    voice.busy.store(true, Ordering::Relaxed);
+    writes.write(off, n(60.0));
+    // A 1024-frame block ends, longer than the limit: not aged yet.
+    writes.age(1024, 480);
+    assert_eq!(writes.waiting(), 1);
+    voice.busy.store(false, Ordering::Relaxed);
+    writes.retry();
+    assert_eq!(voice.landed(), [("note_off", 60.0)]);
+    // Still busy at its retry, a block later it gives up.
+    voice.busy.store(true, Ordering::Relaxed);
+    writes.write(off, n(62.0));
+    writes.age(1024, 480);
+    writes.retry();
+    writes.age(1024, 480);
+    assert_eq!((writes.waiting(), writes.refused().count()), (0, 1));
+}
+
+/// A development's control fanning out to `voices`' `note_on`.
+struct Fan(Vec<Arc<Voice>>);
+
+impl ControlSurface for Fan {
+    fn controls(&self) -> Vec<ControlMeta> {
+        Vec::new()
+    }
+
+    fn get_control(&self, _key: &str) -> Result<ControlValue, String> {
+        Ok(ControlValue::Number(0.0))
+    }
+
+    fn set_control(&self, _key: &str, _value: ControlValue) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn scheduled_aliases(&self, key: &str) -> Option<Vec<(Surface, String)>> {
+        let voice = |voice: &Arc<Voice>| (voice.clone() as Surface, key.to_string());
+        Some(self.0.iter().map(voice).collect())
+    }
+}
+
+#[test]
+fn a_fanned_out_write_waits_only_for_the_alias_that_is_busy() {
+    let (free, busy) = (Arc::new(Voice::default()), Arc::new(Voice::default()));
+    let fan: Surface = Arc::new(Fan(vec![free.clone(), busy.clone()]));
+    let mut controls = LegacyControls::default();
+    let on = controls.index(&fan, "note_on");
+    let writes = controls.build();
+    busy.busy.store(true, Ordering::Relaxed);
+    writes.write(on, n(60.0));
+    writes.retry();
+    assert_eq!(free.landed(), [("note_on", 60.0)], "once, not retriggered");
+    assert_eq!(writes.waiting(), 1);
+    busy.busy.store(false, Ordering::Relaxed);
+    writes.retry();
+    assert_eq!(free.landed(), [("note_on", 60.0)]);
+    assert_eq!(busy.landed(), [("note_on", 60.0)]);
+}
+
+#[test]
+fn a_new_schedule_takes_over_the_waits_to_controls_it_still_reaches() {
+    let (voice, gone) = (Arc::new(Voice::default()), Arc::new(Voice::default()));
+    let (old, indices) = writes(&[&voice, &gone]);
+    let ([_, on, off], [gone_level, ..]) = (indices[0], indices[1]);
+    let (new, [level, ..]) = one(&voice);
+    voice.busy.store(true, Ordering::Relaxed);
+    gone.busy.store(true, Ordering::Relaxed);
+    old.write(on, n(60.0));
+    old.write(off, n(60.0));
+    old.write(gone_level, n(1.0));
+    new.write(level, n(7.0));
+    let (_, allocs, frees) = allocator_events(|| new.take_waiting(&old));
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!((old.waiting(), new.waiting()), (0, 3));
+    assert_eq!(new.refused().count(), 1, "the write to a surface it lost");
+    voice.busy.store(false, Ordering::Relaxed);
+    new.retry();
+    assert_eq!(
+        voice.landed(),
+        [("note_on", 60.0), ("note_off", 60.0), ("level", 7.0)],
+        "the old schedule's first: no stuck note"
+    );
 }
 
 /// A schedule's writes to one voice.

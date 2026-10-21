@@ -64,7 +64,7 @@ impl TableTarget {
     pub(crate) fn legacy(surface: Arc<dyn ControlSurface + Send + Sync>, control: String) -> Self {
         let mut controls = LegacyControls::default();
         let index = controls.index(&surface, &control);
-        controls.build().target(index)
+        controls.build().target(index, &surface, &control)
     }
 
     /// Writes `value`, returning false when a higher tier holds the

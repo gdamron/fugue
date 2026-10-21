@@ -232,3 +232,46 @@ fn writes_finding_their_locks_held_land_a_block_late_in_order() {
     assert_eq!(block(&mut scheduler, 1.0), (0, 0), "step 5");
     assert_eq!(locking.melody.degree(2), Ok(9));
 }
+
+#[test]
+fn a_note_off_waiting_through_a_retarget_still_lands() {
+    use super::resolved::ResolvedSchedule;
+    use super::schedule::resolve_schedule;
+    use crate::payload::Payload;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let entries = vec![
+        entry(
+            1,
+            "sample_instrument",
+            "note_on",
+            ScheduleValue::Number(64.0),
+        ),
+        entry(
+            2,
+            "sample_instrument",
+            "note_off",
+            ScheduleValue::Number(64.0),
+        ),
+    ];
+    let mut scheduler = scheduler(entries.clone(), &directory);
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        block(&mut scheduler, gate);
+    }
+    let surfaces = directory.lock().unwrap().clone();
+    let retarget = resolve_schedule(&entries, "sched", &surfaces).unwrap();
+    let retarget = Payload::owned(Box::new(ResolvedSchedule::retargeting(retarget)));
+    // Step 2's note_off finds the queue held, and is still waiting when the
+    // same plan, re-resolved, is adopted.
+    let old = while_held(locking.instrument.pending_notes(), || {
+        block(&mut scheduler, 1.0);
+        scheduler.apply_payload(SCHEDULE, retarget)
+    });
+    drop(old);
+    assert_eq!(block(&mut scheduler, 0.0), (0, 0), "released");
+    assert_eq!(
+        queued_notes(&locking.instrument),
+        [(64, true), (64, false)],
+        "no stuck note"
+    );
+}

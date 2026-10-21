@@ -311,7 +311,10 @@ pub(crate) fn resolve_schedule(
     for (entry, target) in entries.iter().zip(targets) {
         let target = match target {
             Ok(automation) => TableTarget::Declared(automation),
-            Err(index) => writes.target(index),
+            Err(index) => {
+                let surface = &surfaces[entry.module.as_str()];
+                writes.target(index, surface, &entry.control)
+            }
         };
         resolved.push(ResolvedEntry {
             module: entry.module.clone(),
