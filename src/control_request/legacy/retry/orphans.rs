@@ -13,7 +13,7 @@
 //! in order, and not lost to a surface busy or full for a while.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use super::gate::IDLE;
 use super::{bits_value, value_bits, LegacyRefusal, LegacyWrites, Surface};
@@ -127,17 +127,25 @@ impl Orphans {
         let Some(orphan) = free else {
             return false;
         };
+        self.kept.fetch_add(1, Ordering::Relaxed);
+        KEPT.fetch_add(1, Ordering::Relaxed);
         orphan.key.store(key, Ordering::Relaxed);
         orphan.value.store(value, Ordering::Relaxed);
         orphan.ticket.store(ticket, Ordering::Release);
-        self.kept.fetch_add(1, Ordering::Relaxed);
-        KEPT.fetch_add(1, Ordering::Relaxed);
         true
     }
 
     /// How many events are kept.
     pub(super) fn kept(&self) -> usize {
         self.kept.load(Ordering::Relaxed)
+    }
+
+    /// Whether nothing but this room holds the surface: its module is gone
+    /// from every graph, and nothing will make room on it again.
+    pub(super) fn stranded(&self) -> bool {
+        self.surface
+            .get()
+            .is_some_and(|surface| Arc::strong_count(surface) == 1)
     }
 
     /// Lands what is kept, in ticket order, while each one's turn has come:
@@ -150,8 +158,13 @@ impl Orphans {
         let Some(surface) = self.surface.get() else {
             return refused;
         };
-        while let Some((at, ticket)) = self.first() {
-            if due().is_none_or(|earliest| ticket > earliest) {
+        // `due` first: an event another schedule leaves after it is read,
+        // earlier than those seen, then shows in `first`.
+        while let Some(earliest) = due() {
+            let Some((at, ticket)) = self.first() else {
+                break;
+            };
+            if ticket > earliest {
                 break;
             }
             let orphan = &self.room[at];
