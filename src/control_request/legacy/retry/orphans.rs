@@ -159,7 +159,9 @@ impl Orphans {
             return refused;
         };
         // `due` first: an event another schedule leaves after it is read,
-        // earlier than those seen, then shows in `first`.
+        // earlier than those seen, then shows in `first`. Both are read
+        // again once one is claimed (lanes before the room: an event is
+        // left before its lane stops showing it).
         while let Some(earliest) = due() {
             let Some((at, ticket)) = self.first() else {
                 break;
@@ -171,7 +173,14 @@ impl Orphans {
             if orphan.landing.swap(true, Ordering::Acquire) {
                 break;
             }
-            // Another thread may have landed it while this one looked.
+            // Claimed, it is looked at again: another thread may have
+            // landed it, or (off the audio thread) an earlier write been
+            // kept or left since `due` was read.
+            let turn = due().is_some_and(|earliest| ticket <= earliest);
+            if !turn || self.first().is_some_and(|(_, first)| first < ticket) {
+                orphan.landing.store(false, Ordering::Release);
+                break;
+            }
             if orphan.ticket.load(Ordering::Acquire) == ticket {
                 let key = self.key(orphan.key.load(Ordering::Relaxed));
                 let value = bits_value(orphan.value.load(Ordering::Relaxed));

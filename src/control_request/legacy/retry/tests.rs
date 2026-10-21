@@ -400,6 +400,32 @@ fn a_left_event_lets_its_surface_go_once_nothing_else_holds_it() {
     assert!(gone.upgrade().is_none(), "not held for good");
 }
 
+#[test]
+fn a_left_note_off_waits_for_a_note_on_kept_while_the_reclaimer_looked() {
+    let voice = Arc::new(Voice::default());
+    let ((first, [_, _, on, _]), (second, [.., off])) = (one(&voice), one(&voice));
+    let gate = first.groups[0].gate.clone();
+    let looked = std::cell::Cell::new(false);
+    // The reclaimer reads that nothing waits; before it reads the first
+    // event left, a note_on is kept and another scheduler leaves the
+    // note_off made after it.
+    let due = || match looked.replace(true) {
+        true => gate.settled_earliest(),
+        false => {
+            voice.busy.store(true, Ordering::Relaxed);
+            first.write(on, n(60.0));
+            second.write(off, n(60.0));
+            second.abandon();
+            voice.busy.store(false, Ordering::Relaxed);
+            Some(IDLE)
+        }
+    };
+    gate.orphans.land(due);
+    assert!(voice.landed().is_empty(), "no note_off before its note_on");
+    first.retry();
+    assert_eq!(voice.landed(), [("note_on", 60.0), ("note_off", 60.0)]);
+}
+
 /// A schedule's writes to one voice.
 fn one(voice: &Arc<Voice>) -> (Arc<LegacyWrites>, [usize; 4]) {
     let (writes, indices) = writes(&[voice]);
