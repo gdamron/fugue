@@ -18,11 +18,17 @@ impl DelayLine {
         }
     }
 
-    /// Reads from the delay line at `offset` samples in the past.
+    /// Reads from the delay line at `offset` samples in the past, where
+    /// `offset` is at most the buffer length.
     #[inline]
     pub fn read(&self, offset: usize) -> f32 {
         let len = self.buffer.len();
-        let pos = (self.index + len - offset) % len;
+        debug_assert!(offset <= len, "delay offset {offset} exceeds length {len}");
+        // With `offset` clamped to `len`, `index + len - offset` lies in
+        // `[0, 2 * len)`, so one conditional subtract wraps it without an
+        // integer divide per read.
+        let pos = self.index + len - offset.min(len);
+        let pos = if pos >= len { pos - len } else { pos };
         self.buffer[pos]
     }
 
@@ -34,5 +40,34 @@ impl DelayLine {
         if self.index >= self.buffer.len() {
             self.index = 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_matches_modulo_wrap_for_every_offset_and_head() {
+        let len = 7;
+        let mut line = DelayLine::new(len);
+        for step in 0..3 * len {
+            for offset in 0..=len {
+                let expected = line.buffer[(line.index + len - offset) % len];
+                assert_eq!(line.read(offset), expected, "step {step} offset {offset}");
+            }
+            line.write_and_advance(step as f32);
+        }
+    }
+
+    #[test]
+    fn read_returns_the_sample_written_offset_steps_ago() {
+        let mut line = DelayLine::new(4);
+        for value in 1..=6 {
+            line.write_and_advance(value as f32);
+        }
+        assert_eq!(line.read(1), 6.0);
+        assert_eq!(line.read(2), 5.0);
+        assert_eq!(line.read(4), 3.0);
     }
 }
