@@ -231,7 +231,9 @@ impl Oscillator {
         };
 
         self.phase += modulated_freq / self.sample_rate as f32;
-        self.phase %= 1.0;
+        // Through-zero FM makes the step negative; `%` keeps the sign, so
+        // wrap with `floor` to hold the phase in [0, 1) either way.
+        self.phase -= self.phase.floor();
 
         let amp_scale = if am_amount > 0.0 {
             let normalized_amp = (self.inputs.am(i) + 1.0) * 0.5;
@@ -370,6 +372,7 @@ impl Module for Oscillator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MAX_BLOCK;
 
     #[test]
     fn test_fast_sine_cardinal_points() {
@@ -442,6 +445,54 @@ mod tests {
         // After disconnecting the frequency port, should use control again
         osc.set_input_connected(0, false);
         assert_eq!(osc.effective_frequency(), 440.0);
+    }
+
+    #[test]
+    fn through_zero_fm_keeps_every_waveform_in_range() {
+        let sample_rate = 48_000;
+        for osc_type in [
+            OscillatorType::Sine,
+            OscillatorType::Square,
+            OscillatorType::Sawtooth,
+            OscillatorType::Triangle,
+        ] {
+            // 1 kHz of FM depth around 220 Hz swings the frequency from
+            // -780 Hz to 1220 Hz, through zero twice per modulator cycle.
+            let mut osc = Oscillator::new(sample_rate, osc_type)
+                .with_frequency(220.0)
+                .with_fm_amount(1_000.0);
+            let mut modulator_phase = 0.0f32;
+            for block in 0..200 {
+                let fm = osc.input_block_mut(1);
+                for value in fm.iter_mut() {
+                    *value = (modulator_phase * 2.0 * PI).sin();
+                    modulator_phase = (modulator_phase + 3.0 / sample_rate as f32).fract();
+                }
+                osc.process(MAX_BLOCK);
+                for (i, &sample) in osc.output_block(0)[..MAX_BLOCK].iter().enumerate() {
+                    // `fast_sine` rounds a hair past its peak (1.0000001).
+                    assert!(
+                        sample.abs() <= 1.0 + 1e-6,
+                        "{osc_type:?} block {block} frame {i}: {sample}"
+                    );
+                }
+                assert!((0.0..=1.0).contains(&osc.phase), "phase {}", osc.phase);
+            }
+        }
+    }
+
+    #[test]
+    fn negative_frequency_runs_the_saw_backwards_in_range() {
+        let sample_rate = 48_000;
+        let mut osc = Oscillator::new(sample_rate, OscillatorType::Sawtooth)
+            .with_frequency(0.0)
+            .with_fm_amount(sample_rate as f32 / 8.0);
+        osc.input_block_mut(1)[..4].fill(-1.0);
+
+        osc.process(4);
+
+        // Each step moves the phase back an eighth of a cycle from 0.
+        assert_eq!(&osc.output_block(0)[..4], &[-1.0, 0.75, 0.5, 0.25]);
     }
 
     #[test]
