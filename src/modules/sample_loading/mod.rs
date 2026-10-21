@@ -228,6 +228,10 @@ fn sample_cache() -> &'static SampleCache {
 
 /// Returns the resampled buffer for `(source, target_sample_rate)`, decoding it
 /// (and caching) only on a miss. A decode error leaves the cache untouched.
+///
+/// The cache keeps every buffer it returns for the life of the process, so
+/// dropping a returned `Arc` (on the audio thread, say, as a voice lets go
+/// of a replaced sample) never frees it.
 pub(crate) fn load_cached_sample(
     source: &str,
     target_sample_rate: u32,
@@ -239,11 +243,16 @@ pub(crate) fn load_cached_sample(
     }
 
     let sample = Arc::new(load_sample(source, target_sample_rate)?);
-    sample_cache()
-        .lock()
-        .unwrap()
-        .insert(key, Arc::clone(&sample));
-    Ok(sample)
+    Ok(cache_loaded(key, sample))
+}
+
+/// Caches `sample` under `key`, returning the buffer the cache keeps: one
+/// another thread cached since this one missed, if any, so the cache owns
+/// every buffer returned. The one decoded here is then dropped, on this
+/// control thread.
+fn cache_loaded(key: (String, u32), sample: Arc<SampleData>) -> Arc<SampleData> {
+    let mut cache = sample_cache().lock().unwrap();
+    Arc::clone(cache.entry(key).or_insert(sample))
 }
 
 fn load_sample(source: &str, target_sample_rate: u32) -> Result<SampleData, String> {
