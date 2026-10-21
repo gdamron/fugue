@@ -57,6 +57,7 @@ pub(crate) use pending::{PendingLog, PendingWrite};
 pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
+pub(crate) use timed::Authored;
 pub(crate) use timed_status::CancelCause;
 #[cfg(test)]
 pub(crate) use timed_status::EditState;

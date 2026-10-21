@@ -162,6 +162,7 @@ impl Publisher {
         let waiting = self.timed.take()?;
         self.set_timed(None); // for the flag: `take` cleared `timed`
         self.generation += 1;
+        self.timed_adopted = self.generation;
         // Releases every request and write queued before it to the audio
         // thread, which then knows nothing is tagged older (see `landing`).
         self.published.store(self.generation, Ordering::Release);
@@ -207,6 +208,11 @@ impl Publisher {
         }
         self.set_timed(None);
         true
+    }
+
+    /// Whether a timed edit was adopted after generation `seen`.
+    pub(crate) fn timed_adopted_since(&self, seen: u64) -> bool {
+        self.timed_adopted > seen
     }
 
     /// The id of the timed edit waiting, if any.
