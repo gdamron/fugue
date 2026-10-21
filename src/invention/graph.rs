@@ -40,6 +40,7 @@ use indexmap::IndexMap;
 use std::sync::Arc;
 
 use crate::control_request::Transport;
+use crate::modules::AudioDiagnostics;
 use crate::{GraphModule, MAX_BLOCK};
 
 use super::runtime::ModuleInstance;
@@ -211,6 +212,10 @@ pub(crate) struct SignalGraph {
     /// Observers of the mixed master output (peak meter, spectrum tap), fed
     /// once per block for off-thread samplers to read.
     pub(crate) master: MasterObservers,
+    /// The audio backend's diagnostics, where an install that falls back to
+    /// recompiling on the audio thread is counted. `None` for offline render
+    /// and backends without diagnostics.
+    pub(crate) diagnostics: Option<Arc<AudioDiagnostics>>,
 }
 
 impl SignalGraph {
@@ -252,6 +257,7 @@ impl SignalGraph {
             installing: None,
             retired: false,
             master,
+            diagnostics: None,
         }
     }
 
