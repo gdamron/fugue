@@ -499,7 +499,7 @@ impl LiveGraph {
         // Under the publisher, where a schedule write records itself, so
         // each survivor re-resolves the schedule it will be playing.
         let written = match rebind::pack(&mut prepared) {
-            Ok(written) => written,
+            Ok(packed) => packed.written,
             Err(error) => {
                 drop(publisher);
                 drop(prepared);

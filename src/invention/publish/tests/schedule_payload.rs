@@ -160,6 +160,7 @@ fn a_schedule_resolved_before_a_change_published_is_refused_as_stale() {
     let recorded = std::cell::Cell::new(false);
     let checked = Checked {
         generation,
+        targets: Vec::new(),
         record: Box::new(|| recorded.set(true)),
     };
     let payload = crate::payload::Payload::new(0_u32);
