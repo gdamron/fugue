@@ -163,8 +163,14 @@ pub(crate) struct RequestDrain {
     /// The newest generation the publisher has queued an edit for. Newer
     /// than `installed` means an edit is waiting in the queue, so requests
     /// ahead of it are taken even into a full store (see the module docs).
-    /// Only a hint for when to stop holding back, so `Relaxed` is enough:
-    /// a stale value holds back one more block.
+    ///
+    /// The publisher stores it with `Release` once everything tagged with
+    /// the generation before is queued, and [`Self::adopted`] loads it with
+    /// `Acquire` at block start: seeing a timed edit adopted then means
+    /// every request and input write tagged with the generation it replaced
+    /// is visible in the queues, so the bridge can be released (see
+    /// `publication::landing`). The full-store hint stays `Relaxed`: a stale
+    /// value holds back one more block.
     published: Arc<AtomicU64>,
     /// Run as the drain is dropped, before its queue: closes the link to
     /// further submissions (see `Publisher::close`).
