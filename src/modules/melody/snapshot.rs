@@ -29,8 +29,8 @@ pub(super) struct DegreeSnapshot {
 }
 
 impl DegreeSnapshot {
-    /// Builds a snapshot of the current table. Control thread: waits for an
-    /// edit of many entries to finish.
+    /// Builds a snapshot of the current table. Control thread: waits for a
+    /// position write in flight to finish.
     pub(super) fn new(ctrl: &MelodyControls) -> Self {
         let mut snapshot = Self {
             degrees: [0; MAX_DEGREES],
@@ -44,8 +44,9 @@ impl DegreeSnapshot {
                 weights: [0.0; MAX_DEGREES],
             }),
         };
-        let _whole = ctrl.table.whole();
-        snapshot.copy(ctrl);
+        while !snapshot.copy(ctrl) {
+            std::thread::yield_now();
+        }
         snapshot
     }
 
