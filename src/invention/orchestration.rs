@@ -305,7 +305,7 @@ impl RuntimeSnapshot {
             attempts,
             (module_id, key),
             || live.generation(),
-            || self.set_control_transient(module_id, key, value.clone()),
+            || self.make_authored(module_id, key, value.clone()),
             |seen| live.record_authored(module_id, key, &value, seen),
         )?;
         Ok(value)

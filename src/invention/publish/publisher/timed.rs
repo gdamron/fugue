@@ -10,12 +10,14 @@
 //! nothing changed), as any change prepared against a generation that has
 //! moved is.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::{Published, Publisher, Refused};
-use crate::control_request::{QueueFull, Request, RequestId, RequestValue, When};
+use crate::control_request::{
+    Condition, ControlTarget, Predicate, QueueFull, Request, RequestId, RequestValue, RtValue, When,
+};
 use crate::invention::declared::RequestPort;
 use crate::invention::graph::{Fate, TIMED_EDIT_MODULE};
 use crate::invention::publish::change::{BuiltModule, PreparedChange, TopologyMirror};
@@ -52,20 +54,28 @@ pub(crate) struct Waiting {
     /// [`Publisher::chain_timed`]).
     chained: Vec<(String, String)>,
     /// The priority the latest authored write it keeps was chained at (see
-    /// [`Publisher::timed_keeping`]); its own writes are at 0.
+    /// [`Publisher::keep_authored`]); its own writes are at 0.
     kept: i16,
 }
 
-/// What the latest timed edits adopted did, for an authored write that one
-/// may have overtaken (see [`Publisher::timed_overtook`]).
+/// How many recent adoptions [`Adoptions`] remembers.
+const ADOPTIONS: usize = 8;
+
+/// What the latest timed edits adopted did, for an authored write one may
+/// have overtaken (see [`Publisher::timed_overtook`]).
 #[derive(Default)]
-pub(crate) struct LastAdopted {
-    /// The generation the latest was adopted as, 0 before any.
+pub(crate) struct Adoptions {
+    recent: VecDeque<Adoption>,
+    /// The generation of the newest adoption forgotten, 0 before any.
+    forgotten: u64,
+}
+
+struct Adoption {
+    /// The generation it was adopted as.
     generation: u64,
-    /// The generation the one before it was adopted as, 0 before any.
-    before: u64,
-    /// The modules the latest rebuilt or removed, or whose schedule it
-    /// re-resolved as it landed.
+    id: RequestId,
+    /// The modules it rebuilt or removed, or whose schedule it re-resolved
+    /// as it landed.
     modules: HashSet<String>,
     /// The controls of modules it kept that it wrote as it landed.
     controls: Vec<(String, String)>,
@@ -211,12 +221,18 @@ impl Publisher {
             .filter(|id| !self.mirror.modules.contains_key(*id));
         let built = waiting.built.keys();
         let rebound = waiting.packed.rebound.iter();
-        self.adopted = LastAdopted {
+        let modules = removed.chain(built).chain(rebound).cloned().collect();
+        self.adopted.recent.push_back(Adoption {
             generation: self.generation,
-            before: self.adopted.generation,
-            modules: removed.chain(built).chain(rebound).cloned().collect(),
+            id: waiting.id,
+            modules,
             controls: waiting.chained,
-        };
+        });
+        if self.adopted.recent.len() > ADOPTIONS {
+            if let Some(oldest) = self.adopted.recent.pop_front() {
+                self.adopted.forgotten = oldest.generation;
+            }
+        }
         Some(Adopted {
             id: waiting.id,
             published: Published {
@@ -261,22 +277,25 @@ impl Publisher {
     }
 
     /// Whether a timed edit adopted after generation `seen` may have
-    /// overtaken an authored write to control `key` of `module_id` made
-    /// while `seen` was the latest: landing after it, the edit rebuilt or
-    /// removed the module, re-resolved its schedule, or wrote the control.
-    /// `None` when none was adopted since; `Some(true)`, to be safe, when
-    /// more than one was.
-    pub(crate) fn timed_overtook(&self, seen: u64, module_id: &str, key: &str) -> Option<bool> {
-        let adopted = &self.adopted;
-        if adopted.generation <= seen {
-            return None;
-        }
+    /// overtaken an authored write to control `key` of `module_id` queued
+    /// at `seen`: landing after it, the edit rebuilt or removed the module,
+    /// re-resolved its schedule, or wrote the control. Not by writing the
+    /// control, though, when it is `safe`: the edit the write was queued
+    /// after or kept over (see [`Self::keep_authored`]). True, to be safe,
+    /// when one adopted since is forgotten.
+    pub(crate) fn timed_overtook(
+        &self,
+        seen: u64,
+        (module_id, key): (&str, &str),
+        safe: Option<RequestId>,
+    ) -> bool {
         let wrote = |(module, control): &(String, String)| module == module_id && control == key;
-        Some(
-            adopted.before > seen
-                || adopted.modules.contains(module_id)
-                || adopted.controls.iter().any(wrote),
-        )
+        let overtook = |adoption: &Adoption| {
+            adoption.generation > seen
+                && (adoption.modules.contains(module_id)
+                    || (Some(adoption.id) != safe && adoption.controls.iter().any(wrote)))
+        };
+        self.adopted.forgotten > seen || self.adopted.recent.iter().any(overtook)
     }
 
     /// The id of the timed edit waiting, if any.
@@ -323,36 +342,57 @@ impl Publisher {
 
     /// Notes the controls of modules it keeps that the timed edit waiting
     /// writes as it lands, so an authored write to one is kept over it
-    /// (see `LiveGraph::keep_authored`).
+    /// (see [`Self::keep_authored`]).
     pub(crate) fn chain_timed(&mut self, chained: Vec<(String, String)>) {
         if let Some(waiting) = self.timed.as_mut() {
             waiting.chained = chained;
         }
     }
 
-    /// The timed edit waiting and the priority to chain an authored write
-    /// it is to keep at: above its own writes and every write kept before,
-    /// so the latest plays as it lands whatever the order they apply in
-    /// there. `None` when none waits, it has landed or will not, or the
-    /// priorities ran out.
-    pub(crate) fn timed_keeping(&self) -> Option<(RequestId, i16)> {
+    /// Readies an authored write of `raw` to control `key` of `module_id`
+    /// (at `target`, in the graph that is playing), about to be queued,
+    /// against the timed edit waiting, and returns the edit it is safe from
+    /// (see [`Self::timed_overtook`]). One landed already: the write follows
+    /// its writes. One that writes the control as it lands: the write is
+    /// kept over it, chained to the landing first at a priority above the
+    /// edit's own write and any kept before, so whatever order they apply
+    /// in there, the author's value plays and the edit's never sounds (see
+    /// [`Ledger::kept`]). `None`, with nothing queued, when neither: none
+    /// waits, it does not write the control, or the write cannot be kept
+    /// (an event, the priorities ran out, or the request queue or the
+    /// requests waiting on conditions are full), and an edit writing the
+    /// control is cancelled as the write is recorded.
+    pub(crate) fn keep_authored(
+        &mut self,
+        (module_id, key): (&str, &str),
+        target: ControlTarget,
+        (raw, event): (RtValue, bool),
+    ) -> Option<RequestId> {
         let waiting = self.timed.as_ref()?;
-        if waiting.fate.settled().is_some() {
+        match waiting.fate.settled() {
+            Some(true) => return Some(waiting.id),
+            Some(false) => return None,
+            None => {}
+        }
+        let chained = |(module, control): &(String, String)| module == module_id && control == key;
+        if event || !waiting.chained.iter().any(chained) {
             return None;
         }
-        Some((waiting.id, waiting.kept.checked_add(1)?))
-    }
-
-    /// Notes that the timed edit waiting keeps an authored write to control
-    /// `key` of `module_id`, chained at the priority [`Self::timed_keeping`]
-    /// gave, and reports it (see [`Ledger::kept`]).
-    pub(crate) fn kept_timed(&mut self, module_id: &str, key: &str) {
-        let Some(waiting) = self.timed.as_mut() else {
-            return;
-        };
-        waiting.kept += 1;
+        let priority = waiting.kept.checked_add(1)?;
+        // Room for the write itself after it, so a kept write is made.
+        if self.requests.watchers_full() || !self.requests.has_room_for(2) {
+            return None;
+        }
         let id = waiting.id;
+        let mut kept = Request::new(target, RequestValue::Value(raw));
+        kept.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).expect("one part"));
+        kept.priority = priority;
+        self.requests.submit(kept).ok()?;
+        if let Some(waiting) = self.timed.as_mut() {
+            waiting.kept = priority;
+        }
         self.ledger.kept(id, format!("{module_id}.{key}"));
+        Some(id)
     }
 
     /// Every recent timed edit's status (see `timed_status`).
