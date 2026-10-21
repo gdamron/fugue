@@ -10,25 +10,6 @@ use crate::invention::runtime::ControlSurfaceInstance;
 use crate::module_config::tests::registry::{base_config, eight_frame_wav, UNBUILDABLE};
 use crate::ControlValue;
 
-/// Runs `f` while another thread holds `lock`, as a control thread
-/// editing the state it guards would.
-pub(crate) fn while_held<T: Send, R>(lock: &std::sync::Mutex<T>, f: impl FnOnce() -> R) -> R {
-    let (held, holding) = std::sync::mpsc::channel();
-    let (done, finished) = std::sync::mpsc::channel::<()>();
-    std::thread::scope(|scope| {
-        scope.spawn(move || {
-            let guard = lock.lock().unwrap();
-            held.send(()).unwrap();
-            let _ = finished.recv_timeout(std::time::Duration::from_secs(2));
-            drop(guard);
-        });
-        holding.recv().unwrap();
-        let result = f();
-        let _ = done.send(());
-        result
-    })
-}
-
 /// Every built-in type with controls either declares them or is listed,
 /// never both; every type builds (from the registry harness's config)
 /// unless it cannot be built in a test at all, and every listed type

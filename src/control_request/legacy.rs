@@ -53,13 +53,5 @@ pub(crate) fn scheduled_index(key: &str, prefix: &str) -> Option<usize> {
     key.strip_prefix(prefix)?.parse().ok()
 }
 
-/// Takes `lock` without waiting: refused as [`LegacyRefusal::Busy`] when
-/// another thread holds it (or panicked holding it).
-pub(crate) fn try_scheduled<T>(
-    lock: &std::sync::Mutex<T>,
-) -> Result<std::sync::MutexGuard<'_, T>, LegacyRefusal> {
-    lock.try_lock().map_err(|_| LegacyRefusal::Busy)
-}
-
 #[cfg(test)]
 pub(crate) mod tests;
