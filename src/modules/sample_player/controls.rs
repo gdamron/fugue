@@ -7,7 +7,7 @@
 //! later block.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 
 use crate::atomic::AtomicF32;
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
@@ -44,7 +44,8 @@ pub(crate) struct SamplePlayerShared {
 pub(crate) struct SampleSwap {
     pending: Option<Arc<SampleData>>,
     /// The sample the audio thread swapped out. The next control-thread
-    /// swap drops it, so the audio thread never frees a sample.
+    /// swap drops it, so the audio thread never frees a sample. Until then
+    /// it stays in memory (usually shared with the sample cache anyway).
     retired: Option<Arc<SampleData>>,
 }
 
@@ -185,15 +186,21 @@ impl SamplePlayerControls {
     /// control thread to drop. Returns `None` when the lock was busy, so the
     /// caller retries on a later block; `Some(swapped)` otherwise.
     pub(crate) fn try_swap(&self, current: &mut Option<Arc<SampleData>>) -> Option<bool> {
-        let mut swap = self.shared.swap.try_lock().ok()?;
+        let mut swap = match self.shared.swap.try_lock() {
+            Ok(swap) => swap,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        // `retired` is empty whenever `pending` is full: the staging write
+        // empties it, and only one swap follows each staging. Should that
+        // ever not hold, wait for a control thread rather than free here.
+        if swap.retired.is_some() {
+            return None;
+        }
         let Some(sample) = swap.pending.take() else {
             return Some(false);
         };
-        let replaced = current.replace(sample);
-        // `retired` is empty here: the staging write that made `pending`
-        // emptied it, and only one swap follows each staging.
-        debug_assert!(swap.retired.is_none());
-        swap.retired = replaced;
+        swap.retired = current.replace(sample);
         Some(true)
     }
 
