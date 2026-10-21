@@ -13,6 +13,7 @@ use super::*;
 use crate::control_request::{BeatSpec, Outcome, Refusal, RequestId, Timeline};
 use crate::invention::declared::STALE;
 use crate::invention::publish::timed::EditTime;
+use crate::invention::publish::{CancelCause, EditState};
 use crate::test_support::dial::DIAL;
 
 /// A tempo with fractional samples per beat at 48 kHz.
@@ -189,6 +190,11 @@ fn a_schedule_written_while_a_timed_swap_waits_cancels_it() {
     let out = render_counted(&mut rig, blocks(BPM, 7.0));
     let refused = Outcome::Refused(Refusal::TargetGone);
     assert_eq!(outcomes_of(&mut rig, id), [(id, refused)]);
+    let cause = CancelCause::ScheduleWrite {
+        module_id: "sched".to_string(),
+    };
+    let state = rig.live.timed_status(id).unwrap().state;
+    assert_eq!(state, EditState::Cancelled(cause), "and says why");
     let heard = (1..=6).all(|step| {
         out[beats[step]..beats[step + 1]]
             .iter()

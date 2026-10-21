@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
+use super::timed_status::{CancelCause, Ledger};
 use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{
     outcome_channel, request_channel, ControlIndex, ControlTarget, OutcomeReceiver, QueueFull,
@@ -122,6 +123,8 @@ pub(crate) struct Publisher {
     timed: Option<timed::Waiting>,
     /// Whether `timed` holds one, for the reclaimer to read without a lock.
     timed_flag: Arc<AtomicBool>,
+    /// What became of each recent timed edit.
+    ledger: Ledger,
 }
 
 impl Publisher {
@@ -165,6 +168,7 @@ impl Publisher {
             closed: false,
             timed: None,
             timed_flag: Arc::new(AtomicBool::new(false)),
+            ledger: Ledger::default(),
         };
         let ends = LinkEnds {
             requests: requests.reserving(EDIT_RESERVE as u64),
@@ -391,7 +395,7 @@ impl Publisher {
                     change: prepared,
                 });
             }
-            if !self.cancel_timed() {
+            if !self.cancel_timed(|| CancelCause::Commit) {
                 return Err(Refused {
                     error: GraphCommandError::TopologyMoved,
                     change: prepared,
