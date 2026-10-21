@@ -1,5 +1,7 @@
-use std::sync::atomic::AtomicBool;
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
@@ -9,6 +11,34 @@ use crate::alloc_counter::allocator_events;
 use crate::audio_thread::AudioThreadScope;
 use crate::modules::melody::MelodyControls;
 use crate::ControlSurface;
+
+thread_local! {
+    /// What runs on this thread between the next two loads that must agree.
+    static BETWEEN_LOADS: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
+}
+
+/// Called by the table between a degrees' header load and a weights'
+/// generation load, and between a weights' generation load and a count
+/// load: where another thread's edit can land.
+pub(super) fn between_loads() {
+    if let Some(run) = BETWEEN_LOADS.with(|hook| hook.borrow_mut().take()) {
+        run();
+    }
+}
+
+/// Runs `edit` the next time this thread is between two such loads.
+fn between_the_next_loads(edit: impl FnOnce() + 'static) {
+    BETWEEN_LOADS.with(|hook| *hook.borrow_mut() = Some(Box::new(edit)));
+}
+
+/// Waits (up to ten seconds) until `progress` moves `by` past where it was.
+fn wait_for(progress: &AtomicUsize, by: usize) {
+    let (from, deadline) = (progress.load(Ordering::Acquire), Instant::now());
+    while progress.load(Ordering::Acquire) < from + by {
+        assert!(deadline.elapsed() < Duration::from_secs(10), "no progress");
+        std::thread::yield_now();
+    }
+}
 
 /// Main's degree table, recomputed whole under its lock after every edit:
 /// the reference the atomic table must match.
@@ -175,9 +205,12 @@ fn a_copy_taken_while_whole_scales_are_set_is_always_one_of_them() {
     ];
     let controls = MelodyControls::new(60, scales[1].clone());
     let weights = [vec![2.0; MAX_DEGREES], vec![0.5; 5]];
-    let done = Arc::new(AtomicBool::new(false));
+    let (done, edits) = (
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
     let writer = {
-        let (controls, done) = (controls.clone(), done.clone());
+        let (controls, done, edits) = (controls.clone(), done.clone(), edits.clone());
         let (scales, weights) = (scales.clone(), weights.clone());
         std::thread::spawn(move || {
             for which in (0..2).cycle() {
@@ -186,13 +219,17 @@ fn a_copy_taken_while_whole_scales_are_set_is_always_one_of_them() {
                 }
                 controls.set_note_weights(weights[which].clone());
                 controls.set_allowed_degrees(scales[which].clone());
+                edits.fetch_add(1, Ordering::Release);
                 std::thread::yield_now();
             }
         })
     };
+    wait_for(&edits, 1);
     let (mut degrees, mut weights_read) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
     let (mut taken, mut refused) = (0, 0);
-    while taken < 5_000 {
+    let (started, deadline) = (edits.load(Ordering::Acquire), Instant::now());
+    while taken < 5_000 || edits.load(Ordering::Acquire) < started + 500 {
+        assert!(deadline.elapsed() < Duration::from_secs(10), "no edits");
         let Some(count) = controls.table.read_into(&mut degrees, &mut weights_read) else {
             refused += 1;
             continue;
@@ -254,19 +291,74 @@ fn a_position_reads_on_the_audio_thread_without_a_lock() {
 fn a_stale_write_never_replaces_one_made_after_a_whole_edit() {
     let controls = MelodyControls::new(60, vec![0]);
     let table = &controls.table;
-    // A write that read the table before the scale was set, and stores
-    // only after a write made since.
-    let before = table.header.load(Ordering::Acquire);
-    controls.set_allowed_degrees(vec![0, 7]);
-    controls.set_degree(0, 5).unwrap();
-    assert!(table.write_degree_as_of(before, 0, 11));
+    // A write that checked the generation, then was preempted: meanwhile
+    // the scale is set whole and a position written. It stores after.
+    let before = table.degrees_generation();
+    let preempted = Cell::new(true);
+    let now = || {
+        if preempted.replace(false) {
+            controls.set_allowed_degrees(vec![0, 7]);
+            controls.set_degree(0, 5).unwrap();
+            return before;
+        }
+        table.degrees_generation()
+    };
+    table.write(&table.written_degrees[0], before, now, 11);
     assert_eq!(controls.allowed_degrees(), [5, 7]);
     // Weights likewise.
     let before = table.weights_generation();
-    controls.set_note_weights(vec![1.0, 1.0]);
-    controls.set_note_weight(0, 4.0).unwrap();
-    assert!(table.write_weight_as_of(before, 0, 9.0));
+    let preempted = Cell::new(true);
+    let now = || {
+        if preempted.replace(false) {
+            controls.set_note_weights(vec![1.0, 1.0]);
+            controls.set_note_weight(0, 4.0).unwrap();
+            return before;
+        }
+        table.weights_generation()
+    };
+    table.write(&table.written_weights[0], before, now, 9.0f32.to_bits());
     assert_eq!(controls.note_weights(), [4.0, 1.0]);
+}
+
+#[test]
+fn a_copy_meeting_a_count_change_and_whole_weights_is_a_table_that_was() {
+    let controls = MelodyControls::new(60, vec![0, 2, 4]);
+    let table = &controls.table;
+    // Between the copy's header load and its weights load, the count
+    // shrinks and whole weights are set.
+    let edit = controls.clone();
+    between_the_next_loads(move || {
+        edit.set_degree_count(1);
+        edit.set_note_weights(vec![0.0, 0.0, 10.0]);
+    });
+    let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
+    assert_eq!(table.read_into(&mut degrees, &mut weights), None);
+    assert_eq!(table.read_into(&mut degrees, &mut weights), Some(1));
+    assert_eq!((degrees[0], weights[0]), (0, 0.0));
+    // A position read meeting the same retries, and finds it past the
+    // count.
+    controls.set_degree_count(3);
+    controls.set_note_weights(vec![]);
+    let edit = controls.clone();
+    between_the_next_loads(move || {
+        edit.set_degree_count(1);
+        edit.set_note_weights(vec![0.0, 0.0, 10.0]);
+    });
+    assert_eq!(table.position(2), None);
+}
+
+#[test]
+fn a_weight_write_meeting_whole_weights_and_a_grown_count_is_kept() {
+    let controls = MelodyControls::new(60, vec![0]);
+    // Between the write's generation load and its count load, whole
+    // weights are set and the count grows to take position 5.
+    let edit = controls.clone();
+    between_the_next_loads(move || {
+        edit.set_note_weights(vec![]);
+        edit.set_degree_count(6);
+    });
+    controls.set_note_weight(5, 9.0).unwrap();
+    assert_eq!(controls.note_weights()[5], 9.0);
 }
 
 #[test]
@@ -312,22 +404,29 @@ fn a_copy_is_not_taken_while_a_position_write_is_in_flight() {
 
 #[test]
 fn a_copy_never_holds_a_later_position_write_without_an_earlier_one() {
-    let controls = MelodyControls::new(60, vec![0, 0]);
-    let done = Arc::new(AtomicBool::new(false));
+    let controls = MelodyControls::new(60, vec![-127, -127]);
+    let (done, writes) = (
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
     let writer = {
-        let (controls, done) = (controls.clone(), done.clone());
+        let (controls, done, writes) = (controls.clone(), done.clone(), writes.clone());
         std::thread::spawn(move || {
             while !done.load(Ordering::Acquire) {
                 for value in -127..=127 {
                     controls.set_degree(0, value).unwrap();
                     controls.set_degree(1, value).unwrap();
+                    writes.fetch_add(1, Ordering::Release);
                 }
             }
         })
     };
+    wait_for(&writes, 1);
     let (mut degrees, mut weights) = ([0; MAX_DEGREES], [0.0; MAX_DEGREES]);
     let mut taken = 0;
-    while taken < 20_000 {
+    let (started, deadline) = (writes.load(Ordering::Acquire), Instant::now());
+    while taken < 20_000 || writes.load(Ordering::Acquire) < started + 5_000 {
+        assert!(deadline.elapsed() < Duration::from_secs(10), "no writes");
         if controls
             .table
             .read_into(&mut degrees, &mut weights)
