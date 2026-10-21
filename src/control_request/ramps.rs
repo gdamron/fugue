@@ -419,6 +419,14 @@ impl Ramps {
                 i += 1;
                 continue;
             }
+            // A kept table's writes after the install instead, as its
+            // entries do, so its last reaches a target it rebuilds
+            // (FUG-413).
+            if matches!(running.on, RampOn::Entry(key) if !running.ended && host.defers(key.module))
+            {
+                i += 1;
+                continue;
+            }
             let Running {
                 on,
                 clock,
