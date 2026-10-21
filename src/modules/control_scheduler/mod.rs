@@ -134,7 +134,7 @@ mod resolved;
 mod schedule;
 
 use controls::{SCHEDULE, TABLE};
-use resolved::ResolvedSchedule;
+use resolved::{same_plan, ResolvedSchedule};
 use schedule::ResolvedEntry;
 
 /// Module type id, shared with the runtime attachment points.
@@ -245,10 +245,17 @@ impl ControlScheduler {
     /// Plays `next` from here on, handing back the schedule it replaces in
     /// `next`'s box. Ramps in flight are abandoned, holding their last
     /// written value; entries at or before the current step have had their
-    /// boundary, so only later ones fire. Swaps rather than moves, so it
-    /// allocates, frees and locks nothing.
+    /// boundary, so only later ones fire. A retarget of the schedule it
+    /// plays only swaps the targets in, and ramps carry on. Swaps rather
+    /// than moves, so it allocates, frees and locks nothing.
     fn adopt(&mut self, mut next: Box<ResolvedSchedule>) -> Box<ResolvedSchedule> {
         self.ctrl.set_adopted(next.id);
+        if next.retarget && same_plan(&self.entries, &next.entries) {
+            // The same entries, re-resolved: only their targets change, so
+            // the step and every ramp in flight (by entry index) carry on.
+            std::mem::swap(&mut self.entries, &mut next.entries);
+            return next;
+        }
         std::mem::swap(&mut self.entries, &mut next.entries);
         std::mem::swap(&mut self.ramps, &mut next.ramps);
         self.ramps.clear();

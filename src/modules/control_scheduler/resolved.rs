@@ -26,6 +26,11 @@ pub(crate) struct ResolvedSchedule {
     /// it adopted last, so a control thread can tell whether the schedule
     /// it recorded is the one playing.
     pub(super) id: u64,
+    /// The schedule the scheduler plays, re-resolved for a graph change
+    /// that rebuilt a target: adopted as new targets for the same entries,
+    /// so the step and ramps in flight carry on (see
+    /// `ControlScheduler::adopt`).
+    pub(super) retarget: bool,
 }
 
 impl ResolvedSchedule {
@@ -36,6 +41,16 @@ impl ResolvedSchedule {
             entries,
             ramps: Vec::with_capacity(ramp_count),
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            retarget: false,
+        }
+    }
+
+    /// The schedule the scheduler plays, re-resolved: `entries` replace its
+    /// own as new targets, keeping its place. Control thread.
+    pub(crate) fn retargeting(entries: Vec<ResolvedEntry>) -> Self {
+        Self {
+            retarget: true,
+            ..Self::new(entries)
         }
     }
 }
@@ -56,4 +71,18 @@ pub(super) fn target_module_ids(spec: &[ScheduleEntry]) -> Vec<String> {
         }
     }
     ids
+}
+
+/// Whether `next` plans what `entries` do (the same steps, targets,
+/// values and ramps, in order), whichever instances each resolved to.
+/// Allocation-free: the audio thread checks a retarget with it.
+pub(super) fn same_plan(entries: &[ResolvedEntry], next: &[ResolvedEntry]) -> bool {
+    entries.len() == next.len()
+        && entries.iter().zip(next).all(|(entry, other)| {
+            entry.at_step == other.at_step
+                && entry.ramp_steps == other.ramp_steps
+                && entry.value == other.value
+                && entry.module == other.module
+                && entry.control == other.control
+        })
 }
