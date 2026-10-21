@@ -206,11 +206,11 @@ fn cancelled(cause: &CancelCause) -> String {
             touches,
         } => {
             let does = match touches {
-                Touched::Removed => format!("removes {module_id}"),
-                Touched::Rebuilt => format!("rebuilds {module_id}"),
-                Touched::Written => "also writes as it lands".to_string(),
+                Touched::Removed => "whose module this edit removes",
+                Touched::Rebuilt => "whose module this edit rebuilds",
+                Touched::Written => "which this edit also writes as it lands",
             };
-            format!("cancelled: authored write to {module_id}.{key}, which this edit {does}")
+            format!("cancelled: authored write to {module_id}.{key}, {does}")
         }
         CancelCause::ScheduleWrite { module_id } => {
             format!("cancelled: a schedule written to {module_id}, which this edit re-resolves")
