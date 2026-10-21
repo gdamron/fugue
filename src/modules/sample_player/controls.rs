@@ -230,6 +230,11 @@ impl ControlSurface for SamplePlayerControls {
             _ => Err(LegacyRefusal::Unsupported),
         }
     }
+
+    /// `play` starts the sample over (or stops it): an event, as a trigger.
+    fn scheduled_event(&self, key: &str) -> bool {
+        key == "play"
+    }
 }
 
 #[cfg(test)]

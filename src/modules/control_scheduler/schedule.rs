@@ -10,7 +10,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::control_request::{EventCounter, TableEntry, TableTarget, TableValue};
+use crate::control_request::{LegacyControls, TableEntry, TableTarget, TableValue};
 use crate::module_config::serde_whole;
 use crate::{ControlSurface, ControlValue};
 
@@ -251,8 +251,11 @@ pub(crate) fn resolve_schedule(
     surfaces: &SurfaceMap,
 ) -> Result<Vec<ResolvedEntry>, String> {
     let mut resolved = Vec::with_capacity(entries.len());
-    // Shared by the schedule's legacy targets: their writes refused.
-    let refused = Arc::new(EventCounter::new());
+    // The schedule's legacy targets share their writes (those waiting for a
+    // busy surface, and those refused): their indices first, the targets
+    // once every one is known.
+    let mut legacy = LegacyControls::default();
+    let mut targets = Vec::with_capacity(entries.len());
     for entry in entries {
         if entry.module == own_id {
             return Err(format!(
@@ -299,9 +302,16 @@ pub(crate) fn resolve_schedule(
                 entry.at_step, entry.module, entry.control
             ));
         }
-        let target = match automation {
-            Some(automation) => TableTarget::Declared(automation),
-            None => TableTarget::legacy(surface.clone(), entry.control.clone(), refused.clone()),
+        targets.push(match automation {
+            Some(automation) => Ok(automation),
+            None => Err(legacy.index(surface, &entry.control)),
+        });
+    }
+    let writes = legacy.build();
+    for (entry, target) in entries.iter().zip(targets) {
+        let target = match target {
+            Ok(automation) => TableTarget::Declared(automation),
+            Err(index) => writes.target(index),
         };
         resolved.push(ResolvedEntry {
             module: entry.module.clone(),

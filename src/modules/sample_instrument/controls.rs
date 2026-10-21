@@ -434,6 +434,11 @@ impl ControlSurface for SampleInstrumentControls {
         self.scheduled_read(key)
     }
 
+    /// A note on or off is an event: a waiting one is never merged.
+    fn scheduled_event(&self, key: &str) -> bool {
+        matches!(key, "note_on" | "note_off")
+    }
+
     /// Checks the zone and the value's shape; whether a new asset loads is
     /// only known by loading it, and a full note queue only by queueing.
     fn validate_control(

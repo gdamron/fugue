@@ -257,6 +257,7 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
     let Some(table) = table.filter(|table| table.id() == cursor.table) else {
         return fired;
     };
+    table.retry_legacy();
     if timeline.position().is_nan() {
         return fired;
     }

@@ -227,6 +227,16 @@ impl ControlSurface for DevelopmentControlSurface {
         }
     }
 
+    /// Whether any alias of `key` is an event.
+    fn scheduled_event(&self, key: &str) -> bool {
+        (self.controls.iter())
+            .filter(|entry| entry.meta.key == key)
+            .any(|control| {
+                (self.surfaces.get(&control.module_id))
+                    .is_some_and(|surface| surface.scheduled_event(&control.key))
+            })
+    }
+
     /// Reads `key`'s first alias, as [`Self::get_control`] does a key on
     /// the legacy path.
     #[allow(private_interfaces)]

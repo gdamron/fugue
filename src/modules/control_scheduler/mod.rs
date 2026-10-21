@@ -142,7 +142,8 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::control_request::{
-    BeatTable, ControlCells, ControlIndex, ControlTable, Refusal, TableEntry, TableValue,
+    BeatTable, ControlCells, ControlIndex, ControlTable, LegacyWrites, Refusal, TableEntry,
+    TableValue,
 };
 use crate::payload::{Payload, Retired};
 use crate::traits::ControlMeta;
@@ -237,6 +238,11 @@ pub struct ControlScheduler {
     /// Ramps in flight. Capacity is reserved with the schedule for every
     /// ramp entry in it, so pushes never allocate on the audio thread.
     ramps: Vec<ActiveRamp>,
+    /// The schedule's legacy writes, keeping those a busy surface refused
+    /// to try again (see `LegacyWrites`), and how many samples one may wait
+    /// before it is dropped: 10 ms.
+    legacy: Option<Arc<LegacyWrites>>,
+    retry_limit: u32,
 
     /// Duration of one step in samples, measured between gate edges.
     step_duration_samples: u32,
@@ -275,6 +281,8 @@ impl ControlScheduler {
             cursor: 0,
             current_step: -1,
             ramps: Vec::new(),
+            legacy: None,
+            retry_limit: sample_rate / 100,
             step_duration_samples: sample_rate / 2, // Default ~120 BPM
             samples_since_gate: 0,
             first_gate_received: false,
@@ -303,6 +311,10 @@ impl ControlScheduler {
     /// than moves, so it allocates, frees and locks nothing.
     fn adopt(&mut self, mut next: Box<ResolvedSchedule>) -> Box<ResolvedSchedule> {
         self.ctrl.set_adopted(next.id);
+        // A write still waiting has a last try; then it goes with its
+        // schedule.
+        self.retry_legacy();
+        std::mem::swap(&mut self.legacy, &mut next.legacy);
         if next.retarget && same_plan(&self.entries, &next.entries) {
             // The same entries, re-resolved: only their targets change, so
             // the step and every ramp in flight (by entry index) carry on.
@@ -467,6 +479,8 @@ impl Module for ControlScheduler {
     }
 
     fn process(&mut self, frames: usize) -> bool {
+        // Writes a busy surface refused land first, before this block's.
+        self.retry_legacy();
         if self.played.load(Ordering::Relaxed) {
             self.followed = true;
             self.follow_drain(frames);
@@ -481,6 +495,9 @@ impl Module for ControlScheduler {
         }
         // Mirror the step counter into the controls at block rate.
         self.ctrl.set_step(self.current_step);
+        if let Some(legacy) = &self.legacy {
+            legacy.age(frames as u32, self.retry_limit);
+        }
         true
     }
 
@@ -612,6 +629,12 @@ impl BeatTable for ControlScheduler {
 
     fn set_step(&self, step: i64) {
         self.told_step.store(step, Ordering::Relaxed);
+    }
+
+    fn retry_legacy(&self) {
+        if let Some(legacy) = &self.legacy {
+            legacy.retry();
+        }
     }
 }
 

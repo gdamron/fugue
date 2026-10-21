@@ -256,6 +256,15 @@ pub trait ControlSurface: Send + Sync {
             .map_err(|_| LegacyRefusal::Unsupported)
     }
 
+    /// Whether legacy control `key` is an event a write triggers (a note, a
+    /// play) rather than a value it sets: a scheduled write of it waiting
+    /// for a busy surface is never merged with a later one, as a value's
+    /// is (see `control_request::LegacyWrites`).
+    #[doc(hidden)]
+    fn scheduled_event(&self, _key: &str) -> bool {
+        false
+    }
+
     /// Reads legacy control `key`'s number where a scheduled ramp starts,
     /// on the audio thread, as [`Self::set_scheduled`] writes: refused for
     /// a control holding no number. The default is the getter itself.

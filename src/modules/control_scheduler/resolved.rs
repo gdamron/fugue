@@ -8,9 +8,11 @@
 //! allocates, frees and locks nothing there.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use super::schedule::{ResolvedEntry, ScheduleEntry};
 use super::ActiveRamp;
+use crate::control_request::LegacyWrites;
 
 /// The next [`ResolvedSchedule::id`]. Zero is never handed out.
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -22,6 +24,9 @@ pub(crate) struct ResolvedSchedule {
     /// Ramps in flight. Capacity is reserved for every ramp entry in the
     /// schedule, so pushes never allocate on the audio thread.
     pub(super) ramps: Vec<ActiveRamp>,
+    /// Its legacy targets' writes, those waiting included; `None` when it
+    /// has no legacy target.
+    pub(super) legacy: Option<Arc<LegacyWrites>>,
     /// Tells this schedule from every other: the scheduler reports the one
     /// it adopted last, so a control thread can tell whether the schedule
     /// it recorded is the one playing.
@@ -40,9 +45,13 @@ impl ResolvedSchedule {
             .iter()
             .filter(|entry| entry.ramp_steps() > 0)
             .count();
+        let legacy = (entries.iter())
+            .find_map(|entry| entry.entry.target.legacy_writes())
+            .cloned();
         Self {
             entries,
             ramps: Vec::with_capacity(ramp_count),
+            legacy,
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             retarget: false,
         }

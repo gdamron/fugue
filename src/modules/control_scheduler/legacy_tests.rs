@@ -1,6 +1,6 @@
 //! A schedule's entries and ramps into every legacy family play on the
 //! audio thread without allocating, freeing or waiting on a lock a control
-//! thread holds: a write finding one held is refused, and dropped.
+//! thread holds: a write finding one held waits, and lands a block later.
 
 use std::sync::{Arc, Mutex};
 
@@ -162,46 +162,73 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
     assert_eq!(locking.instrument.notes_version(), 1);
 }
 
+/// The instrument's queued note events, as (note, on).
+fn queued_notes(instrument: &SampleInstrumentControls) -> Vec<(u8, bool)> {
+    let pending = instrument.pending_notes().lock().unwrap();
+    pending.iter().map(|event| (event.note, event.on)).collect()
+}
+
+/// `run` with every locking family's lock held, as control threads would.
+fn with_locks_held<T>(locking: &Locking, run: impl FnOnce() -> T) -> T {
+    while_held(&locking.melody.table, || {
+        while_held(&locking.player.shared, || {
+            while_held(locking.instrument.pending_notes(), || {
+                while_held(&locking.cells.shared.sequences, run)
+            })
+        })
+    })
+}
+
 #[test]
-fn a_write_finding_its_lock_held_is_dropped_without_waiting() {
+fn writes_finding_their_locks_held_land_a_block_late_in_order() {
     use ScheduleValue::{Bool, Number};
     let locking = Locking::new();
     let directory = locking.directory();
     let mut scheduler = scheduler(
         vec![
-            entry(1, "melody", "degree.1", Number(5.0)),
-            entry(1, "sample_player", "loop", Bool(true)),
-            entry(1, "sample_instrument", "note_on", Number(64.0)),
-            entry(1, "cell_sequencer", "select_cell", Number(2.0)),
+            entry(3, "melody", "degree.1", Number(5.0)),
+            entry(3, "sample_player", "play", Bool(true)),
+            entry(3, "sample_instrument", "note_on", Number(64.0)),
+            entry(3, "cell_sequencer", "select_cell", Number(2.0)),
             // A ramp starting while the table is held still starts.
             ScheduleEntry {
                 ramp_steps: Some(1),
-                ..entry(1, "melody", "note_weight.0", Number(3.0))
+                ..entry(3, "melody", "note_weight.0", Number(3.0))
             },
-            entry(2, "melody", "degree.2", Number(9.0)),
+            entry(4, "melody", "degree.1", Number(6.0)),
+            entry(4, "sample_player", "loop", Bool(true)),
+            entry(4, "sample_instrument", "note_off", Number(64.0)),
+            entry(5, "melody", "degree.2", Number(9.0)),
         ],
         &directory,
     );
-    assert_eq!(block(&mut scheduler, 1.0), (0, 0), "step 0");
-    assert_eq!(block(&mut scheduler, 0.0), (0, 0));
-    // Step 1 plays while control threads hold every family's lock.
-    let held = while_held(&locking.melody.table, || {
-        while_held(&locking.player.shared, || {
-            while_held(locking.instrument.pending_notes(), || {
-                while_held(&locking.cells.shared.sequences, || {
-                    block(&mut scheduler, 1.0)
-                })
-            })
-        })
+    for gate in [1.0, 0.0, 1.0, 0.0, 1.0, 0.0] {
+        assert_eq!(block(&mut scheduler, gate), (0, 0), "steps 0 to 2");
+    }
+    // Steps 3 and 4 play while control threads hold every family's lock.
+    let held = with_locks_held(&locking, || {
+        [1.0, 0.0, 1.0].map(|gate| block(&mut scheduler, gate))
     });
-    assert_eq!(held, (0, 0), "step 1");
-    assert_eq!(locking.melody.degree(1), Ok(2), "refused, not waited for");
+    assert_eq!(held, [(0, 0); 3], "steps 3 and 4");
+    assert_eq!(locking.melody.degree(1), Ok(2), "waiting, not waited for");
+    assert!(!locking.player.play());
     assert!(!locking.player.loop_enabled());
-    assert_eq!(locking.instrument.notes_version(), 0);
+    assert_eq!(queued_notes(&locking.instrument), []);
     assert_eq!(locking.cells.selected_cell(), 2, "an atomic write lands");
-    // The next step's entries land as ever.
-    assert_eq!(block(&mut scheduler, 0.0), (0, 0));
-    assert_eq!(block(&mut scheduler, 1.0), (0, 0), "step 2");
-    assert_eq!(locking.melody.degree(2), Ok(9));
+    // Released: the first block after lands every write, in order.
+    assert_eq!(block(&mut scheduler, 0.0), (0, 0), "released");
+    assert_eq!(locking.melody.degree(1), Ok(6), "the newer value");
     assert_eq!(locking.melody.note_weight(0), Ok(3.0), "the ramp landed");
+    assert!(locking.player.play());
+    assert!(locking.player.loop_enabled());
+    assert_eq!(
+        queued_notes(&locking.instrument),
+        [(64, true), (64, false)],
+        "the note on, then its note off: no stuck note"
+    );
+    let writes = scheduler.legacy.as_ref().unwrap();
+    assert_eq!((writes.waiting(), writes.refused().count()), (0, 0));
+    // The next step's entries land as ever.
+    assert_eq!(block(&mut scheduler, 1.0), (0, 0), "step 5");
+    assert_eq!(locking.melody.degree(2), Ok(9));
 }

@@ -33,11 +33,7 @@ impl ControlSurface for Knob {
 }
 
 fn legacy(surface: &Arc<Knob>, control: &str) -> TableTarget {
-    TableTarget::legacy(
-        surface.clone(),
-        control.to_string(),
-        Arc::new(EventCounter::new()),
-    )
+    TableTarget::legacy(surface.clone(), control.to_string())
 }
 
 fn user_hold(target: &Automation, due: u64) {

@@ -8,16 +8,17 @@
 //! `super::hold`); a legacy control (one its module does not declare)
 //! through its surface's setter, as a scheduler always wrote one, with no
 //! tiers and no holds. A legacy write is allocation-, free- and lock-free
-//! too ([`crate::ControlSurface::set_scheduled`]): one its surface cannot
-//! make so, such as one finding a control thread holding the lock it
-//! needs, is refused and counted, never waited on or formatted.
+//! too ([`crate::ControlSurface::set_scheduled`]): one finding a control
+//! thread holding the lock it needs waits to be tried again, in order (see
+//! [`super::legacy::LegacyWrites`]), and one its surface cannot make is
+//! refused and counted, never waited on or formatted.
 
 use std::sync::Arc;
 
 use super::automation::Automation;
 use super::cells::ControlCells;
 use super::event::EventCounter;
-use super::legacy::LegacyRefusal;
+use super::legacy::{LegacyControls, LegacyWrites};
 use super::request::ControlIndex;
 use crate::ControlSurface;
 
@@ -38,8 +39,10 @@ pub(crate) enum TableTarget {
     Legacy {
         surface: Arc<dyn ControlSurface + Send + Sync>,
         control: String,
-        /// Counts its writes and reads refused (see [`Self::refused`]).
-        refused: Arc<EventCounter>,
+        /// Its schedule's legacy writes, keeping those that wait, and its
+        /// index there.
+        writes: Arc<LegacyWrites>,
+        index: usize,
     },
 }
 
@@ -54,40 +57,27 @@ impl TableTarget {
         }
     }
 
-    /// A legacy control, written through `surface`'s scheduled setter,
-    /// counting refusals in `refused`. Control thread.
-    pub(crate) fn legacy(
-        surface: Arc<dyn ControlSurface + Send + Sync>,
-        control: String,
-        refused: Arc<EventCounter>,
-    ) -> Self {
-        Self::Legacy {
-            surface,
-            control,
-            refused,
-        }
+    /// A legacy control written through `surface`'s scheduled setter, on
+    /// its own: a schedule's share their writes (see
+    /// [`LegacyControls`]). Control thread.
+    #[cfg(test)]
+    pub(crate) fn legacy(surface: Arc<dyn ControlSurface + Send + Sync>, control: String) -> Self {
+        let mut controls = LegacyControls::default();
+        let index = controls.index(&surface, &control);
+        controls.build().target(index)
     }
 
     /// Writes `value`, returning false when a higher tier holds the
     /// control and it was dropped. Allocation-, free- and lock-free: a
-    /// legacy write its surface refuses (see
-    /// [`crate::ControlSurface::set_scheduled`]) is counted, and still
-    /// returns true, as a legacy control has no holds to end a ramp on.
+    /// legacy write finding its surface busy waits to be tried again, one
+    /// its surface refuses is counted (see [`LegacyWrites`]), and both
+    /// return true, as a legacy control has no holds to end a ramp on.
     pub(crate) fn write(&self, value: TableValue) -> bool {
         match (self, value) {
             (Self::Declared(target), TableValue::Number(number)) => target.write_number(number),
             (Self::Declared(target), TableValue::Bool(flag)) => target.write_bool(flag),
-            (
-                Self::Legacy {
-                    surface,
-                    control,
-                    refused,
-                },
-                value,
-            ) => {
-                if surface.set_scheduled(control, value).is_err() {
-                    refused.record();
-                }
+            (Self::Legacy { writes, index, .. }, value) => {
+                writes.write(*index, value);
                 true
             }
         }
@@ -99,29 +89,23 @@ impl TableTarget {
     pub(crate) fn current(&self) -> Option<f32> {
         match self {
             Self::Declared(target) => target.current(),
-            Self::Legacy {
-                surface,
-                control,
-                refused,
-            } => match surface.get_scheduled(control) {
-                Ok(number) => Some(number),
-                Err(LegacyRefusal::Unsupported) => None,
-                Err(_) => {
-                    refused.record();
-                    None
-                }
-            },
+            Self::Legacy { writes, index, .. } => writes.read(*index),
         }
     }
 
-    /// Counts a legacy target's writes and ramp starts its surface
-    /// refused; `None` for a declared one. Clone it on a control thread and
-    /// read it through an `EventCursor`.
-    pub(crate) fn refused(&self) -> Option<&Arc<EventCounter>> {
+    /// A legacy target's schedule's writes; `None` for a declared one.
+    pub(crate) fn legacy_writes(&self) -> Option<&Arc<LegacyWrites>> {
         match self {
             Self::Declared(_) => None,
-            Self::Legacy { refused, .. } => Some(refused),
+            Self::Legacy { writes, .. } => Some(writes),
         }
+    }
+
+    /// Counts a legacy target's writes that never landed and ramp starts
+    /// refused (see [`LegacyWrites::refused`]); `None` for a declared one.
+    /// Read it through an `EventCursor`.
+    pub(crate) fn refused(&self) -> Option<&EventCounter> {
+        self.legacy_writes().map(|writes| writes.refused())
     }
 
     /// Whether `self` and `other` reach a control in common: the same
@@ -188,6 +172,11 @@ pub(crate) struct TableEntry {
 pub(crate) trait BeatTable {
     /// Tells this table from every other for its module's life.
     fn id(&self) -> usize;
+
+    /// Tries again the writes to legacy controls a busy surface refused
+    /// (see [`LegacyWrites`]): at the start of every pass, before its
+    /// entries due then write.
+    fn retry_legacy(&self) {}
 
     /// The input its clock's gate comes in on: the clock output connected
     /// there sets the length of a step.

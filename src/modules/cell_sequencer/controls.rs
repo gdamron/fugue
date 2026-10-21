@@ -462,6 +462,11 @@ impl ControlSurface for CellSequencerControls {
     fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
         self.scheduled_read(key)
     }
+
+    /// Stepping to the next cell is an event.
+    fn scheduled_event(&self, key: &str) -> bool {
+        key == "next_cell"
+    }
 }
 
 /// Parses a `mode` value: true for `one_shot`, false for `loop`.

@@ -5,7 +5,6 @@ use serde_json::{json, Value};
 use super::{LegacyRefusal, LEGACY_CONTROLS};
 use crate::alloc_counter::allocator_events;
 use crate::control_request::table::{TableTarget, TableValue};
-use crate::control_request::EventCounter;
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::module_config::tests::registry::{base_config, eight_frame_wav, UNBUILDABLE};
 use crate::ControlValue;
@@ -156,10 +155,7 @@ fn a_scheduled_write_to_a_legacy_control_allocates_nothing() {
             .iter()
             .map(|(key, value)| (key.clone(), writes(value))))
         .chain(missing.map(|key| (key, writes(&ControlValue::Number(0.0)))))
-        .map(|(key, values)| {
-            let refused = Arc::new(EventCounter::new());
-            (TableTarget::legacy(surface.clone(), key, refused), values)
-        })
+        .map(|(key, values)| (TableTarget::legacy(surface.clone(), key), values))
         .collect::<Vec<_>>();
         for (target, values) in &targets {
             let (_, allocs, frees) = allocator_events(|| {
@@ -216,8 +212,8 @@ fn a_scheduled_write_lands_as_the_setter_would() {
 #[test]
 fn a_refused_write_is_counted_and_ends_no_ramp() {
     let surface = scheduled_surface("adsr");
-    let refused = Arc::new(EventCounter::new());
-    let target = TableTarget::legacy(surface, "no_such_control".into(), refused.clone());
+    let target = TableTarget::legacy(surface, "no_such_control".into());
+    let refused = target.refused().unwrap();
     assert_eq!(target.current(), None);
     assert_eq!(
         refused.count(),
@@ -227,5 +223,4 @@ fn a_refused_write_is_counted_and_ends_no_ramp() {
     assert!(target.write(TableValue::Number(1.0)));
     assert!(target.write(TableValue::Bool(true)));
     assert_eq!(refused.count(), 2);
-    assert!(Arc::ptr_eq(target.refused().unwrap(), &refused));
 }
