@@ -126,17 +126,20 @@ fn a_waiting_value_gives_way_to_a_newer_one_and_an_event_never_does() {
     writes.write(on, n(60.0));
     writes.write(on, n(60.0)); // a repeated note is two notes
     writes.write(off, n(60.0));
+    // Not past the notes between: each level lands where it was written.
     writes.write(level, n(4.0));
-    assert_eq!(writes.waiting(), 4);
+    writes.write(level, n(5.0));
+    assert_eq!(writes.waiting(), 5);
     voice.busy.store(false, Ordering::Relaxed);
     writes.retry();
     assert_eq!(
         voice.landed(),
         [
+            ("level", 3.0),
             ("note_on", 60.0),
             ("note_on", 60.0),
             ("note_off", 60.0),
-            ("level", 4.0)
+            ("level", 5.0)
         ]
     );
 }

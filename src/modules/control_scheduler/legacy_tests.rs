@@ -304,3 +304,29 @@ fn a_ramp_after_a_write_finding_its_table_held_starts_from_that_write() {
     let falling = locking.melody.degree(0).unwrap();
     assert!((1..started).contains(&falling), "{falling}");
 }
+
+#[test]
+fn a_write_another_waiting_one_needs_is_not_merged_away() {
+    use ScheduleValue::Number;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let mut scheduler = scheduler(
+        vec![
+            entry(1, "melody", "degree_count", Number(1.0)),
+            // Degree 2 is there only once the count grows back to 3.
+            entry(2, "melody", "degree_count", Number(3.0)),
+            entry(2, "melody", "degree.2", Number(9.0)),
+            entry(2, "melody", "degree_count", Number(4.0)),
+        ],
+        &directory,
+    );
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        block(&mut scheduler, gate);
+    }
+    while_held(&locking.melody.table, || block(&mut scheduler, 1.0));
+    block(&mut scheduler, 0.0);
+    assert_eq!(number(&directory, "melody", "degree_count"), 4.0);
+    assert_eq!(locking.melody.degree(2), Ok(9));
+    let writes = scheduler.legacy.as_ref().unwrap();
+    assert_eq!(writes.refused().count(), 0);
+}

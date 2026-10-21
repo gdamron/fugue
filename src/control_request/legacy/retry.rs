@@ -12,9 +12,11 @@
 //!   one waits, every later write to that surface waits behind it, so a
 //!   `note_off` never lands before its `note_on`.
 //! - **Coalescing.** A value's waiting write gives way to a newer one to the
-//!   same control, which lands as the latest would have, so a ramp waiting
-//!   takes one slot. An event ([`crate::ControlSurface::scheduled_event`]:
-//!   a note, a play) is never merged: each waits its turn.
+//!   same control when no other write to its surface came between them, so
+//!   a ramp waiting takes one slot, and a write another depends on (a
+//!   melody's `degree_count` before a `degree.N`) is never lost. An event
+//!   ([`crate::ControlSurface::scheduled_event`]: a note, a play) is never
+//!   merged: each waits its turn.
 //! - **Bound.** At most [`RETRY_CAPACITY`] writes wait. Each is tried again
 //!   at least once, and then for at most the scheduler's limit (10 ms of
 //!   samples). A write past either is dropped and counted in
@@ -308,14 +310,21 @@ impl LegacyWrites {
         }
     }
 
-    /// Keeps a write to try again, after the latest waiting value of its
-    /// control gives way to it (an event's never does).
+    /// Keeps a write to try again: in place of its surface's latest waiting
+    /// write when that is a value of the same control (an event's never
+    /// gives way), else after every write waiting.
     fn keep(&self, index: usize, value: TableValue) {
         let control = &self.controls[index];
-        if !control.surface.scheduled_event(&control.key) {
-            self.retain(|other, _| other != index);
-        }
         let waiting = self.waiting();
+        let latest = (self.slots[..waiting].iter().rev())
+            .find(|slot| self.controls[slot.load().0].group == control.group);
+        if let Some(slot) = latest {
+            let (other, _, waited) = slot.load();
+            if other == index && !control.surface.scheduled_event(&control.key) {
+                slot.store(index, value, waited);
+                return;
+            }
+        }
         let Some(slot) = self.slots.get(waiting) else {
             self.refused.record();
             return;
