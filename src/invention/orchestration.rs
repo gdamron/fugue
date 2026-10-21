@@ -1,8 +1,6 @@
 use crate::control_request::DeclKind;
 use crate::invention::graph::{GraphCommand, SignalGraph};
-use crate::invention::publish::{
-    connect_offline, edge, Authored, BuiltModule, GraphChange, LiveGraph,
-};
+use crate::invention::publish::{connect_offline, edge, BuiltModule, GraphChange, LiveGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
 use crate::rpc::non_finite_refusal;
@@ -18,9 +16,9 @@ use std::sync::{Arc, Mutex};
 use super::declared::{add_offline, remove_offline};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
-/// How many times an authored write is made when a timed edit is adopted
-/// between making it and recording it.
-const WRITE_ATTEMPTS: usize = 3;
+mod authored;
+
+use authored::{write_authored, Written, WRITE_ATTEMPTS};
 
 /// Read/write orchestration surface shared by live and render runtimes.
 pub trait OrchestrationRuntime {
@@ -302,14 +300,14 @@ impl RuntimeSnapshot {
         } else {
             WRITE_ATTEMPTS
         };
-        for attempt in 1..=attempts {
-            let seen = live.generation();
-            self.set_control_transient(module_id, key, value.clone())?;
-            match live.record_authored(module_id, key, &value, (seen, attempt == attempts)) {
-                Authored::Recorded => return Ok(value),
-                Authored::Raced => continue,
-                Authored::RecordedRaced => break,
-            }
+        let written = write_authored(
+            attempts,
+            || live.generation(),
+            || self.set_control_transient(module_id, key, value.clone()),
+            |seen, last| live.record_authored(module_id, key, &value, (seen, last)),
+        )?;
+        if written == Written::Recorded {
+            return Ok(value);
         }
         Err(GraphCommandError::ControlError(format!(
             "{module_id}.{key} was written and recorded, but a timed edit landed as it was \
