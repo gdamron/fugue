@@ -298,7 +298,7 @@ fn fire(cursor: &mut Cursor, now: u64, host: &impl BeatHost, ramps: &mut Ramps) 
             // A ramp leaves the control where it stands: one holding no
             // number is skipped, as a scheduler always skipped it.
             (steps, TableValue::Number(to)) => {
-                let Some(from) = entry.target.current() else {
+                let Some(from) = entry.target.current_after(table.draining()) else {
                     continue;
                 };
                 let beats = steps as f64 * cursor.clock.beats;

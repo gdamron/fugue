@@ -30,3 +30,40 @@ fn a_removed_scheduler_s_waiting_note_holds_no_other_scheduler_s_back() {
     assert_eq!(block(&mut staying, 1.0), (0, 0));
     assert_eq!(queued_notes(&locking.instrument), [(67, true)]);
 }
+
+#[test]
+fn a_ramp_in_a_new_schedule_starts_where_the_old_one_s_waiting_write_leaves_it() {
+    use super::resolved::ResolvedSchedule;
+    use super::schedule::resolve_schedule;
+    use crate::payload::Payload;
+    use ScheduleValue::Number;
+    let locking = Locking::new();
+    let directory = locking.directory();
+    let degree = |at, to| entry(at, "melody", "degree.0", Number(to));
+    let mut scheduler = scheduler(vec![degree(1, 12.0)], &directory);
+    for gate in [1.0, 0.0] {
+        block(&mut scheduler, gate);
+    }
+    // The new schedule ramps the same degree up from step 2.
+    let surfaces = directory.lock().unwrap().clone();
+    let rising = vec![ScheduleEntry {
+        ramp_steps: Some(4),
+        ..degree(2, 24.0)
+    }];
+    let next = ResolvedSchedule::new(resolve_schedule(&rising, "sched", &surfaces).unwrap());
+    let next = Payload::owned(Box::new(next));
+    // Step 1's 12 finds the table held, and still waits in the schedule
+    // replaced as step 2's ramp starts.
+    let (old, started) = while_held(&locking.melody.table, || {
+        block(&mut scheduler, 1.0);
+        let old = scheduler.apply_payload(SCHEDULE, next);
+        block(&mut scheduler, 0.0);
+        (old, block(&mut scheduler, 1.0))
+    });
+    assert_eq!(started, (0, 0), "step 2");
+    drop(old);
+    block(&mut scheduler, 0.0);
+    // It rises from 12, not from the 0 the table held.
+    let rising = locking.melody.degree(0).unwrap();
+    assert!((12..=15).contains(&rising), "{rising}");
+}

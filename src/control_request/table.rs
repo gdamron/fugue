@@ -86,10 +86,18 @@ impl TableTarget {
     /// The control's number as automation last left it: where a ramp
     /// starts. `None` for one holding no number, or a legacy one its
     /// surface could not read without waiting (counted as refused).
+    #[cfg(test)]
     pub(crate) fn current(&self) -> Option<f32> {
+        self.current_after(&[])
+    }
+
+    /// [`Self::current`], for a legacy control as the writes still waiting
+    /// in `before` (the schedules its own replaced, oldest first) will
+    /// leave it, unless its own schedule has one waiting there too.
+    pub(crate) fn current_after(&self, before: &[Arc<LegacyWrites>]) -> Option<f32> {
         match self {
             Self::Declared(target) => target.current(),
-            Self::Legacy { writes, index, .. } => writes.read(*index),
+            Self::Legacy { writes, index, .. } => writes.read(*index, before),
         }
     }
 
@@ -177,6 +185,12 @@ pub(crate) trait BeatTable {
     /// (see [`LegacyWrites`]): at the start of every pass, before its
     /// entries due then write.
     fn retry_legacy(&self) {}
+
+    /// The schedules it replaced whose writes still wait to land, oldest
+    /// first: a ramp starts where they will leave its control.
+    fn draining(&self) -> &[Arc<LegacyWrites>] {
+        &[]
+    }
 
     /// The input its clock's gate comes in on: the clock output connected
     /// there sets the length of a step.

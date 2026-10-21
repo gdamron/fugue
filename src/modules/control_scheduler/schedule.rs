@@ -10,7 +10,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::control_request::{LegacyControls, TableEntry, TableTarget, TableValue};
+use crate::control_request::{LegacyControls, LegacyWrites, TableEntry, TableTarget, TableValue};
 use crate::module_config::serde_whole;
 use crate::{ControlSurface, ControlValue};
 
@@ -232,10 +232,11 @@ impl ResolvedEntry {
         self.entry.target.begin(frame);
     }
 
-    /// The target's current number, where a ramp starts.
+    /// The target's current number, where a ramp starts, as the writes
+    /// still waiting in `before` (schedules it replaced) will leave it.
     #[inline]
-    pub(crate) fn current_number(&self) -> Option<f32> {
-        self.entry.target.current()
+    pub(crate) fn current_number(&self, before: &[Arc<LegacyWrites>]) -> Option<f32> {
+        self.entry.target.current_after(before)
     }
 }
 
