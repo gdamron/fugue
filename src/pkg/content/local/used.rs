@@ -9,54 +9,67 @@ use std::collections::BTreeSet;
 /// Development nesting bound, matching the builder and the content walk.
 const MAX_DEPTH: usize = 64;
 
+/// A `code` module's script can set a module's `asset` control to any package
+/// ref at runtime (`setControl`), which no document walk can see.
+const SCRIPT_TYPE: &str = "code";
+
+/// What the walk has found so far: package ids, and the development files
+/// already read, so a cycle or a shared development is walked once.
+#[derive(Default)]
+struct Walk {
+    used: BTreeSet<String>,
+    visited: BTreeSet<PathBuf>,
+}
+
 impl ContentRoots {
     /// Package ids `invention` uses: package audio refs in module configs
     /// (after `$asset` expansion) and development `ref`s, through every nested
     /// development whether it comes by path, ref or inline definition.
     ///
-    /// `None` when some document or reference cannot be read: the caller
-    /// then cannot know what was skipped, so it must verify everything.
-    /// Reading documents never hashes package contents.
+    /// `None` when some document or reference cannot be read, or a script
+    /// could choose packages at runtime: the caller then cannot know what was
+    /// skipped, so it must verify everything. Reading documents never hashes
+    /// package contents.
     pub fn used_packages(&self, invention: &Invention) -> Option<BTreeSet<String>> {
-        let mut used = BTreeSet::new();
-        self.collect_used(invention, &mut used, 0)?;
-        Some(used)
+        let mut walk = Walk::default();
+        self.collect_used(invention, &mut walk, 0)?;
+        Some(walk.used)
     }
 
-    fn collect_used(
-        &self,
-        document: &Invention,
-        used: &mut BTreeSet<String>,
-        depth: usize,
-    ) -> Option<()> {
+    fn collect_used(&self, document: &Invention, walk: &mut Walk, depth: usize) -> Option<()> {
         if depth > MAX_DEPTH {
             return None;
         }
         let mut expanded = document.clone();
         resolve_json_assets(&mut expanded).ok()?;
         for module in &mut expanded.modules {
+            if module.module_type == SCRIPT_TYPE {
+                return None;
+            }
             for value in module_asset_values(&mut module.config) {
                 if let Some(reference) = value.as_str().and_then(PackageAudioRef::parse) {
-                    used.insert(reference.id);
+                    walk.used.insert(reference.id);
                 }
             }
         }
         for development in &document.developments {
-            let child = if let Some(reference) = &development.reference {
+            let file = if let Some(reference) = &development.reference {
                 if let ContentRef::Package { package, .. } = reference {
-                    used.insert(package.clone());
+                    walk.used.insert(package.clone());
                 }
-                let (path, _, _) = self.reference_path(reference).ok()?;
-                Invention::from_file(path.to_str()?).ok()?
+                self.reference_path(reference).ok()?.0
             } else if let Some(path) = &development.path {
-                let path = resolve_development_path(document.source_path.as_deref(), path).ok()?;
-                Invention::from_file(path.to_str()?).ok()?
+                resolve_development_path(document.source_path.as_deref(), path).ok()?
             } else {
                 let mut child = development.definition.as_deref()?.clone();
                 child.source_path = document.source_path.clone();
-                child
+                self.collect_used(&child, walk, depth + 1)?;
+                continue;
             };
-            self.collect_used(&child, used, depth + 1)?;
+            if walk.visited.insert(std::fs::canonicalize(&file).ok()?) {
+                let child = Invention::from_file(file.to_str()?).ok()?;
+                self.collect_used(&child, walk, depth + 1)?;
+            }
         }
         Some(())
     }
@@ -120,7 +133,11 @@ mod tests {
         let main = invention(
             json!({
                 "modules": [sampler(json!("fugue.demo.keys@2.0.0:c4.wav")),
-                    sampler(json!({"path": "local.wav"}))],
+                    sampler(json!({"path": "local.wav"})),
+                    {"id": "kit", "type": "sample_kit", "config": {"samples": [
+                        {"asset": "fugue.demo.kit@1:snare.wav"}]}},
+                    {"id": "inst", "type": "sample_instrument", "config": {"zones": [
+                        {"asset": "fugue.demo.piano@1:a0.wav"}]}}],
                 "connections": [],
                 "developments": [
                     {"name": "voice", "ref": {"package": "fugue.demo.voice", "version": "1.0.0"}},
@@ -138,7 +155,9 @@ mod tests {
             [
                 "fugue.demo.drums",
                 "fugue.demo.keys",
+                "fugue.demo.kit",
                 "fugue.demo.pads",
+                "fugue.demo.piano",
                 "fugue.demo.strings",
                 "fugue.demo.voice"
             ]
@@ -154,5 +173,49 @@ mod tests {
             &temp.path().join("main.json"),
         );
         assert_eq!(roots.used_packages(&main), None);
+    }
+
+    #[test]
+    fn a_script_makes_the_set_unknown() {
+        let (temp, roots) = roots();
+        let source = temp.path().join("main.json");
+        write(
+            &temp.path().join("voice.json"),
+            &json!({"modules": [{"id": "c", "type": "code", "config": {}}], "connections": []}),
+        );
+        let main = invention(
+            json!({"modules": [], "connections": [],
+                "developments": [{"name": "voice", "path": "voice.json"}]}),
+            &source,
+        );
+        assert_eq!(roots.used_packages(&main), None);
+    }
+
+    #[test]
+    fn cyclic_and_shared_developments_are_walked_once() {
+        let (temp, roots) = roots();
+        let source = temp.path().join("main.json");
+        // `loop.json` declares itself twice: without a visited set this
+        // walk would branch twice per level down to the depth bound.
+        write(
+            &temp.path().join("loop.json"),
+            &json!({"modules": [sampler(json!("fugue.demo.loop@1:l.wav"))], "connections": [],
+                "developments": [{"name": "a", "path": "loop.json"},
+                    {"name": "b", "path": "loop.json"}]}),
+        );
+        let main = invention(
+            json!({"modules": [], "connections": [],
+                "developments": [{"name": "a", "path": "loop.json"},
+                    {"name": "b", "path": "loop.json"}]}),
+            &source,
+        );
+        assert_eq!(
+            roots
+                .used_packages(&main)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            ["fugue.demo.loop"]
+        );
     }
 }
