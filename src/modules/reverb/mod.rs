@@ -8,7 +8,8 @@
 //!
 //! - Stereo in/out with configurable width
 //! - Separate early reflections and reverb tail
-//! - Room size, decay time, damping controls
+//! - Room size, decay time, damping controls; room size and decay glide to
+//!   new values rather than jumping, so both can be automated
 //! - Freeze mode for infinite sustain
 //! - All delay buffers pre-allocated at construction (allocation-free processing)
 //!
@@ -43,10 +44,12 @@ use crate::traits::ControlMeta;
 use crate::Module;
 
 use self::controls::{DAMPING, DECAY, DRY, FREEZE, ROOM_SIZE, TABLE, WET, WIDTH};
+use self::tuning::{blend, Retuning, Tuning};
 
 mod controls;
 mod inputs;
 mod outputs;
+mod tuning;
 
 // --- GVerb constants ---
 
@@ -146,8 +149,10 @@ fn compute_alpha(rt60: f32, sample_rate: u32) -> f32 {
 ///
 /// # Controls
 ///
-/// - `room_size` - Room size (0.0–1.0, maps to 1–100m, default 0.5)
-/// - `decay` - Reverb decay time (0.0–1.0, maps to RT60 0.2–15s, default 0.5)
+/// - `room_size` - Room size (0.0–1.0, maps to 1–100m, default 0.5). A change
+///   crossfades to the new room over 30 ms, so it can be automated.
+/// - `decay` - Reverb decay time (0.0–1.0, maps to RT60 0.2–15s, default 0.5),
+///   crossfaded like `room_size`
 /// - `damping` - High-frequency damping (0.0–1.0, default 0.5)
 /// - `wet` - Wet signal level (0.0–1.0, default 0.33)
 /// - `dry` - Dry signal level (0.0–1.0, default 1.0)
@@ -165,8 +170,9 @@ pub struct Reverb {
     width: f32,
     freeze: bool,
     /// What `room_size`, `decay` and `freeze` make of the delay network,
-    /// recomputed as they change rather than every sample.
-    tuning: Tuning,
+    /// recomputed as they change rather than every sample, and crossfaded
+    /// from the last tuning so a change never steps the output.
+    retuning: Retuning,
     cells: Arc<ControlCells>,
 
     // Input processing
@@ -188,16 +194,6 @@ pub struct Reverb {
 
     inputs: inputs::ReverbInputs,
     outputs: outputs::ReverbOutputs,
-}
-
-/// The delay network's lengths and gains for one room size, decay and
-/// freeze state.
-#[derive(Clone, Copy, Default)]
-struct Tuning {
-    fdn_lens: [usize; FDN_ORDER],
-    fdn_gains: [f32; FDN_ORDER],
-    tap_positions: [usize; FDN_ORDER],
-    tap_gains: [f32; FDN_ORDER],
 }
 
 impl Reverb {
@@ -249,7 +245,7 @@ impl Reverb {
             dry: 1.0,
             width: 1.0,
             freeze: false,
-            tuning: Tuning::default(),
+            retuning: Retuning::settled(Tuning::default(), sample_rate),
             cells,
             input_damper: Damper::new(),
             input_diffuser,
@@ -269,50 +265,8 @@ impl Reverb {
                 let _ = apply_declared(&mut reverb, index, value);
             }
         }
-        reverb.retune();
+        reverb.retuning = Retuning::settled(reverb.tuning(), sample_rate);
         reverb
-    }
-
-    /// Recomputes the delay network's tuning from the controls.
-    fn retune(&mut self) {
-        let frozen = self.freeze;
-        let room_m = room_size_to_meters(self.room_size);
-        let largest_delay = ((self.sample_rate as f32 * room_m / SPEED_OF_SOUND) as usize).max(1);
-
-        let rt60 = decay_to_rt60(self.decay);
-        let alpha = compute_alpha(rt60, self.sample_rate);
-
-        // FDN lengths (clamped to allocated max)
-        let fdn_lens: [usize; FDN_ORDER] = std::array::from_fn(|i| {
-            ((largest_delay as f32 * FDN_RATIOS[i]) as usize)
-                .max(1)
-                .min(self.max_fdn_lengths[i])
-        });
-
-        // FDN gains from alpha
-        let fdn_gains: [f32; FDN_ORDER] = if frozen {
-            [-1.0; FDN_ORDER]
-        } else {
-            std::array::from_fn(|i| -(alpha.powi(fdn_lens[i] as i32)))
-        };
-
-        // Tap positions and gains
-        let tap_positions: [usize; FDN_ORDER] = std::array::from_fn(|i| {
-            let pos = (TAP_FRACTIONS[i] * largest_delay as f32) as usize + TAP_OFFSET;
-            pos.min(self.max_tap_delay_len - 1)
-        });
-        let tap_gains: [f32; FDN_ORDER] = if frozen {
-            [0.0; FDN_ORDER]
-        } else {
-            std::array::from_fn(|i| alpha.powi(tap_positions[i] as i32))
-        };
-
-        self.tuning = Tuning {
-            fdn_lens,
-            fdn_gains,
-            tap_positions,
-            tap_gains,
-        };
     }
 
     /// Processes one stereo sample through the reverb at frame `i`.
@@ -322,12 +276,8 @@ impl Reverb {
         let wet_ctrl = self.wet;
         let dry = self.dry;
         let width = self.width;
-        let Tuning {
-            fdn_lens,
-            fdn_gains,
-            tap_positions,
-            tap_gains,
-        } = self.tuning;
+        let s = self.retuning.next_weight();
+        let (old, new) = (self.retuning.from(), self.retuning.to());
 
         let input_l = self.inputs.left(i);
         let input_r = if self.inputs.right_active() {
@@ -347,18 +297,24 @@ impl Reverb {
         let z = self.input_diffuser.tick(z);
 
         // 3. Read early reflection taps
+        let tap = |tuning: &Tuning, i: usize| {
+            tuning.tap_gains[i] * self.tap_delay.read(tuning.tap_positions[i])
+        };
         let early: [f32; FDN_ORDER] =
-            std::array::from_fn(|i| tap_gains[i] * self.tap_delay.read(tap_positions[i]));
+            std::array::from_fn(|i| blend(s, || tap(old, i), tap(new, i)));
 
         // 4. Write into tap delay
         self.tap_delay.write_and_advance(z);
 
         // 5. Read FDN with damping in feedback path
         let fdn_damping = if frozen { 0.0 } else { damping };
+        // The damper is linear, so each tuning's gain is applied before it,
+        // where the two tunings' reads blend.
         let d: [f32; FDN_ORDER] = std::array::from_fn(|i| {
-            let raw = self.fdn_delays[i].read(fdn_lens[i]);
-            let damped = self.fdn_dampers[i].tick(raw, fdn_damping);
-            fdn_gains[i] * damped
+            let line = &self.fdn_delays[i];
+            let read = |tuning: &Tuning| tuning.fdn_gains[i] * line.read(tuning.fdn_lens[i]);
+            let raw = blend(s, || read(old), read(new));
+            self.fdn_dampers[i].tick(raw, fdn_damping)
         });
 
         // 6. Mix early reflections + tail
@@ -476,7 +432,7 @@ impl Module for Reverb {
             _ => return Err(Refusal::Unsupported),
         };
         if matches!(control, ROOM_SIZE | DECAY | FREEZE) {
-            self.retune();
+            self.retuning.retarget(self.tuning());
         }
         Ok(applied)
     }

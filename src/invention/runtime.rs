@@ -84,6 +84,7 @@ impl InventionRuntime {
         let master = super::graph::MasterObservers::live();
 
         let mut graph = SignalGraph::new(self.modules, self.sinks, self.routing, master.clone());
+        graph.diagnostics = backend.diagnostics();
         // Compile the first topology here, so the audio thread's first block
         // does not allocate.
         graph.recompile();

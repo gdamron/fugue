@@ -534,15 +534,16 @@ impl SignalGraph {
         }
         // One order: what was submitted before the edit acts on the graph
         // it replaces, at this same sample.
-        let publication = edit.map(|edit| {
+        let publication = edit.and_then(|edit| {
             debug_assert_eq!(edit.target.generation, installed, "edits install in order");
             // Beat-timed requests due now included; the segment start
             // after the install looks again for the next one.
+            self.installing = Self::take_publication(&mut drain, edit);
             let _ = self.apply_due(&mut drain, now);
-            Self::take_publication(&mut drain, edit)
+            self.installing.take()
         });
         self.requests = Some(drain);
-        publication.flatten()
+        publication
     }
 
     /// The publication an edit carries. An edit only ever carries one; any
@@ -610,6 +611,9 @@ impl SignalGraph {
 
     /// Applies every request in `drain` due at `now`, those timed in beats
     /// included, and returns how many samples until the next may be due.
+    /// The publication of an edit `installing` once they have applied
+    /// hands its survivors what it carries for them with the requests (see
+    /// `Handover::with_requests`), after those due and before the beats.
     /// Allocation-, free- and lock-free.
     fn apply_due(&mut self, drain: &mut RequestDrain, now: u64) -> Option<u64> {
         // New beat spans count from the clocks as they are before a
@@ -637,6 +641,10 @@ impl SignalGraph {
                 }
                 applied
             });
+        if let Some(mut publication) = self.installing.take() {
+            self.hand_over_with_requests(&mut publication);
+            self.installing = Some(publication);
+        }
         // What those requests applying met applies with them, before beats
         // are placed: it may move a clock (a tempo). So may what the beats
         // applying meet, so beats are placed again until none applies.
@@ -676,7 +684,8 @@ impl SignalGraph {
         let mut next = self.apply_due(&mut drain, now);
         self.requests = Some(drain);
         // A timed edit due now installs once what is due with it has
-        // applied; what it maps may then be due too.
+        // applied; what it maps may then be due too, and the tables it
+        // keeps play on it (see `BeatHost::defers`).
         if self.land_timed_edit() {
             if let Some(mut drain) = self.requests.take() {
                 next = self.apply_due(&mut drain, now);

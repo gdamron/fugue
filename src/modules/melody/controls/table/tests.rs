@@ -11,6 +11,7 @@ use crate::modules::melody::tests::without_waiting;
 use crate::modules::melody::MelodyControls;
 
 mod reference;
+mod restore;
 mod support;
 
 // Tests whose hooks make whole edits run in `without_waiting`: a hooked
