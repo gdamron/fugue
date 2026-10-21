@@ -237,6 +237,34 @@ impl<T> QueueProducer<T> {
     }
 }
 
+#[cfg(test)]
+impl<T> QueueProducer<T> {
+    /// The first half of [`Self::try_push`], claiming the next position,
+    /// and the second half to call later, as a producer preempted between
+    /// the two leaves them: until it runs, the consumer sees nothing past
+    /// that position. `None` when the queue is full.
+    pub(crate) fn claim(&self) -> Option<impl FnOnce(T) + '_> {
+        let shared = &*self.shared;
+        let pos = shared.tail.load(Ordering::Relaxed);
+        let slot = shared.slot(pos);
+        if slot.seq.load(Ordering::Acquire) != pos {
+            return None;
+        }
+        let next = pos.wrapping_add(1);
+        (shared
+            .tail
+            .compare_exchange(pos, next, Ordering::Relaxed, Ordering::Relaxed))
+        .ok()?;
+        Some(move |value| {
+            // SAFETY: as in `try_push`, winning the exchange made this the
+            // only writer of `pos`.
+            slot.value
+                .with_mut(|cell| unsafe { cell.write(MaybeUninit::new(value)) });
+            slot.seq.store(next, Ordering::Release);
+        })
+    }
+}
+
 /// The popping end of a [`bounded`] queue: one consumer, the audio thread.
 pub(crate) struct QueueConsumer<T> {
     shared: Arc<Shared<T>>,
