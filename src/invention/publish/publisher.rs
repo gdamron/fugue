@@ -145,6 +145,8 @@ impl Publisher {
             Arc::clone(&published),
             requests.watch_slots(),
         ));
+        // A new drain plays no table yet: look for them again.
+        graph.tables_stale = true;
         let applied = Arc::new(AtomicU64::new(0));
         graph.link = Some(AudioLink::new(
             Consumer::claim(Arc::clone(&inputs)),

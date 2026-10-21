@@ -5,7 +5,9 @@
 //! # Steps
 //!
 //! A table's step is one gate of the clock output connected to its clock
-//! input: a beat, or the output's division of one. Step 0 falls on the
+//! input: a beat, or the output's division of one, on the clock's beat
+//! grid whatever its gates' length (one at 0 or 1, never rising, still
+//! steps it, as the `step` output follows the clock). Step 0 falls on the
 //! clock's first gate past where it stood when the drain first saw the
 //! table (on beat 0 for a clock not yet started), and again on beat 0
 //! after every reset of the clock, which ends the table's ramps then
@@ -132,6 +134,11 @@ impl Cursors {
         self.entries.iter().map(|cursor| cursor.clock.module)
     }
 
+    /// Whether it plays table `table`.
+    pub(crate) fn has(&self, table: usize) -> bool {
+        self.entries.iter().any(|cursor| cursor.table == table)
+    }
+
     /// Starts looking for the graph's tables again, after the modules
     /// changed: those not found by [`Self::sought`] end there.
     pub(crate) fn seek(&mut self) {
@@ -194,6 +201,14 @@ impl Cursors {
             }
             cursor.found
         });
+    }
+
+    /// Puts the cursors in their modules' order, so entries of several
+    /// tables firing at one sample write in module order (the last
+    /// module's write lands), however and whenever each table was found.
+    /// In place: allocation- and free-free.
+    pub(crate) fn order(&mut self) {
+        self.entries.sort_unstable_by_key(|cursor| cursor.module);
     }
 
     /// One pass at sample `now`: fires every entry whose step the clock's

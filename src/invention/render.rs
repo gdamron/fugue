@@ -379,14 +379,17 @@ impl RenderEngine {
             super::declared::retire_offline(previous, &self.control_surfaces);
         }
         *self.module_ports.lock().unwrap() = module_ports(&runtime.modules);
-        let graph = Arc::new(Mutex::new(SignalGraph::new(
+        let mut graph = SignalGraph::new(
             runtime.modules,
             runtime.sinks,
             runtime.routing,
             // Offline render has no sampler: a meter nobody drains, and no
             // spectrum ring.
             super::graph::MasterObservers::default(),
-        )));
+        );
+        // No request reaches it, but it plays the modules' tables.
+        super::graph::offline_requests(&mut graph);
+        let graph = Arc::new(Mutex::new(graph));
         super::declared::bind_offline(&graph, &runtime.control_surfaces);
         self.graph = Some(graph);
         self.registry = runtime.registry;

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -115,7 +116,13 @@ pub struct Clock {
     latch: Option<(u64, f64, f32)>,
     // Cached output for modular routing
     outputs: outputs::ClockOutputs,
+    // Tells this clock from every other built in the process (see
+    // `Module::gate_beats`).
+    instance: u64,
 }
+
+/// The next clock's `instance`: never reused.
+static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
 impl Clock {
     /// Creates a clock at `bpm` with gates a quarter of a pulse long.
@@ -141,6 +148,7 @@ impl Clock {
             beats_before: 0,
             latch: None,
             outputs: outputs::ClockOutputs::new(),
+            instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
         };
         let _ = apply_declared(&mut clock, BPM, RtValue::F32(bpm as f32));
         let _ = apply_declared(&mut clock, GATE_LENGTH, RtValue::F32(gate_length as f32));
@@ -320,6 +328,11 @@ impl Module for Clock {
     #[allow(private_interfaces)]
     fn timeline_mut(&mut self) -> Option<&mut dyn Timeline> {
         Some(self)
+    }
+
+    fn gate_beats(&self, port: &str) -> Option<(u64, f64)> {
+        let index = outputs::OUTPUTS.iter().position(|output| *output == port)?;
+        Some((self.instance, outputs::GATE_BEATS[index]))
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

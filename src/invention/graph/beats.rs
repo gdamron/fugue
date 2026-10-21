@@ -1,11 +1,13 @@
 //! Requests timed in beats on the audio thread: each waits on its clock
 //! and applies at the sample its clock's position reaches the beat (see
-//! [`crate::control_request::Watches`]).
+//! [`crate::control_request::Watches`]). The modules' tables play there
+//! too (see [`crate::control_request::BeatTable`]), each on the clock
+//! output connected to its clock input.
 
 use super::SignalGraph;
 use crate::control_request::{
-    kept_hold, take_automation, BeatHost, ControlTarget, Outcome, Outcomes, RequestValue, RtValue,
-    Standing, Timeline, Watches,
+    kept_hold, take_automation, BeatHost, BeatTable, ControlTarget, Outcome, Outcomes,
+    RequestValue, RtValue, Standing, StepClock, Timeline, Watches,
 };
 use crate::payload::Retirer;
 
@@ -68,6 +70,11 @@ impl BeatHost for SignalGraph {
         shared
     }
 
+    fn table(&self, module_idx: usize) -> Option<&dyn BeatTable> {
+        let (_, instance) = self.modules.get_index(module_idx)?;
+        instance.module().beat_table()
+    }
+
     fn apply(
         &mut self,
         target: &ControlTarget,
@@ -91,6 +98,9 @@ impl SignalGraph {
         outcomes: &mut Outcomes,
         installed: u64,
     ) -> Option<u64> {
+        if std::mem::take(&mut self.tables_stale) {
+            self.find_tables(watches);
+        }
         if watches.is_empty() {
             return None;
         }
@@ -99,24 +109,27 @@ impl SignalGraph {
         // So a request timed in beats applies after automation written for
         // the same sample, and wins; one timed in samples applies before
         // it, and the automation wins.
-        for clock in watches.clocks(installed) {
-            if let Some((_, instance)) = self.modules.get_index_mut(clock) {
-                take_automation(instance.module_mut());
-            }
-        }
+        self.take_clocks(watches, installed);
         // An application can move a clock (a reset or tempo timed on
         // beats), and so can a ramp's write (one of a tempo), so pass again
         // after them until none applies, the deadlines then as the clocks
         // run after every write: each watch applies at most once a sample,
         // and a ramp writes the same value again at the same sample, so
         // this ends.
+        //
+        // A table's entry, or its ramp, writes automation, which every
+        // clock waited on then takes, so the deadlines see a tempo written.
         let now = self.current_sample;
         loop {
             if watches.pass(now, installed, self, outcomes).0 {
+                self.take_clocks(watches, installed);
                 continue;
             }
-            let arrives = watches.ramps.step(installed, self, &mut outcomes.retirer);
+            watches.ramps.step(installed, self, &mut outcomes.retirer);
+            self.take_clocks(watches, installed);
+            let arrives = watches.ramps.arrival(installed, self);
             let (applied, wait) = watches.pass(now, installed, self, outcomes);
+            self.take_clocks(watches, installed);
             if !applied {
                 return match (wait, arrives) {
                     (Some(wait), Some(arrives)) => Some(wait.min(arrives)),
@@ -124,5 +137,60 @@ impl SignalGraph {
                 };
             }
         }
+    }
+
+    /// Takes the automation written to every clock a watch, ramp or table
+    /// waits on.
+    fn take_clocks(&mut self, watches: &Watches, installed: u64) {
+        for clock in watches.clocks(installed) {
+            if let Some((_, instance)) = self.modules.get_index_mut(clock) {
+                take_automation(instance.module_mut());
+            }
+        }
+    }
+
+    /// Finds every module's table and the clock it steps on, after the
+    /// modules or their routes changed, telling each table whether the
+    /// drain plays it: a table finding no clock output on its clock input
+    /// (nothing, a mix of sources, or another signal) or no room plays on
+    /// its own. The tables played before are found first, so the room of
+    /// those gone is free for new ones; then the cursors are put in module
+    /// order. Allocation-, free- and lock-free.
+    fn find_tables(&self, watches: &mut Watches) {
+        let Watches { cursors, ramps, .. } = watches;
+        cursors.seek();
+        for known in [true, false] {
+            for (module, (id, instance)) in self.modules.iter().enumerate() {
+                let Some(table) = instance.module().beat_table() else {
+                    continue;
+                };
+                if cursors.has(table.id()) != known {
+                    continue;
+                }
+                let input = table.clock_input();
+                let mut sources = self
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.to_module == *id && edge.to_port == input);
+                let clock = match (sources.next(), sources.next()) {
+                    (Some(edge), None) => self.step_clock(&edge.from_module, &edge.from_port),
+                    _ => None,
+                };
+                table.set_played(cursors.found(table.id(), module, clock, ramps));
+            }
+            if known {
+                cursors.sought(ramps);
+            }
+        }
+        cursors.order();
+    }
+
+    /// The clock whose output `port` of module `id` is, if it is one, told
+    /// apart by its instance's token: the same wherever it moves, another
+    /// for a clock replacing it.
+    fn step_clock(&self, id: &str, port: &str) -> Option<StepClock> {
+        let (module, _, instance) = self.modules.get_full(id)?;
+        let (id, beats) = instance.module().gate_beats(port)?;
+        Some(StepClock { module, id, beats })
     }
 }

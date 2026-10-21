@@ -89,6 +89,8 @@ impl CompiledTopology {
         std::mem::swap(&mut self.out_prev, &mut graph.out_prev);
         std::mem::swap(&mut self.out_counts, &mut graph.out_counts);
         std::mem::swap(&mut self.block_capacity, &mut graph.block_capacity);
+        // Its modules or routes changed: their tables are found again.
+        graph.tables_stale = true;
     }
 }
 

@@ -103,7 +103,7 @@ pub(crate) use sender::{request_channel, QueueFull, RequestSender};
 pub(crate) use table::{BeatTable, TableEntry, TableTarget, TableValue};
 pub(crate) use timeline::{first_sample_reaching, Timeline, BEFORE_START};
 pub(crate) use transport::Transport;
-pub(crate) use watch::{BeatHost, Watches};
+pub(crate) use watch::{BeatHost, StepClock, Watches};
 
 #[cfg(test)]
 mod loom_tests;

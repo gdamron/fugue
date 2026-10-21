@@ -455,6 +455,12 @@ impl Ramps {
             }
             i += 1;
         }
+        self.arrival(installed, &*host)
+    }
+
+    /// Samples until the next ramp in the `installed` generation arrives,
+    /// at its clock's tempo now: the segment ends just before it.
+    pub(crate) fn arrival(&self, installed: u64, host: &impl BeatHost) -> Option<u64> {
         let mut wait = None::<u64>;
         for running in &self.entries {
             if !running.installed(installed) {
