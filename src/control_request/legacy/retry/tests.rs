@@ -385,6 +385,21 @@ fn a_value_crowded_out_of_room_still_lands_after_another_schedule_s_older_one() 
     assert_eq!(first.refused().count() + second.refused().count(), 0);
 }
 
+#[test]
+fn a_left_event_lets_its_surface_go_once_nothing_else_holds_it() {
+    let voice = Arc::new(Voice::default());
+    let (writes, [.., off]) = one(&voice);
+    voice.busy.store(true, Ordering::Relaxed);
+    writes.write(off, n(60.0));
+    writes.abandon();
+    drop(writes);
+    // Its module gone from the graph, nothing will make room on it.
+    let gone = Arc::downgrade(&voice);
+    drop(voice);
+    super::land_left_events();
+    assert!(gone.upgrade().is_none(), "not held for good");
+}
+
 /// A schedule's writes to one voice.
 fn one(voice: &Arc<Voice>) -> (Arc<LegacyWrites>, [usize; 4]) {
     let (writes, indices) = writes(&[voice]);

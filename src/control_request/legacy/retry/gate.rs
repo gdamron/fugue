@@ -107,16 +107,25 @@ fn gates() -> MutexGuard<'static, Gates> {
 
 /// Lands, in ticket order, the events kept at gates the last schedule
 /// freed let go of, once no live schedule's earlier write waits there,
-/// and lets go of the gates that then keep none. One whose surface is
-/// still busy or full keeps the rest for the next call. A schedule built
-/// but not yet playing holds nothing back: it has nothing waiting, and
-/// what it writes once playing waits behind them. Control thread, on the
-/// reclaimer's cadence: never waits on a surface or the audio thread.
+/// and lets go of the gates that then keep none, or whose surface nothing
+/// else holds (its module gone, nothing will make room on it). One whose
+/// surface is still busy or full keeps the rest for the next call. A
+/// schedule built but not yet playing holds nothing back: it has nothing
+/// waiting, and what it writes once playing waits behind them. Control
+/// thread, on the reclaimer's cadence: never waits on a surface or the
+/// audio thread.
 pub(crate) fn land_left_events() {
-    gates().held.retain(|gate| {
+    let mut gates = gates();
+    let held = std::mem::take(&mut gates.held);
+    let (still, done): (Vec<_>, Vec<_>) = held.into_iter().partition(|gate| {
         gate.orphans.land(|| gate.settled_earliest());
-        gate.orphans.kept() > 0
+        let stranded = Arc::strong_count(gate) == 1 && gate.orphans.stranded();
+        gate.orphans.kept() > 0 && !stranded
     });
+    gates.held = still;
+    drop(gates);
+    // Freed unlocked: a surface freed with its gate may free schedules.
+    drop(done);
 }
 
 impl Gate {
