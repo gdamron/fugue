@@ -256,6 +256,13 @@ impl ControlSurface for DevelopmentControlSurface {
         }
     }
 
+    fn scheduled_writes_refused(&self) -> u64 {
+        let inner = self.surfaces.values();
+        inner
+            .map(|surface| surface.scheduled_writes_refused())
+            .sum()
+    }
+
     fn declares(&self, key: &str) -> bool {
         self.declared(key).is_some()
     }

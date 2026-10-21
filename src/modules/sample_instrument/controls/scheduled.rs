@@ -62,7 +62,7 @@ impl SampleInstrumentControls {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{ZoneSpec, LANES, NOTE_CAPACITY};
+    use super::super::{ZoneSpec, LANES, NOTE_CAPACITY, NOTE_OFF_RESERVE};
     use super::*;
     use crate::alloc_counter::allocator_events;
     use crate::audio_thread::AudioThreadScope;
@@ -157,8 +157,18 @@ mod tests {
         let scheduled = TableValue::Number(67.0);
         let _audio = AudioThreadScope::enter();
         let ((), allocs, frees) = allocator_events(|| {
-            for _ in 0..NOTE_CAPACITY {
+            let reserve = NOTE_OFF_RESERVE as usize;
+            for _ in 0..NOTE_CAPACITY - reserve {
                 assert_eq!(controls.set_scheduled("note_on", scheduled), Ok(()));
+            }
+            let crowded = controls.set_scheduled("note_on", scheduled);
+            assert_eq!(
+                crowded,
+                Err(LegacyRefusal::Full),
+                "the rest is for note offs"
+            );
+            for _ in 0..reserve {
+                assert_eq!(controls.set_scheduled("note_off", scheduled), Ok(()));
             }
             let full = controls.set_scheduled("note_off", scheduled);
             assert_eq!(full, Err(LegacyRefusal::Full));

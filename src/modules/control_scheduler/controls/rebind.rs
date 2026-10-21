@@ -14,9 +14,7 @@ use std::sync::atomic::Ordering;
 
 use super::{ControlSchedulerControls, ResolvedSchedule, SurfaceMap, SCHEDULE};
 use crate::control_request::ControlIndex;
-use crate::modules::control_scheduler::schedule::{
-    parse_schedule_json, resolve_schedule, ScheduleEntry,
-};
+use crate::modules::control_scheduler::schedule::{parse_schedule_json, ScheduleEntry};
 use crate::payload::Payload;
 
 /// A surviving scheduler's schedule, re-resolved for a change.
@@ -88,11 +86,11 @@ impl ControlSchedulerControls {
         let (schedule, spec) = match (json, current) {
             (Some(json), _) => {
                 let spec = parse_schedule_json(json)?;
-                let resolved = resolve_schedule(&spec, &own_id, surfaces)?;
+                let resolved = self.resolve(&spec, &own_id, surfaces)?;
                 (ResolvedSchedule::new(resolved), Some(spec))
             }
             (None, spec) => {
-                let resolved = resolve_schedule(&spec.unwrap_or_default(), &own_id, surfaces)?;
+                let resolved = self.resolve(&spec.unwrap_or_default(), &own_id, surfaces)?;
                 (ResolvedSchedule::retargeting(resolved), None)
             }
         };

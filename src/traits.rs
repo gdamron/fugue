@@ -298,6 +298,15 @@ pub trait ControlSurface: Send + Sync {
     #[doc(hidden)]
     fn retire(&self) {}
 
+    /// How many scheduled writes and ramp starts to legacy controls this
+    /// surface's schedulers had refused (see [`Self::set_scheduled`]): a
+    /// scheduler's own, a development's inner ones summed, zero otherwise.
+    /// Each scheduler counts modulo 2^32. Control thread.
+    #[doc(hidden)]
+    fn scheduled_writes_refused(&self) -> u64 {
+        0
+    }
+
     /// Whether `key` is one of this surface's declared controls. Such a
     /// control is never written through [`Self::set_control`] from the
     /// audio thread: automation writes it, or it cannot be scheduled.

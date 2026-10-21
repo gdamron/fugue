@@ -12,14 +12,18 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::control_request::{
-    Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue,
+    Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, EventCounter,
+    RtValue,
 };
 use crate::invention::declared::{Checked, Declaration, DeclaredSurface, Route, STALE};
 use crate::payload::Payload;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
 use super::resolved::{target_module_ids, ResolvedSchedule};
-use super::schedule::{parse_schedule_json, resolve_schedule, ScheduleEntry, SurfaceMap};
+use super::schedule::{
+    parse_schedule_json, resolve_schedule, resolve_schedule_counting, ResolvedEntry, ScheduleEntry,
+    SurfaceMap,
+};
 
 mod rebind;
 pub(crate) use rebind::{Rebind, Written};
@@ -72,6 +76,9 @@ struct Shared {
     /// before `state` and the publisher, never while holding a publisher or
     /// graph lock.
     writing: Mutex<()>,
+    /// Counts the legacy writes and reads the scheduler's surfaces refused,
+    /// whichever schedule it was playing.
+    refused: Arc<EventCounter>,
 }
 
 struct ScheduleState {
@@ -137,6 +144,7 @@ impl ControlSchedulerControls {
                     unattached_id: None,
                 }),
                 writing: Mutex::new(()),
+                refused: Arc::new(EventCounter::new()),
             }),
         }
     }
@@ -172,7 +180,7 @@ impl ControlSchedulerControls {
     ) -> Result<(), String> {
         let _writing = self.shared.writing.lock().unwrap();
         let spec = self.shared.state.lock().unwrap().spec.clone();
-        let resolved = resolve_schedule(&spec, own_id, surfaces)?;
+        let resolved = self.resolve(&spec, own_id, surfaces)?;
         let id = self.deliver(resolved, &spec)?;
         let mut state = self.shared.state.lock().unwrap();
         state.attachment = Some(Attachment {
@@ -251,7 +259,18 @@ impl ControlSchedulerControls {
             .upgrade()
             .ok_or("control_scheduler runtime is gone")?;
         let surfaces = directory.lock().unwrap();
-        resolve_schedule(spec, &own_id, &surfaces).map(Some)
+        self.resolve(spec, &own_id, &surfaces).map(Some)
+    }
+
+    /// Resolves `spec`, its legacy targets counting refusals in this
+    /// scheduler's counter.
+    fn resolve(
+        &self,
+        spec: &[ScheduleEntry],
+        own_id: &str,
+        surfaces: &SurfaceMap,
+    ) -> Result<Vec<ResolvedEntry>, String> {
+        resolve_schedule_counting(spec, own_id, surfaces, &self.shared.refused)
     }
 
     /// Hands `resolved` to the scheduler by its surface's route, returning
@@ -466,6 +485,10 @@ impl ControlSurface for ControlSchedulerControls {
     #[allow(private_interfaces)]
     fn automation(&self, key: &str) -> Option<Automation> {
         self.declared.automation(key)
+    }
+
+    fn scheduled_writes_refused(&self) -> u64 {
+        u64::from(self.shared.refused.count())
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
