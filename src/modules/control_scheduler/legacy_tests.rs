@@ -241,7 +241,7 @@ fn a_write_lands_while_control_threads_hold_every_lock_left() {
         locking.cells.clone(),
     );
     let held = while_held(
-        || melody.table.writing(),
+        || melody.table.editing(),
         || {
             while_held(
                 || player.hold_swap_lock(),
