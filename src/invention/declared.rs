@@ -121,6 +121,14 @@ struct Written {
     staged: Option<Payload>,
 }
 
+/// What a write saw as it was queued for the live graph: the publisher's
+/// generation then, read under its lock (see `LiveGraph::record_authored`).
+/// `None` when the module is not live.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Queued {
+    pub(crate) generation: Option<u64>,
+}
+
 /// A write resolved for a request the live graph times itself.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct Resolved {
@@ -198,6 +206,7 @@ impl DeclaredSurface {
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
         self.deliver(index, Write::Payload(payload, shown, None))
+            .map(drop)
     }
 
     /// [`Self::write_payload`] for a payload built against the live graph's
@@ -215,6 +224,23 @@ impl DeclaredSurface {
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
         self.deliver(index, Write::Payload(payload, shown, Some(checked)))
+            .map(drop)
+    }
+
+    /// [`ControlSurface::set_control`], saying what the write saw as it
+    /// was queued. Control thread.
+    pub(crate) fn set_control_queued(
+        &self,
+        key: &str,
+        value: ControlValue,
+    ) -> Result<Queued, String> {
+        if let Some(prepared) = self.prepare(key, &value) {
+            let (index, payload, shown) = prepared?;
+            return self.deliver(index, Write::Payload(payload, shown, None));
+        }
+        let index = self.index(key)?;
+        let value = self.table.coerce(index, &value)?;
+        self.deliver(index, Write::Value(value))
     }
 
     /// The live graph's publisher generation, read under its lock (so
@@ -325,7 +351,7 @@ impl DeclaredSurface {
             .ok_or_else(|| format!("Unknown control: {key}"))
     }
 
-    fn deliver(&self, index: ControlIndex, write: Write) -> Result<(), String> {
+    fn deliver(&self, index: ControlIndex, write: Write) -> Result<Queued, String> {
         let (event, clamp) = match self.table.decl(index) {
             Some((decl, _)) => (decl.event, decl.clamp.filter(|_| self.clamps)),
             None => (false, None),
@@ -344,7 +370,7 @@ impl DeclaredSurface {
                         if let Some(checked) = checked {
                             (checked.record)();
                         }
-                        return Ok(());
+                        return Ok(Queued::default());
                     }
                 };
                 // Held as the module will hold it once it applies it.
@@ -361,7 +387,7 @@ impl DeclaredSurface {
                 if !written.contains(&index) {
                     written.push(index);
                 }
-                return Ok(());
+                return Ok(Queued::default());
             }
             route.clone()
         };
@@ -374,6 +400,7 @@ impl DeclaredSurface {
                     .ok_or("The audio thread has stopped")?;
                 let mut publisher = publisher.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Live(_)))?;
+                let generation = Some(publisher.generation());
                 // A kept controller can outlive the audio graph: never queue
                 // a request nothing will drain.
                 if !publisher.audio_alive() {
@@ -454,7 +481,7 @@ impl DeclaredSurface {
                 if let Some(settler) = &port.settler {
                     settler.settle();
                 }
-                Ok(())
+                Ok(Queued { generation })
             }
             Route::Offline { graph, module_id } => {
                 let graph = graph.upgrade().ok_or("The render has been replaced")?;
@@ -473,6 +500,7 @@ impl DeclaredSurface {
                         applied
                     }
                 }
+                .map(|()| Queued::default())
                 .map_err(|refusal| refused(&self.table, index, refusal))
             }
             Route::Inner => Err("This control is set through its development".into()),
@@ -523,13 +551,7 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        if let Some(prepared) = self.prepare(key, &value) {
-            let (index, payload, shown) = prepared?;
-            return self.deliver(index, Write::Payload(payload, shown, None));
-        }
-        let index = self.index(key)?;
-        let value = self.table.coerce(index, &value)?;
-        self.deliver(index, Write::Value(value))
+        self.set_control_queued(key, value).map(drop)
     }
 
     fn validate_control(
