@@ -10,7 +10,8 @@
 //! nothing changed), as any change prepared against a generation that has
 //! moved is.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use super::{Published, Publisher, Refused};
 use crate::control_request::{QueueFull, Request, RequestId, RequestValue, When};
@@ -93,14 +94,29 @@ impl Publisher {
                 return refuse(GraphCommandError::QueueFull, prepared);
             }
         };
-        self.timed = Some(Waiting {
+        self.set_timed(Some(Waiting {
             fate,
             mirror: prepared.mirror,
             built: prepared.built,
             retain,
             port,
-        });
+        }));
         Ok(id)
+    }
+
+    /// Sets or clears the timed edit waiting, and the flag mirroring it.
+    fn set_timed(&mut self, waiting: Option<Waiting>) {
+        // A hint for the reclaimer only: whatever acts on a timed edit
+        // takes the publisher lock, so `Relaxed` is enough. A stale `false`
+        // delays adoption to the next tick or the next lock.
+        self.timed_flag.store(waiting.is_some(), Ordering::Relaxed);
+        self.timed = waiting;
+    }
+
+    /// Whether a timed edit waits, readable without the publisher lock:
+    /// a hint, as [`Self::set_timed`] says.
+    pub(crate) fn timed_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.timed_flag)
     }
 
     /// Whether a timed edit waits: queued, and neither adopted nor known
@@ -118,12 +134,13 @@ impl Publisher {
         match self.timed.as_ref()?.fate.settled() {
             None => return None,
             Some(false) => {
-                self.timed = None;
+                self.set_timed(None);
                 return None;
             }
             Some(true) => {}
         }
         let waiting = self.timed.take()?;
+        self.set_timed(None); // for the flag: `take` cleared `timed`
         self.generation += 1;
         // Releases every request and write queued before it to the audio
         // thread, which then knows nothing is tagged older (see `landing`).
@@ -149,7 +166,7 @@ impl Publisher {
         if !waiting.fate.cancel() && waiting.fate.landed() {
             return false;
         }
-        self.timed = None;
+        self.set_timed(None);
         true
     }
 }
