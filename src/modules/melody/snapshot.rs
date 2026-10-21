@@ -227,8 +227,13 @@ mod tests {
 
         // Mid-edit: the copy is of the table as published, without waiting.
         let editing = ctrl.table.editing();
-        assert!(snapshot.sync(&ctrl));
-        assert_eq!(snapshot.degrees[..snapshot.degree_count], [11]);
+        let reader = ctrl.clone();
+        let (synced, degrees) = super::super::tests::without_waiting(move || {
+            let synced = snapshot.sync(&reader);
+            (synced, snapshot.degrees[..snapshot.degree_count].to_vec())
+        });
+        assert!(synced);
+        assert_eq!(degrees, [11]);
         drop(editing);
     }
 

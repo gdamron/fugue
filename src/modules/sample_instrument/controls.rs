@@ -207,7 +207,7 @@ impl SampleInstrumentControls {
     fn push_note(&self, note: u8, on: bool) -> Result<(), String> {
         (self.inner.notes.send(note, on))
             .then_some(())
-            .ok_or_else(|| "Too many pending note events".to_string())
+            .ok_or_else(|| "Too many pending note events, or no note lane free".to_string())
     }
 
     /// Audio thread: the current swap counter, checked once per block.

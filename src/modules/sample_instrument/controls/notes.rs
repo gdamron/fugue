@@ -31,6 +31,12 @@ pub(crate) const NOTE_CAPACITY: usize = 256;
 /// way at once without one waiting for a lane.
 pub(crate) const LANES: usize = 4;
 
+/// How many times a control thread's send looks over the lanes for a free
+/// one before giving up. Each look finds every lane not full taken by
+/// another push, which lasts nanoseconds unless its thread is preempted;
+/// a send never waits on threads that do not resume.
+const SEND_ATTEMPTS: usize = 1024;
+
 /// A note request, popped per block by the audio thread.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct NoteEvent {
@@ -98,10 +104,11 @@ pub(in crate::modules::sample_instrument) fn note_queues() -> (NoteSenders, Note
 
 impl NoteSenders {
     /// Queues a control thread's note in a free lane, returning false when
-    /// every lane is full. Lock-free and allocation-free; waits, yielding,
-    /// only while every lane not full has a push under way.
+    /// every lane is full, or when every one not full had a push under way
+    /// through [`SEND_ATTEMPTS`] looks, yielding between them. Lock-free
+    /// and allocation-free.
     pub(in crate::modules::sample_instrument) fn send(&self, note: u8, on: bool) -> bool {
-        loop {
+        for _ in 0..SEND_ATTEMPTS {
             let mut contended = false;
             for lane in &self.lanes {
                 let free =
@@ -122,6 +129,7 @@ impl NoteSenders {
             }
             std::thread::yield_now();
         }
+        false
     }
 
     /// Queues a scheduler's note, returning false when its lane is full.
@@ -261,6 +269,40 @@ mod tests {
         assert_eq!(notes(&mut queues), [(60, true), (60, false)]);
         publish(72, true);
         assert_eq!(notes(&mut queues), [(72, true)], "a block later");
+    }
+
+    /// Sends a note on another thread, failing rather than hanging should
+    /// the send wait.
+    fn send_soon(senders: &Arc<NoteSenders>, note: u8) -> bool {
+        let (sent, received) = std::sync::mpsc::channel();
+        let senders = senders.clone();
+        std::thread::spawn(move || sent.send(senders.send(note, true)));
+        let patience = std::time::Duration::from_secs(10);
+        received
+            .recv_timeout(patience)
+            .expect("the send waited for a lane")
+    }
+
+    #[test]
+    fn a_note_with_no_free_lane_is_refused_while_their_pushes_stay_held_up() {
+        let (senders, mut queues) = note_queues();
+        let senders = Arc::new(senders);
+        // Every lane taken by a control thread preempted mid-push: a send
+        // gives up rather than wait for them to resume.
+        for lane in &senders.lanes {
+            lane.taken.store(true, Ordering::Relaxed);
+        }
+        assert!(!send_soon(&senders, 60));
+        // One lane free again, the others full: still refused.
+        for lane in &senders.lanes[1..] {
+            lane.taken.store(false, Ordering::Relaxed);
+            while lane.queue.try_push(senders.event(72, true)).is_ok() {}
+        }
+        assert!(!send_soon(&senders, 60));
+        // The first lane's push finishes: the note goes in there.
+        senders.lanes[0].taken.store(false, Ordering::Relaxed);
+        assert!(senders.send(60, true));
+        assert_eq!(notes(&mut queues).last(), Some(&(60, true)));
     }
 
     #[test]
