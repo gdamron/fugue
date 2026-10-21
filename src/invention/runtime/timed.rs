@@ -6,7 +6,7 @@ use super::{GraphCommandError, RunningInvention};
 use crate::control_request::Refusal;
 use crate::control_request::{BeatSpec, RequestId};
 use crate::invention::handles::InventionHandles;
-use crate::invention::publish::{CancelCause, EditState, EditStatus, EditTime};
+use crate::invention::publish::{CancelCause, EditState, EditStatus, EditTime, Touched};
 use crate::rpc::{EditWhen, RequestLanding, RequestState, RequestStatus};
 
 impl RunningInvention {
@@ -203,9 +203,13 @@ fn cancelled(cause: &CancelCause) -> String {
         CancelCause::AuthoredWrite {
             module_id,
             key,
-            removed,
+            touches,
         } => {
-            let does = if *removed { "removes" } else { "rebuilds" };
+            let does = match touches {
+                Touched::Removed => format!("removes {module_id}"),
+                Touched::Rebuilt => format!("rebuilds {module_id}"),
+                Touched::Written => "also writes as it lands".to_string(),
+            };
             format!("cancelled: authored write to {module_id}.{key}, which this edit {does}")
         }
         CancelCause::ScheduleWrite { module_id } => {

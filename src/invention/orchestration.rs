@@ -1,5 +1,8 @@
+use crate::control_request::DeclKind;
 use crate::invention::graph::{GraphCommand, SignalGraph};
-use crate::invention::publish::{connect_offline, edge, BuiltModule, GraphChange, LiveGraph};
+use crate::invention::publish::{
+    connect_offline, edge, Authored, BuiltModule, GraphChange, LiveGraph,
+};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
 use crate::rpc::non_finite_refusal;
@@ -15,8 +18,8 @@ use std::sync::{Arc, Mutex};
 use super::declared::{add_offline, remove_offline};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
-/// How many times an authored write is made when a change is published or
-/// adopted between making it and recording it.
+/// How many times an authored write is made when a timed edit is adopted
+/// between making it and recording it.
 const WRITE_ATTEMPTS: usize = 3;
 
 /// Read/write orchestration surface shared by live and render runtimes.
@@ -289,20 +292,39 @@ impl RuntimeSnapshot {
         // Written first, so a write refused changes nothing, then recorded
         // under the publisher: a timed edit waiting takes the write into its
         // own document or, when it rebuilds or removes the module, is
-        // cancelled. When a change was published or adopted in between (a
-        // timed edit landing, which may write this control as it lands or
-        // replace the module), the write is made again, so it plays last
-        // and what is recorded is what plays.
-        for _ in 0..WRITE_ATTEMPTS {
+        // cancelled. When a timed edit was adopted in between (it may write
+        // this control as it lands, or replace the module), the write is
+        // made again, so it plays last and what is recorded is what plays.
+        // A payload (a schedule) is made once: making it again is not the
+        // same as making it once. A write made is always recorded.
+        let attempts = if self.is_payload(module_id, key) {
+            1
+        } else {
+            WRITE_ATTEMPTS
+        };
+        for attempt in 1..=attempts {
             let seen = live.generation();
             self.set_control_transient(module_id, key, value.clone())?;
-            if live.record_authored(module_id, key, &value, seen) {
-                return Ok(value);
+            match live.record_authored(module_id, key, &value, (seen, attempt == attempts)) {
+                Authored::Recorded => return Ok(value),
+                Authored::Raced => continue,
+                Authored::RecordedRaced => break,
             }
         }
         Err(GraphCommandError::ControlError(format!(
-            "the graph changed each time {module_id}.{key} was written; write it again"
+            "{module_id}.{key} was written and recorded, but a timed edit landed as it was \
+             written, and may have written it or replaced {module_id}: read it back"
         )))
+    }
+
+    /// Whether `key` of `module_id` is a declared payload control (a
+    /// scheduler's schedule).
+    fn is_payload(&self, module_id: &str, key: &str) -> bool {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        surfaces
+            .get(module_id)
+            .and_then(|surface| surface.declaration(key))
+            .is_some_and(|declaration| matches!(declaration.decl.kind, DeclKind::Payload))
     }
 
     /// Whether `key` of `module_id` is a declared event control.

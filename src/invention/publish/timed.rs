@@ -16,7 +16,7 @@ use indexmap::IndexMap;
 
 use super::change::BuiltModule;
 use super::rebind;
-use super::timed_status::{CancelCause, EditStatus};
+use super::timed_status::{CancelCause, EditStatus, Touched};
 use super::watch::{condition_of, Part};
 use super::{
     publisher, Committed, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher, Refused,
@@ -29,6 +29,20 @@ use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
 use crate::ControlValue;
 use crate::ModuleRegistry;
+
+/// What became of an authored write as it was recorded (see
+/// [`LiveGraph::record_authored`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Authored {
+    /// Recorded: what plays.
+    Recorded,
+    /// Not recorded: a timed edit landed after the write, so it is to be
+    /// made again.
+    Raced,
+    /// Recorded on the last attempt, though a timed edit landed after the
+    /// write: what plays may differ.
+    RecordedRaced,
+}
 
 /// When a timed edit lands, resolved against the graph that is playing.
 #[derive(Clone, Copy, Debug)]
@@ -120,40 +134,58 @@ impl LiveGraph {
     /// Records an authored write to control `key` of `module_id`, made
     /// while generation `seen` was the latest, in the retained document.
     /// Runs under the publisher, so no timed edit can be adopted in
-    /// between. A timed edit waiting that rebuilds or removes the module is
-    /// cancelled, and the edit reports why. One that keeps the module folds
-    /// the write into its own document instead, so the write is recorded
-    /// again as the edit is adopted.
+    /// between. A timed edit waiting that rebuilds or removes the module,
+    /// or writes the control itself as it lands, is cancelled, and the edit
+    /// reports why: the write may reach the audio thread before or after
+    /// the edit lands, so only cancelling it makes the write what plays,
+    /// and what is recorded. One that keeps the module and leaves the
+    /// control alone folds the write into its own document instead, so the
+    /// write is recorded again as the edit is adopted.
     ///
-    /// False, with nothing recorded, when a change was published or
-    /// adopted since `seen`: a timed edit may have landed after the write,
-    /// replacing the module or writing the control as it landed, so what
-    /// plays may not be the write. The caller writes again.
+    /// [`Authored::Raced`], with nothing recorded, when a timed edit was
+    /// adopted since `seen`: it may have landed after the write, replacing
+    /// the module or writing the control as it landed, so what plays may
+    /// not be the write. The caller writes again, unless this is its `last`
+    /// attempt: then the write is recorded anyway, as it is when only
+    /// untimed changes were published since `seen` (they publish nothing
+    /// after the write reaches the audio thread).
     pub(crate) fn record_authored(
         &self,
         module_id: &str,
         key: &str,
         value: &ControlValue,
-        seen: u64,
-    ) -> bool {
+        (seen, last): (u64, bool),
+    ) -> Authored {
         let mut publisher = self.lock();
-        if let Some(removed) = publisher.timed_replaces(module_id) {
+        let touches = match publisher.timed_replaces(module_id) {
+            Some(true) => Some(Touched::Removed),
+            Some(false) => Some(Touched::Rebuilt),
+            None => publisher
+                .timed_chains(module_id, key)
+                .then_some(Touched::Written),
+        };
+        if let Some(touches) = touches {
             let cause = || CancelCause::AuthoredWrite {
                 module_id: module_id.to_string(),
                 key: key.to_string(),
-                removed,
+                touches,
             };
             if !publisher.cancel_timed(cause) {
                 self.adopt(&mut publisher);
             }
         }
-        if publisher.generation() != seen {
-            return false;
+        let raced = publisher.timed_adopted_since(seen);
+        if raced && !last {
+            return Authored::Raced;
         }
         publisher.fold_timed(module_id, key, value);
         let mut state = self.state.lock().unwrap();
         state.record_authored_control(module_id, key, value);
-        true
+        if raced {
+            Authored::RecordedRaced
+        } else {
+            Authored::Recorded
+        }
     }
 
     /// Queues `prepared` to land at `time`, refused once `ttl` samples have
@@ -240,13 +272,16 @@ impl LiveGraph {
                     _ => None,
                 };
                 publisher.ledger().queued(id, sample, beat);
-                if short {
-                    publisher.cancel_timed(|| CancelCause::Unchained);
-                }
+                // Short of its chain only if a submission raced this one
+                // outside the publisher, which none does: then the edit is
+                // cancelled, refusing the writes queued with it. One that
+                // landed already is adopted as it is, and reported as what
+                // it is, never as refused.
+                let unchained = short && publisher.cancel_timed(|| CancelCause::Unchained);
                 drop(pending);
                 drop(publisher);
                 self.settle();
-                if short {
+                if unchained {
                     return Err(GraphCommandError::QueueFull);
                 }
                 Ok(id)

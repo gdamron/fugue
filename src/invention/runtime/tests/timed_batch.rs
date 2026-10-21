@@ -170,18 +170,37 @@ fn what_cannot_land_whole_is_refused_with_nothing_queued() {
     assert!(!running.state.lock().unwrap().modules.contains_key("lfo"));
 }
 
-/// The batch writes the oscillator's frequency as it lands, last: an
-/// authored write to it meanwhile is heard until then, and then yields,
-/// in the document too. One to a control the batch does not write is
-/// kept.
+/// The batch writes the oscillator's frequency as it lands: an authored
+/// write to it meanwhile cancels the batch, which says why, so the write
+/// is what plays and what the document records.
 #[test]
-fn an_authored_write_to_a_control_the_batch_writes_yields_to_it() {
+fn an_authored_write_to_a_control_the_batch_writes_cancels_it() {
     let (mut running, audio) = start();
     audio.render(INTO_THE_BAR);
     let queued = (running.apply_edits_at(&swap_and_retune(), &next_bar(), None)).unwrap();
     running
         .set_control("osc", "frequency", ControlValue::Number(275.0))
         .unwrap();
+    let status = running.request_status(&queued.id).unwrap();
+    assert_eq!(status.state, RequestState::Cancelled);
+    let reason = status.reason.unwrap();
+    assert!(
+        reason.contains("osc.frequency, which this edit also writes as it lands"),
+        "{reason}"
+    );
+    audio.render(PAST_TWO_BARS);
+    let playing = running.get_control("osc", "frequency").unwrap();
+    assert_eq!(playing, ControlValue::Number(275.0));
+    assert_eq!(frequency_of(&running), (275.0, 275.0));
+}
+
+/// An authored write to a control the batch leaves alone is kept, in the
+/// document too, as the batch lands.
+#[test]
+fn an_authored_write_to_a_control_the_batch_leaves_alone_is_kept() {
+    let (mut running, audio) = start();
+    audio.render(INTO_THE_BAR);
+    let queued = (running.apply_edits_at(&swap_and_retune(), &next_bar(), None)).unwrap();
     let saw = running.get_control("osc", "waveform").unwrap();
     running
         .set_control("osc", "waveform", ControlValue::String("sine".into()))
