@@ -20,8 +20,8 @@ pub(crate) const WRITE_ATTEMPTS: usize = 3;
 /// overtaken on its last attempt, or refused when made again, it is
 /// reported to be made again (`ControlError`), with nothing recorded.
 ///
-/// Concurrent authored writers to one control are not serialized, as they
-/// are not on main: the last to be recorded may not be the last to play.
+/// Concurrent authored writers are serialized by the caller
+/// (`LiveGraph::authoring`), so the last recorded is the last to play.
 pub(crate) fn write_authored(
     attempts: usize,
     target: (&str, &str),
