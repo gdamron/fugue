@@ -74,3 +74,25 @@ fn set_input_and_set_control_make_no_host_allocation() {
     assert_eq!(results, (Ok(()), Ok(())));
     assert_eq!((allocs, frees), (0, 0));
 }
+
+#[test]
+fn set_input_block_lowers_the_input_block_without_a_host_allocation() {
+    let (_temp, path) = fixture_component();
+    let mut module =
+        super::WasmModule::load(&path, 48_000, "{}", &fixture_manifest()).expect("load");
+    module.init_ports().expect("ports");
+    module.input_blocks[0][..64].fill(24_000.0);
+    // Warm up the export.
+    let call = |module: &mut super::WasmModule| {
+        module
+            .set_input_block
+            .call(&mut module.store, (0, &module.input_blocks[0][..64]))
+            .map(|(result,)| result)
+    };
+    call(&mut module).expect("call").expect("set input block");
+
+    let (result, allocs, frees) = allocator_events(|| call(&mut module));
+
+    assert!(matches!(result, Ok(Ok(()))));
+    assert_eq!((allocs, frees), (0, 0));
+}
