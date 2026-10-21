@@ -12,7 +12,7 @@
 //! lands what it keeps on its cadence (see `land_left_events`): late, but
 //! in order, and not lost to a surface busy or full for a while.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use super::gate::IDLE;
@@ -27,11 +27,13 @@ const KEYS: usize = 16;
 /// Events kept at every gate: none, and the audio thread looks no further.
 static KEPT: AtomicUsize = AtomicUsize::new(0);
 
-/// One event kept: its ticket ([`IDLE`] for none), control and value.
+/// One event kept: its ticket ([`IDLE`] for none), control and value, and
+/// whether a thread is landing it (the audio thread, or the reclaimer).
 struct Orphan {
     ticket: AtomicU64,
     key: AtomicU32,
     value: AtomicU64,
+    landing: AtomicBool,
 }
 
 impl Default for Orphan {
@@ -40,6 +42,7 @@ impl Default for Orphan {
             ticket: AtomicU64::new(IDLE),
             key: AtomicU32::new(0),
             value: AtomicU64::new(0),
+            landing: AtomicBool::new(false),
         }
     }
 }
@@ -59,7 +62,7 @@ pub(super) struct Orphans {
     room: [Orphan; ROOM],
     kept: AtomicUsize,
     keys: Keys,
-    /// The surface, for what is still kept when the gate goes.
+    /// The surface the events land on.
     surface: OnceLock<Surface>,
     /// Control threads only: one names a key at a time.
     naming: Mutex<()>,
@@ -109,7 +112,7 @@ impl Orphans {
 
     fn first(&self) -> Option<(usize, u64)> {
         (self.room.iter().enumerate())
-            .map(|(at, orphan)| (at, orphan.ticket.load(Ordering::Relaxed)))
+            .map(|(at, orphan)| (at, orphan.ticket.load(Ordering::Acquire)))
             .filter(|&(_, ticket)| ticket != IDLE)
             .min_by_key(|&(_, ticket)| ticket)
     }
@@ -125,7 +128,7 @@ impl Orphans {
         };
         orphan.key.store(key, Ordering::Relaxed);
         orphan.value.store(value, Ordering::Relaxed);
-        orphan.ticket.store(ticket, Ordering::Relaxed);
+        orphan.ticket.store(ticket, Ordering::Release);
         self.kept.fetch_add(1, Ordering::Relaxed);
         KEPT.fetch_add(1, Ordering::Relaxed);
         true
@@ -136,26 +139,45 @@ impl Orphans {
         self.kept.load(Ordering::Relaxed)
     }
 
-    /// Lands what is kept, in ticket order, until the surface refuses one
-    /// for now. Only while no schedule writes the surface (see
-    /// [`super::gate::land_left_events`]).
-    pub(super) fn land_left(&self) {
+    /// Lands what is kept, in ticket order, while each one's turn has come:
+    /// `due` gives the earliest ticket a live schedule has waiting, or
+    /// `None` when that cannot be told now. Stops at one the surface
+    /// refuses for now, or another thread is landing; returns how many the
+    /// surface refused outright, dropped. Never waits.
+    pub(super) fn land(&self, due: impl Fn() -> Option<u64>) -> u32 {
+        let mut refused = 0;
         let Some(surface) = self.surface.get() else {
-            return;
+            return refused;
         };
-        while let Some((at, _)) = self.first() {
-            let orphan = &self.room[at];
-            let key = self.key(orphan.key.load(Ordering::Relaxed));
-            let value = bits_value(orphan.value.load(Ordering::Relaxed));
-            match surface.set_scheduled(key, value) {
-                Err(LegacyRefusal::Busy | LegacyRefusal::Full) => return,
-                _ => self.clear(at),
+        while let Some((at, ticket)) = self.first() {
+            if due().is_none_or(|earliest| ticket > earliest) {
+                break;
             }
+            let orphan = &self.room[at];
+            if orphan.landing.swap(true, Ordering::Acquire) {
+                break;
+            }
+            // Another thread may have landed it while this one looked.
+            if orphan.ticket.load(Ordering::Acquire) == ticket {
+                let key = self.key(orphan.key.load(Ordering::Relaxed));
+                let value = bits_value(orphan.value.load(Ordering::Relaxed));
+                match surface.set_scheduled(key, value) {
+                    Err(LegacyRefusal::Busy | LegacyRefusal::Full) => {
+                        orphan.landing.store(false, Ordering::Release);
+                        break;
+                    }
+                    Err(_) => refused += 1,
+                    Ok(()) => {}
+                }
+                self.clear(at);
+            }
+            orphan.landing.store(false, Ordering::Release);
         }
+        refused
     }
 
     fn clear(&self, at: usize) {
-        self.room[at].ticket.store(IDLE, Ordering::Relaxed);
+        self.room[at].ticket.store(IDLE, Ordering::Release);
         self.kept.fetch_sub(1, Ordering::Relaxed);
         KEPT.fetch_sub(1, Ordering::Relaxed);
     }
@@ -185,6 +207,7 @@ impl LegacyWrites {
         }
         self.waiting.store(0, Ordering::Relaxed);
         self.hide();
+        self.settle();
     }
 
     /// Lands the events left at its surfaces' gates whose turn has come:
@@ -195,22 +218,9 @@ impl LegacyWrites {
             return;
         }
         for group in self.groups.iter() {
-            let orphans = &group.gate.orphans;
-            while let Some((at, ticket)) = orphans.first() {
-                if ticket > group.gate.lanes_earliest() {
-                    break;
-                }
-                let orphan = &orphans.room[at];
-                let key = orphans.key(orphan.key.load(Ordering::Relaxed));
-                let value = bits_value(orphan.value.load(Ordering::Relaxed));
-                match group.surface.set_scheduled(key, value) {
-                    Ok(()) => orphans.clear(at),
-                    Err(LegacyRefusal::Busy | LegacyRefusal::Full) => break,
-                    Err(_) => {
-                        orphans.clear(at);
-                        self.refused.record();
-                    }
-                }
+            let gate = &group.gate;
+            for _ in 0..gate.orphans.land(|| Some(gate.lanes_earliest())) {
+                self.refused.record();
             }
         }
     }

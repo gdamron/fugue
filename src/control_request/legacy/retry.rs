@@ -84,7 +84,6 @@ struct Control {
 struct Group {
     gate: Arc<Gate>,
     lane: usize,
-    surface: Surface,
 }
 
 /// Whether `a` and `b` are one surface.
@@ -146,11 +145,7 @@ impl LegacyControls {
             let group = group.unwrap_or_else(|| {
                 let gate = Gate::of(surface);
                 let lane = gate.claim();
-                groups.push(Group {
-                    gate,
-                    lane,
-                    surface: surface.clone(),
-                });
+                groups.push(Group { gate, lane });
                 surfaces.push(surface);
                 surfaces.len() - 1
             });
@@ -325,6 +320,7 @@ impl LegacyWrites {
             }
         }
         self.waiting.store(kept, Ordering::Relaxed);
+        self.settle();
         self.land_orphans();
     }
 
@@ -442,6 +438,7 @@ impl LegacyWrites {
             }
         }
         self.waiting.store(kept, Ordering::Relaxed);
+        self.settle();
     }
 
     /// Shows the gate `ticket` waiting, unless an earlier one of this
@@ -452,10 +449,19 @@ impl LegacyWrites {
         }
     }
 
-    /// Shows every gate nothing of this schedule's waiting.
+    /// Shows every gate nothing of this schedule's waiting, for a pass to
+    /// show again what still waits: [`Self::settle`] ends it.
     fn hide(&self) {
         for group in self.groups.iter() {
+            group.gate.begin();
             group.gate.show(group.lane, IDLE);
+        }
+    }
+
+    /// Ends a pass [`Self::hide`] began: every gate shows what waits.
+    fn settle(&self) {
+        for group in self.groups.iter() {
+            group.gate.end();
         }
     }
 }
