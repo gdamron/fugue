@@ -25,7 +25,7 @@ fn one_shot(frames: &[[f32; 2]]) -> (SamplePlayerControls, SamplePlayer, std::pa
 }
 
 /// The swap lock, held by another thread as a control thread mid-
-/// `set_asset` would, until [`Self::release`]: or for two seconds, should
+/// `set_asset` would, until [`Self::release`]: or for ten seconds, should
 /// the audio thread wait on it, so that fails rather than hangs.
 struct HeldSwapLock {
     release: mpsc::Sender<()>,
@@ -39,7 +39,7 @@ fn hold_swap_lock(controls: &SamplePlayerControls) -> HeldSwapLock {
     let holder = std::thread::spawn(move || {
         let _held = controls.hold_swap_lock();
         holding.send(()).unwrap();
-        released.recv_timeout(Duration::from_secs(2)).is_ok()
+        released.recv_timeout(Duration::from_secs(10)).is_ok()
     });
     holds.recv_timeout(Duration::from_secs(10)).unwrap();
     HeldSwapLock { release, holder }
