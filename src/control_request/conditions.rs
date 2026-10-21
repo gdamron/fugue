@@ -100,7 +100,10 @@ impl WatchSlots {
     }
 
     /// Control thread: notes that timed edit `id` was cancelled, so never
-    /// applies (its fate settled so, once).
+    /// applies (its fate settled so, once). Only the latest few are kept:
+    /// what waits on one forgotten before the drain looked is refused
+    /// once the edit is, at its due sample, or at the next segment start
+    /// for one timed by a condition (see [`ConditionHost::edit_cancelled`]).
     pub(crate) fn cancel(&self, id: RequestId) {
         let at = self.next_cancelled.fetch_add(1, Ordering::Relaxed) % CANCELLED;
         self.cancelled[at].store(id.0, Ordering::Release);
@@ -127,6 +130,12 @@ pub(crate) trait ConditionHost {
     /// The value declared control `control` of `module` holds, as a
     /// number. `None` when it declares no such control.
     fn control(&self, module: usize, control: ControlIndex) -> Option<f32>;
+
+    /// Whether `value`, a timed edit, was cancelled while it waited, so
+    /// never lands. Allocation- and lock-free.
+    fn edit_cancelled(&self, _value: &RequestValue) -> bool {
+        false
+    }
 
     /// Applies `value` as the pending store's `apply` does, of `standing`
     /// (none for an event): `Err` is what it reports instead.
@@ -288,7 +297,11 @@ impl Conditions {
             let entry = &mut self.entries[i];
             // A timed edit cancelled while its condition waits never lands,
             // nor does what waits on one, whatever graph it is tagged for.
-            if cancelled.contains(&entry.request.id.0) && entry.request.value.is_edit() {
+            // The edit is read itself, so it never waits on, however many
+            // were cancelled since; what waits on it, through the latest
+            // cancelled, or once the edit is refused.
+            let value = &entry.request.value;
+            if value.is_edit() && host.edit_cancelled(value) {
                 self.end(i, outcomes, Refusal::TargetGone.into());
                 continue;
             }

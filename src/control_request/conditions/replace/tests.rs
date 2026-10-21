@@ -51,3 +51,18 @@ fn an_event_a_ttl_or_another_condition_replaces_nothing() {
     assert_eq!(log(&outcomes), []);
     assert_eq!((conditions.len(), slots.taken()), (6, 6));
 }
+
+/// A waiting request that may expire is never replaced: a higher rank
+/// expiring before the landing would otherwise leave nothing to apply.
+#[test]
+fn a_request_that_may_expire_is_never_replaced() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut expiring = request(1, &AFTER);
+    expiring.expires = Some(100);
+    expiring.priority = 1;
+    insert(&mut conditions, &slots, expiring, &mut store);
+    insert(&mut conditions, &slots, request(2, &AFTER), &mut store);
+    assert_eq!(log(&outcomes), []);
+    assert_eq!((conditions.len(), slots.taken()), (2, 2));
+}

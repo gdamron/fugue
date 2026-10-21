@@ -16,6 +16,7 @@
 //! reported late. A target in a feedback group, or a sink, is not split:
 //! what comes due inside its segment applies there too.
 
+use super::publication::Publication;
 use super::requests::RequestDrain;
 use super::SignalGraph;
 use crate::control_request::{
@@ -66,6 +67,15 @@ impl ConditionHost for SignalGraph {
         })
     }
 
+    fn edit_cancelled(&self, value: &RequestValue) -> bool {
+        let RequestValue::Edit(payload) = value else {
+            return false;
+        };
+        let publication = payload.peek::<Publication>();
+        let fate = publication.and_then(|publication| publication.fate.as_ref());
+        fate.is_some_and(|fate| fate.cancelled())
+    }
+
     fn apply(
         &mut self,
         target: &ControlTarget,
@@ -97,6 +107,10 @@ impl ConditionHost for Superseding<'_> {
 
     fn control(&self, module: usize, control: ControlIndex) -> Option<f32> {
         ConditionHost::control(&*self.graph, module, control)
+    }
+
+    fn edit_cancelled(&self, value: &RequestValue) -> bool {
+        self.graph.edit_cancelled(value)
     }
 
     fn apply(
