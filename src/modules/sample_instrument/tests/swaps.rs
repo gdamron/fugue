@@ -119,3 +119,38 @@ fn replacing_zone_audio_frees_nothing_on_the_audio_thread() {
     let _ = std::fs::remove_file(first);
     let _ = std::fs::remove_file(second);
 }
+
+#[test]
+fn a_voice_letting_go_of_twice_replaced_audio_frees_nothing() {
+    let first = write_level_wav(0.5, 44_100);
+    let second = write_level_wav(0.25, 44_100);
+    let third = write_level_wav(0.125, 44_100);
+    let config = serde_json::json!({
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": first.to_str().unwrap() } ]
+    });
+    let (mut instrument, controls) = build_instrument(config);
+    note(&controls, "note_on", 60.0);
+    instrument.process(1);
+
+    // The sounding voice keeps the first audio through two swaps; the
+    // second drops the parked first on this control thread.
+    controls.set_asset(0, second.to_str().unwrap()).unwrap();
+    instrument.process(1);
+    controls.set_asset(0, third.to_str().unwrap()).unwrap();
+    instrument.process(1);
+
+    // Retriggering the note moves its voice to the third audio, fading out
+    // the first and then letting go of it: the cache still owns it.
+    note(&controls, "note_on", 60.0);
+    let (_, allocs, frees) = allocator_events(|| {
+        for _ in 0..4_410 {
+            instrument.process(1);
+        }
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert!((instrument.get_output("audio_left").unwrap() - 0.125).abs() < TOL);
+
+    for path in [first, second, third] {
+        let _ = std::fs::remove_file(path);
+    }
+}

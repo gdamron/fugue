@@ -192,3 +192,20 @@ fn elastic_mode_config_parses_and_rejects_unknowns() {
     let err = elastic_mode_from_config("m", &bad).unwrap_err();
     assert!(err.contains("'mode'"), "{err}");
 }
+
+#[test]
+fn a_sample_decoded_by_a_losing_racer_is_not_the_one_returned() {
+    // Two threads missed the same key, and both decoded it: the second to
+    // cache gets the first's buffer, so the cache owns whatever either
+    // returns, and a voice dropping it on the audio thread frees nothing.
+    let key = ("fugue-test://a-raced-sample".to_string(), RATE);
+    let first = Arc::new(SampleData::from_interleaved(1, RATE, RATE, vec![0.1; 4]));
+    let second = Arc::new(SampleData::from_interleaved(1, RATE, RATE, vec![0.2; 4]));
+    let lost = Arc::downgrade(&second);
+    assert!(Arc::ptr_eq(
+        &super::cache_loaded(key.clone(), first.clone()),
+        &first
+    ));
+    assert!(Arc::ptr_eq(&super::cache_loaded(key, second), &first));
+    assert!(lost.upgrade().is_none(), "the losing decode is dropped");
+}
