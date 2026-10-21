@@ -566,3 +566,23 @@ fn recorded_document(rig: &Rig, id: &str) -> f64 {
     let spec = document.modules.iter().find(|spec| spec.id == id).unwrap();
     spec.config["frequency"].as_f64().unwrap()
 }
+
+/// Authored writers take turns from making a write to recording it, so
+/// one recorded later was made later: a write made while another holds
+/// its turn waits for it, rather than make its write and record it first.
+#[test]
+fn authored_writers_take_turns_from_write_to_record() {
+    let rig = Rig::new(BASE);
+    let turn = rig.live.authoring();
+    let door = front_door(&rig);
+    let writer = std::thread::spawn(move || {
+        let value = ControlValue::Number(660.0);
+        door.set_control_with_intent("osc2", "frequency", value, ControlWriteIntent::Author)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let (document, _) = recorded(&rig, "osc2", "frequency");
+    assert_ne!(document, 660.0, "the writer waits its turn");
+    drop(turn);
+    writer.join().unwrap().unwrap();
+    assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
+}
