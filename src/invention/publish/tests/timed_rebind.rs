@@ -6,15 +6,17 @@
 //! schedule write racing the edit while it waits cancels it, as a change
 //! publishing does.
 
-use super::request_beats::{outcomes_of, render_counted, Twin};
+use super::migrated::{read, write};
+use super::request_beats::{outcomes_of, render_counted};
 use super::schedule_payload::scheduler;
 use super::scheduler_beats::{beat_samples, blocks, level, rig_on};
 use super::*;
-use crate::control_request::{BeatSpec, Outcome, Refusal, RequestId, Timeline};
+use crate::control_request::{BeatSpec, Outcome, Refusal, RequestId};
 use crate::invention::declared::STALE;
 use crate::invention::publish::timed::EditTime;
 use crate::invention::publish::{CancelCause, EditState};
 use crate::test_support::dial::DIAL;
+use crate::ControlValue;
 
 /// A tempo with fractional samples per beat at 48 kHz.
 const BPM: f64 = 97.0;
@@ -62,12 +64,8 @@ fn plays_steps(out: &[f32], beats: &[usize], from: usize) -> bool {
     })
 }
 
-/// On a beat between two steps: from the landing sample the new instance
-/// plays, and every later step's entry reaches it.
-///
-/// An entry due on the landing sample itself still applies to the instance
-/// replaced: the drain plays what is due at a landing sample before the
-/// edit installs (see `graph::publication::landing`).
+/// On a step's beat: from the landing sample the new instance plays, that
+/// step's entry included (FUG-413), and every later step's.
 #[test]
 fn a_timed_swap_at_a_beat_plays_the_schedule_on_to_the_new_instance() {
     let beats = beat_samples(BPM, 8);
@@ -77,26 +75,63 @@ fn a_timed_swap_at_a_beat_plays_the_schedule_on_to_the_new_instance() {
     // From the clock's beat 0, as the drain takes it in the first block.
     let time = EditTime::Beat {
         clock: "clock",
-        spec: BeatSpec::After(2.5),
+        spec: BeatSpec::After(3.0),
     };
     let id = swap_dial(&rig, time, None).unwrap();
     // Waiting: nothing recorded yet.
     assert_eq!(controls.recorded(), recorded);
     let out = render_counted(&mut rig, blocks(BPM, 7.0));
 
-    let mut twin = Twin::new(BPM);
-    let lands = twin.until(|clock| clock.position() >= 2.5) as usize;
-    let landed = Outcome::Applied { at: lands as u64 };
+    let landed = Outcome::Applied {
+        at: beats[3] as u64,
+    };
     assert_eq!(outcomes_of(&mut rig, id), [(id, landed)]);
     assert!(out[..beats[1]].iter().all(|&level| level == 0.25));
-    assert!(out[beats[2]..lands].iter().all(|&level| level == value(2)));
-    assert!(out[lands..beats[3]].iter().all(|&level| level == 0.25));
-    assert!(plays_steps(&out, &beats, 3), "the schedule plays on");
+    assert!(plays_steps(&out, &beats, 1), "the schedule plays on");
     // Adopted: the handover is recorded as the schedule the scheduler
     // adopted.
     rig.live.adopt_landed();
     assert_ne!(controls.recorded(), recorded);
     assert_eq!(controls.recorded(), controls.adopted());
+}
+
+/// Timed in samples onto a step's, the same: the step's entry plays once,
+/// on the new instance (FUG-413).
+#[test]
+fn a_timed_swap_on_a_step_plays_its_entry_on_the_new_instance() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let id = swap_dial(&rig, EditTime::AtSample(beats[3] as u64), None).unwrap();
+    let out = render_counted(&mut rig, blocks(BPM, 7.0));
+    let landed = Outcome::Applied {
+        at: beats[3] as u64,
+    };
+    assert_eq!(outcomes_of(&mut rig, id), [(id, landed)]);
+    assert!(plays_steps(&out, &beats, 1));
+}
+
+/// An immediate swap installing on a step's sample (a block start) plays
+/// that step's entry on the new instance too.
+#[test]
+fn an_immediate_swap_on_a_step_plays_its_entry_on_the_new_instance() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let lands = beats[3];
+    let mut out = render_counted(&mut rig, lands / 64);
+    let rest = lands - out.len();
+    let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+    rig.graph
+        .process_block(&mut left[..rest], &mut right[..rest]);
+    out.extend_from_slice(&left[..rest]);
+    let dial = rig.build("dial", DIAL, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("dial", dial);
+            Ok(())
+        })
+        .unwrap();
+    out.extend(render_counted(&mut rig, blocks(BPM, 7.0) - out.len() / 64));
+    assert!(plays_steps(&out, &beats, 1));
 }
 
 /// Landing mid-step, the new instance holds its own level until the next
@@ -228,16 +263,10 @@ fn a_schedule_written_after_a_timed_swap_lands_waits_for_its_adoption() {
     );
 }
 
-/// On a step's own sample, the new instance should play that step's level
-/// from the landing, as it plays every later step's.
-///
-/// Today it does not (FUG-413): the drain plays the entries due on a
-/// landing sample before the edit installs, so step 3's level goes to the
-/// instance replaced, and the new one holds its own level (0.25) until
-/// step 4. FUG-413 changes the drain's order (with FUG-388, which hits the
-/// same loss for immediate retargets) and flips or replaces this test.
+/// On a step's own sample, the new instance plays that step's level from
+/// the landing, as it plays every later step's: the drain plays the
+/// entries due on a landing sample once the edit installs (FUG-413).
 #[test]
-#[ignore = "FUG-413: a timed edit landing on a step's sample loses that step for the new instance"]
 fn a_timed_swap_on_a_step_plays_that_step_on_the_new_instance() {
     let beats = beat_samples(BPM, 8);
     let mut rig = stepped();
@@ -247,6 +276,132 @@ fn a_timed_swap_on_a_step_plays_that_step_on_the_new_instance() {
     let landed = Outcome::Applied { at: lands as u64 };
     assert_eq!(outcomes_of(&mut rig, id), [(id, landed)]);
     let step3 = &out[lands..beats[4]];
-    assert!(step3.iter().all(|&level| level == value(3)), "today 0.25");
+    assert!(step3.iter().all(|&level| level == value(3)));
     assert!(plays_steps(&out, &beats, 4));
+}
+
+/// An edit swapping one of a scheduler's targets and unplugging its clock
+/// on a step's sample leaves the scheduler off the drain: the step plays
+/// before it installs, as one only unplugging the clock does, so its
+/// entry on the target kept lands.
+#[test]
+fn a_swap_unplugging_the_clock_on_a_step_plays_it_before_the_install() {
+    let beats = beat_samples(BPM, 8);
+    let mut rig = stepped();
+    let d2 = rig.build("d2", DIAL, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("d2", d2);
+            Ok(())
+        })
+        .unwrap();
+    let schedule = serde_json::json!([level(3, 0.3), at_d2(3, 0.6)]);
+    write(&rig, "sched", "schedule", schedule.to_string().into());
+    let lands = beats[3];
+    let out = render_counted(&mut rig, lands / 64);
+    let rest = lands - out.len();
+    let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+    rig.graph
+        .process_block(&mut left[..rest], &mut right[..rest]);
+    let dial = rig.build("dial", DIAL, serde_json::json!({}));
+    rig.live
+        .edit(|change| {
+            change.upsert("dial", dial);
+            change.disconnect(edge("clock", "beat", "sched", "clock"));
+            Ok(())
+        })
+        .unwrap();
+    render_counted(&mut rig, 1);
+    assert_eq!(read(&rig, "d2", "level"), ControlValue::Number(0.6));
+}
+
+/// An entry at `step` setting d2's level to `value`.
+fn at_d2(step: u32, value: f32) -> serde_json::Value {
+    serde_json::json!({ "at_step": step, "module": "d2", "control": "level", "value": value })
+}
+
+/// Two schedulers writing d2 on one step, only the first also writing the
+/// dial a swap rebuilds there: the later one in module order still lands
+/// its write last, the install timed or not.
+#[test]
+fn tables_on_one_control_keep_their_order_across_a_swap_on_a_step() {
+    let beats = beat_samples(BPM, 8);
+    for timed in [false, true] {
+        let mut rig = stepped();
+        let d2 = rig.build("d2", DIAL, serde_json::json!({}));
+        let config = serde_json::json!({ "schedule": [] });
+        let sched_b = rig.build("sched_b", "control_scheduler", config);
+        rig.live
+            .edit(|change| {
+                change.upsert("d2", d2);
+                change.upsert("sched_b", sched_b);
+                change.connect(edge("clock", "beat", "sched_b", "clock"))
+            })
+            .unwrap();
+        let first = serde_json::json!([level(3, 0.3), at_d2(3, 0.5)]);
+        write(&rig, "sched", "schedule", first.to_string().into());
+        let last = serde_json::json!([at_d2(3, 0.75)]);
+        write(&rig, "sched_b", "schedule", last.to_string().into());
+        let lands = beats[3];
+        if timed {
+            swap_dial(&rig, EditTime::AtSample(lands as u64), None).unwrap();
+            render_counted(&mut rig, lands / 64 + 1);
+            // Read through the surfaces the landed edit installs.
+            rig.live.adopt_landed();
+        } else {
+            render_counted(&mut rig, lands / 64);
+            let rest = lands - rig.graph.current_sample as usize;
+            let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+            rig.graph
+                .process_block(&mut left[..rest], &mut right[..rest]);
+            let dial = rig.build("dial", DIAL, serde_json::json!({}));
+            rig.live
+                .edit(|change| {
+                    change.upsert("dial", dial);
+                    Ok(())
+                })
+                .unwrap();
+            render_counted(&mut rig, 1);
+        }
+        let heard = (read(&rig, "d2", "level"), read(&rig, "dial", "level"));
+        let expected = (ControlValue::Number(0.75), ControlValue::Number(0.3));
+        assert_eq!(heard, expected, "timed: {timed}");
+    }
+}
+
+/// A ramp of the dial's level from step 1 arriving at 1.0 on step 3, the
+/// sample a swap of the dial installs at, immediately or timed: its last
+/// write reaches the new instance, which holds 1.0 from there (FUG-413).
+#[test]
+fn a_swap_on_a_ramp_s_arrival_lands_its_end_on_the_new_instance() {
+    let beats = beat_samples(BPM, 8);
+    let ramp = serde_json::json!([
+        { "at_step": 1, "module": "dial", "control": "level", "value": 1.0, "ramp_steps": 2 }
+    ]);
+    for timed in [false, true] {
+        let mut rig = rig_on(DOCUMENT, BPM, ramp.clone(), ("dial", "out"));
+        let lands = beats[3];
+        let mut out = if timed {
+            swap_dial(&rig, EditTime::AtSample(lands as u64), None).unwrap();
+            Vec::new()
+        } else {
+            let mut out = render_counted(&mut rig, lands / 64);
+            let rest = lands - out.len();
+            let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+            rig.graph
+                .process_block(&mut left[..rest], &mut right[..rest]);
+            out.extend_from_slice(&left[..rest]);
+            let dial = rig.build("dial", DIAL, serde_json::json!({}));
+            rig.live
+                .edit(|change| {
+                    change.upsert("dial", dial);
+                    Ok(())
+                })
+                .unwrap();
+            out
+        };
+        out.extend(render_counted(&mut rig, blocks(BPM, 5.0) - out.len() / 64));
+        let held = &out[lands..beats[5]];
+        assert!(held.iter().all(|&level| level == 1.0), "timed: {timed}");
+    }
 }

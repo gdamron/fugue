@@ -41,6 +41,7 @@ mod publisher;
 mod rebind;
 mod reclaim;
 mod registry;
+mod retarget;
 #[cfg(test)]
 pub(crate) mod tests;
 mod timed;
@@ -58,6 +59,7 @@ pub(crate) use pending::{PendingLog, PendingWrite};
 pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
+pub(crate) use retarget::Retarget;
 pub(crate) use timed::{Authored, EditTime};
 pub(crate) use timed_status::{CancelCause, EditState, EditStatus, Touched};
 
@@ -147,6 +149,33 @@ impl Settler {
             }
         }
     }
+}
+
+/// A change against the topology `publisher` last published, its edits
+/// building against `directory`, the live graph's control surfaces.
+fn change_against(
+    publisher: &Publisher,
+    directory: Arc<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
+    requests: &RequestSender,
+) -> GraphChange {
+    let mut change = GraphChange::new(
+        publisher.generation(),
+        publisher.mirror().clone(),
+        directory,
+        publisher.block_size(),
+    );
+    // Orders conditions watched through, once none waits (see `change::order`).
+    if requests.watch_slots().taken() == 0 {
+        change.forget_orders();
+    }
+    change
+}
+
+/// Whether more publications than the retire ring holds wait to be freed
+/// (see [`LiveGraph::backlogged`]).
+fn backlogged(publisher: &Publisher, reclaimer: &Reclaimer) -> bool {
+    let unfreed = publisher.generation() - reclaimer.freed();
+    unfreed > publisher::RETIRE_CAPACITY as u64
 }
 
 /// The runtime's mirrors of the graph a commit updates: control surfaces,
@@ -266,8 +295,7 @@ impl LiveGraph {
     /// counters only: every commit reclaims just before it locks the
     /// publisher, since what a reclaim frees must not drop under the lock.
     fn backlogged(&self, publisher: &Publisher) -> bool {
-        let unfreed = publisher.generation() - self.reclaimer.freed();
-        unfreed > publisher::RETIRE_CAPACITY as u64
+        backlogged(publisher, &self.reclaimer)
     }
 
     /// Serializes authored writes, each held from making the write to
@@ -320,17 +348,7 @@ impl LiveGraph {
     }
 
     fn change_on(&self, publisher: &Publisher) -> GraphChange {
-        let mut change = GraphChange::new(
-            publisher.generation(),
-            publisher.mirror().clone(),
-            self.control_surfaces.clone(),
-            publisher.block_size(),
-        );
-        // Orders conditions watched through, once none waits (see `change::order`).
-        if self.requests.watch_slots().taken() == 0 {
-            change.forget_orders();
-        }
-        change
+        change_against(publisher, self.control_surfaces.clone(), &self.requests)
     }
 
     /// Control writes submitted and not yet applied (or refused), oldest
@@ -378,6 +396,7 @@ impl LiveGraph {
             pending: self.pending.clone(),
             module_id: String::new(),
             settler: self.settler.clone(),
+            retarget: Retarget::new(&self.control_surfaces, &self.reclaimer, &self.requests),
         }
     }
 
