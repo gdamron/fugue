@@ -192,3 +192,41 @@ fn invalid_source_checkout_is_a_catalog_diagnostic() {
         page.diagnostics
     );
 }
+
+#[test]
+fn checkout_fingerprints_name_the_bytes_parsed() {
+    // A checkout changes in place, and its package hash is taken after its
+    // documents are read; the documents and manifest as parsed are therefore
+    // fingerprinted too, so a load that parsed one revision never matches an
+    // inspection of another.
+    let (_temp, roots) = checkout("=2026.10.2", "2026.10.2");
+    let starter_dir = roots.packages.join("fugue.starter.study");
+    let piano = roots.packages.join("fugue.instruments.piano/voice.json");
+    let fingerprints = roots
+        .inspect(&starter(), Hashing::Full)
+        .unwrap()
+        .fingerprints;
+    let parsed = |path: &Path| hash(&fs::read(path).unwrap());
+    assert_eq!(
+        fingerprints["checkout:fugue.starter.study:invention.json"],
+        parsed(&starter_dir.join("invention.json"))
+    );
+    assert_eq!(
+        fingerprints["checkout:fugue.instruments.piano:voice.json"],
+        parsed(&piano)
+    );
+    assert!(fingerprints.contains_key("checkout-manifest:fugue.starter.study"));
+    assert!(fingerprints.contains_key("checkout-manifest:fugue.instruments.piano"));
+
+    let mut edited = voice();
+    edited["title"] = json!("Edited piano");
+    write(&piano, &edited);
+    let after = roots
+        .inspect(&starter(), Hashing::Full)
+        .unwrap()
+        .fingerprints;
+    assert_ne!(
+        after["checkout:fugue.instruments.piano:voice.json"],
+        fingerprints["checkout:fugue.instruments.piano:voice.json"]
+    );
+}

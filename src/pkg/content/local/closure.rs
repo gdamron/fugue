@@ -30,6 +30,7 @@ impl ContentRoots {
             serde_json::from_slice(&bytes).map_err(|e| err("invalid_content", e))?;
         document.source_path = Some(path.clone());
         self.fingerprint_file(&path, root, || Ok(hash(&bytes)), manifest, closure)?;
+        self.fingerprint_checkout_bytes(&path, root, &bytes, closure)?;
         if let Some(m) = manifest.filter(|m| match &m.entry {
             pkg::EntrySpec::Development { development } => root.join(development) == path,
             pkg::EntrySpec::Invention { invention } => root.join(invention) == path,
@@ -288,6 +289,7 @@ impl ContentRoots {
         } else {
             let bytes = read_file(&path)?;
             self.fingerprint_file(&path, root, || Ok(hash(&bytes)), manifest, closure)?;
+            self.fingerprint_checkout_bytes(&path, root, &bytes, closure)?;
         }
         push_unique(&mut closure.assets, relative.into());
         Ok(())
@@ -321,6 +323,37 @@ impl ContentRoots {
         Ok(())
     }
 
+    /// The package id when `root` is a source checkout (`<packages>/<id>`).
+    /// Its files can change in place, so the bytes actually parsed are
+    /// fingerprinted as well: the package hash is taken after those reads and
+    /// could describe a later revision than the one loaded.
+    fn checkout_id(&self, root: &Path) -> Option<String> {
+        let packages = canonical(&self.packages, "content_not_found").ok()?;
+        let root = canonical(root, "content_not_found").ok()?;
+        let id = root.strip_prefix(&packages).ok()?.to_str()?;
+        (root.parent() == Some(packages.as_path()) && pkg::is_source_checkout(&packages, id))
+            .then(|| id.to_string())
+    }
+
+    fn fingerprint_checkout_bytes(
+        &self,
+        path: &Path,
+        root: &Path,
+        bytes: &[u8],
+        closure: &mut Closure,
+    ) -> Result<()> {
+        if let Some(id) = self.checkout_id(root) {
+            let relative = path
+                .strip_prefix(canonical(root, "content_not_found")?)
+                .map_err(|e| err("outside_root", e))?;
+            closure.fingerprints.insert(
+                format!("checkout:{id}:{}", relative.to_string_lossy()),
+                hash(bytes),
+            );
+        }
+        Ok(())
+    }
+
     fn package_integrity(
         &self,
         root: &Path,
@@ -332,6 +365,13 @@ impl ContentRoots {
         // the same sample library once per zone.
         if closure.fingerprints.contains_key(&key) {
             return Ok(());
+        }
+        if let Some(id) = self.checkout_id(root) {
+            // The manifest as parsed, for the same reason as its documents.
+            let parsed = serde_json::to_vec(manifest).map_err(|e| err("invalid_content", e))?;
+            closure
+                .fingerprints
+                .insert(format!("checkout-manifest:{id}"), hash(&parsed));
         }
         contained(&self.packages, root)?;
         let integrity = cache::package_integrity(root, closure.hashing, || {
