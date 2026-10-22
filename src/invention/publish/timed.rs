@@ -187,6 +187,15 @@ impl LiveGraph {
         Authored::Recorded
     }
 
+    /// Cancels the timed edit waiting, if any, as the invention stops, or
+    /// adopts it when it has landed (see `RunningInvention::settle_requests`).
+    pub(crate) fn settle_timed(&self) {
+        let mut publisher = self.lock();
+        if !publisher.cancel_timed(|| CancelCause::Stopping) {
+            self.adopt(&mut publisher);
+        }
+    }
+
     /// Queues `prepared` to land at `time`, refused once `ttl` samples have
     /// passed, and `retain` to run on the runtime state as it lands (a
     /// reload's document, say). Returns the request's id, whose outcome
