@@ -339,6 +339,9 @@ impl SignalGraph {
             compile_topology(modules, edges, sinks, self.block_size)
         };
         topology.swap_with(self);
+        if let Some(watch) = &mut self.end_watch {
+            watch.refresh(&self.modules);
+        }
         // `topology` now holds the previous derived state.
         let previous = &topology.connected_in_ports;
         let same_order = previous.len() == self.modules.len();
