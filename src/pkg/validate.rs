@@ -155,10 +155,16 @@ pub fn parse_str(input: &str) -> Result<PackageManifest, ManifestError> {
     Ok(manifest)
 }
 
-/// Parse and validate a manifest from a path on disk.
+/// Parse and validate a manifest from a path on disk. The read is bounded like
+/// any document (a regular file under 16 MiB), so an oversized manifest in a
+/// source checkout is refused before it is read into memory.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_path(path: impl AsRef<std::path::Path>) -> Result<PackageManifest, ManifestError> {
-    let bytes = std::fs::read(path.as_ref())?;
+    use crate::pkg::read_limit::ReadError;
+    let bytes = crate::pkg::read_limit::read_document(path.as_ref()).map_err(|e| match e {
+        ReadError::Io(e) => e,
+        too_large => std::io::Error::new(std::io::ErrorKind::InvalidData, too_large.to_string()),
+    })?;
     let manifest: PackageManifest = serde_json::from_slice(&bytes)?;
     validate(&manifest)?;
     Ok(manifest)

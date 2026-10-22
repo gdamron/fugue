@@ -7,6 +7,8 @@
 
 pub mod audio_asset;
 pub mod content;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod layout;
 pub mod lock;
 pub mod manifest;
 pub mod read_limit;
@@ -31,6 +33,8 @@ pub use validate::{parse_str, validate, ManifestError, ValidationError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use audio_asset::{default_packages_dir, resolve_package_asset, ResolvedPackageAsset};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use layout::is_source_checkout;
 #[cfg(not(target_arch = "wasm32"))]
 pub use lock::compute_integrity;
 
