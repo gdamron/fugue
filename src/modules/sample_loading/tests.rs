@@ -241,3 +241,25 @@ fn a_changed_file_at_the_same_path_decodes_afresh() {
     assert!(!Arc::ptr_eq(&first, &second));
     assert_eq!(second.frame_at(0).0, 0.5);
 }
+
+#[test]
+fn oversized_and_non_regular_local_samples_are_refused_before_reading() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("huge.wav");
+    std::fs::write(&path, vec![0u8; 64]).unwrap();
+    let source = path.to_str().unwrap();
+    let refused = |source: &str| match super::load_cached_sample(source, RATE) {
+        Ok(_) => panic!("{source} loaded"),
+        Err(error) => error,
+    };
+    let error = crate::pkg::read_limit::test_override::with_hashed_limit(16, || refused(source));
+    assert!(error.contains("Failed to open sample"), "{error}");
+
+    let error = refused(dir.path().to_str().unwrap());
+    assert!(error.contains("not a regular file"), "{error}");
+    #[cfg(unix)]
+    {
+        let error = refused("/dev/zero");
+        assert!(error.contains("not a regular file"), "{error}");
+    }
+}

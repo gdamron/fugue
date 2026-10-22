@@ -16,6 +16,7 @@ use std::io::Read;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub(crate) mod elastic;
+mod local;
 
 #[cfg(test)]
 mod tests;
@@ -244,7 +245,7 @@ pub(crate) fn load_cached_sample(
 ) -> Result<Arc<SampleData>, String> {
     // A local file is read once: its digest keys the cache, and the same
     // bytes decode on a miss, so the key always names what was decoded.
-    let (bytes, digest) = read_local(source)?;
+    let (bytes, digest) = local::read_local(source)?;
     let key = (source.to_string(), target_sample_rate, digest);
 
     if let Some(cached) = sample_cache().lock().unwrap().get(&key) {
@@ -261,26 +262,6 @@ pub(crate) fn load_cached_sample(
         None => load_sample(source, target_sample_rate)?,
     };
     Ok(cache_loaded(key, Arc::new(sample)))
-}
-
-/// A local sample file's bytes and their SHA-256, or `None`s for a URL
-/// (fetched by `open_source`).
-#[cfg(not(target_arch = "wasm32"))]
-fn read_local(source: &str) -> Result<(Option<Vec<u8>>, Option<String>), String> {
-    use sha2::{Digest, Sha256};
-    if source.starts_with("https://") || source.starts_with("http://") {
-        return Ok((None, None));
-    }
-    let bytes = std::fs::read(source)
-        .map_err(|err| format!("Failed to open sample '{}': {}", source, err))?;
-    let digest = crate::hex::lower_hex(&Sha256::digest(&bytes));
-    Ok((Some(bytes), Some(digest)))
-}
-
-/// Sample loading is unavailable on wasm32; `open_source` reports why.
-#[cfg(target_arch = "wasm32")]
-fn read_local(_source: &str) -> Result<(Option<Vec<u8>>, Option<String>), String> {
-    Ok((None, None))
 }
 
 /// Caches `sample` under `key`, returning the buffer the cache keeps: one
