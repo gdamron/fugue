@@ -191,21 +191,28 @@ impl SignalGraph {
     }
 
     /// Finds every module's table and the clock it steps on, after the
-    /// modules or their routes changed, telling each table whether the
-    /// drain plays it: a table finding no clock output on its clock input
-    /// (nothing, a mix of sources, or another signal) or no room plays on
-    /// its own. The tables played before are found first, so the room of
+    /// modules or their routes changed, telling each table who plays it:
+    /// the drain on one clock output on its clock input, the drain on the
+    /// edges of any other signal or mix of them (one computing outside a
+    /// feedback group), or, with nothing on its clock input, in a feedback
+    /// group or with no room, its module. The tables played before are found first, so the room of
     /// those gone is free for new ones; then the cursors are put in module
     /// order. Allocation-, free- and lock-free.
     fn find_tables(&self, watches: &mut Watches) {
-        let Watches { cursors, ramps, .. } = watches;
+        let Watches {
+            cursors,
+            ramps,
+            edges,
+            ..
+        } = watches;
         cursors.seek();
+        edges.seek();
         for known in [true, false] {
             for (module, (id, instance)) in self.modules.iter().enumerate() {
                 let Some(table) = instance.module().beat_table() else {
                     continue;
                 };
-                if cursors.has(table.id()) != known {
+                if (cursors.has(table.id()) || edges.has(table.id())) != known {
                     continue;
                 }
                 let input = table.clock_input();
@@ -219,6 +226,12 @@ impl SignalGraph {
                 };
                 let player = if cursors.found(table.id(), module, clock, ramps) {
                     Player::Clock
+                } else if clock.is_none()
+                    && self
+                        .edge_ports(module, table)
+                        .is_some_and(|ports| edges.found(table, module, ports))
+                {
+                    Player::Edges
                 } else {
                     Player::Module
                 };
@@ -226,9 +239,11 @@ impl SignalGraph {
             }
             if known {
                 cursors.sought(ramps);
+                edges.prune();
             }
         }
         cursors.order();
+        edges.sought(self);
     }
 
     /// The clock whose output `port` of module `id` is, if it is one, told

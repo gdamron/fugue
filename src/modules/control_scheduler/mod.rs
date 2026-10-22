@@ -13,37 +13,51 @@
 //! its step falls on, as a request timed in beats applies.
 //!
 //! In an invention's top level the graph's request drain plays the
-//! schedule in place, on the clock's position (see
-//! `crate::control_request::BeatTable`), when `clock` takes one clock's
-//! gate output, or nothing; on any other signal, or a mix of several, the
-//! scheduler plays it itself, as inside a development (below). On a clock,
-//! step 0 falls on the clock's first gate past where it stood when the
-//! drain first saw the schedule (beat 0 for a clock not yet started),
-//! whatever the block boundaries, and a tempo an entry writes moves the
-//! next steps at once. When the clock
-//! resets, the schedule plays again from step 0 on the clock's new beat 0;
-//! the `reset` input is not followed there. The `step` output follows the
-//! clock's position. When two schedulers write one control at one sample,
-//! the later module's write lands, unless the earlier one's entry only fell
-//! due there because the later one wrote its clock's tempo at that sample:
-//! it lands after the write that moved it. (A scheduler playing its
-//! schedule itself, below, writes as it processes, after every schedule
-//! the drain plays.) Module order is the order of the
-//! invention's `modules` at load: a module rebuilt in place keeps its
-//! place, and one added later, live or by a reload, goes after every
-//! other. Reordering `modules` in a reloaded document doesn't reorder the
-//! running modules, so the order is load order plus edit history.
+//! schedule in place. On one clock's gate output it plays on the clock's
+//! position (see `crate::control_request::BeatTable`): step 0
+//! falls on the clock's first gate past where it stood when the drain
+//! first saw the schedule (beat 0 for a clock not yet started), whatever
+//! the block boundaries, and a tempo an entry writes moves the next steps
+//! at once. When the clock resets, the schedule plays again from step 0 on
+//! the clock's new beat 0; the `reset` input is not followed there. The
+//! `step` output follows the clock's position. When two schedulers write
+//! one control at one sample, the later module's write lands, unless the
+//! earlier one's entry only fell due there because the later one wrote its
+//! clock's tempo at that sample: it lands after the write that moved it.
+//! (A scheduler playing its schedule itself, below, writes as it
+//! processes, after every schedule the drain plays.) Module order is the
+//! order of the invention's `modules` at load: a module rebuilt in place
+//! keeps its place, and one added later, live or by a reload, goes after
+//! every other. Reordering `modules` in a reloaded document doesn't
+//! reorder the running modules, so the order is load order plus edit
+//! history.
+//!
+//! On any other signal, or a mix of several (an LFO's square, a gate
+//! sequencer, two clocks summed), the drain counts the rising edges of
+//! `clock` (past 0.5) as the scheduler does, the first being step 0, and a
+//! rising edge on `reset` restarts the schedule from step 0 (see
+//! `crate::control_request::EdgeCursors`). Each entry lands on the sample
+//! of its step's edge, whatever the block boundaries, live and offline
+//! alike; after the entries of schedules played on a clock at that sample.
+//! A target computing before the scheduler's inputs are known (in a
+//! feedback group with them, or a sink) takes its entry late: once the
+//! segment holding the edge (a block, or part of one) has computed, so it
+//! lands on the next segment's first sample. The `step` output counts
+//! the same edges.
 //!
 //! When the drain stops playing a schedule (its clock unplugged), the
-//! scheduler plays on by itself from the step the clock reached, counting
+//! scheduler plays on by itself from the step the schedule reached, counting
 //! gates as inside a development; a ramp then under way stops where it
 //! stands. Plugging a clock in, moving the cable to another clock output,
 //! or replacing the clock starts the schedule over: step 0 falls on that
-//! clock's next gate, and every entry plays again.
+//! clock's next gate, and every entry plays again. Moving it from a clock
+//! onto another signal plays on instead, counting that signal's edges from
+//! the step the clock reached.
 //!
-//! Inside a development, the scheduler plays the schedule itself: it counts
-//! rising edges of its `clock` input, the first being step 0, and a rising
-//! edge on `reset` restarts the schedule from step 0.
+//! Inside a development, or in a feedback group at the top level, the
+//! scheduler plays the schedule itself: it counts rising edges of its
+//! `clock` input, the first being step 0, and a rising edge on `reset`
+//! restarts the schedule from step 0.
 //!
 //! A target whose module declares its controls is written through its
 //! automation slots, which the graph applies just before the target
@@ -61,9 +75,10 @@
 //! An entry with `ramp_steps: N` leaves the control's current value at step
 //! `at_step` and arrives exactly at `value` on the sample of step
 //! `at_step + N`, interpolating linearly in between (hairpin-style
-//! automation). Played by the drain, the ramp follows the clock's position
-//! and is written at the start of each processing segment (a block, or
-//! part of one); played by the scheduler itself, every sample, from the
+//! automation). Played by the drain on a clock, the ramp follows the
+//! clock's position and is written at the start of each processing segment
+//! (a block, or part of one); on edges, for now, the entry jumps to its
+//! value; played by the scheduler itself, every sample, from the
 //! measured step length, with every step boundary `at_step + k` exactly
 //! `from + (to - from) * k / N`. Values are computed in `f64` and rounded
 //! once to `f32`, never overflow, and never leave the range between the
@@ -226,9 +241,8 @@ fn ramp_value(from: f32, to: f32, progress: f32) -> f32 {
 /// - `clock` - Clock input (a gate of the clock output patched here, or a
 ///   rising edge of any other signal, is a step)
 /// - `reset` - Reset input (a rising edge restarts the schedule from step
-///   0 wherever the scheduler counts edges: inside a development, or at the
-///   top level on anything but one clock's gate; on a clock, the clock's
-///   reset does)
+///   0, except on a clock's gate at the top level, where the clock's reset
+///   does)
 ///
 /// # Outputs
 ///

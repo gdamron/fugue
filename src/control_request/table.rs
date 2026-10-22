@@ -230,7 +230,6 @@ pub(crate) enum Player {
     /// The drain, on the steps its module counts on its clock input's
     /// rising edges and reports on its step output (see
     /// `super::watch::edges`).
-    #[cfg_attr(not(test), allow(dead_code))] // until the drain plays edges
     Edges = 2,
 }
 

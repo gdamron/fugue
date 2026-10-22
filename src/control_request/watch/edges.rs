@@ -25,8 +25,6 @@
 //! An entry ends the drain's ramps in beats on its control. (Ramps measured
 //! in edges follow; until then an entry's ramp jumps to its value.)
 
-#![allow(dead_code)] // until the graph plays edges, next in this stack
-
 use super::BeatHost;
 use crate::control_request::hold::FrameScope;
 use crate::control_request::ramps::Ramps;
