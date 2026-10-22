@@ -13,8 +13,8 @@
 //! its step falls on, as a request timed in beats applies.
 //!
 //! In an invention's top level the graph's request drain plays the
-//! schedule in place. On one clock's gate output (or nothing) it plays on
-//! the clock's position (see `crate::control_request::BeatTable`): step 0
+//! schedule in place. On one clock's gate output it plays on the clock's
+//! position (see `crate::control_request::BeatTable`): step 0
 //! falls on the clock's first gate past where it stood when the drain
 //! first saw the schedule (beat 0 for a clock not yet started), whatever
 //! the block boundaries, and a tempo an entry writes moves the next steps

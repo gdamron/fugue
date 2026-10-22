@@ -192,10 +192,10 @@ impl SignalGraph {
 
     /// Finds every module's table and the clock it steps on, after the
     /// modules or their routes changed, telling each table who plays it:
-    /// the drain on one clock output (or nothing) on its clock input, the
-    /// drain on the edges of any other signal or mix of them (one computing
-    /// outside a feedback group), or, in a feedback group or with no room,
-    /// its module. The tables played before are found first, so the room of
+    /// the drain on one clock output on its clock input, the drain on the
+    /// edges of any other signal or mix of them (one computing outside a
+    /// feedback group), or, with nothing on its clock input, in a feedback
+    /// group or with no room, its module. The tables played before are found first, so the room of
     /// those gone is free for new ones; then the cursors are put in module
     /// order. Allocation-, free- and lock-free.
     fn find_tables(&self, watches: &mut Watches) {
