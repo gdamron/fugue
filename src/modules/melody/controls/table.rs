@@ -183,6 +183,8 @@ impl DegreeTable {
 
     fn view(&self) -> View<'_> {
         let header = self.header.load(Ordering::Acquire);
+        #[cfg(test)]
+        tests::between_loads();
         View {
             table: self,
             header,
@@ -295,6 +297,8 @@ impl DegreeTable {
         // lands during is refused, whether begun before the bump or after;
         // and after, so a copy taken before it lands is taken again.
         let _landing = self.land();
+        #[cfg(test)]
+        tests::between_loads();
         let mut seen = slot.load(Ordering::SeqCst);
         while now() == generation {
             let value = tagged(generation, bits);
@@ -328,6 +332,8 @@ impl DegreeTable {
     pub(crate) fn write_degree(&self, index: usize, value: i32) -> bool {
         let _in_flight = self.in_flight();
         let header = self.header.load(Ordering::SeqCst);
+        #[cfg(test)]
+        tests::between_loads();
         self.write_degree_as_of(header, index, value)
     }
 
@@ -355,6 +361,8 @@ impl DegreeTable {
         let _in_flight = self.in_flight();
         loop {
             let generation = self.weights_generation.load(Ordering::SeqCst);
+            #[cfg(test)]
+            tests::between_loads();
             let count = self.count();
             if self.weights_generation() == generation {
                 return self.write_weight_as_of(generation, count, index, value);
@@ -476,6 +484,8 @@ impl DegreeTable {
             for i in 0..count {
                 degrees[i] = view.degree(i);
                 weights[i] = view.weight(i);
+                #[cfg(test)]
+                tests::between_loads();
             }
             count
         })
@@ -489,10 +499,14 @@ impl DegreeTable {
         weights: &mut [f32; MAX_DEGREES],
     ) -> usize {
         debug_assert_control_thread("copying a melody's whole degree table");
+        #[cfg(test)]
+        let waiting = std::time::Instant::now();
         loop {
             if let Some(count) = self.read_into(degrees, weights) {
                 return count;
             }
+            #[cfg(test)]
+            tests::still_waiting(waiting, "a whole copy");
             std::thread::yield_now();
         }
     }
@@ -503,6 +517,15 @@ impl DegreeTable {
     pub(crate) fn editing(&self) -> MutexGuard<'_, ()> {
         self.whole()
     }
+
+    /// Moves the degrees' generation straight to `generation`, as if a
+    /// round of whole scales had been set, none waiting out writes.
+    #[cfg(test)]
+    fn jump_to(&self, generation: u32) {
+        let count = self.count();
+        self.header
+            .store(header(generation, count), Ordering::SeqCst);
+    }
 }
 
 /// A write counted landing; see [`DegreeTable::land`].
@@ -511,6 +534,11 @@ struct Landing<'a>(&'a DegreeTable);
 impl Drop for Landing<'_> {
     fn drop(&mut self) {
         self.0.landing.fetch_sub(1, Ordering::SeqCst);
+        #[cfg(test)]
+        tests::between_loads();
         self.0.changed();
     }
 }
+
+#[cfg(test)]
+mod tests;
