@@ -266,7 +266,8 @@ impl FrozenLock {
     /// when that is the configured or the canonical spelling of the dir
     /// followed by a locked id and plain names, else as the filesystem
     /// names it, with its parent's links, `..` and case resolved
-    /// (`packs/../packs/<id>`, `packs/<ID>` on a case-insensitive volume).
+    /// (`packs/../packs/<id>`, `packs/<ID>` on a case-insensitive volume, a
+    /// path relative to the working dir).
     /// Only the parent is resolved, so a link inside a package still names
     /// a file the integrity skipped.
     fn package_relative(&self, file: &Path) -> Option<PathBuf> {
@@ -284,7 +285,9 @@ impl FrozenLock {
                 Err(_) => {}
             }
         }
-        let canonical = std::fs::canonicalize(file.parent()?)
+        // A bare file name's parent is the working dir.
+        let parent = file.parent().filter(|parent| !parent.as_os_str().is_empty());
+        let canonical = std::fs::canonicalize(parent.unwrap_or(Path::new(".")))
             .ok()?
             .join(file.file_name()?);
         let relative = canonical
