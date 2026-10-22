@@ -2,7 +2,6 @@
 //! verifies only those (see `Lockfile::verify_first_for_invention`).
 
 use super::*;
-use crate::invention::audio_assets::module_asset_values;
 use crate::invention::builder::{resolve_development_path, resolve_json_assets};
 use std::collections::BTreeSet;
 
@@ -31,15 +30,18 @@ impl ContentRoots {
     /// (`{"sample": "fugue.drums@1:kick.wav"}`), through any depth of nested
     /// developments. Each alias hands the string on unchanged, and every
     /// package-loading sink takes a package only from a string that parses as
-    /// a [`PackageAudioRef`]. So every top-level string in a module config
-    /// that parses as one counts as used, whatever its key: a superset of the
-    /// alias targets that needs no tracing of where an alias leads and cannot
-    /// miss one. A string no alias reaches only costs one more hash.
+    /// a [`PackageAudioRef`], including a local `{"path": ...}` object that
+    /// flattens to one. So every string anywhere in a module config that
+    /// parses as one counts as used, whatever its key or depth: a superset of
+    /// the alias targets and asset slots that needs no tracing of where an
+    /// alias leads and cannot miss one. A string nothing loads only costs one
+    /// more hash.
     ///
-    /// `None` when some document or reference cannot be read, or a script
-    /// could choose packages at runtime: the caller then cannot know what was
-    /// skipped, so it must verify everything. Reading documents never hashes
-    /// package contents.
+    /// `None` when some document or reference cannot be read, a `$asset`
+    /// expands to another `$asset` (the builder expands again, so its string
+    /// would only appear later), or a script could choose packages at
+    /// runtime: the caller then cannot know what was skipped, so it must
+    /// verify everything. Reading documents never hashes package contents.
     pub fn used_packages(&self, invention: &Invention) -> Option<BTreeSet<String>> {
         let mut walk = Walk::default();
         self.collect_used(invention, &mut walk, 0)?;
@@ -52,25 +54,11 @@ impl ContentRoots {
         }
         let mut expanded = document.clone();
         resolve_json_assets(&mut expanded).ok()?;
-        for module in &mut expanded.modules {
+        for module in &expanded.modules {
             if module.module_type == SCRIPT_TYPE {
                 return None;
             }
-            let slots: Vec<String> = module_asset_values(&mut module.config)
-                .filter_map(|value| value.as_str().map(str::to_string))
-                .collect();
-            // Top-level strings include every development-control alias.
-            let top_level = module
-                .config
-                .as_object()
-                .into_iter()
-                .flat_map(|map| map.values());
-            let strings = top_level.filter_map(|value| value.as_str());
-            for text in strings.chain(slots.iter().map(String::as_str)) {
-                if let Some(reference) = PackageAudioRef::parse(text) {
-                    walk.used.insert(reference.id);
-                }
-            }
+            collect_refs(&module.config, &mut walk.used)?;
         }
         for development in &document.developments {
             let file = if let Some(reference) = &development.reference {
@@ -93,6 +81,33 @@ impl ContentRoots {
         }
         Some(())
     }
+}
+
+/// Adds the package id of every string in `value`, at any depth, that parses
+/// as a [`PackageAudioRef`]. `None` on a `$asset` left after expansion.
+fn collect_refs(value: &serde_json::Value, used: &mut BTreeSet<String>) -> Option<()> {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some(reference) = PackageAudioRef::parse(text) {
+                used.insert(reference.id);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_refs(item, used)?;
+            }
+        }
+        serde_json::Value::Object(map) => {
+            if map.contains_key("$asset") {
+                return None;
+            }
+            for item in map.values() {
+                collect_refs(item, used)?;
+            }
+        }
+        _ => {}
+    }
+    Some(())
 }
 
 #[cfg(test)]
@@ -245,6 +260,38 @@ mod tests {
                 "connections": [],
                 "developments": [{"name": "drums",
                     "ref": {"package": "fugue.demo.missing", "version": "1.0.0"}}]}),
+            &temp.path().join("main.json"),
+        );
+        assert_eq!(roots.used_packages(&main), None);
+    }
+
+    #[test]
+    fn collects_a_package_ref_hidden_in_a_local_path_object() {
+        let (temp, roots) = roots();
+        // An inline development has no source path, so the builder flattens
+        // this path object to the bare string, which then loads the package.
+        let main = invention(
+            json!({"modules": [{"id": "d", "type": "inline", "config": {}}],
+                "connections": [],
+                "developments": [{"name": "inline", "definition": {"modules": [
+                    sampler(json!({"path": "fugue.hidden@1:x.wav"}))], "connections": []}}]}),
+            &temp.path().join("main.json"),
+        );
+        let used = roots.used_packages(&main).unwrap();
+        assert_eq!(used.into_iter().collect::<Vec<_>>(), ["fugue.hidden"]);
+    }
+
+    #[test]
+    fn a_chained_asset_makes_the_set_unknown() {
+        let (temp, roots) = roots();
+        // `a.json` holds another `$asset`, which only the builder's second
+        // expansion turns into the package ref in `b.json`.
+        write(&temp.path().join("a.json"), &json!({"$asset": "b"}));
+        write(&temp.path().join("b.json"), &json!("fugue.hidden@1:x.wav"));
+        let main = invention(
+            json!({"assets": {"a": {"path": "a.json"}, "b": {"path": "b.json"}},
+                "modules": [{"id": "d", "type": "drums", "config": {"sample": {"$asset": "a"}}}],
+                "connections": []}),
             &temp.path().join("main.json"),
         );
         assert_eq!(roots.used_packages(&main), None);
