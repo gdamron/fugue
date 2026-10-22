@@ -3,6 +3,10 @@ name: Tests
 # Pull requests run once per push to the PR; pushes to main run the full suite
 # and save the build caches every PR restores from. Other branch pushes do not
 # run CI on their own: open a PR (or dispatch manually) to test them.
+#
+# Windows tests run on every PR but sit outside the required CI check, so they
+# report before merge without holding up a green CI. Check their result before
+# merging.
 on:
   push:
     branches:
@@ -22,6 +26,10 @@ concurrency:
 env:
   CARGO_HTTP_MULTIPLEXING: false
   CARGO_NET_RETRY: 10
+  # Most of each test job is compiling and linking about 20 test binaries, and
+  # full debuginfo makes both slower and the caches bigger. Panics and
+  # backtraces still report file and line.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   changes:
@@ -55,29 +63,16 @@ jobs:
               - '!.github/workflows/release.yml'
 
   test:
-    name: Run Unit Tests (${{ matrix.os }})
+    name: Run Unit Tests (ubuntu-latest)
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            features: ""
-          # Spectrogram analysis is off by default and its tap is concurrent
-          # code, so test it on every OS. The feature is purely additive, so
-          # this run also covers every default-feature test; Linux covers it
-          # under --all-features below.
-          - os: windows-latest
-            features: --features spectrogram
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check Out Repository
         uses: actions/checkout@v4
 
       - name: Install Linux Audio Dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config
@@ -91,7 +86,33 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Tests
-        run: cargo test ${{ matrix.features }} --lib --tests
+        run: cargo test --lib --tests
+
+  # Windows is the slowest job (about 5 minutes against under 4 for Linux), so
+  # it is informational: CI does not wait for it, and a failure shows as its own
+  # red check. Spectrogram analysis is off by default and its tap is concurrent
+  # code, so test it here too; the feature is purely additive, so this run also
+  # covers every default-feature test.
+  windows-test:
+    name: Run Unit Tests (windows-latest)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v4
+
+      - name: Install Stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Run Tests
+        run: cargo test --features spectrogram --lib --tests
 
   feature-tests:
     name: Run Feature-Gated Tests (Linux)
@@ -126,7 +147,8 @@ jobs:
 
   # One stable check that is green when tests passed or were rightly skipped,
   # so a docs-only PR still reports a result. Require this check, not the
-  # individual jobs, if CI checks become required.
+  # individual jobs, if CI checks become required. It leaves out windows-test
+  # on purpose (see above).
   ci:
     name: CI
     if: always()
