@@ -156,7 +156,7 @@
 //! entries merge with any explicit `schedule`. Patch the same clock output
 //! that drives the sequencers into this module's `clock` input.
 
-use std::sync::atomic::{AtomicI64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::control_request::{
@@ -269,11 +269,13 @@ pub struct ControlScheduler {
 
     /// Its schedule as the graph's drain plays it (see [`BeatTable`]): its
     /// id, the plan it plays (changed by every adoption but a retarget),
-    /// who plays it (a [`Player`]), and the step the drain last told it.
+    /// who plays it (a [`Player`]), and the step the drain last told it,
+    /// with whether that step began on the sample it was told for.
     table: usize,
     plan: u64,
     player: AtomicU8,
     told_step: AtomicI64,
+    told_began: AtomicBool,
     /// Who played its last block: the first block another plays in takes
     /// up from the step reached.
     followed: Player,
@@ -304,6 +306,7 @@ impl ControlScheduler {
             plan: 0,
             player: AtomicU8::new(Player::Module as u8),
             told_step: AtomicI64::new(-1),
+            told_began: AtomicBool::new(false),
             followed: Player::Module,
             inputs: inputs::ControlSchedulerInputs::new(),
             outputs: outputs::ControlSchedulerOutputs::new(),
@@ -613,13 +616,12 @@ impl ControlScheduler {
     }
 
     /// The clock input's last level as the drain counted it: a step told
-    /// since the last block the drain played began on this block's first
-    /// sample (the drain splits blocks on each step's sample), so its gate
-    /// is counted already, and a rise of the input there is not another.
-    /// The step told may be lower, when the clock was reset on that beat.
+    /// as beginning on this block's first sample (the drain splits blocks
+    /// on each step's sample) has its gate counted already, and a rise of
+    /// the input there is not another, whichever step it is (a clock reset
+    /// on that beat tells step 0 again).
     fn told_gate(&self) -> f32 {
-        let told = self.told_step.load(Ordering::Relaxed);
-        if told >= 0 && told != self.current_step {
+        if self.told_began.load(Ordering::Relaxed) {
             return 1.0;
         }
         self.last_gate_in
@@ -702,8 +704,9 @@ impl BeatTable for ControlScheduler {
         self.entries.get(index).map(|entry| entry.module.as_str())
     }
 
-    fn set_step(&self, step: i64) {
+    fn set_step(&self, step: i64, began: bool) {
         self.told_step.store(step, Ordering::Relaxed);
+        self.told_began.store(began, Ordering::Relaxed);
     }
 }
 
