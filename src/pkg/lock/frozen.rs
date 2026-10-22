@@ -37,10 +37,10 @@
 //! its own lock with [`govern_here`], which governs only the calling thread,
 //! so the session's other threads (its scripts) keep the session's lock until
 //! the candidate commits, and keep it for good if the candidate is refused.
-//! A candidate built under another policy than the session's rebuilds what
-//! may hold package content instead of keeping it (see
-//! [`candidate_changes_policy`]): bytes a module loaded under the session's
-//! policy were never verified against the candidate's.
+//! A reload under another policy than its running graph was built under
+//! rebuilds what may hold package content instead of keeping it (see
+//! [`changes_policy`]): bytes a module loaded under the graph's policy were
+//! never verified against the reload's.
 //!
 //! Resolution is control-thread work (asset loads decode and resample off the
 //! audio thread), so the governing slot is a plain lock.
@@ -263,14 +263,22 @@ impl FrozenLock {
     }
 
     /// `file` relative to the packages dir, when it lies in it: as spelled
-    /// (the configured or the canonical spelling of the dir), else with its
-    /// parent's links resolved. Only the parent is resolved, so a link
-    /// inside a package still names a file the integrity skipped.
+    /// (the configured or the canonical spelling of the dir, followed by
+    /// plain names only), else with its parent's links and `..` resolved.
+    /// Only the parent is resolved, so a link inside a package still names
+    /// a file the integrity skipped.
     fn package_relative(&self, file: &Path) -> Option<PathBuf> {
+        let plain = |relative: &Path| {
+            (relative.components()).all(|part| matches!(part, Component::Normal(_)))
+        };
         let spellings = std::iter::once(&self.packages_dir).chain(&self.canonical_packages);
         for dir in spellings {
-            if let Ok(relative) = file.strip_prefix(dir) {
-                return Some(relative.to_path_buf());
+            match file.strip_prefix(dir) {
+                Ok(relative) if plain(relative) => return Some(relative.to_path_buf()),
+                // `packs/../packs/<id>/..`: where it lies is the filesystem's
+                // to say.
+                Ok(_) => break,
+                Err(_) => {}
             }
         }
         let canonical = std::fs::canonicalize(file.parent()?)
@@ -407,24 +415,17 @@ pub(crate) fn check_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether the candidate this thread builds ([`govern_here`]) is governed
-/// otherwise than the running session: another lockfile or none, or other
-/// locked content. What the session's modules hold was then loaded under
-/// another policy, and a candidate keeps none of them that may hold package
-/// content. `false` when no candidate is being built here.
-pub(crate) fn candidate_changes_policy() -> bool {
-    let Some(candidate) = HERE.with(|here| here.borrow().clone()) else {
-        return false;
-    };
-    let session = GOVERNING
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone();
-    match (&candidate, &session) {
+/// Whether what this thread builds now (a candidate under [`govern_here`],
+/// else under the session's lock) is governed otherwise than `built_under`,
+/// the lock a running graph was built under: another lockfile or none, or
+/// other locked content. What that graph's modules hold was then loaded
+/// under another policy, and a reload keeps none of them that may hold
+/// package content. The graph's own lock, not the session's: a timed
+/// reload's graph is adopted before the host makes its lock the session's.
+pub(crate) fn changes_policy(built_under: &Governance) -> bool {
+    match (&governing(), built_under) {
         (None, None) => false,
-        (Some(candidate), Some(session)) => {
-            !(Arc::ptr_eq(candidate, session) || candidate.same_policy(session))
-        }
+        (Some(now), Some(graph)) => !(Arc::ptr_eq(now, graph) || now.same_policy(graph)),
         _ => true,
     }
 }

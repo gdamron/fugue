@@ -172,7 +172,23 @@ impl ContentRoots {
 
     /// Resolve and verify a reference. `Hashing::Cached` may reuse digests of
     /// unchanged files; imports pass `Hashing::Full` to re-hash every byte.
+    /// Browsing reads under no lock, whatever a frozen session's is, so a
+    /// catalog lists and describes every installed version as it is.
     fn inspect(
+        &self,
+        reference: &ContentRef,
+        hashing: Hashing,
+        purpose: Purpose,
+    ) -> Result<Resolved> {
+        match purpose {
+            Purpose::Load => self.inspect_as(reference, hashing, purpose),
+            Purpose::Browse => {
+                pkg::lock::govern_here(None, || self.inspect_as(reference, hashing, purpose))
+            }
+        }
+    }
+
+    fn inspect_as(
         &self,
         reference: &ContentRef,
         hashing: Hashing,

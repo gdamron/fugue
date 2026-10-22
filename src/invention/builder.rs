@@ -230,6 +230,8 @@ impl InventionBuilder {
             sample_rate: self.sample_rate,
             running: false,
             document: Some(document),
+            #[cfg(not(target_arch = "wasm32"))]
+            built_under: crate::pkg::lock::governing(),
         }
     }
 

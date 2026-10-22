@@ -2,7 +2,7 @@
 //! [`crate::pkg::lock`]).
 
 use super::{ReloadPlan, ReloadPolicy, ValidatedDocument};
-use crate::pkg::lock::{candidate_changes_policy, govern, govern_here, Governance};
+use crate::pkg::lock::{changes_policy, govern, govern_here, Governance};
 
 /// A candidate's lock: it governs preparation on this thread, and the
 /// session from the commit on. Holds the session's previous lock while
@@ -32,16 +32,20 @@ const PACKAGE_LOADERS: [&str; 4] = [
     "sample_slicer",
 ];
 
-/// Under another policy than the session's (another lockfile or none), a
-/// module that may hold package content is rebuilt rather than kept: what
-/// it holds was loaded under the session's policy, and never verified
-/// against the candidate's. That is a package loader, or a development
+/// Under another policy than the graph was built under (`built_under`:
+/// another lockfile or none), a module that may hold package content is
+/// rebuilt rather than kept: what it holds was loaded under that policy, and
+/// never verified against the candidate's. That is a package loader, or a development
 /// instance, whose inner modules may be loaders (an alias passes a package
 /// ref to one unchanged, so its config does not change with the policy).
 /// Everything else keeps playing. Runs as a timed or untimed reload plans,
 /// under the candidate's lock ([`govern_here`]).
-pub(super) fn rebuild_under_another_policy(plan: &mut ReloadPlan, validated: &ValidatedDocument) {
-    if !candidate_changes_policy() {
+pub(super) fn rebuild_under_another_policy(
+    plan: &mut ReloadPlan,
+    validated: &ValidatedDocument,
+    built_under: &Governance,
+) {
+    if !changes_policy(built_under) {
         return;
     }
     let holds_packages = |module_type: &str| {

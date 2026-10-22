@@ -25,6 +25,10 @@ pub(crate) struct PreparedCommit {
     /// their controls' kinds.
     pub(super) control_updates: Vec<(String, String, ControlValue)>,
     pub(super) refreshed_configs: Vec<(String, serde_json::Value)>,
+    /// The lockfile that governed preparing it, which the graph is built
+    /// under from the commit on.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) built_under: crate::pkg::lock::Governance,
     pub(super) report: ReloadReport,
 }
 
@@ -102,6 +106,8 @@ impl RunningInvention {
             adopt,
             control_updates,
             refreshed_configs: plan.refreshed_configs,
+            #[cfg(not(target_arch = "wasm32"))]
+            built_under: crate::pkg::lock::governing(),
             report,
         })
     }
@@ -182,6 +188,8 @@ impl RunningInvention {
             adopt,
             control_updates,
             refreshed_configs,
+            #[cfg(not(target_arch = "wasm32"))]
+            built_under,
             mut report,
         } = prepared;
         let (registry, definitions) = adopt.unzip();
@@ -193,6 +201,10 @@ impl RunningInvention {
             }
             if let Some(document) = document {
                 state.document = Some(document);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                state.built_under = built_under;
             }
         })?;
         // Definitions are read only by the next reload's plan, and reloads

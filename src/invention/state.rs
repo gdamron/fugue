@@ -61,6 +61,12 @@ pub struct RuntimeState {
     /// a document. Module configs stay as authored (`$asset` references
     /// unresolved); connections are mirrored from `connections` on assembly.
     pub document: Option<Invention>,
+    /// The lockfile that governed package resolution as this graph's
+    /// document was built or last reloaded (see [`crate::pkg::lock`]), set
+    /// as the graph commits, a timed reload's as it is adopted. A reload
+    /// under another policy rebuilds what may hold package content.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) built_under: crate::pkg::lock::Governance,
 }
 
 impl RuntimeState {
