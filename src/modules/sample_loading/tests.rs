@@ -299,3 +299,35 @@ fn oversized_checkout_samples_are_refused_before_reading() {
         assert!(error.contains("Failed to open sample"), "{error}");
     });
 }
+
+#[test]
+fn checkout_samples_are_found_under_any_spelling_of_the_packs_dir() {
+    // Package refs resolve under `FUGUE_PACKS_DIR` as configured; a trailing
+    // slash there must not hide a checkout. An installed version under the
+    // same packs dir stays path-keyed.
+    let (packs, package) = checkout();
+    let checkout_wav = package.join("hit.wav");
+    let installed = packs.path().join("fugue.test.installed/1.0.0");
+    std::fs::create_dir_all(&installed).unwrap();
+    std::fs::write(installed.join("fugue.pkg.json"), "{}").unwrap();
+    let installed_wav = installed.join("hit.wav");
+    let slashed = format!("{}/", packs.path().display());
+    crate::pkg::audio_asset::with_packs_dir(std::path::Path::new(&slashed), || {
+        for path in [&checkout_wav, &installed_wav] {
+            write_wav(path, 0.25);
+        }
+        let checkout_first =
+            super::load_cached_sample(checkout_wav.to_str().unwrap(), RATE).unwrap();
+        let installed_first =
+            super::load_cached_sample(installed_wav.to_str().unwrap(), RATE).unwrap();
+        for path in [&checkout_wav, &installed_wav] {
+            write_wav(path, 0.5);
+        }
+        let checkout_again =
+            super::load_cached_sample(checkout_wav.to_str().unwrap(), RATE).unwrap();
+        let installed_again =
+            super::load_cached_sample(installed_wav.to_str().unwrap(), RATE).unwrap();
+        assert!(!Arc::ptr_eq(&checkout_first, &checkout_again));
+        assert!(Arc::ptr_eq(&installed_first, &installed_again));
+    });
+}

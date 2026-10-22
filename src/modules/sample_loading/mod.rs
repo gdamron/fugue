@@ -213,8 +213,8 @@ enum AudioFormat {
 }
 
 /// Process-wide cache of decoded + resampled buffers, keyed by the resolved
-/// source string, the target (engine) sample rate and, for a local file, the
-/// SHA-256 of its bytes. Decode/resample happens
+/// source string, the target (engine) sample rate and, for a file inside a
+/// package's source checkout, the SHA-256 of its bytes. Decode/resample happens
 /// off the audio thread, so a `Mutex` here is fine; the audio thread only ever
 /// touches the resulting `Arc<SampleData>`. Deduplicates work and memory when
 /// several players reference the same asset at the same rate.
@@ -271,9 +271,9 @@ pub(crate) fn load_cached_sample(
 /// control thread.
 ///
 /// Caching a new source-checkout revision of a path also reclaims older
-/// revisions of that path and rate that nothing else holds. One still held stays cached, so its
-/// reader's final drop never frees it on the audio thread; it is reclaimed
-/// when a later load caches another revision of the path.
+/// revisions of that path and rate that nothing else holds. One still held
+/// stays cached, so its reader's final drop never frees it on the audio
+/// thread; it is reclaimed when a later load caches another revision.
 fn cache_loaded(key: SampleKey, sample: Arc<SampleData>) -> Arc<SampleData> {
     let mut stale = Vec::new();
     let kept = {
