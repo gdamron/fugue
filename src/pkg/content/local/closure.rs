@@ -168,7 +168,7 @@ impl ContentRoots {
                         ));
                     }
                 }
-                merge_closure(closure, child_closure);
+                merge_closure(closure, child_closure)?;
                 push_unique(&mut closure.dependencies, reference.clone());
             } else if let Some(relative) = &dev.path {
                 let child = contained(root, &parent.join(relative))?;
@@ -195,7 +195,7 @@ impl ContentRoots {
                     };
                     push_unique(&mut closure.dependencies, reference);
                 }
-                merge_closure(closure, child_closure);
+                merge_closure(closure, child_closure)?;
             } else if let Some(inline) = &dev.definition {
                 self.walk_inline(inline, path, root, manifest, closure, depth + 1)?;
             }
@@ -346,10 +346,8 @@ impl ContentRoots {
             let relative = path
                 .strip_prefix(canonical(root, "content_not_found")?)
                 .map_err(|e| err("outside_root", e))?;
-            closure.fingerprints.insert(
-                format!("checkout:{id}:{}", relative.to_string_lossy()),
-                hash(bytes),
-            );
+            let key = format!("checkout:{id}:{}", relative.to_string_lossy());
+            record_checkout_read(closure, key, hash(bytes))?;
         }
         Ok(())
     }
@@ -360,18 +358,16 @@ impl ContentRoots {
         manifest: &PackageManifest,
         closure: &mut Closure,
     ) -> Result<()> {
+        if let Some(id) = self.checkout_id(root) {
+            // The manifest as parsed, for the same reason as its documents.
+            let parsed = serde_json::to_vec(manifest).map_err(|e| err("invalid_content", e))?;
+            record_checkout_read(closure, format!("checkout-manifest:{id}"), hash(&parsed))?;
+        }
         let key = format!("package:{}@{}", manifest.id, manifest.version);
         // One hash per package per closure: a multi-zone sample instrument names
         // the same sample library once per zone.
         if closure.fingerprints.contains_key(&key) {
             return Ok(());
-        }
-        if let Some(id) = self.checkout_id(root) {
-            // The manifest as parsed, for the same reason as its documents.
-            let parsed = serde_json::to_vec(manifest).map_err(|e| err("invalid_content", e))?;
-            closure
-                .fingerprints
-                .insert(format!("checkout-manifest:{id}"), hash(&parsed));
         }
         contained(&self.packages, root)?;
         let integrity = cache::package_integrity(root, closure.hashing, || {
@@ -424,12 +420,56 @@ pub(super) struct Closure {
     pub(super) assets: Vec<String>,
 }
 
-fn merge_closure(parent: &mut Closure, child: Closure) {
-    parent.fingerprints.extend(child.fingerprints);
+fn merge_closure(parent: &mut Closure, child: Closure) -> Result<()> {
+    for (key, digest) in child.fingerprints {
+        if key.starts_with("checkout") {
+            record_checkout_read(parent, key, digest)?;
+        } else {
+            parent.fingerprints.insert(key, digest);
+        }
+    }
     for reference in child.dependencies {
         push_unique(&mut parent.dependencies, reference);
     }
     for asset in child.assets {
         push_unique(&mut parent.assets, asset);
+    }
+    Ok(())
+}
+
+/// Record the digest of a checkout file as one read of it parsed it. Every
+/// read in a closure must see the same bytes: a file edited between two reads
+/// (an entry also declared as its own asset, say) is stale, never re-recorded.
+fn record_checkout_read(closure: &mut Closure, key: String, digest: String) -> Result<()> {
+    match closure.fingerprints.get(&key) {
+        Some(seen) if *seen != digest => Err(err(
+            "stale_reference",
+            "Content changed while loading; inspect and retry",
+        )),
+        _ => {
+            closure.fingerprints.insert(key, digest);
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_checkout_file_read_twice_with_different_bytes_is_stale() {
+        let mut closure = Closure::default();
+        let key = || "checkout:fugue.a.b:invention.json".to_string();
+        record_checkout_read(&mut closure, key(), hash(b"A")).unwrap();
+        record_checkout_read(&mut closure, key(), hash(b"A")).unwrap();
+        let stale = record_checkout_read(&mut closure, key(), hash(b"B")).unwrap_err();
+        assert_eq!(stale.code, "stale_reference");
+        assert_eq!(closure.fingerprints[&key()], hash(b"A"));
+
+        let mut child = Closure::default();
+        child.fingerprints.insert(key(), hash(b"B"));
+        let stale = merge_closure(&mut closure, child).unwrap_err();
+        assert_eq!(stale.code, "stale_reference");
     }
 }
