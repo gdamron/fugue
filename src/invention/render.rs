@@ -7,6 +7,7 @@ use crate::agents::AgentManager;
 use crate::scripting::ScriptManager;
 use crate::{ControlValue, Invention, InventionBuilder, InventionHandles, ModuleRegistry};
 
+use super::graph::ended::is_end_output;
 use super::graph::SignalGraph;
 use super::orchestration::{ModulePorts, OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 use super::runtime::{module_ports, ControlSurfaceInstance, GraphCommandError};
@@ -17,16 +18,8 @@ mod audio_file_sink;
 mod code_modules;
 mod editing;
 mod replay;
-mod split_ends;
 
 pub use code_modules::CodeModuleRuntimeInfo;
-
-/// Whether an output port is a one-shot module's latched end-of-playback
-/// gate: `ended` by the convention. Not `end`, which the sample modules name
-/// a one-sample pulse at the end of a sample or slice.
-fn is_end_output(port: &str) -> bool {
-    port == "ended"
-}
 
 /// Offline renderer for inventions.
 ///
@@ -49,8 +42,6 @@ pub struct RenderEngine {
     event_sink: super::orchestration::EventSinkSlot,
     /// A live session's requests still to apply (see [`Self::replay`]).
     replay: replay::Replay,
-    /// Where the last block's `ended` gates rose, when a replay split it.
-    split_ends: split_ends::SplitEnds,
 }
 
 impl RenderEngine {
@@ -72,7 +63,6 @@ impl RenderEngine {
             agents: AgentManager::default(),
             event_sink: Arc::new(Mutex::new(None)),
             replay: replay::Replay::default(),
-            split_ends: split_ends::SplitEnds::default(),
         }
     }
 
@@ -169,9 +159,7 @@ impl RenderEngine {
             replay::Replay::resolve(log, &surfaces)?
         };
         if let Some(graph) = &self.graph {
-            let mut graph = graph.lock().unwrap();
-            replay.check_clocks(&mut graph)?;
-            self.split_ends.reserve(graph.modules.len());
+            replay.check_clocks(&mut graph.lock().unwrap())?;
         }
         self.replay = replay;
         Ok(())
@@ -210,16 +198,14 @@ impl RenderEngine {
         let mut done = 0;
         while done < frames_total {
             let n = (frames_total - done).min(block);
-            // Split where a replayed request is due, as the live drain does,
-            // noting each piece's end gates (its buffers keep only the last).
-            self.split_ends.start_block();
+            if let Some(watch) = &mut graph.end_watch {
+                watch.begin();
+            }
+            // Split where a replayed request is due, as the live drain does.
             let mut at = 0;
             while at < n {
                 let end = at + self.replay.apply_due(&mut graph, n - at);
                 graph.process_block(&mut left[at..end], &mut right[at..end]);
-                if end - at < n {
-                    self.split_ends.record_piece(&graph, at, end - at);
-                }
                 at = end;
             }
             for k in 0..n {
@@ -260,8 +246,10 @@ impl RenderEngine {
     /// the number of valid frames in the last render call, which must not
     /// have exceeded one graph block for the scan to be frame-exact (the
     /// `ended` gate is latched, so a coarser host still cannot *miss* it —
-    /// only land on a later frame). A block a replayed request split (see
-    /// [`Self::replay`]) is answered for whole, as if it rendered unsplit.
+    /// only land on a later frame). A block that processed in pieces (split
+    /// by a replayed request, see [`Self::replay`], or by the graph at a
+    /// scheduler's entry) is answered for whole, and a module removed or
+    /// moved by an edit since the render still answers for what it rendered.
     ///
     /// Errors when no invention is loaded, when a named source does not
     /// exist or has no `ended` output, or when `source` is `None` and nothing
@@ -279,22 +267,24 @@ impl RenderEngine {
 
         let mut earliest: Option<usize> = None;
         let mut candidates = 0usize;
-        for (index, (id, module)) in graph.modules.iter().enumerate() {
+        for (id, module) in graph.modules.iter() {
             if let Some(wanted) = source {
                 if id != wanted {
                     continue;
                 }
             }
             let module = module.module();
-            let Some(port) = split_ends::end_port(module) else {
+            let Some(port) = module.outputs().iter().position(|port| is_end_output(port)) else {
                 if source.is_some() {
                     return Err(format!("module '{}' has no 'ended' output", id).into());
                 }
                 continue;
             };
             candidates += 1;
-            // A block a replay split was scanned piece by piece as it rendered.
-            let rise = self.split_ends.rise(index).unwrap_or_else(|| {
+            // The watch saw every piece of the block; a module's buffers keep
+            // only the last.
+            let watched = graph.end_watch.as_ref().and_then(|watch| watch.rise(id));
+            let rise = watched.unwrap_or_else(|| {
                 let block = module.output_block(port);
                 let n = frames.min(block.len());
                 block[..n].iter().position(|&value| value > 0.5)
@@ -387,7 +377,6 @@ impl RenderEngine {
 
     fn install_runtime(&mut self, runtime: super::runtime::InventionRuntime) {
         self.replay = replay::Replay::default();
-        self.split_ends = split_ends::SplitEnds::default();
         self.scripts.stop_all();
         self.agents.stop_all();
         runtime.state.lock().unwrap().running = true;
@@ -404,6 +393,7 @@ impl RenderEngine {
             // spectrum ring.
             super::graph::MasterObservers::default(),
         );
+        graph.end_watch = Some(Default::default());
         // No request reaches it, but it plays the modules' tables.
         super::graph::offline_requests(&mut graph);
         let graph = Arc::new(Mutex::new(graph));
@@ -457,6 +447,8 @@ impl OrchestrationRuntime for RenderEngine {
     }
 }
 
+#[cfg(test)]
+mod end_tests;
 #[cfg(test)]
 mod retarget_tests;
 #[cfg(test)]

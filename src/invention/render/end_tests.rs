@@ -1,10 +1,11 @@
-//! A replayed request inside the block a one-shot ends in splits that
-//! block; the render still finds the `ended` gate where the live session's
-//! rose, not where the last piece of the block began.
+//! A block a one-shot ends in can process in pieces: split by a replayed
+//! request, or by the graph at a scheduler's entry. The render still finds
+//! the `ended` gate where it rose (where the live session's rose), not
+//! where the last piece of the block began.
 
+use super::tests::{render_until_end, ONE_SHOT_INVENTION};
 use crate::control_request::{RtValue, When};
 use crate::invention::manual_backend::{start_manual, SAMPLE_RATE};
-use crate::invention::render::tests::{render_until_end, ONE_SHOT_INVENTION};
 use crate::{Invention, InventionBuilder, LoggedRequest, LoggedValue, RenderEngine, RequestLog};
 
 /// The one-shot fixture's end frame, with no replay (see
@@ -101,4 +102,73 @@ fn a_replayed_write_anywhere_in_the_ending_block_keeps_its_end_frame() {
         log.requests.push(later.clone());
     }
     assert_eq!(replayed_end(&log), [END; 2]);
+}
+
+#[test]
+fn a_split_in_an_earlier_block_or_a_short_render_call_keeps_the_end_frame() {
+    // A split long before the end: the ending block renders whole.
+    assert_eq!(replayed_end(&frequency_write(100, 64)), [END; 2]);
+
+    // Render calls of 48 frames, shorter than the 64-frame block: the call
+    // [480, 528) is split at 500, and the gate rose at 511 in its first
+    // piece.
+    let mut engine = RenderEngine::new(SAMPLE_RATE);
+    engine.load_json(ONE_SHOT_INVENTION).unwrap();
+    engine.replay(&frequency_write(500, 64)).unwrap();
+    let mut buffer = [0.0f32; 48 * 2];
+    let mut done = 0;
+    let end = loop {
+        engine.render_interleaved(&mut buffer).unwrap();
+        if let Some(frame) = engine.scan_end_gate(Some("seq"), 48).unwrap() {
+            break done + frame;
+        }
+        done += 48;
+        assert!(done < 48_000, "end gate never fired");
+    };
+    assert_eq!(end, END);
+}
+
+#[test]
+fn a_scheduler_entry_splitting_the_ending_block_keeps_the_end_frame() {
+    // The graph splits the block itself at the entry's beat, the end's own
+    // (beat edges at 0, 127, 255, 383, 511): no replay needed.
+    let mut doc: serde_json::Value = serde_json::from_str(ONE_SHOT_INVENTION).unwrap();
+    let entry = serde_json::json!([
+        { "at_step": 4, "module": "osc", "control": "frequency", "value": 880.0 }
+    ]);
+    doc["modules"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "id": "sched", "type": "control_scheduler", "config": { "schedule": entry.to_string() }
+        }));
+    doc["connections"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "from": "clock", "from_port": "beat", "to": "sched", "to_port": "clock"
+        }));
+    for source in [None, Some("seq")] {
+        let mut engine = RenderEngine::new(SAMPLE_RATE);
+        engine.load_json(&doc.to_string()).unwrap();
+        assert_eq!(render_until_end(&mut engine, source), END);
+    }
+}
+
+#[test]
+fn an_edit_between_the_render_and_the_scan_keeps_the_end_frame() {
+    let mut engine = RenderEngine::new(SAMPLE_RATE);
+    engine.load_json(ONE_SHOT_INVENTION).unwrap();
+    engine.replay(&frequency_write(480, 64)).unwrap();
+    let mut buffer = [0.0f32; 64 * 2];
+    for _ in 0..=END / 64 {
+        engine.render_interleaved(&mut buffer).unwrap();
+    }
+    // Removing the clock moves `seq` to the clock's place in the graph.
+    engine.remove_module("clock").unwrap();
+    assert_eq!(
+        engine.scan_end_gate(Some("seq"), 64).unwrap(),
+        Some(END - 448)
+    );
+    assert_eq!(engine.scan_end_gate(None, 64).unwrap(), Some(END - 448));
 }
