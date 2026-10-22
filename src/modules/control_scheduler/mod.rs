@@ -42,7 +42,8 @@
 //! A target computing before the scheduler's inputs are known (in a
 //! feedback group with them, or a sink) takes its entry late: once the
 //! segment holding the edge (a block, or part of one) has computed, so it
-//! lands on the next segment's first sample. The `step` output counts the same edges.
+//! lands on the next segment's first sample. The `step` output counts
+//! the same edges.
 //!
 //! When the drain stops playing a schedule (its clock unplugged), the
 //! scheduler plays on by itself from the step the schedule reached, counting
