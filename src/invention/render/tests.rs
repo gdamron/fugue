@@ -244,7 +244,7 @@ fn render_engine_keeps_legacy_globalthis_hooks_working() {
 
 /// Clock at 22_500 BPM = 128 samples per beat at 48 kHz; a 4-step one_shot
 /// pattern therefore ends exactly at frame 4 * 128 = 512.
-const ONE_SHOT_INVENTION: &str = r#"{
+pub(super) const ONE_SHOT_INVENTION: &str = r#"{
     "version": "1.0.0",
     "title": "one-shot-render-test",
     "modules": [
@@ -273,7 +273,7 @@ const ONE_SHOT_INVENTION: &str = r#"{
 
 /// Renders block-by-block until the ended gate fires; returns the absolute end
 /// frame.
-fn render_until_end(engine: &mut RenderEngine, source: Option<&str>) -> usize {
+pub(super) fn render_until_end(engine: &mut RenderEngine, source: Option<&str>) -> usize {
     let block = engine.block_size();
     let mut buffer = vec![0.0f32; block * 2];
     let mut done = 0usize;

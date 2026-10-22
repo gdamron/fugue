@@ -49,6 +49,7 @@ mod beats;
 mod compile;
 mod conditions;
 mod edges;
+pub(crate) mod ended;
 mod master;
 mod process;
 mod publication;
@@ -217,6 +218,8 @@ pub(crate) struct SignalGraph {
     /// recompiling on the audio thread is counted. `None` for offline render
     /// and backends without diagnostics.
     pub(crate) diagnostics: Option<Arc<AudioDiagnostics>>,
+    /// Where an offline render's `ended` gates rose; `None` for a live graph.
+    pub(crate) end_watch: Option<ended::EndWatch>,
 }
 
 impl SignalGraph {
@@ -259,6 +262,7 @@ impl SignalGraph {
             retired: false,
             master,
             diagnostics: None,
+            end_watch: None,
         }
     }
 
