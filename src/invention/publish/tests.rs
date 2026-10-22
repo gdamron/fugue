@@ -42,6 +42,7 @@ mod step_pattern;
 mod timed_edits;
 mod timed_publisher;
 mod timed_rebind;
+mod timed_status;
 mod timelines;
 mod writes;
 

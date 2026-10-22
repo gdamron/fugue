@@ -19,6 +19,7 @@ use crate::invention::declared::RequestPort;
 use crate::invention::graph::{Fate, TIMED_EDIT_MODULE};
 use crate::invention::publish::change::{BuiltModule, PreparedChange, TopologyMirror};
 use crate::invention::publish::rebind::Packed;
+use crate::invention::publish::timed_status::{CancelCause, Ledger};
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
 use crate::modules::control_scheduler::Written;
@@ -31,6 +32,7 @@ pub(crate) type Retain = Box<dyn FnOnce(&mut RuntimeState) + Send>;
 
 /// A timed edit queued and not yet adopted.
 pub(crate) struct Waiting {
+    id: RequestId,
     fate: Fate,
     /// The topology once it lands.
     mirror: TopologyMirror,
@@ -46,6 +48,7 @@ pub(crate) struct Waiting {
 /// A timed edit the audio thread landed, adopted by the publisher: what it
 /// replaced and built, for the runtime's other mirrors.
 pub(crate) struct Adopted {
+    pub(crate) id: RequestId,
     pub(crate) published: Published,
     pub(crate) retain: Retain,
     pub(crate) port: RequestPort,
@@ -103,6 +106,7 @@ impl Publisher {
             }
         };
         self.set_timed(Some(Waiting {
+            id,
             fate,
             mirror: prepared.mirror,
             built: prepared.built,
@@ -156,6 +160,7 @@ impl Publisher {
         self.published.store(self.generation, Ordering::Release);
         let previous = std::mem::replace(&mut self.mirror, waiting.mirror);
         Some(Adopted {
+            id: waiting.id,
             published: Published {
                 previous,
                 built: waiting.built,
@@ -179,16 +184,31 @@ impl Publisher {
     }
 
     /// Clears the way for a change publishing now: cancels a timed edit
-    /// still waiting. False when it has landed and is not yet adopted:
-    /// the change was prepared against a generation that has moved.
-    pub(crate) fn cancel_timed(&mut self) -> bool {
+    /// still waiting, recording `cause` (see [`Self::ledger`]). False when
+    /// it has landed and is not yet adopted: the change was prepared
+    /// against a generation that has moved.
+    pub(crate) fn cancel_timed(&mut self, cause: impl FnOnce() -> CancelCause) -> bool {
         let Some(waiting) = &self.timed else {
             return true;
         };
-        if !waiting.fate.cancel() && waiting.fate.landed() {
+        if waiting.fate.cancel() {
+            let id = waiting.id;
+            self.ledger.cancelled(id, cause());
+        } else if waiting.fate.landed() {
             return false;
         }
         self.set_timed(None);
         true
+    }
+
+    /// The id of the timed edit waiting, if any.
+    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
+    pub(crate) fn timed_id(&self) -> Option<RequestId> {
+        self.timed.as_ref().map(|waiting| waiting.id)
+    }
+
+    /// Every recent timed edit's status (see `timed_status`).
+    pub(crate) fn ledger(&mut self) -> &mut Ledger {
+        &mut self.ledger
     }
 }

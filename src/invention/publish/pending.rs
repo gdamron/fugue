@@ -59,6 +59,10 @@ pub(crate) struct PendingLog {
     /// Timed edits queued (see `publish::timed`), until their outcomes.
     /// More than the one waiting: one adopted may not have reported yet.
     timed: VecDeque<RequestId>,
+    /// Timed edits' outcomes, until the publisher's ledger takes them, and
+    /// whether any outcome was dropped meanwhile (see `timed_status`).
+    timed_outcomes: VecDeque<(RequestId, Outcome)>,
+    timed_lost: bool,
 }
 
 impl PendingLog {
@@ -71,6 +75,8 @@ impl PendingLog {
             lost: 0,
             log: Recorder::default(),
             timed: VecDeque::new(),
+            timed_outcomes: VecDeque::new(),
+            timed_lost: false,
         }
     }
 
@@ -94,6 +100,11 @@ impl PendingLog {
         while let Some((id, outcome)) = self.receiver.try_recv() {
             if let Some(at) = self.timed.iter().position(|timed| *timed == id) {
                 self.timed.remove(at);
+                if self.timed_outcomes.len() == TIMED_CAPACITY {
+                    self.timed_outcomes.pop_front();
+                    self.timed_lost = true;
+                }
+                self.timed_outcomes.push_back((id, outcome));
             } else {
                 let write = self.writes.iter().position(|(pending, _)| *pending == id);
                 let write = write
@@ -113,7 +124,17 @@ impl PendingLog {
             self.log.lost(u64::from(dropped));
             self.writes.clear();
             self.timed.clear();
+            self.timed_lost = true;
         }
+    }
+
+    /// Timed edits' outcomes received since the last call, oldest first,
+    /// and whether any outcome was lost meanwhile, a timed edit's maybe.
+    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
+    pub(crate) fn take_timed(&mut self) -> (Vec<(RequestId, Outcome)>, bool) {
+        self.settle();
+        let lost = std::mem::take(&mut self.timed_lost);
+        (self.timed_outcomes.drain(..).collect(), lost)
     }
 
     /// Records `write` in the session log when `outcome` applied it, or

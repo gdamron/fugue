@@ -42,7 +42,9 @@ use indexmap::IndexMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use super::graph::{GraphCommand, SignalGraph};
-use super::publish::{check_offline, PendingLog, PendingWrite, Publisher, Retarget, Settler};
+use super::publish::{
+    check_offline, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler,
+};
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
@@ -407,7 +409,10 @@ impl DeclaredSurface {
                         if !port.requests.has_room() {
                             return Err(QUEUE_FULL.into());
                         }
-                        if !publisher.cancel_timed() {
+                        let cause = || CancelCause::ScheduleWrite {
+                            module_id: port.module_id.clone(),
+                        };
+                        if !publisher.cancel_timed(cause) {
                             return Err(STALE.into());
                         }
                     }

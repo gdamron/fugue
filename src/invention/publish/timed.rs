@@ -16,10 +16,14 @@ use indexmap::IndexMap;
 
 use super::change::BuiltModule;
 use super::rebind;
+use super::timed_status::EditStatus;
 use super::watch::{condition_of, Part};
-use super::{publisher, LiveGraph, Mirrors, PreparedChange, Publisher, Refused};
+use super::{
+    publisher, Committed, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher, Refused,
+};
 use crate::control_request::{BeatSpec, BeatTime, RequestId, When};
 use crate::invention::orchestration::ModulePorts;
+use crate::invention::request_log::LoggedBeat;
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
@@ -80,6 +84,36 @@ impl LiveGraph {
         }
     }
 
+    /// Where timed edit `id` stands, if the ledger still remembers it.
+    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
+    pub(crate) fn timed_status(&self, id: RequestId) -> Option<EditStatus> {
+        let mut publisher = self.lock();
+        self.sync_timed(&mut publisher);
+        publisher.ledger().status(id)
+    }
+
+    /// Every timed edit whose status changed since the last call, in the
+    /// order they changed.
+    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
+    pub(crate) fn take_timed_changes(&self) -> Vec<EditStatus> {
+        let mut publisher = self.lock();
+        self.sync_timed(&mut publisher);
+        publisher.ledger().take_changes()
+    }
+
+    /// What adopting timed edit `id` committed (its built modules'
+    /// handles), once it is adopted; taken once.
+    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
+    pub(crate) fn take_timed_committed(&self, id: RequestId) -> Option<Committed> {
+        self.lock().ledger().take_committed(id)
+    }
+
+    /// Takes the audio thread's outcomes for timed edits into the ledger.
+    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
+    fn sync_timed(&self, publisher: &mut Publisher) {
+        sync_ledger(publisher, &mut self.pending.lock().unwrap());
+    }
+
     /// Queues `prepared` to land at `time`, refused once `ttl` samples have
     /// passed, and `retain` to run on the runtime state as it lands (a
     /// reload's document, say). Returns the request's id, whose outcome
@@ -129,6 +163,8 @@ impl LiveGraph {
         match publisher.publish_timed(prepared, when, ttl, (Box::new(retain), port, packed)) {
             Ok(id) => {
                 pending.timed(id);
+                let (sample, beat) = landing_of(time);
+                publisher.ledger().queued(id, sample, beat);
                 drop(pending);
                 drop(publisher);
                 self.settle();
@@ -192,6 +228,7 @@ impl LiveGraph {
 /// document, as a commit does.
 fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
     let Some(publisher::Adopted {
+        id,
         published,
         retain,
         port,
@@ -204,7 +241,48 @@ fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
     for schedule in written {
         schedule.record();
     }
-    LiveGraph::commit_mirrors(mirrors, publisher, published, &port, retain);
+    let committed = LiveGraph::commit_mirrors(mirrors, publisher, published, &port, retain);
+    publisher.ledger().adopted(id, committed);
+}
+
+/// Takes `pending`'s outcomes for timed edits into `publisher`'s ledger.
+#[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
+fn sync_ledger(publisher: &mut Publisher, pending: &mut PendingLog) {
+    let (outcomes, lost) = pending.take_timed();
+    let waiting = publisher.timed_id();
+    let ledger = publisher.ledger();
+    for (id, outcome) in outcomes {
+        ledger.outcome(id, outcome);
+    }
+    if lost {
+        ledger.lost(waiting);
+    }
+}
+
+/// Where a timed edit lands, as far as is known when it is queued: the
+/// sample for one timed to a sample, the beat for one timed in beats.
+fn landing_of(time: EditTime<'_>) -> (Option<u64>, Option<LoggedBeat>) {
+    match time {
+        EditTime::AtSample(sample) => (Some(sample), None),
+        EditTime::Beat { clock, spec } => {
+            let clock = clock.to_string();
+            let beat = match spec {
+                BeatSpec::After(beats) => LoggedBeat::After { clock, beats },
+                BeatSpec::Grid {
+                    every,
+                    offset,
+                    repeat,
+                } => LoggedBeat::Grid {
+                    clock,
+                    every,
+                    offset,
+                    repeat,
+                },
+            };
+            (None, Some(beat))
+        }
+        EditTime::AfterSamples(_) | EditTime::Condition(_) => (None, None),
+    }
 }
 
 /// Adopts a landed timed edit on the reclaimer thread's cadence, so its
