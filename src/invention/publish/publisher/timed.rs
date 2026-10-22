@@ -10,6 +10,7 @@
 //! nothing changed), as any change prepared against a generation that has
 //! moved is.
 
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -24,6 +25,7 @@ use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
 use crate::modules::control_scheduler::Written;
 use crate::payload::Payload;
+use crate::ControlValue;
 use indexmap::IndexMap;
 
 /// Runs on the runtime state as a timed edit is adopted: records what it
@@ -43,6 +45,29 @@ pub(crate) struct Waiting {
     /// The schedules it hands surviving schedulers as it lands, recorded
     /// once it is adopted; a refused one records nothing.
     packed: Packed,
+    /// Authored control writes made while it waits to modules it keeps,
+    /// recorded again once `retain` has run (see [`Publisher::fold_timed`]).
+    folded: Vec<(String, String, ControlValue)>,
+}
+
+/// How many recent adoptions [`Adoptions`] remembers.
+const ADOPTIONS: usize = 8;
+
+/// What the latest timed edits adopted did, for an authored write one may
+/// have overtaken (see [`Publisher::timed_overtook`]).
+#[derive(Default)]
+pub(crate) struct Adoptions {
+    recent: VecDeque<Adoption>,
+    /// The generation of the newest adoption forgotten, 0 before any.
+    forgotten: u64,
+}
+
+struct Adoption {
+    /// The generation it was adopted as.
+    generation: u64,
+    /// The modules it rebuilt or removed, or whose schedule it re-resolved
+    /// as it landed.
+    modules: HashSet<String>,
 }
 
 /// A timed edit the audio thread landed, adopted by the publisher: what it
@@ -54,6 +79,8 @@ pub(crate) struct Adopted {
     pub(crate) port: RequestPort,
     /// The schedules it handed surviving schedulers, to record now.
     pub(crate) written: Vec<Written>,
+    /// Authored writes folded into it, to record after `retain`.
+    pub(crate) folded: Vec<(String, String, ControlValue)>,
 }
 
 impl Publisher {
@@ -113,6 +140,7 @@ impl Publisher {
             retain,
             port,
             packed,
+            folded: Vec::new(),
         }));
         Ok(id)
     }
@@ -159,6 +187,22 @@ impl Publisher {
         // thread, which then knows nothing is tagged older (see `landing`).
         self.published.store(self.generation, Ordering::Release);
         let previous = std::mem::replace(&mut self.mirror, waiting.mirror);
+        let removed = previous
+            .modules
+            .keys()
+            .filter(|id| !self.mirror.modules.contains_key(*id));
+        let built = waiting.built.keys();
+        let rebound = waiting.packed.rebound.iter();
+        let modules = removed.chain(built).chain(rebound).cloned().collect();
+        self.adopted.recent.push_back(Adoption {
+            generation: self.generation,
+            modules,
+        });
+        if self.adopted.recent.len() > ADOPTIONS {
+            if let Some(oldest) = self.adopted.recent.pop_front() {
+                self.adopted.forgotten = oldest.generation;
+            }
+        }
         Some(Adopted {
             id: waiting.id,
             published: Published {
@@ -168,6 +212,7 @@ impl Publisher {
             retain: waiting.retain,
             port: waiting.port,
             written: waiting.packed.written,
+            folded: waiting.folded,
         })
     }
 
@@ -201,10 +246,48 @@ impl Publisher {
         true
     }
 
+    /// Whether a timed edit adopted after generation `seen` may have
+    /// overtaken an authored write to `module_id` queued at `seen`: landing
+    /// after it, the edit rebuilt or removed the module, or re-resolved its
+    /// schedule. True, to be safe, when one adopted since is forgotten.
+    pub(crate) fn timed_overtook(&self, seen: u64, module_id: &str) -> bool {
+        let adopted = &self.adopted;
+        adopted.forgotten > seen
+            || (adopted.recent.iter())
+                .any(|adoption| adoption.generation > seen && adoption.modules.contains(module_id))
+    }
+
     /// The id of the timed edit waiting, if any.
     #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
     pub(crate) fn timed_id(&self) -> Option<RequestId> {
         self.timed.as_ref().map(|waiting| waiting.id)
+    }
+
+    /// What the timed edit waiting, if any, does to module `id`: removes
+    /// it (`Some(true)`) or rebuilds it (`Some(false)`). `None` when it
+    /// keeps it, or none waits.
+    pub(crate) fn timed_replaces(&self, id: &str) -> Option<bool> {
+        let waiting = self.timed.as_ref()?;
+        if !self.mirror.modules.contains_key(id) {
+            return None;
+        }
+        if !waiting.mirror.modules.contains_key(id) {
+            return Some(true);
+        }
+        waiting.built.contains_key(id).then_some(false)
+    }
+
+    /// Folds an authored write to a module the timed edit waiting keeps
+    /// into it, so its retained document records the write again as it is
+    /// adopted rather than lose it. The last write to each control stands.
+    /// Nothing when none waits.
+    pub(crate) fn fold_timed(&mut self, module_id: &str, key: &str, value: &ControlValue) {
+        let Some(waiting) = self.timed.as_mut() else {
+            return;
+        };
+        let folded = &mut waiting.folded;
+        folded.retain(|(module, control, _)| module != module_id || control != key);
+        folded.push((module_id.to_string(), key.to_string(), value.clone()));
     }
 
     /// Every recent timed edit's status (see `timed_status`).

@@ -16,7 +16,7 @@ use indexmap::IndexMap;
 
 use super::change::BuiltModule;
 use super::rebind;
-use super::timed_status::EditStatus;
+use super::timed_status::{CancelCause, EditStatus};
 use super::watch::{condition_of, Part};
 use super::{
     publisher, Committed, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher, Refused,
@@ -27,6 +27,19 @@ use crate::invention::request_log::LoggedBeat;
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
+use crate::ControlValue;
+
+/// What became of an authored write as it was recorded (see
+/// [`LiveGraph::record_authored`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Authored {
+    /// Recorded: what plays.
+    Recorded,
+    /// Not recorded: a timed edit landed after the write and rebuilt or
+    /// removed its module (or re-resolved its schedule), so what plays may
+    /// not be the write. It is to be made again.
+    Overtaken,
+}
 
 /// When a timed edit lands, resolved against the graph that is playing.
 #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
@@ -112,6 +125,52 @@ impl LiveGraph {
     #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
     fn sync_timed(&self, publisher: &mut Publisher) {
         sync_ledger(publisher, &mut self.pending.lock().unwrap());
+    }
+
+    /// Records an authored write to control `key` of `module_id`, queued
+    /// at generation `seen` (see `declared::Queued`), in the retained
+    /// document. Runs under the publisher, so no timed edit can be adopted
+    /// in between.
+    ///
+    /// [`Authored::Overtaken`], with nothing recorded and nothing else
+    /// done, when a timed edit adopted since `seen` may have landed after
+    /// the write and replaced what it wrote (see
+    /// [`Publisher::timed_overtook`]): the caller makes it again. One that
+    /// left the module alone leaves the write playing, so it is recorded,
+    /// as it is when only untimed changes were published since `seen`
+    /// (they publish nothing after the write reaches the audio thread).
+    ///
+    /// Otherwise a timed edit waiting that rebuilds or removes the module
+    /// is cancelled, and the edit reports why. One that keeps the module
+    /// folds the write into its own document instead, so the write is
+    /// recorded again as the edit is adopted.
+    pub(crate) fn record_authored(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: &ControlValue,
+        seen: u64,
+    ) -> Authored {
+        let mut publisher = self.lock();
+        if publisher.timed_overtook(seen, module_id) {
+            return Authored::Overtaken;
+        }
+        if let Some(removed) = publisher.timed_replaces(module_id) {
+            let cause = || CancelCause::AuthoredWrite {
+                module_id: module_id.to_string(),
+                key: key.to_string(),
+                removed,
+            };
+            // Landed meanwhile, after the write: adopted, it overtook it.
+            if !publisher.cancel_timed(cause) {
+                self.adopt(&mut publisher);
+                return Authored::Overtaken;
+            }
+        }
+        publisher.fold_timed(module_id, key, value);
+        let mut state = self.state.lock().unwrap();
+        state.record_authored_control(module_id, key, value);
+        Authored::Recorded
     }
 
     /// Queues `prepared` to land at `time`, refused once `ttl` samples have
@@ -233,6 +292,7 @@ fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
         retain,
         port,
         written,
+        folded,
     }) = publisher.adopt()
     else {
         return;
@@ -241,6 +301,14 @@ fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
     for schedule in written {
         schedule.record();
     }
+    let retain = move |state: &mut RuntimeState| {
+        retain(state);
+        // Written to the graph that was playing, to modules this edit
+        // kept, after its document was prepared.
+        for (module_id, key, value) in &folded {
+            state.record_authored_control(module_id, key, value);
+        }
+    };
     let committed = LiveGraph::commit_mirrors(mirrors, publisher, published, &port, retain);
     publisher.ledger().adopted(id, committed);
 }

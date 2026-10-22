@@ -50,6 +50,13 @@ pub(crate) enum CancelCause {
     /// Another change to the graph or the document committed first: a
     /// structural edit, a swap, a reload or an edit batch.
     Commit,
+    /// An authored write to a control of a module this edit rebuilds, or
+    /// removes when `removed`.
+    AuthoredWrite {
+        module_id: String,
+        key: String,
+        removed: bool,
+    },
     /// A schedule written to a scheduler whose schedule this edit
     /// re-resolves, or which writes a module this edit rebuilds or removes.
     ScheduleWrite { module_id: String },

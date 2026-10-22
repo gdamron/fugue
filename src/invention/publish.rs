@@ -59,6 +59,7 @@ pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use retarget::Retarget;
+pub(crate) use timed::Authored;
 pub(crate) use timed_status::CancelCause;
 #[cfg(test)]
 pub(crate) use timed_status::EditState;
@@ -85,6 +86,9 @@ pub(crate) struct LiveGraph {
     /// Renders a zero-length block after each change, for a backend that
     /// never renders on its own (see [`crate::NullBackend`]).
     settler: Option<Settler>,
+    /// Held across an authored write and its record (see
+    /// [`Self::authoring`]).
+    authoring: Arc<Mutex<()>>,
 }
 
 /// Settles a live graph whose backend never renders on its own, so that
@@ -246,6 +250,7 @@ impl LiveGraph {
             module_ports,
             registry: LiveRegistry::new(registry),
             settler,
+            authoring: Arc::default(),
         };
         // Every module the graph starts with runs from here on.
         let port = live.port();
@@ -292,6 +297,16 @@ impl LiveGraph {
     /// publisher, since what a reclaim frees must not drop under the lock.
     fn backlogged(&self, publisher: &Publisher) -> bool {
         backlogged(publisher, &self.reclaimer)
+    }
+
+    /// Serializes authored writes, each held from making the write to
+    /// recording it, so the last recorded is the last made: what plays (the
+    /// last made, and of the writes a timed edit keeps, the last chained)
+    /// is what the document records. Taken before any other lock, never
+    /// under one; control threads only.
+    pub(crate) fn authoring(&self) -> std::sync::MutexGuard<'_, ()> {
+        let authoring = self.authoring.lock();
+        authoring.unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Publications made so far. A change prepared from state read before
@@ -418,7 +433,7 @@ impl LiveGraph {
         retain: impl FnOnce(&mut RuntimeState),
     ) -> Result<Committed, GraphCommandError> {
         self.reclaim();
-        self.commit_locked(self.lock(), prepared, retain)
+        self.commit_locked(self.lock(), prepared, Some(retain))
     }
 
     /// [`Self::commit_with`], also adopting `registry`, when given, as the
@@ -437,10 +452,14 @@ impl LiveGraph {
         self.reclaim();
         let publisher = self.lock();
         // `retain` runs only when the change commits, under the publisher.
-        let result = self.commit_locked(publisher, prepared, |state| {
-            superseded = registry.map(|registry| self.registry.replace(registry));
-            retain(state);
-        });
+        let result = self.commit_locked(
+            publisher,
+            prepared,
+            Some(|state: &mut RuntimeState| {
+                superseded = registry.map(|registry| self.registry.replace(registry));
+                retain(state);
+            }),
+        );
         // The previous registry drops off the publisher's lock.
         drop(superseded);
         result
@@ -479,7 +498,7 @@ impl LiveGraph {
             return Err(error);
         }
         let discarded = change.take_discarded();
-        let result = self.commit_locked(publisher, change.compile(), |_| {});
+        let result = self.commit_locked(publisher, change.compile(), None::<fn(&mut _)>);
         // Modules the edit displaced drop off the lock too.
         drop(discarded);
         result
@@ -490,11 +509,17 @@ impl LiveGraph {
     /// never commits work planned against a topology that has moved.
     /// Whatever the change or the publication leaves to free is dropped
     /// after the guard is released.
+    ///
+    /// A change with `retain` records a document of its own: even empty, it
+    /// cancels a timed edit waiting, whose document would replace it as it
+    /// is adopted (`TopologyMoved`, nothing changed, when that edit landed
+    /// meanwhile). An empty change without, such as removing a module that
+    /// is not there, changes nothing and cancels nothing.
     fn commit_locked(
         &self,
         mut publisher: MutexGuard<'_, Publisher>,
         mut prepared: PreparedChange,
-        retain: impl FnOnce(&mut RuntimeState),
+        retain: Option<impl FnOnce(&mut RuntimeState)>,
     ) -> Result<Committed, GraphCommandError> {
         if prepared.base_generation != publisher.generation() {
             drop(publisher);
@@ -509,6 +534,15 @@ impl LiveGraph {
             .unwrap_or_else(PoisonError::into_inner)
             .edited();
         if prepared.is_empty() {
+            let Some(retain) = retain else {
+                drop(publisher);
+                return Ok(Committed::default());
+            };
+            if !publisher.cancel_timed(|| CancelCause::Commit) {
+                drop(publisher);
+                drop(prepared);
+                return Err(GraphCommandError::TopologyMoved);
+            }
             retain(&mut self.state.lock().unwrap());
             drop(publisher);
             return Ok(Committed::default());
@@ -541,6 +575,11 @@ impl LiveGraph {
         for schedule in written {
             schedule.record();
         }
+        let retain = |state: &mut RuntimeState| {
+            if let Some(retain) = retain {
+                retain(state);
+            }
+        };
         let committed = self.commit_published(&publisher, published, &self.port(), retain);
         drop(publisher);
         self.settle();
