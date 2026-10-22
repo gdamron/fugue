@@ -38,9 +38,6 @@ pub struct InventionBuilder {
     /// The developments the document being built declares, as loaded, for
     /// a nested build; `None` for a document's own build, which loads them.
     loaded: Option<Arc<LoadedDevelopments>>,
-    /// Whether it builds a development's inner graph, where a table plays
-    /// on its own whatever steps it, rather than a document's top level.
-    nested: bool,
 }
 
 impl InventionBuilder {
@@ -51,7 +48,6 @@ impl InventionBuilder {
             registry: ModuleRegistry::default(),
             registered: Arc::new(Mutex::new(HashSet::new())),
             loaded: None,
-            nested: false,
         }
     }
 
@@ -62,7 +58,6 @@ impl InventionBuilder {
             registry,
             registered: Arc::new(Mutex::new(HashSet::new())),
             loaded: None,
-            nested: false,
         }
     }
 
@@ -81,7 +76,6 @@ impl InventionBuilder {
             registry,
             registered,
             loaded: Some(loaded),
-            nested: true,
         }
     }
 
@@ -186,9 +180,6 @@ impl InventionBuilder {
 
         // Build the routing graph
         let routing = self.build_routing(&invention, &modules)?;
-        if !self.nested {
-            crate::invention::publish::check_load(&modules, &routing)?;
-        }
 
         let state = Arc::new(Mutex::new(self.build_runtime_state(&invention, document)));
 

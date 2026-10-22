@@ -16,7 +16,7 @@ use self::controls::{BPM, GATE_LENGTH, POSITION, RESET, TABLE};
 
 mod controls;
 mod inputs;
-pub(crate) mod outputs;
+mod outputs;
 mod timeline;
 
 /// Factory for constructing Clock modules from configuration.

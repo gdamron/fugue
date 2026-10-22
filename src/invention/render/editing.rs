@@ -4,7 +4,6 @@ use super::RenderEngine;
 use crate::invention::declared::{add_offline, remove_offline};
 use crate::invention::graph::GraphCommand;
 use crate::invention::orchestration::ModulePorts;
-use crate::invention::publish::{connect_offline, edge};
 use crate::invention::runtime::{validate_input_port, validate_output_port, GraphCommandError};
 use crate::invention::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
 use crate::InventionHandles;
@@ -170,7 +169,12 @@ impl RenderEngine {
                 .ok_or_else(|| GraphCommandError::UnknownModule(to_module.to_string()))?;
             validate_input_port(dest, to_port)
                 .map_err(|e| GraphCommandError::InvalidPort(e.to_string()))?;
-            connect_offline(&mut graph, edge(from_module, from_port, to_module, to_port))?;
+            graph.apply_command(GraphCommand::AddConnection {
+                from_module: from_module.to_string(),
+                from_port: from_port.to_string(),
+                to_module: to_module.to_string(),
+                to_port: to_port.to_string(),
+            });
         }
         self.state
             .lock()
