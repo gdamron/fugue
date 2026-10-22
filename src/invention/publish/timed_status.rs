@@ -50,16 +50,30 @@ pub(crate) enum CancelCause {
     /// Another change to the graph or the document committed first: a
     /// structural edit, a swap, a reload or an edit batch.
     Commit,
-    /// An authored write to a control of a module this edit rebuilds, or
-    /// removes when `removed`.
+    /// An authored write to a control this edit `touches`: one of a module
+    /// it removes or rebuilds, or one it writes as it lands.
     AuthoredWrite {
         module_id: String,
         key: String,
-        removed: bool,
+        touches: Touched,
     },
     /// A schedule written to a scheduler whose schedule this edit
     /// re-resolves, or which writes a module this edit rebuilds or removes.
     ScheduleWrite { module_id: String },
+    /// The request queue had no room for the control writes it chains as
+    /// it lands; the caller was refused (`QueueFull`).
+    Unchained,
+}
+
+/// What a timed edit does to a control an authored write cancelled it for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Touched {
+    /// It removes the control's module.
+    Removed,
+    /// It rebuilds the control's module.
+    Rebuilt,
+    /// It writes the control as it lands.
+    Written,
 }
 
 /// A timed edit's state, with where it landed or will land.

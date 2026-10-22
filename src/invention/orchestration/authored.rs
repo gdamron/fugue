@@ -2,7 +2,8 @@
 //! land between the two (see `LiveGraph::record_authored`).
 
 use super::RuntimeSnapshot;
-use crate::invention::declared::DeclaredSurface;
+use crate::control_request::RequestId;
+use crate::invention::declared::{DeclaredSurface, Queued};
 use crate::invention::publish::Authored;
 use crate::invention::runtime::GraphCommandError;
 use crate::ControlValue;
@@ -13,12 +14,14 @@ pub(crate) const WRITE_ATTEMPTS: usize = 3;
 
 /// Makes an authored write (`write`, which says the publisher generation
 /// it was queued at when it knows, or else the one `generation` read just
-/// before it) and records it (`record`, given that generation), up to
+/// before it, and the timed edit it is safe from) and records it
+/// (`record`, given those), up to
 /// `attempts` times while a timed edit overtakes it: lands after it, and
-/// rebuilds or removes its module (see `LiveGraph::record_authored`). A
-/// write overtaken is never recorded, as what plays may not be the write:
-/// overtaken on its last attempt, or refused when made again, it is
-/// reported to be made again (`ControlError`), with nothing recorded.
+/// rebuilds or removes its module or writes the control itself (see
+/// `LiveGraph::record_authored`). A write overtaken is never recorded, as
+/// what plays may not be the write: overtaken on its last attempt, or
+/// refused when made again, it is reported to be made again
+/// (`ControlError`), with nothing recorded.
 ///
 /// Concurrent authored writers are serialized by the caller
 /// (`LiveGraph::authoring`), so the last recorded is the last to play.
@@ -26,16 +29,16 @@ pub(crate) fn write_authored(
     attempts: usize,
     target: (&str, &str),
     mut generation: impl FnMut() -> u64,
-    mut write: impl FnMut() -> Result<Option<u64>, GraphCommandError>,
-    mut record: impl FnMut(u64) -> Authored,
+    mut write: impl FnMut() -> Result<Queued, GraphCommandError>,
+    mut record: impl FnMut((u64, Option<RequestId>)) -> Authored,
 ) -> Result<(), GraphCommandError> {
     debug_assert!(attempts > 0, "an authored write is made at least once");
     let (module_id, key) = target;
     let overtaken = || {
         format!(
             "{module_id}.{key} was written, but a timed edit landed after it and rebuilt or \
-             removed {module_id}, so it may not be playing; nothing was recorded: make the \
-             write again"
+             removed {module_id}, or wrote {module_id}.{key} itself, so it may not be playing; \
+             nothing was recorded: make the write again"
         )
     };
     for attempt in 1..=attempts {
@@ -48,7 +51,7 @@ pub(crate) fn write_authored(
                 return Err(GraphCommandError::ControlError(refused));
             }
         };
-        if record(queued.unwrap_or(before)) == Authored::Recorded {
+        if record((queued.generation.unwrap_or(before), queued.safe)) == Authored::Recorded {
             return Ok(());
         }
     }
@@ -57,14 +60,14 @@ pub(crate) fn write_authored(
 
 impl RuntimeSnapshot {
     /// Makes an authored write as [`Self::set_control_transient`] does,
-    /// returning the publisher generation it was queued at when its module
-    /// declares its controls (see `declared::Queued`).
+    /// saying what it saw as it was queued when its module declares its
+    /// controls (see `declared::Queued`).
     pub(crate) fn make_authored(
         &self,
         module_id: &str,
         key: &str,
         value: ControlValue,
-    ) -> Result<Option<u64>, GraphCommandError> {
+    ) -> Result<Queued, GraphCommandError> {
         let surface = {
             let controls = self.control_surfaces.lock().unwrap();
             let surface = controls.get(module_id).cloned();
@@ -75,12 +78,11 @@ impl RuntimeSnapshot {
             .and_then(|any| any.downcast_ref::<DeclaredSurface>());
         let Some(declared) = declared else {
             self.set_control_transient(module_id, key, value)?;
-            return Ok(None);
+            return Ok(Queued::default());
         };
-        let queued = declared
+        declared
             .set_control_queued(key, value)
-            .map_err(GraphCommandError::ControlError)?;
-        Ok(queued.generation)
+            .map_err(GraphCommandError::ControlError)
     }
 }
 
@@ -104,7 +106,7 @@ mod tests {
             || {
                 writes += 1;
                 match writes {
-                    1 => Ok(None),
+                    1 => Ok(Queued::default()),
                     _ => Err(GraphCommandError::QueueFull),
                 }
             },
@@ -118,7 +120,7 @@ mod tests {
         };
         assert!(message.contains("make the write again"), "{message}");
         assert!(message.contains("refused"), "{message}");
-        assert_eq!(records, [7]);
+        assert_eq!(records, [(7, None)]);
     }
 
     /// A write refused the first time is never recorded, and its refusal
@@ -150,7 +152,7 @@ mod tests {
             || 0,
             || {
                 writes += 1;
-                Ok(None)
+                Ok(Queued::default())
             },
             |_| Authored::Overtaken,
         );
@@ -164,7 +166,7 @@ mod tests {
             || 0,
             || {
                 writes += 1;
-                Ok(None)
+                Ok(Queued::default())
             },
             |_| Authored::Recorded,
         );

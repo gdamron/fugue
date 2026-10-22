@@ -16,7 +16,7 @@ use indexmap::IndexMap;
 
 use super::change::BuiltModule;
 use super::rebind;
-use super::timed_status::{CancelCause, EditStatus};
+use super::timed_status::{CancelCause, EditStatus, Touched};
 use super::watch::{condition_of, Part};
 use super::{
     publisher, Committed, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher, Refused,
@@ -37,8 +37,9 @@ pub(crate) enum Authored {
     /// Recorded: what plays.
     Recorded,
     /// Not recorded: a timed edit landed after the write and rebuilt or
-    /// removed its module (or re-resolved its schedule), so what plays may
-    /// not be the write. It is to be made again.
+    /// removed its module (or re-resolved its schedule), or wrote the
+    /// control itself, so what plays may not be the write. It is to be
+    /// made again.
     Overtaken,
 }
 
@@ -128,38 +129,48 @@ impl LiveGraph {
     }
 
     /// Records an authored write to control `key` of `module_id`, queued
-    /// at generation `seen` (see `declared::Queued`), in the retained
-    /// document. Runs under the publisher, so no timed edit can be adopted
-    /// in between.
+    /// at generation `seen` and `safe` from the timed edit it names (see
+    /// `declared::Queued`), in the retained document. Runs under the
+    /// publisher, so no timed edit can be adopted in between.
     ///
     /// [`Authored::Overtaken`], with nothing recorded and nothing else
     /// done, when a timed edit adopted since `seen` may have landed after
     /// the write and replaced what it wrote (see
     /// [`Publisher::timed_overtook`]): the caller makes it again. One that
-    /// left the module alone leaves the write playing, so it is recorded,
-    /// as it is when only untimed changes were published since `seen`
-    /// (they publish nothing after the write reaches the audio thread).
+    /// touched neither the module, its schedule nor the control leaves the
+    /// write playing, so it is recorded, as it is when only untimed changes
+    /// were published since `seen` (they publish nothing after the write
+    /// reaches the audio thread).
     ///
     /// Otherwise a timed edit waiting that rebuilds or removes the module
-    /// is cancelled, and the edit reports why. One that keeps the module
-    /// folds the write into its own document instead, so the write is
-    /// recorded again as the edit is adopted.
+    /// is cancelled, and the edit reports why, as is one that writes the
+    /// control as it lands: the write may reach the audio thread before or
+    /// after the edit lands, so only that makes the write what plays, and
+    /// what is recorded. One that keeps the module folds the
+    /// write into its own document, so the write is recorded again as the
+    /// edit is adopted.
     pub(crate) fn record_authored(
         &self,
         module_id: &str,
         key: &str,
         value: &ControlValue,
-        seen: u64,
+        (seen, safe): (u64, Option<RequestId>),
     ) -> Authored {
         let mut publisher = self.lock();
-        if publisher.timed_overtook(seen, module_id) {
+        if publisher.timed_overtook(seen, (module_id, key), safe) {
             return Authored::Overtaken;
         }
-        if let Some(removed) = publisher.timed_replaces(module_id) {
+        let touches = match publisher.timed_replaces(module_id) {
+            Some(true) => Some(Touched::Removed),
+            Some(false) => Some(Touched::Rebuilt),
+            None => (publisher.timed_chains(module_id, key) && publisher.timed_id() != safe)
+                .then_some(Touched::Written),
+        };
+        if let Some(touches) = touches {
             let cause = || CancelCause::AuthoredWrite {
                 module_id: module_id.to_string(),
                 key: key.to_string(),
-                removed,
+                touches,
             };
             // Landed meanwhile, after the write: adopted, it overtook it.
             if !publisher.cancel_timed(cause) {
@@ -191,13 +202,15 @@ impl LiveGraph {
         ttl: Option<u64>,
         retain: impl FnOnce(&mut RuntimeState) + Send + 'static,
     ) -> Result<RequestId, GraphCommandError> {
-        self.commit_built_when(prepared, None, time, ttl, retain)
+        self.commit_built_when(prepared, None, time, ttl, retain, &[])
     }
 
     /// [`Self::commit_when`] for a change whose modules were built against
     /// `built_with`: refused `TopologyMoved` when a commit has adopted
     /// another registry since, so no edit queues an instance of a
-    /// superseded definition.
+    /// superseded definition. `writes` (module, control, value) to modules
+    /// it keeps play from the sample it lands on (see `timed_chain`).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_built_when(
         &self,
         mut prepared: PreparedChange,
@@ -205,6 +218,7 @@ impl LiveGraph {
         time: EditTime<'_>,
         ttl: Option<u64>,
         retain: impl FnOnce(&mut RuntimeState) + Send + 'static,
+        writes: &[(String, String, ControlValue)],
     ) -> Result<RequestId, GraphCommandError> {
         self.reclaim();
         let mut publisher = self.lock();
@@ -221,8 +235,9 @@ impl LiveGraph {
         // `Publisher::timed_races`).
         let result = self
             .resolve_edit_time(&publisher, &prepared, time)
-            .and_then(|when| Ok((when, rebind::pack(&mut prepared)?)));
-        let ((when, beat), packed) = match result {
+            .and_then(|when| Ok((when, self.resolve_chain(&publisher, writes)?)))
+            .and_then(|resolved| Ok((resolved, rebind::pack(&mut prepared)?)));
+        let (((when, beat), chain), packed) = match result {
             Ok(resolved) => resolved,
             Err(error) => {
                 drop(publisher);
@@ -235,17 +250,36 @@ impl LiveGraph {
         // log, locked before the submission, as a write is (see `watch`).
         let mut pending = self.pending.lock().unwrap();
         pending.settle();
-        match publisher.publish_timed(prepared, when, ttl, (Box::new(retain), port, packed)) {
+        let mut submitted = (Vec::new(), false);
+        // The writes are queued ahead of the edit, so the audio thread has
+        // them waiting when it lands, however soon.
+        let before = |id| {
+            pending.timed(id);
+            submitted = self.submit_chain(&mut pending, id, chain)?;
+            Ok(())
+        };
+        let parts = (Box::new(retain) as _, port, packed);
+        match publisher.publish_timed(prepared, when, ttl, parts, before) {
             Ok(id) => {
-                pending.timed(id);
+                let (chained, short) = submitted;
+                publisher.chain_timed(chained);
                 let sample = match time {
                     EditTime::AtSample(sample) => Some(sample),
                     _ => None,
                 };
                 publisher.ledger().queued(id, sample, beat);
+                // Short of its chain only if a submission raced this one
+                // outside the publisher, which none does: then the edit is
+                // cancelled, refusing the writes queued with it. One that
+                // landed already is adopted as it is, and reported as what
+                // it is, never as refused.
+                let unchained = short && publisher.cancel_timed(|| CancelCause::Unchained);
                 drop(pending);
                 drop(publisher);
                 self.settle();
+                if unchained {
+                    return Err(GraphCommandError::QueueFull);
+                }
                 Ok(id)
             }
             Err(Refused { error, change }) => {

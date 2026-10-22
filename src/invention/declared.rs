@@ -48,7 +48,8 @@ use super::publish::{
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
-    PayloadCodec, Refusal, Request, RequestSender, RequestValue, RtValue, Source, Writer,
+    PayloadCodec, Refusal, Request, RequestId, RequestSender, RequestValue, RtValue, Source,
+    Writer,
 };
 use crate::payload::Payload;
 use crate::traits::ControlSurfaceMap;
@@ -126,12 +127,14 @@ struct Written {
     staged: Option<Payload>,
 }
 
-/// What a write saw as it was queued for the live graph: the publisher's
-/// generation then, read under its lock (see `LiveGraph::record_authored`).
-/// `None` when the module is not live.
+/// What a write saw as it was queued for the live graph, under the
+/// publisher's lock (see `LiveGraph::record_authored`): its generation
+/// then, `None` when the module is not live, and the timed edit the write
+/// is safe from (see `Publisher::timed_safe`).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Queued {
     pub(crate) generation: Option<u64>,
+    pub(crate) safe: Option<RequestId>,
 }
 
 /// A write resolved for a request the live graph times itself.
@@ -409,6 +412,7 @@ impl DeclaredSurface {
                 let mut publisher = publisher.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Live(_)))?;
                 let generation = Some(publisher.generation());
+                let safe = publisher.timed_safe();
                 // A kept controller can outlive the audio graph: never queue
                 // a request nothing will drain.
                 if !publisher.audio_alive() {
@@ -482,7 +486,7 @@ impl DeclaredSurface {
                         }
                         // No timed edit waits (`Retarget::prepare` publishes
                         // none while one does), so none can overtake it.
-                        return Ok(Queued { generation });
+                        return Ok(Queued { generation, safe });
                     }
                     (_, value) => value,
                 };
@@ -531,7 +535,7 @@ impl DeclaredSurface {
                 if let Some(settler) = &port.settler {
                     settler.settle();
                 }
-                Ok(Queued { generation })
+                Ok(Queued { generation, safe })
             }
             Route::Offline { graph, module_id } => {
                 let graph = graph.upgrade().ok_or("The render has been replaced")?;
