@@ -23,7 +23,7 @@
 
 use std::io::Read;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ureq::http::{header::LOCATION, Response, StatusCode};
 use ureq::{Agent, Body};
@@ -52,16 +52,16 @@ const MAX_REDIRECTS: usize = 5;
 /// The process-wide agent; its connection pool is shared by every caller.
 fn agent() -> &'static Agent {
     static AGENT: OnceLock<Agent> = OnceLock::new();
-    AGENT.get_or_init(|| build_agent(RECV_RESPONSE_TIMEOUT))
+    AGENT.get_or_init(|| build_agent(RECV_RESPONSE_TIMEOUT, GLOBAL_TIMEOUT))
 }
 
-fn build_agent(recv_response: Duration) -> Agent {
+fn build_agent(recv_response: Duration, global: Duration) -> Agent {
     Agent::config_builder()
         .http_status_as_error(false)
         .max_redirects(0)
         .timeout_connect(Some(CONNECT_TIMEOUT))
         .timeout_recv_response(Some(recv_response))
-        .timeout_global(Some(GLOBAL_TIMEOUT))
+        .timeout_global(Some(global))
         .build()
         .into()
 }
@@ -85,9 +85,24 @@ pub(crate) fn get(url: &str) -> Result<Response<Body>, String> {
 
 fn get_with(agent: &Agent, url: &str) -> Result<Response<Body>, String> {
     let mut target = parse(url)?;
+    // Redirects are followed by hand, one `call` per hop, and ureq restarts
+    // its global timer on every call; share one deadline across the hops so
+    // the whole GET, final body included, stays within the agent's budget.
+    let deadline = agent
+        .config()
+        .timeouts()
+        .global
+        .map(|budget| Instant::now() + budget);
     for _ in 0..=MAX_REDIRECTS {
+        let remaining = deadline.map(|at| at.saturating_duration_since(Instant::now()));
+        if remaining == Some(Duration::ZERO) {
+            return Err(format!("{url}: timeout: global"));
+        }
         let response = agent
             .get(target.as_str())
+            .config()
+            .timeout_global(remaining)
+            .build()
             .call()
             .map_err(|err| format!("{url}: {err}"))?;
         if !is_followed_redirect(response.status()) {
@@ -322,11 +337,51 @@ mod tests {
         });
         let url = format!("http://{addr}/stalled.wav");
         let started = std::time::Instant::now();
-        let err = get_with(&build_agent(Duration::from_millis(200)), &url).unwrap_err();
+        let err = get_with(
+            &build_agent(Duration::from_millis(200), GLOBAL_TIMEOUT),
+            &url,
+        )
+        .unwrap_err();
         drop(release);
         assert!(err.starts_with(&format!("{url}: ")), "{err}");
         assert!(err.contains("timeout"), "{err}");
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn redirect_hops_share_one_global_budget() {
+        // Six slow hops (five redirects, then a 200) of ~300ms each: every
+        // hop fits the 1s budget alone, but together they overrun it.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(MAX_REDIRECTS + 1).flatten() {
+                std::thread::spawn(move || {
+                    let mut stream = stream;
+                    let mut buf = [0u8; 4096];
+                    let read = stream.read(&mut buf).unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..read]).into_owned();
+                    let hop: usize = request
+                        .split(' ')
+                        .nth(1)
+                        .and_then(|path| path.trim_start_matches("/hop").parse().ok())
+                        .unwrap_or(0);
+                    std::thread::sleep(Duration::from_millis(300));
+                    let reply = if hop < MAX_REDIRECTS {
+                        format!("HTTP/1.1 302 Found\r\nLocation: /hop{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", hop + 1)
+                    } else {
+                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                            .to_string()
+                    };
+                    let _ = stream.write_all(reply.as_bytes());
+                });
+            }
+        });
+        let url = format!("http://{addr}/hop0");
+        let agent = build_agent(RECV_RESPONSE_TIMEOUT, Duration::from_secs(1));
+        let err = get_with(&agent, &url).unwrap_err();
+        assert!(err.starts_with(&format!("{url}: ")), "{err}");
+        assert!(err.contains("timeout"), "{err}");
     }
 
     #[test]
