@@ -259,6 +259,14 @@ pub(crate) trait BeatTable {
         None
     }
 
+    /// The level its module's input `port` holds while nothing is
+    /// connected to it: 0, or a value written to it, constant through a
+    /// segment.
+    fn held_input(&self, port: usize) -> f32 {
+        let _ = port;
+        0.0
+    }
+
     /// How far its module counted its clock input's rising edges by the
     /// end of its last block: where a drain starting to play it on its
     /// edges takes up the count.

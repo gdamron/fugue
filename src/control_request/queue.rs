@@ -175,6 +175,11 @@ impl<T> Clone for QueueProducer<T> {
 }
 
 impl<T> QueueProducer<T> {
+    /// How many items the queue holds at most.
+    pub(crate) fn capacity(&self) -> u64 {
+        self.shared.mask + 1
+    }
+
     /// Whether at least `reserve` slots past the next position are free,
     /// so a push now leaves them for others. Exact while pushes are
     /// serialized (a push racing this check can take one of them); the

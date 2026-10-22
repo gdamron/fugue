@@ -56,3 +56,39 @@ fn moved_off_a_clock_it_reports_the_step_the_drain_told() {
         (2, 0, false)
     );
 }
+
+/// Moved off a clock on the sample of a step the drain told, the clock's
+/// gate rising there is that step, not another: playing on by itself,
+/// or on the drain's edges, the scheduler counts the next rise as the
+/// next step.
+#[test]
+fn moved_off_a_clock_on_a_step_s_sample_counts_that_gate_once() {
+    for player in [Player::Module, Player::Edges] {
+        let (mut module, _mixer, _dir) = setup(SCHEDULE);
+        module.set_played(Player::Clock);
+        module.set_step(0);
+        module.process(4);
+        // The clock's next gate rises on the next block's first sample:
+        // the drain tells step 1 there, and the scheduler moves off it.
+        module.set_step(1);
+        module.set_input("clock", 1.0).unwrap();
+        module.set_played(player);
+        if player == Player::Edges {
+            assert_eq!(module.counted().gate, 1.0, "the drain takes it as counted");
+        }
+        module.process(1);
+        assert_eq!(module.get_output("step").unwrap(), 1.0, "{player:?}");
+        module.set_input("clock", 0.0).unwrap();
+        module.process(3);
+        pulse(&mut module, 3);
+        assert_eq!(module.get_output("step").unwrap(), 2.0, "{player:?}");
+    }
+}
+
+#[test]
+fn an_unconnected_input_holds_what_was_written_to_it() {
+    let (mut module, _mixer, _dir) = setup(SCHEDULE);
+    assert_eq!(module.held_input(1), 0.0);
+    module.set_input("reset", 1.0).unwrap();
+    assert_eq!((module.held_input(0), module.held_input(1)), (0.0, 1.0));
+}

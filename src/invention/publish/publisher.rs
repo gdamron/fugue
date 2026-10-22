@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::change::{BuiltModule, PreparedChange, TopologyMirror};
+use super::timed_status::{CancelCause, Ledger};
 use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{
     outcome_channel, request_channel, ControlIndex, ControlTarget, OutcomeReceiver, QueueFull,
@@ -122,6 +123,10 @@ pub(crate) struct Publisher {
     timed: Option<timed::Waiting>,
     /// Whether `timed` holds one, for the reclaimer to read without a lock.
     timed_flag: Arc<AtomicBool>,
+    /// What the latest timed edits adopted touched.
+    adopted: timed::Adoptions,
+    /// What became of each recent timed edit.
+    ledger: Ledger,
 }
 
 impl Publisher {
@@ -165,6 +170,8 @@ impl Publisher {
             closed: false,
             timed: None,
             timed_flag: Arc::new(AtomicBool::new(false)),
+            adopted: timed::Adoptions::default(),
+            ledger: Ledger::default(),
         };
         let ends = LinkEnds {
             requests: requests.reserving(EDIT_RESERVE as u64),
@@ -255,6 +262,18 @@ impl Publisher {
         })
     }
 
+    /// The index of the invention's first clock, the one a timed edit
+    /// batch or reload counts beats on unless it names one.
+    pub(crate) fn first_clock(&self) -> Result<u32, GraphCommandError> {
+        let mut modules = self.mirror.modules.values();
+        let clock = modules.position(|module| matches!(module.flow, Flow::Clock));
+        let none = "The invention has no clock to count beats on: time this edit in samples";
+        // Module counts are far below u32::MAX (`BeatTime` keeps it narrow).
+        clock
+            .map(|index| index as u32)
+            .ok_or_else(|| GraphCommandError::ControlError(none.into()))
+    }
+
     /// Resolves the clock a request timed in beats on `module_id` counts on,
     /// for [`BeatTime::clock`](crate::control_request::BeatTime): `clock`
     /// by id when the request names one, otherwise the module's timeline
@@ -268,8 +287,6 @@ impl Publisher {
     /// clock, or an unnamed clock cannot be resolved: the invention has no
     /// clock a request can name, or the module is driven by a clock inside a
     /// development, which a request cannot name yet.
-    // The front doors that submit beat-timed requests arrive with FUG-317.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn beat_clock(
         &self,
         module_id: &str,
@@ -391,7 +408,7 @@ impl Publisher {
                     change: prepared,
                 });
             }
-            if !self.cancel_timed() {
+            if !self.cancel_timed(|| CancelCause::Commit) {
                 return Err(Refused {
                     error: GraphCommandError::TopologyMoved,
                     change: prepared,

@@ -225,15 +225,17 @@ impl RpcCommand {
     pub fn advances_revision(&self) -> bool {
         match self {
             Self::LoadInvention { .. }
-            | Self::ReloadInvention { .. }
             | Self::UnloadInvention
             | Self::AddModule { .. }
             | Self::RemoveModule { .. }
             | Self::Connect { .. }
             | Self::Disconnect { .. }
-            | Self::SwapModule { .. }
-            | Self::ApplyEdits { .. }
             | Self::LoadExample { .. } => true,
+            // A timed edit changes nothing as it is queued: the revision
+            // advances as it is adopted (see `EditTiming`).
+            Self::ReloadInvention { timing, .. }
+            | Self::SwapModule { timing, .. }
+            | Self::ApplyEdits { timing, .. } => !timing.is_timed(),
             Self::SetControl { intent, .. } => intent.is_authoring(),
             Self::SetControls { writes } => writes.iter().any(|write| write.intent.is_authoring()),
             Self::InspectInvention { .. }
@@ -249,6 +251,7 @@ impl RpcCommand {
             | Self::DescribeModule(_)
             | Self::ExportRequestLog { .. }
             | Self::FlushSession { .. }
+            | Self::GetRequest { .. }
             | Self::Shutdown => false,
         }
     }
