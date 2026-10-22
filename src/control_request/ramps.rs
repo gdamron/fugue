@@ -164,15 +164,19 @@ struct Running {
     ramp: BeatRamp,
     /// Another write replaced it: removed at the next step.
     ended: bool,
+    /// A table's: when its entry began (see [`TableTarget::begun`]); one
+    /// begun on its control since, by any player, replaced it.
+    begun: u64,
 }
 
 impl Running {
-    fn new(on: RampOn, clock: usize, ramp: BeatRamp) -> Self {
+    fn new(on: RampOn, clock: usize, ramp: BeatRamp, begun: u64) -> Self {
         Self {
             on,
             clock,
             ramp,
             ended: false,
+            begun,
         }
     }
 
@@ -288,25 +292,28 @@ impl Ramps {
         ramp: BeatRamp,
         host: &impl BeatHost,
     ) -> bool {
-        if let Some(target) = entry_target(host, key) {
+        let target = entry_target(host, key);
+        if let Some(target) = target {
             self.supersede_entry(target, host);
         }
+        let begun = target.map_or(0, TableTarget::begun);
+        let running = Running::new(RampOn::Entry(key), clock, ramp, begun);
         // An ended ramp of a table's (one just replaced) gives up its room.
         let ended = |running: &&mut Running| running.ended && running.is_entry();
         if let Some(slot) = self.entries.iter_mut().find(ended) {
-            *slot = Running::new(RampOn::Entry(key), clock, ramp);
+            *slot = running;
             return true;
         }
         if self.count(true) >= self.table_limit {
             self.crowded.record();
             return false;
         }
-        self.push(RampOn::Entry(key), clock, ramp);
+        self.entries.push(running);
         true
     }
 
     fn push(&mut self, on: RampOn, clock: usize, ramp: BeatRamp) {
-        self.entries.push(Running::new(on, clock, ramp));
+        self.entries.push(Running::new(on, clock, ramp, 0));
     }
 
     /// Ends every request's ramp on a control `target` reaches: another
@@ -432,10 +439,15 @@ impl Ramps {
                 clock,
                 ramp,
                 ended,
+                begun,
             } = running;
             let kept = match on {
                 RampOn::Request { target, standing } => host.kept(&target, standing),
-                RampOn::Entry(_) => true,
+                // Another entry on its control since, played by any table
+                // or by a scheduler itself, replaced it.
+                RampOn::Entry(key) => {
+                    entry_target(&*host, key).is_some_and(|target| target.begun() <= begun)
+                }
             };
             let next = (host.timeline(clock))
                 .and_then(|timeline| ramp.next(timeline))
