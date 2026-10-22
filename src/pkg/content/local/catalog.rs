@@ -36,6 +36,20 @@ impl ContentCatalog {
             if !id.file_type().map_err(io_error)?.is_dir() {
                 continue;
             }
+            let name = id.file_name().to_string_lossy().into_owned();
+            // A source checkout lists its manifest version; inspecting it
+            // applies the layout rules (a mixed or invalid one is a diagnostic).
+            if let Ok(m) = pkg::parse_path(id.path().join("fugue.pkg.json")) {
+                if matches!(
+                    m.kind,
+                    pkg::PackageKind::Development | pkg::PackageKind::Invention
+                ) {
+                    refs.push(ContentRef::Package {
+                        package: name.clone(),
+                        version: m.version,
+                    });
+                }
+            }
             for version in directory(&id.path())? {
                 if !version.file_type().map_err(io_error)?.is_dir() {
                     continue;

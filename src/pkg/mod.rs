@@ -7,6 +7,8 @@
 
 pub mod audio_asset;
 pub mod content;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod layout;
 pub mod lock;
 pub mod manifest;
 pub mod read_limit;

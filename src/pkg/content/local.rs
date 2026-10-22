@@ -413,6 +413,8 @@ mod read_limit_tests;
 #[cfg(test)]
 mod refresh_cost_tests;
 #[cfg(test)]
+mod source_checkout_tests;
+#[cfg(test)]
 mod tests;
 
 fn missing_entry(mut error: ContentError) -> ContentError {
