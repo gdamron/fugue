@@ -240,6 +240,18 @@ fn a_changed_file_at_the_same_path_decodes_afresh() {
     let second = super::load_cached_sample(source, RATE).unwrap();
     assert!(!Arc::ptr_eq(&first, &second));
     assert_eq!(second.frame_at(0).0, 0.5);
+
+    // A revision still held elsewhere stays cached (its last drop must not
+    // free it, as that drop may run on the audio thread); one nothing else
+    // holds is reclaimed when a newer revision is cached.
+    assert_eq!(Arc::strong_count(&first), 2);
+    let first_gone = Arc::downgrade(&first);
+    drop(first);
+    write(&path, 0.75);
+    let third = super::load_cached_sample(source, RATE).unwrap();
+    assert_eq!(third.frame_at(0).0, 0.75);
+    assert!(first_gone.upgrade().is_none());
+    assert_eq!(Arc::strong_count(&second), 2);
 }
 
 #[test]

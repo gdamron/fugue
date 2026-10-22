@@ -223,8 +223,8 @@ enum AudioFormat {
 // and the direct path to the same installed file share one buffer. The
 // content digest makes a changed file (an edited local sample, or a package
 // read in place from a source checkout) decode afresh instead of replaying
-// the bytes first cached at that path. Each distinct content stays cached for
-// the life of the process, like every other entry.
+// the bytes first cached at that path. Older revisions are reclaimed by
+// `cache_loaded` once nothing outside the cache holds them.
 type SampleKey = (String, u32, Option<String>);
 type SampleCache = Mutex<HashMap<SampleKey, Arc<SampleData>>>;
 
@@ -236,9 +236,10 @@ fn sample_cache() -> &'static SampleCache {
 /// Returns the resampled buffer for `(source, target_sample_rate)`, decoding it
 /// (and caching) only on a miss. A decode error leaves the cache untouched.
 ///
-/// The cache keeps every buffer it returns for the life of the process, so
-/// dropping a returned `Arc` (on the audio thread, say, as a voice lets go
-/// of a replaced sample) never frees it.
+/// The cache keeps every buffer it returns until a newer revision of the same
+/// file is cached and nothing else holds the old one, so dropping a returned
+/// `Arc` (on the audio thread, say, as a voice lets go of a replaced sample)
+/// never frees it.
 pub(crate) fn load_cached_sample(
     source: &str,
     target_sample_rate: u32,
@@ -268,9 +269,28 @@ pub(crate) fn load_cached_sample(
 /// another thread cached since this one missed, if any, so the cache owns
 /// every buffer returned. The one decoded here is then dropped, on this
 /// control thread.
+///
+/// Caching a new revision of a path also reclaims older revisions of that
+/// path and rate that nothing else holds. One still held stays cached, so its
+/// reader's final drop never frees it on the audio thread; a later load of
+/// the path reclaims it.
 fn cache_loaded(key: SampleKey, sample: Arc<SampleData>) -> Arc<SampleData> {
-    let mut cache = sample_cache().lock().unwrap();
-    Arc::clone(cache.entry(key).or_insert(sample))
+    let mut stale = Vec::new();
+    let kept = {
+        let mut cache = sample_cache().lock().unwrap();
+        // Lookups clone under this lock, so a count of 1 cannot rise here.
+        let unused: Vec<SampleKey> = cache
+            .iter()
+            .filter(|(k, held)| {
+                k.0 == key.0 && k.1 == key.1 && k.2 != key.2 && Arc::strong_count(held) == 1
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        stale.extend(unused.iter().filter_map(|k| cache.remove(k)));
+        Arc::clone(cache.entry(key).or_insert(sample))
+    };
+    drop(stale);
+    kept
 }
 
 fn load_sample(source: &str, target_sample_rate: u32) -> Result<SampleData, String> {
