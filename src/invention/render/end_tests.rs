@@ -119,7 +119,9 @@ fn a_split_in_an_earlier_block_or_a_short_render_call_keeps_the_end_frame() {
     let mut done = 0;
     let end = loop {
         engine.render_interleaved(&mut buffer).unwrap();
-        if let Some(frame) = engine.scan_end_gate(Some("seq"), 48).unwrap() {
+        let any = engine.scan_end_gate(None, 48).unwrap();
+        assert_eq!(engine.scan_end_gate(Some("seq"), 48).unwrap(), any);
+        if let Some(frame) = any {
             break done + frame;
         }
         done += 48;

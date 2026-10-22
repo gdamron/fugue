@@ -46,7 +46,11 @@ impl EndWatch {
             });
         let kept: Vec<_> = gates.collect();
         if kept != self.gates {
-            self.rises = vec![None; kept.len()];
+            // A gate this block already saw rise keeps its frame.
+            self.rises = kept
+                .iter()
+                .map(|(id, ..)| self.rise(id).flatten())
+                .collect();
             self.gates = kept;
         }
     }

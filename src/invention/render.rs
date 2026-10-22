@@ -248,8 +248,8 @@ impl RenderEngine {
     /// `ended` gate is latched, so a coarser host still cannot *miss* it —
     /// only land on a later frame). A block that processed in pieces (split
     /// by a replayed request, see [`Self::replay`], or by the graph at a
-    /// scheduler's entry) is answered for whole, and a module removed or
-    /// moved by an edit since the render still answers for what it rendered.
+    /// scheduler's entry) is answered for whole, and a module another edit
+    /// moved since the render still answers for what it rendered.
     ///
     /// Errors when no invention is loaded, when a named source does not
     /// exist or has no `ended` output, or when `source` is `None` and nothing
