@@ -20,6 +20,7 @@ use super::requests::RequestDrain;
 use super::SignalGraph;
 use crate::control_request::{
     ConditionHost, ControlIndex, ControlTarget, Outcome, Ramps, RequestValue, RtValue, Standing,
+    Watches,
 };
 use crate::payload::Retirer;
 
@@ -135,12 +136,22 @@ impl SignalGraph {
         drain
             .conditions
             .read(drain.installed, Some(module), self, chains);
+        // So do the entries of tables played on edges (see `super::edges`),
+        // after the requests due at the same sample.
+        let edges = !drain.watches.edges.is_empty();
+        if edges {
+            drain.watches.edges.begin(module, self);
+        }
         let start = self.segment.start;
         let mut from = 0;
         while from < frames {
             let at = start + from as u64;
             let next = self.apply_conditions(&mut drain, Some(module), at);
-            let to = next.map_or(frames, |due| ((due - start) as usize).min(frames));
+            let mut to = next.map_or(frames, |due| ((due - start) as usize).min(frames));
+            if edges {
+                let Watches { edges, ramps, .. } = &mut drain.watches;
+                to = to.min(edges.play(module, from, self, ramps));
+            }
             self.process_span(module, from, to);
             from = to;
         }

@@ -55,8 +55,9 @@ impl SignalGraph {
         self.current_sample += frames as u64;
 
         // Requests timed by a condition apply as their target computes
-        // (see `super::conditions`); with none waiting, nothing looks.
-        let conditioned = self.conditions_waiting();
+        // (see `super::conditions`), and so do tables played on edges (see
+        // `super::edges`); with none waiting, nothing looks.
+        let conditioned = self.conditions_waiting() || self.edges_playing();
         for g in 0..self.process_groups.len() {
             if self.process_groups[g].feedback {
                 if conditioned {
@@ -80,6 +81,7 @@ impl SignalGraph {
         }
         if conditioned {
             self.read_conditions();
+            self.commit_edges();
         }
 
         // Mix sink output blocks.

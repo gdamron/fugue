@@ -198,14 +198,20 @@ impl SignalGraph {
     /// those gone is free for new ones; then the cursors are put in module
     /// order. Allocation-, free- and lock-free.
     fn find_tables(&self, watches: &mut Watches) {
-        let Watches { cursors, ramps, .. } = watches;
+        let Watches {
+            cursors,
+            ramps,
+            edges,
+            ..
+        } = watches;
         cursors.seek();
+        edges.seek();
         for known in [true, false] {
             for (module, (id, instance)) in self.modules.iter().enumerate() {
                 let Some(table) = instance.module().beat_table() else {
                     continue;
                 };
-                if cursors.has(table.id()) != known {
+                if (cursors.has(table.id()) || edges.has(table.id())) != known {
                     continue;
                 }
                 let input = table.clock_input();
@@ -219,6 +225,12 @@ impl SignalGraph {
                 };
                 let player = if cursors.found(table.id(), module, clock, ramps) {
                     Player::Clock
+                } else if clock.is_none()
+                    && self
+                        .edge_ports(module, table)
+                        .is_some_and(|ports| edges.found(table, module, ports))
+                {
+                    Player::Edges
                 } else {
                     Player::Module
                 };
@@ -229,6 +241,7 @@ impl SignalGraph {
             }
         }
         cursors.order();
+        edges.sought(self);
     }
 
     /// The clock whose output `port` of module `id` is, if it is one, told

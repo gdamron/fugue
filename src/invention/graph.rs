@@ -48,6 +48,7 @@ use super::runtime::ModuleInstance;
 mod beats;
 mod compile;
 mod conditions;
+mod edges;
 mod master;
 mod process;
 mod publication;
