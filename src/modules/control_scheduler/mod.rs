@@ -139,11 +139,12 @@
 //! entries merge with any explicit `schedule`. Patch the same clock output
 //! that drives the sequencers into this module's `clock` input.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::control_request::{
-    BeatTable, ControlCells, ControlIndex, ControlTable, Refusal, TableEntry, TableValue,
+    BeatTable, ControlCells, ControlIndex, ControlTable, Counted, Player, Refusal, TableEntry,
+    TableValue,
 };
 use crate::payload::{Payload, Retired};
 use crate::traits::ControlMeta;
@@ -262,14 +263,16 @@ pub struct ControlScheduler {
 
     /// Its schedule as the graph's drain plays it (see [`BeatTable`]): its
     /// id, the plan it plays (changed by every adoption but a retarget),
-    /// whether the drain plays it, and the step the drain last told it.
+    /// who plays it (a [`Player`]), and the step the drain last told it,
+    /// with whether that step began on the sample it was told for.
     table: usize,
     plan: u64,
-    played: AtomicBool,
+    player: AtomicU8,
     told_step: AtomicI64,
-    /// Whether the last block followed the drain: the first it plays on
-    /// its own takes the step the drain told since.
-    followed: bool,
+    told_began: AtomicBool,
+    /// Who played its last block: the first block another plays in takes
+    /// up from the step reached.
+    followed: Player,
 
     inputs: inputs::ControlSchedulerInputs,
     outputs: outputs::ControlSchedulerOutputs,
@@ -295,9 +298,10 @@ impl ControlScheduler {
             last_reset_in: 0.0,
             table: NEXT_TABLE.fetch_add(1, Ordering::Relaxed),
             plan: 0,
-            played: AtomicBool::new(false),
+            player: AtomicU8::new(Player::Module as u8),
             told_step: AtomicI64::new(-1),
-            followed: false,
+            told_began: AtomicBool::new(false),
+            followed: Player::Module,
             inputs: inputs::ControlSchedulerInputs::new(),
             outputs: outputs::ControlSchedulerOutputs::new(),
         }
@@ -444,8 +448,9 @@ impl ControlScheduler {
         });
     }
 
-    /// Processes one sample.
-    fn process_sample(&mut self, i: usize) {
+    /// Processes one sample: counts its gates, and plays the schedule
+    /// when `play` (the drain plays it otherwise).
+    fn process_sample(&mut self, i: usize, play: bool) {
         // Detect rising edges
         let gate_rising = self.inputs.clock(i) > 0.5 && self.last_gate_in <= 0.5;
         let reset_rising = self.inputs.reset(i) > 0.5 && self.last_reset_in <= 0.5;
@@ -464,9 +469,11 @@ impl ControlScheduler {
             self.samples_since_gate = 0;
 
             self.current_step += 1;
-            self.advance_ramps_on_edge();
-            self.fire_due_entries(i);
-        } else {
+            if play {
+                self.advance_ramps_on_edge();
+                self.fire_due_entries(i);
+            }
+        } else if play {
             self.update_ramps_between_edges();
         }
 
@@ -487,16 +494,25 @@ impl Module for ControlScheduler {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        if self.played.load(Ordering::Relaxed) {
-            self.followed = true;
+        let player = self.player();
+        let was = std::mem::replace(&mut self.followed, player);
+        if player == Player::Clock {
             self.follow_drain(frames);
         } else {
-            if std::mem::take(&mut self.followed) {
+            if was == Player::Clock {
                 // The drain may have played a step since the last block.
                 self.take_told();
+            } else if was != player {
+                // The other player played the entries up to this step, and
+                // ramps in flight stop where they stand.
+                self.skip_played();
+                self.ramps.clear();
             }
+            // On its edges the drain plays the entries, on the steps
+            // counted here (see `crate::control_request::BeatTable`).
+            let play = player == Player::Module;
             for i in 0..frames {
-                self.process_sample(i);
+                self.process_sample(i, play);
             }
         }
         // Mirror the step counter into the controls at block rate.
@@ -577,6 +593,14 @@ impl Module for ControlScheduler {
 }
 
 impl ControlScheduler {
+    fn player(&self) -> Player {
+        match self.player.load(Ordering::Relaxed) {
+            1 => Player::Clock,
+            2 => Player::Edges,
+            _ => Player::Module,
+        }
+    }
+
     /// A block the drain plays the schedule in: the step is the one the
     /// drain told, constant through the block (the drain splits blocks on
     /// each step's sample). The gate and reset inputs are only followed,
@@ -592,11 +616,27 @@ impl ControlScheduler {
         }
     }
 
+    /// The clock input's last level as the drain counted it: a step told
+    /// as beginning on this block's first sample (the drain splits blocks
+    /// on each step's sample) has its gate counted already, and a rise of
+    /// the input there is not another, whichever step it is (a clock reset
+    /// on that beat tells step 0 again).
+    fn told_gate(&self) -> f32 {
+        if self.told_began.load(Ordering::Relaxed) {
+            return 1.0;
+        }
+        self.last_gate_in
+    }
+
     /// Takes the step the drain last told, keeping the rest as playing on
     /// its own again needs it: the entries the drain played are skipped,
     /// its ramps are its own, and the next gate starts measuring the step
     /// length afresh.
     fn take_told(&mut self) {
+        self.last_gate_in = self.told_gate();
+        // A step tells of its own sample only: the drain tells none on the
+        // segment it moves the schedule off its clock.
+        self.told_began.store(false, Ordering::Relaxed);
         self.current_step = self.told_step.load(Ordering::Relaxed);
         self.skip_played();
         self.ramps.clear();
@@ -626,12 +666,51 @@ impl BeatTable for ControlScheduler {
         self.entries.get(index).map(|entry| &entry.entry)
     }
 
-    fn set_played(&self, played: bool) {
-        self.played.store(played, Ordering::Relaxed);
+    fn set_played(&self, player: Player) {
+        self.player.store(player as u8, Ordering::Relaxed);
     }
 
-    fn set_step(&self, step: i64) {
+    fn reset_input(&self) -> Option<&str> {
+        Some("reset")
+    }
+
+    fn held_input(&self, port: usize) -> f32 {
+        match port {
+            0 => self.inputs.clock(0),
+            1 => self.inputs.reset(0),
+            _ => 0.0,
+        }
+    }
+
+    fn counted(&self) -> Counted {
+        if self.followed == Player::Clock {
+            // As its next block takes it up (see `Self::take_told`).
+            return Counted {
+                step: self.told_step.load(Ordering::Relaxed),
+                gate: self.told_gate(),
+                reset: self.last_reset_in,
+                since: 0,
+                interval: self.step_duration_samples,
+                measured: false,
+            };
+        }
+        Counted {
+            step: self.current_step,
+            gate: self.last_gate_in,
+            reset: self.last_reset_in,
+            since: self.samples_since_gate,
+            interval: self.step_duration_samples,
+            measured: self.first_gate_received,
+        }
+    }
+
+    fn target_module(&self, index: usize) -> Option<&str> {
+        self.entries.get(index).map(|entry| entry.module.as_str())
+    }
+
+    fn set_step(&self, step: i64, began: bool) {
         self.told_step.store(step, Ordering::Relaxed);
+        self.told_began.store(began, Ordering::Relaxed);
     }
 }
 
@@ -656,6 +735,8 @@ mod declared_tests;
 mod legacy_tests;
 #[cfg(test)]
 mod payload_tests;
+#[cfg(test)]
+mod player_tests;
 #[cfg(test)]
 mod refused_tests;
 #[cfg(test)]

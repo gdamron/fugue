@@ -131,5 +131,5 @@ fn a_table_reads_its_entries_in_place_and_hears_whether_it_is_played() {
     assert_eq!((second.step, second.ramp_steps), (4, 2));
     assert_eq!(second.value, TableValue::Number(1.0));
     assert!(table.entry(2).is_none());
-    table.set_played(true);
+    table.set_played(super::Player::Clock);
 }

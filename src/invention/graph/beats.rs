@@ -6,7 +6,7 @@
 
 use super::{Publication, RoutingConnection, SignalGraph};
 use crate::control_request::{
-    kept_hold, take_automation, BeatHost, BeatTable, ControlTarget, Outcome, Outcomes,
+    kept_hold, take_automation, BeatHost, BeatTable, ControlTarget, Outcome, Outcomes, Player,
     RequestValue, RtValue, Standing, StepClock, Timeline, Watches,
 };
 use crate::payload::Retirer;
@@ -217,7 +217,12 @@ impl SignalGraph {
                     (Some(edge), None) => self.step_clock(&edge.from_module, &edge.from_port),
                     _ => None,
                 };
-                table.set_played(cursors.found(table.id(), module, clock, ramps));
+                let player = if cursors.found(table.id(), module, clock, ramps) {
+                    Player::Clock
+                } else {
+                    Player::Module
+                };
+                table.set_played(player);
             }
             if known {
                 cursors.sought(ramps);

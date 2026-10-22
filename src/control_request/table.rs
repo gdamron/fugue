@@ -189,14 +189,61 @@ pub(crate) struct TableEntry {
     pub(crate) target: TableTarget,
 }
 
+/// A module's count of its clock input's rising edges (see
+/// [`BeatTable::counted`]), as the drain carries it on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Counted {
+    /// The step it is in: -1 before its first edge, and after a reset.
+    pub(crate) step: i64,
+    /// Its clock and reset inputs' last levels: an edge rises past 0.5.
+    pub(crate) gate: f32,
+    pub(crate) reset: f32,
+    /// Samples since its last edge, the samples between the two edges
+    /// before that (the step length a ramp moves on by between edges), and
+    /// whether an edge came since it started or reset (only the next one
+    /// measures a step).
+    pub(crate) since: u32,
+    pub(crate) interval: u32,
+    pub(crate) measured: bool,
+}
+
+impl Default for Counted {
+    fn default() -> Self {
+        Self {
+            step: -1,
+            gate: 0.0,
+            reset: 0.0,
+            since: 0,
+            interval: 1,
+            measured: false,
+        }
+    }
+}
+
+/// Who plays a table's entries (see [`BeatTable::set_played`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Player {
+    /// Its module, counting its gates and writing as it processes.
+    Module = 0,
+    /// The drain, on the clock gate its clock input carries.
+    Clock = 1,
+    /// The drain, on the steps its module counts on its clock input's
+    /// rising edges and reports on its step output (see
+    /// `super::watch::edges`).
+    #[cfg_attr(not(test), allow(dead_code))] // until the drain plays edges
+    Edges = 2,
+}
+
 /// A table a module plays automation from, read in place by the drain on
 /// the audio thread: between `process` calls, allocation-, free- and
 /// lock-free.
 ///
-/// Its step `n` falls on its clock's `n`-th gate counted from where the
-/// drain first saw it, and again from beat 0 after every reset of the
-/// clock. A module whose table no drain plays (one inside a development)
-/// plays it itself, on its own gate.
+/// On a clock, its step `n` falls on its clock's `n`-th gate counted from
+/// where the drain first saw it, and again from beat 0 after every reset
+/// of the clock. On any other signal its module counts the rising edges,
+/// and the drain plays each entry on the sample of its step's edge. A
+/// module whose table no drain plays (one inside a development) plays it
+/// itself, on its own gate.
 pub(crate) trait BeatTable {
     /// Tells this table from every other for its module's life.
     fn id(&self) -> usize;
@@ -215,13 +262,43 @@ pub(crate) trait BeatTable {
     /// Entry `index`, in step order (ties in the order written).
     fn entry(&self, index: usize) -> Option<&TableEntry>;
 
-    /// Told whether a drain plays it: until one does, its module does.
-    fn set_played(&self, played: bool);
+    /// Told who plays it: until a drain does, its module does.
+    fn set_played(&self, player: Player);
+
+    /// The input a rise on restarts its count, for one its module counts
+    /// (see [`Self::counted`]).
+    fn reset_input(&self) -> Option<&str> {
+        None
+    }
+
+    /// The level its module's input `port` holds while nothing is
+    /// connected to it: 0, or a value written to it, constant through a
+    /// segment.
+    fn held_input(&self, port: usize) -> f32 {
+        let _ = port;
+        0.0
+    }
+
+    /// How far its module counted its clock input's rising edges by the
+    /// end of its last block: where a drain starting to play it on its
+    /// edges takes up the count.
+    fn counted(&self) -> Counted {
+        Counted::default()
+    }
+
+    /// The id of the module entry `index` writes, when it names one: a
+    /// drain playing it on its edges writes each entry just before that
+    /// module computes the entry's sample.
+    fn target_module(&self, index: usize) -> Option<&str> {
+        let _ = index;
+        None
+    }
 
     /// Told, by the drain playing it, the step its clock's next sample is
     /// in (-1 before step 0), at every pass and on each step's sample: a
-    /// module's `step` output follows its clock's position.
-    fn set_step(&self, step: i64);
+    /// module's `step` output follows its clock's position. `began`: that
+    /// sample begins the step (its beat, whose gate rises there).
+    fn set_step(&self, step: i64, began: bool);
 }
 
 #[cfg(test)]
