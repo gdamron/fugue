@@ -16,7 +16,6 @@ use std::io::Read;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub(crate) mod elastic;
-mod local;
 
 #[cfg(test)]
 mod tests;
@@ -213,20 +212,14 @@ enum AudioFormat {
 }
 
 /// Process-wide cache of decoded + resampled buffers, keyed by the resolved
-/// source string, the target (engine) sample rate and, for a local file, the
-/// SHA-256 of its bytes. Decode/resample happens
+/// source string and the target (engine) sample rate. Decode/resample happens
 /// off the audio thread, so a `Mutex` here is fine; the audio thread only ever
 /// touches the resulting `Arc<SampleData>`. Deduplicates work and memory when
 /// several players reference the same asset at the same rate.
 //
 // Keyed by the *resolved* source path (`resolve_source`), so a package ref
-// and the direct path to the same installed file share one buffer. The
-// content digest makes a changed file (an edited local sample, or a package
-// read in place from a source checkout) decode afresh instead of replaying
-// the bytes first cached at that path. Older revisions are reclaimed by
-// `cache_loaded` once nothing outside the cache holds them.
-type SampleKey = (String, u32, Option<String>);
-type SampleCache = Mutex<HashMap<SampleKey, Arc<SampleData>>>;
+// and the direct path to the same installed file share one buffer.
+type SampleCache = Mutex<HashMap<(String, u32), Arc<SampleData>>>;
 
 fn sample_cache() -> &'static SampleCache {
     static CACHE: OnceLock<SampleCache> = OnceLock::new();
@@ -236,74 +229,35 @@ fn sample_cache() -> &'static SampleCache {
 /// Returns the resampled buffer for `(source, target_sample_rate)`, decoding it
 /// (and caching) only on a miss. A decode error leaves the cache untouched.
 ///
-/// The cache keeps every buffer it returns until a newer revision of the same
-/// file is cached and nothing else holds the old one, so dropping a returned
-/// `Arc` (on the audio thread, say, as a voice lets go of a replaced sample)
-/// never frees it.
+/// The cache keeps every buffer it returns for the life of the process, so
+/// dropping a returned `Arc` (on the audio thread, say, as a voice lets go
+/// of a replaced sample) never frees it.
 pub(crate) fn load_cached_sample(
     source: &str,
     target_sample_rate: u32,
 ) -> Result<Arc<SampleData>, String> {
-    // A local file is read once: its digest keys the cache, and the same
-    // bytes decode on a miss, so the key always names what was decoded.
-    let (bytes, digest) = local::read_local(source)?;
-    let key = (source.to_string(), target_sample_rate, digest);
+    let key = (source.to_string(), target_sample_rate);
 
     if let Some(cached) = sample_cache().lock().unwrap().get(&key) {
         return Ok(Arc::clone(cached));
     }
 
-    let sample = match bytes {
-        Some(bytes) => decode_sample(
-            source,
-            Box::new(std::io::Cursor::new(bytes)),
-            false,
-            target_sample_rate,
-        )?,
-        None => load_sample(source, target_sample_rate)?,
-    };
-    Ok(cache_loaded(key, Arc::new(sample)))
+    let sample = Arc::new(load_sample(source, target_sample_rate)?);
+    Ok(cache_loaded(key, sample))
 }
 
 /// Caches `sample` under `key`, returning the buffer the cache keeps: one
 /// another thread cached since this one missed, if any, so the cache owns
 /// every buffer returned. The one decoded here is then dropped, on this
 /// control thread.
-///
-/// Caching a new revision of a path also reclaims older revisions of that
-/// path and rate that nothing else holds. One still held stays cached, so its
-/// reader's final drop never frees it on the audio thread; it is reclaimed
-/// when a later load caches another revision of the path.
-fn cache_loaded(key: SampleKey, sample: Arc<SampleData>) -> Arc<SampleData> {
-    let mut stale = Vec::new();
-    let kept = {
-        let mut cache = sample_cache().lock().unwrap();
-        // Lookups clone under this lock, so a count of 1 cannot rise here.
-        let unused: Vec<SampleKey> = cache
-            .iter()
-            .filter(|(k, held)| {
-                k.0 == key.0 && k.1 == key.1 && k.2 != key.2 && Arc::strong_count(held) == 1
-            })
-            .map(|(k, _)| k.clone())
-            .collect();
-        stale.extend(unused.iter().filter_map(|k| cache.remove(k)));
-        Arc::clone(cache.entry(key).or_insert(sample))
-    };
-    drop(stale);
-    kept
+fn cache_loaded(key: (String, u32), sample: Arc<SampleData>) -> Arc<SampleData> {
+    let mut cache = sample_cache().lock().unwrap();
+    Arc::clone(cache.entry(key).or_insert(sample))
 }
 
 fn load_sample(source: &str, target_sample_rate: u32) -> Result<SampleData, String> {
-    let (reader, remote) = open_source(source)?;
-    decode_sample(source, reader, remote, target_sample_rate)
-}
+    let (mut reader, remote) = open_source(source)?;
 
-fn decode_sample(
-    source: &str,
-    mut reader: Box<dyn Read>,
-    remote: bool,
-    target_sample_rate: u32,
-) -> Result<SampleData, String> {
     // Peek the header magic so format detection is header-driven (authoritative)
     // with the file extension as a fallback. The source readers (file or HTTPS
     // stream) are not seekable, so the consumed bytes are chained back on.

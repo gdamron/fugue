@@ -198,7 +198,7 @@ fn a_sample_decoded_by_a_losing_racer_is_not_the_one_returned() {
     // Two threads missed the same key, and both decoded it: the second to
     // cache gets the first's buffer, so the cache owns whatever either
     // returns, and a voice dropping it on the audio thread frees nothing.
-    let key = ("fugue-test://a-raced-sample".to_string(), RATE, None);
+    let key = ("fugue-test://a-raced-sample".to_string(), RATE);
     let first = Arc::new(SampleData::from_interleaved(1, RATE, RATE, vec![0.1; 4]));
     let second = Arc::new(SampleData::from_interleaved(1, RATE, RATE, vec![0.2; 4]));
     let lost = Arc::downgrade(&second);
@@ -208,73 +208,4 @@ fn a_sample_decoded_by_a_losing_racer_is_not_the_one_returned() {
     ));
     assert!(Arc::ptr_eq(&super::cache_loaded(key, second), &first));
     assert!(lost.upgrade().is_none(), "the losing decode is dropped");
-}
-
-#[test]
-fn a_changed_file_at_the_same_path_decodes_afresh() {
-    // A source-checkout package (or an edited local sample) keeps its path
-    // when its bytes change; the cache must not replay the first decode.
-    fn write(path: &std::path::Path, value: f32) {
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: RATE,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        };
-        let mut writer = hound::WavWriter::create(path, spec).unwrap();
-        for _ in 0..8 {
-            writer.write_sample(value).unwrap();
-        }
-        writer.finalize().unwrap();
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("hit.wav");
-    let source = path.to_str().unwrap();
-    write(&path, 0.25);
-    let first = super::load_cached_sample(source, RATE).unwrap();
-    assert!(Arc::ptr_eq(
-        &first,
-        &super::load_cached_sample(source, RATE).unwrap()
-    ));
-    write(&path, 0.5);
-    let second = super::load_cached_sample(source, RATE).unwrap();
-    assert!(!Arc::ptr_eq(&first, &second));
-    assert_eq!(second.frame_at(0).0, 0.5);
-
-    // A revision still held elsewhere stays cached (its last drop must not
-    // free it, as that drop may run on the audio thread); one nothing else
-    // holds is reclaimed when a newer revision is cached.
-    assert_eq!(Arc::strong_count(&first), 2);
-    let first_gone = Arc::downgrade(&first);
-    drop(first);
-    write(&path, 0.75);
-    let third = super::load_cached_sample(source, RATE).unwrap();
-    assert_eq!(third.frame_at(0).0, 0.75);
-    assert!(first_gone.upgrade().is_none());
-    assert_eq!(Arc::strong_count(&second), 2);
-}
-
-#[test]
-fn oversized_and_non_regular_local_samples_are_refused_before_reading() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("huge.wav");
-    std::fs::write(&path, vec![0u8; 64]).unwrap();
-    let source = path.to_str().unwrap();
-    let refused = |source: &str| match super::load_cached_sample(source, RATE) {
-        Ok(_) => panic!("{source} loaded"),
-        Err(error) => error,
-    };
-    let error = crate::pkg::read_limit::test_override::with_hashed_limit(16, || refused(source));
-    assert!(error.contains("trim or split the sample"), "{error}");
-
-    // Windows refuses to open a directory before the regular-file check.
-    let error = refused(dir.path().to_str().unwrap());
-    assert!(error.contains("Failed to open sample"), "{error}");
-    #[cfg(unix)]
-    {
-        let error = refused(dir.path().to_str().unwrap());
-        assert!(error.contains("not a regular file"), "{error}");
-        let error = refused("/dev/zero");
-        assert!(error.contains("not a regular file"), "{error}");
-    }
 }
