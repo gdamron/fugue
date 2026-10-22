@@ -231,6 +231,16 @@ mod tests {
     }
 
     #[test]
+    fn oversized_source_manifest_is_refused_before_reading() {
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(&tmp.path().join("fugue.a.b"), "fugue.a.b", "2026.10.2");
+        let refused = crate::pkg::read_limit::test_override::with_document_limit(16, || {
+            available(tmp.path(), "fugue.a.b").unwrap_err()
+        });
+        assert!(refused.contains("limited to"), "{refused}");
+    }
+
+    #[test]
     fn source_checkout_with_wrong_id_or_bad_manifest_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
         manifest(&tmp.path().join("fugue.a.b"), "fugue.other.pkg", "1.0.0");
