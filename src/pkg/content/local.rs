@@ -225,8 +225,9 @@ impl ContentRoots {
             }
         }
         let source = if let ContentRef::Package { package, version } = &reference {
+            // Receipts describe installs; a source checkout has none.
             read_receipt(&self.packages, package, version)?
-                .filter(|r| r.bundled)
+                .filter(|r| r.bundled && self.packages.join(package).join(version).is_dir())
                 .map_or(source, |_| ContentSource::Bundled)
         } else {
             source
@@ -412,6 +413,8 @@ use std::fs;
 mod read_limit_tests;
 #[cfg(test)]
 mod refresh_cost_tests;
+#[cfg(test)]
+mod source_checkout_tests;
 #[cfg(test)]
 mod tests;
 
