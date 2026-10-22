@@ -88,3 +88,12 @@ pub(super) fn latch(entry: &mut Entry, chains: &Chains) {
         }
     }
 }
+
+/// Whether `entry` waits on one of the requests `ids` applying (0: none).
+pub(super) fn waits_on(entry: &Entry, ids: &[u64]) -> bool {
+    let parts = entry.condition.parts();
+    parts.iter().any(|part| match *part {
+        Predicate::Applied(id) => id.0 != 0 && ids.contains(&id.0),
+        _ => false,
+    })
+}
