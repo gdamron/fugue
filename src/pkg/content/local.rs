@@ -180,6 +180,7 @@ impl ContentRoots {
     ) -> Result<Resolved> {
         let mut closure = Closure {
             hashing,
+            governed: matches!(purpose, Purpose::Load),
             ..Default::default()
         };
         let (path, root, manifest) = self.reference_path(reference, purpose)?;
@@ -299,8 +300,22 @@ impl ContentRoots {
                 let root = canonical(&resolved.install_dir, "content_not_found")?;
                 contained(&self.packages, &root)?;
                 let manifest_path = contained(&root, &resolved.file)?;
-                let manifest =
-                    pkg::parse_path(&manifest_path).map_err(|e| err("invalid_content", e))?;
+                let manifest = match purpose {
+                    // Read once, checked, and parsed from the bytes checked.
+                    Purpose::Load => {
+                        let bytes = read_file(&manifest_path)?;
+                        crate::pkg::lock::check_bytes(&manifest_path, &bytes)
+                            .map_err(|e| err("integrity_mismatch", e))?;
+                        std::str::from_utf8(&bytes)
+                            .map_err(|e| err("invalid_content", e))
+                            .and_then(|text| {
+                                pkg::parse_str(text).map_err(|e| err("invalid_content", e))
+                            })?
+                    }
+                    Purpose::Browse => {
+                        pkg::parse_path(&manifest_path).map_err(|e| err("invalid_content", e))?
+                    }
+                };
                 if manifest.id != *package || manifest.version != *version {
                     return Err(err(
                         "integrity_mismatch",

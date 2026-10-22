@@ -470,6 +470,8 @@ pub(crate) fn resolve_json_assets(
                 err
             )
         })?;
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::pkg::lock::check_bytes(&resolved, contents.as_bytes())?;
         let is_json = resolved
             .extension()
             .and_then(|ext| ext.to_str())

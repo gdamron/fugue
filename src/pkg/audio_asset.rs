@@ -155,12 +155,7 @@ mod fs_ops {
                 "frozen load refused {reference}: the locked version {version} is not present"
             ));
         }
-        lock.admit_file(
-            &reference.id,
-            &resolved.install_dir,
-            &resolved.file,
-            reference,
-        )?;
+        lock.admit_file(&resolved.file, reference)?;
         Ok(resolved)
     }
 
