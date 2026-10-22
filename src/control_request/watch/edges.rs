@@ -227,9 +227,9 @@ impl EdgeCursors {
     }
 
     /// Ends the cursors not found since [`Self::seek`] and their ramps,
-    /// then puts the rest in module order and finds where their entries
-    /// and ramps write. Allocation- and free-free.
-    pub(crate) fn sought(&mut self, host: &impl EdgeHost) {
+    /// freeing their room for tables found after. Allocation- and
+    /// free-free.
+    pub(crate) fn prune(&mut self) {
         let Self { entries, ramps, .. } = self;
         entries.retain(|cursor| {
             if !cursor.found {
@@ -237,6 +237,14 @@ impl EdgeCursors {
             }
             cursor.found
         });
+    }
+
+    /// Ends the cursors not found since [`Self::seek`] and their ramps,
+    /// then puts the rest in module order and finds where their entries
+    /// and ramps write. Allocation- and free-free.
+    pub(crate) fn sought(&mut self, host: &impl EdgeHost) {
+        self.prune();
+        let Self { entries, ramps, .. } = self;
         entries.sort_unstable_by_key(|cursor| cursor.module);
         for cursor in entries.iter_mut() {
             let Some(table) = table_of(cursor, host) else {
@@ -349,12 +357,18 @@ fn target_of(table: &dyn BeatTable, index: usize, host: &impl EdgeHost) -> Optio
     host.module_index(table.target_module(index)?)
 }
 
+/// Whether a count at step `step` (-1 before the first edge) has reached
+/// an entry at step `at`, compared whole: one too far to count never is.
+fn reached(at: u64, step: i64) -> bool {
+    u64::try_from(step).is_ok_and(|step| at <= step)
+}
+
 /// The index of `table`'s first entry after step `step`.
 fn played(table: &dyn BeatTable, step: i64) -> usize {
     let mut next = 0;
     while table
         .entry(next)
-        .is_some_and(|entry| (entry.step as i64) <= step)
+        .is_some_and(|entry| reached(entry.step, step))
     {
         next += 1;
     }
@@ -402,7 +416,7 @@ fn due(
     let (step, mut next) = cursor.scan.peek(restart);
     while table
         .entry(next)
-        .is_some_and(|entry| entry.step as i64 <= step)
+        .is_some_and(|entry| reached(entry.step, step))
     {
         if mine(target_of(table, next, host)) {
             return true;
@@ -440,7 +454,7 @@ fn step(
     ramps.edge(id, table, mine);
     let step = cursor.scan.counted.step;
     while let Some(entry) = table.entry(cursor.scan.next) {
-        if entry.step as i64 > step {
+        if !reached(entry.step, step) {
             break;
         }
         let index = cursor.scan.next;

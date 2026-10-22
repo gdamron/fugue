@@ -8,7 +8,7 @@
 //! its count agree.
 
 use super::SignalGraph;
-use crate::control_request::{BeatTable, EdgeHost, Ports, Watches};
+use crate::control_request::{BeatHost, BeatTable, EdgeHost, Ports, Watches};
 
 impl EdgeHost for SignalGraph {
     fn segment(&self) -> (u64, usize) {
@@ -19,9 +19,19 @@ impl EdgeHost for SignalGraph {
         let (Some(port), Some(routes)) = (port, self.compiled_routes.get(module)) else {
             return 0.0;
         };
+        let mut routes = routes
+            .iter()
+            .filter(|route| route.to_port == port)
+            .peekable();
+        if routes.peek().is_none() {
+            // Unconnected, it holds what was written to it, as its module
+            // reads it.
+            let table = self.table(module);
+            return table.map_or(0.0, |table| table.held_input(port));
+        }
         // Summed in route order from 0, as `process_span` sums them.
         let mut sum = 0.0;
-        for route in routes.iter().filter(|route| route.to_port == port) {
+        for route in routes {
             let base = route.from_port * self.block_capacity;
             sum += self.out_bufs[route.from_module][base + frame];
         }

@@ -367,3 +367,53 @@ fn a_schedule_moved_from_a_clock_onto_a_gate_plays_on_from_the_clock_s_step() {
         "steps 2 and 3 on the gate's next edges"
     );
 }
+
+/// A rise written to the unconnected `reset` input restarts the schedule
+/// the drain plays, as it restarts the module's count.
+#[test]
+fn a_rise_written_to_an_unconnected_reset_restarts_the_schedule() {
+    let schedule = serde_json::json!([level(0, 0.5), level(1, 0.75)]);
+    let edges = edges(64 * 200);
+    let mut rig = rig(schedule, ("dial", "out"), false);
+    let before = render_counted(&mut rig, edges[3] / 64 + 1);
+    let written = before.len();
+    rig.live.write_input("sched", "reset", 1.0).unwrap();
+    let after = render_counted(&mut rig, 60);
+    let out: Vec<f32> = before.into_iter().chain(after).collect();
+    let next = edges.iter().position(|&at| at >= written).unwrap();
+    assert!(out[written..edges[next]].iter().all(|&level| level == 0.75));
+    assert_eq!(out[edges[next]], 0.5, "step 0 again");
+    assert_eq!(out[edges[next + 1]], 0.75);
+}
+
+/// Another source joining a clock on the sample of its beat: the beat is
+/// the step the drain played there, and the next beat the next step.
+#[test]
+fn a_source_joining_a_clock_on_its_beat_counts_the_beat_once() {
+    let changes = |out: &[f32]| -> Vec<(usize, f32)> {
+        (1..out.len())
+            .filter(|&at| out[at] != out[at - 1])
+            .map(|at| (at, out[at]))
+            .collect()
+    };
+    let mut steps = Vec::new();
+    for joined in [23_998, 23_999] {
+        let mut rig = rig(serde_json::json!([level(9, 0.5)]), ("sched", "step"), false);
+        let clock = rig.build("clock", "clock", serde_json::json!({ "bpm": 120.0 }));
+        rig.live
+            .edit(|change| {
+                change.upsert("clock", clock);
+                change.disconnect(edge("lfo", "unipolar", "sched", "clock"));
+                change.connect(edge("clock", "beat", "sched", "clock"))
+            })
+            .unwrap();
+        let mut out = render(&mut rig.graph, 1, joined);
+        rig.live
+            .edit(|change| change.connect(edge("dial", "out", "sched", "clock")))
+            .unwrap();
+        out.extend(render(&mut rig.graph, 1, 30_000));
+        steps.push(changes(&out));
+    }
+    assert_eq!(steps[0], steps[1], "joined a sample before, or on the beat");
+    assert_eq!(steps[1][..2], [(23_999, 1.0), (47_999, 2.0)]);
+}

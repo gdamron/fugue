@@ -40,8 +40,9 @@
 //! of its step's edge, whatever the block boundaries, live and offline
 //! alike; after the entries of schedules played on a clock at that sample.
 //! A target computing before the scheduler's inputs are known (in a
-//! feedback group with them, or a sink) takes its entry late, at the start
-//! of the segment after the edge. The `step` output counts the same edges.
+//! feedback group with them, or a sink) takes its entry late: once the
+//! segment holding the edge (a block, or part of one) has computed, so it
+//! lands on the next segment's first sample. The `step` output counts the same edges.
 //!
 //! When the drain stops playing a schedule (its clock unplugged), the
 //! scheduler plays on by itself from the step the schedule reached, counting
@@ -610,11 +611,23 @@ impl ControlScheduler {
         }
     }
 
+    /// The clock input's last level as the drain counted it: a step told
+    /// since the last block the drain played began on this block's first
+    /// sample (the drain splits blocks on each step's sample), so its gate
+    /// is counted already, and a rise of the input there is not another.
+    fn told_gate(&self) -> f32 {
+        if self.told_step.load(Ordering::Relaxed) > self.current_step {
+            return 1.0;
+        }
+        self.last_gate_in
+    }
+
     /// Takes the step the drain last told, keeping the rest as playing on
     /// its own again needs it: the entries the drain played are skipped,
     /// its ramps are its own, and the next gate starts measuring the step
     /// length afresh.
     fn take_told(&mut self) {
+        self.last_gate_in = self.told_gate();
         self.current_step = self.told_step.load(Ordering::Relaxed);
         self.skip_played();
         self.ramps.clear();
@@ -652,12 +665,20 @@ impl BeatTable for ControlScheduler {
         Some("reset")
     }
 
+    fn held_input(&self, port: usize) -> f32 {
+        match port {
+            0 => self.inputs.clock(0),
+            1 => self.inputs.reset(0),
+            _ => 0.0,
+        }
+    }
+
     fn counted(&self) -> Counted {
         if self.followed == Player::Clock {
             // As its next block takes it up (see `Self::take_told`).
             return Counted {
                 step: self.told_step.load(Ordering::Relaxed),
-                gate: self.last_gate_in,
+                gate: self.told_gate(),
                 reset: self.last_reset_in,
                 since: 0,
                 interval: self.step_duration_samples,
