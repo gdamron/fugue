@@ -49,7 +49,7 @@ fn moved_off_a_clock_it_reports_the_step_the_drain_told() {
     let (mut module, _mixer, _dir) = setup(SCHEDULE);
     module.set_played(Player::Clock);
     module.process(4);
-    module.set_step(2);
+    module.set_step(2, false);
     let counted = module.counted();
     assert_eq!(
         (counted.step, counted.since, counted.measured),
@@ -66,11 +66,11 @@ fn moved_off_a_clock_on_a_step_s_sample_counts_that_gate_once() {
     for player in [Player::Module, Player::Edges] {
         let (mut module, _mixer, _dir) = setup(SCHEDULE);
         module.set_played(Player::Clock);
-        module.set_step(0);
+        module.set_step(0, true);
         module.process(4);
         // The clock's next gate rises on the next block's first sample:
         // the drain tells step 1 there, and the scheduler moves off it.
-        module.set_step(1);
+        module.set_step(1, true);
         module.set_input("clock", 1.0).unwrap();
         module.set_played(player);
         if player == Player::Edges {
@@ -85,22 +85,48 @@ fn moved_off_a_clock_on_a_step_s_sample_counts_that_gate_once() {
     }
 }
 
-/// A clock reset on its beat tells a lower step on that gate's sample:
-/// moved off it there, the scheduler still counts that gate once.
+/// A clock reset on its beat tells a lower step, or the same one, on that
+/// gate's sample: moved off it there, the scheduler still counts that gate
+/// once, on its own or on the drain's edges.
 #[test]
 fn moved_off_a_clock_reset_on_its_beat_counts_that_gate_once() {
+    for (from, player) in [
+        (5, Player::Module),
+        (0, Player::Module),
+        (5, Player::Edges),
+        (0, Player::Edges),
+    ] {
+        let (mut module, _mixer, _dir) = setup(SCHEDULE);
+        module.set_played(Player::Clock);
+        module.set_step(from, true);
+        module.process(4);
+        module.set_step(0, true);
+        module.set_input("clock", 1.0).unwrap();
+        module.set_played(player);
+        if player == Player::Edges {
+            assert_eq!(module.counted().gate, 1.0, "the drain takes it as counted");
+        }
+        module.process(1);
+        assert_eq!(module.get_output("step").unwrap(), 0.0, "{from} {player:?}");
+        module.set_input("clock", 0.0).unwrap();
+        module.process(3);
+        pulse(&mut module, 3);
+        assert_eq!(module.get_output("step").unwrap(), 1.0, "{from} {player:?}");
+    }
+}
+
+/// Moved off a clock mid-step, the scheduler counts the next rise there
+/// as the next step.
+#[test]
+fn moved_off_a_clock_mid_step_counts_the_next_rise() {
     let (mut module, _mixer, _dir) = setup(SCHEDULE);
     module.set_played(Player::Clock);
-    module.set_step(5);
+    module.set_step(0, true);
     module.process(4);
-    module.set_step(0);
+    module.set_step(0, false);
     module.set_input("clock", 1.0).unwrap();
     module.set_played(Player::Module);
     module.process(1);
-    assert_eq!(module.get_output("step").unwrap(), 0.0);
-    module.set_input("clock", 0.0).unwrap();
-    module.process(3);
-    pulse(&mut module, 3);
     assert_eq!(module.get_output("step").unwrap(), 1.0);
 }
 
