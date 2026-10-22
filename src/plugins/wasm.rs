@@ -95,6 +95,9 @@ pub fn load_component_module(
 
 /// Guest export `set-input-block(index, values)`.
 type SetInputBlockFunc = TypedFunc<(u32, &'static [f32]), (Result<(), String>,)>;
+/// Guest exports `set-input(port, value)` and `set-control(key, value)`. The
+/// name is lowered from a borrowed `&str`, so a call makes no host `String`.
+type SetNamedFunc = TypedFunc<(&'static str, f32), (Result<(), String>,)>;
 /// Guest export `process-output-block(frames)`, returning `(active, samples)`.
 type ProcessOutputBlockFunc = TypedFunc<(u32,), (Result<(bool, Vec<f32>), String>,)>;
 
@@ -106,9 +109,9 @@ pub struct WasmModule {
     process: TypedFunc<(u32,), (bool,)>,
     process_output_block: Option<ProcessOutputBlockFunc>,
     output_block: TypedFunc<(u32,), (Result<Vec<f32>, String>,)>,
-    set_input: TypedFunc<(String, f32), (Result<(), String>,)>,
+    set_input: SetNamedFunc,
     set_input_connected: Option<TypedFunc<(u32, bool), ()>>,
-    set_control: TypedFunc<(String, f32), (Result<(), String>,)>,
+    set_control: SetNamedFunc,
     name: String,
     inputs: Vec<String>,
     outputs: Vec<String>,
@@ -116,7 +119,6 @@ pub struct WasmModule {
     output_names: Vec<&'static str>,
     input_blocks: Vec<[f32; MAX_BLOCK]>,
     output_blocks: Vec<[f32; MAX_BLOCK]>,
-    input_transfer: Vec<Vec<f32>>,
     input_connected: Vec<bool>,
     /// Latched after a guest trap; a trapped store fails every subsequent
     /// call, so we stop calling into it instead of paying full call cost
@@ -172,7 +174,6 @@ impl WasmModule {
             output_names: Vec::new(),
             input_blocks: Vec::new(),
             output_blocks: Vec::new(),
-            input_transfer: Vec::new(),
             input_connected: Vec::new(),
             failed: false,
         })
@@ -184,9 +185,6 @@ impl WasmModule {
         self.outputs = self.call_string_list("outputs")?;
         self.input_blocks = vec![[0.0; MAX_BLOCK]; self.inputs.len()];
         self.output_blocks = vec![[0.0; MAX_BLOCK]; self.outputs.len()];
-        self.input_transfer = (0..self.inputs.len())
-            .map(|_| Vec::with_capacity(MAX_BLOCK))
-            .collect();
         self.input_connected = vec![false; self.inputs.len()];
 
         self.input_names = leak_port_names(&self.inputs);
@@ -249,12 +247,11 @@ impl Module for WasmModule {
             if !self.input_connected.get(index).copied().unwrap_or(false) {
                 continue;
             }
-            let values = &mut self.input_transfer[index];
-            values.clear();
-            values.extend_from_slice(&self.input_blocks[index][..frames]);
+            // Lowered straight from the input block: no host-side copy.
+            let values = &self.input_blocks[index][..frames];
             let Ok((Ok(()),)) = self
                 .set_input_block
-                .call(&mut self.store, (index as u32, &*values))
+                .call(&mut self.store, (index as u32, values))
             else {
                 return self.fail("set-input-block");
             };
@@ -317,7 +314,7 @@ impl Module for WasmModule {
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
         let (result,) = self
             .set_input
-            .call(&mut self.store, (port.to_string(), value))
+            .call(&mut self.store, (port, value))
             .map_err(|e| e.to_string())?;
         result
     }
@@ -343,7 +340,7 @@ impl Module for WasmModule {
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
         let (result,) = self
             .set_control
-            .call(&mut self.store, (key.to_string(), value))
+            .call(&mut self.store, (key, value))
             .map_err(|e| e.to_string())?;
         result
     }
@@ -352,6 +349,11 @@ impl Module for WasmModule {
 fn component_engine() -> Result<Engine, Box<dyn Error>> {
     let mut config = Config::new();
     config.wasm_component_model(true);
+    // The host makes only sync calls. With concurrency support on (the
+    // default when wasmtime's `component-model-async` feature is compiled
+    // in), every call books a guest task: boxed closures and a hash-set
+    // insert, allocated and freed on the audio thread.
+    config.concurrency_support(false);
     config.consume_fuel(true);
     Ok(Engine::new(&config)?)
 }
@@ -506,6 +508,9 @@ fn preopen(
     builder.preopened_dir(path, scope, perms)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod alloc_tests;
 
 #[cfg(test)]
 mod tests {
