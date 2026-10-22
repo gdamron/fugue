@@ -15,17 +15,17 @@ use std::sync::Arc;
 
 /// A plan prepared off the audio thread, ready to commit.
 pub(crate) struct PreparedCommit {
-    change: PreparedChange,
+    pub(super) change: PreparedChange,
     /// Becomes the retained document on commit, when given.
-    document: Option<Invention>,
+    pub(super) document: Option<Invention>,
     /// Registry and development definitions to adopt on commit, when the
     /// change was built against new ones.
-    adopt: Option<(Arc<ModuleRegistry>, DevelopmentDefinitions)>,
+    pub(super) adopt: Option<(Arc<ModuleRegistry>, DevelopmentDefinitions)>,
     /// Validated control writes on surviving modules, values coerced to
     /// their controls' kinds.
-    control_updates: Vec<(String, String, ControlValue)>,
-    refreshed_configs: Vec<(String, serde_json::Value)>,
-    report: ReloadReport,
+    pub(super) control_updates: Vec<(String, String, ControlValue)>,
+    pub(super) refreshed_configs: Vec<(String, serde_json::Value)>,
+    pub(super) report: ReloadReport,
 }
 
 impl RunningInvention {
