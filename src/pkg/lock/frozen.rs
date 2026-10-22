@@ -262,21 +262,24 @@ impl FrozenLock {
         )
     }
 
-    /// `file` relative to the packages dir, when it lies in it: as spelled
-    /// (the configured or the canonical spelling of the dir, followed by
-    /// plain names only), else with its parent's links and `..` resolved.
+    /// `file` relative to the packages dir, when it lies in it: as spelled,
+    /// when that is the configured or the canonical spelling of the dir
+    /// followed by a locked id and plain names, else as the filesystem
+    /// names it, with its parent's links, `..` and case resolved
+    /// (`packs/../packs/<id>`, `packs/<ID>` on a case-insensitive volume).
     /// Only the parent is resolved, so a link inside a package still names
     /// a file the integrity skipped.
     fn package_relative(&self, file: &Path) -> Option<PathBuf> {
-        let plain = |relative: &Path| {
-            (relative.components()).all(|part| matches!(part, Component::Normal(_)))
+        let as_spelled = |relative: &Path| {
+            let mut parts = relative.components();
+            matches!(parts.next(), Some(Component::Normal(id))
+                if id.to_str().is_some_and(|id| self.lockfile.packages.contains_key(id)))
+                && parts.all(|part| matches!(part, Component::Normal(_)))
         };
         let spellings = std::iter::once(&self.packages_dir).chain(&self.canonical_packages);
         for dir in spellings {
             match file.strip_prefix(dir) {
-                Ok(relative) if plain(relative) => return Some(relative.to_path_buf()),
-                // `packs/../packs/<id>/..`: where it lies is the filesystem's
-                // to say.
+                Ok(relative) if as_spelled(relative) => return Some(relative.to_path_buf()),
                 Ok(_) => break,
                 Err(_) => {}
             }

@@ -157,6 +157,31 @@ fn a_file_named_through_a_parent_traversal_is_governed() {
 }
 
 #[test]
+fn a_file_named_through_another_case_of_a_locked_id_is_governed() {
+    // On a case-insensitive volume (macOS's default), `FUGUE.test.kit` is
+    // the locked package's dir.
+    let tmp = tempfile::tempdir().unwrap();
+    let (packs, lock) = playable_kit(tmp.path());
+    let alias = packs.join(KIT.to_uppercase());
+    if !alias.exists() {
+        return; // A case-sensitive volume: another id, which is not locked.
+    }
+    with_governing(lock, || {
+        let newer = alias.join("1.1.0/a.wav");
+        let err = load_cached_sample(newer.to_str().unwrap(), 48_000)
+            .err()
+            .unwrap();
+        assert!(err.contains("not in fugue.test.kit@1.0.0"), "{err}");
+        wav(&packs.join(KIT).join("1.0.0/a.wav"), 0.5);
+        let edited = alias.join("1.0.0/a.wav");
+        let err = load_cached_sample(edited.to_str().unwrap(), 48_000)
+            .err()
+            .unwrap();
+        assert!(err.contains("changed since the lockfile verified"), "{err}");
+    });
+}
+
+#[test]
 fn a_reload_compares_the_policy_its_graph_was_built_under_not_the_sessions() {
     // A timed reload under no lock lands, and its graph plays, before the
     // host makes its lock the session's: a reload under the session's lock
