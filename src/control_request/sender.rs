@@ -92,8 +92,23 @@ impl RequestSender {
     // The request comes back by value, as large as it is (a condition makes
     // it 176 bytes), so a full queue never allocates.
     #[allow(clippy::result_large_err)]
-    pub(crate) fn submit(&self, mut request: Request) -> Result<RequestId, QueueFull> {
-        let id = RequestId(self.shared.next_id.fetch_add(1, Ordering::Relaxed));
+    pub(crate) fn submit(&self, request: Request) -> Result<RequestId, QueueFull> {
+        self.submit_as(self.take_id(), request)
+    }
+
+    /// The channel's next id, for a request submitted later with
+    /// [`Self::submit_as`], so others can wait on it first.
+    pub(crate) fn take_id(&self) -> RequestId {
+        RequestId(self.shared.next_id.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// [`Self::submit`] with an id from [`Self::take_id`].
+    #[allow(clippy::result_large_err)]
+    pub(crate) fn submit_as(
+        &self,
+        id: RequestId,
+        mut request: Request,
+    ) -> Result<RequestId, QueueFull> {
         request.id = id;
         let now = self.shared.transport.rendered();
         match request.when {
@@ -140,6 +155,16 @@ impl RequestSender {
         self.queue.leaves(self.reserve)
     }
 
+    /// Whether `count` requests submitted now, one after another, would all
+    /// find room. Exact under the same terms as [`Self::has_room`].
+    pub(crate) fn has_room_for(&self, count: u64) -> bool {
+        let Some(last) = count.checked_sub(1) else {
+            return true;
+        };
+        let ahead = self.reserve.saturating_add(last);
+        ahead < self.queue.capacity() && self.queue.leaves(ahead)
+    }
+
     /// Whether [`CONDITION_CAPACITY`](super::CONDITION_CAPACITY) requests
     /// timed by a condition are in flight, so a front door refuses one more
     /// before submitting it. Exact while submissions are serialized, as a
@@ -147,6 +172,12 @@ impl RequestSender {
     /// releases, so a stale count only refuses conservatively.
     pub(crate) fn watchers_full(&self) -> bool {
         self.shared.watches.full()
+    }
+
+    /// Notes that timed edit `id`, queued through this channel, was
+    /// cancelled (see [`WatchSlots`]).
+    pub(crate) fn cancelled(&self, id: RequestId) {
+        self.shared.watches.cancel(id);
     }
 
     /// The count the channel's drain releases requests timed by a

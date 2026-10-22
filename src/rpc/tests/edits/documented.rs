@@ -21,7 +21,7 @@ fn the_documented_request_parses_through_the_envelope() {
     let request: RpcRequest = serde_json::from_str(DOCUMENTED_REQUEST).unwrap();
     assert_eq!(request.mutation.as_ref().unwrap().id, "editor-7f3a-0042");
     assert!(request.check_ticket().is_ok());
-    let RpcRequestPayload::Command(RpcCommand::ApplyEdits { edits }) = &request.payload else {
+    let RpcRequestPayload::Command(RpcCommand::ApplyEdits { edits, .. }) = &request.payload else {
         panic!("expected apply_edits, got {:?}", request.payload);
     };
     assert_eq!(edits.len(), 3);

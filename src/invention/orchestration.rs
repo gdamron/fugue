@@ -1,3 +1,4 @@
+use crate::control_request::DeclKind;
 use crate::invention::graph::{GraphCommand, SignalGraph};
 use crate::invention::publish::{edge, BuiltModule, GraphChange, LiveGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
@@ -14,6 +15,10 @@ use std::sync::{Arc, Mutex};
 
 use super::declared::{add_offline, remove_offline};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
+
+pub(crate) mod authored;
+
+use authored::{write_authored, WRITE_ATTEMPTS};
 
 /// Read/write orchestration surface shared by live and render runtimes.
 pub trait OrchestrationRuntime {
@@ -276,12 +281,46 @@ impl RuntimeSnapshot {
         // (see FUG-240). set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
         let value = self.coerced(module_id, key, value)?;
-        self.set_control_transient(module_id, key, value.clone())?;
-        self.state
-            .lock()
-            .unwrap()
-            .record_authored_control(module_id, key, &value);
+        let Some(live) = &self.live else {
+            self.set_control_transient(module_id, key, value.clone())?;
+            let mut state = self.state.lock().unwrap();
+            state.record_authored_control(module_id, key, &value);
+            return Ok(value);
+        };
+        // Written first, so a write refused changes nothing, then recorded
+        // under the publisher: a timed edit waiting takes the write into its
+        // own document or, when it rebuilds or removes the module, is
+        // cancelled. When a timed edit adopted in between overtook the write
+        // (landed after it and replaced the module), the write is made
+        // again, so it plays last and what is recorded is what plays. A
+        // payload (a schedule) is made once: making it again is not the same
+        // as making it once. A write is recorded only when this returns Ok,
+        // so the caller's event follows every value recorded. Authored
+        // writers take turns, so the last recorded is the last made.
+        let _authoring = live.authoring();
+        let attempts = if self.is_payload(module_id, key) {
+            1
+        } else {
+            WRITE_ATTEMPTS
+        };
+        write_authored(
+            attempts,
+            (module_id, key),
+            || live.generation(),
+            || self.make_authored(module_id, key, value.clone()),
+            |seen| live.record_authored(module_id, key, &value, seen),
+        )?;
         Ok(value)
+    }
+
+    /// Whether `key` of `module_id` is a declared payload control (a
+    /// scheduler's schedule).
+    fn is_payload(&self, module_id: &str, key: &str) -> bool {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        surfaces
+            .get(module_id)
+            .and_then(|surface| surface.declaration(key))
+            .is_some_and(|declaration| matches!(declaration.decl.kind, DeclKind::Payload))
     }
 
     /// Whether `key` of `module_id` is a declared event control.
