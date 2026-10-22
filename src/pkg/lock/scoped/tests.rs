@@ -94,6 +94,29 @@ fn frozen_load_rejects_a_corrupted_used_package_or_dependency() {
 }
 
 #[test]
+fn frozen_load_rejects_a_corrupted_package_chosen_only_through_an_alias() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (candidates, packs, mut invention) = setup(tmp.path());
+    // Codex's repro: the development exposes its sample player's `asset` as
+    // `sample`, and only the instance config names the package.
+    invention.modules = serde_json::from_value(json!([{"id": "d", "type": "drums",
+        "config": {"sample": "fugue.demo.unused@1:sample.wav"}}]))
+    .unwrap();
+    invention.developments = serde_json::from_value(json!([{"name": "drums", "definition": {
+        "modules": [{"id": "s", "type": "sample_player", "config": {}}], "connections": [],
+        "controls": [{"name": "sample", "module": "s", "control": "asset"}]}}]))
+    .unwrap();
+    corrupt(&packs, "fugue.demo.unused");
+    let err = Lockfile::verify_first_for_invention(&candidates, &packs, &invention)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("fugue.demo.unused@1.0.0 integrity mismatch"),
+        "{err}"
+    );
+}
+
+#[test]
 fn an_unknown_used_set_verifies_every_package() {
     let tmp = tempfile::tempdir().unwrap();
     let (candidates, packs, mut invention) = setup(tmp.path());

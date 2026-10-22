@@ -26,6 +26,16 @@ impl ContentRoots {
     /// (after `$asset` expansion) and development `ref`s, through every nested
     /// development whether it comes by path, ref or inline definition.
     ///
+    /// A development instance's config sets its exposed controls, and an
+    /// exposed control can alias a sample module's `asset` under any name
+    /// (`{"sample": "fugue.drums@1:kick.wav"}`), through any depth of nested
+    /// developments. Each alias hands the string on unchanged, and every
+    /// package-loading sink takes a package only from a string that parses as
+    /// a [`PackageAudioRef`]. So every top-level string in a module config
+    /// that parses as one counts as used, whatever its key: a superset of the
+    /// alias targets that needs no tracing of where an alias leads and cannot
+    /// miss one. A string no alias reaches only costs one more hash.
+    ///
     /// `None` when some document or reference cannot be read, or a script
     /// could choose packages at runtime: the caller then cannot know what was
     /// skipped, so it must verify everything. Reading documents never hashes
@@ -46,8 +56,18 @@ impl ContentRoots {
             if module.module_type == SCRIPT_TYPE {
                 return None;
             }
-            for value in module_asset_values(&mut module.config) {
-                if let Some(reference) = value.as_str().and_then(PackageAudioRef::parse) {
+            let slots: Vec<String> = module_asset_values(&mut module.config)
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect();
+            // Top-level strings include every development-control alias.
+            let top_level = module
+                .config
+                .as_object()
+                .into_iter()
+                .flat_map(|map| map.values());
+            let strings = top_level.filter_map(|value| value.as_str());
+            for text in strings.chain(slots.iter().map(String::as_str)) {
+                if let Some(reference) = PackageAudioRef::parse(text) {
                     walk.used.insert(reference.id);
                 }
             }
@@ -162,6 +182,72 @@ mod tests {
                 "fugue.demo.voice"
             ]
         );
+    }
+
+    /// A development document exposing its sample player's `asset` as
+    /// `sample`, as Codex's repro does.
+    fn drums(nested: serde_json::Value) -> serde_json::Value {
+        json!({"modules": [{"id": "s", "type": "sample_player", "config": {}}, nested],
+            "connections": [], "controls": [{"name": "sample", "module": "s", "control": "asset"}]})
+    }
+
+    #[test]
+    fn collects_packages_chosen_through_a_development_control_alias() {
+        let (temp, roots) = roots();
+        let main = invention(
+            json!({"modules": [{"id": "d", "type": "drums",
+                    "config": {"sample": "fugue.drums@1:kick.wav", "mode": "loop", "gain": 0.5}}],
+                "connections": [],
+                "developments": [{"name": "drums", "definition": drums(json!(
+                    {"id": "n", "type": "sample_player", "config": {"asset": {"path": "a.wav"}}}))}]}),
+            &temp.path().join("main.json"),
+        );
+        let used = roots.used_packages(&main).unwrap();
+        assert_eq!(used.into_iter().collect::<Vec<_>>(), ["fugue.drums"]);
+    }
+
+    #[test]
+    fn collects_packages_chosen_through_nested_development_aliases() {
+        let (temp, roots) = roots();
+        // `kit` re-exposes `sample` from its inner `drums` instance, which
+        // itself sets an inner alias in `kit.json`.
+        write(
+            &temp.path().join("kit.json"),
+            &json!({"modules": [{"id": "inner", "type": "drums",
+                    "config": {"sample": "fugue.demo.inner@1:y.wav"}}],
+                "connections": [],
+                "controls": [{"name": "sample", "module": "inner", "control": "sample"}],
+                "developments": [{"name": "drums", "definition": drums(json!(
+                    {"id": "n", "type": "drums", "config": {"sample": "fugue.demo.deep@^2:z.wav"}}))}]}),
+        );
+        let main = invention(
+            json!({"modules": [{"id": "k", "type": "kit",
+                    "config": {"sample": "fugue.demo.outer@1.0.0:x.wav"}}],
+                "connections": [],
+                "developments": [{"name": "kit", "path": "kit.json"}]}),
+            &temp.path().join("main.json"),
+        );
+        let used = roots.used_packages(&main).unwrap();
+        assert_eq!(
+            used.into_iter().collect::<Vec<_>>(),
+            ["fugue.demo.deep", "fugue.demo.inner", "fugue.demo.outer"]
+        );
+    }
+
+    #[test]
+    fn an_alias_into_an_unreadable_development_makes_the_set_unknown() {
+        let (temp, roots) = roots();
+        // The aliased instance's development is a package ref that is not
+        // installed: where `sample` leads cannot be read, so it is unknown.
+        let main = invention(
+            json!({"modules": [{"id": "d", "type": "drums",
+                    "config": {"sample": "fugue.drums@1:kick.wav"}}],
+                "connections": [],
+                "developments": [{"name": "drums",
+                    "ref": {"package": "fugue.demo.missing", "version": "1.0.0"}}]}),
+            &temp.path().join("main.json"),
+        );
+        assert_eq!(roots.used_packages(&main), None);
     }
 
     #[test]
