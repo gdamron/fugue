@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 
 use crate::control_request::{
-    Automation, BeatTable, ControlCells, ControlIndex, DeclKind, RtValue, TableEntry, TableTarget,
-    TableValue,
+    Automation, BeatTable, ControlCells, ControlIndex, DeclKind, Player, RtValue, TableEntry,
+    TableTarget, TableValue,
 };
 
 pub(crate) struct TestTable {
@@ -51,8 +51,8 @@ impl BeatTable for TestTable {
         self.entries.get(index)
     }
 
-    fn set_played(&self, played: bool) {
-        self.played.store(played, Ordering::Relaxed);
+    fn set_played(&self, player: Player) {
+        self.played.store(player == Player::Clock, Ordering::Relaxed);
     }
 
     fn set_step(&self, step: i64) {

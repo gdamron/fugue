@@ -10,7 +10,7 @@ use crate::{ControlSurface, ControlValue};
 
 /// Builds a scheduler attached to a directory containing a 2-channel mixer
 /// (id `mixer`, all levels 1.0) and a cell sequencer (id `cells`).
-fn setup(schedule_json: &str) -> (ControlScheduler, MixerControls, SurfaceDirectory) {
+pub(super) fn setup(schedule_json: &str) -> (ControlScheduler, MixerControls, SurfaceDirectory) {
     let mixer = MixerControls::new(2);
     let cells = CellSequencerControls::new();
     let mut map: SurfaceMap = IndexMap::new();
@@ -35,7 +35,7 @@ fn setup(schedule_json: &str) -> (ControlScheduler, MixerControls, SurfaceDirect
 
 /// Sends one gate rising edge (one high frame, then `low_frames` low frames),
 /// processing one frame at a time.
-fn pulse(module: &mut ControlScheduler, low_frames: usize) {
+pub(super) fn pulse(module: &mut ControlScheduler, low_frames: usize) {
     module.set_input("clock", 1.0).unwrap();
     module.process(1);
     module.set_input("clock", 0.0).unwrap();
