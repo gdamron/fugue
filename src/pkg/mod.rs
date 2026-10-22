@@ -34,6 +34,8 @@ pub use validate::{parse_str, validate, ManifestError, ValidationError};
 pub use audio_asset::{default_packages_dir, resolve_package_asset, ResolvedPackageAsset};
 
 #[cfg(not(target_arch = "wasm32"))]
+pub use layout::is_source_checkout;
+#[cfg(not(target_arch = "wasm32"))]
 pub use lock::compute_integrity;
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -59,13 +59,21 @@ impl Available {
     }
 }
 
+/// Whether `<packages_dir>/<id>` is a source checkout (it holds
+/// `fugue.pkg.json` directly). Installers must not add version directories
+/// beside one: that would make the package's layout ambiguous, which
+/// resolution refuses.
+pub fn is_source_checkout(packages_dir: &Path, id: &str) -> bool {
+    packages_dir.join(id).join("fugue.pkg.json").is_file()
+}
+
 /// The versions of `id` under `packages_dir`, in whichever layout holds it.
 /// A missing package directory offers no versions.
 pub(crate) fn available(packages_dir: &Path, id: &str) -> Result<Available, String> {
     let package_dir = packages_dir.join(id);
     let installed = installed_versions(&package_dir);
     let manifest_path = package_dir.join("fugue.pkg.json");
-    if !manifest_path.is_file() {
+    if !is_source_checkout(packages_dir, id) {
         return Ok(Available::Installed(installed));
     }
     if !installed.is_empty() {
@@ -198,6 +206,7 @@ mod tests {
         let mut versions = available(tmp.path(), "fugue.a.b").unwrap().versions();
         versions.sort();
         assert_eq!(versions, vec![Version::new(1, 0, 0), Version::new(1, 2, 0)]);
+        assert!(!is_source_checkout(tmp.path(), "fugue.a.b"));
         assert_eq!(
             available(tmp.path(), "fugue.missing.pkg").unwrap(),
             Available::Installed(Vec::new())
@@ -210,6 +219,7 @@ mod tests {
         manifest(&tmp.path().join("fugue.a.b"), "fugue.a.b", "2026.10.2");
         let found = available(tmp.path(), "fugue.a.b").unwrap();
         assert_eq!(found, Available::Source(Version::new(2026, 10, 2)));
+        assert!(crate::pkg::is_source_checkout(tmp.path(), "fugue.a.b"));
         assert_eq!(
             version_dir(tmp.path(), "fugue.a.b", "2026.10.2").unwrap(),
             Some(tmp.path().join("fugue.a.b"))
