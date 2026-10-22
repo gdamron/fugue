@@ -161,11 +161,14 @@ impl EdgeRamps {
             if entry.target.begun() > ramp.begun {
                 return false;
             }
+            // Estimated in `f32`, as the scheduler estimates it, but never
+            // past the next boundary, which is exact in `f64`.
             let progress = ((ramp.done as f32 + frac) / ramp.total as f32).min(1.0);
+            let next = (ramp.done + 1) as f64 / ramp.total as f64;
             entry.target.write(TableValue::Number(ramp_value(
                 ramp.from,
                 ramp.to,
-                progress.into(),
+                f64::from(progress).min(next),
             )))
         });
     }

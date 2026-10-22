@@ -88,7 +88,9 @@
 //! writes only finite values.
 //!
 //! A later entry on the control, from this scheduler or another, however
-//! either is played, ends the ramp where it stands.
+//! either is played, ends the ramp where it stands. On a legacy control
+//! (one whose module does not declare its controls) only this scheduler's
+//! own entries do.
 //!
 //! # Holds
 //!
