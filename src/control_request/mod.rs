@@ -109,7 +109,7 @@ pub(crate) use timeline::{first_sample_reaching, Timeline, BEFORE_START};
 pub(crate) use transport::Transport;
 #[cfg(test)]
 pub(crate) use watch::CURSOR_CAPACITY;
-pub(crate) use watch::{BeatHost, StepClock, Watches};
+pub(crate) use watch::{BeatHost, EdgeHost, Ports, StepClock, Watches};
 
 #[cfg(test)]
 mod loom_tests;
