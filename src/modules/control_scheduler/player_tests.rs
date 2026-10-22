@@ -115,6 +115,26 @@ fn moved_off_a_clock_reset_on_its_beat_counts_that_gate_once() {
     }
 }
 
+/// Moved off a clock on the next step's sample, before the drain told it
+/// (it tells none on the segment it moves a schedule off its clock), the
+/// scheduler counts that rise as the step.
+#[test]
+fn moved_off_a_clock_before_a_step_was_told_counts_its_rise() {
+    for player in [Player::Module, Player::Edges] {
+        let (mut module, _mixer, _dir) = setup(SCHEDULE);
+        module.set_played(Player::Clock);
+        module.set_step(0, true);
+        module.process(4);
+        module.set_input("clock", 1.0).unwrap();
+        module.set_played(player);
+        if player == Player::Edges {
+            assert_eq!(module.counted().gate, 0.0, "the drain counts the rise");
+        }
+        module.process(1);
+        assert_eq!(module.get_output("step").unwrap(), 1.0, "{player:?}");
+    }
+}
+
 /// Moved off a clock mid-step, the scheduler counts the next rise there
 /// as the next step.
 #[test]
