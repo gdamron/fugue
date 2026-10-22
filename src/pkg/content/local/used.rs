@@ -13,11 +13,14 @@ const MAX_DEPTH: usize = 64;
 const SCRIPT_TYPE: &str = crate::modules::code::TYPE_ID;
 
 /// What the walk has found so far: package ids, and the development files
-/// already read, so a cycle or a shared development is walked once.
+/// already read, so a cycle or a shared development is walked once. A file is
+/// keyed with the directory it is read from: the builder resolves its relative
+/// `$asset`s and developments from there, so one file reached through two
+/// directories (a symlink) can load different packages from each.
 #[derive(Default)]
 struct Walk {
     used: BTreeSet<String>,
-    visited: BTreeSet<PathBuf>,
+    visited: BTreeSet<(PathBuf, PathBuf)>,
 }
 
 impl ContentRoots {
@@ -74,7 +77,11 @@ impl ContentRoots {
                 self.collect_used(&child, walk, depth + 1)?;
                 continue;
             };
-            if walk.visited.insert(std::fs::canonicalize(&file).ok()?) {
+            let context = std::fs::canonicalize(file.parent()?).ok()?;
+            if walk
+                .visited
+                .insert((std::fs::canonicalize(&file).ok()?, context))
+            {
                 let child = Invention::from_file(file.to_str()?).ok()?;
                 self.collect_used(&child, walk, depth + 1)?;
             }
@@ -322,6 +329,41 @@ mod tests {
             &source,
         );
         assert_eq!(roots.used_packages(&main), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn one_document_reached_from_two_directories_is_walked_in_each() {
+        let (temp, roots) = roots();
+        // `a/voice.json` and `b/voice.json` link to one document whose
+        // relative `$asset` names a different package beside each link.
+        write(
+            &temp.path().join("real/voice.json"),
+            &json!({"assets": {"s": {"path": "sample.json"}},
+                "modules": [sampler(json!({"$asset": "s"}))], "connections": []}),
+        );
+        for (dir, id) in [("a", "fugue.demo.a"), ("b", "fugue.demo.b")] {
+            write(
+                &temp.path().join(dir).join("sample.json"),
+                &json!(format!("{id}@1:x.wav")),
+            );
+            std::os::unix::fs::symlink(
+                temp.path().join("real/voice.json"),
+                temp.path().join(dir).join("voice.json"),
+            )
+            .unwrap();
+        }
+        let main = invention(
+            json!({"modules": [], "connections": [],
+                "developments": [{"name": "a", "path": "a/voice.json"},
+                    {"name": "b", "path": "b/voice.json"}]}),
+            &temp.path().join("main.json"),
+        );
+        let used = roots.used_packages(&main).unwrap();
+        assert_eq!(
+            used.into_iter().collect::<Vec<_>>(),
+            ["fugue.demo.a", "fugue.demo.b"]
+        );
     }
 
     #[test]
