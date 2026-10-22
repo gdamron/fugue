@@ -11,8 +11,9 @@
 //!
 //! An edge is the clock input rising past [`GATE_LEVEL`]. Step 0 is the
 //! first edge since the module started, or since its reset input last rose:
-//! that restarts the table. Another plan plays on from the step counted:
-//! entries at or before it have had their edge.
+//! that restarts the table, ending its ramps. Another plan plays on from
+//! the step counted: entries at or before it have had their edge, and the
+//! old plan's ramps end.
 //!
 //! # Where entries land
 //!
@@ -22,13 +23,18 @@
 //! target (a sink, a feedback group's member, one computing before a source)
 //! takes them at the end of the segment, late.
 //!
-//! An entry ends the drain's ramps in beats on its control. (Ramps measured
-//! in edges follow; until then an entry's ramp jumps to its value.)
+//! # Ramps
+//!
+//! Measured in edges (see [`ramps`]). An entry on a control ends the
+//! table's ramp there, and the drain's ramps in beats.
 
+use self::ramps::EdgeRamps;
 use super::BeatHost;
 use crate::control_request::hold::FrameScope;
 use crate::control_request::ramps::Ramps;
 use crate::control_request::table::{BeatTable, Counted};
+
+mod ramps;
 
 /// The level an input rises past at an edge, as its module counts it.
 pub(crate) const GATE_LEVEL: f32 = 0.5;
@@ -152,20 +158,23 @@ struct EdgeCursor {
     found: bool,
 }
 
-/// The tables a graph's drain plays on edges, one cursor each.
-/// Single-threaded (the audio thread), allocated once on a control
+/// The tables a graph's drain plays on edges, one cursor each, and their
+/// ramps. Single-threaded (the audio thread), allocated once on a control
 /// thread and never grown.
 pub(crate) struct EdgeCursors {
     entries: Vec<EdgeCursor>,
     limit: usize,
+    ramps: EdgeRamps,
 }
 
 impl EdgeCursors {
-    /// Room for `capacity` tables. Allocates: control thread.
+    /// Room for `capacity` tables and their ramps. Allocates: control
+    /// thread.
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
             entries: Vec::with_capacity(capacity),
             limit: capacity,
+            ramps: EdgeRamps::new(),
         }
     }
 
@@ -217,28 +226,37 @@ impl EdgeCursors {
         true
     }
 
-    /// Ends the cursors not found since [`Self::seek`], then puts the rest
-    /// in module order and finds where their entries write. Allocation- and
-    /// free-free.
+    /// Ends the cursors not found since [`Self::seek`] and their ramps,
+    /// then puts the rest in module order and finds where their entries
+    /// and ramps write. Allocation- and free-free.
     pub(crate) fn sought(&mut self, host: &impl EdgeHost) {
-        let entries = &mut self.entries;
-        entries.retain(|cursor| cursor.found);
+        let Self { entries, ramps, .. } = self;
+        entries.retain(|cursor| {
+            if !cursor.found {
+                ramps.end(cursor.table, &|_| true);
+            }
+            cursor.found
+        });
         entries.sort_unstable_by_key(|cursor| cursor.module);
         for cursor in entries.iter_mut() {
-            if let Some(table) = table_of(cursor, host) {
-                cursor.targets = Targets::of(table, host);
-            }
+            let Some(table) = table_of(cursor, host) else {
+                ramps.end(cursor.table, &|_| true);
+                continue;
+            };
+            cursor.targets = Targets::of(table, host);
+            ramps.retarget(cursor.table, |index| target_of(table, index, host));
         }
     }
 
     /// Starts playing the segment for `target`, before it computes.
     pub(crate) fn begin(&mut self, target: usize, host: &impl EdgeHost) {
-        for cursor in self.entries.iter_mut() {
+        let Self { entries, ramps, .. } = self;
+        for cursor in entries.iter_mut() {
             cursor.live = false;
             let Some(table) = table_of(cursor, host) else {
                 continue;
             };
-            sync(cursor, table, host);
+            sync(cursor, table, ramps, host);
             cursor.scan = cursor.count;
             cursor.reached = 0;
             cursor.live =
@@ -247,8 +265,9 @@ impl EdgeCursors {
     }
 
     /// Plays, for `target` (after [`Self::begin`]), what falls due at frame
-    /// `frame` of the segment, before it computes that frame: every entry
-    /// of a table counting an edge there. Returns the next frame something
+    /// `frame` of the segment, before it computes that frame: every ramp's
+    /// boundary and entry of a table counting an edge there, then its
+    /// ramps' values between edges. Returns the next frame something
     /// of it falls due at (the segment's length for none). Allocation-,
     /// free- and lock-free.
     pub(crate) fn play(
@@ -261,24 +280,32 @@ impl EdgeCursors {
         let (_, frames) = host.segment();
         let mine = |module: Option<usize>| module == Some(target);
         let mut next = frames;
-        for cursor in self.entries.iter_mut().filter(|cursor| cursor.live) {
+        let Self { entries, ramps, .. } = self;
+        for cursor in entries.iter_mut().filter(|cursor| cursor.live) {
             let Some(table) = table_of(cursor, host) else {
                 continue;
             };
-            // Frames counted ahead brought nothing of it.
+            // Frames counted ahead brought nothing of it: no edge, while
+            // it has a ramp here.
+            let mut edge = false;
             while cursor.reached <= frame {
                 let at = cursor.reached;
-                step(cursor, table, at, &mine, beat_ramps, host);
+                edge = step(cursor, table, at, &mine, ramps, beat_ramps, host);
                 cursor.reached += 1;
+            }
+            if !edge {
+                let ahead = (cursor.reached - frame) as u32;
+                let since = cursor.scan.counted.since.saturating_sub(ahead);
+                between(cursor, table, frame, since, &mine, ramps, host);
             }
             // Counts on, up to the next frame something of it is due at.
             while cursor.reached < frames {
-                if due(cursor, table, cursor.reached, &mine, host) {
+                if due(cursor, table, cursor.reached, &mine, ramps, host) {
                     next = next.min(cursor.reached);
                     break;
                 }
                 let at = cursor.reached;
-                step(cursor, table, at, &mine, beat_ramps, host);
+                step(cursor, table, at, &mine, ramps, beat_ramps, host);
                 cursor.reached += 1;
             }
         }
@@ -290,19 +317,22 @@ impl EdgeCursors {
     /// Allocation-, free- and lock-free.
     pub(crate) fn commit(&mut self, host: &impl EdgeHost, beat_ramps: &mut Ramps) {
         let (_, frames) = host.segment();
-        for cursor in self.entries.iter_mut() {
+        let Self { entries, ramps, .. } = self;
+        for cursor in entries.iter_mut() {
             let Some(table) = table_of(cursor, host) else {
                 continue;
             };
-            sync(cursor, table, host);
+            sync(cursor, table, ramps, host);
             let (module, ports) = (cursor.module, cursor.ports);
             let late = |target: Option<usize>| {
                 !target.is_some_and(|target| host.splits(module, ports, target))
             };
             cursor.scan = cursor.count;
             for at in 0..frames {
-                step(cursor, table, at, &late, beat_ramps, host);
+                step(cursor, table, at, &late, ramps, beat_ramps, host);
             }
+            let since = cursor.scan.counted.since;
+            between(cursor, table, frames, since, &late, ramps, host);
             cursor.count = cursor.scan;
         }
     }
@@ -332,23 +362,30 @@ fn played(table: &dyn BeatTable, step: i64) -> usize {
 }
 
 /// Follows another plan of `table`: entries at or before the step counted
-/// have had their edge.
-fn sync(cursor: &mut EdgeCursor, table: &dyn BeatTable, host: &impl EdgeHost) {
+/// have had their edge, and the old plan's ramps end.
+fn sync(
+    cursor: &mut EdgeCursor,
+    table: &dyn BeatTable,
+    ramps: &mut EdgeRamps,
+    host: &impl EdgeHost,
+) {
     if table.plan() == cursor.plan {
         return;
     }
     cursor.plan = table.plan();
     cursor.count.next = played(table, cursor.count.counted.step);
     cursor.targets = Targets::of(table, host);
+    ramps.end(cursor.table, &|_| true);
 }
 
-/// Whether frame `at` brings something of `mine` due: an edge bringing
-/// its entry.
+/// Whether frame `at` brings something of `mine` due: an edge or restart
+/// while the table has a ramp on it, or an edge bringing its entry.
 fn due(
     cursor: &EdgeCursor,
     table: &dyn BeatTable,
     at: usize,
     mine: &impl Fn(Option<usize>) -> bool,
+    ramps: &EdgeRamps,
     host: &impl EdgeHost,
 ) -> bool {
     let gate = host.input(cursor.module, Some(cursor.ports.clock), at);
@@ -356,6 +393,9 @@ fn due(
     let counted = &cursor.scan.counted;
     let rise = gate > GATE_LEVEL && counted.gate <= GATE_LEVEL;
     let restart = reset > GATE_LEVEL && counted.reset <= GATE_LEVEL;
+    if (rise || restart) && ramps.any(cursor.table, mine) {
+        return true;
+    }
     if !rise {
         return false;
     }
@@ -379,18 +419,25 @@ fn step(
     table: &dyn BeatTable,
     at: usize,
     mine: &impl Fn(Option<usize>) -> bool,
+    ramps: &mut EdgeRamps,
     beat_ramps: &mut Ramps,
     host: &impl EdgeHost,
 ) -> bool {
     let gate = host.input(cursor.module, Some(cursor.ports.clock), at);
     let reset = host.input(cursor.module, cursor.ports.reset, at);
-    let (_, rise) = cursor.scan.frame(gate, reset);
+    let (restart, rise) = cursor.scan.frame(gate, reset);
+    let id = cursor.table;
+    if restart {
+        ramps.end(id, mine);
+    }
     if !rise {
         return false;
     }
     let (start, _) = host.segment();
     // Weighed against a higher tier's write as of its own sample.
     let _scope = FrameScope::enter(start + at as u64);
+    // The ramps under way reach their boundary first, exactly.
+    ramps.edge(id, table, mine);
     let step = cursor.scan.counted.step;
     while let Some(entry) = table.entry(cursor.scan.next) {
         if entry.step as i64 > step {
@@ -398,13 +445,34 @@ fn step(
         }
         let index = cursor.scan.next;
         cursor.scan.next += 1;
-        if !mine(target_of(table, index, host)) {
+        let target = target_of(table, index, host);
+        if !mine(target) {
             continue;
         }
-        // A newer change supersedes the drain's ramps in beats there.
+        // A newer change supersedes the table's ramp on its control, and
+        // the drain's ramps in beats there.
+        ramps.supersede(id, table, entry);
         beat_ramps.supersede_entry(&entry.target, host);
         entry.target.begin(0);
-        entry.target.write(entry.value);
+        if !ramps.start(id, index, target, entry, beat_ramps) {
+            entry.target.write(entry.value);
+        }
     }
     true
+}
+
+/// Writes, at frame `at` of the segment, the value of each of the table's
+/// ramps on targets `mine` takes, `since` samples after the last edge.
+fn between(
+    cursor: &EdgeCursor,
+    table: &dyn BeatTable,
+    at: usize,
+    since: u32,
+    mine: &impl Fn(Option<usize>) -> bool,
+    ramps: &mut EdgeRamps,
+    host: &impl EdgeHost,
+) {
+    let (start, _) = host.segment();
+    let _scope = FrameScope::enter(start + at as u64);
+    ramps.between(cursor.table, table, &cursor.scan.counted, since, mine);
 }

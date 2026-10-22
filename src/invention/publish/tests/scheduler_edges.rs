@@ -1,9 +1,9 @@
 //! A top-level `control_scheduler` stepping on a gate other than a clock's
 //! (an LFO's square), played by the graph's request drain on its rising
 //! edges (FUG-389): each entry lands on the sample of its step's edge,
-//! whatever the block size, live and offline alike; the `reset` input
-//! restarts the schedule; and no block allocates, frees or takes a lock a
-//! control thread holds.
+//! whatever the block size, live and offline alike; a ramp lands each
+//! boundary on its edge; the `reset` input restarts the schedule; and no
+//! block allocates, frees or takes a lock a control thread holds.
 
 use super::migrated::{block_with_locks_held, read, write};
 use super::request_beats::render_counted;
@@ -173,6 +173,32 @@ fn the_step_output_counts_the_edges() {
 }
 
 #[test]
+fn a_ramp_lands_each_boundary_on_its_edge() {
+    let schedule = serde_json::json!([ramp(1, 4, 1.0), level(7, 0.1)]);
+    let edges = edges(64 * 160);
+    let mut rig = rig(schedule, ("dial", "out"), false);
+    let out = render_counted(&mut rig, 160);
+    assert_eq!(
+        out[edges[1]], 0.25,
+        "a ramp starts where the control stands"
+    );
+    for k in 1..4 {
+        assert_eq!(
+            out[edges[1 + k]],
+            0.25 + 0.75 * k as f32 / 4.0,
+            "boundary {k}"
+        );
+    }
+    let glide = &out[edges[1]..edges[5]];
+    assert!(glide.windows(2).all(|pair| pair[0] <= pair[1]));
+    let first = &out[edges[1] + 1..edges[2]];
+    let gliding = |level: &f32| *level > 0.25 && *level < 0.4375;
+    assert!(first.iter().any(gliding), "it moves on between edges");
+    assert!(out[edges[5]..edges[7]].iter().all(|&level| level == 1.0));
+    assert!(out[edges[7]..].iter().all(|&level| level == 0.1));
+}
+
+#[test]
 fn a_rise_on_reset_plays_the_schedule_again_from_step_0() {
     let schedule = serde_json::json!([level(0, 0.5), level(1, 0.75)]);
     let mut slow = rig(serde_json::json!([]), ("slow", "unipolar"), false);
@@ -189,6 +215,24 @@ fn a_rise_on_reset_plays_the_schedule_again_from_step_0() {
     assert_eq!(out[edges[first + 1]], 0.75);
 }
 
+/// A rise on `reset` ends the ramp where it stands; step 1 starts it
+/// again from there.
+#[test]
+fn a_rise_on_reset_ends_a_ramp_where_it_stands() {
+    let mut slow = rig(serde_json::json!([]), ("slow", "unipolar"), false);
+    let reset = rises(&render_counted(&mut slow, 400))[1];
+    let edges = edges(64 * 400);
+    let mut rig = rig(serde_json::json!([ramp(1, 40, 1.0)]), ("dial", "out"), true);
+    let out = render_counted(&mut rig, 400);
+    let first = edges.iter().position(|&at| at >= reset).unwrap();
+    let stood = out[reset];
+    assert!(stood > 0.25 && stood < 1.0, "mid-ramp: {stood}");
+    assert!(out[reset..=edges[first]]
+        .iter()
+        .all(|&level| level == stood));
+    assert!(out[edges[first + 1] + 64] > stood, "step 1 starts it again");
+}
+
 #[test]
 fn a_schedule_written_live_plays_on_from_the_step_counted() {
     let edges = edges(64 * 160);
@@ -201,6 +245,27 @@ fn a_schedule_written_live_plays_on_from_the_step_counted() {
     // Step 2 had its edge: only step 5 plays.
     assert!(out[edges[1]..edges[5]].iter().all(|&level| level == 0.5));
     assert!(out[edges[5]..].iter().all(|&level| level == 0.6));
+}
+
+/// A target rebuilt by an edit mid-ramp (FUG-402): the scheduler adopts
+/// the same plan retargeted, and the ramp plays on into the new module,
+/// each boundary on its edge.
+#[test]
+fn a_ramp_plays_on_into_a_target_an_edit_rebuilds() {
+    let edges = edges(64 * 160);
+    let mut live = rig(serde_json::json!([ramp(1, 4, 1.0)]), ("dial", "out"), false);
+    let before = render_counted(&mut live, edges[3] / 64 + 1);
+    let dial = live.build("dial", DIAL, serde_json::json!({}));
+    live.live
+        .edit(|change| {
+            change.upsert("dial", dial);
+            Ok(())
+        })
+        .unwrap();
+    let after = render_counted(&mut live, 160 - before.len() / 64);
+    let out: Vec<f32> = before.into_iter().chain(after).collect();
+    assert_eq!(out[edges[4]], 0.25 + 0.75 * 3.0 / 4.0);
+    assert!(out[edges[5]..].iter().all(|&level| level == 1.0));
 }
 
 #[test]
