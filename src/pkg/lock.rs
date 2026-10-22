@@ -298,9 +298,10 @@ mod fs_ops {
         }
 
         /// Verify every locked package is present under `packages_dir` and its
-        /// contents still hash to the recorded integrity. The canonical install
-        /// location `packages_dir/<id>/<version>` is used, so the lockfile is
-        /// portable across machines. Frozen loads verify only the packages an
+        /// contents still hash to the recorded integrity. The version is found by
+        /// id and version under `packages_dir` (installed, or a source
+        /// checkout), never the recorded path, so the lockfile is portable
+        /// across machines. Frozen loads verify only the packages an
         /// invention uses (see [`Lockfile::verify_packages`]); this checks all.
         pub fn verify(&self, packages_dir: &Path) -> Result<(), LockError> {
             self.verify_ids(packages_dir, self.packages.keys().map(String::as_str))
@@ -331,14 +332,25 @@ mod fs_ops {
     /// One locked package's problem, if any: not installed at its canonical
     /// location, missing its integrity hash, or hashing to something else.
     fn verify_package(id: &str, package: &LockedPackage, packages_dir: &Path) -> Option<String> {
-        let dir = packages_dir.join(id).join(&package.version);
-        if !dir.is_dir() {
-            return Some(format!(
-                "{id}@{} is not installed (expected {})",
-                package.version,
-                dir.display()
-            ));
-        }
+        // Either layout (see `crate::pkg::layout`): the exact locked version
+        // must be present, and its bytes are hashed the same way.
+        let dir = match crate::pkg::layout::version_dir(packages_dir, id, &package.version) {
+            Ok(Some(dir)) => dir,
+            Ok(None) => {
+                let found = match crate::pkg::layout::available(packages_dir, id) {
+                    Ok(crate::pkg::layout::Available::Source(version)) => {
+                        format!("; the source checkout there is version {version}")
+                    }
+                    _ => String::new(),
+                };
+                return Some(format!(
+                    "{id}@{} is not installed (expected {}){found}",
+                    package.version,
+                    packages_dir.join(id).join(&package.version).display()
+                ));
+            }
+            Err(err) => return Some(format!("{id}@{}: {err}", package.version)),
+        };
         if package.integrity.is_empty() {
             return Some(format!(
                 "{id}@{} has no integrity hash; run `fugue install` to refresh the lockfile",
