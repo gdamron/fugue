@@ -17,6 +17,7 @@ mod audio_file_sink;
 mod code_modules;
 mod editing;
 mod replay;
+mod split_ends;
 
 pub use code_modules::CodeModuleRuntimeInfo;
 
@@ -48,6 +49,8 @@ pub struct RenderEngine {
     event_sink: super::orchestration::EventSinkSlot,
     /// A live session's requests still to apply (see [`Self::replay`]).
     replay: replay::Replay,
+    /// Where the last block's `ended` gates rose, when a replay split it.
+    split_ends: split_ends::SplitEnds,
 }
 
 impl RenderEngine {
@@ -69,6 +72,7 @@ impl RenderEngine {
             agents: AgentManager::default(),
             event_sink: Arc::new(Mutex::new(None)),
             replay: replay::Replay::default(),
+            split_ends: split_ends::SplitEnds::default(),
         }
     }
 
@@ -165,7 +169,9 @@ impl RenderEngine {
             replay::Replay::resolve(log, &surfaces)?
         };
         if let Some(graph) = &self.graph {
-            replay.check_clocks(&mut graph.lock().unwrap())?;
+            let mut graph = graph.lock().unwrap();
+            replay.check_clocks(&mut graph)?;
+            self.split_ends.reserve(graph.modules.len());
         }
         self.replay = replay;
         Ok(())
@@ -204,11 +210,16 @@ impl RenderEngine {
         let mut done = 0;
         while done < frames_total {
             let n = (frames_total - done).min(block);
-            // Split where a replayed request is due, as the live drain does.
+            // Split where a replayed request is due, as the live drain does,
+            // noting each piece's end gates (its buffers keep only the last).
+            self.split_ends.start_block();
             let mut at = 0;
             while at < n {
                 let end = at + self.replay.apply_due(&mut graph, n - at);
                 graph.process_block(&mut left[at..end], &mut right[at..end]);
+                if end - at < n {
+                    self.split_ends.record_piece(&graph, at, end - at);
+                }
                 at = end;
             }
             for k in 0..n {
@@ -249,7 +260,8 @@ impl RenderEngine {
     /// the number of valid frames in the last render call, which must not
     /// have exceeded one graph block for the scan to be frame-exact (the
     /// `ended` gate is latched, so a coarser host still cannot *miss* it —
-    /// only land on a later frame).
+    /// only land on a later frame). A block a replayed request split (see
+    /// [`Self::replay`]) is answered for whole, as if it rendered unsplit.
     ///
     /// Errors when no invention is loaded, when a named source does not
     /// exist or has no `ended` output, or when `source` is `None` and nothing
@@ -267,23 +279,27 @@ impl RenderEngine {
 
         let mut earliest: Option<usize> = None;
         let mut candidates = 0usize;
-        for (id, module) in graph.modules.iter() {
+        for (index, (id, module)) in graph.modules.iter().enumerate() {
             if let Some(wanted) = source {
                 if id != wanted {
                     continue;
                 }
             }
             let module = module.module();
-            let Some(port) = module.outputs().iter().position(|port| is_end_output(port)) else {
+            let Some(port) = split_ends::end_port(module) else {
                 if source.is_some() {
                     return Err(format!("module '{}' has no 'ended' output", id).into());
                 }
                 continue;
             };
             candidates += 1;
-            let block = module.output_block(port);
-            let n = frames.min(block.len());
-            if let Some(frame) = block[..n].iter().position(|&value| value > 0.5) {
+            // A block a replay split was scanned piece by piece as it rendered.
+            let rise = self.split_ends.rise(index).unwrap_or_else(|| {
+                let block = module.output_block(port);
+                let n = frames.min(block.len());
+                block[..n].iter().position(|&value| value > 0.5)
+            });
+            if let Some(frame) = rise.filter(|&frame| frame < frames) {
                 earliest = Some(earliest.map_or(frame, |current| current.min(frame)));
             }
         }
@@ -371,6 +387,7 @@ impl RenderEngine {
 
     fn install_runtime(&mut self, runtime: super::runtime::InventionRuntime) {
         self.replay = replay::Replay::default();
+        self.split_ends = split_ends::SplitEnds::default();
         self.scripts.stop_all();
         self.agents.stop_all();
         runtime.state.lock().unwrap().running = true;

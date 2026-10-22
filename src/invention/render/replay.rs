@@ -156,6 +156,8 @@ impl Replay {
 }
 
 #[cfg(test)]
+mod end_tests;
+#[cfg(test)]
 mod hold_tests;
 #[cfg(test)]
 mod tests;
