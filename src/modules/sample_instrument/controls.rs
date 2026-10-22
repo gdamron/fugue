@@ -84,9 +84,10 @@ struct ZoneSwaps {
     /// Staged by `set_asset`, for the audio thread to swap in.
     pending: Vec<Option<ZoneAudio>>,
     /// What the audio thread swapped out. The next `set_asset` drops it, so
-    /// the audio thread never drops a zone's audio. The sample cache keeps
-    /// every sample it loads for good (see `load_cached_sample`), so a
-    /// voice letting go of one on the audio thread frees nothing either.
+    /// the audio thread never drops a zone's audio. The sample cache owns
+    /// every sample it returns while anything else holds it (see
+    /// `load_cached_sample`), so a voice letting go of one on the audio
+    /// thread frees nothing either.
     retired: Vec<Option<ZoneAudio>>,
 }
 
