@@ -154,16 +154,12 @@ fn writes(value: &ControlValue) -> Vec<TableValue> {
     }
 }
 
-/// Listed types whose scheduled path is still their setter: the next
-/// change of this stack gives it its own.
-const UNCOVERED: &[&str] = &["sample_player"];
-
 /// Every listed type's scheduled reads and writes, of every control a
 /// schedule can reach and of keys it has not got, allocate and free
 /// nothing: what is refused is counted, never formatted.
 #[test]
 fn a_scheduled_write_to_a_legacy_control_allocates_nothing() {
-    for type_id in LEGACY_CONTROLS.iter().filter(|id| !UNCOVERED.contains(id)) {
+    for type_id in LEGACY_CONTROLS {
         let surface = scheduled_surface(type_id);
         let reached = schedulable(&surface);
         assert!(!reached.is_empty(), "'{type_id}' has schedulable controls");

@@ -66,6 +66,15 @@ fn build_instrument(
     (module, controls)
 }
 
+impl SampleInstrument {
+    /// The notes sounding, oldest first.
+    pub(crate) fn sounding(&self) -> Vec<u8> {
+        let mut voices: Vec<_> = self.voices.iter().filter(|voice| voice.active).collect();
+        voices.sort_by_key(|voice| voice.started);
+        voices.iter().map(|voice| voice.note).collect()
+    }
+}
+
 fn freq(note: u8) -> f32 {
     crate::music::Note::new(note).frequency()
 }
