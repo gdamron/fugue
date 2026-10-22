@@ -198,7 +198,7 @@ fn a_sample_decoded_by_a_losing_racer_is_not_the_one_returned() {
     // Two threads missed the same key, and both decoded it: the second to
     // cache gets the first's buffer, so the cache owns whatever either
     // returns, and a voice dropping it on the audio thread frees nothing.
-    let key = ("fugue-test://a-raced-sample".to_string(), RATE);
+    let key = ("fugue-test://a-raced-sample".to_string(), RATE, None);
     let first = Arc::new(SampleData::from_interleaved(1, RATE, RATE, vec![0.1; 4]));
     let second = Arc::new(SampleData::from_interleaved(1, RATE, RATE, vec![0.2; 4]));
     let lost = Arc::downgrade(&second);
@@ -208,4 +208,36 @@ fn a_sample_decoded_by_a_losing_racer_is_not_the_one_returned() {
     ));
     assert!(Arc::ptr_eq(&super::cache_loaded(key, second), &first));
     assert!(lost.upgrade().is_none(), "the losing decode is dropped");
+}
+
+#[test]
+fn a_changed_file_at_the_same_path_decodes_afresh() {
+    // A source-checkout package (or an edited local sample) keeps its path
+    // when its bytes change; the cache must not replay the first decode.
+    fn write(path: &std::path::Path, value: f32) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: RATE,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for _ in 0..8 {
+            writer.write_sample(value).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hit.wav");
+    let source = path.to_str().unwrap();
+    write(&path, 0.25);
+    let first = super::load_cached_sample(source, RATE).unwrap();
+    assert!(Arc::ptr_eq(
+        &first,
+        &super::load_cached_sample(source, RATE).unwrap()
+    ));
+    write(&path, 0.5);
+    let second = super::load_cached_sample(source, RATE).unwrap();
+    assert!(!Arc::ptr_eq(&first, &second));
+    assert_eq!(second.frame_at(0).0, 0.5);
 }

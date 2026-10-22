@@ -212,14 +212,19 @@ enum AudioFormat {
 }
 
 /// Process-wide cache of decoded + resampled buffers, keyed by the resolved
-/// source string and the target (engine) sample rate. Decode/resample happens
+/// source string, the target (engine) sample rate and, for a local file, the
+/// SHA-256 of its bytes. Decode/resample happens
 /// off the audio thread, so a `Mutex` here is fine; the audio thread only ever
 /// touches the resulting `Arc<SampleData>`. Deduplicates work and memory when
 /// several players reference the same asset at the same rate.
 //
 // Keyed by the *resolved* source path (`resolve_source`), so a package ref
-// and the direct path to the same installed file share one buffer.
-type SampleCache = Mutex<HashMap<(String, u32), Arc<SampleData>>>;
+// and the direct path to the same installed file share one buffer. The
+// content digest makes a changed file (an edited local sample, or a package
+// read in place from a source checkout) decode afresh instead of replaying
+// the bytes first cached at that path.
+type SampleKey = (String, u32, Option<String>);
+type SampleCache = Mutex<HashMap<SampleKey, Arc<SampleData>>>;
 
 fn sample_cache() -> &'static SampleCache {
     static CACHE: OnceLock<SampleCache> = OnceLock::new();
@@ -236,28 +241,65 @@ pub(crate) fn load_cached_sample(
     source: &str,
     target_sample_rate: u32,
 ) -> Result<Arc<SampleData>, String> {
-    let key = (source.to_string(), target_sample_rate);
+    // A local file is read once: its digest keys the cache, and the same
+    // bytes decode on a miss, so the key always names what was decoded.
+    let bytes = read_local(source)?;
+    let digest = bytes.as_deref().map(|bytes| {
+        use sha2::{Digest, Sha256};
+        crate::hex::lower_hex(&Sha256::digest(bytes))
+    });
+    let key = (source.to_string(), target_sample_rate, digest);
 
     if let Some(cached) = sample_cache().lock().unwrap().get(&key) {
         return Ok(Arc::clone(cached));
     }
 
-    let sample = Arc::new(load_sample(source, target_sample_rate)?);
-    Ok(cache_loaded(key, sample))
+    let sample = match bytes {
+        Some(bytes) => decode_sample(
+            source,
+            Box::new(std::io::Cursor::new(bytes)),
+            false,
+            target_sample_rate,
+        )?,
+        None => load_sample(source, target_sample_rate)?,
+    };
+    Ok(cache_loaded(key, Arc::new(sample)))
+}
+
+/// The bytes of a local sample file, or `None` for a URL (fetched by
+/// `open_source`) and on wasm32, where sample loading is unavailable.
+fn read_local(source: &str) -> Result<Option<Vec<u8>>, String> {
+    if cfg!(target_arch = "wasm32")
+        || source.starts_with("https://")
+        || source.starts_with("http://")
+    {
+        return Ok(None);
+    }
+    std::fs::read(source)
+        .map(Some)
+        .map_err(|err| format!("Failed to open sample '{}': {}", source, err))
 }
 
 /// Caches `sample` under `key`, returning the buffer the cache keeps: one
 /// another thread cached since this one missed, if any, so the cache owns
 /// every buffer returned. The one decoded here is then dropped, on this
 /// control thread.
-fn cache_loaded(key: (String, u32), sample: Arc<SampleData>) -> Arc<SampleData> {
+fn cache_loaded(key: SampleKey, sample: Arc<SampleData>) -> Arc<SampleData> {
     let mut cache = sample_cache().lock().unwrap();
     Arc::clone(cache.entry(key).or_insert(sample))
 }
 
 fn load_sample(source: &str, target_sample_rate: u32) -> Result<SampleData, String> {
-    let (mut reader, remote) = open_source(source)?;
+    let (reader, remote) = open_source(source)?;
+    decode_sample(source, reader, remote, target_sample_rate)
+}
 
+fn decode_sample(
+    source: &str,
+    mut reader: Box<dyn Read>,
+    remote: bool,
+    target_sample_rate: u32,
+) -> Result<SampleData, String> {
     // Peek the header magic so format detection is header-driven (authoritative)
     // with the file extension as a fallback. The source readers (file or HTTPS
     // stream) are not seekable, so the consumed bytes are chained back on.
