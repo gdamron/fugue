@@ -57,11 +57,17 @@ fn rpc_commands_round_trip_json() {
             module_type: "lfo".to_string(),
             config: serde_json::json!({ "frequency": 2.0 }),
             preserve_connections: true,
+            timing: Default::default(),
         },
         RpcCommand::ReloadInvention {
             invention: Box::new(test_invention()),
             source_path: Some("/tmp/invention.json".to_string()),
             frozen: true,
+            // A timed reload is refused on this build's wire.
+            timing: EditTiming::default(),
+        },
+        RpcCommand::GetRequest {
+            id: "3-17".to_string(),
         },
         RpcCommand::InstallPackage(PackageInstallRequest {
             package: "demo".to_string(),
@@ -252,6 +258,7 @@ fn advances_revision_separates_authoring_from_performance() {
         invention: Box::new(test_invention()),
         source_path: None,
         frozen: true,
+        timing: Default::default(),
     }
     .advances_revision());
     assert!(!RpcCommand::ListPackages {

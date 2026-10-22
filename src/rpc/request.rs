@@ -1,9 +1,9 @@
 //! Client request envelopes and the commands a daemon accepts.
 
 use super::{
-    ControlWriteIntent, DescribeModuleQuery, InspectionQuery, ModuleTypeQuery, MutationReply,
-    MutationTicket, PackageInstallRequest, RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery,
-    StructuralEdit, RPC_SCHEMA_VERSION,
+    ControlWriteIntent, DescribeModuleQuery, EditTiming, InspectionQuery, ModuleTypeQuery,
+    MutationReply, MutationTicket, PackageInstallRequest, RpcSubscriptionTopic, RuntimeRevision,
+    SnapshotDelivery, StructuralEdit, RPC_SCHEMA_VERSION,
 };
 use crate::{ControlValue, Invention};
 use serde::{Deserialize, Serialize};
@@ -237,6 +237,9 @@ pub enum RpcCommand {
         config: serde_json::Value,
         #[serde(default)]
         preserve_connections: bool,
+        /// When the edit lands, if not at once (see [`EditTiming`]).
+        #[serde(flatten)]
+        timing: EditTiming,
     },
     /// Reload a full invention document into the running graph as a diff of
     /// runtime mutations, keeping the audio stream alive and preserving the
@@ -255,6 +258,9 @@ pub enum RpcCommand {
         /// integrity before reloading and refuses on a mismatch.
         #[serde(default = "default_frozen")]
         frozen: bool,
+        /// When the edit lands, if not at once (see [`EditTiming`]).
+        #[serde(flatten)]
+        timing: EditTiming,
     },
     /// Apply an ordered batch of structural edits atomically: every edit
     /// lands, in one revision, or none does. Must carry a
@@ -263,6 +269,15 @@ pub enum RpcCommand {
     /// [`RpcCommand::ReloadInvention`] remains the default structural path.
     ApplyEdits {
         edits: Vec<StructuralEdit>,
+        /// When the edit lands, if not at once (see [`EditTiming`]).
+        #[serde(flatten)]
+        timing: EditTiming,
+    },
+    /// The status of a timed request: a swap, an edit batch or a reload
+    /// sent with a `when`. Its later changes are also announced as
+    /// `RequestChanged` events.
+    GetRequest {
+        id: String,
     },
     /// Inspect bounded authored selections with revision and source context.
     InspectInvention {
