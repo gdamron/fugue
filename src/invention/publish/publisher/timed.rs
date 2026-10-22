@@ -10,19 +10,25 @@
 //! nothing changed), as any change prepared against a generation that has
 //! moved is.
 
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::{Published, Publisher, Refused};
-use crate::control_request::{QueueFull, Request, RequestId, RequestValue, When};
+use crate::control_request::{
+    Condition, ControlTarget, Predicate, QueueFull, Request, RequestId, RequestSender,
+    RequestValue, RtValue, When,
+};
 use crate::invention::declared::RequestPort;
 use crate::invention::graph::{Fate, TIMED_EDIT_MODULE};
 use crate::invention::publish::change::{BuiltModule, PreparedChange, TopologyMirror};
 use crate::invention::publish::rebind::Packed;
+use crate::invention::publish::timed_status::{CancelCause, Ledger};
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
 use crate::modules::control_scheduler::Written;
 use crate::payload::Payload;
+use crate::ControlValue;
 use indexmap::IndexMap;
 
 /// Runs on the runtime state as a timed edit is adopted: records what it
@@ -31,6 +37,7 @@ pub(crate) type Retain = Box<dyn FnOnce(&mut RuntimeState) + Send>;
 
 /// A timed edit queued and not yet adopted.
 pub(crate) struct Waiting {
+    id: RequestId,
     fate: Fate,
     /// The topology once it lands.
     mirror: TopologyMirror,
@@ -41,16 +48,48 @@ pub(crate) struct Waiting {
     /// The schedules it hands surviving schedulers as it lands, recorded
     /// once it is adopted; a refused one records nothing.
     packed: Packed,
+    /// Authored control writes made while it waits to modules it keeps,
+    /// recorded again once `retain` has run (see [`Publisher::fold_timed`]).
+    folded: Vec<(String, String, ControlValue)>,
+    /// The controls of modules it keeps that it writes as it lands (see
+    /// [`Publisher::chain_timed`]).
+    chained: Vec<(String, String)>,
+}
+
+/// How many recent adoptions [`Adoptions`] remembers.
+const ADOPTIONS: usize = 8;
+
+/// What the latest timed edits adopted did, for an authored write one may
+/// have overtaken (see [`Publisher::timed_overtook`]).
+#[derive(Default)]
+pub(crate) struct Adoptions {
+    recent: VecDeque<Adoption>,
+    /// The generation of the newest adoption forgotten, 0 before any.
+    forgotten: u64,
+}
+
+struct Adoption {
+    /// The generation it was adopted as.
+    generation: u64,
+    id: RequestId,
+    /// The modules it rebuilt or removed, or whose schedule it re-resolved
+    /// as it landed.
+    modules: HashSet<String>,
+    /// The controls of modules it kept that it wrote as it landed.
+    controls: Vec<(String, String)>,
 }
 
 /// A timed edit the audio thread landed, adopted by the publisher: what it
 /// replaced and built, for the runtime's other mirrors.
 pub(crate) struct Adopted {
+    pub(crate) id: RequestId,
     pub(crate) published: Published,
     pub(crate) retain: Retain,
     pub(crate) port: RequestPort,
     /// The schedules it handed surviving schedulers, to record now.
     pub(crate) written: Vec<Written>,
+    /// Authored writes folded into it, to record after `retain`.
+    pub(crate) folded: Vec<(String, String, ControlValue)>,
 }
 
 impl Publisher {
@@ -60,14 +99,19 @@ impl Publisher {
     /// is adopted. Refused with nothing queued as [`Self::publish`]
     /// refuses a change, when the change edits nothing, or while another
     /// timed edit waits (`ControlError`).
+    ///
+    /// `before` runs once every check has passed, with the id the edit is
+    /// about to be queued with: requests submitted there that wait on it
+    /// applying are queued ahead of it, so none can miss it. Refused, with
+    /// the edit not queued, when `before` refuses (having queued nothing).
     #[allow(clippy::result_large_err)]
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
     pub(crate) fn publish_timed(
         &mut self,
         mut prepared: PreparedChange,
         when: When,
         ttl: Option<u64>,
         (retain, port, packed): (Retain, RequestPort, Packed),
+        before: impl FnOnce(RequestId) -> Result<(), GraphCommandError>,
     ) -> Result<RequestId, Refused> {
         let refuse = |error, change| Err(Refused { error, change });
         let control = |message: &str| GraphCommandError::ControlError(message.into());
@@ -81,9 +125,17 @@ impl Publisher {
             let waiting = "A timed edit already waits; try again once it lands";
             return refuse(control(waiting), prepared);
         }
-        let Some(mut publication) = prepared.publication.take() else {
+        if prepared.publication.is_none() {
             return refuse(control("Only a structural edit can be timed"), prepared);
-        };
+        }
+        if !self.requests.has_room() {
+            return refuse(GraphCommandError::QueueFull, prepared);
+        }
+        let id = self.requests.take_id();
+        if let Err(error) = before(id) {
+            return refuse(error, prepared);
+        }
+        let mut publication = prepared.publication.take().expect("checked above");
         publication.map_survivors(self.mirror.modules.keys().map(String::as_str));
         publication.generation = self.generation + 1;
         let fate = Fate::default();
@@ -92,7 +144,9 @@ impl Publisher {
         edit.target.module_idx = TIMED_EDIT_MODULE;
         edit.when = when;
         edit.ttl = ttl;
-        let id = match self.requests.submit(edit) {
+        // `before` left room for it while submissions are serialized, as
+        // they are under the publisher.
+        let id = match self.requests.submit_as(id, edit) {
             Ok(id) => id,
             Err(QueueFull(edit)) => {
                 let RequestValue::Edit(payload) = edit.value else {
@@ -103,12 +157,15 @@ impl Publisher {
             }
         };
         self.set_timed(Some(Waiting {
+            id,
             fate,
             mirror: prepared.mirror,
             built: prepared.built,
             retain,
             port,
             packed,
+            folded: Vec::new(),
+            chained: Vec::new(),
         }));
         Ok(id)
     }
@@ -155,7 +212,26 @@ impl Publisher {
         // thread, which then knows nothing is tagged older (see `landing`).
         self.published.store(self.generation, Ordering::Release);
         let previous = std::mem::replace(&mut self.mirror, waiting.mirror);
+        let removed = previous
+            .modules
+            .keys()
+            .filter(|id| !self.mirror.modules.contains_key(*id));
+        let built = waiting.built.keys();
+        let rebound = waiting.packed.rebound.iter();
+        let modules = removed.chain(built).chain(rebound).cloned().collect();
+        self.adopted.recent.push_back(Adoption {
+            generation: self.generation,
+            id: waiting.id,
+            modules,
+            controls: waiting.chained,
+        });
+        if self.adopted.recent.len() > ADOPTIONS {
+            if let Some(oldest) = self.adopted.recent.pop_front() {
+                self.adopted.forgotten = oldest.generation;
+            }
+        }
         Some(Adopted {
+            id: waiting.id,
             published: Published {
                 previous,
                 built: waiting.built,
@@ -163,6 +239,7 @@ impl Publisher {
             retain: waiting.retain,
             port: waiting.port,
             written: waiting.packed.written,
+            folded: waiting.folded,
         })
     }
 
@@ -179,16 +256,151 @@ impl Publisher {
     }
 
     /// Clears the way for a change publishing now: cancels a timed edit
-    /// still waiting. False when it has landed and is not yet adopted:
-    /// the change was prepared against a generation that has moved.
-    pub(crate) fn cancel_timed(&mut self) -> bool {
+    /// still waiting, recording `cause` (see [`Self::ledger`]). False when
+    /// it has landed and is not yet adopted: the change was prepared
+    /// against a generation that has moved.
+    pub(crate) fn cancel_timed(&mut self, cause: impl FnOnce() -> CancelCause) -> bool {
         let Some(waiting) = &self.timed else {
             return true;
         };
-        if !waiting.fate.cancel() && waiting.fate.landed() {
+        if waiting.fate.cancel() {
+            let id = waiting.id;
+            self.requests.cancelled(id);
+            self.ledger.cancelled(id, cause());
+        } else if waiting.fate.landed() {
             return false;
         }
         self.set_timed(None);
         true
+    }
+
+    /// Whether a timed edit adopted after generation `seen` may have
+    /// overtaken an authored write to control `key` of `module_id` queued
+    /// at `seen`: landing after it, the edit rebuilt or removed the module,
+    /// re-resolved its schedule, or wrote the control. Not by writing the
+    /// control, though, when it is `safe`: the edit the write was queued
+    /// after or kept over (see [`Self::keep_authored`]). True, to be safe,
+    /// when one adopted since is forgotten.
+    pub(crate) fn timed_overtook(
+        &self,
+        seen: u64,
+        (module_id, key): (&str, &str),
+        safe: Option<RequestId>,
+    ) -> bool {
+        let wrote = |(module, control): &(String, String)| module == module_id && control == key;
+        let overtook = |adoption: &Adoption| {
+            adoption.generation > seen
+                && (adoption.modules.contains(module_id)
+                    || (Some(adoption.id) != safe && adoption.controls.iter().any(wrote)))
+        };
+        self.adopted.forgotten > seen || self.adopted.recent.iter().any(overtook)
+    }
+
+    /// The id of the timed edit waiting, if any.
+    pub(crate) fn timed_id(&self) -> Option<RequestId> {
+        self.timed.as_ref().map(|waiting| waiting.id)
+    }
+
+    /// What the timed edit waiting, if any, does to module `id`: removes
+    /// it (`Some(true)`) or rebuilds it (`Some(false)`). `None` when it
+    /// keeps it, or none waits.
+    pub(crate) fn timed_replaces(&self, id: &str) -> Option<bool> {
+        let waiting = self.timed.as_ref()?;
+        if !self.mirror.modules.contains_key(id) {
+            return None;
+        }
+        if !waiting.mirror.modules.contains_key(id) {
+            return Some(true);
+        }
+        waiting.built.contains_key(id).then_some(false)
+    }
+
+    /// Folds an authored write to a module the timed edit waiting keeps
+    /// into it, so its retained document records the write again as it is
+    /// adopted rather than lose it. The last write to each control stands.
+    /// Nothing when none waits.
+    pub(crate) fn fold_timed(&mut self, module_id: &str, key: &str, value: &ControlValue) {
+        let Some(waiting) = self.timed.as_mut() else {
+            return;
+        };
+        let folded = &mut waiting.folded;
+        folded.retain(|(module, control, _)| module != module_id || control != key);
+        folded.push((module_id.to_string(), key.to_string(), value.clone()));
+    }
+
+    /// Whether the timed edit waiting writes control `key` of `module_id`
+    /// as it lands (see [`Self::chain_timed`]).
+    pub(crate) fn timed_chains(&self, module_id: &str, key: &str) -> bool {
+        self.timed.as_ref().is_some_and(|waiting| {
+            let chained =
+                |(module, control): &(String, String)| module == module_id && control == key;
+            waiting.chained.iter().any(chained)
+        })
+    }
+
+    /// Notes the controls of modules it keeps that the timed edit waiting
+    /// writes as it lands, so an authored write to one is kept over it
+    /// (see [`Self::keep_authored`]).
+    pub(crate) fn chain_timed(&mut self, chained: Vec<(String, String)>) {
+        if let Some(waiting) = self.timed.as_mut() {
+            waiting.chained = chained;
+        }
+    }
+
+    /// Readies an authored write of `raw` to control `key` of `module_id`
+    /// (at `target`, in the graph that is playing), about to be queued,
+    /// against the timed edit waiting, and returns the edit it is safe from
+    /// (see [`Self::timed_overtook`]) with the id of the copy it queued, if
+    /// any. One landed already: the write follows its writes. One that
+    /// writes the control as it lands: the write is kept over it, a copy
+    /// chained to the landing as the edit's own write is, at the same rank.
+    /// The audio thread meets requests in the order they are queued and
+    /// applies those waiting on a condition in the order it received them,
+    /// and at one sample, of equal rank, the later wins: the copy, queued
+    /// after the edit and so after its write, replaces it (and any copy
+    /// kept before) as it reaches the audio thread, holding one slot
+    /// however long a drag. So the copy plays at the landing, and the
+    /// edit's value never sounds when the copy reaches the audio thread
+    /// before the landing; held back past it, the copy plays as soon as it
+    /// does (see [`Ledger::kept`]). At the same rank, its hold is the
+    /// author's own, refusing no later write a plain one would
+    /// not. `None`, with nothing queued, when neither: none waits, it does
+    /// not write the control, or the write cannot be kept (an event, the
+    /// requests waiting on conditions are full, or `requests`, the sender
+    /// the write goes through, has no room for both), and an edit writing
+    /// the control is cancelled as the write is recorded.
+    pub(crate) fn keep_authored(
+        &mut self,
+        (module_id, key): (&str, &str),
+        target: ControlTarget,
+        (raw, event): (RtValue, bool),
+        requests: &RequestSender,
+    ) -> Option<(RequestId, Option<RequestId>)> {
+        let waiting = self.timed.as_ref()?;
+        match waiting.fate.settled() {
+            Some(true) => return Some((waiting.id, None)),
+            Some(false) => return None,
+            None => {}
+        }
+        let chained = |(module, control): &(String, String)| module == module_id && control == key;
+        if event || !waiting.chained.iter().any(chained) {
+            return None;
+        }
+        // Room for the write itself after it, through the same sender (and
+        // its reserve), so a kept write is always made.
+        if requests.watchers_full() || !requests.has_room_for(2) {
+            return None;
+        }
+        let id = waiting.id;
+        let mut kept = Request::new(target, RequestValue::Value(raw));
+        kept.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).expect("one part"));
+        let copy = requests.submit(kept).ok()?;
+        self.ledger.kept(id, format!("{module_id}.{key}"));
+        Some((id, Some(copy)))
+    }
+
+    /// Every recent timed edit's status (see `timed_status`).
+    pub(crate) fn ledger(&mut self) -> &mut Ledger {
+        &mut self.ledger
     }
 }

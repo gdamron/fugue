@@ -1,7 +1,8 @@
 //! Server-pushed events, subscription topics, and the polled event log.
 
 use super::{
-    RpcError, RuntimeFullSnapshot, SpectrogramStreamMeta, SpectrogramTile, RPC_SCHEMA_VERSION,
+    RequestStatus, RpcError, RuntimeFullSnapshot, SpectrogramStreamMeta, SpectrogramTile,
+    RPC_SCHEMA_VERSION,
 };
 use crate::ControlValue;
 use serde::{Deserialize, Serialize};
@@ -76,6 +77,9 @@ pub enum RpcEventPayload {
     /// The whole runtime state. Never retained in polled history; streamed
     /// only to a subscriber, right after a `TopologyChanged` it delivered.
     Snapshot(RuntimeFullSnapshot),
+    /// A timed request changed state: queued, landed, adopted, refused,
+    /// expired or cancelled.
+    RequestChanged(RequestStatus),
 }
 
 /// Minimal sink interface for transports that collect or broadcast RPC events.

@@ -13,6 +13,7 @@ fn reload() -> RpcCommand {
         invention: Box::new(test_invention()),
         source_path: None,
         frozen: false,
+        timing: Default::default(),
     }
 }
 

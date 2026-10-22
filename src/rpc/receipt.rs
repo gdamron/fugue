@@ -87,17 +87,19 @@ impl super::RpcCommand {
     pub fn replies_with_snapshot(&self) -> bool {
         // Exhaustive, so a new command needs a decision here.
         match self {
+            // A timed edit replies with the request's status.
+            Self::ReloadInvention { timing, .. } | Self::SwapModule { timing, .. } => {
+                !timing.is_timed()
+            }
             Self::LoadInvention { .. }
             | Self::LoadExample { .. }
-            | Self::ReloadInvention { .. }
             | Self::UnloadInvention
             | Self::SetControl { .. }
             | Self::SetControls { .. }
             | Self::AddModule { .. }
             | Self::RemoveModule { .. }
             | Self::Connect { .. }
-            | Self::Disconnect { .. }
-            | Self::SwapModule { .. } => true,
+            | Self::Disconnect { .. } => true,
             Self::ApplyEdits { .. }
             | Self::InspectInvention { .. }
             | Self::GetInvention { .. }
@@ -112,6 +114,7 @@ impl super::RpcCommand {
             | Self::DescribeModuleTypes(_)
             | Self::DescribeModule(_)
             | Self::FlushSession { .. }
+            | Self::GetRequest { .. }
             | Self::Shutdown => false,
         }
     }

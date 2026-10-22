@@ -16,7 +16,7 @@ fn time(rig: &Rig, prepared: PreparedChange, when: When, ttl: Option<u64>) -> Re
         rig.live.port(),
         Default::default(),
     );
-    let Ok(id) = publisher.publish_timed(prepared, when, ttl, retain) else {
+    let Ok(id) = publisher.publish_timed(prepared, when, ttl, retain, |_| Ok(())) else {
         panic!("the timed edit was refused");
     };
     id
@@ -181,7 +181,8 @@ fn what_cannot_be_timed_is_refused_with_nothing_queued() {
             rig.live.port(),
             Default::default(),
         );
-        let refused = publisher.publish_timed(prepared, When::AfterSamples(10), None, retain);
+        let refused =
+            publisher.publish_timed(prepared, When::AfterSamples(10), None, retain, |_| Ok(()));
         refused
             .map(|_| ())
             .map_err(|refused| refused.error.to_string())
@@ -200,4 +201,36 @@ fn what_cannot_be_timed_is_refused_with_nothing_queued() {
     let error = refusal(change.prepare().unwrap(), &mut publisher).unwrap_err();
     assert!(error.contains("already waits"), "{error}");
     assert!(publisher.timed_waiting());
+}
+
+#[test]
+fn what_is_submitted_before_an_edit_is_queued_is_taken_ahead_of_it() {
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    let prepared = removing(&rig, "osc2");
+    let live = rig.live.clone();
+    let graph = &mut rig.graph;
+    let mut publisher = live.publisher().lock().unwrap();
+    let retain = (
+        Box::new(|_: &mut RuntimeState| {}) as _,
+        live.port(),
+        Default::default(),
+    );
+    let mut reserved = None;
+    let before = |id| {
+        // Already due, yet not queued: a block rendered now leaves it be.
+        let (mut left, mut right) = ([0.0f32; 64], [0.0f32; 64]);
+        graph.process_block(&mut left, &mut right);
+        reserved = Some(id);
+        Ok(())
+    };
+    let queued = publisher.publish_timed(prepared, When::AtSample(0), None, retain, before);
+    let Ok(id) = queued else {
+        panic!("the timed edit was refused");
+    };
+    drop(publisher);
+    assert_eq!(reserved, Some(id), "queued under the id it was given");
+    assert_eq!(rig.module_ids(), ["osc1", "osc2", "dac"]);
+    rig.render(1);
+    assert_eq!(rig.module_ids(), ["osc1", "dac"]);
 }
