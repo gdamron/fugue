@@ -309,6 +309,15 @@ pub(crate) mod test_override {
         }
     }
 
+    /// Run `body` with the document limit set to `limit` on this thread.
+    pub(crate) fn with_document_limit<T>(limit: u64, body: impl FnOnce() -> T) -> T {
+        let previous = LIMITS.with(Cell::get);
+        LIMITS.with(|l| l.set((Some(limit), previous.1)));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+        LIMITS.with(|l| l.set(previous));
+        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+
     /// Run `body` with the hashed-file limit set to `limit` on this thread.
     pub(crate) fn with_hashed_limit<T>(limit: u64, body: impl FnOnce() -> T) -> T {
         let previous = LIMITS.with(Cell::get);

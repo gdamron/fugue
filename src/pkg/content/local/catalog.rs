@@ -32,9 +32,36 @@ impl ContentCatalog {
     fn refresh(&mut self) -> Result<()> {
         let _guard = package_read_guard(&self.roots.packages)?;
         let mut refs = Vec::new();
+        let mut source_errors = Vec::new();
         for id in directory(&self.roots.packages)? {
             if !id.file_type().map_err(io_error)?.is_dir() {
                 continue;
+            }
+            let name = id.file_name().to_string_lossy().into_owned();
+            // A source checkout lists its manifest version; inspecting it
+            // applies the layout rules (a mixed one is a diagnostic).
+            let manifest = id.path().join("fugue.pkg.json");
+            if manifest.is_file() {
+                match contained(&id.path(), &manifest)
+                    .and_then(|m| pkg::parse_path(m).map_err(|e| err("invalid_content", e)))
+                {
+                    Ok(m) if is_content(m.kind) => refs.push(ContentRef::Package {
+                        package: name.clone(),
+                        version: m.version,
+                    }),
+                    Ok(_) => {}
+                    Err(e) => source_errors.push(err(
+                        "invalid_content",
+                        truncate(
+                            &format!(
+                                "invalid source checkout {}: {}",
+                                manifest.display(),
+                                e.message
+                            ),
+                            512,
+                        ),
+                    )),
+                }
             }
             for version in directory(&id.path())? {
                 if !version.file_type().map_err(io_error)?.is_dir() {
@@ -48,15 +75,12 @@ impl ContentCatalog {
                 if let Ok(m) = contained(&version.path(), &path)
                     .and_then(|path| pkg::parse_path(&path).map_err(|e| err("invalid_content", e)))
                 {
-                    if !matches!(
-                        m.kind,
-                        pkg::PackageKind::Development | pkg::PackageKind::Invention
-                    ) {
+                    if !is_content(m.kind) {
                         continue;
                     }
                 }
                 refs.push(ContentRef::Package {
-                    package: id.file_name().to_string_lossy().into_owned(),
+                    package: name.clone(),
                     version: version_name,
                 });
             }
@@ -69,8 +93,8 @@ impl ContentCatalog {
             ));
         }
         let mut entries = Vec::new();
-        let mut diagnostics = Vec::new();
-        let mut diagnostics_truncated = false;
+        let mut diagnostics_truncated = source_errors.len() > 20;
+        let mut diagnostics: Vec<_> = source_errors.into_iter().take(20).collect();
         let mut fingerprints = BTreeMap::new();
         for reference in refs {
             match self.roots.inspect(&reference, Hashing::Cached) {
@@ -210,4 +234,12 @@ impl ContentCatalog {
         self.refresh()?;
         self.roots.load_invention(&query.reference)
     }
+}
+
+/// Package kinds the catalog lists: musical content, not samples or modules.
+fn is_content(kind: pkg::PackageKind) -> bool {
+    matches!(
+        kind,
+        pkg::PackageKind::Development | pkg::PackageKind::Invention
+    )
 }

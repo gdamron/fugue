@@ -199,6 +199,26 @@ copies collapse to one entry; if both provenance records exist, report `bundled`
 Conflicting bytes for the same package ID/version fail as `integrity_mismatch`.
 Workspace content never shadows a package, even when its title matches.
 
+The package cache may also be a pack repository's source checkout
+(`FUGUE_PACKS_DIR=<repo>/packs`), where each package is `<id>/fugue.pkg.json`
+rather than the installed `<id>/<version>/`. A source checkout offers exactly
+its manifest's `version`, so pins and requirements match it as they would an
+installed version; an exact pin needs that exact manifest version. Its manifest
+must validate and declare the directory's id, and the checkout may hold only
+regular files and directories that integrity hashing covers (no symlinks, no
+`.git`), since it is read in place. A package directory holding both
+layouts is refused as ambiguous: neither wins. Identity is unchanged: the
+checkout's bytes are hashed like an install's, and lockfile and frozen
+verification find the locked version by id and version in either layout.
+Because a checkout changes in place, a load also fingerprints the checkout
+bytes it actually parsed, and an edit between reads is `stale_reference`. The
+package hash is still taken after the documents are read, so an edit landing
+in that window is caught by a later inspection, not by the lock check itself.
+A checkout has no install receipt: its own dependencies resolve like an
+unlocked workspace file's (a lock pin if present, otherwise the highest
+satisfying version), and a receipt left from an earlier install of the same
+version is ignored. See `src/pkg/layout.rs`.
+
 For authored dependency requirements, reuse existing package selection: an
 installed satisfying lock pin wins, otherwise the highest satisfying installed
 version. A frozen load fails on a missing/mismatched pin. It byte-hashes only

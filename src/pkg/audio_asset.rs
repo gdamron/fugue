@@ -87,18 +87,20 @@ impl std::fmt::Display for PackageAudioRef {
 #[cfg(not(target_arch = "wasm32"))]
 mod fs_ops {
     use super::PackageAudioRef;
+    use crate::pkg::layout::Available;
     use crate::pkg::resolve::select_version;
     use semver::{Version, VersionReq};
     use std::path::{Path, PathBuf};
 
-    /// A package asset ref resolved against the installed package cache.
+    /// A package asset ref resolved against the package cache.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct ResolvedPackageAsset {
         /// Package id.
         pub id: String,
         /// Concrete installed version the requirement resolved to.
         pub version: Version,
-        /// Canonical install dir: `packages_dir/<id>/<version>`.
+        /// The version's directory: `packages_dir/<id>/<version>` when
+        /// installed, `packages_dir/<id>` for a source checkout.
         pub install_dir: PathBuf,
         /// The referenced file inside the install dir.
         pub file: PathBuf,
@@ -117,29 +119,13 @@ mod fs_ops {
             .ok_or_else(|| "Could not determine home directory for package cache".to_string())
     }
 
-    /// Installed versions of `id` under `packages_dir` (directory names that
-    /// parse as semver). Missing package dir yields an empty list.
-    fn installed_versions(packages_dir: &Path, id: &str) -> Vec<Version> {
-        let Ok(entries) = std::fs::read_dir(packages_dir.join(id)) else {
-            return Vec::new();
-        };
-        entries
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                if !entry.file_type().ok()?.is_dir() {
-                    return None;
-                }
-                Version::parse(entry.file_name().to_str()?).ok()
-            })
-            .collect()
-    }
-
-    /// Resolve a package asset ref against the installed cache.
+    /// Resolve a package asset ref against the package cache, in either
+    /// layout `crate::pkg::layout` describes (installed, or a source checkout).
     ///
     /// The version is chosen as: the `locked` version when it still satisfies
-    /// the requirement and is installed (lockfile pin wins), otherwise the
-    /// highest installed version satisfying the requirement. The referenced
-    /// file must exist inside the chosen install.
+    /// the requirement and is present (lockfile pin wins), otherwise the
+    /// highest present version satisfying the requirement. The referenced
+    /// file must exist inside the chosen version's directory.
     pub fn resolve_package_asset(
         reference: &PackageAudioRef,
         packages_dir: &Path,
@@ -147,15 +133,23 @@ mod fs_ops {
     ) -> Result<ResolvedPackageAsset, String> {
         let requirement = VersionReq::parse(&reference.requirement)
             .map_err(|err| format!("invalid version requirement in '{}': {}", reference, err))?;
-        let available = installed_versions(packages_dir, &reference.id);
+        let layout = crate::pkg::layout::available(packages_dir, &reference.id)?;
+        let available = layout.versions();
 
         let locked_version = locked
             .and_then(|version| Version::parse(version).ok())
             .filter(|version| requirement.matches(version) && available.contains(version));
         let version = match locked_version {
             Some(version) => version,
-            None => select_version(&available, &requirement).ok_or_else(|| {
-                format!(
+            None => select_version(&available, &requirement).ok_or_else(|| match &layout {
+                Available::Source(version) => format!(
+                    "the source checkout of {} in {} is version {version}, which does not \
+                     satisfy {}",
+                    reference.id,
+                    packages_dir.display(),
+                    reference.requirement,
+                ),
+                Available::Installed(_) => format!(
                     "no installed version of {} satisfies {} (looked in {}); \
                      run `fugue install {}@{}`",
                     reference.id,
@@ -163,11 +157,11 @@ mod fs_ops {
                     packages_dir.display(),
                     reference.id,
                     reference.requirement,
-                )
+                ),
             })?,
         };
 
-        let install_dir = packages_dir.join(&reference.id).join(version.to_string());
+        let install_dir = layout.dir(packages_dir, &reference.id, &version);
         let file = install_dir.join(&reference.path);
         if !file.is_file() {
             return Err(format!(
