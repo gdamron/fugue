@@ -431,10 +431,16 @@ pub(crate) fn check_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// package content. The graph's own lock, not the session's: a timed
 /// reload's graph is adopted before the host makes its lock the session's.
 pub(crate) fn changes_policy(built_under: &Governance) -> bool {
-    match (&governing(), built_under) {
-        (None, None) => false,
-        (Some(now), Some(graph)) => !(Arc::ptr_eq(now, graph) || now.same_policy(graph)),
-        _ => true,
+    !same_governance(&governing(), built_under)
+}
+
+/// Whether `a` and `b` govern alike: the same lock, or the same lockfile
+/// over the same packages dir, or neither governed.
+pub(crate) fn same_governance(a: &Governance, b: &Governance) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a.same_policy(b),
+        _ => false,
     }
 }
 

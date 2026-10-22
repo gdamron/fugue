@@ -461,11 +461,13 @@ impl RunningInvention {
                 }))
             });
             let prepared = prepared.expect("prepare runs its body")?;
+            // The candidate's lock becomes the session's only once its graph
+            // has: the graph's own modules and live edits load under the
+            // lock it was built under meanwhile (see `BuildPolicy`).
             let result = prepared.and_then(|prepared| {
-                policy.adopt();
                 let committed = self.commit_prepared(prepared);
-                if committed.is_err() {
-                    policy.restore();
+                if committed.is_ok() {
+                    policy.adopt();
                 }
                 committed
             });
@@ -583,7 +585,6 @@ mod tests;
 trait ReloadPolicy {
     fn prepare(&mut self, body: &mut dyn FnMut());
     fn adopt(&mut self) {}
-    fn restore(&mut self) {}
 }
 
 /// Resolution as the session's governing lock, if any, has it.

@@ -175,6 +175,15 @@ pub enum RpcCommand {
         /// does). `None` for inline documents with no relative references.
         #[serde(default)]
         source_path: Option<String>,
+        /// Whether `invention` is the file at `source_path` as the client
+        /// read it, rather than a document authored inline that only
+        /// resolves its relative references from there. A frozen daemon
+        /// then reads the file itself, under its lockfile, and loads what
+        /// it read: the client's read was not governed, and a document
+        /// lying in a package the lockfile locks loads only as the locked,
+        /// verified bytes.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        read_source: bool,
         /// When true (the default), the daemon validates `fugue.lock.json`
         /// integrity before loading and refuses on a mismatch. Defaulted for
         /// wire back-compatibility with clients that omit it.
@@ -254,6 +263,15 @@ pub enum RpcCommand {
         /// wire, so file-loaded documents pass their path here.
         #[serde(default)]
         source_path: Option<String>,
+        /// Whether `invention` is the file at `source_path` as the client
+        /// read it, rather than a document authored inline that only
+        /// resolves its relative references from there. A frozen daemon
+        /// then reads the file itself, under its lockfile, and loads what
+        /// it read: the client's read was not governed, and a document
+        /// lying in a package the lockfile locks loads only as the locked,
+        /// verified bytes.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        read_source: bool,
         /// When true (the default), the daemon validates `fugue.lock.json`
         /// integrity before reloading and refuses on a mismatch.
         #[serde(default = "default_frozen")]

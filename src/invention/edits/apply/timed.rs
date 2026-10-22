@@ -41,12 +41,14 @@ impl RunningInvention {
     ) -> Result<RequestStatus, RpcError> {
         let time = edit_time(when, None)?;
         let ttl = self.ttl_samples(ttl_ms);
-        let batch = self.batch(edits)?;
+        let batch = self.live.graph_policy().run(|| self.batch(edits))?;
         let mut attempt = 1;
         loop {
             let base = self.live.generation();
-            let result = self
-                .prepare_edits(base, &batch)
+            // Built under the running graph's policy, read after `base`.
+            let policy = self.live.graph_policy();
+            let result = policy
+                .run(|| self.prepare_edits(base, &batch))
                 .and_then(|prepared| self.queue_edits(prepared, &batch, time, ttl));
             match result {
                 Ok(id) => return Ok(self.status_of(id)),

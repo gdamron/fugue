@@ -5,8 +5,7 @@ use super::{ReloadPlan, ReloadPolicy, ValidatedDocument};
 use crate::pkg::lock::{changes_policy, govern, govern_here, Governance};
 
 /// A candidate's lock: it governs preparation on this thread, and the
-/// session from the commit on. Holds the session's previous lock while
-/// the commit is attempted.
+/// session once the commit succeeds.
 pub(super) struct Candidate(pub(super) Governance);
 
 impl ReloadPolicy for Candidate {
@@ -15,11 +14,7 @@ impl ReloadPolicy for Candidate {
     }
 
     fn adopt(&mut self) {
-        self.0 = govern(self.0.clone());
-    }
-
-    fn restore(&mut self) {
-        self.0 = govern(self.0.clone());
+        govern(self.0.clone());
     }
 }
 

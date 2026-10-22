@@ -16,6 +16,7 @@ use crate::atomic::AtomicF32;
 use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{LegacyRefusal, TableValue};
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
+use crate::pkg::lock::BuildPolicy;
 use crate::traits::{check_finite, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
@@ -69,6 +70,9 @@ pub struct SampleInstrumentControls {
 
 struct InstrumentInner {
     sample_rate: u32,
+    /// The lock the instrument was built under: every zone it loads, at
+    /// build or from a later write, loads under it (see `BuildPolicy`).
+    policy: BuildPolicy,
     release: AtomicF32,
     zones: Vec<ZoneState>,
     /// Bumped after staging an asset swap in `swaps`; the audio thread
@@ -120,10 +124,13 @@ impl SampleInstrumentControls {
         release: f32,
         specs: Vec<ZoneSpec>,
     ) -> Result<(Self, Vec<ZoneAudio>, NoteQueues), String> {
+        let policy = BuildPolicy::current();
         let mut audio = Vec::with_capacity(specs.len());
         let mut zones = Vec::with_capacity(specs.len());
         for (index, spec) in specs.into_iter().enumerate() {
-            let zone_audio = load_zone_audio(&spec.asset, spec.loop_spec.as_ref(), sample_rate)
+            let loaded = || load_zone_audio(&spec.asset, spec.loop_spec.as_ref(), sample_rate);
+            let zone_audio = policy
+                .run(loaded)
                 .map_err(|err| format!("zones[{}]: {}", index, err))?;
             audio.push(zone_audio);
             zones.push(ZoneState {
@@ -144,6 +151,7 @@ impl SampleInstrumentControls {
         let controls = Self {
             inner: Arc::new(InstrumentInner {
                 sample_rate,
+                policy,
                 release: AtomicF32::new(release),
                 zones,
                 swaps_version: AtomicU64::new(0),
@@ -202,7 +210,10 @@ impl SampleInstrumentControls {
     pub fn set_asset(&self, index: usize, asset: &str) -> Result<(), String> {
         debug_assert_control_thread("loading a sample instrument's asset");
         let zone = self.zone(index)?;
-        let audio = load_zone_audio(asset, zone.loop_spec.as_ref(), self.inner.sample_rate)?;
+        let audio = self
+            .inner
+            .policy
+            .run(|| load_zone_audio(asset, zone.loop_spec.as_ref(), self.inner.sample_rate))?;
         let emptied = ZoneSwaps::empty(self.inner.zones.len());
         *zone.asset.lock().unwrap() = asset.to_string();
         let (replaced, retired) = {

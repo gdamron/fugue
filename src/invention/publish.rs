@@ -37,6 +37,7 @@ use crate::ModuleRegistry;
 
 mod change;
 mod pending;
+mod policy;
 mod publisher;
 mod rebind;
 mod reclaim;
@@ -756,28 +757,34 @@ impl LiveGraph {
         let mut attempt = 1;
         loop {
             let registry = self.registry.current();
-            let mut built =
-                match GraphChange::build(&registry, sample_rate, id, module_type, config) {
-                    Ok(built) => Some(built),
-                    // A registry adopted since may know the type, or build it.
-                    Err(_) if attempt < BUILD_ATTEMPTS && !self.registry.is_current(&registry) => {
-                        attempt += 1;
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                };
+            let policy = self.graph_policy();
+            let build = || GraphChange::build(&registry, sample_rate, id, module_type, config);
+            let mut built = match policy.run(build) {
+                Ok(built) => Some(built),
+                // A registry adopted since may know the type, or build it.
+                Err(_) if attempt < BUILD_ATTEMPTS && !self.registry.is_current(&registry) => {
+                    attempt += 1;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             // `built` is held out here so a refused edit drops the module
             // after `edit_against` releases the publisher, not inside the
             // closure.
             let result = self.edit_against(Some(&registry), |change| {
+                // Under the publisher: a reload that committed another
+                // policy since the build moves the topology too.
+                if self.policy_moved(&policy) {
+                    return Err(GraphCommandError::TopologyMoved);
+                }
                 edit(change)?;
                 change.upsert(id, built.take().expect("upserted once"));
                 Ok(())
             });
             drop(built);
             match result {
-                // Under the publisher, only a registry adopted since the
-                // build moves the topology.
+                // Under the publisher, only a registry or a policy adopted
+                // since the build moves the topology.
                 Err(GraphCommandError::TopologyMoved) if attempt < BUILD_ATTEMPTS => attempt += 1,
                 result => return result,
             }

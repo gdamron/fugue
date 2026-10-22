@@ -194,14 +194,16 @@ impl RunningInvention {
     /// batch is planned or prepared, it is planned and prepared again from
     /// the same candidate, up to three times in all.
     pub fn apply_edits(&mut self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
-        let batch = self.batch(edits)?;
+        let batch = self.live.graph_policy().run(|| self.batch(edits))?;
         let mut attempt = 1;
         loop {
             // Read before planning, as reload does: a change landing after
             // this read is caught when the prepared change publishes.
             let base = self.live.generation();
-            let result = self
-                .prepare_edits(base, &batch)
+            // Built under the running graph's policy, read after `base`.
+            let policy = self.live.graph_policy();
+            let result = policy
+                .run(|| self.prepare_edits(base, &batch))
                 .and_then(|prepared| self.commit_edits(prepared, &batch));
             match result {
                 Ok(report) => return Ok(report),

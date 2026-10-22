@@ -500,8 +500,11 @@ pub use fs_ops::{compute_integrity, integrity_files};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod frozen;
+mod policy;
 #[cfg(not(target_arch = "wasm32"))]
 mod scoped;
+
+pub(crate) use policy::BuildPolicy;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use frozen::{changes_policy, check_bytes};
