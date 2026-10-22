@@ -198,7 +198,7 @@ fn a_sample_decoded_by_a_losing_racer_is_not_the_one_returned() {
     // Two threads missed the same key, and both decoded it: the second to
     // cache gets the first's buffer, so the cache owns whatever either
     // returns, and a voice dropping it on the audio thread frees nothing.
-    let key = ("fugue-test://a-raced-sample".to_string(), RATE);
+    let key = ("fugue-test://a-raced-sample".to_string(), RATE, None);
     let first = Arc::new(SampleData::from_interleaved(1, RATE, RATE, vec![0.1; 4]));
     let second = Arc::new(SampleData::from_interleaved(1, RATE, RATE, vec![0.2; 4]));
     let lost = Arc::downgrade(&second);
@@ -208,4 +208,126 @@ fn a_sample_decoded_by_a_losing_racer_is_not_the_one_returned() {
     ));
     assert!(Arc::ptr_eq(&super::cache_loaded(key, second), &first));
     assert!(lost.upgrade().is_none(), "the losing decode is dropped");
+}
+
+fn write_wav(path: &std::path::Path, value: f32) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: RATE,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).unwrap();
+    for _ in 0..8 {
+        writer.write_sample(value).unwrap();
+    }
+    writer.finalize().unwrap();
+}
+
+/// A packages dir holding one source checkout, `fugue.test.samples`.
+fn checkout() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let package = dir.path().join("fugue.test.samples");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("fugue.pkg.json"), "{}").unwrap();
+    (dir, package)
+}
+
+#[test]
+fn a_changed_checkout_sample_decodes_afresh() {
+    // A source checkout is edited in place: its path stays while its bytes
+    // change, so the cache must not replay the first decode.
+    let (packs, package) = checkout();
+    let path = package.join("hit.wav");
+    let source = path.to_str().unwrap();
+    crate::pkg::audio_asset::with_packs_dir(packs.path(), || {
+        write_wav(&path, 0.25);
+        let first = super::load_cached_sample(source, RATE).unwrap();
+        assert!(Arc::ptr_eq(
+            &first,
+            &super::load_cached_sample(source, RATE).unwrap()
+        ));
+        write_wav(&path, 0.5);
+        let second = super::load_cached_sample(source, RATE).unwrap();
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert_eq!(second.frame_at(0).0, 0.5);
+
+        // A revision still held elsewhere stays cached (its last drop must not
+        // free it, as that drop may run on the audio thread); one nothing else
+        // holds is reclaimed when a newer revision is cached.
+        assert_eq!(Arc::strong_count(&first), 2);
+        let first_gone = Arc::downgrade(&first);
+        drop(first);
+        write_wav(&path, 0.75);
+        let third = super::load_cached_sample(source, RATE).unwrap();
+        assert_eq!(third.frame_at(0).0, 0.75);
+        assert!(first_gone.upgrade().is_none());
+        assert_eq!(Arc::strong_count(&second), 2);
+    });
+}
+
+#[test]
+fn a_plain_local_sample_keeps_its_path_keyed_hit() {
+    // Outside a source checkout a hit is a map lookup: the file is not read
+    // again, so an edit there is not seen until the process restarts.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hit.wav");
+    let source = path.to_str().unwrap();
+    write_wav(&path, 0.25);
+    let first = super::load_cached_sample(source, RATE).unwrap();
+    write_wav(&path, 0.5);
+    let again = super::load_cached_sample(source, RATE).unwrap();
+    assert!(Arc::ptr_eq(&first, &again));
+}
+
+#[test]
+fn oversized_checkout_samples_are_refused_before_reading() {
+    let (packs, package) = checkout();
+    let path = package.join("huge.wav");
+    std::fs::write(&path, vec![0u8; 64]).unwrap();
+    let source = path.to_str().unwrap();
+    let refused = |source: &str| match super::load_cached_sample(source, RATE) {
+        Ok(_) => panic!("{source} loaded"),
+        Err(error) => error,
+    };
+    crate::pkg::audio_asset::with_packs_dir(packs.path(), || {
+        let error =
+            crate::pkg::read_limit::test_override::with_hashed_limit(16, || refused(source));
+        assert!(error.contains("trim or split the sample"), "{error}");
+        // Windows refuses to open a directory before the regular-file check.
+        let error = refused(package.to_str().unwrap());
+        assert!(error.contains("Failed to open sample"), "{error}");
+    });
+}
+
+#[test]
+fn checkout_samples_are_found_under_any_spelling_of_the_packs_dir() {
+    // Package refs resolve under `FUGUE_PACKS_DIR` as configured; a trailing
+    // slash there must not hide a checkout. An installed version under the
+    // same packs dir stays path-keyed.
+    let (packs, package) = checkout();
+    let checkout_wav = package.join("hit.wav");
+    let installed = packs.path().join("fugue.test.installed/1.0.0");
+    std::fs::create_dir_all(&installed).unwrap();
+    std::fs::write(installed.join("fugue.pkg.json"), "{}").unwrap();
+    let installed_wav = installed.join("hit.wav");
+    let slashed = format!("{}/", packs.path().display());
+    crate::pkg::audio_asset::with_packs_dir(std::path::Path::new(&slashed), || {
+        for path in [&checkout_wav, &installed_wav] {
+            write_wav(path, 0.25);
+        }
+        let checkout_first =
+            super::load_cached_sample(checkout_wav.to_str().unwrap(), RATE).unwrap();
+        let installed_first =
+            super::load_cached_sample(installed_wav.to_str().unwrap(), RATE).unwrap();
+        for path in [&checkout_wav, &installed_wav] {
+            write_wav(path, 0.5);
+        }
+        let checkout_again =
+            super::load_cached_sample(checkout_wav.to_str().unwrap(), RATE).unwrap();
+        let installed_again =
+            super::load_cached_sample(installed_wav.to_str().unwrap(), RATE).unwrap();
+        assert!(!Arc::ptr_eq(&checkout_first, &checkout_again));
+        assert!(Arc::ptr_eq(&installed_first, &installed_again));
+    });
 }
