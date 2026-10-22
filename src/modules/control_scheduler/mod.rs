@@ -225,8 +225,10 @@ fn ramp_value(from: f32, to: f32, progress: f32) -> f32 {
 ///
 /// - `clock` - Clock input (a gate of the clock output patched here, or a
 ///   rising edge of any other signal, is a step)
-/// - `reset` - Reset input (inside a development, a rising edge restarts
-///   the schedule from step 0; at the top level the clock's reset does)
+/// - `reset` - Reset input (a rising edge restarts the schedule from step
+///   0 wherever the scheduler counts edges: inside a development, or at the
+///   top level on anything but one clock's gate; on a clock, the clock's
+///   reset does)
 ///
 /// # Outputs
 ///
