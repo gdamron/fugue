@@ -206,6 +206,16 @@ struct ActiveRamp {
     steps_total: u64,
     /// Step boundaries crossed since the ramp fired.
     steps_done: u64,
+    /// When its entry began: one begun on its control since, by the drain
+    /// or another scheduler, replaced it (see `TableTarget::begun`).
+    begun: u64,
+}
+
+impl ActiveRamp {
+    /// Whether a newer entry on its control, from anywhere, replaced it.
+    fn replaced(&self, entry: &ResolvedEntry) -> bool {
+        entry.entry.target.begun() > self.begun
+    }
 }
 
 /// The ramp value `from + (to - from) * progress` for `progress` in `[0, 1]`.
@@ -380,7 +390,9 @@ impl ControlScheduler {
         self.ramps.retain_mut(|ramp| {
             ramp.steps_done += 1;
             let entry = &entries[ramp.entry_idx];
-            if ramp.steps_done >= ramp.steps_total {
+            if ramp.replaced(entry) {
+                false
+            } else if ramp.steps_done >= ramp.steps_total {
                 entry.write(TableValue::Number(ramp.to));
                 false
             } else {
@@ -422,6 +434,7 @@ impl ControlScheduler {
                 to,
                 steps_total: entry.ramp_steps(),
                 steps_done: 0,
+                begun: entry.entry.target.begun(),
             });
         }
     }
@@ -439,9 +452,13 @@ impl ControlScheduler {
         let entries = &self.entries;
         // A ramp held off by a higher tier is abandoned.
         self.ramps.retain(|ramp| {
+            let entry = &entries[ramp.entry_idx];
+            if ramp.replaced(entry) {
+                return false;
+            }
             let progress = ((ramp.steps_done as f32 + frac) / ramp.steps_total as f32).min(1.0);
             let value = ramp_value(ramp.from, ramp.to, progress);
-            entries[ramp.entry_idx].write(TableValue::Number(value))
+            entry.write(TableValue::Number(value))
         });
     }
 
