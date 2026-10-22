@@ -4,19 +4,28 @@
 //! scaling) happens in control-thread calls here; the audio thread only
 //! observes atomics and, when staged work exists, takes one short lock
 //! gated behind a version counter (the pattern from `SampleKitControls`).
+//!
+//! Notes reach the audio thread through lock-free queues ([`notes`]): a
+//! control thread's `note_on` and a scheduler's entry push without
+//! waiting, and the module pops what is queued at the top of each block.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::atomic::AtomicF32;
+use crate::audio_thread::debug_assert_control_thread;
+use crate::control_request::{LegacyRefusal, TableValue};
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
 use crate::traits::{check_finite, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
-/// Upper bound on control-thread note events staged per block. Both the
-/// pending queue and the audio thread's drain scratch are sized to this,
-/// so draining never allocates.
-pub(crate) const MAX_PENDING_NOTES: usize = 64;
+mod notes;
+mod scheduled;
+
+pub(crate) use notes::NoteQueues;
+use notes::{note_queues, NoteSenders};
+#[cfg(test)]
+pub(crate) use notes::{LANES, NOTE_CAPACITY};
 
 /// One keymap zone as authored in config: a sample, the note it was
 /// recorded at, the key range it covers, and an optional sustain loop.
@@ -53,13 +62,6 @@ pub(crate) struct ZoneAudio {
     pub loop_region: Option<ScaledLoop>,
 }
 
-/// A control-thread note request, drained per block by the audio thread.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct NoteEvent {
-    pub note: u8,
-    pub on: bool,
-}
-
 #[derive(Clone)]
 pub struct SampleInstrumentControls {
     inner: Arc<InstrumentInner>,
@@ -73,9 +75,8 @@ struct InstrumentInner {
     /// thread locks only when this counter moved.
     swaps_version: AtomicU64,
     pending_swaps: Mutex<Vec<Option<ZoneAudio>>>,
-    /// Bumped after pushing a note event; same lock discipline.
-    notes_version: AtomicU64,
-    pending_notes: Mutex<Vec<NoteEvent>>,
+    /// Note events for the audio thread.
+    notes: NoteSenders,
 }
 
 struct ZoneState {
@@ -94,13 +95,13 @@ struct ZoneState {
 impl SampleInstrumentControls {
     /// Builds controls from parsed zone specs, loading every referenced
     /// sample (decode + resample + loop scaling happen here, off the audio
-    /// thread). Returns the controls and each zone's playable audio, in
-    /// zone order.
+    /// thread). Returns the controls, each zone's playable audio in zone
+    /// order, and the note queues' audio-thread end.
     pub(crate) fn new(
         sample_rate: u32,
         release: f32,
         specs: Vec<ZoneSpec>,
-    ) -> Result<(Self, Vec<ZoneAudio>), String> {
+    ) -> Result<(Self, Vec<ZoneAudio>, NoteQueues), String> {
         let mut audio = Vec::with_capacity(specs.len());
         let mut zones = Vec::with_capacity(specs.len());
         for (index, spec) in specs.into_iter().enumerate() {
@@ -118,6 +119,7 @@ impl SampleInstrumentControls {
         }
 
         let pending = (0..zones.len()).map(|_| None).collect();
+        let (notes, queues) = note_queues();
         let controls = Self {
             inner: Arc::new(InstrumentInner {
                 sample_rate,
@@ -125,11 +127,10 @@ impl SampleInstrumentControls {
                 zones,
                 swaps_version: AtomicU64::new(0),
                 pending_swaps: Mutex::new(pending),
-                notes_version: AtomicU64::new(0),
-                pending_notes: Mutex::new(Vec::with_capacity(MAX_PENDING_NOTES)),
+                notes,
             }),
         };
-        Ok((controls, audio))
+        Ok((controls, audio, queues))
     }
 
     pub fn zone_count(&self) -> usize {
@@ -169,6 +170,7 @@ impl SampleInstrumentControls {
     }
 
     pub fn asset(&self, index: usize) -> Result<String, String> {
+        debug_assert_control_thread("reading a sample instrument's asset");
         Ok(self.zone(index)?.asset.lock().unwrap().clone())
     }
 
@@ -177,6 +179,7 @@ impl SampleInstrumentControls {
     /// thread), then stages the result for the audio thread to swap in at
     /// the next block boundary. Voices already sounding keep the old buffer.
     pub fn set_asset(&self, index: usize, asset: &str) -> Result<(), String> {
+        debug_assert_control_thread("loading a sample instrument's asset");
         let zone = self.zone(index)?;
         let audio = load_zone_audio(asset, zone.loop_spec.as_ref(), self.inner.sample_rate)?;
         *zone.asset.lock().unwrap() = asset.to_string();
@@ -195,15 +198,16 @@ impl SampleInstrumentControls {
         self.push_note(parse_note(value)?, false)
     }
 
+    /// A control thread's note push, preempted (see `NoteSenders::held_up`).
+    #[cfg(test)]
+    pub(crate) fn held_up_note(&self) -> impl FnOnce(u8, bool) + '_ {
+        self.inner.notes.held_up()
+    }
+
     fn push_note(&self, note: u8, on: bool) -> Result<(), String> {
-        let mut pending = self.inner.pending_notes.lock().unwrap();
-        if pending.len() >= MAX_PENDING_NOTES {
-            return Err("Too many pending note events".to_string());
-        }
-        pending.push(NoteEvent { note, on });
-        drop(pending);
-        self.inner.notes_version.fetch_add(1, Ordering::Release);
-        Ok(())
+        (self.inner.notes.send(note, on))
+            .then_some(())
+            .ok_or_else(|| "Too many pending note events, or no note lane free".to_string())
     }
 
     /// Audio thread: the current swap counter, checked once per block.
@@ -218,23 +222,6 @@ impl SampleInstrumentControls {
         for (target, staged) in into.iter_mut().zip(pending.iter_mut()) {
             if let Some(audio) = staged.take() {
                 *target = Some(audio);
-            }
-        }
-    }
-
-    /// Audio thread: the current note-event counter, checked once per block.
-    pub(crate) fn notes_version(&self) -> u64 {
-        self.inner.notes_version.load(Ordering::Acquire)
-    }
-
-    /// Audio thread: drains pending note events into `into`, which must be
-    /// pre-allocated with capacity `MAX_PENDING_NOTES` (never exceeded, so
-    /// the push never allocates).
-    pub(crate) fn take_note_events(&self, into: &mut Vec<NoteEvent>) {
-        let mut pending = self.inner.pending_notes.lock().unwrap();
-        for event in pending.drain(..) {
-            if into.len() < into.capacity() {
-                into.push(event);
             }
         }
     }
@@ -262,11 +249,13 @@ fn parse_note(value: &ControlValue) -> Result<u8, String> {
     if !number.is_finite() {
         return Err(format!("Invalid note {}", number));
     }
+    midi_note(number).ok_or_else(|| format!("Note {} is outside MIDI range 0..=127", number))
+}
+
+/// `number`, rounded, as a MIDI note; `None` past MIDI's range.
+fn midi_note(number: f32) -> Option<u8> {
     let note = number.round();
-    if !(0.0..=127.0).contains(&note) {
-        return Err(format!("Note {} is outside MIDI range 0..=127", number));
-    }
-    Ok(note as u8)
+    (0.0..=127.0).contains(&note).then_some(note as u8)
 }
 
 /// Resolves an authored ref through the shared decoded-buffer cache and
@@ -349,7 +338,7 @@ impl ControlSurface for SampleInstrumentControls {
                     "Zone sample: path, https URL, or package ref like \
                      'fugue.keys.grand@1.0.0:c4.wav' (WAV or FLAC)",
                 )
-                .with_default(zone.asset.lock().unwrap().clone()),
+                .with_default(self.asset(index).unwrap_or_default()),
             );
             metas.push(
                 ControlMeta::number(format!("level.{}", index), "Zone level (1.0 = unity)")
@@ -402,6 +391,16 @@ impl ControlSurface for SampleInstrumentControls {
         Err(format!("Unknown control: {}", key))
     }
 
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        self.scheduled_write(key, value)
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        self.scheduled_read(key)
+    }
+
     /// Checks the zone and the value's shape; whether a new asset loads is
     /// only known by loading it, and a full note queue only by queueing.
     fn validate_control(
@@ -435,10 +434,15 @@ impl ControlSurface for SampleInstrumentControls {
 }
 
 fn check_release(release: f32) -> Result<(), String> {
-    if !release.is_finite() || release <= 0.0 {
+    if !release_ok(release) {
         return Err("'release' must be a positive number of seconds".to_string());
     }
     Ok(())
+}
+
+/// Whether `release` is a positive number of seconds.
+fn release_ok(release: f32) -> bool {
+    release.is_finite() && release > 0.0
 }
 
 /// Parses hierarchical control keys like `level.3` into the zone index.

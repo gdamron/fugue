@@ -23,7 +23,9 @@ pub(crate) const LEGACY_CONTROLS: &[&str] = &[
 /// Why a scheduled write to a legacy control did not land. `Copy`, so a
 /// refusal on the audio thread allocates nothing, where the control
 /// thread's setter would format an error (see
-/// [`crate::ControlSurface::set_scheduled`]).
+/// [`crate::ControlSurface::set_scheduled`]). Every control a schedule can
+/// write is lock-free at the source, so a write is never refused for a lock
+/// a control thread holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LegacyRefusal {
     /// No such control, or one a schedule cannot write: read-only, a
@@ -32,10 +34,8 @@ pub(crate) enum LegacyRefusal {
     /// A value the control does not take (a note past MIDI's range, a
     /// position past the active count).
     Invalid,
-    /// A control thread holds the lock the write needs: refused rather
-    /// than waited on.
-    Busy,
-    /// No room (a full note queue).
+    /// No room: a note queue full even in the slots control threads leave
+    /// free for schedules.
     Full,
 }
 
@@ -44,6 +44,14 @@ pub(crate) fn scheduled_number(value: TableValue) -> Result<f32, LegacyRefusal> 
     match value {
         TableValue::Number(number) => Ok(number),
         TableValue::Bool(_) => Err(LegacyRefusal::Unsupported),
+    }
+}
+
+/// `value` as a boolean, or refused: a number.
+pub(crate) fn scheduled_bool(value: TableValue) -> Result<bool, LegacyRefusal> {
+    match value {
+        TableValue::Bool(flag) => Ok(flag),
+        TableValue::Number(_) => Err(LegacyRefusal::Unsupported),
     }
 }
 
