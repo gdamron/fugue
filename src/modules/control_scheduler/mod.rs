@@ -87,6 +87,9 @@
 //! range between the endpoints, so a ramp between any two finite values
 //! writes only finite values.
 //!
+//! A later entry on the control, from this scheduler or another, however
+//! either is played, ends the ramp where it stands.
+//!
 //! # Holds
 //!
 //! The scheduler is the automation tier. A user's, an agent's or a script's

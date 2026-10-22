@@ -3,8 +3,8 @@
 //! the sample of the k-th edge after its entry's, and between edges moves
 //! on by the samples between the last two, written where each of its
 //! target's segments starts, never past its next boundary. An entry on the
-//! control ends the table's ramp there; a reset rise or another plan ends
-//! the table's ramps where they stand.
+//! control, from any table, whoever plays it, ends a ramp there; a reset
+//! rise or another plan ends the table's ramps where they stand.
 
 use crate::control_request::ramps::{ramp_value, Ramps, RAMP_CAPACITY};
 use crate::control_request::table::{BeatTable, Counted, TableEntry, TableValue};
@@ -19,6 +19,9 @@ struct EdgeRamp {
     to: f32,
     total: u64,
     done: u64,
+    /// When its entry began (see `TableTarget::begun`): an entry begun on
+    /// its control since replaced it.
+    begun: u64,
 }
 
 /// The ramps of every table played on edges. Single-threaded (the audio
@@ -68,6 +71,9 @@ impl EdgeRamps {
             let Some(entry) = table.entry(ramp.entry) else {
                 return false;
             };
+            if entry.target.begun() > ramp.begun {
+                return false;
+            }
             ramp.done += 1;
             if ramp.done >= ramp.total {
                 entry.target.write(TableValue::Number(ramp.to));
@@ -81,7 +87,7 @@ impl EdgeRamps {
     }
 
     /// Ends table `id`'s ramp on the control `entry` writes, as a newer
-    /// change supersedes it.
+    /// change supersedes it (a legacy control's too, which notes no begin).
     pub(super) fn supersede(&mut self, id: usize, table: &dyn BeatTable, entry: &TableEntry) {
         self.0.retain(|ramp| {
             ramp.table != id
@@ -126,6 +132,7 @@ impl EdgeRamps {
             to,
             total: entry.ramp_steps,
             done: 0,
+            begun: entry.target.begun(),
         });
         true
     }
@@ -151,6 +158,9 @@ impl EdgeRamps {
             let Some(entry) = table.entry(ramp.entry) else {
                 return false;
             };
+            if entry.target.begun() > ramp.begun {
+                return false;
+            }
             let progress = ((ramp.done as f32 + frac) / ramp.total as f32).min(1.0);
             entry.target.write(TableValue::Number(ramp_value(
                 ramp.from,
