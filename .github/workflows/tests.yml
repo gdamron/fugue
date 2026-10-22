@@ -26,6 +26,10 @@ concurrency:
 env:
   CARGO_HTTP_MULTIPLEXING: false
   CARGO_NET_RETRY: 10
+  # Most of each test job is compiling and linking about 20 test binaries, and
+  # full debuginfo makes both slower and the caches bigger. Panics and
+  # backtraces still report file and line.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   changes:
