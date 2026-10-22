@@ -40,7 +40,8 @@ impl ContentRoots {
     /// alias leads and cannot miss one. A string nothing loads only costs one
     /// more hash.
     ///
-    /// `None` when some document or reference cannot be read, a `$asset`
+    /// `None` when some document or reference cannot be read, a document's
+    /// path could join a local sample path into a package ref, a `$asset`
     /// expands to another `$asset` (the builder expands again, so its string
     /// would only appear later), or a script could choose packages at
     /// runtime: the caller then cannot know what was skipped, so it must
@@ -53,6 +54,16 @@ impl ContentRoots {
 
     fn collect_used(&self, document: &Invention, walk: &mut Walk, depth: usize) -> Option<()> {
         if depth > MAX_DEPTH {
+            return None;
+        }
+        // The builder joins a local sample path onto the document's
+        // directory, and the sample loader reads a package ref from the
+        // result: a directory like `fugue.drums@1:kit` turns `kick.wav` into
+        // one, which no string in the config shows. A ref's `@` must then
+        // come from the directory (one from the sample path would leave a
+        // `/` in the package id), so any `@` there makes the set unknown.
+        let source = document.source_path.as_deref().map(Path::to_string_lossy);
+        if source.is_some_and(|text| text.contains('@')) {
             return None;
         }
         let mut expanded = document.clone();
@@ -302,6 +313,22 @@ mod tests {
             &temp.path().join("main.json"),
         );
         assert_eq!(roots.used_packages(&main), None);
+    }
+
+    #[test]
+    fn a_package_shaped_document_directory_makes_the_set_unknown() {
+        let (temp, roots) = roots();
+        // `sample.wav` joins onto this directory as `...fugue.hidden@1:song/sample.wav`.
+        let main = invention(
+            json!({"modules": [sampler(json!({"path": "sample.wav"}))], "connections": []}),
+            Path::new("fugue.hidden@1:song/main.json"),
+        );
+        assert_eq!(roots.used_packages(&main), None);
+        let plain = invention(
+            json!({"modules": [sampler(json!({"path": "sample.wav"}))], "connections": []}),
+            &temp.path().join("song/main.json"),
+        );
+        assert_eq!(roots.used_packages(&plain), Some(BTreeSet::new()));
     }
 
     #[test]
