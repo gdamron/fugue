@@ -120,19 +120,52 @@ mod fs_ops {
     }
 
     /// Resolve a package asset ref against the package cache, in either
-    /// layout `crate::pkg::layout` describes (installed, or a source checkout).
+    /// layout `crate::pkg::layout` describes (installed, or a source checkout),
+    /// to load it.
     ///
-    /// The version is chosen as: the `locked` version when it still satisfies
-    /// the requirement and is present (lockfile pin wins), otherwise the
-    /// highest present version satisfying the requirement. The referenced
-    /// file must exist inside the chosen version's directory.
+    /// While a frozen session's lockfile governs (see
+    /// [`crate::pkg::lock::govern`]) and locks the package, the version is
+    /// exactly the locked one, verified against the lock's integrity, and
+    /// anything else is refused; `locked` is then ignored. Otherwise it is
+    /// chosen as: the `locked` version when it still satisfies the
+    /// requirement and is present (lockfile pin wins), otherwise the highest
+    /// present version satisfying the requirement. The referenced file must
+    /// exist inside the chosen version's directory.
     pub fn resolve_package_asset(
         reference: &PackageAudioRef,
         packages_dir: &Path,
         locked: Option<&str>,
     ) -> Result<ResolvedPackageAsset, String> {
-        let requirement = VersionReq::parse(&reference.requirement)
-            .map_err(|err| format!("invalid version requirement in '{}': {}", reference, err))?;
+        let requirement = parse_requirement(reference)?;
+        let governed = match crate::pkg::lock::governing() {
+            Some(lock) => lock.admit(packages_dir, &reference.id, &requirement, reference)?,
+            None => None,
+        };
+        let Some(version) = governed else {
+            return select_package_asset(reference, packages_dir, locked);
+        };
+        let resolved = select_package_asset(reference, packages_dir, Some(&version.to_string()))?;
+        if resolved.version != version {
+            return Err(format!(
+                "frozen load refused {reference}: the locked version {version} is not present"
+            ));
+        }
+        Ok(resolved)
+    }
+
+    fn parse_requirement(reference: &PackageAudioRef) -> Result<VersionReq, String> {
+        VersionReq::parse(&reference.requirement)
+            .map_err(|err| format!("invalid version requirement in '{}': {}", reference, err))
+    }
+
+    /// [`resolve_package_asset`] without a governing lockfile, for reads that
+    /// load nothing into a session: catalog browsing and content fingerprints.
+    pub(crate) fn select_package_asset(
+        reference: &PackageAudioRef,
+        packages_dir: &Path,
+        locked: Option<&str>,
+    ) -> Result<ResolvedPackageAsset, String> {
+        let requirement = parse_requirement(reference)?;
         let layout = crate::pkg::layout::available(packages_dir, &reference.id)?;
         let available = layout.versions();
 
@@ -182,6 +215,8 @@ mod fs_ops {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use fs_ops::select_package_asset;
 #[cfg(not(target_arch = "wasm32"))]
 pub use fs_ops::{default_packages_dir, resolve_package_asset, ResolvedPackageAsset};
 

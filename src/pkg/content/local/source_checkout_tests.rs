@@ -203,7 +203,7 @@ fn checkout_fingerprints_name_the_bytes_parsed() {
     let starter_dir = roots.packages.join("fugue.starter.study");
     let piano = roots.packages.join("fugue.instruments.piano/voice.json");
     let fingerprints = roots
-        .inspect(&starter(), Hashing::Full)
+        .inspect(&starter(), Hashing::Full, Purpose::Load)
         .unwrap()
         .fingerprints;
     let parsed = |path: &Path| hash(&fs::read(path).unwrap());
@@ -222,7 +222,7 @@ fn checkout_fingerprints_name_the_bytes_parsed() {
     edited["title"] = json!("Edited piano");
     write(&piano, &edited);
     let after = roots
-        .inspect(&starter(), Hashing::Full)
+        .inspect(&starter(), Hashing::Full, Purpose::Load)
         .unwrap()
         .fingerprints;
     assert_ne!(
@@ -246,7 +246,7 @@ fn installed_fingerprints_gain_no_checkout_keys() {
         fs::rename(&staged, roots.packages.join(id).join(version)).unwrap();
     }
     let fingerprints = roots
-        .inspect(&starter(), Hashing::Full)
+        .inspect(&starter(), Hashing::Full, Purpose::Load)
         .unwrap()
         .fingerprints;
     assert!(fingerprints.contains_key("package:fugue.starter.study@2026.10.6"));
@@ -276,5 +276,7 @@ fn a_receipt_left_from_an_install_does_not_judge_a_checkout() {
     let path = receipt_path(&roots.packages, "fugue.instruments.piano", "2026.10.2");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
-    roots.inspect(&starter(), Hashing::Full).unwrap();
+    roots
+        .inspect(&starter(), Hashing::Full, Purpose::Load)
+        .unwrap();
 }

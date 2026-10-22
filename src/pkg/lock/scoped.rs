@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use super::{LockError, Lockfile};
+use super::{FrozenLock, LockError, Lockfile};
+#[cfg(doc)]
 use crate::pkg::content::ContentRoots;
 use crate::Invention;
 
@@ -56,27 +57,19 @@ impl Lockfile {
     /// only the packages it uses (see [`ContentRoots::used_packages`]) and
     /// their locked dependencies. When the used set cannot be determined it
     /// verifies every locked package rather than skip one that matters.
+    ///
+    /// Verification alone does not pin what then loads: a host that loads
+    /// the invention makes the verified lock govern resolution (see
+    /// [`FrozenLock::verify_invention`] and [`super::govern`]).
     pub fn verify_first_for_invention(
         candidates: &[PathBuf],
         packages_dir: &Path,
         invention: &Invention,
     ) -> Result<(), Box<dyn Error>> {
-        let Some(path) = candidates.iter().find(|path| path.is_file()) else {
-            return Ok(());
-        };
-        let lockfile = Self::read(path)?;
-        let used = ContentRoots::from_environment().ok().and_then(|roots| {
-            ContentRoots {
-                packages: packages_dir.to_path_buf(),
-                ..roots
-            }
-            .used_packages(invention)
-        });
-        match used {
-            Some(used) => lockfile.verify_packages(packages_dir, used.iter().map(String::as_str)),
-            None => lockfile.verify(packages_dir),
+        match FrozenLock::find(candidates, packages_dir)? {
+            Some(lock) => lock.verify_invention(invention),
+            None => Ok(()),
         }
-        .map_err(Into::into)
     }
 }
 
