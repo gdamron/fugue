@@ -523,6 +523,7 @@ impl RunningInvention {
 
 pub(crate) mod commit;
 mod config_diff;
+mod timed;
 
 #[cfg(test)]
 mod tests;

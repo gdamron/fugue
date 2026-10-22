@@ -29,6 +29,7 @@ mod facts;
 mod plan;
 #[cfg(test)]
 mod tests;
+mod timed;
 
 use std::collections::HashMap;
 
@@ -193,6 +194,27 @@ impl RunningInvention {
     /// batch is planned or prepared, it is planned and prepared again from
     /// the same candidate, up to three times in all.
     pub fn apply_edits(&mut self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
+        let batch = self.batch(edits)?;
+        let mut attempt = 1;
+        loop {
+            // Read before planning, as reload does: a change landing after
+            // this read is caught when the prepared change publishes.
+            let base = self.live.generation();
+            let result = self
+                .prepare_edits(base, &batch)
+                .and_then(|prepared| self.commit_edits(prepared, &batch));
+            match result {
+                Ok(report) => return Ok(report),
+                Err(Refused::Moved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
+                Err(Refused::Moved) => return Err(graph_refusal(GraphCommandError::TopologyMoved)),
+                Err(Refused::Batch(error)) => return Err(error),
+            }
+        }
+    }
+
+    /// Checks `edits`, applies them to a copy of the retained document and
+    /// validates the result (steps 1 to 3), changing nothing.
+    fn batch(&self, edits: &[StructuralEdit]) -> Result<Batch, RpcError> {
         check_edit_batch(edits)?;
         let document = self.state.lock().unwrap().document().ok_or_else(|| {
             RpcError::new(
@@ -211,28 +233,12 @@ impl RunningInvention {
         check_writes(&facts.directory_after(&candidate.document), &candidate)?;
         let provisional = facts.into_provisional();
         let resolved = self.validate_candidate(&candidate.document)?;
-        let batch = Batch {
+        Ok(Batch {
             edit_count: edits.len(),
             candidate,
             resolved,
             provisional,
-        };
-
-        let mut attempt = 1;
-        loop {
-            // Read before planning, as reload does: a change landing after
-            // this read is caught when the prepared change publishes.
-            let base = self.live.generation();
-            let result = self
-                .prepare_edits(base, &batch)
-                .and_then(|prepared| self.commit_edits(prepared, &batch));
-            match result {
-                Ok(report) => return Ok(report),
-                Err(Refused::Moved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
-                Err(Refused::Moved) => return Err(graph_refusal(GraphCommandError::TopologyMoved)),
-                Err(Refused::Batch(error)) => return Err(error),
-            }
-        }
+        })
     }
 
     /// Builds the whole candidate and throws the build away, returning each
