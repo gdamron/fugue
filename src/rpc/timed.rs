@@ -19,33 +19,12 @@ use crate::LoggedBeat;
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct EditTiming {
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "refuse_until_runnable"
-    )]
-    #[cfg_attr(feature = "rpc-schema", schemars(with = "Option<EditWhen>"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<EditWhen>,
     /// With `when`: expired once this many milliseconds pass without it
     /// landing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_ms: Option<u64>,
-}
-
-/// Refuses a `when` this build cannot run. The contract lands before the
-/// runtime that lands a timed edit, and a host given a `when` it cannot
-/// honour would apply the edit at once: so the wire refuses it, clearly,
-/// until the runtime path is in the same build.
-fn refuse_until_runnable<'de, D>(deserializer: D) -> Result<Option<EditWhen>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    match Option::<EditWhen>::deserialize(deserializer)? {
-        None => Ok(None),
-        Some(_) => Err(serde::de::Error::custom(
-            "timed edits (`when`) are not supported by this build yet: send the edit without `when` to apply it at once",
-        )),
-    }
 }
 
 impl EditTiming {

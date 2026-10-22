@@ -9,7 +9,7 @@ use crate::control_request::Timeline;
 use crate::invention::manual_backend::{start_manual, Pump};
 use crate::modules::filter::FilterControls;
 use crate::modules::Clock;
-use crate::rpc::{EditTiming, EditWhen, RequestState, RequestStatus};
+use crate::rpc::{EditWhen, RequestState, RequestStatus};
 use crate::LoggedBeat;
 
 /// 480 BPM at 48 kHz: a beat every 6000 samples, a bar of four every 24000.
@@ -22,7 +22,7 @@ const DOCUMENT: &str = r#"{
     "version": "1.0.0",
     "modules": [
         { "id": "clock", "type": "clock", "config": { "bpm": 480.0 } },
-        { "id": "osc", "type": "oscillator", "config": { "waveform": "saw", "frequency": 220.0 } },
+        { "id": "osc", "type": "oscillator", "config": { "waveform": "sawtooth", "frequency": 220.0 } },
         { "id": "fx", "type": "filter", "config": { "cutoff": 400.0 } },
         { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
     ],
@@ -63,13 +63,9 @@ fn swap_fx(
     running: &RunningInvention,
     when: EditWhen,
     ttl_ms: Option<u64>,
-) -> Result<Option<RequestStatus>, GraphCommandError> {
+) -> Result<RequestStatus, GraphCommandError> {
     let config = serde_json::json!({ "filter_type": "highpass", "cutoff": 2000.0 });
-    let timing = EditTiming {
-        when: Some(when),
-        ttl_ms,
-    };
-    running.swap_module_at("fx", "filter", &config, true, &timing)
+    running.swap_module_at("fx", "filter", &config, true, &when, ttl_ms)
 }
 
 fn state_of(running: &RunningInvention, id: &str) -> RequestState {
@@ -83,7 +79,7 @@ fn an_effect_swapped_on_the_next_downbeat_lands_on_it() {
     // Into the first bar: the next downbeat is the second bar's.
     assert_eq!(audio.render(100), twin_audio.render(100));
 
-    let queued = swap_fx(&running, next_bar(), None).unwrap().unwrap();
+    let queued = swap_fx(&running, next_bar(), None).unwrap();
     assert_eq!(queued.state, RequestState::Queued);
     let beat = LoggedBeat::Grid {
         clock: "clock".to_string(),
@@ -123,7 +119,7 @@ fn a_swap_whose_ttl_passes_before_the_downbeat_expires() {
     let (running, audio) = start();
     // Past the first downbeat, which a bar queued at sample 0 lands on.
     audio.render(100);
-    let queued = swap_fx(&running, next_bar(), Some(10)).unwrap().unwrap();
+    let queued = swap_fx(&running, next_bar(), Some(10)).unwrap();
     audio.render(PAST_TWO_BARS);
     let expired = running.request_status(&queued.id).unwrap();
     assert_eq!(expired.state, RequestState::Expired);
@@ -135,7 +131,7 @@ fn a_swap_whose_ttl_passes_before_the_downbeat_expires() {
 #[test]
 fn a_swap_another_edit_overtakes_is_cancelled_with_the_reason() {
     let (running, audio) = start();
-    let queued = swap_fx(&running, next_bar(), None).unwrap().unwrap();
+    let queued = swap_fx(&running, next_bar(), None).unwrap();
     running
         .add_module("lfo", "lfo", &serde_json::json!({}))
         .unwrap();
@@ -175,16 +171,4 @@ fn a_time_that_can_never_come_is_refused_with_nothing_queued() {
     assert!(running.take_request_changes().is_empty());
     assert!(running.request_status("1").is_none());
     assert!(running.request_status("not an id").is_none());
-}
-
-#[test]
-fn without_a_when_a_swap_lands_at_once() {
-    let (running, audio) = start();
-    let config = serde_json::json!({ "filter_type": "highpass" });
-    let timing = EditTiming::default();
-    let reply = running.swap_module_at("fx", "filter", &config, true, &timing);
-    assert_eq!(reply.unwrap(), None);
-    audio.render(1);
-    let state = running.state.lock().unwrap();
-    assert_eq!(state.modules["fx"].config["filter_type"], "highpass");
 }

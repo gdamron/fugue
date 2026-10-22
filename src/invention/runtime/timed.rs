@@ -1,18 +1,18 @@
-//! Timed structural edits on a running invention: a swap queued to land on
-//! a sample or a beat, and what became of it, in the wire's terms (see
-//! [`crate::rpc::timed`]).
+//! Timed structural edits on a running invention: a swap, an edit batch or
+//! a reload queued to land on a sample or a beat, and what became of it,
+//! in the wire's terms (see [`crate::rpc::timed`]).
 
 use super::{GraphCommandError, RunningInvention};
 use crate::control_request::Refusal;
 use crate::control_request::{BeatSpec, RequestId};
 use crate::invention::handles::InventionHandles;
 use crate::invention::publish::{CancelCause, EditState, EditStatus, EditTime, Touched};
-use crate::rpc::{EditTiming, EditWhen, RequestLanding, RequestState, RequestStatus};
+use crate::rpc::{EditWhen, RequestLanding, RequestState, RequestStatus};
 
 impl RunningInvention {
-    /// [`Self::swap_module`], landing when `timing` says rather than at
-    /// once. Without a `when` it swaps at once, as `swap_module` does, and
-    /// returns `None`; with one, it returns the queued request's status.
+    /// [`Self::swap_module`], landing `when` rather than at once, unless
+    /// `ttl_ms` milliseconds pass first. Returns the queued request's
+    /// status.
     ///
     /// A beat time counts on the clock it names, otherwise on the one the
     /// swapped module counts on. The replacement is built now, so an
@@ -31,14 +31,11 @@ impl RunningInvention {
         module_type: &str,
         config: &serde_json::Value,
         preserve_connections: bool,
-        timing: &EditTiming,
-    ) -> Result<Option<RequestStatus>, GraphCommandError> {
-        let Some(when) = &timing.when else {
-            self.swap_module(module_id, module_type, config, preserve_connections)?;
-            return Ok(None);
-        };
-        let time = edit_time(when, module_id)?;
-        let ttl = ttl_samples(timing.ttl_ms, self.sample_rate);
+        when: &EditWhen,
+        ttl_ms: Option<u64>,
+    ) -> Result<RequestStatus, GraphCommandError> {
+        let time = edit_time(when, Some(module_id))?;
+        let ttl = self.ttl_samples(ttl_ms);
         let id = self.live.swap_module_at(
             self.sample_rate,
             module_id,
@@ -48,7 +45,19 @@ impl RunningInvention {
             time,
             ttl,
         )?;
-        Ok(self.live.timed_status(id).map(wire_status))
+        Ok(self.status_of(id))
+    }
+
+    /// Timed request `id`'s status, just queued.
+    pub(crate) fn status_of(&self, id: RequestId) -> RequestStatus {
+        let status = self.live.timed_status(id);
+        // Forgotten only once dozens more were queued since.
+        status.map_or_else(|| forgotten(id), wire_status)
+    }
+
+    /// `ttl_ms` in samples.
+    pub(crate) fn ttl_samples(&self, ttl_ms: Option<u64>) -> Option<u64> {
+        ttl_ms.map(|ms| ms.saturating_mul(u64::from(self.sample_rate)) / 1000)
     }
 
     /// Where timed request `id` stands, while the runtime remembers it (its
@@ -76,17 +85,13 @@ fn parse_id(id: &str) -> Option<RequestId> {
     id.parse().ok().map(RequestId)
 }
 
-/// `ttl_ms` in samples at `sample_rate`.
-fn ttl_samples(ttl_ms: Option<u64>, sample_rate: u32) -> Option<u64> {
-    ttl_ms.map(|ms| ms.saturating_mul(u64::from(sample_rate)) / 1000)
-}
-
 /// The time `when` names, a beat counting on its clock or else on the clock
-/// `module` counts on. Refuses beats that are not finite and not negative,
-/// and grids whose step is not positive.
+/// `module` counts on, or the invention's first clock without one. Refuses
+/// beats that are not finite and not negative, and grids whose step is not
+/// positive.
 pub(crate) fn edit_time<'a>(
     when: &'a EditWhen,
-    module: &'a str,
+    module: Option<&'a str>,
 ) -> Result<EditTime<'a>, GraphCommandError> {
     let refuse = |message: &str| Err(GraphCommandError::ControlError(message.to_string()));
     let (clock, spec) = match when {
@@ -118,9 +123,10 @@ pub(crate) fn edit_time<'a>(
             (clock, grid(*beats_per_bar, 0.0))
         }
     };
-    Ok(match clock {
-        Some(clock) => EditTime::Beat { clock, spec },
-        None => EditTime::BeatOf { module, spec },
+    Ok(match (clock, module) {
+        (Some(clock), _) => EditTime::Beat { clock, spec },
+        (None, Some(module)) => EditTime::BeatOf { module, spec },
+        (None, None) => EditTime::FirstClock(spec),
     })
 }
 
@@ -130,6 +136,18 @@ fn grid(every: f32, offset: f32) -> BeatSpec {
         every,
         offset,
         repeat: false,
+    }
+}
+
+/// A request forgotten, as far as anyone can tell, still waiting.
+fn forgotten(id: RequestId) -> RequestStatus {
+    RequestStatus {
+        id: id.0.to_string(),
+        state: RequestState::Queued,
+        landing: RequestLanding::default(),
+        reason: None,
+        built: Vec::new(),
+        removed: Vec::new(),
     }
 }
 

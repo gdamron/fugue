@@ -5,48 +5,8 @@
 use super::*;
 use crate::LoggedBeat;
 
-/// Parses a command, setting its timing after the rest: this build's wire
-/// refuses `when` (see [`a_timed_command_is_refused_until_this_build_runs_it`]),
-/// but the contract it will carry is checked here all the same.
-fn command(mut json: serde_json::Value) -> Result<RpcCommand, serde_json::Error> {
-    let fields = json.as_object_mut().expect("a command is an object");
-    let when = fields
-        .remove("when")
-        .map(serde_json::from_value)
-        .transpose()?;
-    let ttl_ms = fields
-        .remove("ttl_ms")
-        .map(serde_json::from_value)
-        .transpose()?;
-    let mut command: RpcCommand = serde_json::from_value(json)?;
-    if let RpcCommand::SwapModule { timing, .. }
-    | RpcCommand::ApplyEdits { timing, .. }
-    | RpcCommand::ReloadInvention { timing, .. } = &mut command
-    {
-        *timing = EditTiming { when, ttl_ms };
-    }
-    Ok(command)
-}
-
-#[test]
-fn a_timed_command_is_refused_until_this_build_runs_it() {
-    for json in [
-        serde_json::json!({
-            "command": "swap_module", "id": "fx", "module_type": "reverb",
-            "when": { "kind": "next_bar" }
-        }),
-        serde_json::json!({
-            "command": "apply_edits", "edits": [], "when": { "kind": "at_sample", "sample": 0 }
-        }),
-    ] {
-        let refused = serde_json::from_value::<RpcCommand>(json).unwrap_err();
-        assert!(
-            refused.to_string().contains("not supported by this build"),
-            "{refused}"
-        );
-    }
-    let untimed = serde_json::json!({ "command": "apply_edits", "edits": [], "ttl_ms": 10 });
-    assert!(serde_json::from_value::<RpcCommand>(untimed).is_ok());
+fn command(json: serde_json::Value) -> Result<RpcCommand, serde_json::Error> {
+    serde_json::from_value(json)
 }
 
 #[test]
