@@ -24,9 +24,11 @@ use super::timeline::Timeline;
 use crate::payload::Retirer;
 
 mod cursor;
+mod edges;
 mod ramp;
 
 pub(crate) use cursor::{Cursors, StepClock, CURSOR_CAPACITY};
+pub(crate) use edges::{EdgeCursors, EdgeHost, Ports};
 
 /// What watches need of the graph: its modules' timelines, and applying a
 /// request as a sample-timed one is applied.
@@ -223,6 +225,8 @@ pub(crate) struct Watches {
     pub(crate) ramps: Ramps,
     /// Tables played in place (see [`cursor`]).
     pub(crate) cursors: Cursors,
+    /// Tables played on their modules' edges (see [`edges`]).
+    pub(crate) edges: EdgeCursors,
 }
 
 impl Watches {
@@ -233,6 +237,7 @@ impl Watches {
             limit: capacity,
             ramps: Ramps::new(RAMP_CAPACITY),
             cursors: Cursors::new(CURSOR_CAPACITY),
+            edges: EdgeCursors::new(CURSOR_CAPACITY),
         }
     }
 
