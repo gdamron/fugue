@@ -1,9 +1,9 @@
-//! A top-level scheduler steps on one clock's gate output: one whose
-//! `clock` input has any other source, or several, is refused, at load
-//! and by an offline edit (through a render's controller or the render
-//! itself). An unconnected `clock` input is left alone, and
-//! so is a scheduler inside a development, which counts any gate's rising
-//! edges itself.
+//! A top-level scheduler steps on whatever its `clock` input carries: one
+//! clock's gate output (played on the clock's beats), nothing, or any other
+//! signal or mix of signals, whose rising edges it counts (FUG-389). So it
+//! loads on any of them, and an offline edit (through a render's
+//! controller or the render itself) may connect any of them; so may a
+//! development's inner graph.
 
 use fugue::{Invention, InventionBuilder, RenderEngine};
 
@@ -18,7 +18,7 @@ fn document(connections: serde_json::Value) -> Invention {
             { "id": "sched", "type": "control_scheduler", "config": { "schedule": [
                 { "at_step": 1, "module": "clock", "control": "bpm", "value": 100.0 }
             ] } },
-            { "id": "dac", "type": "dac" }
+            { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
         ],
         "connections": connections
     });
@@ -38,69 +38,52 @@ fn load(connections: serde_json::Value) -> Result<(), String> {
 }
 
 #[test]
-fn a_scheduler_steps_on_a_clock_gate_or_on_nothing() {
+fn a_scheduler_steps_on_a_clock_gate_on_nothing_or_on_any_signal() {
     load(serde_json::json!([])).unwrap();
     load(serde_json::json!([to_sched("clock", "beat")])).unwrap();
     load(serde_json::json!([to_sched("clock", "beat_x4")])).unwrap();
-}
-
-#[test]
-fn a_scheduler_on_another_signal_is_refused_at_load() {
-    let error = load(serde_json::json!([to_sched("lfo", "unipolar")])).unwrap_err();
-    assert!(
-        error.contains("'sched'") && error.contains("'lfo.unipolar'"),
-        "{error}"
-    );
-}
-
-#[test]
-fn a_scheduler_on_two_clocks_is_refused_at_load() {
+    load(serde_json::json!([to_sched("lfo", "unipolar")])).unwrap();
     let both = serde_json::json!([to_sched("clock", "beat"), to_sched("other", "beat")]);
-    let error = load(both).unwrap_err();
-    assert!(error.contains("'clock.beat' and 'other.beat'"), "{error}");
+    load(both).unwrap();
+    let twice = serde_json::json!([to_sched("clock", "beat"), to_sched("clock", "beat")]);
+    load(twice).unwrap();
+}
+
+/// Its `step` output, heard: an LFO at 2 Hz rises every half second, from
+/// its first sample.
+#[test]
+fn a_scheduler_on_an_lfo_counts_its_rising_edges_offline() {
+    let heard = serde_json::json!([
+        to_sched("lfo", "unipolar"),
+        { "from": "sched", "from_port": "step", "to": "dac", "to_port": "audio_left" }
+    ]);
+    let mut engine = RenderEngine::new(48_000);
+    engine.load_invention(document(heard)).unwrap();
+    let mut out = vec![0.0f32; 2 * 48_000];
+    engine.render_interleaved(&mut out).unwrap();
+    let step = |second: f32| out[2 * (second * 48_000.0) as usize];
+    assert_eq!(step(0.25), 0.0);
+    assert_eq!(step(0.75), 1.0);
 }
 
 #[test]
-fn an_offline_edit_onto_another_signal_is_refused() {
+fn an_offline_edit_onto_any_signal_is_accepted() {
     let mut engine = RenderEngine::new(48_000);
     engine
         .load_invention(document(serde_json::json!([])))
         .unwrap();
     let controller = engine.controller().unwrap();
-    let error = controller
+    controller
         .connect("lfo", "unipolar", "sched", "clock")
-        .unwrap_err();
-    assert!(error.to_string().contains("'lfo.unipolar'"), "{error}");
-    assert!(
-        engine.snapshot().list_connections().is_empty(),
-        "nothing connected"
-    );
+        .unwrap();
     controller
         .connect("clock", "beat", "sched", "clock")
         .unwrap();
-    let error = controller
-        .connect("other", "beat", "sched", "clock")
-        .unwrap_err();
-    assert!(error.to_string().contains("'other.beat'"), "{error}");
-}
-
-#[test]
-fn a_render_engine_edit_onto_another_signal_is_refused() {
-    let mut engine = RenderEngine::new(48_000);
-    engine
-        .load_invention(document(serde_json::json!([])))
-        .unwrap();
-    let error = engine
-        .connect("lfo", "unipolar", "sched", "clock")
-        .unwrap_err();
-    assert!(error.to_string().contains("'lfo.unipolar'"), "{error}");
-    assert!(engine.list_connections().is_empty(), "nothing connected");
-    engine.connect("clock", "beat", "sched", "clock").unwrap();
-    let error = engine
-        .connect("other", "beat", "sched", "clock")
-        .unwrap_err();
-    assert!(error.to_string().contains("'other.beat'"), "{error}");
-    assert_eq!(engine.list_connections().len(), 1);
+    assert_eq!(engine.snapshot().list_connections().len(), 2);
+    engine.connect("other", "beat", "sched", "clock").unwrap();
+    assert_eq!(engine.list_connections().len(), 3);
+    let mut out = vec![0.0f32; 1024];
+    engine.render_interleaved(&mut out).unwrap();
 }
 
 /// Replacing a scheduler's clock with a module without its gate output
@@ -126,23 +109,12 @@ fn replacing_a_schedulers_clock_leaves_it_unclocked() {
     controller
         .connect("lfo", "unipolar", "dac", "audio_left")
         .unwrap();
-    // A clock again on the edge left behind is a clock's gate once more.
     let clock = serde_json::json!({ "bpm": 120.0 });
     controller.add_module("clock", "clock", &clock).unwrap();
-    let error = controller
+    controller
         .connect("other", "beat", "sched", "clock")
-        .unwrap_err();
-    assert!(
-        error.to_string().contains("'clock.beat' and 'other.beat'"),
-        "{error}"
-    );
-}
-
-#[test]
-fn a_scheduler_connected_twice_to_one_clock_is_told_so() {
-    let twice = serde_json::json!([to_sched("clock", "beat"), to_sched("clock", "beat")]);
-    let error = load(twice).unwrap_err();
-    assert!(error.contains("'clock.beat' is connected twice"), "{error}");
+        .unwrap();
+    engine.render_interleaved(&mut out).unwrap();
 }
 
 #[test]

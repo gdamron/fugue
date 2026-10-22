@@ -43,7 +43,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use super::graph::{GraphCommand, SignalGraph};
 use super::publish::{
-    check_offline, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
+    CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
 };
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
@@ -776,8 +776,7 @@ pub(crate) fn bind_offline(
 /// retires the one it displaces, binds it, and installs the module. So
 /// concurrent edits commit in one order, and a write that checks its
 /// route under the same lock always reaches the module its surface
-/// belongs to. Refused, with nothing changed, if it would leave a table
-/// on another source (see `crate::invention::publish::check_offline`).
+/// belongs to.
 pub(crate) fn add_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
@@ -791,12 +790,6 @@ pub(crate) fn add_offline(
             surface.retire();
         }
         return Err(GraphCommandError::AudioThreadStopped);
-    }
-    if let Err(refused) = check_offline(&locked, Some((module_id, &module)), None) {
-        if let Some(surface) = surface {
-            surface.retire();
-        }
-        return Err(refused);
     }
     let displaced = {
         let mut surfaces = surfaces.lock().unwrap();

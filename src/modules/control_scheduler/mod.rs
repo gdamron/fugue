@@ -14,12 +14,13 @@
 //!
 //! In an invention's top level the graph's request drain plays the
 //! schedule in place, on the clock's position (see
-//! `crate::control_request::BeatTable`). There `clock` takes one clock's
-//! gate output, or nothing: a scheduler on any other signal, or on several,
-//! is refused at load and by an edit. Then step 0 falls on the clock's first
-//! gate past where it stood when the drain first saw the schedule (beat 0
-//! for a clock not yet started), whatever the block boundaries, and a
-//! tempo an entry writes moves the next steps at once. When the clock
+//! `crate::control_request::BeatTable`), when `clock` takes one clock's
+//! gate output, or nothing; on any other signal, or a mix of several, the
+//! scheduler plays it itself, as inside a development (below). On a clock,
+//! step 0 falls on the clock's first gate past where it stood when the
+//! drain first saw the schedule (beat 0 for a clock not yet started),
+//! whatever the block boundaries, and a tempo an entry writes moves the
+//! next steps at once. When the clock
 //! resets, the schedule plays again from step 0 on the clock's new beat 0;
 //! the `reset` input is not followed there. The `step` output follows the
 //! clock's position. When two schedulers write one control at one sample,
@@ -189,6 +190,16 @@ struct ActiveRamp {
     steps_total: u64,
     /// Step boundaries crossed since the ramp fired.
     steps_done: u64,
+    /// When its entry began: one begun on its control since, by the drain
+    /// or another scheduler, replaced it (see `TableTarget::begun`).
+    begun: u64,
+}
+
+impl ActiveRamp {
+    /// Whether a newer entry on its control, from anywhere, replaced it.
+    fn replaced(&self, entry: &ResolvedEntry) -> bool {
+        entry.entry.target.begun() > self.begun
+    }
 }
 
 /// The ramp value `from + (to - from) * progress` for `progress` in `[0, 1]`.
@@ -211,10 +222,12 @@ fn ramp_value(from: f32, to: f32, progress: f32) -> f32 {
 ///
 /// # Inputs
 ///
-/// - `clock` - Clock input (a gate of the clock output patched here is a
-///   step; at the top level, only a clock's gate output is accepted)
-/// - `reset` - Reset input (inside a development, a rising edge restarts
-///   the schedule from step 0; at the top level the clock's reset does)
+/// - `clock` - Clock input (a gate of the clock output patched here, or a
+///   rising edge of any other signal, is a step)
+/// - `reset` - Reset input (a rising edge restarts the schedule from step
+///   0 wherever the scheduler counts edges: inside a development, or at the
+///   top level on anything but one clock's gate; on a clock, the clock's
+///   reset does)
 ///
 /// # Outputs
 ///
@@ -359,7 +372,9 @@ impl ControlScheduler {
         self.ramps.retain_mut(|ramp| {
             ramp.steps_done += 1;
             let entry = &entries[ramp.entry_idx];
-            if ramp.steps_done >= ramp.steps_total {
+            if ramp.replaced(entry) {
+                false
+            } else if ramp.steps_done >= ramp.steps_total {
                 entry.write(TableValue::Number(ramp.to));
                 false
             } else {
@@ -401,6 +416,7 @@ impl ControlScheduler {
                 to,
                 steps_total: entry.ramp_steps(),
                 steps_done: 0,
+                begun: entry.entry.target.begun(),
             });
         }
     }
@@ -418,9 +434,13 @@ impl ControlScheduler {
         let entries = &self.entries;
         // A ramp held off by a higher tier is abandoned.
         self.ramps.retain(|ramp| {
+            let entry = &entries[ramp.entry_idx];
+            if ramp.replaced(entry) {
+                return false;
+            }
             let progress = ((ramp.steps_done as f32 + frac) / ramp.steps_total as f32).min(1.0);
             let value = ramp_value(ramp.from, ramp.to, progress);
-            entries[ramp.entry_idx].write(TableValue::Number(value))
+            entry.write(TableValue::Number(value))
         });
     }
 
