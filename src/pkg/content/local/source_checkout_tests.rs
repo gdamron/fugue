@@ -166,3 +166,25 @@ fn lockfile_verification_hashes_the_checkout_bytes() {
     let error = stale.verify(&roots.packages).unwrap_err();
     assert!(error.problems[0].contains("is not installed"), "{error:?}");
 }
+
+#[test]
+fn invalid_source_checkout_is_a_catalog_diagnostic() {
+    let (_temp, roots) = checkout("=2026.10.2", "2026.10.2");
+    fs::write(
+        roots
+            .packages
+            .join("fugue.instruments.piano/fugue.pkg.json"),
+        b"{",
+    )
+    .unwrap();
+    let page = ContentCatalog::new(roots, "session")
+        .list(&ContentListQuery::default())
+        .unwrap();
+    assert!(
+        page.diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid source checkout")),
+        "{:?}",
+        page.diagnostics
+    );
+}
