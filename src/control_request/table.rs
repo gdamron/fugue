@@ -284,8 +284,9 @@ pub(crate) trait BeatTable {
 
     /// Told, by the drain playing it, the step its clock's next sample is
     /// in (-1 before step 0), at every pass and on each step's sample: a
-    /// module's `step` output follows its clock's position.
-    fn set_step(&self, step: i64);
+    /// module's `step` output follows its clock's position. `began`: that
+    /// sample begins the step (its beat, whose gate rises there).
+    fn set_step(&self, step: i64, began: bool);
 }
 
 #[cfg(test)]

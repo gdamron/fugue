@@ -14,8 +14,9 @@ pub(crate) struct TestTable {
     pub(crate) plan: u64,
     pub(crate) entries: Vec<TableEntry>,
     pub(crate) played: AtomicBool,
-    /// The step the drain last told it.
+    /// The step the drain last told it, and whether it began there.
     pub(crate) step: AtomicI64,
+    pub(crate) began: AtomicBool,
 }
 
 impl TestTable {
@@ -26,6 +27,7 @@ impl TestTable {
             entries,
             played: AtomicBool::new(false),
             step: AtomicI64::new(-1),
+            began: AtomicBool::new(false),
         }
     }
 }
@@ -52,11 +54,13 @@ impl BeatTable for TestTable {
     }
 
     fn set_played(&self, player: Player) {
-        self.played.store(player == Player::Clock, Ordering::Relaxed);
+        self.played
+            .store(player == Player::Clock, Ordering::Relaxed);
     }
 
-    fn set_step(&self, step: i64) {
+    fn set_step(&self, step: i64, began: bool) {
         self.step.store(step, Ordering::Relaxed);
+        self.began.store(began, Ordering::Relaxed);
     }
 }
 

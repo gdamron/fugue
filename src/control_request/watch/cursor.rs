@@ -354,13 +354,17 @@ fn report_step(
     } else if step < LAST_STEP && at(step + 1) <= reached {
         step += 1;
     }
-    table.set_step(step);
+    // Its beat falls on the next sample when the clock's latest sample had
+    // not reached it (or the clock has output none since a reset).
+    let began = step >= 0 && at(step) > timeline.position();
+    table.set_step(step, began);
     (step < LAST_STEP).then(|| at(step + 1))
 }
 
 #[cfg(test)]
 mod last_step {
     use super::*;
+    use crate::control_request::timeline::BEFORE_START;
     use crate::test_support::table::TestTable;
     use std::sync::atomic::Ordering;
 
@@ -386,6 +390,46 @@ mod last_step {
         }
 
         fn latch(&mut self) {}
+    }
+
+    /// A clock whose latest sample was at the given position, a beat every
+    /// 4 samples.
+    struct At(f64);
+
+    impl Timeline for At {
+        fn position(&self) -> f64 {
+            self.0
+        }
+
+        fn position_after(&self, samples: u64) -> f64 {
+            self.0 + samples as f64 * 0.25
+        }
+
+        fn samples_until(&self, beat: f64) -> Option<u64> {
+            (1..).find(|&samples| self.position_after(samples) >= beat)
+        }
+
+        fn beats_before(&self) -> u64 {
+            0
+        }
+
+        fn latch(&mut self) {}
+    }
+
+    #[test]
+    fn a_table_is_told_whether_its_step_begins_on_the_next_sample() {
+        let table = TestTable::new(1, Vec::new());
+        let told = |at: f64| {
+            report_step(&table, &At(at), 0.0, 1.0);
+            (
+                table.step.load(Ordering::Relaxed),
+                table.began.load(Ordering::Relaxed),
+            )
+        };
+        assert_eq!(told(BEFORE_START), (0, true), "built or reset");
+        assert_eq!(told(0.0), (0, false));
+        assert_eq!(told(0.75), (1, true), "on beat 1's sample");
+        assert_eq!(told(1.25), (1, false));
     }
 
     #[test]
