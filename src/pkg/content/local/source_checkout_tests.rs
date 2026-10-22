@@ -255,3 +255,26 @@ fn installed_fingerprints_gain_no_checkout_keys() {
         "{fingerprints:?}"
     );
 }
+
+#[test]
+fn a_receipt_left_from_an_install_does_not_judge_a_checkout() {
+    let (_temp, roots) = checkout("=2026.10.2", "2026.10.2");
+    let receipt = ContentReceipt {
+        package: pkg::LockedPackage {
+            version: "2026.10.2".into(),
+            kind: "development".into(),
+            source: pkg::LockSource::Registry {
+                id: "fugue.instruments.piano".into(),
+                version: "2026.10.2".into(),
+            },
+            integrity: "sha256:from-an-earlier-install".into(),
+            path: roots.packages.join("fugue.instruments.piano/2026.10.2"),
+            dependencies: Vec::new(),
+        },
+        bundled: false,
+    };
+    let path = receipt_path(&roots.packages, "fugue.instruments.piano", "2026.10.2");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    roots.inspect(&starter(), Hashing::Full).unwrap();
+}

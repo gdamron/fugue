@@ -209,8 +209,15 @@ regular files and directories that integrity hashing covers (no symlinks, no
 `.git`), since it is read in place. A package directory holding both
 layouts is refused as ambiguous: neither wins. Identity is unchanged: the
 checkout's bytes are hashed like an install's, and lockfile and frozen
-verification find the locked version by id and version in either layout. See
-`src/pkg/layout.rs`.
+verification find the locked version by id and version in either layout.
+Because a checkout changes in place, a load also fingerprints the checkout
+bytes it actually parsed, and an edit between reads is `stale_reference`. The
+package hash is still taken after the documents are read, so an edit landing
+in that window is caught by a later inspection, not by the lock check itself.
+A checkout has no install receipt: its own dependencies resolve like an
+unlocked workspace file's (a lock pin if present, otherwise the highest
+satisfying version), and a receipt left from an earlier install of the same
+version is ignored. See `src/pkg/layout.rs`.
 
 For authored dependency requirements, reuse existing package selection: an
 installed satisfying lock pin wins, otherwise the highest satisfying installed
