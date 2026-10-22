@@ -125,15 +125,7 @@ fn writes(value: &ControlValue) -> Vec<TableValue> {
 
 /// Listed types whose scheduled path is still their setter: the next
 /// changes of this stack give each its own.
-const UNCOVERED: &[&str] = &[
-    "cell_sequencer",
-    "melody",
-    "mixer",
-    "sample_instrument",
-    "sample_kit",
-    "sample_player",
-    "sample_slicer",
-];
+const UNCOVERED: &[&str] = &["cell_sequencer", "sample_instrument", "sample_player"];
 
 /// Every listed type's scheduled reads and writes, of every control a
 /// schedule can reach and of keys it has not got, allocate and free

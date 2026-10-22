@@ -47,5 +47,11 @@ pub(crate) fn scheduled_number(value: TableValue) -> Result<f32, LegacyRefusal> 
     }
 }
 
+/// The index of a key such as `level.3` under `prefix` (`"level."`),
+/// parsed without allocating.
+pub(crate) fn scheduled_index(key: &str, prefix: &str) -> Option<usize> {
+    key.strip_prefix(prefix)?.parse().ok()
+}
+
 #[cfg(test)]
 pub(crate) mod tests;

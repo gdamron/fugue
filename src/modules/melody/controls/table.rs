@@ -227,8 +227,6 @@ impl DegreeTable {
     /// The degree and weight at active position `index`, or `None` past the
     /// count. Any thread, never waiting: `None` too, but never in practice,
     /// when whole edits were published through every retry.
-    // A scheduler's reads, wired up later in this stack.
-    #[allow(dead_code)]
     pub(crate) fn position(&self, index: usize) -> Option<(i32, f32)> {
         self.consistent(READ_ATTEMPTS, false, |view| view.position(index))
             .flatten()

@@ -3,8 +3,10 @@
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
+use crate::control_request::{LegacyRefusal, TableValue};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
+mod scheduled;
 mod table;
 
 pub(crate) use table::{DegreeTable, MAX_DEGREES};
@@ -287,5 +289,15 @@ impl ControlSurface for MelodyControls {
                 Err(format!("Unknown control: {}", key))
             }
         }
+    }
+
+    #[allow(private_interfaces)]
+    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
+        self.scheduled_write(key, value)
+    }
+
+    #[allow(private_interfaces)]
+    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
+        self.scheduled_read(key)
     }
 }
