@@ -233,9 +233,10 @@ impl DegreeTable {
     }
 
     /// [`Self::position`], taking the edit lock should its retries run out.
-    /// Control thread.
+    /// Control thread, though the lock-free first try may run anywhere (a
+    /// scheduler's default `get_scheduled` reaches it through
+    /// `get_control`); the wait asserts it is off the audio thread.
     pub(crate) fn position_or_wait(&self, index: usize) -> Option<(i32, f32)> {
-        debug_assert_control_thread("reading a melody position, waiting on edits");
         let read = self.consistent(READ_ATTEMPTS, false, |view| view.position(index));
         read.unwrap_or_else(|| {
             let _whole = self.whole();
@@ -293,8 +294,7 @@ impl DegreeTable {
         // Landing, and the version moved before it lands, so a copy it
         // lands during is refused, whether begun before the bump or after;
         // and after, so a copy taken before it lands is taken again.
-        self.landing.fetch_add(1, Ordering::SeqCst);
-        self.changed();
+        let _landing = self.land();
         let mut seen = slot.load(Ordering::SeqCst);
         while now() == generation {
             let value = tagged(generation, bits);
@@ -303,8 +303,16 @@ impl DegreeTable {
                 Err(current) => seen = current,
             }
         }
-        self.landing.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// Counts a write landing and moves the version on, until the guard
+    /// drops: then it stops counting and moves the version on again, even
+    /// if the writer panicked, so no landing count is left behind to refuse
+    /// every copy after.
+    fn land(&self) -> Landing<'_> {
+        self.landing.fetch_add(1, Ordering::SeqCst);
         self.changed();
+        Landing(self)
     }
 
     fn degrees_generation(&self) -> u32 {
@@ -445,11 +453,8 @@ impl DegreeTable {
     /// Runs `writes`, counted landing throughout (see [`Self::write`]), so
     /// a copy is kept before them all or after them all.
     fn landing_as_one(&self, writes: impl FnOnce()) {
-        self.landing.fetch_add(1, Ordering::SeqCst);
-        self.changed();
+        let _landing = self.land();
         writes();
-        self.landing.fetch_sub(1, Ordering::SeqCst);
-        self.changed();
     }
 
     /// Copies the active degrees and weights into `degrees` and `weights`,
@@ -497,5 +502,15 @@ impl DegreeTable {
     #[cfg(test)]
     pub(crate) fn editing(&self) -> MutexGuard<'_, ()> {
         self.whole()
+    }
+}
+
+/// A write counted landing; see [`DegreeTable::land`].
+struct Landing<'a>(&'a DegreeTable);
+
+impl Drop for Landing<'_> {
+    fn drop(&mut self) {
+        self.0.landing.fetch_sub(1, Ordering::SeqCst);
+        self.0.changed();
     }
 }
