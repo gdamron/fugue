@@ -37,17 +37,14 @@ pub(super) fn read_checkout_sample(_source: &str) -> Result<Option<(Vec<u8>, Str
 }
 
 /// Whether `path` is inside `<packages>/<id>/` where `<id>` is a source
-/// checkout (`crate::pkg::layout`). URLs and paths outside the package cache
-/// are not; both sides are canonicalized, so a relative or symlinked route
-/// to a checkout file is recognized too.
+/// checkout (`crate::pkg::layout`). Package refs resolve to paths under the
+/// package cache as configured, so the prefix is compared as written: no
+/// filesystem call is made for paths elsewhere, which keeps their cache hit a
+/// map lookup. A route to a checkout file from outside the package cache is a
+/// plain local path.
 #[cfg(not(target_arch = "wasm32"))]
 fn in_source_checkout(path: &std::path::Path) -> bool {
-    let Ok(packages) = crate::pkg::default_packages_dir()
-        .and_then(|dir| std::fs::canonicalize(dir).map_err(|e| e.to_string()))
-    else {
-        return false;
-    };
-    let Ok(path) = std::fs::canonicalize(path) else {
+    let Ok(packages) = crate::pkg::default_packages_dir() else {
         return false;
     };
     let Some(std::path::Component::Normal(id)) = path
