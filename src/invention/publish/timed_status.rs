@@ -51,7 +51,8 @@ pub(crate) enum CancelCause {
     /// structural edit, a swap, a reload or an edit batch.
     Commit,
     /// An authored write to a control this edit `touches`: one of a module
-    /// it removes or rebuilds, or one it writes as it lands.
+    /// it removes or rebuilds, or one it writes as it lands that it could
+    /// not keep the write over (see `Publisher::keep_authored`).
     AuthoredWrite {
         module_id: String,
         key: String,
@@ -92,6 +93,10 @@ pub(crate) struct EditStatus {
     pub(crate) built: Vec<String>,
     /// Modules it removed (not rebuilt), once adopted.
     pub(crate) removed: Vec<String>,
+    /// Controls (`module.key`) it was to write as it landed that an
+    /// authored write made while it waited took instead: it lands without
+    /// its own write to them.
+    pub(crate) kept: Vec<String>,
 }
 
 struct Entry {
@@ -124,6 +129,7 @@ impl Ledger {
                 beat,
                 built: Vec::new(),
                 removed: Vec::new(),
+                kept: Vec::new(),
             },
             committed: None,
         });
@@ -161,6 +167,18 @@ impl Ledger {
     pub(crate) fn cancelled(&mut self, id: RequestId, cause: CancelCause) {
         if let Some(status) = self.status_mut(id) {
             status.state = EditState::Cancelled(cause);
+            self.touch(id);
+        }
+    }
+
+    /// Records that edit `id` keeps an authored write to `control`
+    /// (`module.key`) rather than write it as it lands.
+    pub(crate) fn kept(&mut self, id: RequestId, control: String) {
+        let Some(status) = self.status_mut(id) else {
+            return;
+        };
+        if !status.kept.contains(&control) {
+            status.kept.push(control);
             self.touch(id);
         }
     }

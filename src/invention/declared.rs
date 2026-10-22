@@ -43,7 +43,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use super::graph::{GraphCommand, SignalGraph};
 use super::publish::{
-    check_offline, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler,
+    check_offline, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
 };
 use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
 use crate::control_request::{
@@ -130,7 +130,7 @@ struct Written {
 /// What a write saw as it was queued for the live graph, under the
 /// publisher's lock (see `LiveGraph::record_authored`): its generation
 /// then, `None` when the module is not live, and the timed edit the write
-/// is safe from (see `Publisher::timed_safe`).
+/// is safe from (see `Publisher::keep_authored`).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Queued {
     pub(crate) generation: Option<u64>,
@@ -216,7 +216,7 @@ impl DeclaredSurface {
         let (index, _) = self
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
-        self.deliver(index, Write::Payload(payload, shown, None))
+        self.deliver(index, Write::Payload(payload, shown, None), None)
             .map(drop)
     }
 
@@ -234,24 +234,27 @@ impl DeclaredSurface {
         let (index, _) = self
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
-        self.deliver(index, Write::Payload(payload, shown, Some(checked)))
+        self.deliver(index, Write::Payload(payload, shown, Some(checked)), None)
             .map(drop)
     }
 
     /// [`ControlSurface::set_control`], saying what the write saw as it
-    /// was queued. Control thread.
+    /// was queued. An `authored` write to a live module is kept over a
+    /// timed edit waiting that writes the control as it lands (see
+    /// `Publisher::keep_authored`). Control thread.
     pub(crate) fn set_control_queued(
         &self,
         key: &str,
         value: ControlValue,
+        authored: bool,
     ) -> Result<Queued, String> {
         if let Some(prepared) = self.prepare(key, &value) {
             let (index, payload, shown) = prepared?;
-            return self.deliver(index, Write::Payload(payload, shown, None));
+            return self.deliver(index, Write::Payload(payload, shown, None), None);
         }
         let index = self.index(key)?;
         let value = self.table.coerce(index, &value)?;
-        self.deliver(index, Write::Value(value))
+        self.deliver(index, Write::Value(value), authored.then_some(key))
     }
 
     /// The live graph's publisher generation, read under its lock (so
@@ -362,7 +365,13 @@ impl DeclaredSurface {
             .ok_or_else(|| format!("Unknown control: {key}"))
     }
 
-    fn deliver(&self, index: ControlIndex, write: Write) -> Result<Queued, String> {
+    /// `authored` names the control an authored write is to, as written.
+    fn deliver(
+        &self,
+        index: ControlIndex,
+        write: Write,
+        authored: Option<&str>,
+    ) -> Result<Queued, String> {
         let (event, clamp) = match self.table.decl(index) {
             Some((decl, _)) => (decl.event, decl.clamp.filter(|_| self.clamps)),
             None => (false, None),
@@ -411,8 +420,6 @@ impl DeclaredSurface {
                     .ok_or("The audio thread has stopped")?;
                 let mut publisher = publisher.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Live(_)))?;
-                let generation = Some(publisher.generation());
-                let safe = publisher.timed_safe();
                 // A kept controller can outlive the audio graph: never queue
                 // a request nothing will drain.
                 if !publisher.audio_alive() {
@@ -459,6 +466,7 @@ impl DeclaredSurface {
                 };
                 let value = match (recompile, value) {
                     (Some(prepared), RequestValue::Payload(payload)) => {
+                        let generation = Some(publisher.generation());
                         let change = (prepared, port.module_id.as_str());
                         let handed = (index, payload);
                         let published =
@@ -485,8 +493,12 @@ impl DeclaredSurface {
                             settler.settle();
                         }
                         // No timed edit waits (`Retarget::prepare` publishes
-                        // none while one does), so none can overtake it.
-                        return Ok(Queued { generation, safe });
+                        // none while one does), so none can overtake it, and
+                        // a payload is never kept.
+                        return Ok(Queued {
+                            generation,
+                            safe: None,
+                        });
                     }
                     (_, value) => value,
                 };
@@ -502,11 +514,45 @@ impl DeclaredSurface {
                 let mut request = Request::new(target, value);
                 request.event = event;
                 let automated = request.source == Source::Automation;
-                // The log is locked before the submission, so its outcome
-                // cannot be received before the write is recorded.
+                let generation = Some(publisher.generation());
+                // Never kept on a graph with no clock: there the copy's
+                // hold, at a sample that never passes, would refuse every
+                // later write to the control. The edit is cancelled instead.
+                let clocked = port.settler.is_none();
+                // The log is locked before anything is submitted, the copy
+                // included, so neither's outcome can be received before
+                // the write is recorded.
                 let mut pending = port.pending.lock().unwrap();
                 pending.settle();
-                let id = port.requests.submit(request).map_err(|_| QUEUE_FULL)?;
+                let kept = match (&request.value, authored) {
+                    (RequestValue::Value(raw), Some(key)) if clocked => {
+                        let module = (port.module_id.as_str(), key);
+                        publisher.keep_authored(module, target, (*raw, event), &port.requests)
+                    }
+                    _ => None,
+                };
+                let (safe, copy) = (kept.map(|(safe, _)| safe), kept.and_then(|(_, copy)| copy));
+                let id = match port.requests.submit(request) {
+                    Ok(id) => id,
+                    // Never, as `keep_authored` kept it only with room for
+                    // this write too, but a write kept and not made is not
+                    // to play: the edit is cancelled, the copy with it.
+                    // Landed already, the copy plays: it is the write.
+                    Err(_) => match (copy, authored) {
+                        (Some(copy), Some(key)) => {
+                            let cause = || CancelCause::AuthoredWrite {
+                                module_id: port.module_id.clone(),
+                                key: key.to_string(),
+                                touches: Touched::Written,
+                            };
+                            if publisher.cancel_timed(cause) {
+                                return Err(QUEUE_FULL.into());
+                            }
+                            copy
+                        }
+                        _ => return Err(QUEUE_FULL.into()),
+                    },
+                };
                 // Under the publisher's lock, so reads report the last write
                 // submitted.
                 if let Some(shown) = shown {
@@ -522,6 +568,10 @@ impl DeclaredSurface {
                         beat: None,
                         automated,
                     };
+                    // The copy applying, too, is this write's.
+                    if let Some(copy) = copy.filter(|copy| *copy != id) {
+                        pending.submitted(copy, write.clone());
+                    }
                     pending.submitted(id, write);
                 }
                 drop(pending);
@@ -606,7 +656,7 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        self.set_control_queued(key, value).map(drop)
+        self.set_control_queued(key, value, false).map(drop)
     }
 
     fn validate_control(

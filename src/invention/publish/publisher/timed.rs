@@ -15,7 +15,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::{Published, Publisher, Refused};
-use crate::control_request::{QueueFull, Request, RequestId, RequestValue, When};
+use crate::control_request::{
+    Condition, ControlTarget, Predicate, QueueFull, Request, RequestId, RequestSender,
+    RequestValue, RtValue, When,
+};
 use crate::invention::declared::RequestPort;
 use crate::invention::graph::{Fate, TIMED_EDIT_MODULE};
 use crate::invention::publish::change::{BuiltModule, PreparedChange, TopologyMirror};
@@ -276,8 +279,8 @@ impl Publisher {
     /// at `seen`: landing after it, the edit rebuilt or removed the module,
     /// re-resolved its schedule, or wrote the control. Not by writing the
     /// control, though, when it is `safe`: the edit the write was queued
-    /// after it landed (see [`Self::timed_safe`]). True, to be safe, when
-    /// one adopted since is forgotten.
+    /// after or kept over (see [`Self::keep_authored`]). True, to be safe,
+    /// when one adopted since is forgotten.
     pub(crate) fn timed_overtook(
         &self,
         seen: u64,
@@ -336,20 +339,64 @@ impl Publisher {
     }
 
     /// Notes the controls of modules it keeps that the timed edit waiting
-    /// writes as it lands, so an authored write to one cancels it (see
-    /// `LiveGraph::record_authored`).
+    /// writes as it lands, so an authored write to one is kept over it
+    /// (see [`Self::keep_authored`]).
     pub(crate) fn chain_timed(&mut self, chained: Vec<(String, String)>) {
         if let Some(waiting) = self.timed.as_mut() {
             waiting.chained = chained;
         }
     }
 
-    /// The timed edit an authored write about to be queued is safe from
-    /// (see [`Self::timed_overtook`]): the one waiting, once it has landed,
-    /// as the write follows its writes.
-    pub(crate) fn timed_safe(&self) -> Option<RequestId> {
+    /// Readies an authored write of `raw` to control `key` of `module_id`
+    /// (at `target`, in the graph that is playing), about to be queued,
+    /// against the timed edit waiting, and returns the edit it is safe from
+    /// (see [`Self::timed_overtook`]) with the id of the copy it queued, if
+    /// any. One landed already: the write follows its writes. One that
+    /// writes the control as it lands: the write is kept over it, a copy
+    /// chained to the landing as the edit's own write is, at the same rank.
+    /// The audio thread meets requests in the order they are queued and
+    /// applies those waiting on a condition in the order it received them,
+    /// and at one sample, of equal rank, the later wins: the copy, queued
+    /// after the edit and so after its write, replaces it (and any copy
+    /// kept before) as it reaches the audio thread, holding one slot
+    /// however long a drag. So the copy plays at the landing, and the
+    /// edit's value never sounds when the copy reaches the audio thread
+    /// before the landing; held back past it, the copy plays as soon as it
+    /// does (see [`Ledger::kept`]). At the same rank, its hold is the
+    /// author's own, refusing no later write a plain one would
+    /// not. `None`, with nothing queued, when neither: none waits, it does
+    /// not write the control, or the write cannot be kept (an event, the
+    /// requests waiting on conditions are full, or `requests`, the sender
+    /// the write goes through, has no room for both), and an edit writing
+    /// the control is cancelled as the write is recorded.
+    pub(crate) fn keep_authored(
+        &mut self,
+        (module_id, key): (&str, &str),
+        target: ControlTarget,
+        (raw, event): (RtValue, bool),
+        requests: &RequestSender,
+    ) -> Option<(RequestId, Option<RequestId>)> {
         let waiting = self.timed.as_ref()?;
-        (waiting.fate.settled() == Some(true)).then_some(waiting.id)
+        match waiting.fate.settled() {
+            Some(true) => return Some((waiting.id, None)),
+            Some(false) => return None,
+            None => {}
+        }
+        let chained = |(module, control): &(String, String)| module == module_id && control == key;
+        if event || !waiting.chained.iter().any(chained) {
+            return None;
+        }
+        // Room for the write itself after it, through the same sender (and
+        // its reserve), so a kept write is always made.
+        if requests.watchers_full() || !requests.has_room_for(2) {
+            return None;
+        }
+        let id = waiting.id;
+        let mut kept = Request::new(target, RequestValue::Value(raw));
+        kept.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).expect("one part"));
+        let copy = requests.submit(kept).ok()?;
+        self.ledger.kept(id, format!("{module_id}.{key}"));
+        Some((id, Some(copy)))
     }
 
     /// Every recent timed edit's status (see `timed_status`).

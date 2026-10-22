@@ -41,6 +41,7 @@ mod scheduler_beats;
 mod step_pattern;
 mod timed_chain;
 mod timed_edits;
+mod timed_keep;
 mod timed_publisher;
 mod timed_rebind;
 mod timed_status;
