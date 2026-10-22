@@ -42,7 +42,8 @@
 //! A target computing before the scheduler's inputs are known (in a
 //! feedback group with them, or a sink) takes its entry late: once the
 //! segment holding the edge (a block, or part of one) has computed, so it
-//! lands on the next segment's first sample. The `step` output counts the same edges.
+//! lands on the next segment's first sample. The `step` output counts
+//! the same edges.
 //!
 //! When the drain stops playing a schedule (its clock unplugged), the
 //! scheduler plays on by itself from the step the schedule reached, counting
@@ -615,8 +616,10 @@ impl ControlScheduler {
     /// since the last block the drain played began on this block's first
     /// sample (the drain splits blocks on each step's sample), so its gate
     /// is counted already, and a rise of the input there is not another.
+    /// The step told may be lower, when the clock was reset on that beat.
     fn told_gate(&self) -> f32 {
-        if self.told_step.load(Ordering::Relaxed) > self.current_step {
+        let told = self.told_step.load(Ordering::Relaxed);
+        if told >= 0 && told != self.current_step {
             return 1.0;
         }
         self.last_gate_in

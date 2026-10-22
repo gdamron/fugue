@@ -85,6 +85,25 @@ fn moved_off_a_clock_on_a_step_s_sample_counts_that_gate_once() {
     }
 }
 
+/// A clock reset on its beat tells a lower step on that gate's sample:
+/// moved off it there, the scheduler still counts that gate once.
+#[test]
+fn moved_off_a_clock_reset_on_its_beat_counts_that_gate_once() {
+    let (mut module, _mixer, _dir) = setup(SCHEDULE);
+    module.set_played(Player::Clock);
+    module.set_step(5);
+    module.process(4);
+    module.set_step(0);
+    module.set_input("clock", 1.0).unwrap();
+    module.set_played(Player::Module);
+    module.process(1);
+    assert_eq!(module.get_output("step").unwrap(), 0.0);
+    module.set_input("clock", 0.0).unwrap();
+    module.process(3);
+    pulse(&mut module, 3);
+    assert_eq!(module.get_output("step").unwrap(), 1.0);
+}
+
 #[test]
 fn an_unconnected_input_holds_what_was_written_to_it() {
     let (mut module, _mixer, _dir) = setup(SCHEDULE);
