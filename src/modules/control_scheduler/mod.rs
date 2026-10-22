@@ -598,8 +598,10 @@ impl ControlScheduler {
     /// since the last block the drain played began on this block's first
     /// sample (the drain splits blocks on each step's sample), so its gate
     /// is counted already, and a rise of the input there is not another.
+    /// The step told may be lower, when the clock was reset on that beat.
     fn told_gate(&self) -> f32 {
-        if self.told_step.load(Ordering::Relaxed) > self.current_step {
+        let told = self.told_step.load(Ordering::Relaxed);
+        if told >= 0 && told != self.current_step {
             return 1.0;
         }
         self.last_gate_in
