@@ -141,28 +141,3 @@ fn an_edit_whose_writes_find_no_room_is_refused_with_nothing_queued() {
     let broken = Outcome::Refused(Refusal::ChainBroken);
     assert!(outcomes.iter().all(|(_, outcome)| *outcome != broken));
 }
-
-#[test]
-fn a_cancelled_edit_s_writes_give_their_slots_back_at_the_next_block() {
-    use super::timed_status::{queue_writing, state_of, write};
-    use crate::invention::publish::EditState;
-    use crate::ControlWriteIntent;
-    let mut rig = Rig::new(super::BASE);
-    let id = queue_writing(&rig, 550.0);
-    assert_eq!(
-        rig.live.requests.watch_slots().taken(),
-        1,
-        "the chained write"
-    );
-    write(&rig, "osc1", "frequency", 330.0, ControlWriteIntent::Author);
-    assert!(matches!(state_of(&rig, id), EditState::Cancelled(_)));
-    rig.render(1);
-    assert_eq!(
-        rig.live.requests.watch_slots().taken(),
-        0,
-        "long before the landing"
-    );
-    let (outcomes, _) = rig.live.take_outcomes();
-    let broken = Outcome::Refused(Refusal::ChainBroken);
-    assert!(outcomes.iter().any(|(_, outcome)| *outcome == broken));
-}

@@ -262,7 +262,6 @@ impl Publisher {
         };
         if waiting.fate.cancel() {
             let id = waiting.id;
-            self.requests.cancelled(id);
             self.ledger.cancelled(id, cause());
         } else if waiting.fate.landed() {
             return false;

@@ -39,22 +39,19 @@
 //!
 //! [`When::Condition`]: super::When::Condition
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use self::parts::{arm, latch, read_controls, waits_on};
+use self::parts::{arm, latch, read_controls};
 use super::chains::Chains;
 use super::condition::{Condition, Predicate, MAX_PARTS};
 use super::hold::Standing;
 use super::pending::{expired, Outcome, Outcomes, Refusal};
-use super::request::{ControlIndex, ControlTarget, Request, RequestId, RequestValue, When};
+use super::request::{ControlIndex, ControlTarget, Request, RequestValue, When};
 use crate::payload::Retirer;
 
 /// The most requests timed by a condition one graph keeps waiting.
 pub(crate) const CONDITION_CAPACITY: usize = 64;
-
-/// How many of the latest timed edits cancelled [`WatchSlots`] remembers.
-const CANCELLED: usize = 4;
 
 /// Counts the requests timed by a condition that are submitted and not
 /// yet settled, shared by a request channel's senders and its drain.
@@ -64,16 +61,9 @@ const CANCELLED: usize = 4;
 /// queued and the drain releases a request only after removing it, so the
 /// count never falls below what the drain holds; a reader on a control
 /// thread may see a release late, which only refuses conservatively.
-///
-/// It also carries the latest timed edits cancelled while they waited, so
-/// what waits on one applying is refused ([`Refusal::ChainBroken`]) at the
-/// drain's next segment start, and its slot released then, rather than when
-/// the edit was due: bars away, or never for an edit timed by a condition.
 #[derive(Debug, Default)]
 pub(crate) struct WatchSlots {
     taken: AtomicUsize,
-    cancelled: [AtomicU64; CANCELLED],
-    next_cancelled: AtomicUsize,
 }
 
 impl WatchSlots {
@@ -98,21 +88,6 @@ impl WatchSlots {
     pub(crate) fn taken(&self) -> usize {
         self.taken.load(Ordering::Relaxed)
     }
-
-    /// Control thread: notes that timed edit `id` was cancelled, so never
-    /// applies (its fate settled so, once). Only the latest few are kept:
-    /// what waits on one forgotten before the drain looked is refused
-    /// once the edit is, at its due sample, or at the next segment start
-    /// for one timed by a condition (see [`ConditionHost::edit_cancelled`]).
-    pub(crate) fn cancel(&self, id: RequestId) {
-        let at = self.next_cancelled.fetch_add(1, Ordering::Relaxed) % CANCELLED;
-        self.cancelled[at].store(id.0, Ordering::Release);
-    }
-
-    /// The latest timed edits cancelled (0: none). Allocation-free.
-    fn cancelled(&self) -> [u64; CANCELLED] {
-        std::array::from_fn(|at| self.cancelled[at].load(Ordering::Acquire))
-    }
 }
 
 /// What conditions need of the graph: the signals they read, and applying
@@ -130,12 +105,6 @@ pub(crate) trait ConditionHost {
     /// The value declared control `control` of `module` holds, as a
     /// number. `None` when it declares no such control.
     fn control(&self, module: usize, control: ControlIndex) -> Option<f32>;
-
-    /// Whether `value`, a timed edit, was cancelled while it waited, so
-    /// never lands. Allocation- and lock-free.
-    fn edit_cancelled(&self, _value: &RequestValue) -> bool {
-        false
-    }
 
     /// Applies `value` as the pending store's `apply` does, of `standing`
     /// (none for an event): `Err` is what it reports instead.
@@ -288,24 +257,9 @@ impl Conditions {
         host: &impl ConditionHost,
         outcomes: &mut Outcomes,
     ) {
-        let cancelled = self.slots.cancelled();
         let mut i = 0;
         while i < self.entries.len() {
             let entry = &mut self.entries[i];
-            // A timed edit cancelled while its condition waits never lands,
-            // nor does what waits on one, whatever graph it is tagged for.
-            // The edit is read itself, so it never waits on, however many
-            // were cancelled since; what waits on it, through the latest
-            // cancelled, or once the edit is refused.
-            let value = &entry.request.value;
-            if value.is_edit() && host.edit_cancelled(value) {
-                self.end(i, outcomes, Refusal::TargetGone.into());
-                continue;
-            }
-            if waits_on(entry, &cancelled) {
-                self.end(i, outcomes, Refusal::ChainBroken.into());
-                continue;
-            }
             if entry.request.target.generation != installed {
                 i += 1;
                 continue;
