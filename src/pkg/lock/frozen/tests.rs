@@ -14,6 +14,8 @@ use crate::pkg::{
 use serde_json::json;
 use std::fs;
 
+mod bytes;
+
 const KIT: &str = "fugue.test.kit";
 const VOICE: &str = "fugue.test.voice";
 

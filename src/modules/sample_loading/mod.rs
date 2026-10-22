@@ -244,9 +244,10 @@ pub(crate) fn load_cached_sample(
     source: &str,
     target_sample_rate: u32,
 ) -> Result<Arc<SampleData>, String> {
-    // A source-checkout file is read once: its digest keys the cache, and the
-    // same bytes decode on a miss, so the key always names what was decoded.
-    let (bytes, digest) = local::read_checkout_sample(source)?.unzip();
+    // A source-checkout file, or a governed package file, is read once: its
+    // digest keys the cache, and the same bytes decode on a miss, so the key
+    // always names what was decoded.
+    let (bytes, digest) = local::read_digested_sample(source)?.unzip();
     let key = (source.to_string(), target_sample_rate, digest);
 
     if let Some(cached) = sample_cache().lock().unwrap().get(&key) {

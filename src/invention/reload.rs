@@ -417,18 +417,58 @@ impl RunningInvention {
     /// again from the same validated document, up to three times in all.
     /// Any error leaves the running invention untouched.
     pub fn reload(&mut self, invention: Invention) -> Result<ReloadReport, ReloadError> {
-        let validated = self.validate_document(invention)?;
+        self.reload_in(invention, &mut Ungoverned)
+    }
+
+    /// [`Self::reload`] for a session whose package resolution a lockfile
+    /// may govern (see [`crate::pkg::lock`]): the document is validated and
+    /// prepared under `lock` on this thread only, so the running session and
+    /// its scripts keep the lock that governs them; `lock` becomes the
+    /// session's as the reload commits, and the previous one is kept when it
+    /// is refused.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn reload_governed(
+        &mut self,
+        invention: Invention,
+        lock: crate::pkg::lock::Governance,
+    ) -> Result<ReloadReport, ReloadError> {
+        self.reload_in(invention, &mut governed::Candidate(lock))
+    }
+
+    fn reload_in(
+        &mut self,
+        invention: Invention,
+        policy: &mut dyn ReloadPolicy,
+    ) -> Result<ReloadReport, ReloadError> {
+        let (mut invention, mut validated) = (Some(invention), None);
+        policy.prepare(&mut || {
+            validated = invention
+                .take()
+                .map(|invention| self.validate_document(invention))
+        });
+        let validated = validated.expect("prepare runs its body")?;
         let mut attempt = 1;
         loop {
             // Read before planning: the plan reads state that commits under
             // the publisher, so a change landing after this read is caught
             // when the prepared change publishes, at worst spuriously.
             let base = self.live.generation();
-            let plan = self.plan_document(&validated)?;
-            let adopt = (validated.registry.clone(), validated.definitions.clone());
-            let result = self
-                .prepare_plan(base, plan, Some(validated.document.clone()), Some(adopt))
-                .and_then(|prepared| self.commit_prepared(prepared));
+            let mut prepared = None;
+            policy.prepare(&mut || {
+                prepared = Some(self.plan_document(&validated).map(|plan| {
+                    let adopt = (validated.registry.clone(), validated.definitions.clone());
+                    self.prepare_plan(base, plan, Some(validated.document.clone()), Some(adopt))
+                }))
+            });
+            let prepared = prepared.expect("prepare runs its body")?;
+            let result = prepared.and_then(|prepared| {
+                policy.adopt();
+                let committed = self.commit_prepared(prepared);
+                if committed.is_err() {
+                    policy.restore();
+                }
+                committed
+            });
             match result {
                 Err(GraphCommandError::TopologyMoved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
                 result => return result.map_err(ReloadError::Apply),
@@ -527,3 +567,45 @@ mod timed;
 
 #[cfg(test)]
 mod tests;
+
+/// How a reload governs package resolution: what its document is validated
+/// and prepared under, and what the session adopts as it commits.
+trait ReloadPolicy {
+    fn prepare(&mut self, body: &mut dyn FnMut());
+    fn adopt(&mut self) {}
+    fn restore(&mut self) {}
+}
+
+/// Resolution as the session's governing lock, if any, has it.
+struct Ungoverned;
+
+impl ReloadPolicy for Ungoverned {
+    fn prepare(&mut self, body: &mut dyn FnMut()) {
+        body()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod governed {
+    use super::ReloadPolicy;
+    use crate::pkg::lock::{govern, govern_here, Governance};
+
+    /// A candidate's lock: it governs preparation on this thread, and the
+    /// session from the commit on. Holds the session's previous lock while
+    /// the commit is attempted.
+    pub(super) struct Candidate(pub(super) Governance);
+
+    impl ReloadPolicy for Candidate {
+        fn prepare(&mut self, body: &mut dyn FnMut()) {
+            govern_here(self.0.clone(), body)
+        }
+
+        fn adopt(&mut self) {
+            self.0 = govern(self.0.clone());
+        }
+
+        fn restore(&mut self) {
+            self.0 = govern(self.0.clone());
+        }
+    }
+}

@@ -126,7 +126,9 @@ mod fs_ops {
     /// While a frozen session's lockfile governs (see
     /// [`crate::pkg::lock::govern`]) and locks the package, the version is
     /// exactly the locked one, verified against the lock's integrity, and
-    /// anything else is refused; `locked` is then ignored. Otherwise it is
+    /// anything else is refused; `locked` is then ignored. The file must then
+    /// be one the verified integrity covered, still holding the bytes
+    /// verified. Otherwise it is
     /// chosen as: the `locked` version when it still satisfies the
     /// requirement and is present (lockfile pin wins), otherwise the highest
     /// present version satisfying the requirement. The referenced file must
@@ -137,11 +139,14 @@ mod fs_ops {
         locked: Option<&str>,
     ) -> Result<ResolvedPackageAsset, String> {
         let requirement = parse_requirement(reference)?;
-        let governed = match crate::pkg::lock::governing() {
-            Some(lock) => lock.admit(packages_dir, &reference.id, &requirement, reference)?,
+        let lock = crate::pkg::lock::governing();
+        let governed = match &lock {
+            Some(lock) => lock
+                .admit(packages_dir, &reference.id, &requirement, reference)?
+                .map(|version| (lock, version)),
             None => None,
         };
-        let Some(version) = governed else {
+        let Some((lock, version)) = governed else {
             return select_package_asset(reference, packages_dir, locked);
         };
         let resolved = select_package_asset(reference, packages_dir, Some(&version.to_string()))?;
@@ -150,6 +155,12 @@ mod fs_ops {
                 "frozen load refused {reference}: the locked version {version} is not present"
             ));
         }
+        lock.admit_file(
+            &reference.id,
+            &resolved.install_dir,
+            &resolved.file,
+            reference,
+        )?;
         Ok(resolved)
     }
 
