@@ -21,7 +21,8 @@
 //! dropped and counted, never stored, and its writer told, so a ramp is
 //! abandoned and a ramp's next start reads the held value. A schedule entry firing is
 //! automation's next event on its control ([`Automation::begin`]): it
-//! frees the control first.
+//! frees the control first, and replaces every ramp an earlier entry on it
+//! started, whoever played either (see [`Automation::begun`]).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -35,9 +36,15 @@ use crate::Module;
 /// An empty slot: no tag [`encode`] makes.
 const EMPTY: u64 = u64::MAX;
 
+/// Orders every entry's begin (see [`Automation::begun`]), across graphs.
+static BEGINS: AtomicU64 = AtomicU64::new(1);
+
 /// One module's automation slots, one per declared control.
 pub(crate) struct AutomationSlots {
     slots: Box<[AtomicU64]>,
+    /// Per control, when a schedule entry last began on it (see
+    /// [`Automation::begun`]).
+    begun: Box<[AtomicU64]>,
     pending: AtomicBool,
     refused: EventCounter,
     overridden: EventCounter,
@@ -47,6 +54,7 @@ impl AutomationSlots {
     pub(super) fn new(len: usize) -> Self {
         Self {
             slots: (0..len).map(|_| AtomicU64::new(EMPTY)).collect(),
+            begun: (0..len).map(|_| AtomicU64::new(0)).collect(),
             pending: AtomicBool::new(false),
             refused: EventCounter::new(),
             overridden: EventCounter::new(),
@@ -178,9 +186,28 @@ impl Automation {
     #[inline]
     pub(crate) fn begin(&self, frame: usize) {
         self.cells.holds.release(self.index, frame);
+        if let Some(begun) = self.cells.automation.begun.get(usize::from(self.index.0)) {
+            begun.store(BEGINS.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
+        }
         for alias in self.aliases.iter().flat_map(|aliases| aliases.iter()) {
             alias.begin(frame);
         }
+    }
+
+    /// When a schedule entry last began on this control, through any key
+    /// reaching it (a development's control, its aliases' too), from any
+    /// table, whoever plays it: 0 for never, later begins larger. A ramp
+    /// started on an entry notes it and ends once it grows: a newer entry
+    /// on the control replaced it. A module rebuilt in its place starts at
+    /// 0, so a ramp carries on onto it.
+    #[inline]
+    pub(crate) fn begun(&self) -> u64 {
+        let own = (self.cells.automation.begun.get(usize::from(self.index.0)))
+            .map_or(0, |begun| begun.load(Ordering::Relaxed));
+        self.aliases
+            .iter()
+            .flat_map(|aliases| aliases.iter())
+            .fold(own, |latest, alias| latest.max(alias.begun()))
     }
 
     fn write(&self, value: Option<RtValue>) -> bool {
