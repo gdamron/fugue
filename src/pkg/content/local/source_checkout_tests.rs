@@ -230,3 +230,28 @@ fn checkout_fingerprints_name_the_bytes_parsed() {
         fingerprints["checkout:fugue.instruments.piano:voice.json"]
     );
 }
+
+#[test]
+fn installed_fingerprints_gain_no_checkout_keys() {
+    // The same packages in the installed layout keep the fingerprints (and so
+    // the identity) they had before source checkouts existed.
+    let (temp, roots) = checkout("=2026.10.2", "2026.10.2");
+    for (id, version) in [
+        ("fugue.instruments.piano", "2026.10.2"),
+        ("fugue.starter.study", "2026.10.6"),
+    ] {
+        let staged = temp.path().join(id);
+        fs::rename(roots.packages.join(id), &staged).unwrap();
+        fs::create_dir_all(roots.packages.join(id)).unwrap();
+        fs::rename(&staged, roots.packages.join(id).join(version)).unwrap();
+    }
+    let fingerprints = roots
+        .inspect(&starter(), Hashing::Full)
+        .unwrap()
+        .fingerprints;
+    assert!(fingerprints.contains_key("package:fugue.starter.study@2026.10.6"));
+    assert!(
+        !fingerprints.keys().any(|k| k.starts_with("checkout")),
+        "{fingerprints:?}"
+    );
+}
