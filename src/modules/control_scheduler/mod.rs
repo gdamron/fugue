@@ -632,6 +632,9 @@ impl ControlScheduler {
     /// length afresh.
     fn take_told(&mut self) {
         self.last_gate_in = self.told_gate();
+        // A step tells of its own sample only: the drain tells none on the
+        // segment it moves the schedule off its clock.
+        self.told_began.store(false, Ordering::Relaxed);
         self.current_step = self.told_step.load(Ordering::Relaxed);
         self.skip_played();
         self.ramps.clear();
