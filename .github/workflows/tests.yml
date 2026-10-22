@@ -3,6 +3,10 @@ name: Tests
 # Pull requests run once per push to the PR; pushes to main run the full suite
 # and save the build caches every PR restores from. Other branch pushes do not
 # run CI on their own: open a PR (or dispatch manually) to test them.
+#
+# Windows tests only run on pushes to main and manual dispatches, so they never
+# hold up a PR. To run them on a PR branch before merging:
+#   gh workflow run Tests --ref <branch>
 on:
   push:
     branches:
@@ -55,29 +59,16 @@ jobs:
               - '!.github/workflows/release.yml'
 
   test:
-    name: Run Unit Tests (${{ matrix.os }})
+    name: Run Unit Tests (ubuntu-latest)
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            features: ""
-          # Spectrogram analysis is off by default and its tap is concurrent
-          # code, so test it on every OS. The feature is purely additive, so
-          # this run also covers every default-feature test; Linux covers it
-          # under --all-features below.
-          - os: windows-latest
-            features: --features spectrogram
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check Out Repository
         uses: actions/checkout@v4
 
       - name: Install Linux Audio Dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config
@@ -91,7 +82,33 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Tests
-        run: cargo test ${{ matrix.features }} --lib --tests
+        run: cargo test --lib --tests
+
+  # Windows is the slowest job (about 5 minutes against under 4 for Linux), so
+  # it runs after merge instead of on every PR push. Spectrogram analysis is
+  # off by default and its tap is concurrent code, so test it here too; the
+  # feature is purely additive, so this run also covers every default-feature
+  # test. Linux covers it under --all-features on every PR.
+  windows-test:
+    name: Run Unit Tests (windows-latest)
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'pull_request'
+    runs-on: windows-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v4
+
+      - name: Install Stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Run Tests
+        run: cargo test --features spectrogram --lib --tests
 
   feature-tests:
     name: Run Feature-Gated Tests (Linux)
@@ -133,6 +150,7 @@ jobs:
     needs:
       - changes
       - test
+      - windows-test
       - feature-tests
     runs-on: ubuntu-latest
     steps:
