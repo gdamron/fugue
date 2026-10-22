@@ -7,6 +7,7 @@ use crate::agents::AgentManager;
 use crate::scripting::ScriptManager;
 use crate::{ControlValue, Invention, InventionBuilder, InventionHandles, ModuleRegistry};
 
+use super::graph::ended::is_end_output;
 use super::graph::SignalGraph;
 use super::orchestration::{ModulePorts, OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 use super::runtime::{module_ports, ControlSurfaceInstance, GraphCommandError};
@@ -19,13 +20,6 @@ mod editing;
 mod replay;
 
 pub use code_modules::CodeModuleRuntimeInfo;
-
-/// Whether an output port is a one-shot module's latched end-of-playback
-/// gate: `ended` by the convention. Not `end`, which the sample modules name
-/// a one-sample pulse at the end of a sample or slice.
-fn is_end_output(port: &str) -> bool {
-    port == "ended"
-}
 
 /// Offline renderer for inventions.
 ///
@@ -204,6 +198,9 @@ impl RenderEngine {
         let mut done = 0;
         while done < frames_total {
             let n = (frames_total - done).min(block);
+            if let Some(watch) = &mut graph.end_watch {
+                watch.begin();
+            }
             // Split where a replayed request is due, as the live drain does.
             let mut at = 0;
             while at < n {
@@ -249,7 +246,10 @@ impl RenderEngine {
     /// the number of valid frames in the last render call, which must not
     /// have exceeded one graph block for the scan to be frame-exact (the
     /// `ended` gate is latched, so a coarser host still cannot *miss* it —
-    /// only land on a later frame).
+    /// only land on a later frame). A block that processed in pieces (split
+    /// by a replayed request, see [`Self::replay`], or by the graph at a
+    /// scheduler's entry) is answered for whole, and a module another edit
+    /// moved since the render still answers for what it rendered.
     ///
     /// Errors when no invention is loaded, when a named source does not
     /// exist or has no `ended` output, or when `source` is `None` and nothing
@@ -281,9 +281,15 @@ impl RenderEngine {
                 continue;
             };
             candidates += 1;
-            let block = module.output_block(port);
-            let n = frames.min(block.len());
-            if let Some(frame) = block[..n].iter().position(|&value| value > 0.5) {
+            // The watch saw every piece of the block; a module's buffers keep
+            // only the last.
+            let watched = graph.end_watch.as_ref().and_then(|watch| watch.rise(id));
+            let rise = watched.unwrap_or_else(|| {
+                let block = module.output_block(port);
+                let n = frames.min(block.len());
+                block[..n].iter().position(|&value| value > 0.5)
+            });
+            if let Some(frame) = rise.filter(|&frame| frame < frames) {
                 earliest = Some(earliest.map_or(frame, |current| current.min(frame)));
             }
         }
@@ -387,6 +393,7 @@ impl RenderEngine {
             // spectrum ring.
             super::graph::MasterObservers::default(),
         );
+        graph.end_watch = Some(Default::default());
         // No request reaches it, but it plays the modules' tables.
         super::graph::offline_requests(&mut graph);
         let graph = Arc::new(Mutex::new(graph));
@@ -440,6 +447,8 @@ impl OrchestrationRuntime for RenderEngine {
     }
 }
 
+#[cfg(test)]
+mod end_tests;
 #[cfg(test)]
 mod retarget_tests;
 #[cfg(test)]
