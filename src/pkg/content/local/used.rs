@@ -88,6 +88,12 @@ impl ContentRoots {
                 self.collect_used(&child, walk, depth + 1)?;
                 continue;
             };
+            // Before `visited`: a spelling with an `@` can reach a file
+            // already walked through a symlink, and only the spelling
+            // decides whether a joined local sample path parses as a ref.
+            if file.to_string_lossy().contains('@') {
+                return None;
+            }
             let context = std::fs::canonicalize(file.parent()?).ok()?;
             if walk
                 .visited
@@ -391,6 +397,30 @@ mod tests {
             used.into_iter().collect::<Vec<_>>(),
             ["fugue.demo.a", "fugue.demo.b"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_package_shaped_spelling_of_a_walked_document_makes_the_set_unknown() {
+        let (temp, roots) = roots();
+        // `safe` is walked first; `fugue.hidden@1:kit` links to it, so its
+        // `voice.json` is the same file in the same directory.
+        write(
+            &temp.path().join("safe/voice.json"),
+            &json!({"modules": [sampler(json!({"path": "kick.wav"}))], "connections": []}),
+        );
+        std::os::unix::fs::symlink(
+            temp.path().join("safe"),
+            temp.path().join("fugue.hidden@1:kit"),
+        )
+        .unwrap();
+        let main = invention(
+            json!({"modules": [], "connections": [],
+                "developments": [{"name": "a", "path": "safe/voice.json"},
+                    {"name": "b", "path": "fugue.hidden@1:kit/voice.json"}]}),
+            &temp.path().join("main.json"),
+        );
+        assert_eq!(roots.used_packages(&main), None);
     }
 
     #[test]
