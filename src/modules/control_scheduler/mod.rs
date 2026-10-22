@@ -80,12 +80,12 @@
 //! (a block, or part of one); on edges, each boundary `at_step + k` is
 //! written on its edge's sample, and between edges the start of each
 //! segment takes the value the last measured edge interval puts there,
-//! never past the next boundary; played by the scheduler itself, every sample, from the
-//! measured step length, with every step boundary `at_step + k` exactly
-//! `from + (to - from) * k / N`. Values are computed in `f64` and rounded
-//! once to `f32`, never overflow, and never leave the range between the
-//! endpoints, so a ramp between any two finite values writes only finite
-//! values.
+//! never past the next boundary; played by the scheduler itself, every
+//! sample, from the measured step length, with every step boundary
+//! `at_step + k` exactly `from + (to - from) * k / N`. Values are computed
+//! in `f64` and rounded once to `f32`, never overflow, and never leave the
+//! range between the endpoints, so a ramp between any two finite values
+//! writes only finite values.
 //!
 //! # Holds
 //!
