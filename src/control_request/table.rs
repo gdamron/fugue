@@ -54,6 +54,18 @@ impl TableTarget {
         }
     }
 
+    /// When an entry from any table last began on a declared control (see
+    /// `Automation::begun`): a ramp noting it ends once it grows. A legacy
+    /// control notes none, so its ramps end only on their own table's
+    /// entries.
+    #[inline]
+    pub(crate) fn begun(&self) -> u64 {
+        match self {
+            Self::Declared(target) => target.begun(),
+            Self::Legacy { .. } => 0,
+        }
+    }
+
     /// A legacy control, written through `surface`'s scheduled setter,
     /// counting refusals in `refused`. Control thread.
     pub(crate) fn legacy(
