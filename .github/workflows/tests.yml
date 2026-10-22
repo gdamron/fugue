@@ -7,6 +7,8 @@ name: Tests
 # Windows tests only run on pushes to main and manual dispatches, so they never
 # hold up a PR. To run them on a PR branch before merging:
 #   gh workflow run Tests --ref <branch>
+# That run reports its own CI check on the branch's head commit, so a Windows
+# failure there shows on the PR until a later push passes.
 on:
   push:
     branches:
