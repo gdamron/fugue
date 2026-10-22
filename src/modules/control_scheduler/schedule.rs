@@ -250,9 +250,18 @@ pub(crate) fn resolve_schedule(
     own_id: &str,
     surfaces: &SurfaceMap,
 ) -> Result<Vec<ResolvedEntry>, String> {
+    resolve_schedule_counting(entries, own_id, surfaces, &Arc::new(EventCounter::new()))
+}
+
+/// [`resolve_schedule`], with the legacy targets counting the writes and
+/// reads their surfaces refuse in `refused`.
+pub(crate) fn resolve_schedule_counting(
+    entries: &[ScheduleEntry],
+    own_id: &str,
+    surfaces: &SurfaceMap,
+    refused: &Arc<EventCounter>,
+) -> Result<Vec<ResolvedEntry>, String> {
     let mut resolved = Vec::with_capacity(entries.len());
-    // Shared by the schedule's legacy targets: their writes refused.
-    let refused = Arc::new(EventCounter::new());
     for entry in entries {
         if entry.module == own_id {
             return Err(format!(

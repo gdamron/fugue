@@ -339,11 +339,23 @@ impl RunningInvention {
     }
 
     fn with_audio_diagnostics(&self, mut status: RuntimeStatus) -> RuntimeStatus {
-        status.diagnostics = self
-            .backend
-            .diagnostics()
-            .map(|diagnostics| diagnostics.snapshot());
+        status.diagnostics = self.backend.diagnostics().map(|diagnostics| {
+            let mut snapshot = diagnostics.snapshot();
+            snapshot.scheduled_writes_refused = self.scheduled_writes_refused();
+            snapshot
+        });
         status
+    }
+
+    /// Scheduled writes to legacy controls refused, summed over the
+    /// schedulers in the graph now (see
+    /// [`crate::ControlSurface::scheduled_writes_refused`]).
+    pub fn scheduled_writes_refused(&self) -> u64 {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        surfaces
+            .values()
+            .map(|surface| surface.scheduled_writes_refused())
+            .sum()
     }
 
     /// Returns the declarative document describing the current graph: the
