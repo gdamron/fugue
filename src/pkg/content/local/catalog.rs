@@ -42,7 +42,9 @@ impl ContentCatalog {
             // applies the layout rules (a mixed one is a diagnostic).
             let manifest = id.path().join("fugue.pkg.json");
             if manifest.is_file() {
-                match pkg::parse_path(&manifest) {
+                match contained(&id.path(), &manifest)
+                    .and_then(|m| pkg::parse_path(m).map_err(|e| err("invalid_content", e)))
+                {
                     Ok(m) if is_content(m.kind) => refs.push(ContentRef::Package {
                         package: name.clone(),
                         version: m.version,
@@ -51,7 +53,11 @@ impl ContentCatalog {
                     Err(e) => source_errors.push(err(
                         "invalid_content",
                         truncate(
-                            &format!("invalid source checkout {}: {e}", manifest.display()),
+                            &format!(
+                                "invalid source checkout {}: {}",
+                                manifest.display(),
+                                e.message
+                            ),
                             512,
                         ),
                     )),

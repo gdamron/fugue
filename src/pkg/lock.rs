@@ -337,11 +337,17 @@ mod fs_ops {
         let dir = match crate::pkg::layout::version_dir(packages_dir, id, &package.version) {
             Ok(Some(dir)) => dir,
             Ok(None) => {
+                let found = match crate::pkg::layout::available(packages_dir, id) {
+                    Ok(crate::pkg::layout::Available::Source(version)) => {
+                        format!("; the source checkout there is version {version}")
+                    }
+                    _ => String::new(),
+                };
                 return Some(format!(
-                    "{id}@{} is not installed (expected {})",
+                    "{id}@{} is not installed (expected {}){found}",
                     package.version,
                     packages_dir.join(id).join(&package.version).display()
-                ))
+                ));
             }
             Err(err) => return Some(format!("{id}@{}: {err}", package.version)),
         };

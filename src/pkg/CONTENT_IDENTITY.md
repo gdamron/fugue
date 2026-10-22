@@ -204,7 +204,9 @@ The package cache may also be a pack repository's source checkout
 rather than the installed `<id>/<version>/`. A source checkout offers exactly
 its manifest's `version`, so pins and requirements match it as they would an
 installed version; an exact pin needs that exact manifest version. Its manifest
-must validate and declare the directory's id. A package directory holding both
+must validate and declare the directory's id, and the checkout may hold only
+regular files and directories that integrity hashing covers (no symlinks, no
+`.git`), since it is read in place. A package directory holding both
 layouts is refused as ambiguous: neither wins. Identity is unchanged: the
 checkout's bytes are hashed like an install's, and lockfile and frozen
 verification find the locked version by id and version in either layout. See

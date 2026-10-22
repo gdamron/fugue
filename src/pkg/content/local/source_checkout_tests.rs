@@ -164,7 +164,11 @@ fn lockfile_verification_hashes_the_checkout_bytes() {
         .unwrap()
         .version = "2026.10.1".into();
     let error = stale.verify(&roots.packages).unwrap_err();
-    assert!(error.problems[0].contains("is not installed"), "{error:?}");
+    assert!(
+        error.problems[0].contains("is not installed")
+            && error.problems[0].contains("the source checkout there is version 2026.10.2"),
+        "{error:?}"
+    );
 }
 
 #[test]

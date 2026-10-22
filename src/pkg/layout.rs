@@ -10,13 +10,19 @@
 //!   manifest's `version`. Pointing `FUGUE_PACKS_DIR` at a checkout loads its
 //!   packs without staging them.
 //!
-//! The rules, which every resolver path shares:
+//! The rules, shared by asset and content resolution, catalog listing and
+//! lockfile verification (the package-management list and info calls report
+//! installed versions only, since a checkout is not an install):
 //!
 //! - A source checkout offers exactly its manifest's version. Requirements
 //!   and lockfile pins match it as they would an installed version, so an
 //!   exact pin (`=2026.10.2`) needs that exact manifest version.
 //! - Its manifest must parse and validate, and its `id` must equal the
 //!   directory name. Otherwise the package is refused, never skipped.
+//! - Every entry under it must be a regular file or directory that integrity
+//!   hashing covers: no symlinks (the package directory included) and no
+//!   `.git`. An install is a staged copy; a checkout is read in place, so
+//!   anything the hash skips could change playback without changing identity.
 //! - A package directory holding both layouts is ambiguous and refused:
 //!   neither layout wins. Remove one.
 //! - Content identity is unchanged. A package's bytes are hashed from the
@@ -69,6 +75,8 @@ pub(crate) fn available(packages_dir: &Path, id: &str) -> Result<Available, Stri
             package_dir.display()
         ));
     }
+    let mut entries = 0;
+    every_byte_hashed(&package_dir, 0, &mut entries)?;
     let manifest = crate::pkg::parse_path(&manifest_path)
         .map_err(|e| format!("invalid source checkout {}: {e}", manifest_path.display()))?;
     if manifest.id != id {
@@ -103,6 +111,48 @@ pub(crate) fn version_dir(
         .versions()
         .contains(&version)
         .then(|| available.dir(packages_dir, id, &version)))
+}
+
+/// Refuse a source checkout holding anything `compute_integrity` skips, so
+/// its hash covers every byte a load can read. Bounded like content walks.
+fn every_byte_hashed(dir: &Path, depth: usize, entries: &mut usize) -> Result<(), String> {
+    let refuse = |path: &Path, why: &str| {
+        Err(format!(
+            "source checkout entry {} {why}; integrity hashing would not cover it",
+            path.display()
+        ))
+    };
+    let metadata = std::fs::symlink_metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if metadata.file_type().is_symlink() {
+        return refuse(dir, "is a symlink");
+    }
+    if depth > 64 {
+        return refuse(dir, "nests more than 64 directories");
+    }
+    let listing = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for entry in listing {
+        let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
+        *entries += 1;
+        if *entries > 10_000 {
+            return refuse(dir, "holds more than 10000 entries");
+        }
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        if kind.is_symlink() {
+            return refuse(&path, "is a symlink");
+        }
+        if kind.is_dir() {
+            if entry.file_name() == ".git" {
+                return refuse(&path, "is a .git directory");
+            }
+            every_byte_hashed(&path, depth + 1, entries)?;
+        } else if !kind.is_file() {
+            return refuse(&path, "is not a regular file");
+        }
+    }
+    Ok(())
 }
 
 /// Installed version directories (names that parse as semver).
@@ -191,5 +241,34 @@ mod tests {
         let error = available(tmp.path(), "fugue.a.b").unwrap_err();
         assert!(error.contains("both installed versions"), "{error}");
         assert!(version_dir(tmp.path(), "fugue.a.b", "1.0.0").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_checkout_with_unhashed_entries_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let packs = tmp.path().join("packs");
+        let package = packs.join("fugue.a.b");
+        manifest(&package, "fugue.a.b", "1.0.0");
+        fs::write(package.join("a.wav"), b"a").unwrap();
+        assert!(available(&packs, "fugue.a.b").is_ok());
+
+        // A link inside the package: retargeting it would change playback
+        // without changing the hash, which skips links.
+        std::os::unix::fs::symlink(package.join("a.wav"), package.join("b.wav")).unwrap();
+        let error = available(&packs, "fugue.a.b").unwrap_err();
+        assert!(error.contains("b.wav is a symlink"), "{error}");
+        fs::remove_file(package.join("b.wav")).unwrap();
+
+        fs::create_dir_all(package.join("kit/.git")).unwrap();
+        let error = available(&packs, "fugue.a.b").unwrap_err();
+        assert!(error.contains("is a .git directory"), "{error}");
+        fs::remove_dir_all(package.join("kit")).unwrap();
+
+        // The package directory itself linked in from elsewhere.
+        manifest(&tmp.path().join("elsewhere"), "fugue.c.d", "1.0.0");
+        std::os::unix::fs::symlink(tmp.path().join("elsewhere"), packs.join("fugue.c.d")).unwrap();
+        let error = available(&packs, "fugue.c.d").unwrap_err();
+        assert!(error.contains("is a symlink"), "{error}");
     }
 }
