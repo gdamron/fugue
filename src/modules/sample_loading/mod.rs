@@ -272,8 +272,8 @@ pub(crate) fn load_cached_sample(
 ///
 /// Caching a new revision of a path also reclaims older revisions of that
 /// path and rate that nothing else holds. One still held stays cached, so its
-/// reader's final drop never frees it on the audio thread; a later load of
-/// the path reclaims it.
+/// reader's final drop never frees it on the audio thread; it is reclaimed
+/// when a later load caches another revision of the path.
 fn cache_loaded(key: SampleKey, sample: Arc<SampleData>) -> Arc<SampleData> {
     let mut stale = Vec::new();
     let kept = {

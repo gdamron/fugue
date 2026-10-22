@@ -265,12 +265,15 @@ fn oversized_and_non_regular_local_samples_are_refused_before_reading() {
         Err(error) => error,
     };
     let error = crate::pkg::read_limit::test_override::with_hashed_limit(16, || refused(source));
-    assert!(error.contains("Failed to open sample"), "{error}");
+    assert!(error.contains("trim or split the sample"), "{error}");
 
+    // Windows refuses to open a directory before the regular-file check.
     let error = refused(dir.path().to_str().unwrap());
-    assert!(error.contains("not a regular file"), "{error}");
+    assert!(error.contains("Failed to open sample"), "{error}");
     #[cfg(unix)]
     {
+        let error = refused(dir.path().to_str().unwrap());
+        assert!(error.contains("not a regular file"), "{error}");
         let error = refused("/dev/zero");
         assert!(error.contains("not a regular file"), "{error}");
     }
