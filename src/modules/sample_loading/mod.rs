@@ -222,7 +222,8 @@ enum AudioFormat {
 // and the direct path to the same installed file share one buffer. The
 // content digest makes a changed file (an edited local sample, or a package
 // read in place from a source checkout) decode afresh instead of replaying
-// the bytes first cached at that path.
+// the bytes first cached at that path. Each distinct content stays cached for
+// the life of the process, like every other entry.
 type SampleKey = (String, u32, Option<String>);
 type SampleCache = Mutex<HashMap<SampleKey, Arc<SampleData>>>;
 
@@ -243,11 +244,7 @@ pub(crate) fn load_cached_sample(
 ) -> Result<Arc<SampleData>, String> {
     // A local file is read once: its digest keys the cache, and the same
     // bytes decode on a miss, so the key always names what was decoded.
-    let bytes = read_local(source)?;
-    let digest = bytes.as_deref().map(|bytes| {
-        use sha2::{Digest, Sha256};
-        crate::hex::lower_hex(&Sha256::digest(bytes))
-    });
+    let (bytes, digest) = read_local(source)?;
     let key = (source.to_string(), target_sample_rate, digest);
 
     if let Some(cached) = sample_cache().lock().unwrap().get(&key) {
@@ -266,18 +263,24 @@ pub(crate) fn load_cached_sample(
     Ok(cache_loaded(key, Arc::new(sample)))
 }
 
-/// The bytes of a local sample file, or `None` for a URL (fetched by
-/// `open_source`) and on wasm32, where sample loading is unavailable.
-fn read_local(source: &str) -> Result<Option<Vec<u8>>, String> {
-    if cfg!(target_arch = "wasm32")
-        || source.starts_with("https://")
-        || source.starts_with("http://")
-    {
-        return Ok(None);
+/// A local sample file's bytes and their SHA-256, or `None`s for a URL
+/// (fetched by `open_source`).
+#[cfg(not(target_arch = "wasm32"))]
+fn read_local(source: &str) -> Result<(Option<Vec<u8>>, Option<String>), String> {
+    use sha2::{Digest, Sha256};
+    if source.starts_with("https://") || source.starts_with("http://") {
+        return Ok((None, None));
     }
-    std::fs::read(source)
-        .map(Some)
-        .map_err(|err| format!("Failed to open sample '{}': {}", source, err))
+    let bytes = std::fs::read(source)
+        .map_err(|err| format!("Failed to open sample '{}': {}", source, err))?;
+    let digest = crate::hex::lower_hex(&Sha256::digest(&bytes));
+    Ok((Some(bytes), Some(digest)))
+}
+
+/// Sample loading is unavailable on wasm32; `open_source` reports why.
+#[cfg(target_arch = "wasm32")]
+fn read_local(_source: &str) -> Result<(Option<Vec<u8>>, Option<String>), String> {
+    Ok((None, None))
 }
 
 /// Caches `sample` under `key`, returning the buffer the cache keeps: one
