@@ -223,19 +223,33 @@ fn test_seed_control_surface_round_trip() {
 }
 
 #[test]
-fn test_next_note_does_not_block_on_held_control_lock() {
+fn test_next_note_does_not_wait_on_a_whole_table_edit() {
     let mut melody = seeded_melody(5);
     melody.controls().set_allowed_degrees(vec![7]);
 
-    // A control thread mid-edit holds the table lock. Previously this
-    // deadlocked the audio thread; now the stale degrees are used.
+    // A control thread mid-way through an edit of the whole table. Once
+    // this deadlocked the audio thread; now the table as published is used.
     let controls = melody.controls().clone();
-    let guard = controls.table.lock().unwrap();
-    let stale = melody.next_note();
-    assert_ne!(stale.midi_note, 67, "stale table has no degree 7");
-    drop(guard);
+    let editing = controls.table.editing();
+    assert_eq!(without_waiting(move || melody.next_note().midi_note), 67);
+    drop(editing);
+}
 
-    assert_eq!(melody.next_note().midi_note, 67);
+/// Runs `read` on another thread and returns what it read, failing rather
+/// than hanging should it not finish in ten seconds: waiting on a lock
+/// this thread holds, say.
+pub(super) fn without_waiting<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'static) -> T {
+    use std::sync::mpsc::RecvTimeoutError;
+    let (sent, received) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || sent.send(read()));
+    match received.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(read) => read,
+        Err(RecvTimeoutError::Timeout) => panic!("the read did not finish in ten seconds"),
+        Err(RecvTimeoutError::Disconnected) => match worker.join() {
+            Err(panicked) => std::panic::resume_unwind(panicked),
+            Ok(_) => unreachable!("the read sends before it finishes"),
+        },
+    }
 }
 
 #[test]
