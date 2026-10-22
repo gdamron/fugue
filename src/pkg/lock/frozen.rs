@@ -286,7 +286,9 @@ impl FrozenLock {
             }
         }
         // A bare file name's parent is the working dir.
-        let parent = file.parent().filter(|parent| !parent.as_os_str().is_empty());
+        let parent = file
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
         let canonical = std::fs::canonicalize(parent.unwrap_or(Path::new(".")))
             .ok()?
             .join(file.file_name()?);
