@@ -237,12 +237,15 @@ impl Conditions {
         self.slots.release();
     }
 
-    /// Stores `request` ([`Self::check`] has passed it), or settles it
-    /// refused ([`Refusal::PendingFull`]) when full. Allocation- and
-    /// free-free.
+    /// Stores `request` ([`Self::check`] has passed it), replacing one it
+    /// coalesces with (see [`replace`]), or settles it refused
+    /// ([`Refusal::PendingFull`]) when full. Allocation- and free-free.
     pub(crate) fn insert(&mut self, request: Request, outcomes: &mut Outcomes) {
         let When::Condition(condition) = request.when else {
             return self.settle(request, Refusal::Unsupported.into(), outcomes);
+        };
+        let Some(request) = self.coalesce(request, condition, outcomes) else {
+            return;
         };
         if self.is_full() {
             return self.settle(request, Refusal::PendingFull.into(), outcomes);
@@ -502,5 +505,6 @@ fn read_part(part: &Predicate, seen: &mut Seen, host: &impl ConditionHost) {
 }
 
 mod parts;
+mod replace;
 #[cfg(test)]
 mod tests;
