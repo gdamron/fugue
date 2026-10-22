@@ -14,7 +14,10 @@ fn add(id: &str) -> StructuralEdit {
 }
 
 fn apply(edits: Vec<StructuralEdit>) -> RpcCommand {
-    RpcCommand::ApplyEdits { edits }
+    RpcCommand::ApplyEdits {
+        edits,
+        timing: Default::default(),
+    }
 }
 
 fn ticket(id: &str, issued_at: RuntimeRevision) -> MutationTicket {

@@ -16,8 +16,8 @@ use crate::rpc::{
 
 /// A batch's change, prepared and checked, ready to publish.
 pub(super) struct PreparedEdits {
-    change: PreparedChange,
-    plan: ReloadPlan,
+    pub(super) change: PreparedChange,
+    pub(super) plan: ReloadPlan,
 }
 
 impl RunningInvention {
@@ -231,7 +231,7 @@ fn write_built(
 }
 
 /// Whether `plan` builds `id` afresh (added or rebuilt).
-fn plan_builds(plan: &ReloadPlan, id: &str) -> bool {
+pub(super) fn plan_builds(plan: &ReloadPlan, id: &str) -> bool {
     plan.added
         .iter()
         .chain(&plan.swapped)

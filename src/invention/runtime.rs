@@ -24,6 +24,7 @@ mod editing;
 mod error;
 mod orchestration;
 mod ports;
+pub(crate) mod timed;
 
 pub use error::GraphCommandError;
 pub(crate) use ports::{module_ports, validate_input_port, validate_output_port};

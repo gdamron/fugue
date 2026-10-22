@@ -23,6 +23,7 @@ mod response;
 mod revision;
 mod snapshot;
 mod spectrogram;
+mod timed;
 pub use authored_snapshot::{
     AuthoredSnapshot, SnapshotDelivery, MAX_FILE_SNAPSHOT_BYTES, MAX_INLINE_SNAPSHOT_BYTES,
 };
@@ -68,6 +69,8 @@ pub use spectrogram::{
     SpectrogramFrequencyAxis, SpectrogramLimits, SpectrogramMagnitudes, SpectrogramProvenance,
     SpectrogramStreamMeta, SpectrogramTile, SpectrogramWindow,
 };
+
+pub use timed::{EditTiming, EditWhen, RequestLanding, RequestState, RequestStatus};
 
 /// Current runtime RPC schema version.
 pub const RPC_SCHEMA_VERSION: u32 = 1;

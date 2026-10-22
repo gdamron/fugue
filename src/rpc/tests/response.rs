@@ -206,6 +206,10 @@ fn only_snapshot_acknowledged_commands_take_a_reply_shape() {
     assert!(RpcCommand::UnloadInvention.replies_with_snapshot());
     assert!(RpcCommand::RemoveModule { id: "osc".into() }.replies_with_snapshot());
     assert!(!RpcCommand::Shutdown.replies_with_snapshot());
-    assert!(!RpcCommand::ApplyEdits { edits: Vec::new() }.replies_with_snapshot());
+    let apply = RpcCommand::ApplyEdits {
+        edits: Vec::new(),
+        timing: Default::default(),
+    };
+    assert!(!apply.replies_with_snapshot());
     assert!(!RpcCommand::DescribeModuleTypes(Default::default()).replies_with_snapshot());
 }
