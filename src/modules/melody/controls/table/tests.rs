@@ -13,6 +13,7 @@ use crate::modules::melody::MelodyControls;
 mod reference;
 mod restore;
 mod support;
+mod threads;
 
 // Tests whose hooks make whole edits run in `without_waiting`: a hooked
 // edit meeting a read or write that held the edit lock would deadlock the
