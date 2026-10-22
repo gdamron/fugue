@@ -134,7 +134,7 @@ fn control_writes_load_the_locked_version_not_a_newer_one() {
     with_packs_dir(&packs, || {
         with_governing(lock, || {
             let path = resolve_source(&format!("{KIT}@1.0.0:a.wav")).unwrap();
-            assert!(path.ends_with("1.0.0/a.wav"), "{path}");
+            assert!(Path::new(&path).ends_with("1.0.0/a.wav"), "{path}");
         });
     });
 }
@@ -155,7 +155,7 @@ fn document_loads_pin_the_governing_lock_not_the_one_beside_the_invention() {
             resolve_audio_assets(&mut invention).unwrap();
         });
     });
-    assert!(asset_of(&invention).ends_with("1.0.0/a.wav"));
+    assert!(Path::new(&asset_of(&invention)).ends_with("1.0.0/a.wav"));
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn assets_inside_package_developments_pin_the_governing_lock() {
     };
     with_governing(lock, || {
         let definition = roots.load_development(&reference).unwrap();
-        assert!(asset_of(&definition).ends_with("1.0.0/a.wav"));
+        assert!(Path::new(&asset_of(&definition)).ends_with("1.0.0/a.wav"));
     });
 }
 
