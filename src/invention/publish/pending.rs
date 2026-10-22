@@ -130,7 +130,6 @@ impl PendingLog {
 
     /// Timed edits' outcomes received since the last call, oldest first,
     /// and whether any outcome was lost meanwhile, a timed edit's maybe.
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
     pub(crate) fn take_timed(&mut self) -> (Vec<(RequestId, Outcome)>, bool) {
         self.settle();
         let lost = std::mem::take(&mut self.timed_lost);

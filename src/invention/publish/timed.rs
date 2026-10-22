@@ -28,6 +28,7 @@ use crate::invention::runtime::ControlSurfaceInstance;
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
 use crate::ControlValue;
+use crate::ModuleRegistry;
 
 /// What became of an authored write as it was recorded (see
 /// [`LiveGraph::record_authored`]).
@@ -42,7 +43,6 @@ pub(crate) enum Authored {
 }
 
 /// When a timed edit lands, resolved against the graph that is playing.
-#[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum EditTime<'a> {
     /// On this sample of the transport.
@@ -52,15 +52,19 @@ pub(crate) enum EditTime<'a> {
     /// On clock `clock`'s beat `spec` (one beat, not a repeating grid):
     /// the sample the clock reaches it on.
     Beat { clock: &'a str, spec: BeatSpec },
+    /// [`Self::Beat`] on the clock module `module` counts on (see
+    /// `crate::invention::timelines`).
+    BeatOf { module: &'a str, spec: BeatSpec },
     /// Once every one of `parts` has happened: on the sample when that is
     /// a segment start (another request applying, a control crossing),
-    /// otherwise at the next segment start, reported late.
+    /// otherwise at the next segment start, reported late. Not on the wire
+    /// yet: a condition is FUG-317's to name.
+    #[cfg_attr(not(test), allow(dead_code))]
     Condition(&'a [Part<'a>]),
 }
 
 /// Module types whose scripts or agents a commit starts and stops, which
 /// a timed edit cannot do yet as it lands.
-#[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
 const FOLLOWED_UP: [&str; 2] = ["code", "agent"];
 
 impl LiveGraph {
@@ -98,7 +102,6 @@ impl LiveGraph {
     }
 
     /// Where timed edit `id` stands, if the ledger still remembers it.
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
     pub(crate) fn timed_status(&self, id: RequestId) -> Option<EditStatus> {
         let mut publisher = self.lock();
         self.sync_timed(&mut publisher);
@@ -107,7 +110,6 @@ impl LiveGraph {
 
     /// Every timed edit whose status changed since the last call, in the
     /// order they changed.
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
     pub(crate) fn take_timed_changes(&self) -> Vec<EditStatus> {
         let mut publisher = self.lock();
         self.sync_timed(&mut publisher);
@@ -116,13 +118,11 @@ impl LiveGraph {
 
     /// What adopting timed edit `id` committed (its built modules'
     /// handles), once it is adopted; taken once.
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
     pub(crate) fn take_timed_committed(&self, id: RequestId) -> Option<Committed> {
         self.lock().ledger().take_committed(id)
     }
 
     /// Takes the audio thread's outcomes for timed edits into the ledger.
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
     fn sync_timed(&self, publisher: &mut Publisher) {
         sync_ledger(publisher, &mut self.pending.lock().unwrap());
     }
@@ -183,17 +183,33 @@ impl LiveGraph {
     /// nothing, another timed edit waits, `time` names an unknown module or
     /// a part that can never be met, or the change adds or removes a module
     /// that runs a script or an agent (`ControlError`).
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
+    #[cfg_attr(not(test), allow(dead_code))] // the runtime builds through `commit_built_when`
     pub(crate) fn commit_when(
         &self,
+        prepared: PreparedChange,
+        time: EditTime<'_>,
+        ttl: Option<u64>,
+        retain: impl FnOnce(&mut RuntimeState) + Send + 'static,
+    ) -> Result<RequestId, GraphCommandError> {
+        self.commit_built_when(prepared, None, time, ttl, retain)
+    }
+
+    /// [`Self::commit_when`] for a change whose modules were built against
+    /// `built_with`: refused `TopologyMoved` when a commit has adopted
+    /// another registry since, so no edit queues an instance of a
+    /// superseded definition.
+    pub(crate) fn commit_built_when(
+        &self,
         mut prepared: PreparedChange,
+        built_with: Option<&Arc<ModuleRegistry>>,
         time: EditTime<'_>,
         ttl: Option<u64>,
         retain: impl FnOnce(&mut RuntimeState) + Send + 'static,
     ) -> Result<RequestId, GraphCommandError> {
         self.reclaim();
         let mut publisher = self.lock();
-        if prepared.base_generation != publisher.generation() {
+        let superseded = built_with.is_some_and(|registry| !self.registry.is_current(registry));
+        if superseded || prepared.base_generation != publisher.generation() {
             drop(publisher);
             drop(prepared);
             return Err(GraphCommandError::TopologyMoved);
@@ -206,7 +222,7 @@ impl LiveGraph {
         let result = self
             .resolve_edit_time(&publisher, &prepared, time)
             .and_then(|when| Ok((when, rebind::pack(&mut prepared)?)));
-        let (when, packed) = match result {
+        let ((when, beat), packed) = match result {
             Ok(resolved) => resolved,
             Err(error) => {
                 drop(publisher);
@@ -222,7 +238,10 @@ impl LiveGraph {
         match publisher.publish_timed(prepared, when, ttl, (Box::new(retain), port, packed)) {
             Ok(id) => {
                 pending.timed(id);
-                let (sample, beat) = landing_of(time);
+                let sample = match time {
+                    EditTime::AtSample(sample) => Some(sample),
+                    _ => None,
+                };
                 publisher.ledger().queued(id, sample, beat);
                 drop(pending);
                 drop(publisher);
@@ -238,13 +257,14 @@ impl LiveGraph {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // until the runtime calls `commit_when`
+    /// The request time `time` resolves to, with its beat for the ledger
+    /// when it is timed in beats.
     fn resolve_edit_time(
         &self,
         publisher: &Publisher,
         prepared: &PreparedChange,
         time: EditTime<'_>,
-    ) -> Result<When, GraphCommandError> {
+    ) -> Result<(When, Option<LoggedBeat>), GraphCommandError> {
         let control = GraphCommandError::ControlError;
         let state = self.state.lock().unwrap();
         let followed = |id: &String| {
@@ -262,21 +282,30 @@ impl LiveGraph {
             return Err(control(message.into()));
         }
         drop(state);
-        Ok(match time {
-            EditTime::AtSample(sample) => When::AtSample(sample),
-            EditTime::AfterSamples(samples) => When::AfterSamples(samples),
-            EditTime::Beat { clock, spec } => When::Beat(BeatTime {
-                clock: publisher.beat_clock(clock, Some(clock))?,
+        let beat = |clock: u32, spec: BeatSpec| {
+            let id = mirror.modules.get_index(clock as usize).map(|(id, _)| id);
+            let when = When::Beat(BeatTime {
+                clock,
                 spec,
                 ramp: None,
-            }),
+            });
+            (when, id.map(|id| logged_beat(id, spec)))
+        };
+        Ok(match time {
+            EditTime::AtSample(sample) => (When::AtSample(sample), None),
+            EditTime::AfterSamples(samples) => (When::AfterSamples(samples), None),
+            EditTime::Beat { clock, spec } => beat(publisher.beat_clock(clock, Some(clock))?, spec),
+            EditTime::BeatOf { module, spec } => beat(publisher.beat_clock(module, None)?, spec),
             EditTime::Condition(parts) => {
                 if self.requests.watchers_full() {
                     let full = "Too many requests wait on a condition; try again once some apply";
                     return Err(control(full.into()));
                 }
                 let surfaces = self.control_surfaces.lock().unwrap();
-                When::Condition(condition_of(mirror, &surfaces, parts)?)
+                (
+                    When::Condition(condition_of(mirror, &surfaces, parts)?),
+                    None,
+                )
             }
         })
     }
@@ -314,7 +343,6 @@ fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
 }
 
 /// Takes `pending`'s outcomes for timed edits into `publisher`'s ledger.
-#[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
 fn sync_ledger(publisher: &mut Publisher, pending: &mut PendingLog) {
     let (outcomes, lost) = pending.take_timed();
     let waiting = publisher.timed_id();
@@ -327,29 +355,21 @@ fn sync_ledger(publisher: &mut Publisher, pending: &mut PendingLog) {
     }
 }
 
-/// Where a timed edit lands, as far as is known when it is queued: the
-/// sample for one timed to a sample, the beat for one timed in beats.
-fn landing_of(time: EditTime<'_>) -> (Option<u64>, Option<LoggedBeat>) {
-    match time {
-        EditTime::AtSample(sample) => (Some(sample), None),
-        EditTime::Beat { clock, spec } => {
-            let clock = clock.to_string();
-            let beat = match spec {
-                BeatSpec::After(beats) => LoggedBeat::After { clock, beats },
-                BeatSpec::Grid {
-                    every,
-                    offset,
-                    repeat,
-                } => LoggedBeat::Grid {
-                    clock,
-                    every,
-                    offset,
-                    repeat,
-                },
-            };
-            (None, Some(beat))
-        }
-        EditTime::AfterSamples(_) | EditTime::Condition(_) => (None, None),
+/// `spec` on clock `clock`, as the request log and the ledger show it.
+fn logged_beat(clock: &str, spec: BeatSpec) -> LoggedBeat {
+    let clock = clock.to_string();
+    match spec {
+        BeatSpec::After(beats) => LoggedBeat::After { clock, beats },
+        BeatSpec::Grid {
+            every,
+            offset,
+            repeat,
+        } => LoggedBeat::Grid {
+            clock,
+            every,
+            offset,
+            repeat,
+        },
     }
 }
 

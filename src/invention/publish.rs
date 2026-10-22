@@ -45,8 +45,8 @@ mod retarget;
 #[cfg(test)]
 pub(crate) mod tests;
 mod timed;
-#[cfg_attr(not(test), allow(dead_code))] // until the runtime reads timed edits' status
 mod timed_status;
+mod timed_swap;
 // Submitted to by the front doors FUG-317 builds.
 #[cfg_attr(not(test), allow(dead_code))]
 mod watch;
@@ -59,10 +59,8 @@ pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use retarget::Retarget;
-pub(crate) use timed::Authored;
-pub(crate) use timed_status::CancelCause;
-#[cfg(test)]
-pub(crate) use timed_status::EditState;
+pub(crate) use timed::{Authored, EditTime};
+pub(crate) use timed_status::{CancelCause, EditState, EditStatus};
 
 /// How many times an edit that builds a module ([`LiveGraph::add_module`],
 /// [`LiveGraph::swap_module`]) builds it when commits keep adopting new
