@@ -358,7 +358,8 @@ impl ContentRoots {
         manifest: &PackageManifest,
         closure: &mut Closure,
     ) -> Result<()> {
-        if let Some(id) = self.checkout_id(root) {
+        let checkout = self.checkout_id(root);
+        if let Some(id) = &checkout {
             // The manifest as parsed, for the same reason as its documents.
             let parsed = serde_json::to_vec(manifest).map_err(|e| err("invalid_content", e))?;
             record_checkout_read(closure, format!("checkout-manifest:{id}"), hash(&parsed))?;
@@ -378,7 +379,13 @@ impl ContentRoots {
                 }
             })
         })?;
-        if let Some(receipt) = read_receipt(&self.packages, &manifest.id, &manifest.version)? {
+        // A receipt records an install; one left from an earlier install of
+        // this version says nothing about a checkout edited in place.
+        let receipt = match checkout {
+            Some(_) => None,
+            None => read_receipt(&self.packages, &manifest.id, &manifest.version)?,
+        };
+        if let Some(receipt) = receipt {
             if receipt.package.integrity != integrity {
                 return Err(err("integrity_mismatch", "Installed package differs from its install receipt; reinstall the original version"));
             }
