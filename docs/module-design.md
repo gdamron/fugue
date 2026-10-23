@@ -154,7 +154,8 @@ the same rules, and use the musical gesture (`brightness`) rather than the
 inner module's key (`cutoff`).
 
 Formats that feed modules use the modules' names. A `fugue.score.v1` step has
-`velocity`, `gate_length` and `root_note`, as the sequencers do
+`velocity` and `gate_length`, and the score has `root_note`, as the sequencers
+do
 ([`src/invention/score.rs`](../src/invention/score.rs)). A rename changes the
 format in place rather than keeping the old spelling as an alias. Closed
 formats then refuse the old name, so an old file fails to load instead of
