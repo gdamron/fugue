@@ -42,10 +42,12 @@ pub(crate) type OfflineMirrors<'a> = (
 ///
 /// Fails with nothing changed when `edit` fails, a scheduler it adds cannot
 /// resolve its schedule, a surviving scheduler no longer resolves, or the
-/// render has been replaced.
+/// render has been replaced. It installs as an immediate edit does, or as
+/// a timed one lands (`landing`; see `SignalGraph::install_offline`).
 pub(crate) fn edit_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     mirrors: OfflineMirrors<'_>,
+    landing: bool,
     edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
 ) -> Result<Committed, GraphCommandError> {
     let (directory, module_ports, state) = mirrors;
@@ -75,7 +77,7 @@ pub(crate) fn edit_offline(
     };
     publication.map_survivors(locked.modules.keys().map(String::as_str));
     let previous: Vec<String> = locked.modules.keys().cloned().collect();
-    locked.install_offline(&mut publication);
+    let publication = locked.install_offline(publication, landing);
     for schedule in written {
         schedule.record();
     }
