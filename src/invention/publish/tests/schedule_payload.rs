@@ -245,12 +245,31 @@ fn shared() -> String {
     doc.to_string()
 }
 
-/// A write refused through one key restores what the scheduler recorded
-/// from another, so the order a later write carries still runs the
-/// scheduler before what it writes.
-#[test]
-fn a_refused_write_restores_what_another_key_wrote() {
-    let mut rig = Rig::new(&shared());
+/// `shared()`'s development wrapped in another, which forwards its
+/// clock, audio and every key.
+fn nested_shared() -> String {
+    let mut doc: serde_json::Value = serde_json::from_str(&shared()).unwrap();
+    let forward =
+        |name: &str| serde_json::json!({ "name": name, "module": "inner", "control": name });
+    let controls = ["schedule", "again", "other", "freq"].map(forward);
+    let shell = serde_json::json!({ "name": "shell", "definition": {
+        "version": "1.0.0",
+        "modules": [{ "id": "inner", "type": "pattern" }],
+        "connections": [],
+        "inputs": [{ "name": "clock", "to": "inner", "to_port": "clock" }],
+        "outputs": [{ "name": "audio", "from": "inner", "from_port": "audio" }],
+        "controls": controls
+    } });
+    doc["developments"].as_array_mut().unwrap().push(shell);
+    doc["modules"][0]["type"] = "shell".into();
+    doc.to_string()
+}
+
+/// A write refused through one key of `document`'s `p` restores what the
+/// scheduler recorded from another, so the order a later write carries
+/// still runs the scheduler before what it writes.
+fn refused_write_restores_what_another_key_wrote(document: &str) {
+    let mut rig = Rig::new(document);
     rig.render(1);
     assert_eq!(clocked(&mut rig, "p", 1.0), (0, 0), "step 0");
     write(&rig, "p", "schedule", NEXT.into());
@@ -266,4 +285,14 @@ fn a_refused_write_restores_what_another_key_wrote() {
     assert_eq!(clocked(&mut rig, "p", 0.0), (0, 0), "adopting");
     assert_eq!(clocked(&mut rig, "p", 1.0), (0, 0), "step 1");
     assert_eq!(read(&rig, "p", "freq"), ControlValue::Number(330.0));
+}
+
+#[test]
+fn a_refused_write_restores_what_another_key_wrote() {
+    refused_write_restores_what_another_key_wrote(&shared());
+}
+
+#[test]
+fn a_refused_write_restores_what_another_key_wrote_through_a_nested_development() {
+    refused_write_restores_what_another_key_wrote(&nested_shared());
 }

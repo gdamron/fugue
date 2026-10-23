@@ -99,6 +99,24 @@ impl DevelopmentControlSurface {
         declared.declares(key).then_some(declared)
     }
 
+    /// The payload keys reaching an inner control `key` reaches, `key`
+    /// among them when it is one.
+    fn shared_payload_keys<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a str> {
+        let reached = move |entry: &AliasedControl| {
+            (self.controls.iter()).any(|aliased| {
+                aliased.meta.key == key
+                    && aliased.module_id == entry.module_id
+                    && aliased.key == entry.key
+            })
+        };
+        let mut seen = std::collections::HashSet::new();
+        (self.controls.iter())
+            .filter(move |entry| reached(entry))
+            .map(|entry| entry.meta.key.as_str())
+            .filter(move |shared| seen.insert(*shared))
+            .filter(|shared| self.declared(shared).is_some_and(|d| d.is_payload(shared)))
+    }
+
     fn lookup(&self, key: &str) -> Result<(&AliasedControl, &ControlSurfaceInstance), String> {
         let control = self
             .controls
@@ -125,9 +143,14 @@ impl DevelopmentControlSurface {
     ) -> Result<(), String> {
         let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         // What the alias records now, whichever key or development wrote
-        // it last (a nested development's read-back follows `set_legacy`).
+        // it last (a nested development shows every key on it as recorded,
+        // see `set_legacy`), and what this one's keys on it read back as:
+        // a recording a codec builds from is not what it reads back as.
         let (control, surface) = self.lookup(key)?;
         let was = surface.get_control(&control.key)?;
+        let shown: Vec<(&str, ControlValue)> = (self.shared_payload_keys(key))
+            .filter_map(|shared| Some((shared, self.get_control(shared).ok()?)))
+            .collect();
         self.set_legacy(key, value.clone())?;
         let written = match self.prepare_payload(key, &value) {
             Some(prepared) => {
@@ -137,6 +160,11 @@ impl DevelopmentControlSurface {
         };
         if written.is_err() {
             let _ = self.set_legacy(key, was);
+            if let Some(declared) = &self.declared {
+                for (shared, value) in shown {
+                    declared.show_payload(shared, value);
+                }
+            }
         }
         written
     }
@@ -237,10 +265,13 @@ impl ControlSurface for DevelopmentControlSurface {
             surface.set_legacy(&control.key, value.clone())?;
             found = true;
         }
-        // A payload key written through an outer development reads back as
-        // written, as its alias does.
-        if let Some(declared) = self.declared(key).filter(|d| d.is_payload(key)) {
-            declared.show_payload(key, value);
+        // A payload written through an outer development reads back as
+        // written through every key on the same inner control, as its
+        // alias does.
+        if let Some(declared) = &self.declared {
+            for shared in self.shared_payload_keys(key) {
+                declared.show_payload(shared, value.clone());
+            }
         }
         if found {
             Ok(())
