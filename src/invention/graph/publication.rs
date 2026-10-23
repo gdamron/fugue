@@ -434,6 +434,9 @@ impl SignalGraph {
     /// displaced, to drop off the graph's lock. Allocates: offline.
     pub(crate) fn install_offline(&mut self, publication: &mut Publication) {
         self.install(publication);
+        // No publisher keeps an ordering here: a recompile in place (an
+        // offline retarget, say) reads the modules' targets afresh.
+        self.published = false;
         self.offline_edits += 1;
         if let Some(watch) = &mut self.end_watch {
             watch.refresh(&self.modules);
