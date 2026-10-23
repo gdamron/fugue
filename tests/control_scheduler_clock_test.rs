@@ -86,31 +86,55 @@ fn an_offline_edit_onto_any_signal_is_accepted() {
     engine.render_interleaved(&mut out).unwrap();
 }
 
+/// Whether `connections` still has an edge into the scheduler's clock.
+fn clocked(connections: &[fugue::RuntimeConnectionInfo]) -> bool {
+    connections
+        .iter()
+        .any(|conn| conn.to == "sched" && conn.to_port == "clock")
+}
+
 /// Replacing a scheduler's clock with a module without its gate output
-/// leaves the scheduler unclocked, as a live edit does (which drops the
-/// edge): accepted, and an edit afterwards still goes through.
+/// leaves the scheduler unclocked, as a live edit does: the edge through
+/// the port the new module lacks is dropped, and a clock put back under the
+/// same id does not bring it back. While the schedule still targets the
+/// clock, the replacement is refused with nothing changed.
 #[test]
 fn replacing_a_schedulers_clock_leaves_it_unclocked() {
     let lfo = serde_json::json!({ "rate": 2.0, "waveform": "square" });
+    let clock = serde_json::json!({ "bpm": 120.0 });
     let feeding = serde_json::json!([to_sched("clock", "beat")]);
+    let elsewhere = fugue::ControlValue::String(
+        serde_json::json!([{ "at_step": 1, "module": "other", "control": "bpm", "value": 100.0 }])
+            .to_string(),
+    );
     let mut engine = RenderEngine::new(48_000);
     engine.load_invention(document(feeding.clone())).unwrap();
-    engine.add_module("clock", "lfo", &lfo).unwrap();
+    assert!(
+        engine.add_module("clock", "lfo", &lfo).is_err(),
+        "scheduled"
+    );
+    assert!(clocked(&engine.list_connections()));
     engine
-        .connect("lfo", "unipolar", "dac", "audio_left")
+        .set_control("sched", "schedule", elsewhere.clone())
         .unwrap();
+    engine.add_module("clock", "lfo", &lfo).unwrap();
+    assert!(!clocked(&engine.list_connections()));
+    engine.add_module("clock", "clock", &clock).unwrap();
+    assert!(!clocked(&engine.list_connections()), "not brought back");
     let mut out = vec![0.0f32; 1024];
     engine.render_interleaved(&mut out).unwrap();
     // The same through the render's controller.
     let mut engine = RenderEngine::new(48_000);
     engine.load_invention(document(feeding)).unwrap();
     let controller = engine.controller().unwrap();
+    assert!(controller.add_module("clock", "lfo", &lfo).is_err());
+    engine.set_control("sched", "schedule", elsewhere).unwrap();
     controller.add_module("clock", "lfo", &lfo).unwrap();
     controller
         .connect("lfo", "unipolar", "dac", "audio_left")
         .unwrap();
-    let clock = serde_json::json!({ "bpm": 120.0 });
     controller.add_module("clock", "clock", &clock).unwrap();
+    assert!(!clocked(&engine.list_connections()), "not brought back");
     controller
         .connect("other", "beat", "sched", "clock")
         .unwrap();
