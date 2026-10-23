@@ -322,6 +322,8 @@ you are changing before you change it.
   request the audio thread applies, and who wins when writes conflict.
 - [Musical time](docs/musical-time.md): samples, conditions and clock beats,
   and where a score's notation ends and an invention's interpretation begins.
+- [Shared runtime](docs/shared-runtime.md): how clients find, edit and
+  recover from lost replies to the one daemon that plays the music.
 - [Atomic structural edits](docs/apply-edits.md) and
   [authored inspection](docs/authored-inspection.md): changing and reading the
   running invention's document.
