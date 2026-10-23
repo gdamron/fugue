@@ -340,9 +340,10 @@ impl CellSequencer {
 
     fn start_step(&mut self) {
         // Whether the previous step's gate is still sounding at this edge. A
-        // correctly measured step releases before the boundary (the FUG-189
-        // gap), but an over-estimated duration — the cold start before the
-        // second clock edge, or a sudden accelerando — can leave it high.
+        // correctly measured step releases before the boundary (see
+        // `docs/musical-time.md`), but an over-estimated duration — the cold
+        // start before the second clock edge, or a sudden accelerando — can
+        // leave it high.
         let gate_still_high = self.gate_continuous
             || self.gate_samples_remaining > 0
             || self.grace_player.is_active();
