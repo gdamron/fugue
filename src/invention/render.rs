@@ -454,6 +454,8 @@ mod edit_tests;
 #[cfg(test)]
 mod end_tests;
 #[cfg(test)]
+mod remap_tests;
+#[cfg(test)]
 mod retarget_tests;
 #[cfg(test)]
 mod tests;
