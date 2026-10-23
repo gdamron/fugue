@@ -304,6 +304,15 @@ impl GraphChange {
         }
     }
 
+    /// Removes every connection, for a change that then makes exactly the
+    /// ones it keeps, in order.
+    pub(crate) fn disconnect_all(&mut self) {
+        if !self.mirror.edges.is_empty() {
+            self.mirror.edges.clear();
+            self.edits += 1;
+        }
+    }
+
     /// Removes every connection touching module `id`.
     pub(crate) fn disconnect_module(&mut self, id: &str) {
         let touching: Vec<RoutingConnection> = self

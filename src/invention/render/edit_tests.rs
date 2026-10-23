@@ -13,7 +13,7 @@ const RATE: u32 = 48_000;
 /// which halves the mixer's level on step 4; the beat gate through the
 /// mixer is the only audio. Past the drain's room, `sched` plays its
 /// schedule itself.
-fn document(fillers: usize) -> String {
+pub(in crate::invention::render) fn document(fillers: usize) -> String {
     let mut modules = vec![
         r#"{"id":"clock","type":"clock","config":{"bpm":120.0}}"#.to_string(),
         r#"{"id":"mix","type":"mixer","config":{"channel_count":1}}"#.to_string(),
@@ -112,7 +112,7 @@ fn removing_a_scheduled_target_offline_is_refused_with_nothing_changed() {
 }
 
 /// The sample the schedule's write lands on, rendering a frame at a time.
-fn step_sample() -> usize {
+pub(in crate::invention::render) fn step_sample() -> usize {
     let mut engine = RenderEngine::new(RATE);
     engine.load_json(&document(0)).unwrap();
     let mut frame = [0.0f32; 2];
