@@ -53,7 +53,7 @@ mod timed_swap;
 #[cfg_attr(not(test), allow(dead_code))]
 mod watch;
 
-pub(crate) use change::{BuiltModule, GraphChange, PreparedChange};
+pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
 pub(crate) use pending::{PendingLog, PendingWrite};
 pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;

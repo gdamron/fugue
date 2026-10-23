@@ -1,6 +1,6 @@
 use crate::control_request::DeclKind;
-use crate::invention::graph::{GraphCommand, SignalGraph};
-use crate::invention::publish::{edge, BuiltModule, GraphChange, LiveGraph};
+use crate::invention::graph::SignalGraph;
+use crate::invention::publish::{edge, edit_offline, Committed, GraphChange, LiveGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
 use crate::rpc::non_finite_refusal;
@@ -13,7 +13,6 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use super::declared::{add_offline, remove_offline};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
 pub(crate) mod authored;
@@ -409,17 +408,27 @@ impl RuntimeSnapshot {
 }
 
 impl RuntimeController {
-    /// Applies an edit directly to an offline render's graph.
-    fn apply(&self, cmd: GraphCommand) -> Result<(), GraphCommandError> {
+    /// Applies `edit` to an offline render's graph as one change, as a live
+    /// edit would (see [`edit_offline`]).
+    fn edit_offline(
+        &self,
+        edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
+    ) -> Result<Committed, GraphCommandError> {
         let graph = self
             .graph
             .as_ref()
             .ok_or(GraphCommandError::AudioThreadStopped)?;
-        graph.lock().unwrap().apply_command(cmd);
-        Ok(())
+        let mirrors = (
+            &self.snapshot.control_surfaces,
+            &*self.module_ports,
+            &*self.snapshot.state,
+        );
+        edit_offline(graph, mirrors, edit)
     }
 
-    /// Builds and inserts a module into the current graph.
+    /// Builds and inserts a module into the current graph, replacing one
+    /// with the same id in place; connections to ports the new module lacks
+    /// are dropped.
     ///
     /// Returned handles are flattened as `<module_id>.<handle_name>` to match
     /// the runtime's existing handle naming scheme.
@@ -436,13 +445,7 @@ impl RuntimeController {
                 .add_module(self.sample_rate, module_id, module_type, config)
                 .map(|committed| committed.handles);
         }
-        let BuiltModule {
-            instance,
-            info,
-            module,
-            surface,
-            handles,
-        } = GraphChange::build(
+        let built = GraphChange::build(
             self.registry
                 .as_ref()
                 .expect("a render controller carries its registry"),
@@ -451,71 +454,24 @@ impl RuntimeController {
             module_type,
             config,
         )?;
-
-        // Attach schedulers before touching the graph, so a schedule that
-        // fails to resolve leaves the running invention unchanged.
-        if module_type == crate::modules::control_scheduler::CONTROL_SCHEDULER_TYPE_ID {
-            let handle = handles
-                .iter()
-                .find(|(name, _)| name == "controls")
-                .map(|(_, handle)| handle);
-            crate::modules::control_scheduler::attach_from_handle(
-                module_id,
-                handle,
-                &self.snapshot.control_surfaces,
-            )
-            .map_err(GraphCommandError::ModuleBuildFailed)?;
-        }
-
-        let graph = self
-            .graph
-            .as_ref()
-            .ok_or(GraphCommandError::AudioThreadStopped)?;
-        if let Some(module) = instance {
-            add_offline(
-                graph,
-                &self.snapshot.control_surfaces,
-                module_id,
-                module,
-                surface,
-            )?;
-        }
-
-        self.module_ports
-            .lock()
-            .unwrap()
-            .insert(module_id.to_string(), module.ports);
-
-        {
-            let mut state = self.snapshot.state.lock().unwrap();
-            state.modules.insert(module_id.to_string(), info);
-            state.document_upsert_module(module_id, module_type, config);
-        }
-
-        Ok(handles
-            .into_iter()
-            .map(|(name, handle)| (format!("{}.{}", module_id, name), handle))
-            .collect())
+        self.edit_offline(|change| {
+            change.upsert(module_id, built);
+            Ok(())
+        })
+        .map(|committed| committed.handles)
     }
 
-    /// Removes a module and any connections that reference it.
+    /// Removes a module and any connections that reference it. Refused,
+    /// with nothing changed, while a schedule still targets it.
     pub fn remove_module(&self, module_id: &str) -> Result<(), GraphCommandError> {
         if let Some(live) = &self.live {
             return live.remove_module(module_id).map(drop);
         }
-        let graph = self
-            .graph
-            .as_ref()
-            .ok_or(GraphCommandError::AudioThreadStopped)?;
-        remove_offline(graph, &self.snapshot.control_surfaces, module_id)?;
-        self.module_ports.lock().unwrap().shift_remove(module_id);
-        let mut state = self.snapshot.state.lock().unwrap();
-        state.modules.shift_remove(module_id);
-        state
-            .connections
-            .retain(|conn| conn.from != module_id && conn.to != module_id);
-        state.document_remove_module(module_id);
-        Ok(())
+        self.edit_offline(|change| {
+            change.remove(module_id);
+            Ok(())
+        })
+        .map(drop)
     }
 
     /// Connects an output port to an input port after validating both ends.
@@ -526,49 +482,11 @@ impl RuntimeController {
         to_module: &str,
         to_port: &str,
     ) -> Result<(), GraphCommandError> {
+        let edge = edge(from_module, from_port, to_module, to_port);
         if let Some(live) = &self.live {
-            return live.connect(edge(from_module, from_port, to_module, to_port));
+            return live.connect(edge);
         }
-        let ports = self.module_ports.lock().unwrap();
-        let source = ports
-            .get(from_module)
-            .ok_or_else(|| GraphCommandError::UnknownModule(from_module.to_string()))?;
-        if !source.outputs.iter().any(|port| port == from_port) {
-            return Err(GraphCommandError::InvalidPort(format!(
-                "module '{}' does not have output port '{}' (available: {:?})",
-                from_module, from_port, source.outputs
-            )));
-        }
-        let dest = ports
-            .get(to_module)
-            .ok_or_else(|| GraphCommandError::UnknownModule(to_module.to_string()))?;
-        if !dest.inputs.iter().any(|port| port == to_port) {
-            return Err(GraphCommandError::InvalidPort(format!(
-                "module '{}' does not have input port '{}' (available: {:?})",
-                to_module, to_port, dest.inputs
-            )));
-        }
-        drop(ports);
-
-        self.apply(GraphCommand::AddConnection {
-            from_module: from_module.to_string(),
-            from_port: from_port.to_string(),
-            to_module: to_module.to_string(),
-            to_port: to_port.to_string(),
-        })?;
-
-        self.snapshot
-            .state
-            .lock()
-            .unwrap()
-            .connections
-            .push(RuntimeConnectionInfo {
-                from: from_module.to_string(),
-                from_port: from_port.to_string(),
-                to: to_module.to_string(),
-                to_port: to_port.to_string(),
-            });
-        Ok(())
+        self.edit_offline(|change| change.connect(edge)).map(drop)
     }
 
     /// Removes a connection between two ports if present.
@@ -579,26 +497,14 @@ impl RuntimeController {
         to_module: &str,
         to_port: &str,
     ) -> Result<(), GraphCommandError> {
+        let edge = edge(from_module, from_port, to_module, to_port);
         if let Some(live) = &self.live {
-            return live.disconnect(edge(from_module, from_port, to_module, to_port));
+            return live.disconnect(edge);
         }
-        self.apply(GraphCommand::RemoveConnection {
-            from_module: from_module.to_string(),
-            from_port: from_port.to_string(),
-            to_module: to_module.to_string(),
-            to_port: to_port.to_string(),
-        })?;
-        self.snapshot
-            .state
-            .lock()
-            .unwrap()
-            .connections
-            .retain(|conn| {
-                !(conn.from == from_module
-                    && conn.from_port == from_port
-                    && conn.to == to_module
-                    && conn.to_port == to_port)
-            });
-        Ok(())
+        self.edit_offline(|change| {
+            change.disconnect(edge);
+            Ok(())
+        })
+        .map(drop)
     }
 }

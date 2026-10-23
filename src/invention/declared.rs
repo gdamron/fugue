@@ -41,11 +41,15 @@
 use indexmap::IndexMap;
 use std::sync::{Arc, Mutex, Weak};
 
-use super::graph::{GraphCommand, SignalGraph};
+#[cfg(test)]
+use super::graph::GraphCommand;
+use super::graph::SignalGraph;
 use super::publish::{
     CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
 };
-use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
+use super::runtime::ControlSurfaceInstance;
+#[cfg(test)]
+use super::runtime::{GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
     PayloadCodec, Refusal, Request, RequestId, RequestSender, RequestValue, RtValue, Source,
@@ -766,17 +770,19 @@ pub(crate) fn bind_offline(
     let mut locked = graph.lock().unwrap();
     for (id, surface) in surfaces.lock().unwrap().iter() {
         if let Some(instance) = locked.modules.get_mut(id) {
-            surface.bind(offline(graph, id), instance.module_mut());
+            surface.bind(offline_route(graph, id), instance.module_mut());
         }
     }
 }
 
-/// Adds `module` to an offline render's `graph` as `module_id` in one step
-/// under the lock its renders take: lists its `surface` in `surfaces`,
+/// Adds a bare `module` to an offline render's `graph` as `module_id` in one
+/// step under the lock its renders take: lists its `surface` in `surfaces`,
 /// retires the one it displaces, binds it, and installs the module. So
 /// concurrent edits commit in one order, and a write that checks its
 /// route under the same lock always reaches the module its surface
-/// belongs to.
+/// belongs to. A test fixture: renders edit through `publish::edit_offline`,
+/// which also keeps their schedules and connections as a live edit does.
+#[cfg(test)]
 pub(crate) fn add_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
@@ -802,7 +808,7 @@ pub(crate) fn add_offline(
         displaced.retire();
     }
     if let Some(surface) = surface {
-        surface.bind(offline(graph, module_id), module.module_mut());
+        surface.bind(offline_route(graph, module_id), module.module_mut());
     }
     locked.apply_command(GraphCommand::AddModule {
         module_id: module_id.to_string(),
@@ -812,7 +818,9 @@ pub(crate) fn add_offline(
 }
 
 /// Removes `module_id` from an offline render's `graph` and `surfaces` in
-/// one step under the lock its renders take, retiring its surface.
+/// one step under the lock its renders take, retiring its surface. A test
+/// fixture, as [`add_offline`] is.
+#[cfg(test)]
 pub(crate) fn remove_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
@@ -847,7 +855,8 @@ pub(crate) fn retire_offline(
     }
 }
 
-fn offline(graph: &Arc<Mutex<SignalGraph>>, module_id: &str) -> Route {
+/// The route a surface takes to its module in an offline render's `graph`.
+pub(crate) fn offline_route(graph: &Arc<Mutex<SignalGraph>>, module_id: &str) -> Route {
     Route::Offline {
         graph: Arc::downgrade(graph),
         module_id: module_id.to_string(),

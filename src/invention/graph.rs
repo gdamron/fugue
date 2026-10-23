@@ -41,7 +41,9 @@ use std::sync::Arc;
 
 use crate::control_request::Transport;
 use crate::modules::AudioDiagnostics;
-use crate::{GraphModule, MAX_BLOCK};
+#[cfg(test)]
+use crate::GraphModule;
+use crate::MAX_BLOCK;
 
 use super::runtime::ModuleInstance;
 
@@ -68,8 +70,10 @@ pub(crate) use requests::link_requests;
 pub(crate) use requests::offline_requests;
 pub(crate) use requests::RequestDrain;
 
-/// An incremental mutation applied directly to a graph no audio thread owns
-/// (offline render). A live graph changes only by publication.
+/// An incremental mutation applied directly to a graph no audio thread owns,
+/// for tests. A live graph changes only by publication, and an offline
+/// render's through the same change (see `publish::edit_offline`).
+#[cfg(test)]
 pub(crate) enum GraphCommand {
     /// Add a new module to the graph (overwrites if duplicate ID).
     AddModule {
@@ -80,13 +84,6 @@ pub(crate) enum GraphCommand {
     RemoveModule { module_id: String },
     /// Add a connection between two modules.
     AddConnection {
-        from_module: String,
-        from_port: String,
-        to_module: String,
-        to_port: String,
-    },
-    /// Remove a connection between two modules (fire-and-forget).
-    RemoveConnection {
         from_module: String,
         from_port: String,
         to_module: String,
@@ -284,6 +281,7 @@ impl SignalGraph {
     }
 
     /// Applies a single command to a graph no audio thread owns. Allocates.
+    #[cfg(test)]
     pub(crate) fn apply_command(&mut self, cmd: GraphCommand) {
         self.published = false;
         match cmd {
@@ -318,20 +316,6 @@ impl SignalGraph {
                     from_port,
                     to_module,
                     to_port,
-                });
-                self.topo_dirty = true;
-            }
-            GraphCommand::RemoveConnection {
-                from_module,
-                from_port,
-                to_module,
-                to_port,
-            } => {
-                self.edges.retain(|e| {
-                    !(e.from_module == from_module
-                        && e.from_port == from_port
-                        && e.to_module == to_module
-                        && e.to_port == to_port)
                 });
                 self.topo_dirty = true;
             }

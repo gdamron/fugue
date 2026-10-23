@@ -177,9 +177,9 @@ pub use self::factory::ControlSchedulerFactory;
 pub use self::schedule::{ScheduleEntry, ScheduleValue};
 
 pub(crate) use self::controls::{Rebind, SurfaceDirectory, Written};
-pub(crate) use self::factory::{
-    attach_from_handle, attach_from_handle_resolving, name_unattached_from_handles,
-};
+#[cfg(test)]
+pub(crate) use self::factory::attach_from_handle;
+pub(crate) use self::factory::{attach_from_handle_resolving, name_unattached_from_handles};
 pub(crate) use self::resolved::schedule_targets;
 
 mod controls;
