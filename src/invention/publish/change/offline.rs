@@ -5,22 +5,25 @@
 //! schedulers whose targets the change rebuilds re-resolve against the new
 //! instances (see [`Rescheduling`]), and a change removing a module a
 //! schedule still targets, without writing a schedule that no longer does,
-//! is refused with nothing changed. Only the last step differs: instead of
-//! compiling a publication for an audio thread to install, the change is
-//! applied to the graph under the lock its renders take, so a rebound
-//! scheduler adopts its schedule at once, with no handover.
+//! is refused with nothing changed. The change compiles the same
+//! publication, with the same handovers (see `publish::rebind`), and the
+//! graph installs it as the audio thread installs a live one: survivors
+//! keep their feedback carry and unconnected inputs, a rebuilt module may
+//! take over from the instance it replaces. Only the transport differs:
+//! the publication is installed at once, under the lock the render takes,
+//! rather than queued for an audio thread.
 
 use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
 
-use super::{GraphChange, Rescheduling, TopologyMirror};
+use super::{GraphChange, PreparedChange, TopologyMirror};
 use crate::invention::declared::offline_route;
 use crate::invention::graph::SignalGraph;
 use crate::invention::orchestration::ModulePorts;
-use crate::invention::publish::{connection_info, Committed};
-use crate::invention::runtime::{GraphCommandError, ModuleInstance};
+use crate::invention::publish::{connection_info, rebind, Committed};
+use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
-use crate::modules::control_scheduler::{Rebind, SurfaceDirectory};
+use crate::modules::control_scheduler::SurfaceDirectory;
 
 /// The runtime mirrors an offline edit commits with the graph: the
 /// control-surface directory, module ports and runtime state.
@@ -49,39 +52,55 @@ pub(crate) fn edit_offline(
     let mut locked = graph.lock().unwrap();
     let mirror = TopologyMirror::of(&locked.modules, &locked.edges);
     let mut change = GraphChange::new(0, mirror, directory.clone(), locked.block_size);
-    // Edited even on a replaced render, so what `edit` built is retired
-    // below rather than dropped with a surface left open.
+    // A replaced render takes no edit; what `edit` built is dropped.
     let checked = edit(&mut change).and_then(|()| match locked.retired {
         true => Err(GraphCommandError::AudioThreadStopped),
         false => change.attach(),
     });
-    let rebinds = checked.and_then(|()| {
-        Rescheduling::rebinds(&change.rescheduling, &change.surfaces, &change.built)
+    let discarded = change.take_discarded();
+    let prepared = checked.map(|()| change.compile()).and_then(|mut prepared| {
+        // The same handovers a live commit packs (see `rebind::pack`).
+        rebind::pack(&mut prepared).map(|packed| (prepared, packed.written))
     });
-    let rebinds = match rebinds {
-        Ok(rebinds) => rebinds,
+    let (mut prepared, written) = match prepared {
+        Ok(prepared) => prepared,
         Err(error) => {
-            // A kept surface of a module never installed takes no writes.
-            for module in change.built.values() {
-                if let Some(surface) = &module.surface {
-                    surface.retire();
-                }
-            }
             drop(locked);
+            drop(discarded);
             return Err(error);
         }
     };
-    if change.edits == 0 {
+    let Some(mut publication) = prepared.publication.take() else {
         return Ok(Committed::default());
+    };
+    publication.map_survivors(locked.modules.keys().map(String::as_str));
+    let previous: Vec<String> = locked.modules.keys().cloned().collect();
+    locked.install_offline(&mut publication);
+    for schedule in written {
+        schedule.record();
     }
-    let mut built = std::mem::take(&mut change.built);
-    let mirror = std::mem::take(&mut change.mirror);
+    let committed = commit_mirrors(graph, &previous, prepared, (directory, module_ports, state));
+    drop(locked);
+    // What the change displaced drops off the lock.
+    drop(publication);
+    drop(discarded);
+    Ok(committed)
+}
 
-    // The surfaces first, as a live commit does: those of removed and
-    // replaced modules retire, and each built module's binds to it here.
-    let removed: Vec<String> = locked
-        .modules
-        .keys()
+/// Commits the runtime mirrors to `prepared`, now installed in `graph` in
+/// place of the modules `previous` lists, as `LiveGraph::commit_mirrors`
+/// does for a published change: surfaces of removed and replaced modules
+/// retire, built modules' surfaces route to the graph, and the module
+/// ports and runtime state follow the new topology.
+fn commit_mirrors(
+    graph: &Arc<Mutex<SignalGraph>>,
+    previous: &[String],
+    prepared: PreparedChange,
+    (directory, module_ports, state): OfflineMirrors<'_>,
+) -> Committed {
+    let PreparedChange { mirror, built, .. } = prepared;
+    let removed: Vec<String> = previous
+        .iter()
         .filter(|id| !mirror.modules.contains_key(*id))
         .cloned()
         .collect();
@@ -93,59 +112,26 @@ pub(crate) fn edit_offline(
             }
         }
         // A replaced module's surface keeps its place, as its module does.
-        for (id, module) in built.iter_mut() {
+        for (id, module) in &built {
             if let Some(surface) = surfaces.get(id) {
                 surface.retire();
             }
-            let (Some(surface), Some(instance)) = (&module.surface, module.instance.as_mut())
-            else {
-                surfaces.shift_remove(id);
-                continue;
-            };
-            surface.bind(offline_route(graph, id), instance.module_mut());
-            surfaces.insert(id.clone(), surface.clone());
+            match &module.surface {
+                Some(surface) => {
+                    surface.activate(offline_route(graph, id));
+                    surfaces.insert(id.clone(), surface.clone());
+                }
+                None => {
+                    surfaces.shift_remove(id);
+                }
+            }
         }
     }
-
-    // The modules in the mirror's order, as a publication installs them.
-    let mut previous = std::mem::take(&mut locked.modules);
-    let mut modules: IndexMap<String, ModuleInstance> =
-        IndexMap::with_capacity(mirror.modules.len());
-    for id in mirror.modules.keys() {
-        let instance = built
-            .get_mut(id)
-            .and_then(|module| module.instance.take())
-            .or_else(|| previous.shift_remove(id))
-            .expect("every module in the mirror is built or kept");
-        modules.insert(id.clone(), instance);
-    }
-    locked.modules = modules;
-    locked.sinks = mirror.sinks();
-    locked.edges = mirror.edges.clone();
-    locked.connected_in_ports.clear();
-    locked.published = false;
-    locked.topo_dirty = true;
-
-    // Survivors adopt the schedules re-resolved for them, and record them.
-    for Rebind {
-        id,
-        payload,
-        written,
-    } in rebinds
-    {
-        let applied = locked.apply_payload(&id, Rebind::CONTROL, payload);
-        debug_assert!(applied.is_ok(), "a scheduler takes its own schedule");
-        if applied.is_ok() {
-            written.record();
-        }
-    }
-
     *module_ports.lock().unwrap() = mirror
         .modules
         .iter()
         .map(|(id, module)| (id.clone(), module.ports.clone()))
         .collect();
-    let mut committed = Committed::default();
     {
         let mut state = state.lock().unwrap();
         for id in &removed {
@@ -158,11 +144,12 @@ pub(crate) fn edit_offline(
         }
         state.connections = mirror.edges.iter().map(connection_info).collect();
     }
-    drop(locked);
-    // Modules replaced in place stop too, as their successors start.
-    committed.stopped = removed;
+    let mut committed = Committed {
+        stopped: removed,
+        ..Committed::default()
+    };
     for (id, module) in built {
-        if previous.contains_key(&id) && !committed.stopped.contains(&id) {
+        if previous.contains(&id) {
             committed.stopped.push(id.clone());
         }
         for (name, handle) in module.handles {
@@ -170,8 +157,5 @@ pub(crate) fn edit_offline(
         }
         committed.started.push(module.info);
     }
-    // What the change displaced drops off the lock.
-    drop(previous);
-    drop(change);
-    Ok(committed)
+    committed
 }

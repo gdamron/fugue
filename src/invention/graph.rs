@@ -208,6 +208,10 @@ pub(crate) struct SignalGraph {
     /// An offline render's graph that a new render replaced: no module is
     /// added to it or removed from it again (see `declared::retire_offline`).
     pub(crate) retired: bool,
+    /// Edits an offline render installed in place (see
+    /// `publish::edit_offline`): a payload resolved against the surfaces
+    /// before one is stale.
+    pub(crate) offline_edits: u64,
     /// Observers of the mixed master output (peak meter, spectrum tap), fed
     /// once per block for off-thread samplers to read.
     pub(crate) master: MasterObservers,
@@ -257,6 +261,7 @@ impl SignalGraph {
             tables_stale: true,
             installing: None,
             retired: false,
+            offline_edits: 0,
             master,
             diagnostics: None,
             end_watch: None,

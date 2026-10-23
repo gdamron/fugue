@@ -448,6 +448,8 @@ impl OrchestrationRuntime for RenderEngine {
 }
 
 #[cfg(test)]
+mod edit_state_tests;
+#[cfg(test)]
 mod edit_tests;
 #[cfg(test)]
 mod end_tests;

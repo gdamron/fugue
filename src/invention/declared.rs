@@ -165,7 +165,8 @@ pub(crate) struct Checked<'a> {
     /// The publisher generation the directory was read at
     /// ([`DeclaredSurface::generation`]); a live write the publisher would
     /// stamp with any other is refused as [`STALE`], since a graph change
-    /// may have replaced what the payload resolved.
+    /// may have replaced what the payload resolved; so is an offline write
+    /// after an edit installed in place since.
     pub(crate) generation: Option<u64>,
     /// The modules the payload writes: a timed edit waiting that rebuilds
     /// or removes one, or that re-resolved the payload this write
@@ -262,16 +263,21 @@ impl DeclaredSurface {
     }
 
     /// The live graph's publisher generation, read under its lock (so
-    /// after any graph change has updated the directory), or `None` when
-    /// the module is not live. Control thread.
+    /// after any graph change has updated the directory), or the count of
+    /// edits an offline render installed, read under its graph's lock;
+    /// `None` when the module is neither. Control thread.
     pub(crate) fn generation(&self) -> Option<u64> {
         // The route lock is released first: a write takes it under the
-        // publisher.
-        let publisher = match &*self.route.lock().unwrap() {
-            Route::Live(port) => port.publisher.clone(),
+        // publisher, or under the offline graph's lock.
+        let (publisher, graph) = match &*self.route.lock().unwrap() {
+            Route::Live(port) => (Some(port.publisher.clone()), None),
+            Route::Offline { graph, .. } => (None, Some(graph.clone())),
             _ => return None,
         };
-        let publisher = publisher.upgrade()?;
+        if let Some(graph) = graph {
+            return Some(graph.upgrade()?.lock().unwrap().offline_edits);
+        }
+        let publisher = publisher?.upgrade()?;
         let generation = publisher.lock().unwrap().generation();
         Some(generation)
     }
@@ -598,6 +604,12 @@ impl DeclaredSurface {
                 match write {
                     Write::Value(value) => graph.apply_control(&module_id, index, value),
                     Write::Payload(payload, shown, checked) => {
+                        // Resolved before an offline edit installed: it may
+                        // name what the edit replaced (see `Checked`).
+                        let generation = checked.as_ref().and_then(|c| c.generation);
+                        if generation.is_some_and(|seen| seen != graph.offline_edits) {
+                            return Err(STALE.into());
+                        }
                         let applied = graph.apply_payload(&module_id, index, payload);
                         if applied.is_ok() {
                             self.show(index, shown, None);
