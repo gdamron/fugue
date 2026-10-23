@@ -327,8 +327,11 @@ third attempt, the batch is refused as `internal` and nothing was applied.
 1. The new graph is swapped in within one audio block. Modules the batch did
    not touch keep running without interruption and keep their phase.
 2. Control values written to modules that survive the batch are applied right
-   after the new graph is queued. A value may therefore be heard up to one
-   audio block before the new graph. Added and rebuilt modules are built from
+   after the new graph is queued. A declared control's write is a control
+   request queued behind the new graph, so it applies in the block that
+   installs it, never before. A control on a module type not yet moved to
+   control requests is written directly, and may be heard up to one audio
+   block before the new graph. Added and rebuilt modules are built from
    their final configs and take the batch's values through their setters
    before the new graph is prepared, so they arrive with them: a control's key
    need not be the config key the module is built from (a filter's `type`
@@ -342,8 +345,9 @@ third attempt, the batch is refused as `internal` and nothing was applied.
    standalone write, these are emitted as the change is made, before the
    revision advances.
 4. The revision advances once, however many edits the batch held.
-5. The session is saved. A failed save is logged and does not undo the
-   commit.
+5. The session is marked for saving, and a background writer saves it
+   shortly after (see [`shared-runtime.md`](shared-runtime.md#publishing-a-graph-change)).
+   A failed save is retried and reported, and never undoes the commit.
 6. One `topology_changed`. The event carries no graph: a client that wants
    the new one reads a snapshot.
 

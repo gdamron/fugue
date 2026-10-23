@@ -1,5 +1,5 @@
-//! First-party developments' exposed names follow the convention too
-//! (N12): the inputs, outputs and controls a development exposes, whether
+//! First-party developments' exposed names follow the convention too:
+//! the inputs, outputs and controls a development exposes, whether
 //! the document is one or defines one inline (nested ones included). The
 //! documents are the closed-config sweep's: `examples/` plus
 //! `FUGUE_DOCUMENT_DIRS`. A development referenced by path or ref is
@@ -38,7 +38,7 @@ fn violations(document: &Invention, at: &str) -> Vec<String> {
     let mut names = Vec::new();
     exposed(document, at, &mut names);
     let mut found: Vec<String> = Vec::new();
-    // Indices of each (where, kind, stem) family, which run from 0 (N4).
+    // Indices of each (where, kind, stem) family, which run from 0.
     let mut families: BTreeMap<(&str, &str, &str), Vec<usize>> = BTreeMap::new();
     for (at, kind, name) in &names {
         for problem in naming_problems(name) {
@@ -71,7 +71,7 @@ fn every_first_party_development_exposes_conforming_names() {
     }
     assert!(
         found.is_empty(),
-        "Developments expose names that break the convention (N12):\n{}",
+        "Developments expose names that break the convention:\n{}",
         found.join("\n")
     );
 }

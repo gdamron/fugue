@@ -1,6 +1,6 @@
 ---
 name: import-score-from-pdf
-description: Transcribe a score PDF into a validated fugue.score.v1 asset. Use when turning notated sheet music (PDF) into a Fugue score the sequencers can play. Pins poppler for a deterministic render + anchors, then transcribes page→system→measure with numeric self-checks.
+description: Transcribe a score PDF into a validated fugue.score.v1 asset. Use when turning notated sheet music (PDF) into a Fugue score the sequencers can play. Renders with poppler at a fixed DPI, recording its version, for a repeatable render + anchors, then transcribes page→system→measure with numeric self-checks.
 ---
 
 # Import score from PDF
@@ -12,8 +12,8 @@ This skill is **cross-platform**: the rendering/anchor step is a plain script
 (`scripts/prep_pdf.sh` for macOS/Linux/WSL, `scripts/prep_pdf.ps1` for Windows).
 
 We do **not** rasterize PDFs ourselves. Poppler is the canonical renderer the
-toolchain already assumes; pinning it (version recorded in the manifest) is how
-we get reproducibility. The _accuracy_ of a transcription is measured separately,
+toolchain already assumes; recording its version in the manifest is how a run
+can be repeated. The _accuracy_ of a transcription is measured separately,
 against a MusicXML/MIDI ground truth, by the import-accuracy harness — not by
 pixel-identical rendering.
 
@@ -63,7 +63,7 @@ Output in `out/`:
 | `page-1.png`, `page-2.png`, … | the pages to read, in order                                       |
 | `info.txt`                    | `pdfinfo` metadata (Title, Author, Creator, page count/size)      |
 | `text.txt`                    | `pdftotext -layout` embedded text (titles, tempo marks, etc.)     |
-| `manifest.json`               | pinned poppler version + DPI + page list (the determinism record) |
+| `manifest.json`               | poppler version + DPI + page list (the record for repeating a run) |
 
 ## 2 — Fill metadata from anchors
 
@@ -128,11 +128,11 @@ Assemble the `fugue.score.v1` document:
 
 ## 4 — Validate against fugue.score.v1
 
-Every candidate must conform to the schema. When the `fugue` CLI is installed,
+Every candidate must conform to the schema. When the `fyug` CLI is installed,
 run the authoritative validator directly:
 
 ```sh
-fugue score validate draft-score.json   # prints OK / first error; exit 0 on pass
+fyug score validate draft-score.json   # prints OK / first error; exit 0 on pass
 ```
 
 Treat a non-zero exit as a failed candidate: fix the reported problem and

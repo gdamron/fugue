@@ -171,8 +171,9 @@ impl RunningInvention {
     /// document, refreshed configs, and new registry are adopted in the same
     /// step as the publication, so no other edit can land between them, and
     /// an edit that built against the previous registry is built again.
-    /// Control updates are written right after the publication is queued, so
-    /// a value may be heard up to one block before the new topology. A
+    /// Control updates are written right after the publication is queued. A
+    /// declared control's update is a request behind it and never leads the
+    /// new topology; a legacy control's may lead by up to one block. A
     /// validated update that still fails when written keeps the module's
     /// previous value, is moved from the report's `controls_updated` to its
     /// `controls_failed`, and that previous value is written back to the
