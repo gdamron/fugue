@@ -81,10 +81,9 @@ fn adopted_live<G>(
     (target, freq): (&str, &str),
     hold: impl FnOnce() -> G + Send,
 ) {
+    // Each step's write lands in the block it falls in, at the top level
+    // and inside a development alike.
     assert_eq!(clocked(rig, id, 1.0), (0, 0), "step 0");
-    // A development orders its inner modules by signal flow alone, so its
-    // scheduler's write may land a block later.
-    assert_eq!(counted_block(rig), (0, 0));
     assert_eq!(read(rig, target, freq), ControlValue::Number(220.0));
     write(rig, id, "schedule", NEXT.into());
     rig.live.write_input(id, "clock", 0.0).unwrap();
@@ -94,7 +93,6 @@ fn adopted_live<G>(
         "the adopting block"
     );
     assert_eq!(clocked(rig, id, 1.0), (0, 0), "step 1");
-    assert_eq!(counted_block(rig), (0, 0));
     assert_eq!(read(rig, target, freq), ControlValue::Number(330.0));
     let (_, _, frees) = crate::alloc_counter::allocator_events(|| rig.live.reclaim());
     assert!(frees >= 1, "the reclaimer frees the replaced schedule");
@@ -176,4 +174,51 @@ fn a_schedule_resolved_before_a_change_published_is_refused_as_stale() {
     assert_eq!(clocked(&mut rig, "sched", 0.0), (0, 0));
     assert_eq!(clocked(&mut rig, "sched", 1.0), (0, 0), "step 1");
     assert_eq!(read(&rig, "o", "frequency"), ControlValue::Number(330.0));
+}
+
+/// `INNER` with its scheduler first writing an inner `m`, so the order the
+/// development is built in runs `o` before the scheduler.
+const RETARGETED: &str = r#"{
+    "version": "1.0.0",
+    "developments": [{ "name": "pattern", "definition": {
+        "version": "1.0.0",
+        "modules": [
+            { "id": "sched", "type": "control_scheduler", "config": { "schedule": [
+                { "at_step": 0, "module": "m", "control": "frequency", "value": 220.0 }
+            ] } },
+            { "id": "m", "type": "oscillator", "config": { "frequency": 110.0 } },
+            { "id": "o", "type": "oscillator", "config": { "frequency": 440.0 } }
+        ],
+        "connections": [],
+        "inputs": [{ "name": "clock", "to": "sched", "to_port": "clock" }],
+        "outputs": [{ "name": "audio", "from": "o", "from_port": "audio" }],
+        "controls": [
+            { "name": "schedule", "module": "sched", "control": "schedule" },
+            { "name": "freq", "module": "o", "control": "frequency" }
+        ]
+    } }],
+    "modules": [
+        { "id": "p", "type": "pattern" },
+        { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+    ],
+    "connections": [
+        { "from": "p", "from_port": "audio", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+/// A live schedule retargeting an inner scheduler carries the inner order
+/// it leaves: adopted with it, allocation-, free- and lock-free, so its
+/// next step lands in the block it falls in, as loaded.
+#[test]
+fn a_schedule_retargeting_an_inner_scheduler_reorders_its_development() {
+    let mut rig = Rig::new(RETARGETED);
+    rig.render(1);
+    assert_eq!(clocked(&mut rig, "p", 1.0), (0, 0), "step 0");
+    write(&rig, "p", "schedule", NEXT.into());
+    rig.live.write_input("p", "clock", 0.0).unwrap();
+    assert_eq!(block_while_held(&mut rig, || ()), Ok((0, 0)), "adopting");
+    assert_eq!(clocked(&mut rig, "p", 1.0), (0, 0), "step 1");
+    assert_eq!(read(&rig, "p", "freq"), ControlValue::Number(330.0));
+    let (_, _, frees) = crate::alloc_counter::allocator_events(|| rig.live.reclaim());
+    assert!(frees >= 1, "the reclaimer frees the replaced schedule and order");
 }
