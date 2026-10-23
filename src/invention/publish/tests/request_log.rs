@@ -355,6 +355,10 @@ fn a_log_with_timed_edits_round_trips_and_one_from_before_them_still_reads() {
             id: "osc2".into(),
             module_type: "oscillator".into(),
             config: serde_json::json!({ "waveform": "square" }),
+            writes: vec![crate::LoggedSetting {
+                key: "frequency".into(),
+                value: crate::ControlValue::Number(220.0),
+            }],
         }],
         connections: vec![crate::LoggedConnection {
             from: "osc2".into(),

@@ -72,7 +72,9 @@ use crate::control_request::RtValue;
 
 mod timed;
 
-pub use timed::{LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedModule, LoggedWhen};
+pub use timed::{
+    LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedModule, LoggedSetting, LoggedWhen,
+};
 
 /// The most applied requests a session log records before it stops.
 pub const REQUEST_LOG_CAPACITY: usize = 16_384;

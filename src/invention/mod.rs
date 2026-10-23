@@ -50,7 +50,8 @@ pub use reload::{DevelopmentDefinitions, ReloadError, ReloadReport};
 pub use render::{CodeModuleRuntimeInfo, RenderEngine};
 pub use request_log::{
     LoggedBeat, LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedModule, LoggedRequest,
-    LoggedValue, LoggedWhen, RequestLog, REQUEST_LOG_CAPACITY, TIMED_EDIT_LOG_CAPACITY,
+    LoggedSetting, LoggedValue, LoggedWhen, RequestLog, REQUEST_LOG_CAPACITY,
+    TIMED_EDIT_LOG_CAPACITY,
 };
 pub use rpc_snapshot::ControlOverride;
 pub use runtime::{GraphCommandError, InventionRuntime, RunningInvention};
