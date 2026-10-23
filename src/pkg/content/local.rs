@@ -42,13 +42,17 @@ impl ContentRoots {
     pub fn load_development(&self, reference: &ContentRef) -> Result<Invention> {
         let _guard = package_read_guard(&self.packages)?;
         validate_reference(reference)?;
-        let resolved = self.inspect(reference, Hashing::Full)?;
+        let resolved = self.inspect(reference, Hashing::Full, Purpose::Load)?;
         if resolved.entry.kind != ContentKind::Development {
             return Err(err("kind_mismatch", "Select a development reference"));
         }
         let mut document = resolved.document;
         self.prepare_definition(&mut document, 0)?;
-        if self.inspect(reference, Hashing::Full)?.fingerprints != resolved.fingerprints {
+        if self
+            .inspect(reference, Hashing::Full, Purpose::Load)?
+            .fingerprints
+            != resolved.fingerprints
+        {
             return Err(err(
                 "stale_reference",
                 "Content changed while importing; inspect and retry",
@@ -61,11 +65,15 @@ impl ContentRoots {
     pub fn load_invention(&self, reference: &ContentRef) -> Result<Invention> {
         let _guard = package_read_guard(&self.packages)?;
         validate_reference(reference)?;
-        let resolved = self.inspect(reference, Hashing::Full)?;
+        let resolved = self.inspect(reference, Hashing::Full, Purpose::Load)?;
         if resolved.entry.kind != ContentKind::Invention {
             return Err(err("kind_mismatch", "Select an invention reference"));
         }
-        if self.inspect(reference, Hashing::Full)?.fingerprints != resolved.fingerprints {
+        if self
+            .inspect(reference, Hashing::Full, Purpose::Load)?
+            .fingerprints
+            != resolved.fingerprints
+        {
             return Err(err(
                 "stale_reference",
                 "Content changed while loading; inspect and retry",
@@ -89,7 +97,8 @@ impl ContentRoots {
             .to_path_buf();
         for development in &mut document.developments {
             let mut child = if let Some(reference) = &development.reference {
-                self.inspect(reference, Hashing::Full)?.document
+                self.inspect(reference, Hashing::Full, Purpose::Load)?
+                    .document
             } else if let Some(path) = &development.path {
                 Invention::from_file(
                     parent
@@ -163,12 +172,17 @@ impl ContentRoots {
 
     /// Resolve and verify a reference. `Hashing::Cached` may reuse digests of
     /// unchanged files; imports pass `Hashing::Full` to re-hash every byte.
-    fn inspect(&self, reference: &ContentRef, hashing: Hashing) -> Result<Resolved> {
+    fn inspect(
+        &self,
+        reference: &ContentRef,
+        hashing: Hashing,
+        purpose: Purpose,
+    ) -> Result<Resolved> {
         let mut closure = Closure {
             hashing,
             ..Default::default()
         };
-        let (path, root, manifest) = self.reference_path(reference)?;
+        let (path, root, manifest) = self.reference_path(reference, purpose)?;
         let document = self.walk_document(&path, &root, manifest.as_ref(), &mut closure, 0)?;
         let (id, version, source, summary) = match reference {
             ContentRef::Package { package, version } => (
@@ -253,12 +267,20 @@ impl ContentRoots {
     fn reference_path(
         &self,
         reference: &ContentRef,
+        purpose: Purpose,
     ) -> Result<(PathBuf, PathBuf, Option<PackageManifest>)> {
         match reference {
             ContentRef::Package { package, version } => {
                 validate_package(package, version)?;
-                // Resolve the manifest through the existing installed-version resolver.
-                let resolved = pkg::resolve_package_asset(
+                // Resolve the manifest through the existing installed-version
+                // resolver: under a governing lockfile when its document
+                // will load (an exact version the lock does not lock is
+                // refused), as installed when it is only browsed.
+                let resolve = match purpose {
+                    Purpose::Load => pkg::resolve_package_asset,
+                    Purpose::Browse => pkg::select_package_asset,
+                };
+                let resolved = resolve(
                     &PackageAudioRef {
                         id: package.clone(),
                         requirement: format!("={version}"),
@@ -307,6 +329,15 @@ impl ContentRoots {
             }
         }
     }
+}
+
+/// Why content is read: to load into a session, where a governing lockfile
+/// pins and verifies every package (see [`pkg::lock::govern`]), or only to
+/// browse or fingerprint it, which a frozen session leaves as it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    Load,
+    Browse,
 }
 
 struct Resolved {

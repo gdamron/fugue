@@ -41,7 +41,7 @@ impl ContentRoots {
                 let dep = pkg::DepRef::parse(dep)
                     .ok_or_else(|| err("invalid_content", "Invalid package dependency"))?;
                 let pin = self.dependency_pin(root, &dep.id)?;
-                let resolved = pkg::resolve_package_asset(
+                let resolved = pkg::select_package_asset(
                     &PackageAudioRef {
                         id: dep.id.clone(),
                         requirement: dep.requirement,
@@ -62,7 +62,8 @@ impl ContentRoots {
                         package: dep.id,
                         version: resolved.version.to_string(),
                     };
-                    let (child, child_root, child_manifest) = self.reference_path(&reference)?;
+                    let (child, child_root, child_manifest) =
+                        self.reference_path(&reference, Purpose::Browse)?;
                     self.walk_document(
                         &child,
                         &child_root,
@@ -140,7 +141,8 @@ impl ContentRoots {
                         ));
                     }
                 }
-                let (child, child_root, child_manifest) = self.reference_path(reference)?;
+                let (child, child_root, child_manifest) =
+                    self.reference_path(reference, Purpose::Browse)?;
                 let mut child_closure = Closure {
                     active: closure.active.clone(),
                     visits: closure.visits.clone(),
@@ -240,7 +242,7 @@ impl ContentRoots {
                                 }
                             }
                             let pin = self.dependency_pin(parent, &reference.id)?;
-                            let resolved = pkg::resolve_package_asset(
+                            let resolved = pkg::select_package_asset(
                                 &reference,
                                 &self.packages,
                                 pin.as_deref(),

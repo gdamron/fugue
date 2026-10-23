@@ -97,7 +97,10 @@ impl ContentCatalog {
         let mut diagnostics: Vec<_> = source_errors.into_iter().take(20).collect();
         let mut fingerprints = BTreeMap::new();
         for reference in refs {
-            match self.roots.inspect(&reference, Hashing::Cached) {
+            match self
+                .roots
+                .inspect(&reference, Hashing::Cached, Purpose::Browse)
+            {
                 Ok(resolved) => {
                     fingerprints.extend(resolved.fingerprints);
                     entries.push(resolved.entry);
@@ -203,7 +206,9 @@ impl ContentCatalog {
         validate_reference(&query.reference)?;
         self.refresh()?;
         let _guard = package_read_guard(&self.roots.packages)?;
-        let resolved = self.roots.inspect(&query.reference, Hashing::Cached)?;
+        let resolved = self
+            .roots
+            .inspect(&query.reference, Hashing::Cached, Purpose::Browse)?;
         let interface = resolved
             .document
             .is_development()

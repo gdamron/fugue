@@ -331,7 +331,11 @@ mod fs_ops {
 
     /// One locked package's problem, if any: not installed at its canonical
     /// location, missing its integrity hash, or hashing to something else.
-    fn verify_package(id: &str, package: &LockedPackage, packages_dir: &Path) -> Option<String> {
+    pub(super) fn verify_package(
+        id: &str,
+        package: &LockedPackage,
+        packages_dir: &Path,
+    ) -> Option<String> {
         // Either layout (see `crate::pkg::layout`): the exact locked version
         // must be present, and its bytes are hashed the same way.
         let dir = match crate::pkg::layout::version_dir(packages_dir, id, &package.version) {
@@ -438,7 +442,12 @@ mod fs_ops {
 pub use fs_ops::{compute_integrity, integrity_files};
 
 #[cfg(not(target_arch = "wasm32"))]
+mod frozen;
+#[cfg(not(target_arch = "wasm32"))]
 mod scoped;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use frozen::{govern, governing, FrozenLock};
 
 #[cfg(test)]
 mod tests {

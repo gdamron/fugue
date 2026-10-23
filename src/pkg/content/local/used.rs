@@ -79,7 +79,7 @@ impl ContentRoots {
                 if let ContentRef::Package { package, .. } = reference {
                     walk.used.insert(package.clone());
                 }
-                self.reference_path(reference).ok()?.0
+                self.reference_path(reference, Purpose::Browse).ok()?.0
             } else if let Some(path) = &development.path {
                 resolve_development_path(document.source_path.as_deref(), path).ok()?
             } else {
