@@ -132,7 +132,7 @@ Every candidate must conform to the schema. When the `fugue` CLI is installed,
 run the authoritative validator directly:
 
 ```sh
-fugue score validate draft-score.json   # prints OK / first error; exit 0 on pass
+fyug score validate draft-score.json   # prints OK / first error; exit 0 on pass
 ```
 
 Treat a non-zero exit as a failed candidate: fix the reported problem and

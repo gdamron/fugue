@@ -322,6 +322,9 @@ you are changing before you change it.
   request the audio thread applies, and who wins when writes conflict.
 - [Musical time](docs/musical-time.md): samples, conditions and clock beats,
   and where a score's notation ends and an invention's interpretation begins.
+- [Module design](docs/module-design.md): behaviour lives in modules with
+  ports, interfaces follow one naming convention, and views of running audio
+  show what is heard.
 - [Shared runtime](docs/shared-runtime.md): how clients find, edit and
   recover from lost replies to the one daemon that plays the music.
 - [Atomic structural edits](docs/apply-edits.md) and
