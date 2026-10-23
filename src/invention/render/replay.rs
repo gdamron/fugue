@@ -6,8 +6,8 @@
 //! waiting first, then the module's declared control). A request that
 //! applied on its clock's beat latches the clock first, as the live watch
 //! did, so a tempo it changes there takes effect from the same sample. (A
-//! watch refused or overridden on its beat latched its clock live,
-//! unlogged: a late
+//! watch refused or overridden on its beat, a timed edit's among them,
+//! latched its clock live, unlogged: a late
 //! request changing that clock's tempo in the same sample would then take
 //! effect a sample apart. Rare enough to leave.)
 //! Replay is by sample:
