@@ -428,7 +428,7 @@ impl RuntimeController {
             &*self.module_ports,
             &*self.snapshot.state,
         );
-        edit_offline(graph, mirrors, edit)
+        edit_offline(graph, mirrors, false, edit)
     }
 
     /// Builds and inserts a module into the current graph, replacing one
