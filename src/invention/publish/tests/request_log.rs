@@ -366,6 +366,7 @@ fn a_log_with_timed_edits_round_trips_and_one_from_before_them_still_reads() {
             to: "dac".into(),
             to_port: "audio".into(),
         }],
+        requests_before: 0,
     };
     let log = RequestLog {
         timed_edits: vec![edit],

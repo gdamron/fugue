@@ -96,6 +96,11 @@ pub struct LoggedEdit {
     /// Every connection after it, in order.
     #[serde(default)]
     pub connections: Vec<LoggedConnection>,
+    /// How many logged requests applied before the audio thread took it,
+    /// so a replay latches its clock (one taken on its beat) where live
+    /// did: before the requests after it, such as its own tempo write.
+    #[serde(default)]
+    pub requests_before: usize,
 }
 
 impl LoggedEdit {
@@ -160,6 +165,7 @@ impl LoggedEdit {
             removed,
             built,
             connections,
+            requests_before: 0,
         })
     }
 

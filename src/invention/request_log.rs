@@ -228,11 +228,13 @@ impl Recorder {
     }
 
     /// Records a timed edit as it settled, unless the log is full.
-    pub(crate) fn timed_edit(&mut self, edit: LoggedEdit) {
+    pub(crate) fn timed_edit(&mut self, mut edit: LoggedEdit) {
         if self.full || self.timed_edits.len() == TIMED_EDIT_LOG_CAPACITY {
             self.full = true;
             return;
         }
+        // Outcomes arrive in the order the audio thread reported them.
+        edit.requests_before = self.requests.len();
         self.timed_edits.push(edit);
     }
 
