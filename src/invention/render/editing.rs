@@ -88,8 +88,19 @@ impl RenderEngine {
         graph: &Arc<Mutex<SignalGraph>>,
         edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
     ) -> Result<Committed, GraphCommandError> {
+        self.edit_landing(graph, false, edit)
+    }
+
+    /// [`Self::edit`], installed as a timed edit lands when `landing` (see
+    /// `SignalGraph::install_offline`).
+    pub(super) fn edit_landing(
+        &self,
+        graph: &Arc<Mutex<SignalGraph>>,
+        landing: bool,
+        edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
+    ) -> Result<Committed, GraphCommandError> {
         let mirrors = (&self.control_surfaces, &*self.module_ports, &*self.state);
-        edit_offline(graph, mirrors, false, edit)
+        edit_offline(graph, mirrors, landing, edit)
     }
 
     /// Stops the scripts, agents and handles of removed or replaced modules

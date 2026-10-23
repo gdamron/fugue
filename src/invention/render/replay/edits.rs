@@ -17,7 +17,7 @@ pub(in crate::invention::render) struct DueEdit {
 }
 
 /// The timed edits in `log` that landed, their modules built from
-/// `registry`. Fails naming the first out of time order, or the first
+/// `registry` and set as the batch that built them set them. Fails naming the first out of time order, or the first
 /// module that does not build.
 pub(super) fn build(
     log: &RequestLog,
@@ -44,7 +44,15 @@ pub(super) fn build(
                     &module.module_type,
                     config,
                 )
-                .map(|built| (module.id.clone(), built))
+                .map(|built| {
+                    // As the batch made them, failures included.
+                    if let Some(surface) = &built.surface {
+                        for setting in &module.writes {
+                            let _ = surface.set_control(&setting.key, setting.value.clone());
+                        }
+                    }
+                    (module.id.clone(), built)
+                })
                 .map_err(|error| {
                     format!(
                         "logged timed edit {} cannot build its module: {error}",
@@ -64,7 +72,9 @@ pub(super) fn build(
 }
 
 impl RenderEngine {
-    /// Lands `edit` on the render's graph as one offline change: the
+    /// Lands `edit` on the render's graph as one offline change, as a timed
+    /// edit lands live (what it displaces plays first; see
+    /// `SignalGraph::install_offline`): the
     /// modules it removed go, those it built replace theirs in place or
     /// join after the rest, and the connections are then exactly those it
     /// left, in order. Afterwards the requests before the next edit
@@ -73,7 +83,7 @@ impl RenderEngine {
     /// refused, as a request is.
     pub(in crate::invention::render) fn land_replayed(&mut self, edit: DueEdit) {
         let landed = self.loaded().cloned().and_then(|graph| {
-            self.edit(&graph, |change| {
+            self.edit_landing(&graph, true, |change| {
                 change.disconnect_all();
                 for id in &edit.removed {
                     change.remove(id);
