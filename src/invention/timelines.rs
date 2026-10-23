@@ -1,5 +1,5 @@
 //! Timeline context: the clock a module's beats count on when a request
-//! timed in beats names none (B3; ledger `conditions-and-timeline-context`).
+//! timed in beats names none. See `docs/musical-time.md`, "Which clock".
 //!
 //! Worked out on a control thread each time a topology is compiled for
 //! publication, never on the audio thread. A front door resolves the clock
