@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use crate::atomic::AtomicF32;
 use crate::control_request::{scheduled_index, scheduled_number, LegacyRefusal, TableValue};
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
+use crate::pkg::lock::BuildPolicy;
 use crate::traits::{check_finite, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
@@ -46,6 +47,9 @@ pub struct SampleKitControls {
 
 struct KitInner {
     sample_rate: u32,
+    /// The lock the kit was built under: every sample it loads, at build or
+    /// from a later write, loads under it (see `BuildPolicy`).
+    policy: BuildPolicy,
     slots: Vec<SlotState>,
     /// Bumped after staging a sample swap in `pending`; the audio thread
     /// locks `pending` only when this counter moved.
@@ -72,10 +76,11 @@ impl SampleKitControls {
         sample_rate: u32,
         specs: Vec<SlotSpec>,
     ) -> Result<(Self, Vec<Arc<SampleData>>), String> {
+        let policy = BuildPolicy::current();
         let mut samples = Vec::with_capacity(specs.len());
         let mut slots = Vec::with_capacity(specs.len());
         for spec in specs {
-            let sample = load_slot_sample(&spec.asset, sample_rate)
+            let sample = load_slot_sample(&policy, &spec.asset, sample_rate)
                 .map_err(|err| format!("slot '{}': {}", spec.key, err))?;
             samples.push(sample);
             slots.push(SlotState {
@@ -90,6 +95,7 @@ impl SampleKitControls {
         let controls = Self {
             inner: Arc::new(KitInner {
                 sample_rate,
+                policy,
                 slots,
                 swaps_version: AtomicU64::new(0),
                 pending: Mutex::new(pending),
@@ -130,7 +136,7 @@ impl SampleKitControls {
     /// swap in at the next block boundary.
     pub fn set_asset(&self, index: usize, asset: &str) -> Result<(), String> {
         let slot = self.slot(index)?;
-        let sample = load_slot_sample(asset, self.inner.sample_rate)?;
+        let sample = load_slot_sample(&self.inner.policy, asset, self.inner.sample_rate)?;
         *slot.asset.lock().unwrap() = asset.to_string();
         self.inner.pending.lock().unwrap()[index] = Some(sample);
         self.inner.swaps_version.fetch_add(1, Ordering::Release);
@@ -210,10 +216,13 @@ impl SampleKitControls {
 }
 
 /// Resolves an authored ref (package ref, path, or https URL) and loads it
-/// through the shared decoded-buffer cache.
-fn load_slot_sample(asset: &str, sample_rate: u32) -> Result<Arc<SampleData>, String> {
-    let resolved = resolve_source(asset)?;
-    load_cached_sample(&resolved, sample_rate)
+/// through the shared decoded-buffer cache, under `policy`.
+fn load_slot_sample(
+    policy: &BuildPolicy,
+    asset: &str,
+    sample_rate: u32,
+) -> Result<Arc<SampleData>, String> {
+    policy.run(|| load_cached_sample(&resolve_source(asset)?, sample_rate))
 }
 
 impl ControlSurface for SampleKitControls {

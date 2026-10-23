@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, TryLockError};
 use crate::atomic::AtomicF32;
 use crate::audio_thread::debug_assert_control_thread;
 use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
+use crate::pkg::lock::BuildPolicy;
 use crate::{ControlMeta, ControlSurface, ControlValue};
 
 mod scheduled;
@@ -27,6 +28,9 @@ pub struct SamplePlayerControls {
     /// `pitch_ratio` is pitch-only and `time_ratio` speed-only; in classic
     /// mode `pitch_ratio` keeps its coupled speed+pitch meaning.
     elastic: bool,
+    /// The lock the player was built under: every asset it loads, at build
+    /// or from a later write, loads under it (see `BuildPolicy`).
+    policy: BuildPolicy,
 }
 
 pub(crate) struct SamplePlayerShared {
@@ -92,6 +96,7 @@ impl SamplePlayerControls {
             time_ratio: AtomicF32::new(1.0),
             sample_rate,
             elastic,
+            policy: BuildPolicy::current(),
         };
 
         if let Some(asset) = asset {
@@ -118,8 +123,10 @@ impl SamplePlayerControls {
 
     pub fn set_asset(&self, asset: &str) -> Result<(), String> {
         debug_assert_control_thread("loading a sample player's asset");
-        let target = resolve_source(asset)?;
-        let sample = load_cached_sample(&target, self.sample_rate)?;
+        let sample = self.policy.run(|| {
+            let target = resolve_source(asset)?;
+            load_cached_sample(&target, self.sample_rate)
+        })?;
         if self.elastic {
             // Elastic playback needs the per-asset analysis; computing it
             // here keeps the allocation off the audio thread (the reader

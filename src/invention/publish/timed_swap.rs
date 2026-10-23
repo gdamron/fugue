@@ -26,7 +26,9 @@ impl LiveGraph {
         let mut attempt = 1;
         loop {
             let registry = self.registry.current();
-            let built = match GraphChange::build(&registry, sample_rate, id, module_type, config) {
+            let policy = self.graph_policy();
+            let build = || GraphChange::build(&registry, sample_rate, id, module_type, config);
+            let built = match policy.run(build) {
                 Ok(built) => built,
                 Err(_) if attempt < BUILD_ATTEMPTS && !self.registry.is_current(&registry) => {
                     attempt += 1;
@@ -35,6 +37,15 @@ impl LiveGraph {
                 Err(error) => return Err(error),
             };
             let mut change = self.begin();
+            // A reload that committed another policy before `begin` is not
+            // caught when the swap publishes; one after it is.
+            if self.policy_moved(&policy) {
+                if attempt < BUILD_ATTEMPTS {
+                    attempt += 1;
+                    continue;
+                }
+                return Err(GraphCommandError::TopologyMoved);
+            }
             if !change.contains(id) {
                 return Err(GraphCommandError::UnknownModule(id.to_string()));
             }

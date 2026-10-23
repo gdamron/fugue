@@ -76,6 +76,8 @@ impl RunningInvention {
             document,
             control_updates,
             refreshed_configs,
+            #[cfg(not(target_arch = "wasm32"))]
+            built_under,
             ..
         } = prepared;
         let retain = move |state: &mut RuntimeState| {
@@ -86,6 +88,11 @@ impl RunningInvention {
             }
             if let Some(document) = document {
                 state.document = Some(document);
+            }
+            // The graph is built under the reload's lock once it lands.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                state.built_under = built_under;
             }
         };
         let registry = self.registry();

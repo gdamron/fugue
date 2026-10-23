@@ -37,10 +37,10 @@
 //! its own lock with [`govern_here`], which governs only the calling thread,
 //! so the session's other threads (its scripts) keep the session's lock until
 //! the candidate commits, and keep it for good if the candidate is refused.
-//! A candidate built under another policy than the session's rebuilds what
-//! may hold package content instead of keeping it (see
-//! [`candidate_changes_policy`]): bytes a module loaded under the session's
-//! policy were never verified against the candidate's.
+//! A reload under another policy than its running graph was built under
+//! rebuilds what may hold package content instead of keeping it (see
+//! [`changes_policy`]): bytes a module loaded under the graph's policy were
+//! never verified against the reload's.
 //!
 //! Resolution is control-thread work (asset loads decode and resample off the
 //! audio thread), so the governing slot is a plain lock.
@@ -262,18 +262,34 @@ impl FrozenLock {
         )
     }
 
-    /// `file` relative to the packages dir, when it lies in it: as spelled
-    /// (the configured or the canonical spelling of the dir), else with its
-    /// parent's links resolved. Only the parent is resolved, so a link
-    /// inside a package still names a file the integrity skipped.
+    /// `file` relative to the packages dir, when it lies in it: as spelled,
+    /// when that is the configured or the canonical spelling of the dir
+    /// followed by a locked id and plain names, else as the filesystem
+    /// names it, with its parent's links, `..` and case resolved
+    /// (`packs/../packs/<id>`, `packs/<ID>` on a case-insensitive volume, a
+    /// path relative to the working dir).
+    /// Only the parent is resolved, so a link inside a package still names
+    /// a file the integrity skipped.
     fn package_relative(&self, file: &Path) -> Option<PathBuf> {
+        let as_spelled = |relative: &Path| {
+            let mut parts = relative.components();
+            matches!(parts.next(), Some(Component::Normal(id))
+                if id.to_str().is_some_and(|id| self.lockfile.packages.contains_key(id)))
+                && parts.all(|part| matches!(part, Component::Normal(_)))
+        };
         let spellings = std::iter::once(&self.packages_dir).chain(&self.canonical_packages);
         for dir in spellings {
-            if let Ok(relative) = file.strip_prefix(dir) {
-                return Some(relative.to_path_buf());
+            match file.strip_prefix(dir) {
+                Ok(relative) if as_spelled(relative) => return Some(relative.to_path_buf()),
+                Ok(_) => break,
+                Err(_) => {}
             }
         }
-        let canonical = std::fs::canonicalize(file.parent()?)
+        // A bare file name's parent is the working dir.
+        let parent = file
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        let canonical = std::fs::canonicalize(parent.unwrap_or(Path::new(".")))
             .ok()?
             .join(file.file_name()?);
         let relative = canonical
@@ -407,25 +423,24 @@ pub(crate) fn check_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether the candidate this thread builds ([`govern_here`]) is governed
-/// otherwise than the running session: another lockfile or none, or other
-/// locked content. What the session's modules hold was then loaded under
-/// another policy, and a candidate keeps none of them that may hold package
-/// content. `false` when no candidate is being built here.
-pub(crate) fn candidate_changes_policy() -> bool {
-    let Some(candidate) = HERE.with(|here| here.borrow().clone()) else {
-        return false;
-    };
-    let session = GOVERNING
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone();
-    match (&candidate, &session) {
-        (None, None) => false,
-        (Some(candidate), Some(session)) => {
-            !(Arc::ptr_eq(candidate, session) || candidate.same_policy(session))
-        }
-        _ => true,
+/// Whether what this thread builds now (a candidate under [`govern_here`],
+/// else under the session's lock) is governed otherwise than `built_under`,
+/// the lock a running graph was built under: another lockfile or none, or
+/// other locked content. What that graph's modules hold was then loaded
+/// under another policy, and a reload keeps none of them that may hold
+/// package content. The graph's own lock, not the session's: a timed
+/// reload's graph is adopted before the host makes its lock the session's.
+pub(crate) fn changes_policy(built_under: &Governance) -> bool {
+    !same_governance(&governing(), built_under)
+}
+
+/// Whether `a` and `b` govern alike: the same lock, or the same lockfile
+/// over the same packages dir, or neither governed.
+pub(crate) fn same_governance(a: &Governance, b: &Governance) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a.same_policy(b),
+        _ => false,
     }
 }
 

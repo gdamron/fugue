@@ -7,6 +7,7 @@ fn rpc_commands_round_trip_json() {
         RpcCommand::LoadInvention {
             invention: Box::new(test_invention()),
             source_path: Some("/tmp/inv.json".to_string()),
+            read_source: true,
             frozen: true,
             stop_on_end: true,
             end_source: Some("seq".to_string()),
@@ -75,6 +76,7 @@ fn rpc_commands_round_trip_json() {
         RpcCommand::ReloadInvention {
             invention: Box::new(test_invention()),
             source_path: Some("/tmp/invention.json".to_string()),
+            read_source: true,
             frozen: true,
             timing: EditTiming {
                 when: Some(EditWhen::AtSample { sample: 48_000 }),
@@ -182,8 +184,13 @@ fn load_invention_defaults_stop_on_end_fields() {
             frozen,
             stop_on_end,
             end_source,
+            read_source,
             ..
         } => {
+            assert!(
+                !read_source,
+                "a document is inline unless the client says it read it"
+            );
             assert!(frozen, "frozen defaults on");
             assert!(!stop_on_end, "stop_on_end defaults off");
             assert_eq!(end_source, None);
@@ -272,6 +279,7 @@ fn advances_revision_separates_authoring_from_performance() {
     assert!(RpcCommand::ReloadInvention {
         invention: Box::new(test_invention()),
         source_path: None,
+        read_source: false,
         frozen: true,
         timing: Default::default(),
     }

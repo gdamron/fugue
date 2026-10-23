@@ -461,11 +461,13 @@ impl RunningInvention {
                 }))
             });
             let prepared = prepared.expect("prepare runs its body")?;
+            // The candidate's lock becomes the session's only once its graph
+            // has: the graph's own modules and live edits load under the
+            // lock it was built under meanwhile (see `BuildPolicy`).
             let result = prepared.and_then(|prepared| {
-                policy.adopt();
                 let committed = self.commit_prepared(prepared);
-                if committed.is_err() {
-                    policy.restore();
+                if committed.is_ok() {
+                    policy.adopt();
                 }
                 committed
             });
@@ -521,6 +523,14 @@ impl RunningInvention {
     ) -> Result<ReloadPlan, ReloadError> {
         let changed_types =
             changed_development_types(&self.development_definitions, &validated.definitions);
+        // The modules and the lock they were built under, read together.
+        #[cfg(not(target_arch = "wasm32"))]
+        let (current_modules, current_connections, built_under) = {
+            let state = self.state.lock().unwrap();
+            let (modules, connections) = (state.modules.clone(), state.connections.clone());
+            (modules, connections, state.built_under.clone())
+        };
+        #[cfg(target_arch = "wasm32")]
         let (current_modules, current_connections) = {
             let state = self.state.lock().unwrap();
             (state.modules.clone(), state.connections.clone())
@@ -540,7 +550,7 @@ impl RunningInvention {
         )
         .map_err(ReloadError::Invalid)?;
         #[cfg(not(target_arch = "wasm32"))]
-        governed::rebuild_under_another_policy(&mut plan, validated);
+        governed::rebuild_under_another_policy(&mut plan, validated, &built_under);
         // A kept module's reload writes (a clock that resets on reload)
         // land after its config's, so they act on the new values. Only a
         // reload makes them: an edit batch keeps the clock's position, and
@@ -575,7 +585,6 @@ mod tests;
 trait ReloadPolicy {
     fn prepare(&mut self, body: &mut dyn FnMut());
     fn adopt(&mut self) {}
-    fn restore(&mut self) {}
 }
 
 /// Resolution as the session's governing lock, if any, has it.

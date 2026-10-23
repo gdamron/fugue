@@ -16,6 +16,7 @@ use std::fs;
 
 mod bytes;
 mod files;
+mod live;
 
 const KIT: &str = "fugue.test.kit";
 const VOICE: &str = "fugue.test.voice";
