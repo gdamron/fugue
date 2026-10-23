@@ -243,6 +243,7 @@ impl Error for LockError {}
 mod fs_ops {
     use super::{LockError, LockedPackage, Lockfile, LOCKFILE_NAME};
     use sha2::{Digest, Sha256};
+    use std::collections::BTreeMap;
     use std::error::Error;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -336,8 +337,38 @@ mod fs_ops {
         package: &LockedPackage,
         packages_dir: &Path,
     ) -> Option<String> {
-        // Either layout (see `crate::pkg::layout`): the exact locked version
-        // must be present, and its bytes are hashed the same way.
+        let dir = match locked_dir(id, package, packages_dir) {
+            Ok(dir) => dir,
+            Err(problem) => return Some(problem),
+        };
+        let actual = compute_integrity(&dir);
+        integrity_problem(id, package, actual.map_err(|err| err.to_string())).err()
+    }
+
+    /// Verifies one locked package as [`verify_package`] does, and returns
+    /// its directory and the SHA-256 of each file the integrity hashed (keyed
+    /// by normalized relative path), so the bytes a later load consumes can
+    /// be checked against the ones verified here.
+    pub(super) fn verify_package_files(
+        id: &str,
+        package: &LockedPackage,
+        packages_dir: &Path,
+    ) -> Result<(PathBuf, BTreeMap<String, String>), String> {
+        let dir = locked_dir(id, package, packages_dir)?;
+        let mut files = BTreeMap::new();
+        let actual = hash_dir(&dir, Some(&mut files)).map_err(|err| err.to_string());
+        integrity_problem(id, package, actual)?;
+        Ok((dir, files))
+    }
+
+    /// Where the locked version of `id` is under `packages_dir`, in either
+    /// layout (see `crate::pkg::layout`): the exact locked version must be
+    /// present, and it must have an integrity hash to check.
+    fn locked_dir(
+        id: &str,
+        package: &LockedPackage,
+        packages_dir: &Path,
+    ) -> Result<PathBuf, String> {
         let dir = match crate::pkg::layout::version_dir(packages_dir, id, &package.version) {
             Ok(Some(dir)) => dir,
             Ok(None) => {
@@ -347,27 +378,35 @@ mod fs_ops {
                     }
                     _ => String::new(),
                 };
-                return Some(format!(
+                return Err(format!(
                     "{id}@{} is not installed (expected {}){found}",
                     package.version,
                     packages_dir.join(id).join(&package.version).display()
                 ));
             }
-            Err(err) => return Some(format!("{id}@{}: {err}", package.version)),
+            Err(err) => return Err(format!("{id}@{}: {err}", package.version)),
         };
         if package.integrity.is_empty() {
-            return Some(format!(
+            return Err(format!(
                 "{id}@{} has no integrity hash; run `fugue install` to refresh the lockfile",
                 package.version
             ));
         }
-        match compute_integrity(&dir) {
-            Ok(actual) if actual == package.integrity => None,
-            Ok(actual) => Some(format!(
+        Ok(dir)
+    }
+
+    fn integrity_problem(
+        id: &str,
+        package: &LockedPackage,
+        actual: Result<String, String>,
+    ) -> Result<(), String> {
+        match actual {
+            Ok(actual) if actual == package.integrity => Ok(()),
+            Ok(actual) => Err(format!(
                 "{id}@{} integrity mismatch (expected {}, got {actual})",
                 package.version, package.integrity
             )),
-            Err(err) => Some(format!(
+            Err(err) => Err(format!(
                 "{id}@{}: failed to hash installed contents: {err}",
                 package.version
             )),
@@ -382,6 +421,15 @@ mod fs_ops {
     /// order. `.git` is skipped; symlinks are ignored (installs never copy
     /// them).
     pub fn compute_integrity(dir: &Path) -> Result<String, Box<dyn Error>> {
+        hash_dir(dir, None)
+    }
+
+    /// [`compute_integrity`], also recording each file's own SHA-256 in
+    /// `files` when given, from the same read.
+    fn hash_dir(
+        dir: &Path,
+        mut files: Option<&mut BTreeMap<String, String>>,
+    ) -> Result<String, Box<dyn Error>> {
         let mut hasher = Sha256::new();
         for rel in &integrity_files(dir)? {
             hasher.update((rel.len() as u64).to_le_bytes());
@@ -390,7 +438,16 @@ mod fs_ops {
             // audio assets, so a file is accepted on both paths or neither.
             let file = crate::pkg::read_limit::HashedFile::open(&dir.join(rel))?;
             hasher.update(file.size().to_le_bytes());
-            file.stream(|chunk| hasher.update(chunk))?;
+            let mut own = files.is_some().then(Sha256::new);
+            file.stream(|chunk| {
+                hasher.update(chunk);
+                if let Some(own) = own.as_mut() {
+                    own.update(chunk);
+                }
+            })?;
+            if let (Some(files), Some(own)) = (files.as_deref_mut(), own) {
+                files.insert(rel.clone(), crate::hex::lower_hex(&own.finalize()));
+            }
         }
         Ok(format!(
             "sha256:{}",
@@ -447,7 +504,7 @@ mod frozen;
 mod scoped;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use frozen::{govern, governing, FrozenLock};
+pub use frozen::{govern, govern_here, governing, FrozenLock, Governance};
 
 #[cfg(test)]
 mod tests {
