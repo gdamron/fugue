@@ -8,7 +8,7 @@ use crate::invention::InventionBuilder;
 use crate::modules::sample_loading::{load_cached_sample, load_sample_source};
 
 /// A WAV of eight frames, each `value`.
-fn wav(path: &Path, value: f32) {
+pub(super) fn wav(path: &Path, value: f32) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let spec = hound::WavSpec {
         channels: 1,
@@ -24,7 +24,7 @@ fn wav(path: &Path, value: f32) {
 }
 
 /// [`kit_with_newer`], with decodable samples: 0.25 locked, 0.75 newer.
-fn playable_kit(dir: &Path) -> (PathBuf, FrozenLock) {
+pub(super) fn playable_kit(dir: &Path) -> (PathBuf, FrozenLock) {
     let packs = dir.join("packs");
     kit_at(&packs.join(KIT).join("1.0.0"), "1.0.0", "");
     kit_at(&packs.join(KIT).join("1.1.0"), "1.1.0", "");
@@ -115,7 +115,7 @@ fn a_candidate_governs_only_the_thread_building_it() {
     });
 }
 
-fn sampler(asset: &str) -> Invention {
+pub(super) fn sampler(asset: &str) -> Invention {
     serde_json::from_value(json!({
         "modules": [{"id": "s", "type": "sample_player", "config": {"asset": asset}},
             {"id": "dac", "type": "dac"}],

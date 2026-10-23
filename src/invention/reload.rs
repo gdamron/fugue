@@ -539,6 +539,8 @@ impl RunningInvention {
             |module_id, key| self.get_control(module_id, key).is_ok(),
         )
         .map_err(ReloadError::Invalid)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        governed::rebuild_under_another_policy(&mut plan, validated);
         // A kept module's reload writes (a clock that resets on reload)
         // land after its config's, so they act on the new values. Only a
         // reload makes them: an edit batch keeps the clock's position, and
@@ -586,26 +588,4 @@ impl ReloadPolicy for Ungoverned {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-mod governed {
-    use super::ReloadPolicy;
-    use crate::pkg::lock::{govern, govern_here, Governance};
-
-    /// A candidate's lock: it governs preparation on this thread, and the
-    /// session from the commit on. Holds the session's previous lock while
-    /// the commit is attempted.
-    pub(super) struct Candidate(pub(super) Governance);
-
-    impl ReloadPolicy for Candidate {
-        fn prepare(&mut self, body: &mut dyn FnMut()) {
-            govern_here(self.0.clone(), body)
-        }
-
-        fn adopt(&mut self) {
-            self.0 = govern(self.0.clone());
-        }
-
-        fn restore(&mut self) {
-            self.0 = govern(self.0.clone());
-        }
-    }
-}
+mod governed;

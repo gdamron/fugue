@@ -342,6 +342,16 @@ fn resolve_ranges(slices: &[SampleSlice], sample: &SampleData) -> Result<Vec<Sli
     Ok(ranges)
 }
 
+/// A file of the package a sample lies in, read once and checked against a
+/// governing lockfile (see [`crate::pkg::lock::check_bytes`]): a frozen
+/// session slices only by the sidecar it verified.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_package_file(path: &std::path::Path) -> Result<String, String> {
+    let bytes = crate::pkg::read_limit::read_document(path).map_err(|err| err.to_string())?;
+    crate::pkg::lock::check_bytes(path, &bytes)?;
+    String::from_utf8(bytes).map_err(|err| err.to_string())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn slices_from_sample_pack(source: &str) -> Result<Vec<SampleSlice>, String> {
     use std::path::{Path, PathBuf};
@@ -358,13 +368,12 @@ fn slices_from_sample_pack(source: &str) -> Result<Vec<SampleSlice>, String> {
         if !package_path.is_file() {
             continue;
         }
-        let package = crate::pkg::parse_path(&package_path).map_err(|err| {
-            format!(
-                "sample_slicer: failed to load {}: {}",
-                package_path.display(),
-                err
-            )
-        })?;
+        let failed = |path: &Path, err: String| {
+            format!("sample_slicer: failed to load {}: {}", path.display(), err)
+        };
+        let package = read_package_file(&package_path)
+            .and_then(|text| crate::pkg::parse_str(&text).map_err(|err| err.to_string()))
+            .map_err(|err| failed(&package_path, err))?;
         let crate::pkg::EntrySpec::SamplePack { samples } = package.entry else {
             continue;
         };
@@ -377,13 +386,11 @@ fn slices_from_sample_pack(source: &str) -> Result<Vec<SampleSlice>, String> {
         })?;
         let relative = relative.to_string_lossy().replace('\\', "/");
         let manifest_path = root.join(samples);
-        let manifest = crate::pkg::parse_sample_pack_path(&manifest_path).map_err(|err| {
-            format!(
-                "sample_slicer: failed to load {}: {}",
-                manifest_path.display(),
-                err
-            )
-        })?;
+        let manifest = read_package_file(&manifest_path)
+            .and_then(|text| {
+                crate::pkg::parse_sample_pack_str(&text).map_err(|err| err.to_string())
+            })
+            .map_err(|err| failed(&manifest_path, err))?;
         let file = manifest
             .files
             .iter()

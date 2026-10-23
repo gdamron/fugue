@@ -504,6 +504,8 @@ mod frozen;
 mod scoped;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use frozen::{candidate_changes_policy, check_bytes};
+#[cfg(not(target_arch = "wasm32"))]
 pub use frozen::{govern, govern_here, governing, FrozenLock, Governance};
 
 #[cfg(test)]

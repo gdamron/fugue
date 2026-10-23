@@ -26,6 +26,10 @@ impl ContentRoots {
             return Err(err("invalid_content", "Development dependency cycle"));
         }
         let bytes = read_file(&path)?;
+        if closure.governed {
+            crate::pkg::lock::check_bytes(&path, &bytes)
+                .map_err(|e| err("integrity_mismatch", e))?;
+        }
         let mut document: Invention =
             serde_json::from_slice(&bytes).map_err(|e| err("invalid_content", e))?;
         document.source_path = Some(path.clone());
@@ -423,6 +427,11 @@ impl ContentRoots {
 pub(super) struct Closure {
     pub(super) visits: std::rc::Rc<std::cell::Cell<usize>>,
     pub(super) hashing: Hashing,
+    /// Whether the document walked is to load, so its bytes are checked
+    /// against a governing lockfile (see [`crate::pkg::lock::check_bytes`]).
+    /// The documents walked under it are only fingerprinted: those that
+    /// load are read again as they load.
+    pub(super) governed: bool,
     pub(super) active: BTreeSet<PathBuf>,
     pub(super) fingerprints: BTreeMap<String, String>,
     pub(super) dependencies: Vec<ContentRef>,

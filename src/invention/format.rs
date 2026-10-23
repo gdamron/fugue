@@ -71,6 +71,10 @@ impl Invention {
     /// Loads an invention from a JSON file.
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let json = std::fs::read_to_string(path)?;
+        // A document in a package a frozen session's lockfile locks loads
+        // only as verified.
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::pkg::lock::check_bytes(Path::new(path), json.as_bytes())?;
         let mut invention = Self::from_json(&json)?;
         invention.source_path = Some(Path::new(path).to_path_buf());
         Ok(invention)
