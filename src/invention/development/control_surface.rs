@@ -124,9 +124,10 @@ impl DevelopmentControlSurface {
         value: ControlValue,
     ) -> Result<(), String> {
         let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
-        // Its own read-back, which every write through it updates: a
-        // nested development's never sees the writes made through this one.
-        let was = self.get_control(key)?;
+        // What the alias records now, whichever key or development wrote
+        // it last (a nested development's read-back follows `set_legacy`).
+        let (control, surface) = self.lookup(key)?;
+        let was = surface.get_control(&control.key)?;
         self.set_legacy(key, value.clone())?;
         let written = match self.prepare_payload(key, &value) {
             Some(prepared) => {
@@ -235,6 +236,11 @@ impl ControlSurface for DevelopmentControlSurface {
                 .ok_or_else(|| format!("Unknown control module: {}", control.module_id))?;
             surface.set_legacy(&control.key, value.clone())?;
             found = true;
+        }
+        // A payload key written through an outer development reads back as
+        // written, as its alias does.
+        if let Some(declared) = self.declared(key).filter(|d| d.is_payload(key)) {
+            declared.show_payload(key, value);
         }
         if found {
             Ok(())

@@ -225,3 +225,45 @@ fn a_schedule_retargeting_an_inner_scheduler_reorders_its_development() {
         "the reclaimer frees the replaced schedule and order"
     );
 }
+
+/// `RETARGETED` with a second key on its scheduler's `schedule` and a
+/// second scheduler, `other`, writing nothing.
+fn shared() -> String {
+    let mut doc: serde_json::Value = serde_json::from_str(RETARGETED).unwrap();
+    let definition = &mut doc["developments"][0]["definition"];
+    let other = serde_json::json!({ "id": "other", "type": "control_scheduler",
+        "config": { "schedule": [] } });
+    definition["modules"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, other);
+    let inputs = definition["inputs"].as_array_mut().unwrap();
+    inputs.push(serde_json::json!({ "name": "clock", "to": "other", "to_port": "clock" }));
+    let controls = definition["controls"].as_array_mut().unwrap();
+    controls.push(serde_json::json!({ "name": "again", "module": "sched", "control": "schedule" }));
+    controls.push(serde_json::json!({ "name": "other", "module": "other", "control": "schedule" }));
+    doc.to_string()
+}
+
+/// A write refused through one key restores what the scheduler recorded
+/// from another, so the order a later write carries still runs the
+/// scheduler before what it writes.
+#[test]
+fn a_refused_write_restores_what_another_key_wrote() {
+    let mut rig = Rig::new(&shared());
+    rig.render(1);
+    assert_eq!(clocked(&mut rig, "p", 1.0), (0, 0), "step 0");
+    write(&rig, "p", "schedule", NEXT.into());
+    assert_eq!(clocked(&mut rig, "p", 0.0), (0, 0), "adopting");
+    let surface = rig.live.control_surfaces.lock().unwrap()["p"].clone();
+    while surface.set_control("freq", 440.0.into()).is_ok() {}
+    let refused = r#"[{ "at_step": 1, "module": "m", "control": "frequency", "value": 1.0 }]"#;
+    assert!(surface.set_control("again", refused.into()).is_err());
+    for _ in 0..4 {
+        assert_eq!(clocked(&mut rig, "p", 0.0), (0, 0), "draining");
+    }
+    write(&rig, "p", "other", "[]".into());
+    assert_eq!(clocked(&mut rig, "p", 0.0), (0, 0), "adopting");
+    assert_eq!(clocked(&mut rig, "p", 1.0), (0, 0), "step 1");
+    assert_eq!(read(&rig, "p", "freq"), ControlValue::Number(330.0));
+}
