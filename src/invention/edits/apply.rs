@@ -218,6 +218,10 @@ impl RunningInvention {
     /// validates the result (steps 1 to 3), changing nothing.
     fn batch(&self, edits: &[StructuralEdit]) -> Result<Batch, RpcError> {
         check_edit_batch(edits)?;
+        // A timed edit that has landed is adopted first, so the batch reads
+        // the document that is playing; adopted later (when the publisher
+        // is next locked) its changes would read as the batch's own.
+        self.live.adopt_landed();
         let document = self.state.lock().unwrap().document().ok_or_else(|| {
             RpcError::new(
                 RpcErrorCode::Unsupported,
