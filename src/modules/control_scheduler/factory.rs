@@ -77,6 +77,7 @@ impl ModuleFactory for ControlSchedulerFactory {
 /// Attaches a just-built scheduler to the runtime's control-surface
 /// directory via its type-erased `controls` handle. Shared by every path
 /// that can introduce a scheduler (builder, live add, swap).
+#[cfg(test)]
 pub(crate) fn attach_from_handle(
     module_id: &str,
     handle: Option<&Arc<dyn std::any::Any + Send + Sync>>,

@@ -41,11 +41,15 @@
 use indexmap::IndexMap;
 use std::sync::{Arc, Mutex, Weak};
 
-use super::graph::{GraphCommand, SignalGraph};
+#[cfg(test)]
+use super::graph::GraphCommand;
+use super::graph::SignalGraph;
 use super::publish::{
     CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
 };
-use super::runtime::{ControlSurfaceInstance, GraphCommandError, ModuleInstance};
+use super::runtime::ControlSurfaceInstance;
+#[cfg(test)]
+use super::runtime::{GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
     PayloadCodec, Refusal, Request, RequestId, RequestSender, RequestValue, RtValue, Source,
@@ -161,7 +165,8 @@ pub(crate) struct Checked<'a> {
     /// The publisher generation the directory was read at
     /// ([`DeclaredSurface::generation`]); a live write the publisher would
     /// stamp with any other is refused as [`STALE`], since a graph change
-    /// may have replaced what the payload resolved.
+    /// may have replaced what the payload resolved; so is an offline write
+    /// after an edit installed in place since.
     pub(crate) generation: Option<u64>,
     /// The modules the payload writes: a timed edit waiting that rebuilds
     /// or removes one, or that re-resolved the payload this write
@@ -258,16 +263,21 @@ impl DeclaredSurface {
     }
 
     /// The live graph's publisher generation, read under its lock (so
-    /// after any graph change has updated the directory), or `None` when
-    /// the module is not live. Control thread.
+    /// after any graph change has updated the directory), or the count of
+    /// edits an offline render installed, read under its graph's lock;
+    /// `None` when the module is neither. Control thread.
     pub(crate) fn generation(&self) -> Option<u64> {
         // The route lock is released first: a write takes it under the
-        // publisher.
-        let publisher = match &*self.route.lock().unwrap() {
-            Route::Live(port) => port.publisher.clone(),
+        // publisher, or under the offline graph's lock.
+        let (publisher, graph) = match &*self.route.lock().unwrap() {
+            Route::Live(port) => (Some(port.publisher.clone()), None),
+            Route::Offline { graph, .. } => (None, Some(graph.clone())),
             _ => return None,
         };
-        let publisher = publisher.upgrade()?;
+        if let Some(graph) = graph {
+            return Some(graph.upgrade()?.lock().unwrap().offline_edits);
+        }
+        let publisher = publisher?.upgrade()?;
         let generation = publisher.lock().unwrap().generation();
         Some(generation)
     }
@@ -594,6 +604,12 @@ impl DeclaredSurface {
                 match write {
                     Write::Value(value) => graph.apply_control(&module_id, index, value),
                     Write::Payload(payload, shown, checked) => {
+                        // Resolved before an offline edit installed: it may
+                        // name what the edit replaced (see `Checked`).
+                        let generation = checked.as_ref().and_then(|c| c.generation);
+                        if generation.is_some_and(|seen| seen != graph.offline_edits) {
+                            return Err(STALE.into());
+                        }
                         let applied = graph.apply_payload(&module_id, index, payload);
                         if applied.is_ok() {
                             self.show(index, shown, None);
@@ -766,17 +782,19 @@ pub(crate) fn bind_offline(
     let mut locked = graph.lock().unwrap();
     for (id, surface) in surfaces.lock().unwrap().iter() {
         if let Some(instance) = locked.modules.get_mut(id) {
-            surface.bind(offline(graph, id), instance.module_mut());
+            surface.bind(offline_route(graph, id), instance.module_mut());
         }
     }
 }
 
-/// Adds `module` to an offline render's `graph` as `module_id` in one step
-/// under the lock its renders take: lists its `surface` in `surfaces`,
+/// Adds a bare `module` to an offline render's `graph` as `module_id` in one
+/// step under the lock its renders take: lists its `surface` in `surfaces`,
 /// retires the one it displaces, binds it, and installs the module. So
 /// concurrent edits commit in one order, and a write that checks its
 /// route under the same lock always reaches the module its surface
-/// belongs to.
+/// belongs to. A test fixture: renders edit through `publish::edit_offline`,
+/// which also keeps their schedules and connections as a live edit does.
+#[cfg(test)]
 pub(crate) fn add_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
@@ -802,7 +820,7 @@ pub(crate) fn add_offline(
         displaced.retire();
     }
     if let Some(surface) = surface {
-        surface.bind(offline(graph, module_id), module.module_mut());
+        surface.bind(offline_route(graph, module_id), module.module_mut());
     }
     locked.apply_command(GraphCommand::AddModule {
         module_id: module_id.to_string(),
@@ -812,7 +830,9 @@ pub(crate) fn add_offline(
 }
 
 /// Removes `module_id` from an offline render's `graph` and `surfaces` in
-/// one step under the lock its renders take, retiring its surface.
+/// one step under the lock its renders take, retiring its surface. A test
+/// fixture, as [`add_offline`] is.
+#[cfg(test)]
 pub(crate) fn remove_offline(
     graph: &Arc<Mutex<SignalGraph>>,
     surfaces: &Mutex<IndexMap<String, ControlSurfaceInstance>>,
@@ -847,7 +867,8 @@ pub(crate) fn retire_offline(
     }
 }
 
-fn offline(graph: &Arc<Mutex<SignalGraph>>, module_id: &str) -> Route {
+/// The route a surface takes to its module in an offline render's `graph`.
+pub(crate) fn offline_route(graph: &Arc<Mutex<SignalGraph>>, module_id: &str) -> Route {
     Route::Offline {
         graph: Arc::downgrade(graph),
         module_id: module_id.to_string(),

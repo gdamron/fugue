@@ -530,8 +530,10 @@ fn build_publication(
 
 // Used by `publish::watch`, which the front doors FUG-317 builds submit to.
 #[cfg_attr(not(test), allow(dead_code))]
+mod offline;
 mod order;
 mod rebind;
+pub(crate) use offline::edit_offline;
 pub(crate) use rebind::Rescheduling;
 #[cfg(test)]
 mod tests;

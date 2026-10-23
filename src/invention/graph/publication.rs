@@ -427,6 +427,22 @@ impl SignalGraph {
         }
     }
 
+    /// Installs `publication` in an offline render's graph in place, as the
+    /// audio thread installs a live one (see [`Self::install`]), and counts
+    /// the edit, so a payload resolved before it is refused as stale (see
+    /// `declared::Checked`). Afterwards `publication` holds what the install
+    /// displaced, to drop off the graph's lock. Allocates: offline.
+    pub(crate) fn install_offline(&mut self, publication: &mut Publication) {
+        self.install(publication);
+        // No publisher keeps an ordering here: a recompile in place (an
+        // offline retarget, say) reads the modules' targets afresh.
+        self.published = false;
+        self.offline_edits += 1;
+        if let Some(watch) = &mut self.end_watch {
+            watch.refresh(&self.modules);
+        }
+    }
+
     /// Swaps a prepared publication in. Afterwards `publication` holds the
     /// previous module map (with removed and replaced instances, and vacant
     /// placeholders where survivors were) and the previous derived state.

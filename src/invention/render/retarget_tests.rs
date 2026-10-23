@@ -1,6 +1,7 @@
 //! An offline `schedule` write that changes what a scheduler writes
-//! recompiles the process order, as the live write does (FUG-388): the
-//! render matches the document loaded with the new schedule.
+//! recompiles the process order, as the live write does: the render
+//! matches the document loaded with the new schedule, after an offline
+//! structural edit too.
 
 use super::RenderEngine;
 use crate::control_request::CURSOR_CAPACITY;
@@ -43,12 +44,16 @@ const LEVEL: &str = r#"[{"at_step":6,"module":"mix","control":"level.0","value":
 const TEMPO: &str = r#"[{"at_step":6,"module":"clock","control":"bpm","value":211.0}]"#;
 
 /// Renders `doc` offline for five seconds, writing `write` to `sched`'s
-/// schedule after one.
-fn render(doc: &str, write: Option<&str>) -> Vec<f32> {
+/// schedule after one, after an unrelated structural edit when `edited`.
+fn render(doc: &str, write: Option<&str>, edited: bool) -> Vec<f32> {
     let mut engine = RenderEngine::new(RATE);
     engine.load_json(doc).unwrap();
     let mut out = vec![0.0f32; RATE as usize * 2];
     engine.render_interleaved(&mut out).unwrap();
+    if edited {
+        let silent = serde_json::json!({ "frequency": 3.0 });
+        engine.add_module("aside", "oscillator", &silent).unwrap();
+    }
     if let Some(schedule) = write {
         let schedule = ControlValue::String(schedule.into());
         engine.set_control("sched", "schedule", schedule).unwrap();
@@ -61,13 +66,17 @@ fn render(doc: &str, write: Option<&str>) -> Vec<f32> {
 
 #[test]
 fn an_offline_retarget_plays_as_loaded() {
-    for fillers in [0, CURSOR_CAPACITY] {
-        let loaded = render(&document(fillers, TEMPO), None);
-        let written = render(&document(fillers, LEVEL), Some(TEMPO));
+    for (fillers, edited) in [
+        (0, false),
+        (CURSOR_CAPACITY, false),
+        (CURSOR_CAPACITY, true),
+    ] {
+        let loaded = render(&document(fillers, TEMPO), None, edited);
+        let written = render(&document(fillers, LEVEL), Some(TEMPO), edited);
         let first = loaded
             .iter()
             .zip(&written)
             .position(|(a, b)| a.to_bits() != b.to_bits());
-        assert_eq!(first, None, "{fillers} fillers");
+        assert_eq!(first, None, "{fillers} fillers, edited first: {edited}");
     }
 }
