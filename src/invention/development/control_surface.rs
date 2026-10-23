@@ -2,6 +2,9 @@ use super::*;
 use crate::control_request::{Automation, LegacyRefusal, TableValue};
 use crate::invention::declared::{Declaration, DeclaredSurface, Route};
 use crate::modules::control_scheduler::SurfaceDirectory;
+use std::sync::PoisonError;
+
+use super::retarget::{reordered, InnerOrder};
 
 pub(super) struct AliasedControl {
     pub(super) meta: ControlMeta,
@@ -34,6 +37,11 @@ pub(super) struct DevelopmentControlSurface {
     /// The exposed controls reaching declared inner controls (see
     /// `declared_controls`): written as the development's own requests.
     pub(super) declared: Option<DeclaredSurface>,
+    /// What a payload's inner order is computed from (see `retarget`).
+    order: InnerOrder,
+    /// Held from a payload's recording through its write, so the order
+    /// each write carries counts every write before it.
+    writing: Mutex<()>,
 }
 
 impl DevelopmentControlSurface {
@@ -43,6 +51,7 @@ impl DevelopmentControlSurface {
         definition: &Invention,
         directory: SurfaceDirectory,
         declared: Option<DeclaredSurface>,
+        order: InnerOrder,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let surfaces = directory.lock().unwrap().clone();
         let mut controls = Vec::with_capacity(definition.controls.len());
@@ -79,6 +88,8 @@ impl DevelopmentControlSurface {
             surfaces,
             directory,
             declared,
+            order,
+            writing: Mutex::new(()),
         })
     }
 
@@ -86,6 +97,24 @@ impl DevelopmentControlSurface {
     fn declared(&self, key: &str) -> Option<&DeclaredSurface> {
         let declared = self.declared.as_ref()?;
         declared.declares(key).then_some(declared)
+    }
+
+    /// The payload keys reaching an inner control `key` reaches, `key`
+    /// among them when it is one.
+    fn shared_payload_keys<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a str> {
+        let reached = move |entry: &AliasedControl| {
+            (self.controls.iter()).any(|aliased| {
+                aliased.meta.key == key
+                    && aliased.module_id == entry.module_id
+                    && aliased.key == entry.key
+            })
+        };
+        let mut seen = std::collections::HashSet::new();
+        (self.controls.iter())
+            .filter(move |entry| reached(entry))
+            .map(|entry| entry.meta.key.as_str())
+            .filter(move |shared| seen.insert(*shared))
+            .filter(|shared| self.declared(shared).is_some_and(|d| d.is_payload(shared)))
     }
 
     fn lookup(&self, key: &str) -> Result<(&AliasedControl, &ControlSurfaceInstance), String> {
@@ -99,6 +128,45 @@ impl DevelopmentControlSurface {
             .get(&control.module_id)
             .ok_or_else(|| format!("Unknown control module: {}", control.module_id))?;
         Ok((control, surface))
+    }
+
+    /// Writes payload key `key`, whose one alias builds the payload (a
+    /// scheduler's resolved schedule). The alias records `value` first, so
+    /// the inner order the payload carries counts what it now writes; a
+    /// write that fails restores what it recorded. A payload key reaches
+    /// one alias and no legacy one, so recording touches nothing else.
+    fn write_payload(
+        &self,
+        declared: &DeclaredSurface,
+        key: &str,
+        value: ControlValue,
+    ) -> Result<(), String> {
+        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        // What the alias records now, whichever key or development wrote
+        // it last (a nested development shows every key on it as recorded,
+        // see `set_legacy`), and what this one's keys on it read back as:
+        // a recording a codec builds from is not what it reads back as.
+        let (control, surface) = self.lookup(key)?;
+        let was = surface.get_control(&control.key)?;
+        let shown: Vec<(&str, ControlValue)> = (self.shared_payload_keys(key))
+            .filter_map(|shared| Some((shared, self.get_control(shared).ok()?)))
+            .collect();
+        self.set_legacy(key, value.clone())?;
+        let written = match self.prepare_payload(key, &value) {
+            Some(prepared) => {
+                prepared.and_then(|(payload, shown)| declared.write_payload(key, payload, shown))
+            }
+            None => declared.set_control(key, value),
+        };
+        if written.is_err() {
+            let _ = self.set_legacy(key, was);
+            if let Some(declared) = &self.declared {
+                for (shared, value) in shown {
+                    declared.show_payload(shared, value);
+                }
+            }
+        }
+        written
     }
 }
 
@@ -157,19 +225,17 @@ impl ControlSurface for DevelopmentControlSurface {
             self.validate_control(key, &value, &self.surfaces)?;
             // A payload only its alias's own surface can build (a
             // scheduler's resolved schedule) is built there and handed on.
-            match self.prepare_payload(key, &value) {
-                Some(prepared) => {
-                    let (payload, shown) = prepared?;
-                    declared.write_payload(key, payload, shown)?;
-                }
-                None => declared.set_control(key, value.clone())?,
+            if declared.is_payload(key) {
+                return self.write_payload(declared, key, value);
             }
+            declared.set_control(key, value.clone())?;
         }
         self.set_legacy(key, value)
     }
 
     /// Built by the one alias a payload key reaches, when its surface
-    /// builds its own payloads.
+    /// builds its own payloads, and wrapped with the inner order it leaves
+    /// (see `retarget`): the alias records what it was given first.
     #[allow(private_interfaces)]
     fn prepare_payload(
         &self,
@@ -180,7 +246,11 @@ impl ControlSurface for DevelopmentControlSurface {
             return None;
         }
         let (control, surface) = self.lookup(key).ok()?;
-        surface.prepare_payload(&control.key, value)
+        let prepared = surface.prepare_payload(&control.key, value)?;
+        Some(prepared.map(|(payload, shown)| {
+            let order = self.order.compute(&self.surfaces);
+            (reordered(payload, order), shown)
+        }))
     }
 
     /// Writes `key`'s aliases still on the legacy path, and theirs in a
@@ -194,6 +264,14 @@ impl ControlSurface for DevelopmentControlSurface {
                 .ok_or_else(|| format!("Unknown control module: {}", control.module_id))?;
             surface.set_legacy(&control.key, value.clone())?;
             found = true;
+        }
+        // A payload written through an outer development reads back as
+        // written through every key on the same inner control, as its
+        // alias does.
+        if let Some(declared) = &self.declared {
+            for shared in self.shared_payload_keys(key) {
+                declared.show_payload(shared, value.clone());
+            }
         }
         if found {
             Ok(())

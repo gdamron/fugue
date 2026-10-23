@@ -1,5 +1,5 @@
-//! The registry-wide interface convention guard (ledger
-//! `module-interface-conventions`; section 4 of the convention spec). It
+//! The registry-wide interface convention guard (see `docs/module-design.md`,
+//! "Interface naming"). It
 //! builds every built-in type and checks the names it exposes: its inputs,
 //! outputs, declared controls, audio-thread control table and declared
 //! config keys.
@@ -114,13 +114,13 @@ fn check_type(registry: &ModuleRegistry, type_id: &str) -> Vec<Violation> {
     };
     let controls = of(Kind::Control);
 
-    // Spelling and banned tokens (N1, N2, N5, N6, N8).
+    // Spelling and banned tokens.
     for (kind, name) in &names {
         for problem in naming_problems(name) {
             push(name, format!("{kind:?} '{}' {problem}", family(name)));
         }
     }
-    // Indices run from 0 with no gaps (N4).
+    // Indices run from 0 with no gaps.
     for kind in [Kind::Input, Kind::Output, Kind::Control] {
         let mut families: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         for name in of(kind) {
@@ -139,7 +139,7 @@ fn check_type(registry: &ModuleRegistry, type_id: &str) -> Vec<Violation> {
             }
         }
     }
-    // Pairs (N8): left with right, a modulation input with its depth.
+    // Pairs: left with right, a modulation input with its depth.
     for kind in [Kind::Input, Kind::Output] {
         let ports = of(kind);
         for (side, other) in [("_left", "_right"), ("_right", "_left")] {
@@ -168,7 +168,7 @@ fn check_type(registry: &ModuleRegistry, type_id: &str) -> Vec<Violation> {
             }
         }
     }
-    // Config keys and control keys (N9).
+    // Config keys and control keys.
     let stems: BTreeSet<&str> = controls
         .iter()
         .filter_map(|c| c.split_once('.'))

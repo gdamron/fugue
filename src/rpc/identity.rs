@@ -18,7 +18,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// `crate_version` is always present; the git fields are populated by `build.rs`
 /// only inside a checkout, so a packaged build reports version alone. Two builds
-/// are considered the same runtime when every populated field matches.
+/// are the same runtime only when all three fields are equal, so a packaged
+/// build does not match a checkout build of the same version.
 ///
 /// Note there is intentionally no build timestamp: the CLI and MCP adapter are
 /// compiled separately, and two binaries built from identical source must

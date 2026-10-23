@@ -148,4 +148,11 @@ fn a_development_exposing_pattern_hands_it_to_its_sequencer() {
         read(&rig, "p", "notes"),
         r#"[{"note":7},{"note":9}]"#.into()
     );
+    // A write the request queue refuses reads back as the last accepted.
+    let accepted = r#"[{"note": 4}]"#;
+    while surface.set_control("notes", accepted.into()).is_ok() {}
+    assert!(surface
+        .set_control("notes", r#"[{"note": 5}]"#.into())
+        .is_err());
+    assert_eq!(read(&rig, "p", "notes"), r#"[{"note":4}]"#.into());
 }

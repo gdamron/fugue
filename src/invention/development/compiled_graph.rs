@@ -64,7 +64,9 @@ impl CompiledDevelopmentGraph {
         routing: &[RoutingConnection],
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let indexes = module_indexes_slice(&module_list);
-        let (process_order, has_cycle) = compute_process_order_slice(&module_list, routing);
+        let routes = routes_of(routing, &indexes);
+        let targets = targets_of(module_list.iter().map(|(_, m)| m), &indexes);
+        let (process_order, has_cycle) = process_order(module_list.len(), &routes, &targets);
         let mut input_routes: Vec<Vec<CompiledConnection>> =
             (0..module_list.len()).map(|_| Vec::new()).collect();
 
@@ -123,31 +125,98 @@ impl CompiledDevelopmentGraph {
     }
 }
 
-/// Returns `(process_order, has_cycle)`. `has_cycle` is true if the sub-graph
+/// Each route as `(from, to)` module indexes, in routing order; routes
+/// naming no inner module are left out.
+pub(super) fn routes_of(
+    routing: &[RoutingConnection],
+    indexes: &HashMap<&str, usize>,
+) -> Vec<(usize, usize)> {
+    routing
+        .iter()
+        .filter_map(|conn| {
+            let from = *indexes.get(conn.from_module.as_str())?;
+            let to = *indexes.get(conn.to_module.as_str())?;
+            Some((from, to))
+        })
+        .collect()
+}
+
+/// Each module's control targets, by index; ids naming no inner module are
+/// left out.
+fn targets_of<'a>(
+    modules: impl Iterator<Item = &'a GraphModule>,
+    indexes: &HashMap<&str, usize>,
+) -> Vec<Vec<usize>> {
+    modules
+        .map(|module| {
+            let targets = module.module().control_targets();
+            targets
+                .iter()
+                .filter_map(|id| indexes.get(id.as_str()).copied())
+                .collect()
+        })
+        .collect()
+}
+
+/// The order of `n` modules joined by `routes` (`(from, to)` pairs, in
+/// routing order) and ordering edges to each one's `targets`, as
+/// `(process_order, has_cycle)`. `has_cycle` is true if the sub-graph
 /// contains a back-edge (a feedback loop), which forces the slower
 /// sample-by-sample processing path.
-pub(super) fn compute_process_order_slice(
-    modules: &[(String, GraphModule)],
-    routing: &[RoutingConnection],
+///
+/// As at the top level (see `crate::invention::graph::compile`), a module
+/// runs before the modules whose controls it writes (see
+/// [`crate::Module::control_targets`]), so an inner scheduler's write lands
+/// in the block it falls in. Unlike there, such an ordering edge that would
+/// close a loop is left out rather than folded into a feedback group: a
+/// development has one processing path, and a loop would move all of it to
+/// the per-sample path. So only routing decides `has_cycle`, and a
+/// scheduler writing a module upstream of it (its own clock, say) lands its
+/// write a block later, as before.
+///
+/// A sub-graph with a routed loop keeps its routing order: an ordering
+/// edge could move which route of the loop is delayed, and on the
+/// per-sample path a write lands at most a sample late anyway.
+pub(super) fn process_order(
+    n: usize,
+    routes: &[(usize, usize)],
+    targets: &[Vec<usize>],
 ) -> (Vec<usize>, bool) {
-    let indexes = module_indexes_slice(modules);
-    let mut downstream: Vec<Vec<usize>> = (0..modules.len()).map(|_| Vec::new()).collect();
-
-    for conn in routing {
-        let Some(&from_index) = indexes.get(conn.from_module.as_str()) else {
-            continue;
-        };
-        let Some(&to_index) = indexes.get(conn.to_module.as_str()) else {
-            continue;
-        };
-        downstream[from_index].push(to_index);
+    let mut downstream: Vec<Vec<usize>> = (0..n).map(|_| Vec::new()).collect();
+    for &(from, to) in routes {
+        downstream[from].push(to);
     }
 
-    let mut state = vec![0_u8; modules.len()];
-    let mut order = Vec::with_capacity(modules.len());
+    let routed = reverse_postorder(&downstream);
+    if routed.1 {
+        return routed;
+    }
+    // Ordering edges join after the routes, so a sub-graph without them
+    // orders exactly as by routing alone.
+    let mut ordered = false;
+    for (from, targets) in targets.iter().enumerate() {
+        for &to in targets {
+            if !reaches(&downstream, to, from) {
+                downstream[from].push(to);
+                ordered = true;
+            }
+        }
+    }
+    if !ordered {
+        return routed;
+    }
+    reverse_postorder(&downstream)
+}
+
+/// Reverse post-order of a depth-first walk along `downstream`, and whether
+/// it met a back-edge (a loop).
+fn reverse_postorder(downstream: &[Vec<usize>]) -> (Vec<usize>, bool) {
+    let n = downstream.len();
+    let mut state = vec![0_u8; n];
+    let mut order = Vec::with_capacity(n);
     let mut has_cycle = false;
 
-    for start in 0..modules.len() {
+    for start in 0..n {
         if state[start] != 0 {
             continue;
         }
@@ -181,6 +250,26 @@ pub(super) fn compute_process_order_slice(
 
     order.reverse();
     (order, has_cycle)
+}
+
+/// Whether `to` is reachable from `from` along `downstream` (a module
+/// reaches itself).
+fn reaches(downstream: &[Vec<usize>], from: usize, to: usize) -> bool {
+    let mut seen = vec![false; downstream.len()];
+    let mut stack = vec![from];
+    seen[from] = true;
+    while let Some(node) = stack.pop() {
+        if node == to {
+            return true;
+        }
+        for &next in &downstream[node] {
+            if !seen[next] {
+                seen[next] = true;
+                stack.push(next);
+            }
+        }
+    }
+    false
 }
 
 /// A development's signal flow seen from outside: what reaches each output

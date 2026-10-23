@@ -157,7 +157,13 @@ package referenced by `pkg:` are therefore accepted on both paths or refused on
 both. A file over its cap is refused from its size before any bytes are read and
 reported as `file_too_large`, naming the file, the limit and the remedy (trim or
 split the sample, or re-encode it as FLAC). The limits live in
-`src/pkg/read_limit.rs`. Decision: FUG-280, 2026-10-09.
+`src/pkg/read_limit.rs`.
+
+The audio cap is generous but finite on purpose. Hashing streams, so memory
+stays flat whatever the size; the cap bounds the time one file can cost (a
+second or two at native SHA-256 speed). A larger file would be impractical to
+play anyway: the sample player decodes a whole file into memory as `f32`,
+roughly doubling a 16-bit file's size.
 
 ### Refresh cost
 
@@ -176,7 +182,7 @@ they re-hash the complete closure, so a change the stamp cannot see (same size,
 restored mtime) still fails with `stale_reference` or `integrity_mismatch`.
 The cache is process-wide, bounded to 16,384 digests with least-recently-used
 eviction, and shared safely by concurrent calls. It lives in
-`src/pkg/content/local/cache.rs`. Decision: FUG-279.
+`src/pkg/content/local/cache.rs`.
 
 Package versions are immutable: changed bytes require a new version. Reuse
 package integrity and lockfile machinery to detect a changed installed payload.
