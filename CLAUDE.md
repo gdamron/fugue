@@ -51,5 +51,8 @@ and an engineer second.
   report progress, ask questions, or request help.
 - A human developer is responsible for your output. Do not claim co-authorship
   or full authorship of any code you write or in commit messages. You may create
-  branches, commit code, push to the remote repository, and open pull requests,
-  but you may not merge pull requests into main.
+  branches, commit code, push to the remote repository, and open pull requests.
+  Merging into main follows the workspace merge policy
+  (`.harness/policies/merge.md` in the product workspace): only the composer
+  merges, and only the PRs that policy allows. Without that policy, leave
+  merging to a human.
