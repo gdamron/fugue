@@ -124,8 +124,9 @@ impl DevelopmentControlSurface {
         value: ControlValue,
     ) -> Result<(), String> {
         let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
-        let (control, surface) = self.lookup(key)?;
-        let was = surface.get_control(&control.key)?;
+        // Its own read-back, which every write through it updates: a
+        // nested development's never sees the writes made through this one.
+        let was = self.get_control(key)?;
         self.set_legacy(key, value.clone())?;
         let written = match self.prepare_payload(key, &value) {
             Some(prepared) => {

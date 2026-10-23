@@ -173,6 +173,10 @@ fn targets_of<'a>(
 /// the per-sample path. So only routing decides `has_cycle`, and a
 /// scheduler writing a module upstream of it (its own clock, say) lands its
 /// write a block later, as before.
+///
+/// A sub-graph with a routed loop keeps its routing order: an ordering
+/// edge could move which route of the loop is delayed, and on the
+/// per-sample path a write lands at most a sample late anyway.
 pub(super) fn process_order(
     n: usize,
     routes: &[(usize, usize)],
@@ -183,16 +187,31 @@ pub(super) fn process_order(
         downstream[from].push(to);
     }
 
+    let routed = reverse_postorder(&downstream);
+    if routed.1 {
+        return routed;
+    }
     // Ordering edges join after the routes, so a sub-graph without them
     // orders exactly as by routing alone.
+    let mut ordered = false;
     for (from, targets) in targets.iter().enumerate() {
         for &to in targets {
             if !reaches(&downstream, to, from) {
                 downstream[from].push(to);
+                ordered = true;
             }
         }
     }
+    if !ordered {
+        return routed;
+    }
+    reverse_postorder(&downstream)
+}
 
+/// Reverse post-order of a depth-first walk along `downstream`, and whether
+/// it met a back-edge (a loop).
+fn reverse_postorder(downstream: &[Vec<usize>]) -> (Vec<usize>, bool) {
+    let n = downstream.len();
     let mut state = vec![0_u8; n];
     let mut order = Vec::with_capacity(n);
     let mut has_cycle = false;
@@ -217,8 +236,6 @@ pub(super) fn process_order(
                     1 => {
                         // Back-edge: a feedback loop. Preserve the existing
                         // one-sample-delay behavior via the per-sample path.
-                        // Every loop is made of routes: no ordering edge
-                        // closing one was added.
                         has_cycle = true;
                     }
                     _ => {}

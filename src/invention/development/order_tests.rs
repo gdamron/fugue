@@ -36,6 +36,19 @@ fn a_write_upstream_of_its_scheduler_is_no_loop() {
 }
 
 #[test]
+fn a_routed_loop_keeps_its_routing_order() {
+    // 1 and 2 feed each other; 0 writes 2. Routing alone delays 2 → 1;
+    // ordering 0 before 2 would put 2 first and delay 1 → 2 instead.
+    let routes = [(1, 2), (2, 1)];
+    let routed = process_order(3, &routes, &[vec![], vec![], vec![]]);
+    assert_eq!(
+        process_order(3, &routes, &[vec![2], vec![], vec![]]),
+        routed
+    );
+    assert!(routed.1);
+}
+
+#[test]
 fn a_routed_loop_is_still_one() {
     let (_, cycle) = process_order(3, &[(0, 1), (1, 0)], &[vec![], vec![], vec![0, 1]]);
     assert!(cycle);
@@ -106,4 +119,35 @@ fn an_offline_inner_retarget_plays_as_loaded() {
     assert_eq!(first, None);
     // The write is heard: the oscillator changes pitch at step 6.
     assert_ne!(loaded, render(&document(OLD), None));
+}
+
+/// `document`'s development wrapped in another, `shell`, which exposes the
+/// inner one's `schedule` as its own.
+fn nested(schedule: &str) -> String {
+    let doc: serde_json::Value = serde_json::from_str(&document(schedule)).unwrap();
+    let pattern = doc["developments"][0].clone();
+    let shell = serde_json::json!({ "name": "shell", "definition": {
+        "version": "1.0.0",
+        "modules": [{ "id": "inner", "type": "pattern" }],
+        "connections": [],
+        "inputs": [{ "name": "clock", "to": "inner", "to_port": "clock" }],
+        "outputs": [{ "name": "audio", "from": "inner", "from_port": "audio" }],
+        "controls": [{ "name": "schedule", "module": "inner", "control": "schedule" }]
+    } });
+    let mut doc = doc;
+    doc["developments"] = serde_json::json!([pattern, shell]);
+    doc["modules"][1]["type"] = "shell".into();
+    doc.to_string()
+}
+
+#[test]
+fn a_retarget_through_nested_developments_plays_as_loaded() {
+    let loaded = render(&nested(NEW), None);
+    let written = render(&nested(OLD), Some(NEW));
+    let first = loaded
+        .iter()
+        .zip(&written)
+        .position(|(a, b)| a.to_bits() != b.to_bits());
+    assert_eq!(first, None);
+    assert_eq!(loaded, render(&document(NEW), None), "as one development");
 }

@@ -220,5 +220,8 @@ fn a_schedule_retargeting_an_inner_scheduler_reorders_its_development() {
     assert_eq!(clocked(&mut rig, "p", 1.0), (0, 0), "step 1");
     assert_eq!(read(&rig, "p", "freq"), ControlValue::Number(330.0));
     let (_, _, frees) = crate::alloc_counter::allocator_events(|| rig.live.reclaim());
-    assert!(frees >= 1, "the reclaimer frees the replaced schedule and order");
+    assert!(
+        frees >= 1,
+        "the reclaimer frees the replaced schedule and order"
+    );
 }
