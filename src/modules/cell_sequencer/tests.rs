@@ -164,7 +164,7 @@ fn test_cell_sequencer_held_chain_keeps_gate_high_across_step_boundaries() {
 
 #[test]
 fn test_held_step_before_new_note_releases_so_it_retriggers() {
-    // Regression (FUG-189): a held step followed by a *new note* must release
+    // Regression: a held step followed by a *new note* must release
     // its gate before the next clock edge so the note retriggers. It used to
     // fill the full step duration and rely on a one-sample boundary dip, which
     // vanishes at fractional step periods (fast tempos) — dropping the

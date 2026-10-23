@@ -10,9 +10,9 @@
 # a human) can run it to get an identical, inspectable view of a score PDF.
 #
 # We deliberately do NOT rasterize PDFs ourselves — poppler is the renderer the
-# surrounding toolchain already assumes, and pinning it (version recorded in the
-# manifest) is how we get determinism. See the decision ledger entry
-# .harness/decisions/2026-06-30-judgment.md.
+# surrounding toolchain already assumes, and recording its version in the
+# manifest is how a run can be repeated. See README.md, "Why no PDF rasterizer
+# in the engine".
 #
 # Usage:
 #   prep_pdf.sh [--dpi N] [--install] <input.pdf> <output_dir>

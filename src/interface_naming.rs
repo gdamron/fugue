@@ -1,6 +1,6 @@
 //! The naming convention for module interfaces: the inputs, outputs,
-//! controls and config keys a module exposes (ledger
-//! `module-interface-conventions`). Built-in modules are held to it by the
+//! controls and config keys a module exposes (see `docs/module-design.md`,
+//! "Interface naming"). Built-in modules are held to it by the
 //! registry-wide convention test; a wasm guest's port names are checked as
 //! it loads and warned about, never refused.
 
@@ -16,7 +16,7 @@ const BANNED_SEGMENTS: &[(&str, &str)] = &[
 /// Words for a linear amplitude, which is `level` or `<x>_level`.
 const AMPLITUDE_WORDS: &[&str] = &["gain", "volume", "master", "wet", "dry"];
 
-/// Amplitude words kept beside `level` (decision D6). Permanent: they are
+/// Amplitude words kept beside `level`. Permanent: they are
 /// the words musicians use for these mixes.
 pub(crate) const ESTABLISHED_MIX_WORDS: &[(&str, &str)] = &[
     ("master", "the mix bus level"),
@@ -85,7 +85,7 @@ fn is_digits(text: &str) -> bool {
 }
 
 /// A word with digits after it (`in1`), other than a rate multiplier or
-/// divisor such as `x2` or `d4` (decision D7).
+/// divisor such as `x2` or `d4`.
 fn glued_digits(segment: &str) -> bool {
     let word = segment.trim_end_matches(|c: char| c.is_ascii_digit());
     let rate = (word == "x" || word == "d") && word.len() < segment.len();

@@ -9,9 +9,9 @@
   the skill is agent-agnostic across platforms.
 
   We deliberately do NOT rasterize PDFs ourselves — poppler is the renderer the
-  surrounding toolchain already assumes, and pinning it (version recorded in the
-  manifest) is how we get determinism. See the decision ledger entry
-  .harness/decisions/2026-06-30-judgment.md.
+  surrounding toolchain already assumes, and recording its version in the
+  manifest is how a run can be repeated. See README.md, "Why no PDF rasterizer
+  in the engine".
 
 .PARAMETER Pdf
   Path to the input PDF.

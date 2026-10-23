@@ -1,5 +1,5 @@
 //! Names that break the interface convention today, each until its module
-//! family is renamed. Seeded from the convention spec's audit table.
+//! family is renamed. Seeded from the convention's first audit of the built-in types.
 //!
 //! The list only shrinks. A family's rename deletes its block below, and
 //! the guard fails on a row that no longer excuses anything, so a block

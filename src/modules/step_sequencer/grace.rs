@@ -7,8 +7,8 @@
 //! Each grace occupies `per_grace` samples: sounding first, then a short
 //! release gap so the next onset (the following grace or the principal note)
 //! presents a real rising edge to downstream envelopes and voice allocators.
-//! One-sample dips are deliberately avoided here for the same reason FUG-189
-//! moved retriggers to explicit release gaps.
+//! One-sample dips are deliberately avoided here for the same reason
+//! sequencers retrigger through explicit release gaps (`docs/musical-time.md`).
 
 use super::step::GraceChain;
 
