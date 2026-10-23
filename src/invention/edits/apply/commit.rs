@@ -41,14 +41,14 @@ impl RunningInvention {
             super::plan::plan_edits(&self.state.lock().unwrap(), &batch.candidate, &registry)?;
         let build = |spec: &ModuleSpec| -> Result<BuiltModule, Refused> {
             let config = batch.resolved.get(&spec.id).unwrap_or(&spec.config);
-            let module = GraphChange::build(
+            let mut module = GraphChange::build(
                 &registry,
                 self.sample_rate,
                 &spec.id,
                 &spec.module_type,
                 config,
             )?;
-            write_built(&module, &spec.id, &batch.candidate)?;
+            write_built(&mut module, &spec.id, &batch.candidate)?;
             Ok(module)
         };
         let swapped = plan
@@ -199,7 +199,7 @@ impl RunningInvention {
 /// alone may not carry the value. A write the module refuses refuses the
 /// batch at its edit, with nothing published.
 fn write_built(
-    module: &BuiltModule,
+    module: &mut BuiltModule,
     id: &str,
     candidate: &EditedCandidate,
 ) -> Result<(), RpcError> {
@@ -218,6 +218,8 @@ fn write_built(
             .ok_or_else(|| refused_write(candidate, "the module has no controls".to_string()))?;
         let outcome = surface.set_control(&write.key, write.value.clone()).err();
         last.insert(write.key.as_str(), outcome);
+        // Made again on a replay, failures included, so it ends the same.
+        module.writes.push((write.key.clone(), write.value.clone()));
     }
     for candidate in candidate.final_writes() {
         if candidate.write.module_id != id {

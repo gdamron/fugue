@@ -57,6 +57,18 @@ pub struct LoggedModule {
     pub id: String,
     pub module_type: String,
     pub config: serde_json::Value,
+    /// The control writes made through its setters once built, in order,
+    /// before it was installed (an edit batch's to a module it builds).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub writes: Vec<LoggedSetting>,
+}
+
+/// A control write made to a module a timed edit built, before it landed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct LoggedSetting {
+    pub key: String,
+    pub value: crate::ControlValue,
 }
 
 /// A connection, as a timed edit left it.
@@ -111,6 +123,12 @@ impl LoggedEdit {
                 id: module.info.id.clone(),
                 module_type: module.info.module_type.clone(),
                 config: module.info.config.clone(),
+                writes: (module.writes.iter())
+                    .map(|(key, value)| LoggedSetting {
+                        key: key.clone(),
+                        value: value.clone(),
+                    })
+                    .collect(),
             })
             .collect();
         // What a replay leaves: those kept in place, then those added.

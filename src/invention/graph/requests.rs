@@ -562,6 +562,35 @@ impl SignalGraph {
         }
     }
 
+    /// Plays what is due at this sample on the graph an offline install of
+    /// `publication` replaces, as the drain does before a live install: the
+    /// tables the edit removes, rebuilds or takes off their clock play now,
+    /// and those it keeps wait for the install (see `BeatHost::defers`).
+    /// As an immediate edit installs, the handovers made with the requests
+    /// go with them (see `Handover::with_requests`); as a timed edit lands
+    /// (`landing`), every handover waits for the install. Offline only.
+    pub(super) fn play_before_offline_install(
+        &mut self,
+        mut publication: Box<Publication>,
+        landing: bool,
+    ) -> Box<Publication> {
+        let Some(mut drain) = self.requests.take() else {
+            return publication;
+        };
+        let handovers = match landing {
+            true => std::mem::take(&mut publication.handovers),
+            false => Vec::new(),
+        };
+        self.installing = Some(publication);
+        let _ = self.apply_due(&mut drain, self.current_sample);
+        self.requests = Some(drain);
+        let mut publication = self.installing.take().expect("installing until now");
+        if landing {
+            publication.handovers = handovers;
+        }
+        publication
+    }
+
     /// Maps every pending request resolved against the generation the
     /// install just retired (`retired`, with that generation) onto the
     /// `installed` order, or refuses it ([`Refusal::TargetGone`]) when its
