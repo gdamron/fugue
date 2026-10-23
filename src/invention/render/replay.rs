@@ -28,7 +28,9 @@
 //! A timed edit that landed lands on the same sample, after every request
 //! logged at or before it, as the live landing came after every request due
 //! at its segment start; the render makes it through the offline edit path
-//! (see `editing`). One refused live is left out. Requests after an edit
+//! (see `editing`), as a timed edit lands live: what it displaces plays
+//! first, and one taken on its clock's beat latches the clock where live
+//! did, before the requests after it. One refused live is left out. Requests after an edit
 //! resolve against the graph it left: one naming a control not declared
 //! there is counted refused.
 
@@ -164,6 +166,21 @@ impl Replay {
         missing
     }
 
+    /// Latches the clock of the next timed edit, one taken on its beat,
+    /// once it is due and the requests applied before it live have applied.
+    fn latch_edit(&mut self, graph: &mut SignalGraph, now: u64) {
+        let Some(edit) = self.edits.get_mut(self.next_edit) else {
+            return;
+        };
+        let taken = |(before, _): &(usize, String)| *before <= self.next;
+        if edit.sample > now || !edit.latch.as_ref().is_some_and(taken) {
+            return;
+        }
+        if let Some((_, clock)) = edit.latch.take() {
+            latch(graph, &clock);
+        }
+    }
+
     /// The next timed edit, now due, to land; afterwards the requests up to
     /// the one after it resolve against `surfaces` as it left them.
     pub(super) fn take_edit(&mut self) -> Option<DueEdit> {
@@ -181,10 +198,13 @@ impl Replay {
 
     /// Fails naming the first clock a logged beat names that keeps no beat
     /// timeline in `graph`: its latch would silently do nothing.
-    /// Only those resolved yet: a later one may name a clock an edit adds.
+    /// Only those resolved yet, and the first timed edit's: a later one may
+    /// name a clock an edit adds.
     pub(super) fn check_clocks(&self, graph: &mut SignalGraph) -> Result<(), String> {
         let resolved = &self.due[..self.resolved];
-        for clock in resolved.iter().filter_map(|due| due.latch.as_ref()) {
+        let edit = self.edits.first().and_then(|edit| edit.latch.as_ref());
+        let clocks = resolved.iter().filter_map(|due| due.latch.as_ref());
+        for clock in clocks.chain(edit.map(|(_, clock)| clock)) {
             let module = graph.modules.get_mut(clock);
             if module.is_none_or(|module| module.module_mut().timeline_mut().is_none()) {
                 return Err(format!(
@@ -201,18 +221,13 @@ impl Replay {
     /// until the next request or edit is due.
     pub(super) fn apply_due(&mut self, graph: &mut SignalGraph, frames: usize) -> Next {
         let now = graph.current_sample;
-        while let Some(due) = self.due.get(self.next).filter(|due| due.sample <= now) {
-            let clock = due
-                .latch
-                .as_ref()
-                .and_then(|clock| graph.modules.get_mut(clock));
-            if let Some(clock) = clock {
-                // As the live watch does: automation written before this
-                // sample first, then the latch.
-                take_automation(clock.module_mut());
-                if let Some(timeline) = clock.module_mut().timeline_mut() {
-                    timeline.latch();
-                }
+        loop {
+            self.latch_edit(graph, now);
+            let Some(due) = self.due.get(self.next).filter(|due| due.sample <= now) else {
+                break;
+            };
+            if let Some(clock) = &due.latch {
+                latch(graph, clock);
             }
             let applied = due.control.map(|control| {
                 graph.apply_control_due(&due.module_id, control, due.value, due.due)
@@ -232,11 +247,22 @@ impl Replay {
     }
 }
 
+/// Latches `clock` as the live watch does: automation written before this
+/// sample first, then the latch.
+fn latch(graph: &mut SignalGraph, clock: &str) {
+    if let Some(clock) = graph.modules.get_mut(clock) {
+        take_automation(clock.module_mut());
+        if let Some(timeline) = clock.module_mut().timeline_mut() {
+            timeline.latch();
+        }
+    }
+}
+
 #[cfg(test)]
 mod edit_tests;
 #[cfg(test)]
-mod landing_tests;
-#[cfg(test)]
 mod hold_tests;
+#[cfg(test)]
+mod landing_tests;
 #[cfg(test)]
 mod tests;
