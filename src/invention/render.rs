@@ -134,7 +134,11 @@ impl RenderEngine {
     /// Replays a live session's request log (see
     /// [`RunningInvention::request_log`](crate::RunningInvention::request_log)):
     /// from now on, renders apply each logged request at its recorded
-    /// sample, splitting the render there as the live block was split.
+    /// sample, splitting the render there as the live block was split, and
+    /// lands each timed edit that landed live on its sample, after every
+    /// request logged at or before it. Timed edits refused live are left
+    /// out; a request resolved against a module an edit built resolves
+    /// once that edit has landed.
     ///
     /// Load the invention the session played, as loaded, and replay before
     /// rendering, at the session's sample rate and block size: the render
@@ -143,7 +147,11 @@ impl RenderEngine {
     /// cannot reproduce). Replay is by sample, not by beat. Replaces any
     /// replay in progress; loading an invention ends it. Fails, replaying
     /// nothing, when the log was played at another sample rate or block
-    /// size, is out of time order, or names a control not declared here.
+    /// size, is out of time order, names a control not declared here, or
+    /// holds a timed edit whose modules this engine's registry cannot build
+    /// (a development type, say). A request after an edit naming a control
+    /// the edit did not leave counts as refused (see
+    /// [`Self::replay_refused`]).
     pub fn replay(&mut self, log: &crate::RequestLog) -> Result<(), Box<dyn std::error::Error>> {
         self.replay = replay::Replay::default();
         let block_size = self.block_size();
@@ -156,7 +164,8 @@ impl RenderEngine {
         }
         let replay = {
             let surfaces = self.control_surfaces.lock().unwrap();
-            replay::Replay::resolve(log, &surfaces)?
+            let build = (&self.registry, self.sample_rate);
+            replay::Replay::resolve(log, &surfaces, build)?
         };
         if let Some(graph) = &self.graph {
             replay.check_clocks(&mut graph.lock().unwrap())?;
@@ -184,11 +193,11 @@ impl RenderEngine {
             return Err("output buffer length must be even".into());
         }
 
-        let graph = self
+        let shared = self
             .graph
-            .as_ref()
+            .clone()
             .ok_or_else(|| "no invention loaded".to_string())?;
-        let mut graph = graph.lock().unwrap();
+        let mut graph = shared.lock().unwrap();
 
         let frames_total = output.len() / 2;
         let block = graph.block_size.clamp(1, crate::MAX_BLOCK);
@@ -201,10 +210,22 @@ impl RenderEngine {
             if let Some(watch) = &mut graph.end_watch {
                 watch.begin();
             }
-            // Split where a replayed request is due, as the live drain does.
+            // Split where a replayed request or edit is due, as the live
+            // drain does. An edit lands through the offline edit path,
+            // which takes the graph's lock itself.
             let mut at = 0;
             while at < n {
-                let end = at + self.replay.apply_due(&mut graph, n - at);
+                let end = match self.replay.apply_due(&mut graph, n - at) {
+                    replay::Next::Render(frames) => at + frames,
+                    replay::Next::Edit => {
+                        drop(graph);
+                        if let Some(edit) = self.replay.take_edit() {
+                            self.land_replayed(edit);
+                        }
+                        graph = shared.lock().unwrap();
+                        continue;
+                    }
+                };
                 graph.process_block(&mut left[at..end], &mut right[at..end]);
                 at = end;
             }

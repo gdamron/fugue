@@ -77,13 +77,13 @@ impl RenderEngine {
         .map(drop)
     }
 
-    fn loaded(&self) -> Result<&Arc<Mutex<SignalGraph>>, GraphCommandError> {
+    pub(super) fn loaded(&self) -> Result<&Arc<Mutex<SignalGraph>>, GraphCommandError> {
         self.graph
             .as_ref()
             .ok_or_else(|| GraphCommandError::ControlError("no invention loaded".to_string()))
     }
 
-    fn edit(
+    pub(super) fn edit(
         &self,
         graph: &Arc<Mutex<SignalGraph>>,
         edit: impl FnOnce(&mut GraphChange) -> Result<(), GraphCommandError>,
@@ -94,7 +94,7 @@ impl RenderEngine {
 
     /// Stops the scripts, agents and handles of removed or replaced modules
     /// and starts those of newly built ones, as a live edit does.
-    fn follow_up(&self, committed: Committed) {
+    pub(super) fn follow_up(&self, committed: Committed) {
         let mut handles = self.handles.lock().unwrap();
         for id in &committed.stopped {
             self.scripts.stop_module(id);
