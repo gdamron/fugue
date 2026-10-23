@@ -161,6 +161,10 @@ pub(crate) struct BuiltModule {
     pub(crate) module: MirrorModule,
     pub(crate) surface: Option<ControlSurfaceInstance>,
     pub(crate) handles: Vec<(String, Arc<dyn Any + Send + Sync>)>,
+    /// The control writes made through its setters once built, in order
+    /// (an edit batch's to a module it builds), so the request log can
+    /// make them again.
+    pub(crate) writes: Vec<(String, crate::ControlValue)>,
 }
 
 /// A structural change being prepared against a snapshot of the mirror.
@@ -241,6 +245,7 @@ impl GraphChange {
             },
             surface: result.control_surface,
             handles: result.handles,
+            writes: Vec::new(),
         })
     }
 

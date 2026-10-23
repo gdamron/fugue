@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 
 use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
 use crate::control_request::{EventCursor, Outcome, OutcomeReceiver, RequestId, RtValue};
-use crate::invention::request_log::{LoggedBeat, LoggedRequest, Recorder, RequestLog};
+use crate::invention::request_log::{LoggedBeat, LoggedEdit, LoggedRequest, Recorder, RequestLog};
 use crate::ControlValue;
 
 /// The most writes the log remembers: every request the queue, the
@@ -56,9 +56,11 @@ pub(crate) struct PendingLog {
     lost: u64,
     /// The session's applied writes.
     log: Recorder,
-    /// Timed edits queued (see `publish::timed`), until their outcomes.
-    /// More than the one waiting: one adopted may not have reported yet.
-    timed: VecDeque<RequestId>,
+    /// Timed edits queued (see `publish::timed`), until their outcomes,
+    /// with what the request log records of each (none for one it cannot
+    /// replay). More than the one waiting: one adopted may not have
+    /// reported yet.
+    timed: VecDeque<(RequestId, Option<LoggedEdit>)>,
     /// Timed edits' outcomes, until the publisher's ledger takes them, and
     /// whether any outcome was dropped meanwhile (see `timed_status`).
     timed_outcomes: VecDeque<(RequestId, Outcome)>,
@@ -80,16 +82,16 @@ impl PendingLog {
         }
     }
 
-    /// Counts timed edit `id`, just queued, as a commit (whether or not it
-    /// lands, as every commit counts), and expects its outcome, never a
-    /// lost write. Call it under this log's lock, taken before the
-    /// submission, so the outcome cannot be received first.
-    pub(crate) fn timed(&mut self, id: RequestId) {
-        self.log.edited();
+    /// Expects timed edit `id`'s outcome, never a lost write, and records
+    /// `edit` with it in the request log as it settles, landed or refused
+    /// (or counts a commit, for an edit the log cannot replay). Call it
+    /// under this log's lock, taken before the submission, so the outcome
+    /// cannot be received first.
+    pub(crate) fn timed(&mut self, id: RequestId, edit: Option<LoggedEdit>) {
         if self.timed.len() == TIMED_CAPACITY {
             self.timed.pop_front();
         }
-        self.timed.push_back(id);
+        self.timed.push_back((id, edit));
     }
 
     /// Receives every outcome waiting, settling the writes they belong to.
@@ -98,8 +100,19 @@ impl PendingLog {
     /// rather than list one as pending for ever.
     pub(crate) fn settle(&mut self) {
         while let Some((id, outcome)) = self.receiver.try_recv() {
-            if let Some(at) = self.timed.iter().position(|timed| *timed == id) {
-                self.timed.remove(at);
+            if let Some(at) = self.timed.iter().position(|(timed, _)| *timed == id) {
+                let edit = self.timed.remove(at).and_then(|(_, edit)| edit);
+                let landed = matches!(
+                    outcome,
+                    Outcome::Applied { .. } | Outcome::AppliedLate { .. }
+                );
+                match edit {
+                    Some(edit) => self.log.timed_edit(edit.settled(outcome)),
+                    // One the log cannot replay counts as a commit, if it
+                    // landed.
+                    None if landed => self.log.edited(),
+                    None => {}
+                }
                 if self.timed_outcomes.len() == TIMED_CAPACITY {
                     self.timed_outcomes.pop_front();
                     self.timed_lost = true;

@@ -44,9 +44,11 @@
 //!   cannot carry, or applied a request at the automation tier, which a
 //!   replay (holding every logged write above automation) cannot
 //!   reproduce: [`RequestLog::unlogged`];
-//! - the graph was edited, reloaded or given an edit batch during the
-//!   session (a replay runs against the invention as loaded):
-//!   [`RequestLog::edits`];
+//! - the graph was edited, reloaded or given an edit batch at once during
+//!   the session (a replay runs against the invention as loaded):
+//!   [`RequestLog::edits`]. A timed one is logged with its outcome instead
+//!   (see [`LoggedEdit`]), and a replay lands it on the sample it landed
+//!   on, or leaves it out when it was refused;
 //! - the invention runs code or agent modules, whose wall-clock writes are
 //!   logged and would act again in the render: [`RequestLog::actors`];
 //! - a repeating beat grid applied (it reports its first application only).
@@ -68,8 +70,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::control_request::RtValue;
 
+mod timed;
+
+pub use timed::{
+    LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedModule, LoggedSetting, LoggedWhen,
+};
+
 /// The most applied requests a session log records before it stops.
 pub const REQUEST_LOG_CAPACITY: usize = 16_384;
+
+/// The most timed edits a session log records before it stops.
+pub const TIMED_EDIT_LOG_CAPACITY: usize = 1_024;
 
 /// A value a request applied, exactly as the module received it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -166,10 +177,16 @@ pub struct RequestLog {
     /// they held.
     #[serde(default)]
     pub unlogged: u64,
-    /// Commits attempted on the graph during the session (structural
-    /// edits, reloads and edit batches), whether or not they landed.
+    /// Commits attempted on the graph at once during the session
+    /// (structural edits, reloads and edit batches), whether or not they
+    /// landed, and timed ones the log could not record (see
+    /// [`LoggedEdit::queued`]). A log from before timed edits were recorded
+    /// counts those here too, so it still replays as inexact.
     #[serde(default)]
     pub edits: u64,
+    /// Timed structural edits, in the order they settled, landed or not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timed_edits: Vec<LoggedEdit>,
     /// Code and agent modules in the invention, which write on wall-clock
     /// time and would write again in a replay.
     #[serde(default)]
@@ -193,6 +210,7 @@ impl RequestLog {
 #[derive(Default)]
 pub(crate) struct Recorder {
     requests: VecDeque<LoggedRequest>,
+    timed_edits: Vec<LoggedEdit>,
     full: bool,
     lost: u64,
     unlogged: u64,
@@ -202,11 +220,22 @@ pub(crate) struct Recorder {
 impl Recorder {
     /// Records an applied request, unless the log is full.
     pub(crate) fn applied(&mut self, request: LoggedRequest) {
-        if self.requests.len() == REQUEST_LOG_CAPACITY {
+        if self.full || self.requests.len() == REQUEST_LOG_CAPACITY {
             self.full = true;
             return;
         }
         self.requests.push_back(request);
+    }
+
+    /// Records a timed edit as it settled, unless the log is full.
+    pub(crate) fn timed_edit(&mut self, mut edit: LoggedEdit) {
+        if self.full || self.timed_edits.len() == TIMED_EDIT_LOG_CAPACITY {
+            self.full = true;
+            return;
+        }
+        // Outcomes arrive in the order the audio thread reported them.
+        edit.requests_before = self.requests.len();
+        self.timed_edits.push(edit);
     }
 
     /// Counts applied requests that could not be recorded.
@@ -233,6 +262,7 @@ impl Recorder {
             lost: self.lost,
             unlogged: self.unlogged,
             edits: self.edits,
+            timed_edits: self.timed_edits.clone(),
             ..RequestLog::default()
         }
     }

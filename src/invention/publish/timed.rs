@@ -23,7 +23,7 @@ use super::{
 };
 use crate::control_request::{BeatSpec, BeatTime, RequestId, When};
 use crate::invention::orchestration::ModulePorts;
-use crate::invention::request_log::LoggedBeat;
+use crate::invention::request_log::{LoggedBeat, LoggedEdit, LoggedWhen};
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
@@ -257,8 +257,9 @@ impl LiveGraph {
                 return Err(error);
             }
         };
+        let logged = logged_edit(&publisher, &prepared, time, beat.as_ref());
         let port = self.port();
-        // Counted in the request log as it applies: registered under the
+        // Recorded in the request log as it settles: registered under the
         // log, locked before the submission, as a write is (see `watch`).
         let mut pending = self.pending.lock().unwrap();
         pending.settle();
@@ -266,7 +267,7 @@ impl LiveGraph {
         // The writes are queued ahead of the edit, so the audio thread has
         // them waiting when it lands, however soon.
         let before = |id| {
-            pending.timed(id);
+            pending.timed(id, logged);
             submitted = self.submit_chain(&mut pending, id, chain)?;
             Ok(())
         };
@@ -400,6 +401,25 @@ fn sync_ledger(publisher: &mut Publisher, pending: &mut PendingLog) {
     if lost {
         ledger.lost(waiting);
     }
+}
+
+/// What the request log records of `prepared`, queued under `publisher`
+/// at `time` (`beat`, resolved): none when it cannot replay it.
+fn logged_edit(
+    publisher: &Publisher,
+    prepared: &PreparedChange,
+    time: EditTime<'_>,
+    beat: Option<&LoggedBeat>,
+) -> Option<LoggedEdit> {
+    let when = match (time, beat) {
+        (EditTime::AtSample(sample), _) => LoggedWhen::AtSample { sample },
+        (EditTime::AfterSamples(samples), _) => LoggedWhen::AfterSamples { samples },
+        (EditTime::Condition(_), _) => LoggedWhen::Condition,
+        (_, Some(beat)) => LoggedWhen::Beat { beat: beat.clone() },
+        (_, None) => return None,
+    };
+    let after = (&prepared.mirror.modules, &prepared.mirror.edges[..]);
+    LoggedEdit::queued(when, &publisher.mirror().modules, after, &prepared.built)
 }
 
 /// `spec` on clock `clock`, as the request log and the ledger show it.

@@ -69,9 +69,12 @@ fn an_edit_at_a_sample_lands_on_it_mid_block() {
     let out = render_counted(&mut rig, 8);
     assert_eq!(outcomes_of(&mut rig, id), [(id, Outcome::Applied { at })]);
     assert_eq!(dial_gone(&out, start), Some(at));
-    // One commit more in the request log (the rig made one), none lost.
+    // Logged as a timed edit on the sample it landed on, not as a commit
+    // (the rig made one), none lost.
     let log = rig.live.request_log();
-    assert_eq!((log.edits, log.lost), (2, 0));
+    assert_eq!((log.edits, log.lost), (1, 0));
+    let landed: Vec<_> = log.timed_edits.iter().map(|edit| edit.landed()).collect();
+    assert_eq!(landed, [Some(at)]);
 }
 
 #[test]
@@ -86,9 +89,9 @@ fn an_edit_reporting_after_the_next_is_queued_is_not_counted_lost() {
         .pending
         .lock()
         .unwrap()
-        .timed(RequestId(first.0 + 1_000));
+        .timed(RequestId(first.0 + 1_000), None);
     let log = rig.live.request_log();
-    assert_eq!((log.edits, log.lost), (3, 0));
+    assert_eq!((log.edits, log.timed_edits.len(), log.lost), (1, 1, 0));
 }
 
 #[test]
