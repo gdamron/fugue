@@ -25,20 +25,24 @@ mod declared_controls;
 #[cfg(test)]
 mod declared_tests;
 #[cfg(test)]
+mod order_tests;
+#[cfg(test)]
 mod payload_tests;
 #[cfg(test)]
 mod ramp_tests;
+mod retarget;
 #[cfg(test)]
 mod scheduled_tests;
 #[cfg(test)]
 mod tests;
 
 use compiled_graph::{
-    enclosure_of, unique_port_names, CompiledDevelopmentGraph, ExternalInputRoute,
-    ExternalOutputRoute,
+    enclosure_of, module_indexes_slice, routes_of, unique_port_names, CompiledDevelopmentGraph,
+    ExternalInputRoute, ExternalOutputRoute,
 };
 use control_surface::DevelopmentControlSurface;
 use declared_controls::{enclose, DevelopmentControls};
+use retarget::{apply_reordered, InnerOrder};
 
 pub(crate) struct DevelopmentFactory {
     pub(crate) name: String,
@@ -232,12 +236,19 @@ impl DevelopmentModule {
                 Some((controls, declared)) => (Some(controls), Some(declared)),
                 None => (None, None),
             };
+        // What the surface orders the inner modules again from when a
+        // payload retargets one (see `retarget`).
+        let order = InnerOrder {
+            ids: module_list.iter().map(|(id, _)| id.clone()).collect(),
+            routes: routes_of(&runtime.routing, &module_indexes_slice(&module_list)),
+        };
         // The surface keeps the internal directory alive once `runtime` is
         // consumed, so inner schedulers can still resolve schedules.
         let control_surface = Arc::new(DevelopmentControlSurface::new(
             definition,
             runtime.control_surfaces.clone(),
             declared,
+            order,
         )?);
 
         let mut input_routes: Vec<Vec<ExternalInputRoute>> =
@@ -477,10 +488,13 @@ impl Module for DevelopmentModule {
         control: ControlIndex,
         payload: Payload,
     ) -> Result<Retired, (Refusal, Payload)> {
-        match &self.controls {
-            Some(controls) => controls.apply_payload(&mut self.graph.modules, control, payload),
-            None => Err((Refusal::Unsupported, payload)),
-        }
+        let Some(controls) = &self.controls else {
+            return Err((Refusal::Unsupported, payload));
+        };
+        let modules = &mut self.graph.modules;
+        apply_reordered(&mut self.graph.process_order, payload, |payload| {
+            controls.apply_payload(modules, control, payload)
+        })
     }
 
     fn for_each_alias(

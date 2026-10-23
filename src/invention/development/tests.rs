@@ -66,9 +66,12 @@ fn a_development_owns_the_directory_its_surfaces_mirror() {
     let (runtime, _) = InventionBuilder::new(SAMPLE_RATE)
         .build(definition.clone())
         .unwrap();
-    let surface =
-        DevelopmentControlSurface::new(&definition, runtime.control_surfaces.clone(), None)
-            .unwrap();
+    let order = super::retarget::InnerOrder {
+        ids: Vec::new(),
+        routes: Vec::new(),
+    };
+    let directory = runtime.control_surfaces.clone();
+    let surface = DevelopmentControlSurface::new(&definition, directory, None, order).unwrap();
     drop(runtime);
 
     // The surface is the directory's only owner, so nothing can change it
