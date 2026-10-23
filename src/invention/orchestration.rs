@@ -403,6 +403,11 @@ impl RuntimeSnapshot {
     /// Returns the declarative document describing the current graph (see
     /// [`RuntimeState::document`]).
     pub fn document(&self) -> Option<crate::Invention> {
+        // A timed edit that has landed is adopted first, as
+        // `RunningInvention::document` does, so the document is what plays.
+        if let Some(live) = &self.live {
+            live.adopt_landed();
+        }
         self.state.lock().unwrap().document()
     }
 }
@@ -423,7 +428,7 @@ impl RuntimeController {
             &*self.module_ports,
             &*self.snapshot.state,
         );
-        edit_offline(graph, mirrors, edit)
+        edit_offline(graph, mirrors, false, edit)
     }
 
     /// Builds and inserts a module into the current graph, replacing one

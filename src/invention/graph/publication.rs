@@ -430,10 +430,25 @@ impl SignalGraph {
     /// Installs `publication` in an offline render's graph in place, as the
     /// audio thread installs a live one (see [`Self::install`]), and counts
     /// the edit, so a payload resolved before it is refused as stale (see
-    /// `declared::Checked`). Afterwards `publication` holds what the install
+    /// `declared::Checked`). Every pending request, watch, ramp and
+    /// condition follows its module to its new index, or is refused
+    /// ([`Refusal::TargetGone`](crate::control_request::Refusal)) when the
+    /// edit removed or rebuilt it, as through a live install. First, what
+    /// is due at this sample plays on the graph it replaces, as before a
+    /// live install of an immediate edit, or of a timed one as it lands
+    /// (`landing`). Returns `publication` holding what the install
     /// displaced, to drop off the graph's lock. Allocates: offline.
-    pub(crate) fn install_offline(&mut self, publication: &mut Publication) {
-        self.install(publication);
+    pub(crate) fn install_offline(
+        &mut self,
+        publication: Box<Publication>,
+        landing: bool,
+    ) -> Box<Publication> {
+        let installed = self.requests.as_ref().map_or(0, |drain| drain.installed);
+        let mut publication = self.play_before_offline_install(publication, landing);
+        self.install(&mut publication);
+        // The render's own generations: what was resolved against the
+        // order just retired maps through its remap.
+        self.remap_requests(installed + 1, Some((installed, &*publication)));
         // No publisher keeps an ordering here: a recompile in place (an
         // offline retarget, say) reads the modules' targets afresh.
         self.published = false;
@@ -441,6 +456,7 @@ impl SignalGraph {
         if let Some(watch) = &mut self.end_watch {
             watch.refresh(&self.modules);
         }
+        publication
     }
 
     /// Swaps a prepared publication in. Afterwards `publication` holds the

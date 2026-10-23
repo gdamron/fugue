@@ -12,6 +12,7 @@ use crate::invention::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
 use crate::rpc::{StructuralEdit, WrittenControl};
 use crate::{ControlValue, Invention, ModuleRegistry};
 
+mod after_timed_edit;
 mod commit;
 mod config_refusals;
 mod real_modules;

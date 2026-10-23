@@ -110,3 +110,32 @@ fn removing_a_scheduled_target_offline_is_refused_with_nothing_changed() {
     assert_eq!(engine.list_modules().len(), modules.len() - 1);
     assert_eq!(engine.list_connections().len(), connections.len() - 2);
 }
+
+/// The sample the schedule's write lands on, rendering a frame at a time.
+fn step_sample() -> usize {
+    let mut engine = RenderEngine::new(RATE);
+    engine.load_json(&document(0)).unwrap();
+    let mut frame = [0.0f32; 2];
+    for sample in 0..RATE as usize * 4 {
+        engine.render_interleaved(&mut frame).unwrap();
+        if level(&engine) == 0.5 {
+            return sample;
+        }
+    }
+    panic!("the schedule never landed");
+}
+
+#[test]
+fn a_scheduler_removed_offline_on_its_step_still_plays_it_as_live() {
+    let at = step_sample();
+    let mut engine = RenderEngine::new(RATE);
+    engine.load_json(&document(0)).unwrap();
+    let mut out = vec![0.0f32; at * 2];
+    engine.render_interleaved(&mut out).unwrap();
+    assert_eq!(level(&engine), 1.0);
+    // Live, a table the edit removes plays its step on the graph the edit
+    // replaces, before the install at the same sample.
+    engine.remove_module("sched").unwrap();
+    engine.render_interleaved(&mut [0.0f32; 2]).unwrap();
+    assert_eq!(level(&engine), 0.5);
+}
