@@ -48,7 +48,10 @@ pub use handles::InventionHandles;
 pub use orchestration::{OrchestrationRuntime, RuntimeController, RuntimeSnapshot};
 pub use reload::{DevelopmentDefinitions, ReloadError, ReloadReport};
 pub use render::{CodeModuleRuntimeInfo, RenderEngine};
-pub use request_log::{LoggedBeat, LoggedRequest, LoggedValue, RequestLog, REQUEST_LOG_CAPACITY};
+pub use request_log::{
+    LoggedBeat, LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedModule, LoggedRequest,
+    LoggedValue, LoggedWhen, RequestLog, REQUEST_LOG_CAPACITY, TIMED_EDIT_LOG_CAPACITY,
+};
 pub use rpc_snapshot::ControlOverride;
 pub use runtime::{GraphCommandError, InventionRuntime, RunningInvention};
 pub use score::{validate_score, Score, SCORE_SCHEMA_V1};

@@ -342,6 +342,42 @@ fn the_exported_log_round_trips_through_json() {
     assert!(log.is_exact());
 }
 
+#[test]
+fn a_log_with_timed_edits_round_trips_and_one_from_before_them_still_reads() {
+    let edit = crate::LoggedEdit {
+        when: crate::LoggedWhen::AtSample { sample: 640 },
+        outcome: crate::LoggedEditOutcome::Landed {
+            sample: 640,
+            due: None,
+        },
+        removed: vec!["osc".into()],
+        built: vec![crate::LoggedModule {
+            id: "osc2".into(),
+            module_type: "oscillator".into(),
+            config: serde_json::json!({ "waveform": "square" }),
+        }],
+        connections: vec![crate::LoggedConnection {
+            from: "osc2".into(),
+            from_port: "audio".into(),
+            to: "dac".into(),
+            to_port: "audio".into(),
+        }],
+    };
+    let log = RequestLog {
+        timed_edits: vec![edit],
+        ..RequestLog::default()
+    };
+    let json = serde_json::to_string(&log).unwrap();
+    assert_eq!(serde_json::from_str::<RequestLog>(&json).unwrap(), log);
+    assert!(log.is_exact());
+    // Written before timed edits were logged: each counted as a commit, so
+    // it reads, and stays inexact.
+    let old = r#"{ "sample_rate": 48000, "block_size": 64, "requests": [], "edits": 1 }"#;
+    let old: RequestLog = serde_json::from_str(old).unwrap();
+    assert!(old.timed_edits.is_empty());
+    assert!(!old.is_exact());
+}
+
 /// A running session of the step sequencer example on a manual backend.
 fn running_example() -> (
     crate::RunningInvention,
