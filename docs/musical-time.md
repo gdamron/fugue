@@ -43,8 +43,10 @@ callback timing and reported output latency; the error bound is documented on
 clock, so a request timed in samples lands on the same sample offline as live,
 and one timed by wall clock is refused there (`NoClock`).
 
-A request whose sample has already passed when the audio thread takes it still
-applies, at the next segment start, and reports `AppliedLate` with the sample
+The audio thread splits each block into segments at the samples requests are
+due on, and applies requests between them. A request whose sample has already
+passed when the audio thread takes it still applies, at the next segment
+start, and reports `AppliedLate` with the sample
 it was due. Nothing applies early.
 
 ### Clock timelines
@@ -57,7 +59,7 @@ beat position, readable as its `position` control:
   request timed on a beat lands with the beat a listener hears.
 - **Tempo changes keep the position continuous.** A `bpm` change re-anchors
   the count where it stands, so no pulse is clipped or doubled at the seam.
-  A tempo change applied on a beat takes effect from the sample after, so it
+  A tempo change timed on a beat takes effect from the sample after, so it
   never moves the beat it lands on.
 - **`reset` returns the clock to beat 0.** Its next sample is position 0
   exactly, so resetting every `N` beats loops them `N` beats long, to the
@@ -106,7 +108,8 @@ On the wire, timed structural edits (`SwapModule`, `ApplyEdits`,
 `after_beats`, `next_beat` (`every`, `offset`) or `next_bar`
 ([`rpc/timed.rs`](../src/rpc/timed.rs)). `next_bar` is only a grid of
 `beats_per_bar` beats (default 4): a convenience for the caller, not a metre
-the engine keeps. Each takes an optional `clock` and `ttl_ms`.
+the engine keeps. The beat forms take an optional `clock`, and every form an
+optional `ttl_ms`.
 
 ### Which clock: the timeline context
 
@@ -128,8 +131,9 @@ The rules, worked out on a control thread each time the topology is compiled:
   clock the module does not follow.
 - Ties go to a clock a request can name, then to the one first in module
   order.
-- With no clock connected, the context falls back to the first clock in module
-  order (top-down). With no clock at all, a request timed in beats is refused.
+- With no clock connected, the context falls back to the first top-level clock
+  in module order. If no clock can be named (none at all, or only clocks
+  inside developments), an unnamed request timed in beats is refused.
 
 A structural edit that targets one module (a swap) uses that module's context.
 An edit batch or a reload has no single module, so without a named clock it
@@ -182,7 +186,10 @@ ttl.
 ### Limits
 
 The audio thread's tables are allocated once, on a control thread, and never
-grow. Per graph:
+grow. Per graph (the constants are in
+[`src/control_request/`](../src/control_request/), except
+`BEAT_WATCH_CAPACITY` in
+[`publisher.rs`](../src/invention/publish/publisher.rs)):
 
 | Table | Capacity | Past it |
 | --- | --- | --- |
@@ -190,6 +197,7 @@ grow. Per graph:
 | Requests waiting on a condition | 64 (`CONDITION_CAPACITY`) | refused before queuing |
 | Parts per condition | 4 (`MAX_PARTS`) | refused before queuing |
 | Beat ramps running | 64 (`RAMP_CAPACITY`) | `PendingFull` |
+| Schedule-table ramps running | 64 | the value is written at once, and counted |
 | Schedules the drain plays on clocks | 32 (`CURSOR_CAPACITY`) | the scheduler plays its own |
 
 ## Score and interpretation

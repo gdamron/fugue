@@ -46,7 +46,8 @@ ever reaches the audio thread. Every request leaves the audio thread's hands
 exactly once, through `Outcomes::settle` in
 [`pending.rs`](../src/control_request/pending.rs), as `Applied`,
 `AppliedLate`, `Superseded`, `Overridden` or `Refused(reason)`, and the
-outcome goes back on a bounded channel.
+outcome goes back on a bounded channel. When that channel is full, the
+outcome is dropped and counted rather than block the audio thread.
 
 ## The path
 
@@ -65,8 +66,13 @@ outcome goes back on a bounded channel.
    `Module::apply_payload`), exactly at its sample.
 
 A request whose sample has already passed applies at the next segment start
-and reports `AppliedLate`. Requests the store cannot hold are refused
-`PendingFull`; they are never silently dropped.
+and reports `AppliedLate`. A full pending store applies back-pressure: the
+drain stops popping, requests wait in the queue in order, and submitters
+eventually get `QueueFull`. A request is refused `PendingFull` only when it
+cannot wait there: when an edit is queued behind a full store (the requests
+ahead of it are refused so the edit is not held up), when the beat-watch or
+condition tables are full, or on a drain with no clock (the null backend).
+Nothing is silently dropped.
 
 One MPSC queue rather than a ring per producer, because producers come
 and go, and merged rings have no single arrival order for "last write wins".
@@ -130,9 +136,10 @@ into a request. A [`Payload`](../src/payload.rs) carries one by pointer:
 
 So the last owner of a heavy value always drops it off the audio thread;
 debug builds panic if one is dropped inside the audio-thread scope. When the
-reclaimer stalls, the drain stops taking payload requests for the block
-rather than refuse one (refusing would itself need a retirement), and
-backpressure reaches submitters as `QueueFull`.
+reclaimer stalls, the drain stops popping at the first payload request
+rather than refuse it (refusing would itself need a retirement). That request
+and everything behind it, edits included, wait in the queue in order, and
+back-pressure reaches submitters as `QueueFull`.
 
 ## When a request applies
 
@@ -184,12 +191,6 @@ it aliases: a write through one alias is weighed against a hold on any of
 them. Events are never held. Hold state is one word per declared control,
 allocated when the module is built, and belongs to the instance: a module
 that survives an edit keeps its holds; one rebuilt starts with none.
-
-**Derived controls (not yet built).** When automation moves a source control
-(a scheduler ramping a melody's `degree_count`) while a higher tier holds a
-control derived from it (`degree.1`), the hold wins: re-deriving must not
-overwrite the held control. This ships with the first module that has
-derived controls, when the melody moves onto declared controls.
 
 ## Automation on the audio thread
 
@@ -261,7 +262,8 @@ A control write is either:
 - **Perform**: a live gesture. It is applied and announced as
   `ControlChanged`, and never recorded.
 
-The wire defaults to `author` for older clients. Conducting scripts and
+The wire defaults to `author` for older clients. An event control (a
+clock's `reset`) is never authored, whatever the intent. Conducting scripts and
 agents write with `perform`, and scheduler writes are automation that never
 reaches the document, so writes at musical rate never make every peer's
 edit stale. `ApplyEdits`'s `set_control` is always authoring.
@@ -289,4 +291,9 @@ These are part of the model but not wired through yet:
 - **Pending requests and outcomes for clients.** The pending log and outcome
   stream exist but are not listed to clients yet. The intent is that agents
   see their own pending requests as users do, with a compact default.
-- **Derived-control holds**, ramp shapes, and controls declared by plugins.
+- **Derived-control holds.** When automation moves a source control (a
+  scheduler ramping a melody's `degree_count`) while a higher tier holds a
+  control derived from it (`degree.1`), the hold wins: re-deriving must not
+  overwrite the held control. This ships with the first module that has
+  derived controls, when the melody moves onto declared controls.
+- Ramp shapes, and controls declared by plugins.
