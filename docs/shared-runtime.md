@@ -137,8 +137,10 @@ resolved by replaying it. A ticket on a command that does not author is
 refused as `invalid_request`.
 
 The daemon answers `Hello` at once, then checks the schema version,
-`check_ticket`, the ticket against the `MutationLedger` (below), and the
-`expected_revision` precondition, in that order. Only then does the command
+`check_ticket`, whether it is closing (a mutation is then refused as
+`unsupported`, even a retry of one that committed), the ticket against the
+`MutationLedger` (below), and the `expected_revision` precondition, in that
+order. Only then does the command
 run; the revision advances if `advances_revision_after` says so, and the
 outcome is recorded.
 
@@ -166,8 +168,9 @@ messages cut to 4 KiB. A queued timed edit is answered with the request
 status it was first given, never a second request.
 
 The ledger holds the outcomes of the last **128** ticketed commands that ran
-(`MUTATION_LEDGER_CAPACITY`), for the life of the daemon session. There is no
-time-based expiry. Refusals made before a command ran (a stale precondition,
+(`MUTATION_LEDGER_CAPACITY`), for the life of the daemon session. A queued
+timed edit that may still change state is kept past its turn for eviction.
+There is no time-based expiry. Refusals made before a command ran (a stale precondition,
 a replaced session, an expired ticket) are not recorded; resending one is
 refused the same way again.
 

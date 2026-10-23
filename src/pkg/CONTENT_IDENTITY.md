@@ -182,7 +182,7 @@ they re-hash the complete closure, so a change the stamp cannot see (same size,
 restored mtime) still fails with `stale_reference` or `integrity_mismatch`.
 The cache is process-wide, bounded to 16,384 digests with least-recently-used
 eviction, and shared safely by concurrent calls. It lives in
-`src/pkg/content/local/cache.rs`. Decision: FUG-279.
+`src/pkg/content/local/cache.rs`.
 
 Package versions are immutable: changed bytes require a new version. Reuse
 package integrity and lockfile machinery to detect a changed installed payload.
