@@ -1,9 +1,9 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::invention::authored_document;
 use crate::invention::format::{Connection, Invention};
 use crate::invention::reload::scalar_control_value;
+use crate::invention::{audio_assets, authored_document};
 use crate::modules::AudioDiagnosticsSnapshot;
 use crate::ControlValue;
 
@@ -153,20 +153,20 @@ impl RuntimeState {
     /// document records it (see `authored_document::entry_asset_mut`), so a
     /// reload of the saved document sees no change and keeps the module,
     /// while a reload of a file naming another sample rebuilds it to play
-    /// that one.
+    /// that one. An asset's package ref is stored resolved, as the load
+    /// resolved it (see `audio_assets::stored_asset_write`).
     pub(crate) fn write_stored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
-        if let Some(slot) = self
-            .modules
-            .get_mut(id)
-            .and_then(|info| authored_document::entry_asset_mut(&mut info.config, key))
-        {
-            *slot = authored_document::control_json(value);
+        let Some(info) = self.modules.get_mut(id) else {
+            return;
+        };
+        let value = &*audio_assets::stored_asset_write(key, value);
+        let asset = authored_document::control_json(value);
+        if authored_document::write_entry_asset(&mut info.config, key, &asset) {
             return;
         }
-        let Some(stored) = self
-            .modules
-            .get_mut(id)
-            .and_then(|info| info.config.as_object_mut())
+        let Some(stored) = info
+            .config
+            .as_object_mut()
             .and_then(|config| config.get_mut(key))
         else {
             return;

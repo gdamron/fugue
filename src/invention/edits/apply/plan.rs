@@ -58,9 +58,8 @@ pub(super) fn plan_edits(
     for candidate in &candidate.control_writes {
         let write = &candidate.write;
         if let Some(info) = current.get_mut(&write.module_id) {
-            if let Some(slot) = authored_document::entry_asset_mut(&mut info.config, &write.key) {
-                *slot = authored_document::control_json(&write.value);
-            }
+            let asset = authored_document::control_json(&write.value);
+            authored_document::write_entry_asset(&mut info.config, &write.key, &asset);
         }
     }
 

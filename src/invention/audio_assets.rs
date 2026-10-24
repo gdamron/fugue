@@ -25,7 +25,40 @@
 //! The authored document (retained for saves) is cloned before this pass
 //! runs, so saved inventions keep their refs instead of machine paths.
 
+use std::borrow::Cow;
+
 use super::format::Invention;
+use crate::ControlValue;
+
+/// Whether `key` is a control that names an audio asset: a module's `asset`,
+/// or a sample's `asset.N`.
+pub(crate) fn is_asset_control(key: &str) -> bool {
+    key == "asset"
+        || key
+            .strip_prefix("asset.")
+            .is_some_and(|index| index.parse::<usize>().is_ok())
+}
+
+/// The value the runtime's stored module config keeps for a control write.
+///
+/// The stored config holds assets resolved, as [`resolve_audio_assets`]
+/// left them at load, so a package ref written to an asset control is
+/// stored as the file it resolves to: a reload of a saved document naming
+/// the same ref then diffs equal and keeps the module. Any other write, and
+/// a ref that does not resolve, is kept as written.
+pub(crate) fn stored_asset_write<'a>(key: &str, value: &'a ControlValue) -> Cow<'a, ControlValue> {
+    match value {
+        ControlValue::String(text)
+            if is_asset_control(key) && crate::pkg::PackageAudioRef::parse(text).is_some() =>
+        {
+            match crate::modules::sample_loading::resolve_source(text) {
+                Ok(resolved) => Cow::Owned(ControlValue::String(resolved)),
+                Err(_) => Cow::Borrowed(value),
+            }
+        }
+        _ => Cow::Borrowed(value),
+    }
+}
 
 /// Rewrites every module-config `asset` reference in `invention` to its
 /// resolved file path, recording package resolutions in the lockfile beside
