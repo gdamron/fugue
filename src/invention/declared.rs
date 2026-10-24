@@ -156,14 +156,16 @@ pub(crate) struct Queued {
 
 /// How a front door submits a write: whether it is authored (and what the
 /// retained document records once it applies), who wrote it and its rank
-/// within that tier (see `control_request::hold`), and how many samples it
-/// may wait before it is refused `Expired`.
+/// within that tier (see `control_request::hold`), how many samples it
+/// may wait before it is refused `Expired`, and whether it is announced
+/// once it applies (see `PendingWrite::announced`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct WriteOptions<'a> {
     pub(crate) authored: Option<&'a Authoring>,
     pub(crate) source: Source,
     pub(crate) priority: i16,
     pub(crate) ttl: Option<u64>,
+    pub(crate) announced: bool,
 }
 
 impl WriteOptions<'_> {
@@ -174,6 +176,7 @@ impl WriteOptions<'_> {
             source,
             priority: 0,
             ttl: None,
+            announced: false,
         }
     }
 
@@ -185,6 +188,15 @@ impl WriteOptions<'_> {
             source: self.source,
             priority: self.priority,
             ttl: self.ttl,
+            announced: self.announced,
+        }
+    }
+
+    /// The same write, announced once it applies.
+    pub(crate) const fn announcing(self) -> Self {
+        Self {
+            announced: true,
+            ..self
         }
     }
 
@@ -716,6 +728,7 @@ impl DeclaredSurface {
                         raw,
                         beat: None,
                         automated,
+                        announced: options.announced,
                         // Safe from the timed edit it was kept over, or that
                         // landed before it: its record follows that edit's.
                         authored: options.authored.map(|authoring| Authoring {
@@ -723,9 +736,14 @@ impl DeclaredSurface {
                             ..authoring.clone()
                         }),
                     };
-                    // The copy applying, too, is this write's.
+                    // The copy applying, too, is this write's, though only
+                    // the write is announced.
                     if let Some(copy) = copy.filter(|copy| *copy != id) {
-                        pending.submitted(copy, write.clone());
+                        let copy_write = PendingWrite {
+                            announced: false,
+                            ..write.clone()
+                        };
+                        pending.submitted(copy, copy_write);
                     }
                     pending.submitted(id, write);
                 }

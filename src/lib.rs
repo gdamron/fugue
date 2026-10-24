@@ -87,7 +87,7 @@ pub use modules::{
 
 // Re-export invention system
 pub use invention::{
-    validate_score, AssetSpec, CodeModuleRuntimeInfo, Connection, ControlOverride,
+    validate_score, AssetSpec, CodeModuleRuntimeInfo, Connection, ControlAcks, ControlOverride,
     DevelopmentControl, DevelopmentDefinitions, DevelopmentInput, DevelopmentOutput,
     DevelopmentSpec, GraphCommandError, Invention, InventionBuilder, InventionHandles,
     InventionRuntime, LoggedBeat, LoggedConnection, LoggedEdit, LoggedEditOutcome, LoggedLatch,
