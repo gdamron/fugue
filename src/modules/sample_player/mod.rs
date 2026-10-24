@@ -6,20 +6,25 @@
 //! - `"elastic"`: a shared WSOLA reader decouples them; `time_ratio`
 //!   controls speed and `pitch_ratio` controls pitch independently.
 
-use std::any::Any;
 use std::sync::Arc;
 
+use crate::control_request::{
+    local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
+    RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::declared::DeclaredSurface;
 use crate::modules::sample_loading::elastic::ElasticReader;
-use crate::modules::sample_loading::elastic_mode_from_config;
+use crate::modules::sample_loading::{elastic_mode_from_config, AssetLoader, SampleData};
+use crate::payload::{Payload, Retired, Shared};
+use crate::traits::ControlMeta;
 use crate::Module;
 
-pub use self::controls::SamplePlayerControls;
-use self::controls::{transport_play, transport_trigger};
+use self::table::{ASSET, LOOP, MIN_RATIO, PITCH_RATIO, PLAY, PLAYING, TIME_RATIO};
 
-mod controls;
 mod inputs;
 mod outputs;
+mod table;
 
 pub struct SamplePlayerFactory;
 
@@ -45,34 +50,60 @@ impl ModuleFactory for SamplePlayerFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let asset = asset_from_config(config)?;
-        let autoplay = config.get("autoplay").and_then(|value| value.as_bool());
-        let elastic = elastic_mode_from_config("sample_player", config)?;
-        let controls = SamplePlayerControls::with_mode(
-            sample_rate,
-            asset.as_deref(),
-            autoplay,
-            // `loop` is applied below, with the other control keys.
-            None,
-            elastic,
-        )?;
-        crate::factory::apply_control_keys(&controls, config, |key| {
-            // `play` is the control's key, which a written control records
-            // under; `autoplay` is the authored start state. The two
-            // become one split in the request model (FUG-314).
-            matches!(key, "play" | "loop" | "pitch_ratio")
-        })?;
-        let player = SamplePlayer::new_with_controls(controls.clone());
-
+        let (player, surface) = build(sample_rate, config)?;
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(player)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
+    }
+}
+
+/// A player built from `config`, and its surface.
+fn build(
+    sample_rate: u32,
+    config: &serde_json::Value,
+) -> Result<(SamplePlayer, DeclaredSurface), Box<dyn std::error::Error>> {
+    let asset = asset_from_config(config)?;
+    let elastic = elastic_mode_from_config("sample_player", config)?;
+    let loader = AssetLoader::current(sample_rate);
+    let table = table::table(elastic);
+    let cells = Arc::new(ControlCells::new(table::defaults(elastic)));
+    let surface = DeclaredSurface::new(table.clone(), cells.clone());
+    let sample = match asset.as_deref().filter(|asset| !asset.is_empty()) {
+        Some(asset) => {
+            let sample = loader.load(asset)?;
+            if elastic {
+                // Computed here, off the audio thread, which finds it
+                // on the sample through a lock-free accessor.
+                sample.elastic_analysis();
+            }
+            Shared::from_arc(sample)
+        }
+        None => Shared::new(SampleData::empty(sample_rate)),
+    };
+    surface.show_payload("asset", asset.unwrap_or_default().into());
+    // `autoplay` is the authored start state. `play`, the control's
+    // own key, is read as the same: a document saved while `play` was a
+    // state recorded it there. Where both are given, `play` wins.
+    let start = start_from_config(config, "autoplay")?;
+    let start = start_from_config(config, "play")?.or(start);
+    crate::factory::apply_control_keys(&surface, config, |key| {
+        matches!(key, "loop" | "pitch_ratio" | "time_ratio")
+    })?;
+    let player = SamplePlayer::build(sample_rate, table, cells, sample, start.unwrap_or(false));
+    Ok((player, surface.with_context(Arc::new(loader))))
+}
+
+/// A start state in config: a boolean, or one spelled as text.
+fn start_from_config(config: &serde_json::Value, key: &str) -> Result<Option<bool>, String> {
+    match config.get(key) {
+        None => Ok(None),
+        Some(serde_json::Value::Bool(flag)) => Ok(Some(*flag)),
+        Some(serde_json::Value::String(text)) if text.trim() == "true" => Ok(Some(true)),
+        Some(serde_json::Value::String(text)) if text.trim() == "false" => Ok(Some(false)),
+        Some(other) => Err(format!("config '{key}' must be a boolean, got {other}")),
     }
 }
 
@@ -95,51 +126,82 @@ pub(crate) fn asset_from_config(config: &serde_json::Value) -> Result<Option<Str
         })
 }
 
+/// Plays one sample, from its start, on a `play` request or a rising
+/// `play` gate; once through, or looping.
+///
+/// Its controls are applied on the thread running it, between blocks, as
+/// requests (see `crate::control_request`): `play` is an event, so every
+/// start restarts the sample, and `play = false` stops it. Only requests
+/// write it; the player reports whether it is playing in `playing`.
 pub struct SamplePlayer {
-    ctrl: SamplePlayerControls,
+    table: &'static ControlTable,
+    cells: Arc<ControlCells>,
     inputs: inputs::SamplePlayerInputs,
     outputs: outputs::SamplePlayerOutputs,
-    sample: Option<Arc<crate::modules::sample_loading::SampleData>>,
+    sample: Shared<SampleData>,
     position: f64,
     /// Present iff the module was built in elastic mode.
     reader: Option<ElasticReader>,
     playing: bool,
+    /// Whether playback is asked for: on with a start, off with a stop or
+    /// as a one-shot ends. A sample swapped in starts playing when it is.
+    armed: bool,
+    loop_enabled: bool,
+    pitch_ratio: f32,
+    time_ratio: f32,
     last_play_input: f32,
-    last_play_trigger: u64,
-    last_control_play: bool,
-    last_swap_version: u64,
     pending_start_gate: bool,
+    /// What `playing` was last published as.
+    shown_playing: bool,
 }
 
 impl SamplePlayer {
-    pub fn new_with_controls(controls: SamplePlayerControls) -> Self {
-        let reader = controls
-            .is_elastic()
-            .then(|| ElasticReader::new(controls.sample_rate()));
-        Self {
-            ctrl: controls,
+    /// A player holding `sample`, its controls as `cells` hold them, playing
+    /// from the start when `start` is set.
+    fn build(
+        sample_rate: u32,
+        table: &'static ControlTable,
+        cells: Arc<ControlCells>,
+        sample: Shared<SampleData>,
+        start: bool,
+    ) -> Self {
+        let number = |index| match cells.load(index) {
+            Some(RtValue::F32(value)) => value.max(MIN_RATIO),
+            _ => 1.0,
+        };
+        let elastic = table.decl(TIME_RATIO).is_some();
+        let mut player = Self {
+            table,
             inputs: inputs::SamplePlayerInputs::new(),
             outputs: outputs::SamplePlayerOutputs::new(),
-            sample: None,
+            sample,
             position: 0.0,
-            reader,
+            reader: elastic.then(|| ElasticReader::new(sample_rate)),
             playing: false,
+            armed: start,
+            loop_enabled: matches!(cells.load(LOOP), Some(RtValue::Bool(true))),
+            pitch_ratio: number(PITCH_RATIO),
+            time_ratio: number(TIME_RATIO),
             last_play_input: 0.0,
-            last_play_trigger: 0,
-            last_control_play: false,
-            last_swap_version: 0,
             pending_start_gate: false,
+            shown_playing: false,
+            cells,
+        };
+        if start {
+            // As a start written before the first block: the sample swapped
+            // in plays, and the start restarts it.
+            player.playing = player.sample.len() > 0;
+            player.restart();
         }
+        player.cells.publish(PLAY, RtValue::Bool(start));
+        player.publish_playing();
+        player
     }
 
     fn restart(&mut self) {
         let was_audible = self.playing;
         self.position = 0.0;
-        self.playing = self
-            .sample
-            .as_ref()
-            .map(|sample| sample.len() > 0)
-            .unwrap_or(false);
+        self.playing = self.sample.len() > 0;
         self.pending_start_gate = self.playing;
         if let Some(reader) = self.reader.as_mut() {
             if was_audible {
@@ -149,6 +211,21 @@ impl SamplePlayer {
             }
         }
     }
+
+    fn stop(&mut self) {
+        self.playing = false;
+        self.position = 0.0;
+        self.pending_start_gate = false;
+        if let Some(reader) = self.reader.as_mut() {
+            reader.reset(0.0);
+        }
+    }
+
+    /// Publishes whether it is playing. Wait-free.
+    fn publish_playing(&mut self) {
+        self.shown_playing = self.playing;
+        self.cells.publish(PLAYING, RtValue::Bool(self.playing));
+    }
 }
 
 impl Module for SamplePlayer {
@@ -157,61 +234,12 @@ impl Module for SamplePlayer {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        // Control-rate state read once per block, from atomics.
-        let mut transport = self.ctrl.transport();
-        let mut loop_control = self.ctrl.loop_enabled();
-
-        // A staged sample swap: the lock is tried only when the version
-        // moved, and never waited on. A busy lock retries next block.
-        let swap_version = self.ctrl.swap_version();
-        let swapped = swap_version != self.last_swap_version
-            && match self.ctrl.try_swap(&mut self.sample, || {
-                // Read again with the sample swapped in, as staged.
-                transport = self.ctrl.transport();
-                loop_control = self.ctrl.loop_enabled();
-            }) {
-                Some(swapped) => {
-                    self.last_swap_version = swap_version;
-                    swapped
-                }
-                None => false,
-            };
-        let mut control_play = transport_play(transport);
-        let play_trigger = transport_trigger(transport);
-
-        // A replacement still staged, its swap deferred: the sample playing
-        // now is on its way out, so its end leaves `play` on for the
-        // replacement to start with. A stop written meanwhile still stops.
-        let replacing = swap_version != self.last_swap_version;
-
-        if swapped {
-            self.position = 0.0;
-            self.playing = control_play;
-            self.pending_start_gate = self.playing;
-            if let Some(reader) = self.reader.as_mut() {
-                reader.reset(0.0);
-            }
-        }
-
         for i in 0..frames {
-            let gate_rising = self.inputs.play(i) > 0.5 && self.last_play_input <= 0.5;
-            if play_trigger != self.last_play_trigger {
-                self.last_play_trigger = play_trigger;
+            if self.inputs.play(i) > 0.5 && self.last_play_input <= 0.5 {
                 self.restart();
-            } else if gate_rising {
-                self.restart();
-            } else if !control_play && self.last_control_play {
-                self.playing = false;
-                self.position = 0.0;
-                self.pending_start_gate = false;
-                if let Some(reader) = self.reader.as_mut() {
-                    reader.reset(0.0);
-                }
             }
 
-            self.last_control_play = control_play;
-
-            let loop_enabled = self.inputs.loop_enabled(i, loop_control);
+            let loop_enabled = self.inputs.loop_enabled(i, self.loop_enabled);
             let mut start_gate = 0.0;
             let mut end_gate = 0.0;
             let mut left = 0.0;
@@ -222,65 +250,53 @@ impl Module for SamplePlayer {
                 self.pending_start_gate = false;
             }
 
-            if let Some(sample) = &self.sample {
-                let len = sample.len();
-                if self.playing && len > 0 {
-                    let pitch = self
-                        .inputs
-                        .pitch_ratio(i, self.ctrl.pitch_ratio())
-                        .max(1e-4);
+            let sample = &*self.sample;
+            let len = sample.len();
+            if self.playing && len > 0 {
+                let pitch = self.inputs.pitch_ratio(i, self.pitch_ratio).max(MIN_RATIO);
 
-                    if let Some(reader) = self.reader.as_mut() {
-                        // Elastic: the reader decouples time (nominal head
-                        // advance) from pitch (in-window read step).
-                        let time = self.ctrl.time_ratio();
-                        if let Some(analysis) = sample.cached_elastic_analysis() {
-                            if let Some((l, r)) =
-                                reader.next(sample, analysis, 0.0, len as f64, time, pitch)
-                            {
-                                left = l;
-                                right = r;
-                            }
+                if let Some(reader) = self.reader.as_mut() {
+                    // Elastic: the reader decouples time (nominal head
+                    // advance) from pitch (in-window read step).
+                    if let Some(analysis) = sample.cached_elastic_analysis() {
+                        let time = self.time_ratio;
+                        if let Some((l, r)) =
+                            reader.next(sample, analysis, 0.0, len as f64, time, pitch)
+                        {
+                            left = l;
+                            right = r;
                         }
+                    }
 
-                        if reader.source_position() >= len as f64 {
-                            end_gate = 1.0;
-                            if loop_enabled {
-                                reader.reset_crossfade(0.0);
-                                self.pending_start_gate = true;
-                            } else {
-                                self.playing = false;
-                                reader.reset(0.0);
-                                // A `play` written since the top of the block wins.
-                                if control_play && !replacing && self.ctrl.end_play(transport) {
-                                    control_play = false;
-                                    self.last_control_play = false;
-                                }
-                            }
+                    if reader.source_position() >= len as f64 {
+                        end_gate = 1.0;
+                        if loop_enabled {
+                            reader.reset_crossfade(0.0);
+                            self.pending_start_gate = true;
+                        } else {
+                            self.playing = false;
+                            self.armed = false;
+                            reader.reset(0.0);
                         }
-                    } else {
-                        let (l, r) = sample.sample_at(self.position);
-                        left = l;
-                        right = r;
+                    }
+                } else {
+                    let (l, r) = sample.sample_at(self.position);
+                    left = l;
+                    right = r;
 
-                        self.position += pitch as f64;
+                    self.position += pitch as f64;
 
-                        if self.position >= len as f64 {
-                            end_gate = 1.0;
-                            if loop_enabled {
-                                // `%=` keeps the fractional read head bounded without
-                                // accumulating drift across loops.
-                                self.position %= len as f64;
-                                self.pending_start_gate = true;
-                            } else {
-                                self.playing = false;
-                                self.position = 0.0;
-                                // A `play` written since the top of the block wins.
-                                if control_play && !replacing && self.ctrl.end_play(transport) {
-                                    control_play = false;
-                                    self.last_control_play = false;
-                                }
-                            }
+                    if self.position >= len as f64 {
+                        end_gate = 1.0;
+                        if loop_enabled {
+                            // `%=` keeps the fractional read head bounded without
+                            // accumulating drift across loops.
+                            self.position %= len as f64;
+                            self.pending_start_gate = true;
+                        } else {
+                            self.playing = false;
+                            self.armed = false;
+                            self.position = 0.0;
                         }
                     }
                 }
@@ -288,6 +304,9 @@ impl Module for SamplePlayer {
 
             self.outputs.set(i, left, right, start_gate, end_gate);
             self.last_play_input = self.inputs.play(i);
+        }
+        if self.playing != self.shown_playing {
+            self.publish_playing();
         }
         true
     }
@@ -318,6 +337,75 @@ impl Module for SamplePlayer {
 
     fn set_input_connected(&mut self, index: usize, connected: bool) {
         self.inputs.set_connected(index, connected);
+    }
+
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((self.table, &self.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        match (control, value) {
+            (PLAY, RtValue::Bool(true)) => {
+                self.armed = true;
+                self.restart();
+                self.publish_playing();
+            }
+            (PLAY, RtValue::Bool(false)) => {
+                self.armed = false;
+                self.stop();
+                self.publish_playing();
+            }
+            (LOOP, RtValue::Bool(flag)) => self.loop_enabled = flag,
+            (PITCH_RATIO, RtValue::F32(ratio)) => {
+                self.pitch_ratio = ratio.max(MIN_RATIO);
+                return Ok(RtValue::F32(self.pitch_ratio));
+            }
+            (TIME_RATIO, RtValue::F32(ratio)) if self.reader.is_some() => {
+                self.time_ratio = ratio.max(MIN_RATIO);
+                return Ok(RtValue::F32(self.time_ratio));
+            }
+            _ => return Err(Refusal::Unsupported),
+        }
+        Ok(value)
+    }
+
+    #[allow(private_interfaces)]
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        if control != ASSET {
+            return Err((Refusal::Unsupported, payload));
+        }
+        let sample = match payload.downcast::<SampleData>() {
+            Ok(sample) => sample,
+            Err(payload) => return Err((Refusal::Invalid, payload)),
+        };
+        let replaced = std::mem::replace(&mut self.sample, sample);
+        // The new sample plays from its start when playback is asked for.
+        self.position = 0.0;
+        self.playing = self.armed && self.sample.len() > 0;
+        self.pending_start_gate = self.playing;
+        if let Some(reader) = self.reader.as_mut() {
+            reader.reset(0.0);
+        }
+        self.publish_playing();
+        Ok(replaced.into())
+    }
+
+    fn controls(&self) -> Vec<ControlMeta> {
+        local_controls(self)
+    }
+
+    fn get_control(&self, key: &str) -> Result<f32, String> {
+        local_get(self, key)
+    }
+
+    fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        local_set(self, key, value)
     }
 }
 

@@ -86,7 +86,7 @@ fn a_module_type_declares_its_controls_or_is_listed_legacy() {
 }
 
 /// The config a listed type is built from: every control it has a schedule
-/// could write (a sample in each slot, zone and player, elastic mode).
+/// could write (a sample in each slot and zone).
 fn scheduled_config(type_id: &str) -> Value {
     let wav = eight_frame_wav();
     match type_id {
@@ -94,7 +94,6 @@ fn scheduled_config(type_id: &str) -> Value {
         "sample_instrument" => json!({
             "zones": [{ "root_note": 60, "key_range": [0, 127], "asset": wav }]
         }),
-        "sample_player" => json!({ "asset": wav, "mode": "elastic" }),
         _ => base_config(type_id),
     }
 }

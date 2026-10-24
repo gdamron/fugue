@@ -62,6 +62,11 @@ impl SampleData {
         }
     }
 
+    /// No sample: what a player holds before its first is written.
+    pub(crate) fn empty(sample_rate: u32) -> Self {
+        Self::new(Vec::new(), Vec::new(), sample_rate, sample_rate)
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.left.len().min(self.right.len())
     }
