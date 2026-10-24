@@ -54,6 +54,6 @@ pub use request_log::{
     TIMED_EDIT_LOG_CAPACITY,
 };
 pub use rpc_snapshot::ControlOverride;
-pub use runtime::{GraphCommandError, InventionRuntime, RunningInvention};
+pub use runtime::{ControlAcks, GraphCommandError, InventionRuntime, RunningInvention};
 pub use score::{validate_score, Score, SCORE_SCHEMA_V1};
 pub use state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};

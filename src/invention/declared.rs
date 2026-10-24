@@ -152,18 +152,26 @@ pub(crate) struct Queued {
     /// An offline write that lost to a higher-ranked write at the same
     /// sample, so nothing was applied (see `control_request::hold`).
     pub(crate) lost: bool,
+    /// The publication a write travels in instead of a request (see
+    /// `publish::retarget`): it applies once the audio thread installs
+    /// that generation.
+    pub(crate) published: Option<u64>,
 }
 
 /// How a front door submits a write: whether it is authored (and what the
 /// retained document records once it applies), who wrote it and its rank
-/// within that tier (see `control_request::hold`), and how many samples it
-/// may wait before it is refused `Expired`.
+/// within that tier (see `control_request::hold`), how many samples it
+/// may wait before it is refused `Expired`, and whether it is announced
+/// once it applies (see `PendingWrite::announced`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct WriteOptions<'a> {
     pub(crate) authored: Option<&'a Authoring>,
     pub(crate) source: Source,
     pub(crate) priority: i16,
     pub(crate) ttl: Option<u64>,
+    pub(crate) announced: bool,
+    /// A reply awaits its outcome (see `PendingWrite::awaited`).
+    pub(crate) awaited: bool,
 }
 
 impl WriteOptions<'_> {
@@ -174,6 +182,8 @@ impl WriteOptions<'_> {
             source,
             priority: 0,
             ttl: None,
+            announced: false,
+            awaited: false,
         }
     }
 
@@ -185,6 +195,24 @@ impl WriteOptions<'_> {
             source: self.source,
             priority: self.priority,
             ttl: self.ttl,
+            announced: self.announced,
+            awaited: self.awaited,
+        }
+    }
+
+    /// The same write, announced once it applies.
+    pub(crate) const fn announcing(self) -> Self {
+        Self {
+            announced: true,
+            ..self
+        }
+    }
+
+    /// The same write, its outcome awaited by a reply.
+    pub(crate) const fn awaiting(self) -> Self {
+        Self {
+            awaited: true,
+            ..self
         }
     }
 
@@ -627,6 +655,7 @@ impl DeclaredSurface {
                         if let Some(checked) = checked {
                             (checked.record)();
                         }
+                        let generation = publisher.generation();
                         // What the recompile replaced is freed off the lock.
                         drop(publisher);
                         drop(published);
@@ -637,9 +666,8 @@ impl DeclaredSurface {
                         // none while one does), so none can overtake it, and
                         // a payload is never kept.
                         return Ok(Queued {
-                            safe: None,
-                            id: None,
-                            lost: false,
+                            published: Some(generation),
+                            ..Queued::default()
                         });
                     }
                     (_, value) => value,
@@ -716,6 +744,8 @@ impl DeclaredSurface {
                         raw,
                         beat: None,
                         automated,
+                        announced: options.announced,
+                        awaited: options.awaited,
                         // Safe from the timed edit it was kept over, or that
                         // landed before it: its record follows that edit's.
                         authored: options.authored.map(|authoring| Authoring {
@@ -723,9 +753,15 @@ impl DeclaredSurface {
                             ..authoring.clone()
                         }),
                     };
-                    // The copy applying, too, is this write's.
+                    // The copy applying, too, is this write's, though only the
+                    // write is announced: the copy is the edit's.
                     if let Some(copy) = copy.filter(|copy| *copy != id) {
-                        pending.submitted(copy, write.clone());
+                        let copy_write = PendingWrite {
+                            announced: false,
+                            awaited: false,
+                            ..write.clone()
+                        };
+                        pending.submitted(copy, copy_write);
                     }
                     pending.submitted(id, write);
                 }
@@ -743,7 +779,7 @@ impl DeclaredSurface {
                 Ok(Queued {
                     safe,
                     id: Some(id),
-                    lost: false,
+                    ..Queued::default()
                 })
             }
             Route::Offline { graph, module_id } => {

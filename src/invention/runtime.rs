@@ -17,6 +17,7 @@ use super::state::{RuntimeState, RuntimeStatus};
 pub type ModuleInstance = GraphModule;
 pub type ControlSurfaceInstance = Arc<dyn ControlSurface + Send + Sync>;
 
+mod acks;
 mod clock;
 mod controls;
 mod describe;
@@ -26,6 +27,7 @@ mod orchestration;
 mod ports;
 pub(crate) mod timed;
 
+pub use acks::ControlAcks;
 pub use error::GraphCommandError;
 pub(crate) use ports::{module_ports, validate_input_port, validate_output_port};
 

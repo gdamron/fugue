@@ -90,17 +90,25 @@ pub type EventSinkSlot = Arc<Mutex<Option<Arc<dyn RpcEventSink>>>>;
 /// What a front door is told when a control write is taken: the value as
 /// coerced, and the request it was submitted as. `request` is `None` when
 /// the write applied as it was made (offline, while building, a legacy
-/// control) or travels in a publication.
+/// control) or travels in `published`, the publication it applies with;
+/// `lost` when it lost to a higher-ranked write as it was made and
+/// applied nothing.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ControlAck {
     pub(crate) value: ControlValue,
     pub(crate) request: Option<RequestId>,
+    pub(crate) lost: bool,
+    pub(crate) published: Option<u64>,
 }
 
 impl ControlAck {
     fn new(value: ControlValue, queued: &Queued) -> Self {
-        let request = queued.id;
-        Self { value, request }
+        Self {
+            value,
+            request: queued.id,
+            lost: queued.lost,
+            published: queued.published,
+        }
     }
 }
 
@@ -204,7 +212,7 @@ impl RuntimeSnapshot {
     /// Sets the current value of a module control as an *authoring* change:
     /// records it in the retained document so it survives a save/rebuild, and
     /// announces it as a [`RpcEventPayload::ControlChanged`] carrying the
-    /// *applied* value.
+    /// *applied* value once it applies.
     ///
     /// Equivalent to [`Self::set_control_with_intent`] with
     /// [`ControlWriteIntent::Author`].
@@ -222,12 +230,15 @@ impl RuntimeSnapshot {
     ///
     /// This is the choke point for externally-initiated control writes — RPC
     /// commands, conducting scripts, and agents — so an observer sees every one
-    /// of them as a `ControlChanged` event regardless of intent (finding
-    /// FUG-239 #7). What intent changes is whether the value is *authored*:
-    /// a [`ControlWriteIntent::Perform`] write is a live gesture that must
-    /// neither land in a saved document nor advance the daemon's revision, so
-    /// a scheduler running at musical rate cannot make every peer's structural
-    /// edit stale (FUG-266).
+    /// of them that applies as a `ControlChanged` event regardless of intent.
+    /// A write applied as it was made is announced now; one submitted as a
+    /// request once it applies, naming the request, the next time this or
+    /// [`Self::announce_applied`] runs. One that never applies (superseded,
+    /// overridden, refused) is never announced. What intent changes is
+    /// whether the value is *authored*: a [`ControlWriteIntent::Perform`]
+    /// write is a live gesture that must neither land in a saved document
+    /// nor advance the daemon's revision, so a scheduler running at musical
+    /// rate cannot make every peer's structural edit stale.
     ///
     /// Every write is coerced to the control's declared kind first. A write
     /// whose value is a number that is not finite after coercion (NaN, an
@@ -269,15 +280,37 @@ impl RuntimeSnapshot {
         intent: ControlWriteIntent,
         options: WriteOptions,
     ) -> Result<ControlAck, GraphCommandError> {
-        let options = options.performing();
+        let options = options.performing().announcing();
         // An event (a clock's reset) fires; there is no state to author.
         let ack = if intent.is_authoring() && !self.is_event(module_id, key) {
             self.set_control_recorded(module_id, key, value, &options)?
         } else {
             self.set_control_performed(module_id, key, value, &options)?
         };
-        self.emit_control_changed(module_id, key, ack.value.clone());
+        // Those that applied earlier go first.
+        self.announce_applied();
+        // One submitted as a request is announced once it applies, maybe
+        // already. One travelling in a publication applies with it, at the
+        // next block unless the stream stalls, and is announced now.
+        if ack.request.is_none() && !ack.lost {
+            self.emit_control_changed(module_id, key, ack.value.clone(), None);
+        }
         Ok(ack)
+    }
+
+    /// Announces each front door's write that applied since the last call
+    /// as a `ControlChanged` event naming its request (see
+    /// [`Self::set_control_with_intent`]). A host calls it now and then, so
+    /// a write that applied after its reply is announced. Offline, every
+    /// write was announced as it was made.
+    pub fn announce_applied(&self) {
+        let Some(live) = &self.live else {
+            return;
+        };
+        for applied in live.take_announcements() {
+            let request = Some(applied.request.0.to_string());
+            self.emit_control_changed(&applied.module_id, &applied.key, applied.value, request);
+        }
     }
 
     /// Coerces and applies a control write without recording it in the
@@ -315,8 +348,8 @@ impl RuntimeSnapshot {
         options: &WriteOptions,
     ) -> Result<ControlAck, GraphCommandError> {
         // Coerce to the control's declared kind before applying and recording,
-        // so a stringified write lands and the retained document stays typed
-        // (see FUG-240). set_control_transient stays uncoerced: its callers are
+        // so a stringified write lands and the retained document stays typed.
+        // set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
         let value = self.coerced(module_id, key, value)?;
         let (load, origin) = self.asset_to_load(key, &value)?;
@@ -385,8 +418,15 @@ impl RuntimeSnapshot {
         }
     }
 
-    /// Announces a recorded control change to the installed event sink, if any.
-    pub(crate) fn emit_control_changed(&self, module_id: &str, key: &str, value: ControlValue) {
+    /// Announces an applied control change to the installed event sink, if
+    /// any, naming the request it applied as.
+    pub(crate) fn emit_control_changed(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+        request: Option<String>,
+    ) {
         // Clone the sink out under the lock, then release it before emitting so
         // a sink implementation can never re-enter this slot while we hold it.
         let sink = self.event_sink.lock().unwrap().clone();
@@ -395,7 +435,7 @@ impl RuntimeSnapshot {
                 module_id: module_id.to_string(),
                 key: key.to_string(),
                 value,
-                request: None,
+                request,
             }));
         }
     }
