@@ -531,4 +531,73 @@ mod tests {
         assert!(filter.set_input("cutoff_mod", 1.0).is_ok());
         assert!(filter.set_input("cutoff_cv", 1.0).is_err());
     }
+
+    #[test]
+    fn every_filter_type_spelling_still_loads() {
+        let registry = crate::ModuleRegistry::default();
+        for (spelled, read) in [
+            ("lowpass", "lowpass"),
+            ("low_pass", "lowpass"),
+            ("LPF", "lowpass"),
+            ("low", "lowpass"),
+            ("highpass", "highpass"),
+            ("high_pass", "highpass"),
+            ("hpf", "highpass"),
+            ("High", "highpass"),
+            ("bandpass", "bandpass"),
+            ("band_pass", "bandpass"),
+            ("bpf", "bandpass"),
+            ("band", "bandpass"),
+        ] {
+            let config = serde_json::json!({ "filter_type": spelled });
+            let built = registry.build("filter", 48_000, &config).unwrap();
+            let surface = built.control_surface.unwrap();
+            assert_eq!(surface.get_control("filter_type").unwrap(), read.into());
+            surface.set_control("filter_type", spelled.into()).unwrap();
+            assert_eq!(surface.get_control("filter_type").unwrap(), read.into());
+        }
+        let config = serde_json::json!({ "filter_type": "notch" });
+        assert!(registry.build("filter", 48_000, &config).is_err());
+        // Anything but text still leaves the default.
+        for config in [
+            serde_json::json!({ "filter_type": null }),
+            serde_json::json!({ "filter_type": 2 }),
+        ] {
+            let built = registry.build("filter", 48_000, &config).unwrap();
+            let surface = built.control_surface.unwrap();
+            assert_eq!(
+                surface.get_control("filter_type").unwrap(),
+                "lowpass".into()
+            );
+        }
+    }
+
+    #[test]
+    fn there_is_no_type_alias_for_the_filter_type() {
+        // Neither a document's config nor a control write has ever taken
+        // `type` for `filter_type`; the declared table does not start to.
+        let registry = crate::ModuleRegistry::default();
+        let config = serde_json::json!({ "type": "highpass" });
+        assert!(registry.build("filter", 48_000, &config).is_err());
+        let built = registry
+            .build("filter", 48_000, &serde_json::json!({}))
+            .unwrap();
+        let surface = built.control_surface.unwrap();
+        assert!(surface.set_control("type", "highpass".into()).is_err());
+    }
+
+    #[test]
+    fn controls_clamp_as_they_always_did() {
+        let mut filter = Filter::new(44100);
+        filter.set_control("cutoff", 5.0).unwrap();
+        assert_eq!(filter.get_control("cutoff").unwrap(), 20.0);
+        filter.set_control("cutoff", 99999.0).unwrap();
+        assert_eq!(filter.get_control("cutoff").unwrap(), 20000.0);
+        filter.set_control("resonance", 3.0).unwrap();
+        assert_eq!(filter.get_control("resonance").unwrap(), 1.0);
+        filter.set_control("cutoff_mod_depth", -1.0).unwrap();
+        assert_eq!(filter.get_control("cutoff_mod_depth").unwrap(), 0.0);
+        assert!(filter.set_control("filter_type", 3.0).is_err());
+        assert!(filter.set_control("cutoff", f32::NAN).is_err());
+    }
 }

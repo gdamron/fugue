@@ -317,6 +317,67 @@ fn a_scheduler_ramps_an_lfo_without_allocating() {
     }
 }
 
+const FILTER_PATCH: &str = r#"{
+    "version": "1.0.0",
+    "modules": [
+        { "id": "osc", "type": "oscillator", "config": { "waveform": "sawtooth" } },
+        { "id": "filter", "type": "filter", "config": { "filter_type": "hpf", "cutoff": 600.0 } },
+        { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+    ],
+    "connections": [
+        { "from": "osc", "from_port": "audio", "to": "filter", "to_port": "audio" },
+        { "from": "filter", "from_port": "audio", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+#[test]
+fn filter_writes_apply_on_the_audio_thread_and_read_back() {
+    let mut rig = Rig::new(FILTER_PATCH);
+    rig.render(1);
+    assert_eq!(read(&rig, "filter", "cutoff"), 600.0.into(), "from config");
+    assert_eq!(read(&rig, "filter", "resonance"), 0.0.into(), "its default");
+    assert_eq!(read(&rig, "filter", "cutoff_mod_depth"), 5000.0.into());
+    assert_eq!(read(&rig, "filter", "filter_type"), "highpass".into());
+    write(&rig, "filter", "cutoff", 5.0.into());
+    write(&rig, "filter", "resonance", 2.0.into());
+    write(&rig, "filter", "cutoff_mod_depth", (-1.0).into());
+    write(&rig, "filter", "filter_type", "BAND".into());
+    assert_eq!(read(&rig, "filter", "filter_type"), "highpass".into());
+
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(read(&rig, "filter", "cutoff"), 20.0.into(), "as clamped");
+    assert_eq!(read(&rig, "filter", "resonance"), 1.0.into());
+    assert_eq!(read(&rig, "filter", "cutoff_mod_depth"), 0.0.into());
+    assert_eq!(read(&rig, "filter", "filter_type"), "bandpass".into());
+}
+
+#[test]
+fn a_scheduler_sweeps_a_filter_without_allocating() {
+    let mut rig = Rig::new(FILTER_PATCH);
+    let schedule = serde_json::json!({ "schedule": [
+        { "at_step": 0, "module": "filter", "control": "cutoff", "value": 4000.0, "ramp_steps": 4 },
+        { "at_step": 0, "module": "filter", "control": "resonance", "value": 0.8, "ramp_steps": 4 }
+    ]});
+    let scheduler = rig.build("sched", "control_scheduler", schedule);
+    rig.live
+        .edit(|change| {
+            change.upsert("sched", scheduler);
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        rig.live.write_input("sched", "clock", gate).unwrap();
+        assert_eq!(counted_block(&mut rig), (0, 0));
+    }
+    for (control, was, to) in [("cutoff", 600.0, 4000.0), ("resonance", 0.0, 0.8)] {
+        let ControlValue::Number(now) = read(&rig, "filter", control) else {
+            panic!("a number");
+        };
+        assert!(now > was && now < to, "{control}: {now}");
+    }
+}
+
 #[test]
 fn clock_writes_apply_on_the_audio_thread_and_retime_its_gates() {
     // 22500 bpm at 48 kHz is 128 samples a beat; 45000 is 64.

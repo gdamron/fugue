@@ -143,14 +143,13 @@ impl RuntimeState {
     /// for a caller that records the retained document by other means.
     ///
     /// Only a key the stored config already contains is written. A control
-    /// key can be absent from it (a default the file omits, an alias such as
-    /// a filter's `type` for its `filter_type`, an indexed key such as a
-    /// mixer's `level.2` from its `levels` array), and adding one would make
-    /// reloading the original file see that key removed, which reload can
-    /// only express by rebuilding the module, resetting its phase. Leaving
-    /// the key set alone means this can never introduce a rebuild; such a
-    /// write stays unrecorded here and survives that reload, as it always
-    /// has.
+    /// key can be absent from it (a default the file omits, an indexed key
+    /// such as a mixer's `level.2` from its `levels` array), and adding one
+    /// would make reloading the original file see that key removed, which
+    /// reload can only express by rebuilding the module, resetting its phase.
+    /// Leaving the key set alone means this can never introduce a rebuild;
+    /// such a write stays unrecorded here and survives that reload, as it
+    /// always has.
     ///
     /// Only a scalar (a number, bool or string) is overwritten, as only a
     /// scalar delta can reload restore through a control. A stored null,

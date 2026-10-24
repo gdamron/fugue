@@ -340,8 +340,8 @@ third attempt, the batch is refused as `internal` and nothing was applied.
    block before the new graph. Added and rebuilt modules are built from
    their final configs and take the batch's values through their setters
    before the new graph is prepared, so they arrive with them: a control's key
-   need not be the config key the module is built from (a filter's `type`
-   control, say). Writes are made in batch order, as they were checked, so a
+   need not be the config key the module is built from (a mixer's
+   `level.2` control, say). Writes are made in batch order, as they were checked, so a
    control written more than once ends at its last value.
 3. One `control_changed { module_id, key, value }` is emitted per control
    the `set_control` edits wrote, for modules that exist after the commit
