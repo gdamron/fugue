@@ -2,9 +2,9 @@
 //! loaded on a control thread and handed to the module as a payload.
 //!
 //! A sample module attaches an [`AssetLoader`] to its declared surface at
-//! build ([`DeclaredSurface::with_context`]), or a context of its own that
-//! holds one (an instrument's zones add their loop points). Its codec loads
-//! each write through it, so a write loads as the module's build loaded its
+//! build ([`DeclaredSurface::with_context`]), beside any other part its
+//! codecs need (an instrument's zone loop points, a kit's slot keys). Its
+//! codec loads each write through it, so a write loads as the module's build loaded its
 //! samples: at the engine rate, under the same build lock. A load that fails
 //! refuses the write with the reason, and nothing reaches the audio thread.
 //!
@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use super::{load_cached_sample, resolve_source, SampleData};
-use crate::control_request::{PayloadCodec, PayloadContext, Prepared};
+use crate::control_request::{ControlContext, PayloadCodec, Prepared};
 use crate::payload::Payload;
 use crate::pkg::lock::BuildPolicy;
 use crate::ControlValue;
@@ -61,7 +61,7 @@ pub(crate) const SAMPLE_ASSET: PayloadCodec = PayloadCodec {
     prepare: prepare_sample,
 };
 
-fn prepare_sample(context: &PayloadContext<'_>, value: &ControlValue) -> Prepared {
+fn prepare_sample(context: &ControlContext<'_>, value: &ControlValue) -> Prepared {
     let sample = context.module::<AssetLoader>()?.load(value.as_string()?)?;
     Ok((Payload::from_arc(sample), value.clone()))
 }

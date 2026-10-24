@@ -63,10 +63,14 @@ impl ModuleFactory for SamplerFactory {
             cells,
             out: [[0.0; MAX_BLOCK]; SLOTS],
         };
+        // A part of another type first: a codec finds its own by type.
+        let surface = surface
+            .with_context(Arc::new(SLOTS))
+            .with_context(Arc::new(loader));
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(sampler)),
             handles: Vec::new(),
-            control_surface: Some(Arc::new(surface.with_context(Arc::new(loader)))),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
     }

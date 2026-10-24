@@ -9,7 +9,7 @@
 //! advances.
 
 use crate::control_request::{
-    ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec, PayloadContext, Prepared,
+    ControlContext, ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec, Prepared,
     RtValue,
 };
 use crate::payload::Payload;
@@ -186,7 +186,7 @@ impl BankCodec {
         prepare: Self::prepare,
     };
 
-    fn prepare(_: &PayloadContext<'_>, value: &ControlValue) -> Prepared {
+    fn prepare(_: &ControlContext<'_>, value: &ControlValue) -> Prepared {
         let bank = parse_sequence_bank_json(value.as_string()?)?;
         let shown = bank_json(&bank).into();
         Ok((Payload::new(bank), shown))
