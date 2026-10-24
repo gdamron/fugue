@@ -207,6 +207,7 @@ impl PendingLog {
                 }
                 self.timed_outcomes.push_back((id, outcome));
                 self.steps.push_back(DocumentStep::Timed);
+                self.received(id, outcome);
             } else {
                 let write = self.writes.iter().position(|(pending, _)| *pending == id);
                 let write = write
@@ -223,13 +224,21 @@ impl PendingLog {
                     self.authored(write);
                     self.announce(id, write);
                 }
+                // A copy applying is its write applying, superseded or not:
+                // the write's request reads as the copy's, as announced.
+                let copied = write
+                    .as_ref()
+                    .filter(|_| applied)
+                    .and_then(|write| write.twin);
                 self.record(write, outcome, latched);
+                self.received(id, outcome);
+                if let Some(Twin::Write(of)) = copied {
+                    if let Some(held) = self.held.iter_mut().find(|(held, _)| *held == of) {
+                        held.1 = outcome;
+                    }
+                    self.received(of, outcome);
+                }
             }
-            if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
-                self.outcomes.pop_front();
-                self.lost += 1;
-            }
-            self.outcomes.push_back((id, outcome));
         }
         let dropped = self.dropped.take(self.receiver.dropped());
         if dropped > 0 {
@@ -249,6 +258,16 @@ impl PendingLog {
             self.timed.clear();
             self.timed_lost = true;
         }
+    }
+
+    /// Lists request `id`'s outcome among those received, forgetting the
+    /// oldest past [`OUTCOME_QUEUE_CAPACITY`].
+    fn received(&mut self, id: RequestId, outcome: Outcome) {
+        if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
+            self.outcomes.pop_front();
+            self.lost += 1;
+        }
+        self.outcomes.push_back((id, outcome));
     }
 
     /// Timed edits' outcomes received since the last call, oldest first,
