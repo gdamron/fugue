@@ -47,8 +47,9 @@
 //!   one: the hold wins. Automation is weighed only against the hold on the
 //!   control it writes, so a rewriting control is a payload, which no
 //!   automation writes (every one is today).
-//! - Events (triggers) are never held: two are two events, and a write
-//!   reaching one through a key or a rewrite does not hold it either.
+//! - Events (triggers) are never held: two are two events. A key that
+//!   reaches one is an event itself, and a rewrite never names one, so a
+//!   write that holds never reaches an event.
 //! - A payload control ranks and holds as a value does. No automation
 //!   writes one, so its hold only weighs requests. A payload that loses is
 //!   retired with the request, never dropped on the audio thread.
@@ -302,19 +303,19 @@ pub(crate) fn take_hold<M: Module + ?Sized>(module: &M, control: ControlIndex, s
     let Some((table, cells)) = module.declared() else {
         return;
     };
-    if is_event(table, control) {
+    if table.decl(control).is_some_and(|(decl, _)| decl.event) {
         return;
     }
     cells.holds.take(control, standing);
     module.for_each_alias(control, &mut |table, cells, index| {
-        if !is_event(table, index) {
-            cells.holds.take(index, standing);
-        }
+        // A table scan, so checked only in debug builds: the hold path
+        // stays independent of the table's size.
+        debug_assert!(
+            !table.decl(index).is_some_and(|(decl, _)| decl.event),
+            "a write that holds reached an event control"
+        );
+        cells.holds.take(index, standing);
     });
-}
-
-fn is_event(table: &ControlTable, control: ControlIndex) -> bool {
-    table.decl(control).is_some_and(|(decl, _)| decl.event)
 }
 
 /// Whether every hold a write of `standing` to declared `control` of
@@ -329,8 +330,8 @@ pub(crate) fn kept_hold<M: Module + ?Sized>(
         return false;
     };
     let mut kept = cells.holds.kept(control, standing);
-    module.for_each_alias(control, &mut |table, cells, index| {
-        kept &= is_event(table, index) || cells.holds.kept(index, standing);
+    module.for_each_alias(control, &mut |_, cells, index| {
+        kept &= cells.holds.kept(index, standing);
     });
     kept
 }

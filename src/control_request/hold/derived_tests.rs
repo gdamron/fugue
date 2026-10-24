@@ -6,7 +6,7 @@ use super::*;
 use crate::control_request::{ControlDecl, ControlTable, DeclKind, Refusal, RtValue};
 use crate::MAX_BLOCK;
 
-/// Rewrites every degree (and names the pulse, which it must not hold).
+/// Rewrites every degree.
 const SHIFT: ControlIndex = ControlIndex(0);
 const DEGREE: [ControlIndex; 3] = [ControlIndex(1), ControlIndex(2), ControlIndex(3)];
 /// Decides how many degrees are in play; rewrites none.
@@ -47,6 +47,8 @@ const SCRIPT: Standing = Standing {
 struct Scale {
     cells: ControlCells,
     out: [f32; MAX_BLOCK],
+    /// Whether the shift wrongly names the pulse among what it rewrites.
+    names_pulse: bool,
 }
 
 impl Scale {
@@ -58,6 +60,7 @@ impl Scale {
                     .flat_map(|decl| std::iter::repeat_n(decl.default, usize::from(decl.count))),
             ),
             out: [0.0; MAX_BLOCK],
+            names_pulse: false,
         }
     }
 
@@ -113,15 +116,18 @@ impl Module for Scale {
         f: &mut dyn FnMut(&ControlTable, &ControlCells, ControlIndex),
     ) {
         if control == SHIFT {
-            for index in DEGREE.into_iter().chain([PULSE]) {
+            for index in DEGREE {
                 f(&TABLE, &self.cells, index);
+            }
+            if self.names_pulse {
+                f(&TABLE, &self.cells, PULSE);
             }
         }
     }
 }
 
 #[test]
-fn a_rewriting_write_holds_every_control_it_rewrites_but_never_an_event() {
+fn a_rewriting_write_holds_every_control_it_rewrites() {
     let scale = Scale::new();
     take_hold(&scale, SHIFT, USER);
     for index in [SHIFT].into_iter().chain(DEGREE) {
@@ -129,14 +135,22 @@ fn a_rewriting_write_holds_every_control_it_rewrites_but_never_an_event() {
     }
     assert!(!scale.holds().holds_off_automation(PULSE));
     assert!(!scale.holds().holds_off_automation(COUNT));
-    assert!(
-        kept_hold(&scale, SHIFT, USER),
-        "an unheld event keeps nothing from it"
-    );
+    assert!(kept_hold(&scale, SHIFT, USER));
 
     // A position written since is no longer the rewrite's.
     take_hold(&scale, DEGREE[1], Standing::user(11));
     assert!(!kept_hold(&scale, SHIFT, USER));
+}
+
+/// An event is never held, so a write that holds must never name one
+/// among the controls it rewrites.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "a write that holds reached an event control")]
+fn a_rewrite_naming_an_event_is_caught() {
+    let mut scale = Scale::new();
+    scale.names_pulse = true;
+    take_hold(&scale, SHIFT, USER);
 }
 
 #[test]
