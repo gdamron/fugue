@@ -7,14 +7,15 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 use crate::invention::builder::resolve_invention_assets;
+use crate::invention::declared::{DeclaredSurface, Route};
 use crate::invention::edits::{EditFacts, ModuleFacts};
 use crate::invention::format::{Invention, ModuleSpec};
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::runtime::{ControlSurfaceInstance, RunningInvention};
 use crate::module_config::ConfigKey;
 use crate::modules::control_scheduler::name_unattached_from_handles;
-use crate::traits::ControlSurfaceMap;
-use crate::{ControlKind, ControlValue, ModuleRegistry};
+use crate::traits::{ControlSurface, ControlSurfaceMap};
+use crate::{ControlKind, ControlValue, GraphModule, ModuleRegistry};
 
 /// The running invention's facts, read once when the batch starts, so every
 /// edit is checked against the same view of the graph.
@@ -38,6 +39,10 @@ pub(super) struct LiveFacts {
     /// far made on it in order. The running module is never written before
     /// the commit.
     provisional: HashMap<String, ControlSurfaceInstance>,
+    /// The module each declared copy above (provisional or described) was
+    /// built with, so each write is applied to it as made: the edits after
+    /// a whole scale see the count and positions it set.
+    copies: HashMap<String, GraphModule>,
     /// Running modules whose authored config no longer builds a copy (a
     /// sample file deleted since it loaded): their writes are checked on
     /// the running module instead.
@@ -69,6 +74,7 @@ impl LiveFacts {
             described: HashMap::new(),
             authored,
             provisional: HashMap::new(),
+            copies: HashMap::new(),
             unbuildable: HashSet::new(),
         }
     }
@@ -77,6 +83,25 @@ impl LiveFacts {
     /// every write made: what the later checks see for those modules.
     pub(super) fn into_provisional(self) -> ControlSurfaceMap {
         self.provisional.into_iter().collect()
+    }
+
+    /// Keeps `module` beside its copy's declared surface, bound as it is
+    /// built: the copy's writes stage until applied (see `apply_on_copy`).
+    fn keep_copy(&mut self, id: &str, surface: &ControlSurfaceInstance, module: GraphModule) {
+        match declared_surface(surface) {
+            Some(_) => self.copies.insert(id.to_string(), module),
+            None => self.copies.remove(id),
+        };
+    }
+
+    /// Applies what a copy's declared surface staged to the module it was
+    /// built with, in the order written, still building: a payload (a whole
+    /// scale) then rewrites the cells the next write is checked against.
+    fn apply_on_copy(&mut self, id: &str, surface: &ControlSurfaceInstance) {
+        if let (Some(declared), Some(module)) = (declared_surface(surface), self.copies.get_mut(id))
+        {
+            declared.bind(Route::Building(Vec::new()), module.module_mut());
+        }
     }
 
     /// The surface a write to `id` lands on at this point in the batch: the
@@ -119,6 +144,7 @@ impl LiveFacts {
             .control_surface
             .ok_or_else(|| "the module has no controls".to_string())?;
         restore_authored(surface.as_ref(), &config);
+        self.keep_copy(id, &surface, built.module);
         self.provisional.insert(id.to_string(), surface.clone());
         Ok(surface)
     }
@@ -241,6 +267,9 @@ impl EditFacts for LiveFacts {
             &built.module,
             built.control_surface.as_deref().map(|surface| surface as _),
         );
+        if let Some(surface) = &built.control_surface {
+            self.keep_copy(id, surface, built.module);
+        }
         self.described.insert(id.to_string(), built.control_surface);
         Ok(facts)
     }
@@ -248,6 +277,7 @@ impl EditFacts for LiveFacts {
     fn forget(&mut self, id: &str) {
         self.described.remove(id);
         self.provisional.remove(id);
+        self.copies.remove(id);
     }
 
     fn authored_controls(&mut self, id: &str) -> Option<BTreeMap<String, ControlKind>> {
@@ -294,6 +324,7 @@ impl EditFacts for LiveFacts {
         // the write itself (a sample that does not load): that is reported
         // when the write is made at commit, and the copy keeps its state.
         let _ = surface.set_control(key, value.clone());
+        self.apply_on_copy(id, &surface);
         let controls = surface
             .controls()
             .into_iter()
@@ -301,6 +332,10 @@ impl EditFacts for LiveFacts {
             .collect();
         Ok(Some(controls))
     }
+}
+
+fn declared_surface(surface: &ControlSurfaceInstance) -> Option<&DeclaredSurface> {
+    surface.as_any()?.downcast_ref::<DeclaredSurface>()
 }
 
 /// Brings a throwaway copy built from `config` to the control values its

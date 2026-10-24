@@ -735,3 +735,25 @@ fn a_batch_clamps_a_step_sequencers_whole_numbers_and_refuses_fractions() {
     // Nothing applied.
     assert_eq!(read(&running, "seq", "root_note"), number(127.0));
 }
+
+#[test]
+fn a_batch_writes_a_position_a_whole_scale_before_it_added() {
+    let (mut running, pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    let scale = ControlValue::String("[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]".into());
+    let report = running
+        .apply_edits(&[
+            set("tune", "degrees", scale),
+            set("tune", "degree.8", number(3.0)),
+        ])
+        .expect("degree 8 exists once the scale is 10 long");
+    assert!(report.controls_failed.is_empty(), "{report:?}");
+    pump.render(1);
+    assert_eq!(
+        running.get_control("tune", "degree_count").unwrap(),
+        number(10.0)
+    );
+    assert_eq!(
+        running.get_control("tune", "degree.8").unwrap(),
+        number(3.0)
+    );
+}
