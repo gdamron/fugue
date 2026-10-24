@@ -234,6 +234,8 @@ impl InventionBuilder {
             built_under: crate::pkg::lock::governing(),
             replacing: crate::registry::ReplacingKeys::of(&self.registry),
             wholes_written: Default::default(),
+            authored_epoch: 0,
+            authored_log: Default::default(),
         }
     }
 

@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
@@ -80,6 +82,40 @@ pub struct RuntimeState {
     /// a later write is recorded as the module plays it (see
     /// [`Self::write_stored_control`]).
     pub(crate) wholes_written: HashMap<String, Vec<&'static str>>,
+    /// How many authored control writes the document has recorded. A
+    /// commit planned from the document before the latest records them
+    /// again on top of its own, or, when they are no longer all in
+    /// `authored_log`, is refused and planned again (see
+    /// `PreparedChange::authored_at`), so the writes it was planned without
+    /// are not overwritten.
+    pub(crate) authored_epoch: u64,
+    pub(crate) authored_log: AuthoredLog,
+}
+
+/// The latest authored control writes the document recorded, oldest first.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AuthoredLog(VecDeque<(String, String, ControlValue)>);
+
+impl AuthoredLog {
+    /// How many it keeps: a commit is planned in well under a second, in
+    /// which a front door records far fewer.
+    const CAPACITY: usize = 64;
+
+    fn push(&mut self, write: (String, String, ControlValue)) {
+        if self.0.len() == Self::CAPACITY {
+            self.0.pop_front();
+        }
+        self.0.push_back(write);
+    }
+
+    /// The last `count` recorded, oldest first; `None` when it no longer
+    /// keeps them all.
+    pub(crate) fn last(&self, count: u64) -> Option<Vec<(String, String, ControlValue)>> {
+        let count = usize::try_from(count)
+            .ok()
+            .filter(|&count| count <= self.0.len())?;
+        Some(self.0.iter().skip(self.0.len() - count).cloned().collect())
+    }
 }
 
 impl RuntimeState {
@@ -135,8 +171,38 @@ impl RuntimeState {
     /// reloading the original file see no change and keep the written value.
     /// A perform-intent write is never recorded, here or in the document.
     pub(crate) fn record_authored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
+        self.authored_epoch += 1;
+        (self.authored_log).push((id.to_string(), key.to_string(), value.clone()));
         self.document_write_control(id, key, value);
         self.write_stored_control(id, key, value);
+    }
+
+    /// Writes back control `key` of `id` after a write to it failed as it
+    /// was made, leaving the module playing what it did: the document
+    /// takes what `previous`, the document the failing commit replaced (or
+    /// `None` when it kept the retained one), authored for it, or authors
+    /// none; never the module's value, which a performed write may have set. The stored config takes the authored
+    /// value, or the module's `actual` one when none was authored, so a
+    /// later reload diffs against what the module plays and tries the write
+    /// again.
+    pub(crate) fn restore_authored_control(
+        &mut self,
+        previous: Option<&Invention>,
+        (id, key): (&str, &str),
+        actual: &ControlValue,
+    ) {
+        let authored = previous
+            .or(self.document.as_ref())
+            .and_then(|document| authored_document::authored_control(document, id, key));
+        match authored {
+            Some(value) => self.record_authored_control(id, key, &value),
+            None => {
+                if let Some(document) = self.document.as_mut() {
+                    authored_document::unset_control(document, id, key);
+                }
+                self.write_stored_control(id, key, actual);
+            }
+        }
     }
 
     /// Writes an authored control value into a module's stored config only,

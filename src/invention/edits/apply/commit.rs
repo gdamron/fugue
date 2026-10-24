@@ -67,7 +67,8 @@ impl RunningInvention {
             let write = &candidate.write;
             (write.module_id.as_str(), write.key.as_str(), &write.value)
         });
-        let change = self.stage_plan(base_generation, &plan, swapped, added, writes)?;
+        let mut change = self.stage_plan(base_generation, &plan, swapped, added, writes)?;
+        change.authored_at = Some(batch.authored_at);
         // Survivors are written only at the commit; their throwaway copies
         // already hold the batch's writes.
         let mut directory = change.surfaces.clone();
@@ -86,8 +87,9 @@ impl RunningInvention {
     ///
     /// Fails, with nothing changed, only when another change published
     /// since the batch was prepared, or the audio thread is gone. A write
-    /// that still fails when made is reported, and the module's actual value
-    /// is written back to the retained document and its stored config.
+    /// that still fails when made is reported, and the retained document
+    /// keeps what it authored for the control before the batch (see
+    /// `RuntimeState::restore_authored_control`).
     pub(super) fn commit_edits(
         &self,
         prepared: PreparedEdits,
@@ -120,8 +122,6 @@ impl RunningInvention {
                 }
             }
         })?;
-        // The old document drops here, off the publisher's lock.
-        drop(previous);
 
         let snapshot = self.snapshot();
         let mut report = report_for(&plan, batch.edit_count);
@@ -187,9 +187,12 @@ impl RunningInvention {
             // changes to the document.
             let mut state = self.state.lock().unwrap();
             for (write, value) in &actual {
-                state.record_authored_control(&write.module_id, &write.key, value);
+                let control = (write.module_id.as_str(), write.key.as_str());
+                state.restore_authored_control(previous.as_ref(), control, value);
             }
         }
+        // The old document drops here, off the publisher's lock.
+        drop(previous);
 
         self.follow_up(committed);
         for (write, value) in announced {
