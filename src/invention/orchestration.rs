@@ -456,8 +456,10 @@ impl RuntimeSnapshot {
             .submit(key, value, options)
             .map_err(GraphCommandError::ControlError)?;
         // A declared control's write is a request, and logged; any other
-        // reaches its module directly.
-        if let Some(live) = self.live.as_ref().filter(|_| !surface.declares(key)) {
+        // reaches its module directly, as does one to a development's
+        // legacy aliases beside its declared part.
+        let unlogged = surface.writes_legacy(key) && !queued.lost;
+        if let Some(live) = self.live.as_ref().filter(|_| unlogged) {
             live.note_unlogged();
         }
         Ok(queued)

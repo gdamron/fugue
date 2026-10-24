@@ -60,6 +60,9 @@ struct Due {
     /// Resolved against the graph as it will be when the request is due:
     /// as loaded, or as the last edit before it left it.
     control: Option<ControlIndex>,
+    /// The surface whose legacy aliases a development's key also writes,
+    /// as live, once its declared part applies.
+    follow: Option<ControlSurfaceInstance>,
     value: RtValue,
     /// The clock it applied on the beat of, which it latches first.
     latch: Option<String>,
@@ -125,6 +128,7 @@ impl Replay {
                     module_id: request.module_id.clone(),
                     key: request.key.clone(),
                     control: None,
+                    follow: None,
                     value: request.value.into(),
                     latch,
                 }
@@ -160,10 +164,12 @@ impl Replay {
             if through.is_some_and(|through| due.sample > through) {
                 break;
             }
-            due.control = surfaces
-                .get(&due.module_id)
-                .and_then(|surface| surface.declaration(&due.key))
+            let surface = surfaces.get(&due.module_id);
+            due.control = (surface.and_then(|surface| surface.declaration(&due.key)))
                 .map(|declaration| declaration.index);
+            due.follow = surface
+                .filter(|surface| surface.writes_legacy(&due.key))
+                .cloned();
             if due.control.is_none() {
                 missing.get_or_insert(self.resolved);
             }
@@ -239,6 +245,10 @@ impl Replay {
             });
             if !matches!(applied, Some(Ok(_))) {
                 self.refused += 1;
+            } else if let Some(surface) = &due.follow {
+                // A development's legacy aliases took the value as live
+                // wrote it; they are never logged (the log is not exact).
+                let _ = surface.follow_declared(&due.key, due.value);
             }
             self.next += 1;
         }
@@ -276,5 +286,7 @@ mod hold_tests;
 mod landing_tests;
 #[cfg(test)]
 mod latch_tests;
+#[cfg(test)]
+mod mixed_tests;
 #[cfg(test)]
 mod tests;
