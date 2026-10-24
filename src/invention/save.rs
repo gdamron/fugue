@@ -189,7 +189,7 @@ mod tests {
             &serde_json::json!(source.join("a.wav").to_string_lossy())
         );
         let samples = &saved.modules[1].config["samples"];
-        let kit = source.join("kit/b.wav");
+        let kit = source.join("kit").join("b.wav");
         assert_eq!(
             samples[0]["asset"]["path"],
             serde_json::json!(kit.to_string_lossy())

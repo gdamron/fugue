@@ -40,7 +40,7 @@ fn layout(dir: &std::path::Path) -> (String, String) {
     std::fs::create_dir(dir.join("sub")).unwrap();
     let original = constant_wav(dir, 0.5, 4_800);
     let written = constant_wav(&dir.join("sub"), 0.25, 4_800);
-    assert!(written.ends_with("sub/level-0.25.wav"));
+    assert!(std::path::Path::new(&written).ends_with("sub/level-0.25.wav"));
     assert!(!std::path::Path::new("sub/level-0.25.wav").exists());
     (original, "sub/level-0.25.wav".to_string())
 }
@@ -277,8 +277,11 @@ fn a_rebased_write_names_the_same_file_from_the_other_directory() {
     let rebased = |to, value: &str| rebase_asset_write(Some(from), to, "asset.0", &text(value));
     assert_eq!(rebased(Some(from), "kick.wav"), text("kick.wav"));
     assert_eq!(rebased(Some(under), "kick.wav"), text("a/kick.wav"));
-    assert_eq!(rebased(Some(beside), "kick.wav"), text("/songs/a/kick.wav"));
-    assert_eq!(rebased(None, "kick.wav"), text("/songs/a/kick.wav"));
+    // Absolute as the platform spells it (a drive on Windows).
+    let outside = std::path::absolute("/songs/a/kick.wav").unwrap();
+    let outside = text(&outside.to_string_lossy());
+    assert_eq!(rebased(Some(beside), "kick.wav"), outside);
+    assert_eq!(rebased(None, "kick.wav"), outside);
     assert_eq!(
         rebased(Some(beside), "/abs/kick.wav"),
         text("/abs/kick.wav")
