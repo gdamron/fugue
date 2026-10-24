@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use crate::control_request::{
     Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue,
 };
-use crate::invention::declared::{Declaration, DeclaredSurface, Route};
+use crate::invention::declared::{Declaration, DeclaredSurface, Queued, Route, WriteOptions};
 use crate::traits::{check_listed_control, ControlSurfaceMap};
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
@@ -215,6 +215,19 @@ impl ControlSurface for CodeControls {
 
     fn declares(&self, key: &str) -> bool {
         self.declared.declares(key)
+    }
+
+    #[allow(private_interfaces)]
+    fn submit(
+        &self,
+        key: &str,
+        value: ControlValue,
+        options: &WriteOptions,
+    ) -> Result<Queued, String> {
+        match self.declared.declares(key) {
+            true => self.declared.submit(key, value, options),
+            false => self.set_control(key, value).map(|()| Queued::default()),
+        }
     }
 
     #[allow(private_interfaces)]

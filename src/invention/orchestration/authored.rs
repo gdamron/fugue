@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use super::RuntimeSnapshot;
 use crate::control_request::RequestId;
 use crate::invention::audio_assets;
-use crate::invention::declared::{DeclaredSurface, Queued};
+use crate::invention::declared::{Queued, WriteOptions};
 use crate::invention::publish::Authored;
 use crate::invention::runtime::GraphCommandError;
 use crate::ControlValue;
@@ -70,22 +70,9 @@ impl RuntimeSnapshot {
         module_id: &str,
         key: &str,
         value: ControlValue,
+        options: &WriteOptions,
     ) -> Result<Queued, GraphCommandError> {
-        let surface = {
-            let controls = self.control_surfaces.lock().unwrap();
-            let surface = controls.get(module_id).cloned();
-            surface.ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
-        };
-        let declared = surface
-            .as_any()
-            .and_then(|any| any.downcast_ref::<DeclaredSurface>());
-        let Some(declared) = declared else {
-            self.set_control_transient(module_id, key, value)?;
-            return Ok(Queued::default());
-        };
-        declared
-            .set_control_queued(key, value, true)
-            .map_err(GraphCommandError::ControlError)
+        self.submit_transient(module_id, key, value, &options.authoring())
     }
 
     /// The value a write to `key` hands its module: a relative path written

@@ -127,7 +127,7 @@ use super::publication::{Disposition, Publication};
 use super::SignalGraph;
 use crate::control_request::{
     admits_hold, apply_declared, expired, take_automation, take_hold, Conditions, ControlIndex,
-    ControlTarget, Outcome, OutcomeSender, PendingStore, QueueConsumer, Refusal, Request,
+    ControlTarget, Outcome, OutcomeSender, PendingStore, QueueConsumer, Rank, Refusal, Request,
     RequestValue, RtValue, Standing, WatchSlots, Watches, When, CONDITION_CAPACITY,
 };
 use crate::payload::{Payload, Retirer};
@@ -809,17 +809,45 @@ impl SignalGraph {
         }
     }
 
+    /// Whether a write of `rank` to declared control `control` of module
+    /// `module_id` would take it now, as [`Self::apply_control`] weighs it
+    /// (true for a module not in the graph, which that refuses). A front
+    /// door whose write has effects of its own asks first, so one that
+    /// loses has none.
+    pub(crate) fn admits(&self, module_id: &str, control: ControlIndex, rank: Rank) -> bool {
+        let standing = Standing {
+            rank,
+            due: self.current_sample,
+        };
+        (self.modules.get(module_id))
+            .is_none_or(|instance| admits_hold(instance.module(), control, standing).is_ok())
+    }
+
     /// Applies `value` to declared control `control` of module `module_id`
-    /// at once: an offline render's control write, made under the lock its
-    /// renders take (see [`crate::invention::declared::Route`]). A user's,
-    /// it holds the control against lower tiers as a request does.
+    /// at once: an offline render's control write of `rank`, made under the
+    /// lock its renders take (see [`crate::invention::declared::Route`]).
+    /// As a request does, it holds the control against lower ranks, and
+    /// loses to a higher rank's write at this sample: then nothing applies
+    /// and it returns `false`.
     pub(crate) fn apply_control(
         &mut self,
         module_id: &str,
         control: ControlIndex,
         value: RtValue,
-    ) -> Result<(), Refusal> {
-        self.apply_control_due(module_id, control, value, self.current_sample)
+        rank: Rank,
+    ) -> Result<bool, Refusal> {
+        let standing = Standing {
+            rank,
+            due: self.current_sample,
+        };
+        let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
+        if admits_hold(instance.module(), control, standing).is_err() {
+            return Ok(false);
+        }
+        take_automation(instance.module_mut());
+        apply_declared(instance.module_mut(), control, value)?;
+        take_hold(instance.module(), control, standing);
+        Ok(true)
     }
 
     /// [`Self::apply_control`] for a write due at sample `due`, which it
@@ -839,27 +867,31 @@ impl SignalGraph {
     }
 
     /// Keeps `payload` as declared payload control `control` of module
-    /// `module_id` at once, as [`Self::apply_control`] applies a value,
-    /// holding it as that does. Control thread: the value it replaces, or a
-    /// refused payload, is dropped here.
+    /// `module_id` at once, as [`Self::apply_control`] applies a value of
+    /// `rank`, holding it, or losing, as that does. Control thread: the
+    /// value it replaces, or a payload refused or lost, is dropped here.
     pub(crate) fn apply_payload(
         &mut self,
         module_id: &str,
         control: ControlIndex,
         payload: Payload,
-    ) -> Result<(), Refusal> {
+        rank: Rank,
+    ) -> Result<bool, Refusal> {
+        let standing = Standing {
+            rank,
+            due: self.current_sample,
+        };
         let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
+        if admits_hold(instance.module(), control, standing).is_err() {
+            return Ok(false);
+        }
         instance
             .module_mut()
             .apply_payload(control, payload)
             .map(drop)
             .map_err(|(refusal, _)| refusal)?;
-        take_hold(
-            instance.module(),
-            control,
-            Standing::user(self.current_sample),
-        );
-        Ok(())
+        take_hold(instance.module(), control, standing);
+        Ok(true)
     }
 
     /// A [`RequestHook`] applying an `F32` request as an input write, with

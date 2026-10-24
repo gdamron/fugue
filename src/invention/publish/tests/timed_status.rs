@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::control_request::RequestId;
+use crate::invention::declared::WriteOptions;
 use crate::invention::orchestration::RuntimeSnapshot;
 use crate::invention::publish::timed::EditTime;
 use crate::invention::publish::{Authored, CancelCause, EditState, Touched};
@@ -499,7 +500,7 @@ fn a_write_queued_after_an_adoption_is_recorded_at_once() {
             writes += 1;
             let adopted = live.timed_status(id).unwrap().state;
             assert_eq!(adopted, EditState::Adopted, "adopted before the write");
-            door.make_authored("osc1", "frequency", value.clone())
+            door.make_authored("osc1", "frequency", value.clone(), &WriteOptions::default())
         },
         |seen| live.record_authored("osc1", "frequency", &value, seen),
     );

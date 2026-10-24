@@ -11,6 +11,7 @@ mod carry;
 mod declared;
 mod declared_routes;
 mod drops;
+mod front_door_sources;
 mod inputs;
 mod migrated;
 mod null_backend;

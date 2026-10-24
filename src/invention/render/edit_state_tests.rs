@@ -101,10 +101,11 @@ fn a_schedule_resolved_before_an_offline_edit_is_refused_as_stale() {
         record: Box::new(|| recorded.set(true)),
     };
     let payload = crate::payload::Payload::new(0_u32);
-    let written =
-        controls
-            .declared()
-            .write_payload_checked("schedule", payload, "[]".into(), checked);
+    let written = controls.declared().write_payload_checked(
+        ("schedule", payload, "[]".into()),
+        checked,
+        &Default::default(),
+    );
     assert_eq!(written.map(drop), Err(STALE.to_string()));
     assert!(!recorded.get());
     let schedule =

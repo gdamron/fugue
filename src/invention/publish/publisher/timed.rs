@@ -16,10 +16,10 @@ use std::sync::Arc;
 
 use super::{Published, Publisher, Refused};
 use crate::control_request::{
-    Condition, ControlTarget, Predicate, QueueFull, Request, RequestId, RequestSender,
+    Condition, ControlTarget, Intent, Predicate, QueueFull, Request, RequestId, RequestSender,
     RequestValue, RtValue, When,
 };
-use crate::invention::declared::RequestPort;
+use crate::invention::declared::{RequestPort, WriteOptions};
 use crate::invention::graph::{Fate, TIMED_EDIT_MODULE};
 use crate::invention::publish::change::{BuiltModule, PreparedChange, TopologyMirror};
 use crate::invention::publish::rebind::Packed;
@@ -362,18 +362,19 @@ impl Publisher {
     /// however long a drag. So the copy plays at the landing, and the
     /// edit's value never sounds when the copy reaches the audio thread
     /// before the landing; held back past it, the copy plays as soon as it
-    /// does (see [`Ledger::kept`]). At the same rank, its hold is the
-    /// author's own, refusing no later write a plain one would
-    /// not. `None`, with nothing queued, when neither: none waits, it does
-    /// not write the control, or the write cannot be kept (an event, the
-    /// requests waiting on conditions are full, or `requests`, the sender
-    /// the write goes through, has no room for both), and an edit writing
-    /// the control is cancelled as the write is recorded.
+    /// does (see [`Ledger::kept`]). It carries the write's rank, intent
+    /// and ttl, so its hold is the author's own, refusing no later write a
+    /// plain one would not, and it expires as the write would. `None`, with
+    /// nothing queued, when neither: none waits, it does not write the
+    /// control, or the write cannot be kept (an event, the requests waiting
+    /// on conditions are full, or `requests`, the sender the write goes
+    /// through, has no room for both), and an edit writing the control is
+    /// cancelled as the write is recorded.
     pub(crate) fn keep_authored(
         &mut self,
         (module_id, key): (&str, &str),
         target: ControlTarget,
-        (raw, event): (RtValue, bool),
+        (raw, event, options): (RtValue, bool, &WriteOptions),
         requests: &RequestSender,
     ) -> Option<(RequestId, Option<RequestId>)> {
         let waiting = self.timed.as_ref()?;
@@ -393,6 +394,10 @@ impl Publisher {
         }
         let id = waiting.id;
         let mut kept = Request::new(target, RequestValue::Value(raw));
+        kept.intent = Intent::Author;
+        kept.source = options.source;
+        kept.priority = options.priority;
+        kept.ttl = options.ttl;
         kept.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).expect("one part"));
         let copy = requests.submit(kept).ok()?;
         self.ledger.kept(id, format!("{module_id}.{key}"));

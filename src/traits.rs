@@ -10,7 +10,7 @@ use crate::control_request::{
     Automation, BeatTable, ControlCells, ControlIndex, ControlTable, LegacyRefusal, Refusal,
     RtValue, TableValue, Timeline,
 };
-use crate::invention::declared::{Declaration, Route};
+use crate::invention::declared::{Declaration, Queued, Route, WriteOptions};
 use crate::invention::timelines::Enclosure;
 use crate::payload::{Payload, Retired};
 
@@ -226,6 +226,25 @@ pub trait ControlSurface: Send + Sync {
     #[allow(private_interfaces)]
     fn bind(&self, route: Route, module: &mut dyn Module) {
         let _ = (route, module);
+    }
+
+    /// [`Self::set_control`] from a front door, as `options` say (who wrote
+    /// it, its rank, its ttl, whether it is authored), saying what the
+    /// write saw as it was queued and the request it became, if any. A
+    /// legacy surface takes the write in its setter and so applies it at
+    /// once: the default ignores `options`. Every surface over declared
+    /// controls, and a development or wrapper forwarding to one, overrides
+    /// it. Control thread.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn submit(
+        &self,
+        key: &str,
+        value: ControlValue,
+        options: &WriteOptions,
+    ) -> Result<Queued, String> {
+        let _ = options;
+        self.set_control(key, value).map(|()| Queued::default())
     }
 
     /// Writes `key` where it is on the legacy path: the whole of a legacy

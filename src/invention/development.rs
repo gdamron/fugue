@@ -25,6 +25,8 @@ mod declared_controls;
 #[cfg(test)]
 mod declared_tests;
 #[cfg(test)]
+mod lost_tests;
+#[cfg(test)]
 mod order_tests;
 #[cfg(test)]
 mod payload_tests;

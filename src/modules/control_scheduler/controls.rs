@@ -15,7 +15,9 @@ use crate::control_request::{
     Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, EventCounter,
     RtValue,
 };
-use crate::invention::declared::{Checked, Declaration, DeclaredSurface, Route, STALE};
+use crate::invention::declared::{
+    Checked, Declaration, DeclaredSurface, Queued, Route, WriteOptions, STALE,
+};
 use crate::payload::Payload;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
@@ -209,13 +211,20 @@ impl ControlSchedulerControls {
     /// payload is submitted makes the write stale (it may have rebuilt a
     /// target): it resolves again.
     pub fn set_schedule_json(&self, json: &str) -> Result<(), String> {
+        self.submit_schedule_json(json, &WriteOptions::default())
+            .map(drop)
+    }
+
+    /// [`Self::set_schedule_json`] as `options` say, saying what the write
+    /// saw as it was queued.
+    fn submit_schedule_json(&self, json: &str, options: &WriteOptions) -> Result<Queued, String> {
         let spec = parse_schedule_json(json)?;
         let _writing = self.shared.writing.lock().unwrap();
         for _ in 0..STALE_RETRIES {
             let generation = self.declared.generation();
             let Some(resolved) = self.resolve_attached(&spec)? else {
                 self.shared.state.lock().unwrap().record(spec);
-                return Ok(());
+                return Ok(Queued::default());
             };
             let schedule = ResolvedSchedule::new(resolved);
             let id = schedule.id;
@@ -229,12 +238,8 @@ impl ControlSchedulerControls {
                 targets: target_module_ids(&spec),
                 record: Box::new(record),
             };
-            match self.declared.write_payload_checked(
-                "schedule",
-                payload,
-                spec_json(&spec).into(),
-                checked,
-            ) {
+            let write = ("schedule", payload, spec_json(&spec).into());
+            match self.declared.write_payload_checked(write, checked, options) {
                 Err(error) if error == STALE => continue,
                 written => return written,
             }
@@ -475,6 +480,19 @@ impl ControlSurface for ControlSchedulerControls {
 
     fn declares(&self, key: &str) -> bool {
         self.declared.declares(key)
+    }
+
+    #[allow(private_interfaces)]
+    fn submit(
+        &self,
+        key: &str,
+        value: ControlValue,
+        options: &WriteOptions,
+    ) -> Result<Queued, String> {
+        match key {
+            "schedule" => self.submit_schedule_json(value.as_string()?, options),
+            _ => self.set_control(key, value).map(|()| Queued::default()),
+        }
     }
 
     #[allow(private_interfaces)]
