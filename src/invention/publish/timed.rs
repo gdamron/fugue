@@ -167,10 +167,15 @@ impl LiveGraph {
         let mut publisher = self.lock();
         let superseded = built_with.is_some_and(|registry| !self.registry.is_current(registry));
         let moved = prepared.base_generation != publisher.generation();
-        // Planned without an authored write recorded since, which its
-        // document, retained as it lands, would drop: planned again.
-        let authored = authored::Since::of(&prepared, &self.state);
-        if superseded || moved || !authored.is_some_and(|since| since.is_empty()) {
+        // The authored writes recorded since it was planned, which its
+        // document lacks: folded in once it is queued, or, when they are no
+        // longer all kept, planned again.
+        let Some(authored) = authored::Since::of(&prepared, &self.state) else {
+            drop(publisher);
+            drop(prepared);
+            return Err(GraphCommandError::TopologyMoved);
+        };
+        if superseded || moved {
             drop(publisher);
             drop(prepared);
             return Err(GraphCommandError::TopologyMoved);
@@ -211,6 +216,7 @@ impl LiveGraph {
             Ok(id) => {
                 let (chained, short) = submitted;
                 publisher.chain_timed(chained);
+                authored.fold_into(&mut publisher);
                 let sample = match time {
                     EditTime::AtSample(sample) => Some(sample),
                     _ => None,

@@ -124,33 +124,69 @@ pub(crate) fn write_entry_asset(
     true
 }
 
-/// What `document` authors for control `key` of module `id`: the scalar
-/// its config holds under the key, or in the entry a sample's `asset.N`
-/// names. `None` when it authors none.
-pub(crate) fn authored_control(document: &Invention, id: &str, key: &str) -> Option<ControlValue> {
-    let config = &document.modules.iter().find(|spec| spec.id == id)?.config;
-    let entry = key
-        .strip_prefix("asset.")
-        .and_then(|index| index.parse::<usize>().ok())
-        .and_then(|index| {
-            let entries = ["samples", "zones"].into_iter();
-            let mut entries = entries.filter_map(|list| config.get(list)?.get(index));
-            entries.find(|entry| entry.get("$asset").is_none() && entry.is_object())
-        });
-    let held = match entry {
-        Some(entry) => entry.get("asset"),
-        None => config.get(key),
-    };
-    held.and_then(crate::invention::reload::scalar_control_value)
+/// What `document` holds for control `key` of module `id`, as authored:
+/// under the key in its config or, for a sample's `asset.N`, as the `asset`
+/// of the entry it names (see [`entry_asset_mut`]). `None` when it holds
+/// nothing there.
+pub(crate) fn held_control(document: &Invention, id: &str, key: &str) -> Option<serde_json::Value> {
+    let config = document
+        .modules
+        .iter()
+        .find(|spec| spec.id == id)?
+        .config
+        .as_object()?;
+    match asset_entry(config, key) {
+        Some((list, index)) => config[list][index].get("asset").cloned(),
+        None => config.get(key).cloned(),
+    }
 }
 
-/// Drops control `key` from module `id`'s config, as a document that
-/// authors none for it. A sample's `asset.N` stays, in the entry it names.
-pub(crate) fn unset_control(document: &mut Invention, id: &str, key: &str) {
-    let spec = document.modules.iter_mut().find(|spec| spec.id == id);
-    if let Some(config) = spec.and_then(|spec| spec.config.as_object_mut()) {
-        config.remove(key);
+/// Puts `held` back where [`held_control`] read it, or removes what is
+/// there when `held` is `None`. Does nothing when no module has `id`.
+pub(crate) fn restore_control(
+    document: &mut Invention,
+    id: &str,
+    key: &str,
+    held: Option<serde_json::Value>,
+) {
+    let Some(spec) = document.modules.iter_mut().find(|spec| spec.id == id) else {
+        return;
+    };
+    if !spec.config.is_object() {
+        if held.is_none() {
+            return;
+        }
+        spec.config = serde_json::Value::Object(serde_json::Map::new());
     }
+    let config = spec.config.as_object_mut().expect("config is an object");
+    let (fields, field) = match asset_entry(config, key) {
+        Some((list, index)) => {
+            let entry = config[list][index].as_object_mut();
+            (entry.expect("the entry is an object"), "asset")
+        }
+        None => (config, key),
+    };
+    match held {
+        Some(value) => fields.insert(field.to_string(), value),
+        None => fields.remove(field),
+    };
+}
+
+/// The list and index of the sample entry an `asset.N` control names: an
+/// object at `N` of a `samples` or `zones` array, not a `$asset` reference.
+fn asset_entry(
+    config: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<(&'static str, usize)> {
+    let index: usize = key.strip_prefix("asset.")?.parse().ok()?;
+    let list = ["samples", "zones"].into_iter().find(|list| {
+        config
+            .get(*list)
+            .and_then(|entries| entries.get(index))
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|entry| !entry.contains_key("$asset"))
+    })?;
+    Some((list, index))
 }
 
 /// The `asset` of the entry an `asset.N` control names, when `config` lists
@@ -168,15 +204,8 @@ pub(crate) fn entry_asset_mut<'a>(
     config: &'a mut serde_json::Value,
     key: &str,
 ) -> Option<&'a mut serde_json::Value> {
-    let index: usize = key.strip_prefix("asset.")?.parse().ok()?;
     let object = config.as_object_mut()?;
-    let list = ["samples", "zones"].into_iter().find(|list| {
-        object
-            .get(*list)
-            .and_then(|entries| entries.get(index))
-            .and_then(serde_json::Value::as_object)
-            .is_some_and(|entry| !entry.contains_key("$asset"))
-    })?;
+    let (list, index) = asset_entry(object, key)?;
     let entry = object.get_mut(list)?.get_mut(index)?.as_object_mut()?;
     Some(entry.entry("asset").or_insert(serde_json::Value::Null))
 }
@@ -206,5 +235,52 @@ pub(crate) fn control_json(value: &ControlValue) -> serde_json::Value {
             .unwrap_or(serde_json::Value::Null),
         ControlValue::Bool(flag) => serde_json::json!(flag),
         ControlValue::String(text) => serde_json::json!(text),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn document(config: serde_json::Value) -> Invention {
+        let json = json!({ "version": "1.0.0", "modules": [{ "id": "m", "type": "t", "config": config }], "connections": [] });
+        Invention::from_json(&json.to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_held_value_of_any_shape_is_put_back_as_it_was() {
+        let before = document(json!({ "schedule": [{ "at": 0 }], "frequency": null }));
+        let mut after = document(json!({ "schedule": "[]", "frequency": 220 }));
+        for key in ["schedule", "frequency"] {
+            restore_control(&mut after, "m", key, held_control(&before, "m", key));
+        }
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn a_control_held_nowhere_is_removed() {
+        let before = document(json!({}));
+        let mut after = document(json!({ "level": 0.75 }));
+        restore_control(
+            &mut after,
+            "m",
+            "level",
+            held_control(&before, "m", "level"),
+        );
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn a_sample_asset_is_put_back_in_the_entry_it_names() {
+        let before = document(json!({ "samples": [{ "asset": "a.wav" }, { "note": 60 }] }));
+        let mut after = document(
+            json!({ "samples": [{ "asset": "b.wav" }, { "note": 60, "asset": "c.wav" }] }),
+        );
+        for key in ["asset.0", "asset.1"] {
+            restore_control(&mut after, "m", key, held_control(&before, "m", key));
+        }
+        assert_eq!(after, before);
     }
 }

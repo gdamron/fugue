@@ -97,8 +97,10 @@ pub struct RuntimeState {
 pub(crate) struct AuthoredLog(VecDeque<(String, String, ControlValue)>);
 
 impl AuthoredLog {
-    /// How many it keeps: a commit is planned in well under a second, in
-    /// which a front door records far fewer.
+    /// How many it keeps: far more than front doors record while a batch
+    /// or reload is planned and built, even one loading samples. Beyond it,
+    /// the commit is planned again; each kept write holds its value, a
+    /// schedule's text among them.
     const CAPACITY: usize = 64;
 
     fn push(&mut self, write: (String, String, ControlValue)) {
@@ -178,30 +180,37 @@ impl RuntimeState {
     }
 
     /// Writes back control `key` of `id` after a write to it failed as it
-    /// was made, leaving the module playing what it did: the document
-    /// takes what `previous`, the document the failing commit replaced (or
-    /// `None` when it kept the retained one), authored for it, or authors
-    /// none; never the module's value, which a performed write may have set. The stored config takes the authored
-    /// value, or the module's `actual` one when none was authored, so a
-    /// later reload diffs against what the module plays and tries the write
-    /// again.
+    /// was made, leaving the module playing what it did.
+    ///
+    /// The document takes back what `before`, the document as it was before
+    /// the failing commit, held for the control, or holds nothing for it,
+    /// never the module's value, which a performed write may have set. A
+    /// relative asset path is rebased from `before`'s directory. The stored
+    /// config takes the scalar `before` held, or else the module's `actual`
+    /// value, so a later reload diffs against what plays and tries the
+    /// write again. Neither is a new authored write, so nothing is logged.
     pub(crate) fn restore_authored_control(
         &mut self,
-        previous: Option<&Invention>,
+        before: Option<&Invention>,
         (id, key): (&str, &str),
         actual: &ControlValue,
     ) {
-        let authored = previous
-            .or(self.document.as_ref())
-            .and_then(|document| authored_document::authored_control(document, id, key));
-        match authored {
-            Some(value) => self.record_authored_control(id, key, &value),
-            None => {
-                if let Some(document) = self.document.as_mut() {
-                    authored_document::unset_control(document, id, key);
-                }
-                self.write_stored_control(id, key, actual);
-            }
+        let held = before.and_then(|before| {
+            let held = authored_document::held_control(before, id, key)?;
+            let Some(scalar) = scalar_control_value(&held) else {
+                return Some(held);
+            };
+            let from = before.source_path.as_deref();
+            let rebased = audio_assets::rebase_asset_write(from, self.source_path(), key, &scalar);
+            Some(match rebased == scalar {
+                true => held,
+                false => authored_document::control_json(&rebased),
+            })
+        });
+        let stored = held.as_ref().and_then(scalar_control_value);
+        self.write_stored_control(id, key, stored.as_ref().unwrap_or(actual));
+        if let Some(document) = self.document.as_mut() {
+            authored_document::restore_control(document, id, key, held);
         }
     }
 

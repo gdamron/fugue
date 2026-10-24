@@ -33,9 +33,9 @@ pub(crate) struct PreparedCommit {
 }
 
 impl PreparedCommit {
-    /// The commit, refused `TopologyMoved` once the retained document has
-    /// recorded an authored write since `authored`, the epoch read before
-    /// planning (see `PreparedChange::authored_at`).
+    /// The commit, planned from the retained document at `authored`, the
+    /// epoch read before planning: authored writes recorded since are kept
+    /// over its document (see `PreparedChange::authored_at`).
     pub(super) fn planned_at(mut self, authored: u64) -> Self {
         self.change.authored_at = Some(authored);
         self
@@ -209,7 +209,9 @@ impl RunningInvention {
         } = prepared;
         let (registry, definitions) = adopt.unzip();
         let replacing = registry.as_deref().map(crate::registry::ReplacingKeys::of);
-        let mut previous = None;
+        // The document as it was before the commit, when the commit replaced
+        // it; read back only should a write fail when made.
+        let (mut previous, replaces) = (None, document.is_some());
         let committed = self.live.commit_adopting(change, registry, |state| {
             if let Some(replacing) = replacing {
                 state.replacing = replacing;
@@ -276,6 +278,9 @@ impl RunningInvention {
             // Per key, so an edit landing since the commit keeps its own
             // changes to the document.
             let mut state = self.state.lock().unwrap();
+            if !replaces {
+                previous = state.document.clone();
+            }
             for (module_id, key, actual) in &kept {
                 let control = (module_id.as_str(), key.as_str());
                 state.restore_authored_control(previous.as_ref(), control, actual);
