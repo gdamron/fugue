@@ -4,6 +4,8 @@
 //! same sample replaced them.
 
 use super::*;
+use crate::control_request::{Outcome, Source};
+use crate::invention::declared::WriteOptions;
 use crate::invention::manual_backend::{start_manual, Pump};
 use crate::invention::publish::Progress;
 use crate::rpc::{ControlRequestState, RequestSource};
@@ -266,31 +268,37 @@ fn a_write_kept_over_a_timed_edit_is_announced_once_when_it_and_its_copy_apply()
 }
 
 #[test]
-fn a_write_kept_over_a_timed_edit_is_announced_when_only_its_copy_applies() {
+fn a_write_kept_over_a_timed_edit_is_announced_and_applied_when_only_its_copy_applies() {
     let (mut running, pump, sink) = on_manual();
     retune_waiting(&mut running);
 
-    // Authored while the edit waits, so kept over it, then replaced at its
-    // sample by a gesture: the write applies only as its copy lands.
-    let authored = ControlWrite::new("osc", "frequency", 330.0.into());
-    let acks = running.write_controls(&[authored, frequency(440.0, RequestSource::User)]);
-    let (written, gesture) = (
-        acks.controls[0].request.clone(),
-        acks.controls[1].request.clone(),
-    );
+    // Authored while the edit waits, so kept over it, with its outcome
+    // awaited as a reply's is, then replaced at its sample by a gesture:
+    // the write applies only as its copy lands.
+    let options = WriteOptions::performed(Source::User).awaiting();
+    let intent = crate::ControlWriteIntent::Author;
+    let snapshot = running.snapshot();
+    let ack = (snapshot.submit_control("osc", "frequency", 330.0.into(), intent, options)).unwrap();
+    let id = ack.request.unwrap();
+    let acks = running.write_controls(&[frequency(440.0, RequestSource::User)]);
+    let gesture = acks.controls[0].request.clone();
     pump.block();
     running.announce_applied();
     assert_eq!(announced(&sink), [(440.0.into(), gesture.clone())]);
     // Replaced, it may yet apply with its copy.
-    let id = crate::control_request::RequestId(written.as_deref().unwrap().parse().unwrap());
     assert_eq!(running.live.progress(id), Progress::Waiting);
 
     pump.render(8);
     running.announce_applied();
+    let written = Some(id.0.to_string());
     assert_eq!(
         announced(&sink),
         [(440.0.into(), gesture), (330.0.into(), written)]
     );
+    assert!(matches!(
+        running.live.progress(id),
+        Progress::Settled(Outcome::Applied { .. })
+    ));
     assert_eq!(
         running.get_control("osc", "frequency").unwrap(),
         330.0.into()
