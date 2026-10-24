@@ -24,6 +24,7 @@ mod describe;
 mod editing;
 mod error;
 mod orchestration;
+mod pending;
 mod ports;
 pub(crate) mod timed;
 

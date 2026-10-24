@@ -187,6 +187,7 @@ impl RpcCommand {
             | Self::DescribeModule(_)
             | Self::ExportRequestLog { .. }
             | Self::GetRequest { .. }
+            | Self::ListPendingRequests { .. }
             // Fenced to the session it names, so a replacement refuses it.
             | Self::FlushSession { .. } => ReplayPolicy::Resend,
             // Performance writes (see the module docs), installs, and shutdown,

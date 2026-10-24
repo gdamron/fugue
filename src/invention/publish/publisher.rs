@@ -21,7 +21,7 @@ use crate::spsc::{Consumer, Producer, Ring};
 
 mod timed;
 
-pub(crate) use timed::Adopted;
+pub(crate) use timed::{kept_until, Adopted};
 
 /// Input writes that may wait for the audio thread before a write is
 /// refused with [`GraphCommandError::QueueFull`].
@@ -239,7 +239,7 @@ impl Publisher {
     /// The caller submits the request before releasing the publisher, so it
     /// is in the queue before any later publication's edit (see
     /// `graph::requests`).
-    // The front doors that submit requests arrive with FUG-310's controls.
+    // Used by tests until a front door submits a request by target.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn control_target(
         &self,

@@ -14,8 +14,7 @@
 
 use super::{LiveGraph, PendingLog, PendingWrite, Publisher};
 use crate::control_request::{
-    Condition, Predicate, Request, RequestId, RequestValue, RtValue, Source, When,
-    CONDITION_CAPACITY,
+    Condition, Predicate, Request, RequestId, RequestValue, RtValue, When, CONDITION_CAPACITY,
 };
 use crate::invention::declared::DeclaredSurface;
 use crate::invention::runtime::GraphCommandError;
@@ -115,7 +114,7 @@ impl LiveGraph {
                 shown,
             } = write;
             request.when = When::Condition(condition);
-            let automated = request.source == Source::Automation;
+            let (source, when) = (request.source, request.when);
             let Ok(id) = self.requests.submit(request) else {
                 return Ok((chained, true));
             };
@@ -126,7 +125,8 @@ impl LiveGraph {
                     value,
                     raw: Some(raw),
                     beat: None,
-                    automated,
+                    source,
+                    when,
                     authored: None,
                     announced: false,
                     awaited: false,
