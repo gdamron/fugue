@@ -307,6 +307,7 @@ pub(super) fn adopt_into(
         port,
         written,
         folded,
+        chained,
     }) = publisher.adopt()
     else {
         return;
@@ -335,7 +336,8 @@ pub(super) fn adopt_into(
     // recorded; those it replaced are forgotten.
     let fence = authored::Fence::open(pending, mirrors.2, (later, Some(id)));
     let committed = LiveGraph::commit_mirrors(mirrors, publisher, published, &port, retain);
-    fence.close((pending, mirrors.2), &committed.stopped, (later, Some(id)));
+    let replaced = (&*committed.stopped, &*chained);
+    fence.close((pending, mirrors.2), replaced, (later, Some(id)));
     publisher.ledger().adopted(id, committed);
 }
 
