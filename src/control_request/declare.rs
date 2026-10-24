@@ -10,6 +10,7 @@
 //! `count > 1` declares `key.0` to `key.{count - 1}`, all valid for the life
 //! of the module, whatever another control later makes audible.
 
+use std::any::Any;
 use std::borrow::Cow;
 
 use serde_json::Value;
@@ -45,8 +46,38 @@ pub(crate) enum DeclKind {
 #[derive(Clone, Copy)]
 pub(crate) struct PayloadCodec {
     /// Builds, on a control thread, the payload its module keeps from a
-    /// client's value, and the value reads report for it, or refuses it.
-    pub(crate) prepare: fn(&ControlValue) -> Result<(Payload, ControlValue), String>,
+    /// client's value, and the value reads report for it, or refuses it
+    /// with the reason, so nothing reaches the module.
+    pub(crate) prepare: fn(&PayloadContext<'_>, &ControlValue) -> Prepared,
+}
+
+/// A payload write built: the payload, and the value reads report for it.
+pub(crate) type Prepared = Result<(Payload, ControlValue), String>;
+
+/// What a payload write is built with beside its value: which index of an
+/// indexed control it writes, and what its module attached to its surface
+/// at build (an asset control's sample rate and build lock, a zone's loop
+/// points), for a codec whose payload depends on the instance.
+#[derive(Clone, Copy)]
+pub(crate) struct PayloadContext<'a> {
+    /// The index written within its control: `3` for `asset.3`, `0` for a
+    /// plain control.
+    pub(crate) position: u16,
+    pub(crate) module: Option<&'a (dyn Any + Send + Sync)>,
+}
+
+impl PayloadContext<'_> {
+    /// No module context: a codec that needs none.
+    pub(crate) const NONE: PayloadContext<'static> = PayloadContext {
+        position: 0,
+        module: None,
+    };
+
+    /// The module's context, when it attached a `T`.
+    pub(crate) fn module<T: 'static>(&self) -> Result<&T, String> {
+        (self.module.and_then(|module| module.downcast_ref::<T>()))
+            .ok_or_else(|| "this control is written only through its module's own surface".into())
+    }
 }
 
 impl PartialEq for PayloadCodec {

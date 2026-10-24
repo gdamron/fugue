@@ -131,3 +131,40 @@ fn a_developments_config_writes_a_payload_before_the_scalars_beside_it() {
         "two notes at the gain written beside them"
     );
 }
+
+#[test]
+fn a_development_has_an_asset_built_by_its_aliass_own_surface() {
+    use crate::test_support::sampler::{wav, SamplerFactory};
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (wav(dir.path(), "a.wav", 441), wav(dir.path(), "b.wav", 882));
+    let mut registry = ModuleRegistry::default();
+    registry.register(SamplerFactory);
+    let definition = json!({
+        "version": "1.0.0",
+        "modules": [{ "id": "s", "type": "sampler", "config": { "samples": [a, a] } }],
+        "connections": [],
+        "outputs": [{ "name": "frames", "from": "s", "from_port": "slot.1" }],
+        "controls": [{ "name": "sample", "module": "s", "control": "asset.1" }]
+    });
+    let factory = DevelopmentFactory {
+        name: "pad".to_string(),
+        definition: serde_json::from_value(definition).unwrap(),
+        registry,
+        registered: Arc::new(Mutex::new(HashSet::new())),
+        loaded: Arc::new(LoadedDevelopments::default()),
+    };
+    // Written from its config while building, then live offline: each time
+    // loaded with the sampler's own rate, which the development lacks.
+    let mut built = factory.build(48_000, &json!({ "sample": b })).unwrap();
+    let surface = built.control_surface.take().unwrap();
+    let module = built.module.module_mut();
+    surface.bind(crate::invention::declared::Route::Inner, module);
+    module.process(1);
+    assert_eq!(module.output_block(0)[0], 960.0);
+    assert_eq!(surface.get_control("sample").unwrap(), b.as_str().into());
+    let error = surface
+        .set_control("sample", "nope.wav".into())
+        .unwrap_err();
+    assert!(error.contains("nope.wav"), "{error}");
+    assert_eq!(surface.get_control("sample").unwrap(), b.as_str().into());
+}

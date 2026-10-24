@@ -3,7 +3,8 @@
 //! sequencer; the pattern it replaces is retired off the audio thread.
 
 use crate::control_request::{
-    ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec, RtValue,
+    ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec, PayloadContext, Prepared,
+    RtValue,
 };
 use crate::payload::Payload;
 use crate::ControlValue;
@@ -97,7 +98,7 @@ impl PatternCodec {
         prepare: Self::prepare,
     };
 
-    fn prepare(value: &ControlValue) -> Result<(Payload, ControlValue), String> {
+    fn prepare(_: &PayloadContext<'_>, value: &ControlValue) -> Prepared {
         let pattern = parse_pattern_json(value.as_string()?)?;
         let shown = pattern_json(&pattern).into();
         Ok((Payload::new(pattern), shown))

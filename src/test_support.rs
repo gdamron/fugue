@@ -1,6 +1,7 @@
 //! Helpers shared by tests that wait on background threads.
 
 pub(crate) mod dial;
+pub(crate) mod sampler;
 pub(crate) mod table;
 pub(crate) mod tabler;
 pub(crate) mod tape;
