@@ -64,16 +64,72 @@ pub struct MutationReceipt {
     pub controls: Vec<AppliedControl>,
 }
 
-/// A control as it reads after a write.
+/// A control as it reads after a write, and what became of the write.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 pub struct AppliedControl {
     pub module_id: String,
     pub key: String,
     /// The value as applied. `None` when the control could not be read back,
-    /// for example because its module is no longer running.
+    /// for example because its module is no longer running, and when the
+    /// write did not apply (see `state`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<ControlValue>,
+    /// The request the write was submitted as, which a `ControlChanged`
+    /// event names once it applies. `None` for a write that applied as it
+    /// was made, which no request reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+    /// What became of the write by the time the reply was sent. `None`
+    /// from a daemon that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<ControlRequestState>,
+    /// The value written, coerced to the control's kind: what plays once a
+    /// pending write applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested: Option<ControlValue>,
+    /// Why a refused write was refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl AppliedControl {
+    /// A control read back after a write that reports nothing else.
+    pub fn read_back(
+        module_id: impl Into<String>,
+        key: impl Into<String>,
+        value: Option<ControlValue>,
+    ) -> Self {
+        Self {
+            module_id: module_id.into(),
+            key: key.into(),
+            value,
+            request: None,
+            state: None,
+            requested: None,
+            reason: None,
+        }
+    }
+}
+
+/// What became of a control write when its reply was sent.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ControlRequestState {
+    /// It applied; `value` reads what plays.
+    Applied,
+    /// Submitted and not yet applied when the reply was sent: no device
+    /// block took it in time, or none is running. A `ControlChanged` event
+    /// naming its request follows if it applies; none follows if it is
+    /// then superseded or overridden.
+    Pending,
+    /// A later write to the control at the same sample replaced it.
+    Superseded,
+    /// A higher-ranked write held the control.
+    Overridden,
+    /// Refused as it was applied; `reason` says why.
+    Refused,
 }
 
 impl super::RpcCommand {

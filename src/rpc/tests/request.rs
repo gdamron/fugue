@@ -18,6 +18,8 @@ fn rpc_commands_round_trip_json() {
             key: "frequency".to_string(),
             value: ControlValue::Number(440.0),
             intent: ControlWriteIntent::Author,
+            source: None,
+            priority: None,
         },
         RpcCommand::SetControls {
             writes: vec![
@@ -250,6 +252,8 @@ fn advances_revision_separates_authoring_from_performance() {
         key: "frequency".to_string(),
         value: ControlValue::Number(440.0),
         intent,
+        source: None,
+        priority: None,
     };
     assert!(author(ControlWriteIntent::Author).advances_revision());
     assert!(!author(ControlWriteIntent::Perform).advances_revision());
@@ -428,4 +432,22 @@ fn runtime_status_carries_session_durability_only_when_set() {
         serde_json::from_value::<crate::RuntimeStatus>(json).unwrap(),
         status
     );
+}
+
+#[test]
+fn a_control_write_names_its_source_and_priority_only_when_set() {
+    let plain = ControlWrite::new("osc", "frequency", ControlValue::Number(330.0));
+    let json = serde_json::to_value(&plain).unwrap();
+    assert!(json.get("source").is_none() && json.get("priority").is_none());
+
+    let tagged = ControlWrite {
+        source: Some(RequestSource::Agent),
+        priority: Some(-2),
+        ..plain
+    };
+    let json = serde_json::to_value(&tagged).unwrap();
+    assert_eq!(json["source"], "agent");
+    assert_eq!(json["priority"], -2);
+    let decoded: ControlWrite = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded, tagged);
 }

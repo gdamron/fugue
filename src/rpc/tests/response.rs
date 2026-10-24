@@ -88,6 +88,8 @@ fn a_receipt_request_names_its_reply_and_a_default_one_does_not() {
         key: "frequency".to_string(),
         value: crate::ControlValue::Number(440.0),
         intent: ControlWriteIntent::Author,
+        source: None,
+        priority: None,
     };
 
     // A default request is byte-for-byte what a client before receipts sent.
@@ -108,16 +110,8 @@ fn a_receipt_carries_status_and_written_controls_only() {
     let receipt = MutationReceipt {
         status: status(40, 60),
         controls: vec![
-            AppliedControl {
-                module_id: "osc".to_string(),
-                key: "frequency".to_string(),
-                value: Some(crate::ControlValue::Number(440.0)),
-            },
-            AppliedControl {
-                module_id: "gone".to_string(),
-                key: "level".to_string(),
-                value: None,
-            },
+            AppliedControl::read_back("osc", "frequency", Some(440.0.into())),
+            AppliedControl::read_back("gone", "level", None),
         ],
     };
     let response = RpcResponse::ok(None, RpcResponsePayload::Receipt(receipt.clone()));
@@ -167,6 +161,8 @@ fn a_receipt_reads_back_the_controls_a_command_wrote() {
         key: "frequency".to_string(),
         value: value(),
         intent: ControlWriteIntent::Perform,
+        source: None,
+        priority: None,
     };
     assert_eq!(single.written_controls(), vec![("osc", "frequency")]);
 
@@ -212,4 +208,26 @@ fn only_snapshot_acknowledged_commands_take_a_reply_shape() {
     };
     assert!(!apply.replies_with_snapshot());
     assert!(!RpcCommand::DescribeModuleTypes(Default::default()).replies_with_snapshot());
+}
+
+#[test]
+fn an_acknowledged_control_says_what_became_of_its_request() {
+    let pending = AppliedControl {
+        request: Some("7".to_string()),
+        state: Some(ControlRequestState::Pending),
+        requested: Some(crate::ControlValue::Number(330.0)),
+        ..AppliedControl::read_back("osc", "frequency", None)
+    };
+    let json = serde_json::to_value(&pending).unwrap();
+    assert_eq!(json["state"], "pending");
+    assert_eq!(json["request"], "7");
+    assert_eq!(json["requested"], 330.0);
+    assert!(json.get("value").is_none() && json.get("reason").is_none());
+    let decoded: AppliedControl = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded, pending);
+
+    // From a daemon that predates them, none is sent.
+    let json = serde_json::json!({ "module_id": "osc", "key": "frequency", "value": 1.0 });
+    let decoded: AppliedControl = serde_json::from_value(json).unwrap();
+    assert_eq!((decoded.state, decoded.request), (None, None));
 }
