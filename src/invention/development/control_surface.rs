@@ -244,8 +244,9 @@ impl ControlSurface for DevelopmentControlSurface {
         //
         // The declared part goes first: its delivery can still fail (a full
         // request queue, a module being installed), and a failed write must
-        // leave the legacy aliases as they were. Once it is on its way the
-        // legacy aliases, already checked, take the value.
+        // leave the legacy aliases as they were, as must one lost offline to
+        // a higher-ranked write. Once it is on its way the legacy aliases,
+        // already checked, take the value.
         if let Some(declared) = self.declared(key) {
             self.validate_control(key, &value, &self.surfaces)?;
             // A payload only its alias's own surface can build (a
@@ -254,7 +255,9 @@ impl ControlSurface for DevelopmentControlSurface {
                 return self.write_payload(declared, (key, value), options);
             }
             let queued = declared.submit(key, value.clone(), options)?;
-            self.set_legacy(key, value)?;
+            if !queued.lost {
+                self.set_legacy(key, value)?;
+            }
             return Ok(queued);
         }
         self.set_legacy(key, value).map(|()| Queued::default())

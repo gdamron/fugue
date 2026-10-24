@@ -30,6 +30,8 @@ mod fan_out_tests;
 #[cfg(test)]
 mod kit_fan_out_tests;
 #[cfg(test)]
+mod lost_tests;
+#[cfg(test)]
 mod order_tests;
 #[cfg(test)]
 mod payload_tests;

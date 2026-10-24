@@ -364,11 +364,12 @@ impl Publisher {
     /// before the landing; held back past it, the copy plays as soon as it
     /// does (see [`Ledger::kept`]). It carries the write's rank, intent
     /// and ttl, so its hold is the author's own, refusing no later write a
-    /// plain one would not, and it expires as the write would. `None`, with nothing queued, when neither: none waits, it does
-    /// not write the control, or the write cannot be kept (an event, the
-    /// requests waiting on conditions are full, or `requests`, the sender
-    /// the write goes through, has no room for both), and an edit writing
-    /// the control is cancelled as the write is recorded.
+    /// plain one would not, and it expires as the write would. `None`, with
+    /// nothing queued, when neither: none waits, it does not write the
+    /// control, or the write cannot be kept (an event, the requests waiting
+    /// on conditions are full, or `requests`, the sender the write goes
+    /// through, has no room for both), and an edit writing the control is
+    /// cancelled as the write is recorded.
     pub(crate) fn keep_authored(
         &mut self,
         (module_id, key): (&str, &str),
