@@ -49,13 +49,13 @@ pub use package::{
     PackageSource, MAX_PACKAGE_DIAGNOSTICS, MAX_PACKAGE_LIST_BYTES, MAX_PACKAGE_SUMMARY_BYTES,
     PACKAGE_SCHEMA_VERSION,
 };
-pub use receipt::{AppliedControl, MutationReceipt, MutationReply};
+pub use receipt::{AppliedControl, ControlRequestState, MutationReceipt, MutationReply};
 pub(crate) use recovery::{truncate_on_char_boundary, MODULE_ERROR_BYTES};
 pub use recovery::{
     Admission, MutationLedger, MutationTicket, PendingMutation, ReplayPolicy,
     MAX_MUTATION_ID_BYTES, MAX_RECORDED_MESSAGE_BYTES, MUTATION_LEDGER_CAPACITY,
 };
-pub use request::{ControlWrite, RpcCommand, RpcRequest, RpcRequestPayload};
+pub use request::{ControlWrite, RequestSource, RpcCommand, RpcRequest, RpcRequestPayload};
 pub use response::{ReloadMode, ReloadOutcome, RpcResponse, RpcResponsePayload, SaveReport};
 pub use revision::{
     ConflictReason, ControlWriteIntent, RevisionConflict, RevisionTracker, RuntimeRevision,

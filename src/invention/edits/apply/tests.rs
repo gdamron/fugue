@@ -133,6 +133,7 @@ impl Events {
                     module_id,
                     key,
                     value,
+                    ..
                 } => Some((module_id.clone(), key.clone(), value.clone())),
                 _ => None,
             })

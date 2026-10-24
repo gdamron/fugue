@@ -32,6 +32,8 @@ fn perform() -> RpcCommand {
         key: "frequency".to_string(),
         value: ControlValue::Number(220.0),
         intent: ControlWriteIntent::Perform,
+        source: None,
+        priority: None,
     }
 }
 
@@ -358,6 +360,8 @@ fn replay_policy_separates_reads_authoring_and_gestures() {
             key: "frequency".into(),
             value: ControlValue::Number(1.0),
             intent: ControlWriteIntent::Author,
+            source: None,
+            priority: None,
         }),
         ResendWithTicket
     );
