@@ -72,11 +72,10 @@ pub use modules::{
     AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver, AudioFileSink, AudioFileSinkFactory,
     AudioFileSinkHandle, AudioFileSinkStats, Clock, ClockFactory, CodeControls, CodeFactory,
     ControlScheduler, ControlSchedulerControls, ControlSchedulerFactory, DacFactory, DacModule,
-    Filter, FilterFactory, FilterType, Lfo, LfoFactory, MelodyFactory,
-    MelodyGenerator, Mixer, MixerFactory, NullBackend, Oscillator, OscillatorFactory,
-    OscillatorType, SampleKit, SampleKitControls, SampleKitFactory, SamplePlayer,
-    SamplePlayerControls, SamplePlayerFactory, SampleSlicer, SampleSlicerFactory, StreamErrorKind,
-    Vca, VcaFactory,
+    Filter, FilterFactory, FilterType, Lfo, LfoFactory, MelodyFactory, MelodyGenerator, Mixer,
+    MixerFactory, NullBackend, Oscillator, OscillatorFactory, OscillatorType, SampleKit,
+    SampleKitControls, SampleKitFactory, SamplePlayer, SamplePlayerFactory, SampleSlicer,
+    SampleSlicerFactory, StreamErrorKind, Vca, VcaFactory,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

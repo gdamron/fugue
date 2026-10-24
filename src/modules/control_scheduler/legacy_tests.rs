@@ -15,13 +15,12 @@ use crate::control_request::{scheduled_surface, while_held};
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::module_config::tests::registry::eight_frame_wav;
 use crate::modules::sample_instrument::{LoopSpec, SampleInstrument, ZoneSpec};
-use crate::modules::{SampleInstrumentControls, SamplePlayerControls};
+use crate::modules::SampleInstrumentControls;
 use crate::{ControlValue, Module};
 
 /// The families that kept state behind locks, kept to hold what locks they
 /// still have, with the instrument that plays the notes scheduled to it.
 struct Locking {
-    player: SamplePlayerControls,
     instrument: SampleInstrumentControls,
     sounding: SampleInstrument,
 }
@@ -47,7 +46,6 @@ impl Locking {
         let sounding =
             SampleInstrument::new_with_controls(instrument.clone(), audio, notes, 8, 48_000);
         Self {
-            player: SamplePlayerControls::with_mode(48_000, Some(wav), None, None, false).unwrap(),
             instrument,
             sounding,
         }
@@ -58,7 +56,6 @@ impl Locking {
     fn directory(&self) -> SurfaceDirectory {
         let mut map: IndexMap<String, ControlSurfaceInstance> = IndexMap::new();
         map.insert("sample_kit".into(), scheduled_surface("sample_kit"));
-        map.insert("sample_player".into(), Arc::new(self.player.clone()));
         map.insert(
             "sample_instrument".into(),
             Arc::new(self.instrument.clone()),
@@ -144,13 +141,11 @@ fn a_failure_while_busy_stops_the_worker() {
 
 #[test]
 fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
-    use ScheduleValue::{Bool, Number};
+    use ScheduleValue::Number;
     let mut locking = Locking::new();
     let directory = locking.directory();
     let entries = vec![
         ramp("sample_kit", "level.0", 0.5),
-        entry(0, "sample_player", "play", Bool(true)),
-        ramp("sample_player", "pitch_ratio", 2.0),
         entry(0, "sample_instrument", "note_on", Number(64.0)),
         ramp("sample_instrument", "level.0", 0.5),
     ];
@@ -160,44 +155,33 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
     }
     for (module, control, to) in [
         ("sample_kit", "level.0", 0.5),
-        ("sample_player", "pitch_ratio", 2.0),
         ("sample_instrument", "level.0", 0.5),
     ] {
         let landed = number(&directory, module, control);
         assert!((landed - to).abs() < 1e-4, "{module}.{control}: {landed}");
     }
-    assert!(locking.player.play());
     assert_eq!(locking.sounding.sounding(), [64]);
 }
 
 #[test]
 fn a_write_lands_while_control_threads_hold_every_lock_left() {
-    use ScheduleValue::{Bool, Number};
+    use ScheduleValue::Number;
     let mut locking = Locking::new();
     let directory = locking.directory();
     let mut scheduler = scheduler(
-        vec![
-            entry(1, "sample_player", "loop", Bool(true)),
-            entry(1, "sample_instrument", "note_on", Number(64.0)),
-        ],
+        vec![entry(1, "sample_instrument", "note_on", Number(64.0))],
         &directory,
     );
     assert_eq!(locking.block(&mut scheduler, 1.0), (0, 0), "step 0");
     assert_eq!(locking.block(&mut scheduler, 0.0), (0, 0));
     // Step 1 plays while control threads hold every lock these families
-    // have left: the player's and the instrument's sample swaps.
-    let (player, instrument) = (locking.player.clone(), locking.instrument.clone());
+    // have left: the instrument's sample swap.
+    let instrument = locking.instrument.clone();
     let held = while_held(
-        || player.hold_swap_lock(),
-        || {
-            while_held(
-                || instrument.hold_swap_lock(),
-                || locking.block(&mut scheduler, 1.0),
-            )
-        },
+        || instrument.hold_swap_lock(),
+        || locking.block(&mut scheduler, 1.0),
     );
     assert_eq!(held, (0, 0), "step 1");
-    assert!(locking.player.loop_enabled());
     assert_eq!(locking.sounding.sounding(), [64]);
 }
 
