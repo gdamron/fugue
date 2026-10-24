@@ -112,6 +112,10 @@ fn every_control_rebuilds_from_the_value_recorded_in_its_config() {
                 continue;
             }
             let key = meta.key.as_str();
+            // An event fires; no config records it (a clock's `reset`).
+            if surface.declaration(key).is_some_and(|found| found.decl.event) {
+                continue;
+            }
             let Ok(before) = surface.get_control(key) else {
                 continue;
             };

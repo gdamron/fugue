@@ -8,7 +8,9 @@
 //!
 //! - **Building**: the module is not running yet, so the value lands in its
 //!   cells, and each control written so is applied to the module when it
-//!   is bound to run (what it was built with stands for the rest).
+//!   is bound to run (what it was built with stands for the rest). An event
+//!   written so (a development restoring its saved config) fires then, once,
+//!   with the value last written, in write order.
 //! - **Live**: a request through the live graph's queue, applied on the
 //!   audio thread at its sample (on a `NullBackend`, by a zero-length
 //!   block before the write returns).
@@ -221,11 +223,23 @@ impl DeclaredSurface {
     }
 
     /// Records `value` as what payload control `key` reads back as, for
-    /// the payload its module was built with; nothing for a key that
-    /// names no control (see [`Self::index`]). Control thread.
+    /// the payload its module was built with, or as another key on the
+    /// same inner control wrote it; nothing for a key that names no
+    /// control (see [`Self::index`]). A payload still waiting for the
+    /// module stays: the bind applies every key's last write in the order
+    /// written, so an inner control still takes the later one, and an
+    /// alias only the earlier key reaches keeps it. Control thread.
     pub(crate) fn show_payload(&self, key: &str, value: ControlValue) {
         if let Ok(index) = self.index(key) {
-            self.show(index, value, None);
+            let mut payloads = self.payloads.lock().unwrap();
+            match payloads.iter_mut().find(|written| written.index == index) {
+                Some(written) => written.shown = value,
+                None => payloads.push(Written {
+                    index,
+                    shown: value,
+                    staged: None,
+                }),
+            }
         }
     }
 
@@ -439,9 +453,6 @@ impl DeclaredSurface {
             let mut route = self.route.lock().unwrap();
             if let Route::Building(written) = &mut *route {
                 // Under the route lock, so a bind sees it or it sees the bind.
-                if event {
-                    return Err(EVENT_WHILE_BUILDING.into());
-                }
                 let value = match write {
                     Write::Value(value) => value,
                     Write::Payload(payload, shown, checked) => {
@@ -694,8 +705,6 @@ impl DeclaredSurface {
     }
 }
 
-const EVENT_WHILE_BUILDING: &str = "An event fires only once its module runs";
-
 fn refused(table: &ControlTable, index: ControlIndex, refusal: Refusal) -> String {
     let key = table.key(index).unwrap_or_default();
     match refusal {
@@ -743,12 +752,7 @@ impl ControlSurface for DeclaredSurface {
             return prepared.map(drop);
         }
         let index = self.index(key)?;
-        self.coerce(index, value)?;
-        let event = matches!(self.table.decl(index), Some((decl, _)) if decl.event);
-        if event && self.is_building() {
-            return Err(EVENT_WHILE_BUILDING.into());
-        }
-        Ok(())
+        self.coerce(index, value).map(drop)
     }
 
     /// A payload built with this surface's context, which a development

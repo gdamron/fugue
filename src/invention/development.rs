@@ -24,6 +24,9 @@ mod control_surface;
 mod declared_controls;
 #[cfg(test)]
 mod declared_tests;
+mod fan_out;
+#[cfg(test)]
+mod fan_out_tests;
 #[cfg(test)]
 mod order_tests;
 #[cfg(test)]
