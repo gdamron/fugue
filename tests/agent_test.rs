@@ -293,8 +293,9 @@ fn named_local_harness_reports_missing_command_cleanly() {
 }
 
 /// An agent that answers every trigger with a canned JSON response, keeping
-/// at most `max_turns` of history.
-fn echo_agent(max_turns: u64) -> Invention {
+/// at most `max_turns` of history and ignoring triggers for `cooldown`
+/// seconds after each request.
+fn echo_agent(max_turns: u64, cooldown: f32) -> Invention {
     Invention::from_json(&format!(
         r#"{{
             "version": "1.0.0",
@@ -307,6 +308,7 @@ fn echo_agent(max_turns: u64) -> Invention {
                         "prompt": "Answer.",
                         "system_prompt": "You answer.",
                         "history_limits": {{ "max_turns": {max_turns} }},
+                        "cooldown": {cooldown},
                         "response": {{ "format": "json" }},
                         "test_response": {{
                             "kind": "echo",
@@ -323,6 +325,15 @@ fn echo_agent(max_turns: u64) -> Invention {
         }}"#
     ))
     .unwrap()
+}
+
+/// Waits until the agent reports `status`.
+fn wait_for_status(running: &fugue::RunningInvention, status: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while running.get_control("agent", "status").unwrap() != ControlValue::String(status.into()) {
+        assert!(Instant::now() < deadline, "agent never reported {status}");
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Triggers the agent until it has completed `requests` requests.
@@ -347,12 +358,18 @@ fn complete_requests(running: &fugue::RunningInvention, agent: &AgentControls, r
 
 #[test]
 fn agent_telemetry_is_read_only_through_set_control() {
-    let (runtime, handles) = InventionBuilder::new(48_000).build(echo_agent(6)).unwrap();
+    // A cooldown longer than the test keeps triggers sent while the first
+    // request ran from starting another, whose telemetry would change under
+    // the reads below.
+    let invention = echo_agent(6, 3600.0);
+    let (runtime, handles) = InventionBuilder::new(48_000).build(invention).unwrap();
     let running = runtime
         .start_with_backend(NullAudioBackend::new(48_000))
         .unwrap();
     let agent: AgentControls = handles.get("agent.controls").unwrap();
     complete_requests(&running, &agent, 1.0);
+    // The request counts itself before its last write, going idle.
+    wait_for_status(&running, "idle");
 
     let ControlValue::String(parsed) = running
         .get_control("agent", "last_parsed_response")
@@ -388,7 +405,9 @@ fn agent_telemetry_is_read_only_through_set_control() {
 
 #[test]
 fn history_limits_bound_the_history() {
-    let (runtime, handles) = InventionBuilder::new(48_000).build(echo_agent(1)).unwrap();
+    let (runtime, handles) = InventionBuilder::new(48_000)
+        .build(echo_agent(1, 0.0))
+        .unwrap();
     let running = runtime
         .start_with_backend(NullAudioBackend::new(48_000))
         .unwrap();
