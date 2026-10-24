@@ -8,7 +8,9 @@
 //! session's request log (see [`crate::invention::request_log`]), and
 //! lists each authored write that applied for the retained document to
 //! record, in the order the audio thread applied them (see
-//! [`PendingLog::take_steps`]).
+//! [`PendingLog::take_steps`]). It also lists each front door's write
+//! that applied for its `ControlChanged` event (see
+//! [`PendingLog::take_announcements`]).
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -48,6 +50,19 @@ pub(crate) struct PendingWrite {
     /// What the retained document records once the write applies, when it
     /// is authored.
     pub(crate) authored: Option<Authoring>,
+    /// Announced as a `ControlChanged` event once it applies: a front
+    /// door's write (see `RuntimeSnapshot::submit_control`), not a copy
+    /// kept over a timed edit, nor telemetry.
+    pub(crate) announced: bool,
+}
+
+/// A front door's write that applied, for its `ControlChanged` event.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Announcement {
+    pub(crate) request: RequestId,
+    pub(crate) module_id: String,
+    pub(crate) key: String,
+    pub(crate) value: ControlValue,
 }
 
 /// An authored write as the retained document records it once it applies:
@@ -107,6 +122,9 @@ pub(crate) struct PendingLog {
     timed_lost: bool,
     /// What the retained document has yet to take, oldest first.
     steps: VecDeque<DocumentStep>,
+    /// Writes applied and not yet announced, oldest first; past
+    /// [`OUTCOME_QUEUE_CAPACITY`], the oldest goes unannounced.
+    announcements: VecDeque<Announcement>,
 }
 
 impl PendingLog {
@@ -122,6 +140,7 @@ impl PendingLog {
             timed_outcomes: VecDeque::new(),
             timed_lost: false,
             steps: VecDeque::new(),
+            announcements: VecDeque::new(),
         }
     }
 
@@ -179,6 +198,7 @@ impl PendingLog {
                 );
                 if let Some(write) = write.as_ref().filter(|_| applied) {
                     self.authored(write);
+                    self.announce(id, write);
                 }
                 self.record(write, outcome, latched);
             }
@@ -194,8 +214,9 @@ impl PendingLog {
             self.log.lost(u64::from(dropped));
             // Which applied cannot be known; most do, and an author's
             // write is not to be lost from the document.
-            for (_, write) in std::mem::take(&mut self.writes) {
+            for (id, write) in std::mem::take(&mut self.writes) {
                 self.authored(&write);
+                self.announce(id, &write);
             }
             self.timed.clear();
             self.timed_lost = true;
@@ -280,8 +301,9 @@ impl PendingLog {
     pub(crate) fn submitted(&mut self, id: RequestId, write: PendingWrite) {
         if self.writes.len() == LOG_CAPACITY {
             // Forgotten unsettled: recorded as the dropped are.
-            if let Some((_, oldest)) = self.writes.pop_front() {
+            if let Some((id, oldest)) = self.writes.pop_front() {
                 self.authored(&oldest);
+                self.announce(id, &oldest);
             }
         }
         self.writes.push_back((id, write));
@@ -296,6 +318,45 @@ impl PendingLog {
                 authoring: authoring.clone(),
             });
         }
+    }
+
+    /// Lists `write`, applied as request `id`, for its event, if announced.
+    fn announce(&mut self, id: RequestId, write: &PendingWrite) {
+        if !write.announced {
+            return;
+        }
+        if self.announcements.len() == OUTCOME_QUEUE_CAPACITY {
+            self.announcements.pop_front();
+        }
+        self.announcements.push_back(Announcement {
+            request: id,
+            module_id: write.module_id.clone(),
+            key: write.key.clone(),
+            value: write.value.clone(),
+        });
+    }
+
+    /// Each front door's write applied since the last call, oldest first,
+    /// every outcome received first. One whose outcome was lost is listed
+    /// as applied: most do.
+    pub(crate) fn take_announcements(&mut self) -> VecDeque<Announcement> {
+        self.settle();
+        std::mem::take(&mut self.announcements)
+    }
+
+    /// Request `id`'s outcome, when it is among those received and not
+    /// yet taken, every outcome received first. `None` while it waits, and
+    /// once its outcome is lost or taken.
+    pub(crate) fn outcome_of(&mut self, id: RequestId) -> Option<Outcome> {
+        self.settle();
+        (self.outcomes.iter().rev())
+            .find(|(received, _)| *received == id)
+            .map(|(_, outcome)| *outcome)
+    }
+
+    /// Whether request `id` still waits to apply.
+    pub(crate) fn waiting(&self, id: RequestId) -> bool {
+        self.writes.iter().any(|(waiting, _)| *waiting == id)
     }
 
     /// The control of each authored write not yet recorded, waiting to

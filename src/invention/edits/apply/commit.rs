@@ -202,7 +202,7 @@ impl RunningInvention {
 
         self.follow_up(committed);
         for (write, value) in announced {
-            snapshot.emit_control_changed(&write.module_id, &write.key, value);
+            snapshot.emit_control_changed(&write.module_id, &write.key, value, None);
         }
         Ok(report)
     }
