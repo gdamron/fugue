@@ -1,4 +1,5 @@
 use super::*;
+use crate::factory::ModuleFactory;
 
 fn approx_eq(actual: f32, expected: f32) {
     assert!(

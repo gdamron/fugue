@@ -3,6 +3,7 @@
 
 use super::tests::{glides, left_blocks, left_outputs, ramp_frames, BLOCK};
 use super::*;
+use crate::factory::ModuleFactory;
 
 /// The left gain of a centred channel under the equal-power pan law.
 fn centre() -> f32 {

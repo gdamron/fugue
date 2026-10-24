@@ -8,11 +8,11 @@ use indexmap::IndexMap;
 use super::schedule::{parse_schedule_json, resolve_schedule, SurfaceMap};
 use super::*;
 use crate::alloc_counter::allocator_events;
-use crate::modules::mixer::MixerControls;
+use crate::test_support::legacy_levels::LegacyLevels;
 use crate::ControlSurface;
 
-fn mixer_directory() -> (MixerControls, SurfaceMap) {
-    let mixer = MixerControls::new(2);
+fn mixer_directory() -> (LegacyLevels, SurfaceMap) {
+    let mixer = LegacyLevels::new(2);
     let mut map: SurfaceMap = IndexMap::new();
     map.insert(
         "mixer".to_string(),
