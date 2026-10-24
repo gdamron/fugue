@@ -305,7 +305,6 @@ fn elastic_time_ratio_scales_slice_length() {
     let temp = tempfile::tempdir().unwrap();
     let (_path, config) = elastic_fixture(temp.path());
     let mut built = SampleSlicerFactory.build(44_100, &config).unwrap();
-    let surface = built.control_surface.clone().unwrap();
     let slicer = built.module.module_mut();
 
     let frames_to_end = |slicer: &mut dyn Module| {
@@ -323,21 +322,55 @@ fn elastic_time_ratio_scales_slice_length() {
     // 4 source frames at half speed occupy 8 output frames; at double
     // speed, 2. Pitch alone must not change the count.
     assert_eq!(frames_to_end(slicer), 4);
-    surface
-        .set_control("time_ratio", crate::ControlValue::Number(0.5))
-        .unwrap();
+    slicer.set_control("time_ratio", 0.5).unwrap();
     assert_eq!(frames_to_end(slicer), 8);
-    surface
-        .set_control("time_ratio", crate::ControlValue::Number(2.0))
-        .unwrap();
+    slicer.set_control("time_ratio", 2.0).unwrap();
     assert_eq!(frames_to_end(slicer), 2);
-    surface
-        .set_control("time_ratio", crate::ControlValue::Number(1.0))
-        .unwrap();
-    surface
-        .set_control("pitch_ratio", crate::ControlValue::Number(2.0))
-        .unwrap();
+    slicer.set_control("time_ratio", 1.0).unwrap();
+    slicer.set_control("pitch_ratio", 2.0).unwrap();
     assert_eq!(frames_to_end(slicer), 4);
+}
+
+#[test]
+fn the_ratios_exist_only_in_elastic_mode() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("classic.wav");
+    write_test_wav(
+        &path,
+        44_100,
+        &[[0.1, -0.1], [0.2, -0.2], [0.6, -0.6], [0.8, -0.8]],
+    );
+    let mut classic = SampleSlicerFactory
+        .build(44_100, &explicit_config(&path))
+        .unwrap();
+    assert!(classic.control_surface.is_none());
+    let slicer = classic.module.module_mut();
+    assert!(slicer.controls().is_empty());
+    for key in ["time_ratio", "pitch_ratio"] {
+        let read = slicer.get_control(key).unwrap_err();
+        let write = slicer.set_control(key, 2.0).unwrap_err();
+        assert!(read.contains(key) && read.contains("elastic"), "{read}");
+        assert!(write.contains(key) && write.contains("elastic"), "{write}");
+    }
+    assert!(slicer.get_control("nope").is_err());
+}
+
+#[test]
+fn the_ratios_clamp_to_a_small_positive_floor() {
+    let temp = tempfile::tempdir().unwrap();
+    let (_path, config) = elastic_fixture(temp.path());
+    let mut built = SampleSlicerFactory.build(44_100, &config).unwrap();
+    let slicer = built.module.module_mut();
+    assert_eq!(slicer.get_control("time_ratio").unwrap(), 1.0);
+    for key in ["time_ratio", "pitch_ratio"] {
+        slicer.set_control(key, 0.0).unwrap();
+        assert_eq!(slicer.get_control(key).unwrap(), 1e-4);
+        slicer.set_control(key, -3.0).unwrap();
+        assert_eq!(slicer.get_control(key).unwrap(), 1e-4);
+        slicer.set_control(key, 8.0).unwrap();
+        assert_eq!(slicer.get_control(key).unwrap(), 8.0);
+        assert!(slicer.set_control(key, f32::NAN).is_err());
+    }
 }
 
 #[test]

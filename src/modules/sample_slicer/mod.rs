@@ -40,16 +40,22 @@
 
 use std::sync::Arc;
 
+use crate::control_request::{
+    local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
+    RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::pkg::SampleSlice;
+use crate::traits::ControlMeta;
 use crate::Module;
 
 use super::sample_loading::elastic::ElasticReader;
 use super::sample_loading::{elastic_mode_from_config, load_sample_source, SampleData};
 use super::sample_player::asset_from_config;
 
-pub use self::controls::SampleSlicerControls;
+use self::controls::{MIN_RATIO, PITCH_RATIO, TABLE, TIME_RATIO};
 
 mod controls;
 mod inputs;
@@ -110,28 +116,26 @@ impl ModuleFactory for SampleSlicerFactory {
         }
 
         let elastic = elastic_mode_from_config("sample_slicer", config)?;
-        let (voice, handles, control_surface) = if elastic {
+        let (voice, control_surface) = if elastic {
             // Analysis is computed here, off the audio thread, and cached on
             // the (process-cached) buffer for every module sharing it.
             sample.elastic_analysis();
-            let controls = SampleSlicerControls::new();
+            let cells = Arc::new(ControlCells::new(controls::defaults()));
+            let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
             let voice = ElasticVoice {
                 reader: ElasticReader::new(sample_rate),
-                controls: controls.clone(),
+                time_ratio: 1.0,
+                pitch_ratio: 1.0,
+                cells,
                 start: 0.0,
                 end: 0.0,
             };
-            let handles: Vec<(String, Arc<dyn std::any::Any + Send + Sync>)> = vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn std::any::Any + Send + Sync>,
-            )];
             (
                 Some(voice),
-                handles,
-                Some(Arc::new(controls) as Arc<dyn crate::ControlSurface + Send + Sync>),
+                Some(Arc::new(surface) as Arc<dyn crate::ControlSurface + Send + Sync>),
             )
         } else {
-            (None, Vec::new(), None)
+            (None, None)
         };
 
         Ok(ModuleBuildResult {
@@ -141,7 +145,7 @@ impl ModuleFactory for SampleSlicerFactory {
                 initial_slice,
                 voice,
             ))),
-            handles,
+            handles: Vec::new(),
             control_surface,
             sink: None,
         })
@@ -156,11 +160,14 @@ impl ModuleFactory for SampleSlicerFactory {
     }
 }
 
-/// One elastic playback voice: the WSOLA reader plus the live ratios and
-/// the active slice region in source frames.
+/// One elastic playback voice: the WSOLA reader plus the live ratios
+/// (applied on the thread running the module) and the active slice region
+/// in source frames.
 struct ElasticVoice {
     reader: ElasticReader,
-    controls: SampleSlicerControls,
+    time_ratio: f32,
+    pitch_ratio: f32,
+    cells: Arc<ControlCells>,
     start: f64,
     end: f64,
 }
@@ -241,8 +248,8 @@ impl Module for SampleSlicer {
 
             let (left, right) = if self.playing {
                 if let Some(voice) = self.elastic.as_mut() {
-                    let time = voice.controls.time_ratio();
-                    let pitch = voice.controls.pitch_ratio();
+                    let time = voice.time_ratio;
+                    let pitch = voice.pitch_ratio;
                     let mut frame = (0.0, 0.0);
                     if let Some(analysis) = self.sample.cached_elastic_analysis() {
                         if let Some(value) = voice.reader.next(
@@ -305,6 +312,54 @@ impl Module for SampleSlicer {
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         self.outputs.get(port)
+    }
+
+    /// The ratios exist only in elastic mode.
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        self.elastic.as_ref().map(|voice| (&TABLE, &*voice.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        let (Some(voice), RtValue::F32(ratio)) = (self.elastic.as_mut(), value) else {
+            return Err(Refusal::Unsupported);
+        };
+        let field = match control {
+            TIME_RATIO => &mut voice.time_ratio,
+            PITCH_RATIO => &mut voice.pitch_ratio,
+            _ => return Err(Refusal::Unsupported),
+        };
+        *field = ratio.max(MIN_RATIO);
+        Ok(RtValue::F32(*field))
+    }
+
+    fn controls(&self) -> Vec<ControlMeta> {
+        local_controls(self)
+    }
+
+    fn get_control(&self, key: &str) -> Result<f32, String> {
+        self.require_elastic(key)?;
+        local_get(self, key)
+    }
+
+    fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        self.require_elastic(key)?;
+        local_set(self, key, value)
+    }
+}
+
+impl SampleSlicer {
+    /// Refuses a ratio control with the reason it is missing: only
+    /// `mode: "elastic"` has them.
+    fn require_elastic(&self, key: &str) -> Result<(), String> {
+        let ratio = matches!(key, "time_ratio" | "pitch_ratio");
+        if ratio && self.elastic.is_none() {
+            return Err(format!(
+                "sample_slicer has no '{key}' control unless built with mode \"elastic\""
+            ));
+        }
+        Ok(())
     }
 }
 

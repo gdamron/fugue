@@ -378,6 +378,65 @@ fn a_scheduler_sweeps_a_filter_without_allocating() {
     }
 }
 
+fn slicer_patch() -> String {
+    let wav = crate::module_config::tests::registry::eight_frame_wav();
+    serde_json::json!({
+        "version": "1.0.0",
+        "modules": [
+            { "id": "slicer", "type": "sample_slicer", "config": {
+                "asset": wav, "mode": "elastic",
+                "slices": [{ "start_frames": 0, "end_frames": 8 }]
+            } },
+            { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+        ],
+        "connections": [
+            { "from": "slicer", "from_port": "audio_left", "to": "dac", "to_port": "audio" }
+        ]
+    })
+    .to_string()
+}
+
+#[test]
+fn slicer_ratio_writes_apply_on_the_audio_thread_and_read_back() {
+    let mut rig = Rig::new(&slicer_patch());
+    rig.render(1);
+    assert_eq!(read(&rig, "slicer", "time_ratio"), 1.0.into());
+    write(&rig, "slicer", "time_ratio", 2.0.into());
+    write(&rig, "slicer", "pitch_ratio", 0.0.into());
+    assert_eq!(read(&rig, "slicer", "time_ratio"), 1.0.into(), "pending");
+
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(read(&rig, "slicer", "time_ratio"), 2.0.into());
+    assert_eq!(read(&rig, "slicer", "pitch_ratio"), 1e-4.into(), "clamped");
+}
+
+#[test]
+fn a_scheduler_ramps_a_slicer_without_allocating() {
+    let mut rig = Rig::new(&slicer_patch());
+    let schedule = serde_json::json!({ "schedule": [
+        { "at_step": 0, "module": "slicer", "control": "time_ratio", "value": 2.0, "ramp_steps": 4 },
+        { "at_step": 0, "module": "slicer", "control": "pitch_ratio", "value": 3.0, "ramp_steps": 4 }
+    ]});
+    let scheduler = rig.build("sched", "control_scheduler", schedule);
+    rig.live
+        .edit(|change| {
+            change.upsert("sched", scheduler);
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        rig.live.write_input("sched", "clock", gate).unwrap();
+        assert_eq!(counted_block(&mut rig), (0, 0));
+    }
+    for (control, to) in [("time_ratio", 2.0), ("pitch_ratio", 3.0)] {
+        let ControlValue::Number(now) = read(&rig, "slicer", control) else {
+            panic!("a number");
+        };
+        assert!(now > 1.0 && now < to, "{control}: {now}");
+    }
+}
+
 #[test]
 fn clock_writes_apply_on_the_audio_thread_and_retime_its_gates() {
     // 22500 bpm at 48 kHz is 128 samples a beat; 45000 is 64.

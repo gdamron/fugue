@@ -95,11 +95,6 @@ fn scheduled_config(type_id: &str) -> Value {
             "zones": [{ "root_note": 60, "key_range": [0, 127], "asset": wav }]
         }),
         "sample_player" => json!({ "asset": wav, "mode": "elastic" }),
-        "sample_slicer" => {
-            let mut config = base_config(type_id);
-            config["mode"] = json!("elastic");
-            config
-        }
         _ => base_config(type_id),
     }
 }
