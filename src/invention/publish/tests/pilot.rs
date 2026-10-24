@@ -253,6 +253,70 @@ fn a_scheduler_ramps_every_adsr_control_without_allocating() {
     }
 }
 
+const LFO_PATCH: &str = r#"{
+    "version": "1.0.0",
+    "modules": [
+        { "id": "lfo", "type": "lfo", "config": { "rate": 2.0, "waveform": "tri" } },
+        { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+    ],
+    "connections": [
+        { "from": "lfo", "from_port": "bipolar", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+#[test]
+fn lfo_writes_apply_on_the_audio_thread_and_read_back() {
+    let mut rig = Rig::new(LFO_PATCH);
+    rig.render(1);
+    assert_eq!(read(&rig, "lfo", "rate"), 2.0.into(), "from config");
+    assert_eq!(
+        read(&rig, "lfo", "rate_mod_depth"),
+        1.0.into(),
+        "its default"
+    );
+    assert_eq!(read(&rig, "lfo", "waveform"), "triangle".into());
+    write(&rig, "lfo", "rate", 500.0.into());
+    write(&rig, "lfo", "rate_mod_depth", (-1.0).into());
+    write(&rig, "lfo", "waveform", "SAW".into());
+    assert_eq!(read(&rig, "lfo", "waveform"), "triangle".into(), "pending");
+
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(
+        read(&rig, "lfo", "rate"),
+        100.0.into(),
+        "as the lfo clamped it"
+    );
+    assert_eq!(read(&rig, "lfo", "rate_mod_depth"), 0.0.into());
+    assert_eq!(read(&rig, "lfo", "waveform"), "sawtooth".into());
+}
+
+#[test]
+fn a_scheduler_ramps_an_lfo_without_allocating() {
+    let mut rig = Rig::new(LFO_PATCH);
+    let schedule = serde_json::json!({ "schedule": [
+        { "at_step": 0, "module": "lfo", "control": "rate", "value": 8.0, "ramp_steps": 4 },
+        { "at_step": 0, "module": "lfo", "control": "rate_mod_depth", "value": 4.0, "ramp_steps": 4 }
+    ]});
+    let scheduler = rig.build("sched", "control_scheduler", schedule);
+    rig.live
+        .edit(|change| {
+            change.upsert("sched", scheduler);
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        rig.live.write_input("sched", "clock", gate).unwrap();
+        assert_eq!(counted_block(&mut rig), (0, 0));
+    }
+    for (control, was, to) in [("rate", 2.0, 8.0), ("rate_mod_depth", 1.0, 4.0)] {
+        let ControlValue::Number(now) = read(&rig, "lfo", control) else {
+            panic!("a number");
+        };
+        assert!(now > was && now < to, "{control}: {now}");
+    }
+}
+
 #[test]
 fn clock_writes_apply_on_the_audio_thread_and_retime_its_gates() {
     // 22500 bpm at 48 kHz is 128 samples a beat; 45000 is 64.
