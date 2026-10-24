@@ -1101,3 +1101,18 @@ fn bank_numbers_read_whole_floats_and_are_refused_with_their_path() {
         "{error}"
     );
 }
+
+/// Two `next_cell` triggers landing at one sample are two events: they
+/// advance two cells.
+#[test]
+fn two_next_cell_triggers_at_one_sample_advance_two_cells() {
+    use crate::control_request::{apply_declared, RtValue};
+    let mut seq = CellSequencer::new(1000).with_cells(vec![vec![Step::note(0)]; 3]);
+    seq.process(1);
+    for _ in 0..2 {
+        apply_declared(&mut seq, table::NEXT_CELL, RtValue::F32(1.0)).unwrap();
+    }
+    seq.process(1);
+    assert_eq!(seq.current_cell(), 2);
+    assert_eq!(seq.get_control("next_cell").unwrap(), 0.0);
+}

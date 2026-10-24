@@ -134,8 +134,9 @@ pub struct CellSequencer {
     /// A `select_cell` request applied since the last sample, acted on at
     /// the next one.
     requested: Option<usize>,
-    /// A `next_cell` request applied since the last sample.
-    next_requested: bool,
+    /// The `next_cell` triggers applied since the last sample: each is an
+    /// event of its own, so two at one sample advance two cells.
+    next_requested: u32,
     current_sequence: usize,
     pending_sequence: Option<usize>,
     current_step: usize,
@@ -229,7 +230,7 @@ impl CellSequencer {
             sequences: bank,
             selected: current_sequence,
             requested: None,
-            next_requested: false,
+            next_requested: 0,
             current_sequence,
             pending_sequence: None,
             current_step: 0,
@@ -752,12 +753,12 @@ impl CellSequencer {
             }
         }
 
-        let advance_rising = std::mem::take(&mut self.next_requested);
+        let requested_advances = std::mem::take(&mut self.next_requested);
 
         let gate_rising = self.inputs.clock(i) > 0.5 && self.last_gate_in <= 0.5;
         let reset_rising = self.inputs.reset_gate(i) > 0.5 && self.last_reset_in <= 0.5;
-        let next_rising =
-            (self.inputs.next_cell(i) > 0.5 && self.last_next_cell_in <= 0.5) || advance_rising;
+        let next_rising = self.inputs.next_cell(i) > 0.5 && self.last_next_cell_in <= 0.5;
+        let advances = requested_advances.saturating_add(next_rising as u32);
         let previous_rising =
             self.inputs.previous_cell(i) > 0.5 && self.last_previous_cell_in <= 0.5;
 
@@ -770,8 +771,8 @@ impl CellSequencer {
             self.set_finished(false);
         }
 
-        if next_rising {
-            let target = self.advance_sequence_offset(1);
+        if advances > 0 {
+            let target = self.advance_sequence_offset(advances as isize);
             self.request_sequence_change(i, target);
         }
 

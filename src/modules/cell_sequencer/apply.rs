@@ -43,7 +43,9 @@ impl CellSequencer {
                 value
             }
             (NEXT_CELL, RtValue::F32(trigger)) => {
-                self.next_requested |= trigger > 0.5;
+                if trigger > 0.5 {
+                    self.next_requested = self.next_requested.saturating_add(1);
+                }
                 RtValue::F32(0.0)
             }
             (GRACE_DURATION, RtValue::F32(seconds)) => {
