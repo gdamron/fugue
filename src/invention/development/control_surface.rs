@@ -364,6 +364,7 @@ impl ControlSurface for DevelopmentControlSurface {
                     .automation(&control.key)
             })
             .collect::<Option<Vec<_>>>()?;
+        automation.event |= aliases.iter().any(|alias| alias.event);
         automation.aliases = Some(aliases.into());
         Some(automation)
     }
