@@ -47,11 +47,18 @@ pub(crate) fn write_control(document: &mut Invention, id: &str, key: &str, value
 
 /// Writes a control value into one config under the control's key, making
 /// the config an object first when it is not one.
+///
+/// A sample's `asset.N` is the exception: it lands in the `asset` of the
+/// entry it names (see [`entry_asset_mut`]), and a top-level `asset.N` an
+/// older save recorded is dropped, as the entry now holds the write.
 pub(crate) fn write_config_control(
     config: &mut serde_json::Value,
     key: &str,
     value: &ControlValue,
 ) {
+    if write_entry_asset(config, key, &control_json(value)) {
+        return;
+    }
     if !config.is_object() {
         *config = serde_json::Value::Object(serde_json::Map::new());
     }
@@ -59,6 +66,53 @@ pub(crate) fn write_config_control(
         .as_object_mut()
         .expect("config was just made an object")
         .insert(key.to_string(), control_json(value));
+}
+
+/// Writes `asset` into the entry an `asset.N` control names (see
+/// [`entry_asset_mut`]) and drops a top-level `asset.N` an older save
+/// recorded, as the entry now holds the write. Returns false, changing
+/// nothing, when `key` names no such entry.
+pub(crate) fn write_entry_asset(
+    config: &mut serde_json::Value,
+    key: &str,
+    asset: &serde_json::Value,
+) -> bool {
+    let Some(slot) = entry_asset_mut(config, key) else {
+        return false;
+    };
+    *slot = asset.clone();
+    if let Some(object) = config.as_object_mut() {
+        object.remove(key);
+    }
+    true
+}
+
+/// The `asset` of the entry an `asset.N` control names, when `config` lists
+/// its samples in a `samples` or `zones` array holding an object at `N`.
+///
+/// A sample's asset is authored in its entry, where the build loads it and
+/// the audio-asset scan, packaging and the read cap find it (see
+/// `audio_assets::module_asset_values`), so a write to it is recorded there
+/// too. Inserts the entry's `asset` when it has none.
+///
+/// An entry that is a `$asset` reference (its fields read from a JSON
+/// asset) names no such slot: it may hold only the reference, so the write
+/// is recorded under the top-level key instead.
+pub(crate) fn entry_asset_mut<'a>(
+    config: &'a mut serde_json::Value,
+    key: &str,
+) -> Option<&'a mut serde_json::Value> {
+    let index: usize = key.strip_prefix("asset.")?.parse().ok()?;
+    let object = config.as_object_mut()?;
+    let list = ["samples", "zones"].into_iter().find(|list| {
+        object
+            .get(*list)
+            .and_then(|entries| entries.get(index))
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|entry| !entry.contains_key("$asset"))
+    })?;
+    let entry = object.get_mut(list)?.get_mut(index)?.as_object_mut()?;
+    Some(entry.entry("asset").or_insert(serde_json::Value::Null))
 }
 
 /// A control value as config JSON.

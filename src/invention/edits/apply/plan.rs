@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
+use crate::invention::authored_document;
 use crate::invention::edits::EditedCandidate;
 use crate::invention::reload::{plan_reload, ReloadPlan};
 use crate::invention::state::{RuntimeModuleInfo, RuntimeState};
@@ -39,7 +40,11 @@ pub(super) fn plan_edits(
         .flat_map(|document| &document.modules)
         .map(|spec| (spec.id.as_str(), &spec.config))
         .collect();
-    let current: IndexMap<String, RuntimeModuleInfo> = state
+    // A write recorded inside a config entry (a sample's `asset.N`, see
+    // `authored_document::entry_asset_mut`) changes a non-scalar key, which
+    // the diff could only plan as a rebuild. It is the batch's own write, so
+    // the configs planned from take it too and it stays a control write.
+    let mut current: IndexMap<String, RuntimeModuleInfo> = state
         .modules
         .iter()
         .map(|(id, info)| {
@@ -50,6 +55,13 @@ pub(super) fn plan_edits(
             (id.clone(), info)
         })
         .collect();
+    for candidate in &candidate.control_writes {
+        let write = &candidate.write;
+        if let Some(info) = current.get_mut(&write.module_id) {
+            let asset = authored_document::control_json(&write.value);
+            authored_document::write_entry_asset(&mut info.config, &write.key, &asset);
+        }
+    }
 
     // A survivor's config differs from the document's only by the batch's
     // own writes, each already checked against the module's controls, so

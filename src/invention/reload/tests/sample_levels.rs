@@ -9,7 +9,7 @@ use super::*;
 use crate::invention::manual_backend::{start_manual, Pump, SAMPLE_RATE};
 
 /// A mono WAV holding `frames` frames at a constant `level`.
-fn constant_wav(dir: &std::path::Path, level: f32, frames: usize) -> String {
+pub(super) fn constant_wav(dir: &std::path::Path, level: f32, frames: usize) -> String {
     let path = dir.join(format!("level-{level}.wav"));
     let spec = hound::WavSpec {
         channels: 1,
@@ -28,7 +28,7 @@ fn constant_wav(dir: &std::path::Path, level: f32, frames: usize) -> String {
 }
 
 /// `module` (the sampler, id `m`) feeding the dac.
-fn document(module: serde_json::Value) -> Invention {
+pub(super) fn document(module: serde_json::Value) -> Invention {
     let mut module = module;
     module["id"] = json!("m");
     Invention::from_json(
@@ -45,13 +45,13 @@ fn document(module: serde_json::Value) -> Invention {
     .unwrap()
 }
 
-fn start_pumped(document: Invention) -> (RunningInvention, Pump) {
+pub(super) fn start_pumped(document: Invention) -> (RunningInvention, Pump) {
     let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
     start_manual(runtime)
 }
 
 /// The retained document as saving writes it and loading reads it back.
-fn saved(running: &RunningInvention) -> Invention {
+pub(super) fn saved(running: &RunningInvention) -> Invention {
     let json = running.document().unwrap().to_json().unwrap();
     Invention::from_json(&json).unwrap()
 }
@@ -59,7 +59,7 @@ fn saved(running: &RunningInvention) -> Invention {
 /// Sounds the first slot or zone with `sound` and returns the loudest
 /// left-channel sample over the next blocks. An instrument's note is then
 /// released and left to fade, so the next note starts from silence.
-fn peak(running: &RunningInvention, pump: &Pump, sound: (&str, f32)) -> f32 {
+pub(super) fn peak(running: &RunningInvention, pump: &Pump, sound: (&str, f32)) -> f32 {
     let play = |key: &str| {
         running
             .set_control("m", key, ControlValue::Number(sound.1))

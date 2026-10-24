@@ -7,6 +7,7 @@ mod authored;
 mod clock;
 mod mixer_rebuild;
 mod numeric;
+mod sample_assets;
 mod sample_levels;
 
 fn doc(json: &str) -> Invention {

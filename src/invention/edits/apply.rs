@@ -138,6 +138,57 @@ fn check_writes(surfaces: &ControlSurfaceMap, candidate: &EditedCandidate) -> Re
     Ok(())
 }
 
+/// The candidate as validation builds it: a sample entry a surviving
+/// module's `asset.N` write changed keeps the entry `document` has.
+///
+/// The write is recorded in the entry it names, where a build would load
+/// it. A survivor is not built from the candidate: the write is made on the
+/// running module at commit, and a sample that does not load there is
+/// reported in `controls_failed` with the batch committed, so it must not
+/// fail the validation build first.
+fn validation_probe(document: &Invention, candidate: &EditedCandidate) -> Invention {
+    let mut probe = candidate.document.clone();
+    for write in candidate.control_writes.iter().map(|write| &write.write) {
+        let Some(index) = write
+            .key
+            .strip_prefix("asset.")
+            .and_then(|index| index.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        let retained = document
+            .modules
+            .iter()
+            .find(|spec| spec.id == write.module_id);
+        let probed = probe
+            .modules
+            .iter_mut()
+            .find(|spec| spec.id == write.module_id);
+        let (Some(retained), Some(probed)) = (retained, probed) else {
+            continue;
+        };
+        if candidate.replaced.contains(&write.module_id)
+            || retained.module_type != probed.module_type
+        {
+            continue;
+        }
+        for list in ["samples", "zones"] {
+            let before = retained
+                .config
+                .get(list)
+                .and_then(|entries| entries.get(index));
+            let after = probed
+                .config
+                .get_mut(list)
+                .and_then(|entries| entries.get_mut(index));
+            if let (Some(before), Some(after)) = (before, after) {
+                *after = before.clone();
+            }
+        }
+    }
+    probe
+}
+
 /// The `invalid_edit` refusal for a control write the module refused, at
 /// its edit's index.
 fn refused_write(candidate: &CandidateWrite, mut reason: String) -> RpcError {
@@ -239,7 +290,7 @@ impl RunningInvention {
         // prepared directory before publishing.
         check_writes(&facts.directory_after(&candidate.document), &candidate)?;
         let provisional = facts.into_provisional();
-        let resolved = self.validate_candidate(&candidate.document)?;
+        let resolved = self.validate_candidate(&validation_probe(&document, &candidate))?;
         Ok(Batch {
             edit_count: edits.len(),
             candidate,
