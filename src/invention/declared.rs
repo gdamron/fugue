@@ -45,7 +45,7 @@ use std::sync::{Arc, Mutex, Weak};
 use super::graph::GraphCommand;
 use super::graph::SignalGraph;
 use super::publish::{
-    Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched, Twin,
+    Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
 };
 use super::runtime::ControlSurfaceInstance;
 #[cfg(test)]
@@ -746,7 +746,6 @@ impl DeclaredSurface {
                         automated,
                         announced: options.announced,
                         awaited: options.awaited,
-                        twin: copy.filter(|copy| *copy != id).map(Twin::Copy),
                         // Safe from the timed edit it was kept over, or that
                         // landed before it: its record follows that edit's.
                         authored: options.authored.map(|authoring| Authoring {
@@ -754,12 +753,12 @@ impl DeclaredSurface {
                             ..authoring.clone()
                         }),
                     };
-                    // The copy applying, too, is this write's, announced for
-                    // it if the write did not apply first.
+                    // The copy applying, too, is this write's, though only the
+                    // write is announced: the copy is the edit's.
                     if let Some(copy) = copy.filter(|copy| *copy != id) {
                         let copy_write = PendingWrite {
+                            announced: false,
                             awaited: false,
-                            twin: Some(Twin::Write(id)),
                             ..write.clone()
                         };
                         pending.submitted(copy, copy_write);

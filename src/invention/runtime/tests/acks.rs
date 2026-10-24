@@ -4,8 +4,6 @@
 //! same sample replaced them.
 
 use super::*;
-use crate::control_request::{Outcome, Source};
-use crate::invention::declared::WriteOptions;
 use crate::invention::manual_backend::{start_manual, Pump};
 use crate::invention::publish::Progress;
 use crate::rpc::{ControlRequestState, RequestSource};
@@ -253,54 +251,90 @@ fn retune_waiting(running: &mut RunningInvention) {
     (running.apply_edits_at(&[lfo, retune], &when, None)).expect("the edit is queued");
 }
 
+/// `written`'s request id.
+fn request_id(written: &Option<String>) -> crate::control_request::RequestId {
+    crate::control_request::RequestId(written.as_deref().unwrap().parse().unwrap())
+}
+
+/// osc's frequency as the document records it.
+fn recorded(running: &RunningInvention) -> Option<f64> {
+    let document = running.document().unwrap();
+    let osc = document.modules.iter().find(|module| module.id == "osc");
+    osc.unwrap().config["frequency"].as_f64()
+}
+
 #[test]
-fn a_write_kept_over_a_timed_edit_is_announced_once_when_it_and_its_copy_apply() {
+fn a_write_kept_over_a_timed_edit_is_announced_as_it_applies_and_plays_on_past_it() {
     let (mut running, pump, sink) = on_manual();
     retune_waiting(&mut running);
     let authored = ControlWrite::new("osc", "frequency", 330.0.into());
     let acks = running.write_controls(&[authored]);
-    pump.render(8);
-    running.announce_applied();
-    assert_eq!(
-        announced(&sink),
-        [(330.0.into(), acks.controls[0].request.clone())]
-    );
-}
+    let written = acks.controls[0].request.clone();
 
-#[test]
-fn a_write_kept_over_a_timed_edit_is_announced_and_applied_when_only_its_copy_applies() {
-    let (mut running, pump, sink) = on_manual();
-    retune_waiting(&mut running);
-
-    // Authored while the edit waits, so kept over it, with its outcome
-    // awaited as a reply's is, then replaced at its sample by a gesture:
-    // the write applies only as its copy lands.
-    let options = WriteOptions::performed(Source::User).awaiting();
-    let intent = crate::ControlWriteIntent::Author;
-    let snapshot = running.snapshot();
-    let ack = (snapshot.submit_control("osc", "frequency", 330.0.into(), intent, options)).unwrap();
-    let id = ack.request.unwrap();
-    let acks = running.write_controls(&[frequency(440.0, RequestSource::User)]);
-    let gesture = acks.controls[0].request.clone();
     pump.block();
     running.announce_applied();
-    assert_eq!(announced(&sink), [(440.0.into(), gesture.clone())]);
-    // Replaced, it may yet apply with its copy.
-    assert_eq!(running.live.progress(id), Progress::Waiting);
-
-    pump.render(8);
-    running.announce_applied();
-    let written = Some(id.0.to_string());
-    assert_eq!(
-        announced(&sink),
-        [(440.0.into(), gesture), (330.0.into(), written)]
-    );
     assert!(matches!(
-        running.live.progress(id),
-        Progress::Settled(Outcome::Applied { .. })
+        running.live.progress(request_id(&written)),
+        Progress::Settled(crate::control_request::Outcome::Applied { .. })
     ));
+    assert_eq!(announced(&sink), [(330.0.into(), written.clone())]);
+
+    // The edit lands, its retune followed by the kept write's copy.
+    pump.render(8);
+    running.live.adopt_landed();
+    running.announce_applied();
     assert_eq!(
         running.get_control("osc", "frequency").unwrap(),
         330.0.into()
     );
+    assert_eq!(recorded(&running), Some(330.0));
+    // Announced once, as the write applied; its copy is the edit's.
+    assert_eq!(announced(&sink), [(330.0.into(), written)]);
+}
+
+/// A kept write a gesture replaces at its exact sample is superseded, as
+/// its reply says, yet its copy, which the edit owns, still applies as the
+/// edit lands: the write plays again and is recorded, unannounced. Document
+/// and playback agree. Breaking the copy of a write that lost is the audio
+/// thread's to do, as it coalesces copies by target and edit.
+#[test]
+fn a_kept_write_replaced_at_its_sample_is_superseded_though_its_copy_lands_unannounced() {
+    let (mut running, pump, sink) = on_manual();
+    retune_waiting(&mut running);
+    let authored = ControlWrite::new("osc", "frequency", 330.0.into());
+    let acks = running.write_controls(&[authored, frequency(440.0, RequestSource::User)]);
+    let (written, gesture) = (
+        acks.controls[0].request.clone(),
+        acks.controls[1].request.clone(),
+    );
+
+    pump.block();
+    running.announce_applied();
+    let superseded = Progress::Settled(crate::control_request::Outcome::Superseded);
+    assert_eq!(running.live.progress(request_id(&written)), superseded);
+    assert_eq!(announced(&sink), [(440.0.into(), gesture.clone())]);
+
+    pump.render(8);
+    running.live.adopt_landed();
+    running.announce_applied();
+    // Re-asserted as the edit lands, and recorded so.
+    assert_eq!(
+        running.get_control("osc", "frequency").unwrap(),
+        330.0.into()
+    );
+    assert_eq!(recorded(&running), Some(330.0));
+    assert_eq!(announced(&sink), [(440.0.into(), gesture)]);
+}
+
+#[test]
+fn a_kept_writes_copy_holds_no_outcome_once_its_reply_is_sent() {
+    let (mut running, pump, _sink) = on_manual();
+    retune_waiting(&mut running);
+    let authored = ControlWrite::new("osc", "frequency", 330.0.into());
+    running.write_controls(&[authored]);
+
+    // Its copy, unawaited, settles as the edit lands, long after the reply.
+    pump.render(8);
+    running.announce_applied();
+    assert_eq!(running.live.held(), 0);
 }

@@ -311,7 +311,6 @@ fn submit_timed(running: &RunningInvention, id: &str, key: &str, value: f32, whe
             automated: false,
             announced: false,
             awaited: false,
-            twin: None,
             authored: None,
         };
         pending.submitted(request, write);

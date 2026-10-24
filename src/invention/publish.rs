@@ -59,7 +59,7 @@ pub(crate) use announce::Progress;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use authored::APPLY_WAIT;
 pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
-pub(crate) use pending::{Authoring, DocumentStep, PendingLog, PendingWrite, Twin};
+pub(crate) use pending::{Authoring, DocumentStep, PendingLog, PendingWrite};
 pub(crate) use publisher::{Publisher, Refused};
 #[cfg(test)]
 pub(crate) use publisher::OUTCOME_QUEUE_CAPACITY;
