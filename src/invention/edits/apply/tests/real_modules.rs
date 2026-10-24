@@ -296,7 +296,7 @@ fn a_batch_checks_nested_developments_as_loaded_not_as_on_disk() {
 
 /// A melody's degrees and weights as a module rebuilt from its retained
 /// document config has them, against the live module.
-fn assert_document_rebuilds_the_live_melody(running: &RunningInvention) {
+pub(super) fn assert_document_rebuilds_the_live_melody(running: &RunningInvention) {
     let document = running.document().unwrap();
     let config = &document
         .modules
@@ -358,6 +358,60 @@ fn a_saved_melody_rebuilds_what_shrinking_and_growing_left_playing() {
     // The writes land as the audio thread applies them.
     pump.render(1);
     assert_document_rebuilds_the_live_melody(&running);
+}
+
+/// The config of the retained document's melody.
+fn tune_config(running: &RunningInvention) -> serde_json::Value {
+    let document = running.document().unwrap();
+    let spec = document.modules.into_iter().find(|spec| spec.id == "tune");
+    spec.unwrap().config
+}
+
+#[test]
+fn a_saved_melody_forgets_what_a_whole_list_replaced() {
+    let mut document = doc(BASE);
+    document.modules.push(crate::ModuleSpec {
+        id: "tune".into(),
+        module_type: "melody".into(),
+        config: json!({ "degrees": [0, 2, 4, 5, 7, 9, 11], "note_weights": [4, 1, 2] }),
+    });
+    let (mut running, pump) = start_doc(document);
+    let text = |list: &str| ControlValue::String(list.into());
+    running
+        .set_control("tune", "degree_count", number(9.0))
+        .unwrap();
+    running
+        .set_control("tune", "degree.1", number(11.0))
+        .unwrap();
+    running
+        .set_control("tune", "note_weight.0", number(6.0))
+        .unwrap();
+    // A whole scale sets the count and every degree, keeping written weights.
+    running
+        .set_control("tune", "degrees", text("[0, 5]"))
+        .unwrap();
+    pump.render(1);
+    assert_document_rebuilds_the_live_melody(&running);
+    let config = tune_config(&running);
+    assert!(config.get("degree_count").is_none(), "{config}");
+    assert!(config.get("degree.1").is_none(), "{config}");
+    assert_eq!(config["note_weight.0"], json!(6));
+
+    // Whole weights forget written weights, in a batch too; a degree
+    // written after the scale is kept.
+    running
+        .apply_edits(&[
+            set("tune", "note_weight.1", number(3.0)),
+            set("tune", "degree.1", number(4.0)),
+            set("tune", "note_weights", text("[2, 2]")),
+        ])
+        .expect("the batch commits");
+    pump.render(1);
+    assert_document_rebuilds_the_live_melody(&running);
+    let config = tune_config(&running);
+    assert!(config.get("note_weight.0").is_none(), "{config}");
+    assert!(config.get("note_weight.1").is_none(), "{config}");
+    assert_eq!(config["degree.1"], json!(4));
 }
 
 /// BASE with a melody of `scale`.

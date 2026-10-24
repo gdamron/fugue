@@ -5,6 +5,7 @@ use crate::modules::NullBackend;
 
 mod authored;
 mod clock;
+mod melody;
 mod mixer_rebuild;
 mod numeric;
 mod relative_assets;
