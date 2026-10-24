@@ -129,6 +129,8 @@ impl LiveGraph {
                     automated,
                     authored: None,
                     announced: false,
+                    awaited: false,
+                    twin: None,
                 };
                 pending.submitted(id, write);
             }

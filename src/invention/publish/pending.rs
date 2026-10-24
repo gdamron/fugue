@@ -51,9 +51,28 @@ pub(crate) struct PendingWrite {
     /// is authored.
     pub(crate) authored: Option<Authoring>,
     /// Announced as a `ControlChanged` event once it applies: a front
-    /// door's write (see `RuntimeSnapshot::submit_control`), not a copy
-    /// kept over a timed edit, nor telemetry.
+    /// door's write (see `RuntimeSnapshot::submit_control`), not
+    /// telemetry: the write or its copy kept over a timed edit (see
+    /// [`Twin`]), whichever applies first.
     pub(crate) announced: bool,
+    /// A reply awaits its outcome, which is held apart from the shared
+    /// ring of outcomes until the reply releases it (see
+    /// [`PendingLog::release`]).
+    pub(crate) awaited: bool,
+    /// The other of a write kept over a timed edit and its copy.
+    pub(crate) twin: Option<Twin>,
+}
+
+/// A write kept over a timed edit is two requests: the write, and a copy
+/// that lands with the edit, which may yet apply if the write is
+/// superseded. The first of the two to apply is announced, naming the
+/// write's own request.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Twin {
+    /// On the write: its copy's request.
+    Copy(RequestId),
+    /// On the copy: the write's request.
+    Write(RequestId),
 }
 
 /// A front door's write that applied, for its `ControlChanged` event.
@@ -125,6 +144,10 @@ pub(crate) struct PendingLog {
     /// Writes applied and not yet announced, oldest first; past
     /// [`OUTCOME_QUEUE_CAPACITY`], the oldest goes unannounced.
     announcements: VecDeque<Announcement>,
+    /// Outcomes of writes a reply awaits, until it releases them: never
+    /// evicted, so a large batch's earlier outcomes stay known. Room for a
+    /// batch is made before it is submitted (see [`Self::hold_room`]).
+    held: Vec<(RequestId, Outcome)>,
 }
 
 impl PendingLog {
@@ -141,6 +164,7 @@ impl PendingLog {
             timed_lost: false,
             steps: VecDeque::new(),
             announcements: VecDeque::new(),
+            held: Vec::new(),
         }
     }
 
@@ -196,6 +220,9 @@ impl PendingLog {
                     outcome,
                     Outcome::Applied { .. } | Outcome::AppliedLate { .. }
                 );
+                if write.as_ref().is_some_and(|write| write.awaited) {
+                    self.held.push((id, outcome));
+                }
                 if let Some(write) = write.as_ref().filter(|_| applied) {
                     self.authored(write);
                     self.announce(id, write);
@@ -214,9 +241,14 @@ impl PendingLog {
             self.log.lost(u64::from(dropped));
             // Which applied cannot be known; most do, and an author's
             // write is not to be lost from the document.
-            for (id, write) in std::mem::take(&mut self.writes) {
-                self.authored(&write);
-                self.announce(id, &write);
+            let writes = std::mem::take(&mut self.writes);
+            for (id, write) in &writes {
+                self.authored(write);
+                // A copy and its write are one write, announced once.
+                let twin = |of| writes.iter().any(|(listed, _)| *listed == of);
+                if !matches!(write.twin, Some(Twin::Write(of)) if twin(of)) {
+                    self.announce(*id, write);
+                }
             }
             self.timed.clear();
             self.timed_lost = true;
@@ -325,11 +357,22 @@ impl PendingLog {
         if !write.announced {
             return;
         }
+        // The first of a write and its copy to apply is announced, for
+        // the write; the other is not.
+        let request = match write.twin {
+            Some(Twin::Write(of)) => of,
+            _ => id,
+        };
+        if let Some(Twin::Copy(other) | Twin::Write(other)) = write.twin {
+            if let Some((_, twin)) = self.writes.iter_mut().find(|(at, _)| *at == other) {
+                twin.announced = false;
+            }
+        }
         if self.announcements.len() == OUTCOME_QUEUE_CAPACITY {
             self.announcements.pop_front();
         }
         self.announcements.push_back(Announcement {
-            request: id,
+            request,
             module_id: write.module_id.clone(),
             key: write.key.clone(),
             value: write.value.clone(),
@@ -349,14 +392,28 @@ impl PendingLog {
     /// once its outcome is lost or taken.
     pub(crate) fn outcome_of(&mut self, id: RequestId) -> Option<Outcome> {
         self.settle();
-        (self.outcomes.iter().rev())
+        let held = self.held.iter().find(|(received, _)| *received == id);
+        (held.into_iter().chain(self.outcomes.iter().rev()))
             .find(|(received, _)| *received == id)
             .map(|(_, outcome)| *outcome)
     }
 
-    /// Whether request `id` still waits to apply.
+    /// Whether request `id` still waits to apply, or its copy kept over a
+    /// timed edit does.
     pub(crate) fn waiting(&self, id: RequestId) -> bool {
-        self.writes.iter().any(|(waiting, _)| *waiting == id)
+        (self.writes.iter())
+            .any(|(waiting, write)| *waiting == id || write.twin == Some(Twin::Write(id)))
+    }
+
+    /// Makes room to hold the outcomes of `writes` more awaited writes, so
+    /// receiving them allocates nothing.
+    pub(crate) fn hold_room(&mut self, writes: usize) {
+        self.held.reserve(writes);
+    }
+
+    /// Lets go of the held outcomes of `ids`, whose reply is built.
+    pub(crate) fn release(&mut self, ids: &[RequestId]) {
+        self.held.retain(|(id, _)| !ids.contains(id));
     }
 
     /// The control of each authored write not yet recorded, waiting to

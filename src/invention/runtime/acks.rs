@@ -41,10 +41,13 @@ impl RunningInvention {
         let snapshot = self.snapshot();
         let mut taken = Vec::with_capacity(writes.len());
         let mut error = None;
+        // Their outcomes are held apart from the shared ring, which a
+        // large batch or other writers could wrap, until the reply is built.
+        self.live.hold_room(writes.len());
         for write in writes {
             let options = WriteOptions {
                 priority: write.priority.unwrap_or(0),
-                ..WriteOptions::performed(source(write.source))
+                ..WriteOptions::performed(source(write.source)).awaiting()
             };
             let (module_id, key) = (&write.module_id, &write.key);
             let value = write.value.clone();
@@ -58,9 +61,11 @@ impl RunningInvention {
         }
         self.await_acks(taken.iter().map(|(_, ack)| ack));
         snapshot.announce_applied();
+        let held: Vec<_> = taken.iter().filter_map(|(_, ack)| ack.request).collect();
         let controls = (taken.into_iter())
             .map(|(write, ack)| self.acknowledged(write, ack))
             .collect();
+        self.live.release(&held);
         ControlAcks { controls, error }
     }
 
