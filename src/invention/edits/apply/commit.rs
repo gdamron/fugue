@@ -29,7 +29,8 @@ impl RunningInvention {
     /// for real, but a recorder opens its file only once it plays.
     ///
     /// `base_generation` is read before planning; a change published since
-    /// is [`Refused::Moved`].
+    /// is [`Refused::Moved`], and so is an authored write recorded since the
+    /// batch read its document, which the plan would read as the batch's.
     pub(super) fn prepare_edits(
         &self,
         base_generation: u64,
@@ -38,8 +39,13 @@ impl RunningInvention {
         // Only a reload adopts a registry, and it cannot run alongside a
         // batch (both take `&mut self`), so this one stays current.
         let registry = self.registry();
-        let plan =
-            super::plan::plan_edits(&self.state.lock().unwrap(), &batch.candidate, &registry)?;
+        let plan = {
+            let state = self.state.lock().unwrap();
+            if state.authored_epoch != batch.authored_at {
+                return Err(Refused::Moved);
+            }
+            super::plan::plan_edits(&state, &batch.candidate, &registry)?
+        };
         let build = |spec: &ModuleSpec| -> Result<BuiltModule, Refused> {
             let config = batch.resolved.get(&spec.id).unwrap_or(&spec.config);
             let mut module = GraphChange::build(

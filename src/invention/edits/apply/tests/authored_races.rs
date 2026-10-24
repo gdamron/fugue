@@ -92,7 +92,64 @@ fn a_batch_more_authored_writes_landed_under_than_are_kept_is_planned_again() {
 }
 
 #[test]
-fn a_timed_batch_an_authored_write_landed_under_is_planned_again() {
+fn a_write_still_pending_at_the_commit_follows_one_the_commit_records_again() {
+    let scripted = Scripted::default();
+    let (mut running, pump) = start_with(scripted.registry(), BASE);
+    let (snapshot, hook_pump) = (running.snapshot(), pump.clone());
+    let hook = Step::Run(Box::new(move || {
+        let author = ControlWriteIntent::Author;
+        let write =
+            |value| snapshot.set_control_with_intent("osc2", "frequency", number(value), author);
+        write(660.0).unwrap();
+        hook_pump.block();
+        // Not yet taken by the audio thread when the batch commits.
+        write(770.0).unwrap();
+    }));
+    scripted.then(None).then(None).then(Some(hook));
+
+    running
+        .apply_edits(&retuning_batch())
+        .expect("the batch commits");
+    pump.block();
+    // Recorded as the publisher is next locked.
+    running.live.authored_epoch();
+
+    assert_eq!(frequency(&running, "osc2"), 770.0);
+    assert_eq!(
+        running.get_control("osc2", "frequency").unwrap(),
+        number(770.0)
+    );
+}
+
+#[test]
+fn an_authored_write_to_a_module_the_batch_rebuilds_is_not_recorded_again() {
+    let scripted = Scripted::default();
+    let (mut running, pump) = start_with(scripted.registry(), BASE);
+    let hook = authored(&running, &pump, vec![("osc2", 660.0)]);
+    scripted.then(None).then(None).then(Some(hook));
+
+    let rebuilt = json!({ "waveform": "sine", "frequency": 330.0 });
+    running
+        .apply_edits(&[
+            add("t", SCRIPTED, json!({})),
+            remove("osc2"),
+            add("osc2", "oscillator", rebuilt),
+            connect("osc2", "audio", "dac", "audio"),
+        ])
+        .expect("the batch commits");
+    pump.block();
+
+    // The module playing was built from the batch's document.
+    assert_eq!(scripted.builds(), 3);
+    assert_eq!(frequency(&running, "osc2"), 330.0);
+    assert_eq!(
+        running.get_control("osc2", "frequency").unwrap(),
+        number(330.0)
+    );
+}
+
+#[test]
+fn a_timed_batch_an_authored_write_landed_under_keeps_it_as_it_lands() {
     let scripted = Scripted::default();
     let (mut running, pump) = start_with(scripted.registry(), BASE);
     let hook = authored(&running, &pump, vec![("osc2", 660.0)]);
@@ -103,9 +160,8 @@ fn a_timed_batch_an_authored_write_landed_under_is_planned_again() {
         .apply_edits_at(&retuning_batch(), &when, None)
         .expect("the batch is queued");
 
-    // Its document, retained as it lands, would drop the write: refused
-    // once, then checked, validated and built again.
-    assert_eq!(scripted.builds(), 6);
+    // Queued on the first attempt, with the write folded into its document.
+    assert_eq!(scripted.builds(), 3);
     pump.render(4);
     running.live.adopt_landed();
     assert_eq!(frequency(&running, "osc1"), 220.0);

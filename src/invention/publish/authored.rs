@@ -14,7 +14,9 @@
 //! an edit batch, a timed edit adopted) forgets the writes not yet
 //! recorded that it replaced, to a module it rebuilt or removed or to a
 //! control it wrote (see [`Fence`]): recorded after it, they would say
-//! what no longer plays.
+//! what no longer plays. The writes recorded while its document was planned,
+//! which that document lacks, are recorded again on top of it, but those it
+//! replaced the same way (see [`Since`]).
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -231,22 +233,20 @@ impl Since {
     pub(super) fn of(prepared: &PreparedChange, state: &Mutex<RuntimeState>) -> Option<Self> {
         let state = state.lock().unwrap();
         let writes = match prepared.authored_at {
-            Some(at) => state.authored_log.last(state.authored_epoch - at)?,
+            Some(at) => state
+                .authored_log
+                .last(state.authored_epoch.checked_sub(at)?)?,
             None => Vec::new(),
         };
         let origin = state.source_path().map(Path::to_path_buf);
         Some(Self { writes, origin })
     }
 
-    pub(super) fn is_empty(&self) -> bool {
-        self.writes.is_empty()
-    }
-
-    /// Records them again on top of the document the commit just made
-    /// recorded, but those it replaced: to a module it `stopped` (the
-    /// module playing was built from its document) or a control it
-    /// `writes` (its write follows). Before the commit's fence closes, so a
-    /// write still to be recorded that follows one of them is kept.
+    /// Records them again on top of the document the commit just retained,
+    /// all but those it replaced: to a module it `stopped` (the module
+    /// playing was built from its document) or a control it `writes` (its
+    /// write follows). Before the commit's fence closes, so a write still
+    /// to be recorded that follows one of them is kept.
     pub(super) fn rebase(
         self,
         state: &Mutex<RuntimeState>,
@@ -264,6 +264,18 @@ impl Since {
             let (from, to) = (self.origin.as_deref(), state.source_path());
             let value = audio_assets::rebase_asset_write(from, to, &key, &value);
             state.record_authored_control(&module_id, &key, &value);
+        }
+    }
+
+    /// Folds them into the document of the timed edit just queued, as a
+    /// write recorded while it waits is (see `record`): all but those to a
+    /// module it rebuilds or a control it writes as it lands.
+    pub(super) fn fold_into(self, publisher: &mut Publisher) {
+        for (module_id, key, value) in self.writes {
+            let replaced = publisher.timed_replaces(&module_id).is_some();
+            if !replaced && !publisher.timed_chains(&module_id, &key) {
+                publisher.fold_timed(&module_id, &key, &value);
+            }
         }
     }
 }
