@@ -28,8 +28,10 @@ use super::timed::adopt_into;
 use super::timed_status::{CancelCause, Touched};
 use super::{Authoring, DocumentStep, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher};
 use crate::control_request::RequestId;
-use crate::invention::audio_assets;
+use crate::invention::reload::scalar_control_value;
 use crate::invention::state::RuntimeState;
+use crate::invention::{audio_assets, authored_document};
+use crate::module_config::{names, replaced_by};
 use crate::ControlValue;
 
 /// The longest a caller waits for the audio thread to take what it was
@@ -183,7 +185,9 @@ impl Fence {
     /// Forgets, in `pending` and `later`, each write the commit replaced:
     /// to a module it `stopped` (rebuilt or removed), to a control it
     /// `writes` (to any value, the one the document holds included), or to
-    /// a control whose document value it changed otherwise.
+    /// a control whose document value it changed otherwise. Each kept one
+    /// is followed by the commit's writes it would hide, made after it
+    /// (see [`overtaken`]), as the document holds them now.
     pub(super) fn close(
         self,
         (pending, state): (&Mutex<PendingLog>, &Mutex<RuntimeState>),
@@ -213,8 +217,56 @@ impl Fence {
             } => safe(authoring) || !is_replaced(module_id, key),
             DocumentStep::Timed => true,
         });
-        let mut pending = pending.lock().unwrap_or_else(PoisonError::into_inner);
-        pending.forget_authored(is_replaced, except);
+        (pending.lock().unwrap_or_else(PoisonError::into_inner))
+            .forget_authored(is_replaced, except);
+        // Those kept, with the commit's writes each would hide, read with
+        // the log unlocked (the state is locked first elsewhere).
+        let kept = (pending.lock().unwrap_or_else(PoisonError::into_inner)).authored_keys(except);
+        let follows: Vec<_> = {
+            let state = state.lock().unwrap();
+            let earlier = |(module_id, key): &(String, String)| {
+                [(module_id.clone(), key.clone(), ControlValue::Bool(false))]
+            };
+            let later_keys = later.iter().filter_map(|step| match step {
+                DocumentStep::Authored {
+                    module_id,
+                    key,
+                    authoring,
+                } if !safe(authoring) => Some((module_id.clone(), key.clone())),
+                _ => None,
+            });
+            (kept.into_iter().chain(later_keys))
+                .map(|written| {
+                    let overtaken = overtaken(&state, &earlier(&written), writes);
+                    let then: Vec<_> = (overtaken.into_iter())
+                        .map(|(_, key, value)| (key, value))
+                        .collect();
+                    (written, then)
+                })
+                .filter(|(_, then)| !then.is_empty())
+                .collect()
+        };
+        if follows.is_empty() {
+            return;
+        }
+        let follows = |module_id: &str, key: &str| {
+            (follows.iter())
+                .find(|((m, k), _)| m == module_id && k == key)
+                .map_or_else(Vec::new, |(_, then)| then.clone())
+        };
+        for step in later.iter_mut() {
+            if let DocumentStep::Authored {
+                module_id,
+                key,
+                authoring,
+            } = step
+            {
+                if !safe(authoring) {
+                    authoring.then.extend(follows(module_id, key));
+                }
+            }
+        }
+        (pending.lock().unwrap_or_else(PoisonError::into_inner)).follow_authored(follows, except);
     }
 }
 
@@ -256,14 +308,21 @@ impl Since {
             return;
         }
         let mut state = state.lock().unwrap();
-        for (module_id, key, value) in self.writes {
-            let written = writes.iter().any(|(m, k)| *m == module_id && *k == key);
-            if written || stopped.contains(&module_id) {
-                continue;
-            }
+        let replaced = |module_id: &str, key: &str| {
+            stopped.iter().any(|m| m == module_id)
+                || writes.iter().any(|(m, k)| m == module_id && k == key)
+        };
+        let mut earlier = self.writes;
+        earlier.retain(|(module_id, key, _)| !replaced(module_id, key));
+        let overtaken = overtaken(&state, &earlier, writes);
+        for (module_id, key, value) in earlier {
             let (from, to) = (self.origin.as_deref(), state.source_path());
             let value = audio_assets::rebase_asset_write(from, to, &key, &value);
             state.record_authored_control(&module_id, &key, &value);
+        }
+        // Then those of the commit's own they would hide, made after.
+        for (module_id, key, value) in &overtaken {
+            state.record_authored_control(module_id, key, value);
         }
     }
 
@@ -278,6 +337,43 @@ impl Since {
             }
         }
     }
+}
+
+/// The controls a change writes (`writes`) that applied after `earlier`
+/// authored writes to their module where one of the two replaces the other
+/// (see [`ConfigKey::replacing`](crate::module_config::ConfigKey::replacing)),
+/// with the values `state`'s document holds for them: recorded again after
+/// `earlier` is, so the document records them in the order they applied.
+/// One no control takes is left as the document holds it.
+pub(super) fn overtaken(
+    state: &RuntimeState,
+    earlier: &[(String, String, ControlValue)],
+    writes: &[(String, String)],
+) -> Vec<(String, String, ControlValue)> {
+    let Some(document) = state.document.as_ref() else {
+        return Vec::new();
+    };
+    let replaces = |module_id: &str, whole: &str, key: &str| {
+        let Some(info) = state.modules.get(module_id) else {
+            return false;
+        };
+        let keys = state.replacing.config_keys(&info.module_type);
+        replaced_by(keys, whole)
+            .iter()
+            .any(|replaced| names(replaced, key))
+    };
+    let hidden = |module_id: &str, key: &str| {
+        (earlier.iter())
+            .any(|(m, k, _)| m == module_id && (replaces(m, k, key) || replaces(m, key, k)))
+    };
+    (writes.iter())
+        .filter(|(module_id, key)| hidden(module_id, key))
+        .filter_map(|(module_id, key)| {
+            let held = authored_document::held_control(document, module_id, key)?;
+            let value = scalar_control_value(&held)?;
+            Some((module_id.clone(), key.clone(), value))
+        })
+        .collect()
 }
 
 /// What the retained document holds for control `key` of `module_id`.
@@ -312,4 +408,7 @@ fn record(
         publisher.fold_timed(module_id, key, &value);
     }
     state.record_authored_control(module_id, key, &value);
+    for (key, value) in &authoring.then {
+        state.record_authored_control(module_id, key, value);
+    }
 }

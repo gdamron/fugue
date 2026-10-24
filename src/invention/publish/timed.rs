@@ -25,13 +25,12 @@ use super::{
     Refused,
 };
 use crate::control_request::{BeatSpec, BeatTime, RequestId, When};
+use crate::invention::audio_assets;
 use crate::invention::orchestration::ModulePorts;
-use crate::invention::reload::scalar_control_value;
 use crate::invention::request_log::{LoggedBeat, LoggedEdit, LoggedWhen};
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
-use crate::invention::{audio_assets, authored_document};
 use crate::ControlValue;
 use crate::ModuleRegistry;
 
@@ -327,11 +326,11 @@ pub(super) fn adopt_into(
     for schedule in written {
         schedule.record();
     }
-    let landing = landing_after(&folded, &chained);
+    let lands = chained.clone();
     let retain = move |state: &mut RuntimeState| {
         let origin = state.source_path().map(Path::to_path_buf);
         retain(state);
-        let landing = landing_values(state, landing);
+        let landing = authored::overtaken(state, &folded, &lands);
         // Written to the graph that was playing, to modules this edit
         // kept, after its document was prepared; a relative asset path
         // named from the document that was playing.
@@ -344,7 +343,7 @@ pub(super) fn adopt_into(
             );
             state.record_authored_control(module_id, key, &value);
         }
-        // Then the edit's own, as they landed after those.
+        // Then those of the edit's own they overtook, as they landed after.
         for (module_id, key, value) in &landing {
             state.record_authored_control(module_id, key, value);
         }
@@ -356,41 +355,6 @@ pub(super) fn adopt_into(
     let replaced = (&*committed.stopped, &*chained);
     fence.close((pending, mirrors.2), replaced, (later, Some(id)));
     publisher.ledger().adopted(id, committed);
-}
-
-/// The controls the edit writes as it lands (`chained`) on each module a
-/// write `folded` into it touched: those applied while it waited, before
-/// the edit's own, which the document records after them. A control the
-/// fold wrote itself is kept over the edit's write.
-fn landing_after(
-    folded: &[(String, String, ControlValue)],
-    chained: &[(String, String)],
-) -> Vec<(String, String)> {
-    let folds = |module: &str, key: Option<&str>| {
-        (folded.iter()).any(|(m, k, _)| m == module && key.is_none_or(|key| k == key))
-    };
-    (chained.iter())
-        .filter(|(module, key)| folds(module, None) && !folds(module, Some(key)))
-        .cloned()
-        .collect()
-}
-
-/// `controls`' values as the edit's document holds them, all but one no
-/// control takes, left as the document holds it.
-fn landing_values(
-    state: &RuntimeState,
-    controls: Vec<(String, String)>,
-) -> Vec<(String, String, ControlValue)> {
-    let Some(document) = state.document.as_ref() else {
-        return Vec::new();
-    };
-    (controls.into_iter())
-        .filter_map(|(module, key)| {
-            let held = authored_document::held_control(document, &module, &key)?;
-            let value = scalar_control_value(&held)?;
-            Some((module, key, value))
-        })
-        .collect()
 }
 
 /// Takes `pending`'s outcomes for timed edits into `publisher`'s ledger.
