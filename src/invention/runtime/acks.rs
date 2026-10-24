@@ -56,7 +56,7 @@ impl RunningInvention {
                 }
             }
         }
-        self.await_acks(taken.iter().filter_map(|(_, ack)| ack.request));
+        self.await_acks(taken.iter().map(|(_, ack)| ack));
         snapshot.announce_applied();
         let controls = (taken.into_iter())
             .map(|(write, ack)| self.acknowledged(write, ack))
@@ -71,11 +71,11 @@ impl RunningInvention {
         self.snapshot().announce_applied();
     }
 
-    /// Waits, as long as [`Self::ack_wait`] allows, until no request in
-    /// `requests` is still waiting.
-    fn await_acks(&self, requests: impl Iterator<Item = crate::control_request::RequestId>) {
-        let requests: Vec<_> = requests.collect();
-        let waiting = || (requests.iter()).any(|id| self.live.progress(*id) == Progress::Waiting);
+    /// Waits, as long as [`Self::ack_wait`] allows, until no write in
+    /// `acks` is still waiting.
+    fn await_acks<'a>(&self, acks: impl Iterator<Item = &'a ControlAck>) {
+        let acks: Vec<_> = acks.collect();
+        let waiting = || (acks.iter()).any(|ack| self.progress(ack) == Progress::Waiting);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let deadline = std::time::Instant::now() + self.ack_wait();
@@ -106,14 +106,19 @@ impl RunningInvention {
         std::time::Duration::from_secs_f64(wait.clamp(least, most) / 1000.0)
     }
 
+    /// How far a write taken as `ack` got.
+    fn progress(&self, ack: &ControlAck) -> Progress {
+        match (ack.request, ack.published) {
+            (Some(id), _) => self.live.progress(id),
+            _ if ack.lost => Progress::Settled(Outcome::Overridden),
+            (None, Some(generation)) if !self.live.installed(generation) => Progress::Waiting,
+            (None, _) => Progress::Applied,
+        }
+    }
+
     /// `write`, taken as `ack`, as its reply reports it.
     fn acknowledged(&self, write: &ControlWrite, ack: ControlAck) -> AppliedControl {
-        let progress = match ack.request {
-            Some(id) => self.live.progress(id),
-            None if ack.lost => Progress::Settled(Outcome::Overridden),
-            None => Progress::Forgotten,
-        };
-        let (state, reason) = state_of(progress);
+        let (state, reason) = state_of(self.progress(&ack));
         let value = (state == ControlRequestState::Applied)
             .then(|| self.get_control(&write.module_id, &write.key).ok())
             .flatten();
@@ -134,7 +139,7 @@ impl RunningInvention {
 fn state_of(progress: Progress) -> (ControlRequestState, Option<String>) {
     match progress {
         Progress::Waiting => (ControlRequestState::Pending, None),
-        Progress::Forgotten
+        Progress::Applied
         | Progress::Settled(Outcome::Applied { .. } | Outcome::AppliedLate { .. }) => {
             (ControlRequestState::Applied, None)
         }
@@ -171,7 +176,7 @@ fn each_outcome_reports_its_state() {
     use ControlRequestState::*;
     let settled = |outcome| state_of(Progress::Settled(outcome));
     assert_eq!(state_of(Progress::Waiting), (Pending, None));
-    assert_eq!(state_of(Progress::Forgotten), (Applied, None));
+    assert_eq!(state_of(Progress::Applied), (Applied, None));
     assert_eq!(settled(Outcome::Applied { at: 0 }), (Applied, None));
     let late = Outcome::AppliedLate { at: 64, due: 0 };
     assert_eq!(settled(late), (Applied, None));

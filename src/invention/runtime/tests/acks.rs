@@ -146,3 +146,60 @@ fn a_write_that_cannot_be_made_stops_the_batch_and_those_before_it_stand() {
         330.0.into()
     );
 }
+
+#[test]
+fn a_schedule_travelling_in_a_publication_is_pending_until_it_installs() {
+    let document = r#"{
+        "version": "1.0.0",
+        "modules": [
+            { "id": "clock", "type": "clock", "config": { "bpm": 97.0 } },
+            { "id": "osc", "type": "oscillator", "config": { "frequency": 220.0 } },
+            { "id": "sched", "type": "control_scheduler", "config": { "schedule": [
+                { "at_step": 2, "module": "osc", "control": "frequency", "value": 330.0 }
+            ] } },
+            { "id": "dac", "type": "dac" }
+        ],
+        "connections": [
+            { "from": "clock", "from_port": "beat", "to": "sched", "to_port": "clock" },
+            { "from": "osc", "from_port": "audio", "to": "dac", "to_port": "audio" }
+        ]
+    }"#;
+    let invention = Invention::from_json(document).unwrap();
+    let runtime = InventionBuilder::new(48_000).build(invention).unwrap().0;
+    let (running, pump) = start_manual(runtime);
+    let generation = running.live.generation();
+
+    // Retargeted onto the clock's tempo, it is recompiled and published.
+    let tempo = r#"[{ "at_step": 2, "module": "clock", "control": "bpm", "value": 211.0 }]"#;
+    let acks = running.write_controls(&[ControlWrite::new("sched", "schedule", tempo.into())]);
+
+    assert_eq!(running.live.generation(), generation + 1);
+    let [ack] = &acks.controls[..] else {
+        panic!("one write, one ack: {:?}", acks.controls);
+    };
+    assert_eq!(ack.state, Some(ControlRequestState::Pending));
+    assert_eq!(ack.request, None);
+    pump.block();
+    assert!(running.live.installed(generation + 1));
+}
+
+#[test]
+fn a_write_applied_before_an_edit_batch_is_announced_before_the_batchs() {
+    let (mut running, pump, sink) = on_manual();
+    let acks = running.write_controls(&[frequency(330.0, RequestSource::User)]);
+    // Applied, and not yet announced, as the batch commits.
+    pump.block();
+
+    let edit = crate::rpc::StructuralEdit::SetControl {
+        module_id: "osc".into(),
+        key: "frequency".into(),
+        value: 440.0.into(),
+    };
+    running.apply_edits(&[edit]).expect("the batch commits");
+
+    let first = acks.controls[0].request.clone();
+    assert_eq!(
+        announced(&sink),
+        [(330.0.into(), first), (440.0.into(), None)]
+    );
+}
