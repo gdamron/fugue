@@ -9,7 +9,6 @@ use super::table::TableValue;
 /// enforces it).
 pub(crate) const LEGACY_CONTROLS: &[&str] = &[
     "adsr",
-    "cell_sequencer",
     "filter",
     "lfo",
     "melody",

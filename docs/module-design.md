@@ -130,8 +130,9 @@ use for those mixes. `_left` and `_right` always come in pairs.
 - **Files.** A file a module reads is an `asset`.
 - **Sequenced material.** A `cell_sequencer` plays `cells`: `cell_count`,
   `start_cell`, `select_cell`, `next_cell`, `previous_cell`. `start_cell` is
-  config read once at build. The `cell` output and control report the cell
-  playing now and cannot be written.
+  config read once at build. `select_cell` is a request: it reads back the
+  cell last asked for, and playback never writes it. The `cell` output and
+  control report the cell playing now and cannot be written.
 
 ### Config and controls
 

@@ -1,6 +1,6 @@
 use super::*;
 use crate::factory::ModuleFactory;
-use crate::{ControlSurface, ControlValue, ModuleRegistry};
+use crate::{ControlValue, ModuleRegistry};
 
 fn pulse(module: &mut CellSequencer, port: &str) {
     module.set_input(port, 1.0).unwrap();
@@ -33,7 +33,7 @@ fn follow_cell_length_wraps_the_cycle_at_the_selected_cell_length() {
     );
 
     // follow_cell_length ON: the selected cell's own length (2) governs, so the third
-    // advance wraps back to step 0 with no `step_count` write (FUG-239 #10).
+    // advance wraps back to step 0 with no `step_count` write.
     let mut auto = CellSequencer::new(44_100)
         .with_step_count(4)
         .with_follow_cell_length(true)
@@ -322,28 +322,19 @@ fn test_cell_sequencer_wait_for_cycle_end_input_overrides_control() {
 
 #[test]
 fn test_cell_sequencer_select_cell_control_queues_latest_request() {
-    let controls = CellSequencerControls::new_with_values(
-        DEFAULT_ROOT_NOTE,
-        2,
-        DEFAULT_GATE_LENGTH,
-        0,
-        true,
-        vec![
+    let mut seq = CellSequencer::new(44_100)
+        .with_step_count(2)
+        .with_wait_for_cycle_end(true)
+        .with_cells(vec![
             vec![Step::note(0), Step::note(2)],
             vec![Step::note(4), Step::note(5)],
             vec![Step::note(7), Step::note(9)],
-        ],
-    );
-    let mut seq = CellSequencer::new_with_controls(44_100, controls.clone());
+        ]);
 
     advance_gate(&mut seq);
-    controls
-        .set_control("select_cell", ControlValue::Number(1.0))
-        .unwrap();
+    seq.set_control("select_cell", 1.0).unwrap();
     seq.process(1);
-    controls
-        .set_control("select_cell", ControlValue::Number(2.0))
-        .unwrap();
+    seq.set_control("select_cell", 2.0).unwrap();
     seq.process(1);
 
     assert_eq!(seq.pending_sequence, Some(2));
@@ -355,7 +346,8 @@ fn test_cell_sequencer_select_cell_control_queues_latest_request() {
 
 #[test]
 fn test_cells_json_round_trip() {
-    let controls = CellSequencerControls::new();
+    let built = CellSequencerFactory.build(44_100, &serde_json::json!({}));
+    let controls = built.unwrap().control_surface.unwrap();
     controls
         .set_control(
             "cells",
@@ -374,34 +366,26 @@ fn test_cells_json_round_trip() {
 
 #[test]
 fn test_next_cell_control_advances_cell_and_resets_loop_count() {
-    let controls = CellSequencerControls::new_with_values(
-        DEFAULT_ROOT_NOTE,
-        2,
-        DEFAULT_GATE_LENGTH,
-        0,
-        false,
-        vec![
+    let mut seq = CellSequencer::new(44_100)
+        .with_step_count(2)
+        .with_cells(vec![
             vec![Step::note(0), Step::note(2)],
             vec![Step::note(7), Step::note(9)],
-        ],
-    );
-    let mut seq = CellSequencer::new_with_controls(44_100, controls.clone());
+        ]);
 
     advance_gate(&mut seq);
     advance_gate(&mut seq);
     advance_gate(&mut seq); // wraps cell 0 once
-    assert_eq!(controls.loop_count(), 1);
-    assert_eq!(controls.cell(), 0);
+    assert_eq!(seq.get_control("loop_count").unwrap(), 1.0);
+    assert_eq!(seq.get_control("cell").unwrap(), 0.0);
 
-    controls
-        .set_control("next_cell", ControlValue::Number(1.0))
-        .unwrap();
+    seq.set_control("next_cell", 1.0).unwrap();
     seq.process(1);
 
     assert_eq!(seq.current_cell(), 1);
-    assert_eq!(controls.cell(), 1);
-    assert_eq!(controls.loop_count(), 0);
-    assert_eq!(controls.cell_count(), 2);
+    assert_eq!(seq.get_control("cell").unwrap(), 1.0);
+    assert_eq!(seq.get_control("loop_count").unwrap(), 0.0);
+    assert_eq!(seq.get_control("cell_count").unwrap(), 2.0);
 }
 
 #[test]
@@ -412,12 +396,12 @@ fn test_loop_count_increments_on_cell_wrap() {
 
     advance_gate(&mut seq);
     advance_gate(&mut seq);
-    assert_eq!(seq.ctrl.loop_count(), 0);
+    assert_eq!(seq.loop_count, 0);
     advance_gate(&mut seq); // wraps to step 0 → loop completed
-    assert_eq!(seq.ctrl.loop_count(), 1);
+    assert_eq!(seq.loop_count, 1);
     advance_gate(&mut seq);
     advance_gate(&mut seq); // wraps again
-    assert_eq!(seq.ctrl.loop_count(), 2);
+    assert_eq!(seq.loop_count, 2);
 }
 
 #[test]
@@ -639,7 +623,7 @@ fn test_loop_mode_cell_end_never_fires() {
         advance_gate(&mut seq);
         assert_eq!(seq.get_output("ended").unwrap(), 0.0);
     }
-    assert!(seq.ctrl.loop_count() > 0, "the cell keeps looping");
+    assert!(seq.loop_count > 0, "the cell keeps looping");
 }
 
 #[test]
@@ -648,13 +632,14 @@ fn test_cell_mode_control_round_trips() {
     let meta = Module::controls(&seq);
     assert_eq!(meta.iter().filter(|c| c.key == "mode").count(), 1);
 
-    assert_eq!(seq.ctrl.mode(), "loop");
-    seq.ctrl
+    let built = CellSequencerFactory.build(44_100, &serde_json::json!({}));
+    let surface = built.unwrap().control_surface.unwrap();
+    assert_eq!(surface.get_control("mode").unwrap(), "loop".into());
+    surface
         .set_control("mode", ControlValue::from("one_shot"))
         .unwrap();
-    assert_eq!(seq.ctrl.mode(), "one_shot");
-    assert!(seq.ctrl.set_mode("bounce").is_err());
-    match seq.ctrl.get_control("mode").unwrap() {
+    assert!(surface.set_control("mode", "bounce".into()).is_err());
+    match surface.get_control("mode").unwrap() {
         ControlValue::String(value) => assert_eq!(value, "one_shot"),
         other => panic!("expected string mode, got {:?}", other),
     }
@@ -711,7 +696,7 @@ fn test_cell_sequencer_velocity_follows_step_velocity() {
     assert_eq!(seq.get_output("velocity").unwrap(), 1.0);
 }
 
-/// FUG-188 regression: the very first step's duration is a default estimate
+/// Regression: the very first step's duration is a default estimate
 /// (sample_rate / 2) until the second clock edge measures the real one. At a
 /// faster tempo the opening note's gate would overrun the whole first step
 /// and swallow the retrigger of a note on step 1 — the sequencer must force
@@ -751,7 +736,7 @@ fn test_first_step_overrun_still_retriggers_next_note() {
     );
 }
 
-// --- Grace-note realization (FUG-190) ---
+// --- Grace-note realization ---
 //
 // Harness: sample rate 1000 Hz so grace_duration maps to samples at 1000 per
 // second (default 0.06 s = 60 samples), with a synthetic clock driven one sample at
@@ -837,16 +822,15 @@ fn test_grace_before_beat_two_attacks_principal_on_grid() {
 
 #[test]
 fn test_grace_on_beat_delays_principal() {
-    let seq_ctrl = CellSequencerControls::new();
-    seq_ctrl.set_grace_placement("on_beat").unwrap();
-    seq_ctrl.set_cells(vec![vec![
-        Step::note(0),
-        Step::rest(),
-        Step::note_with_grace(10, &[8]),
-        Step::rest(),
-    ]]);
-    seq_ctrl.set_step_count(4);
-    let mut seq = CellSequencer::new_with_controls(1000, seq_ctrl);
+    let mut seq = CellSequencer::new(1000)
+        .with_grace_on_beat(true)
+        .with_cells(vec![vec![
+            Step::note(0),
+            Step::rest(),
+            Step::note_with_grace(10, &[8]),
+            Step::rest(),
+        ]])
+        .with_step_count(4);
 
     let stream = run_grace_clock(&mut seq, 200, 4);
 
@@ -1057,7 +1041,8 @@ fn test_grace_controls_round_trip() {
     assert_eq!(seq.get_control("grace_placement").unwrap(), 1.0);
 
     // String surface: placement round-trips as before | on_beat.
-    let ctrl = CellSequencerControls::new();
+    let built = CellSequencerFactory.build(1000, &serde_json::json!({}));
+    let ctrl = built.unwrap().control_surface.unwrap();
     ctrl.set_control("grace_placement", "on_beat".into())
         .unwrap();
     assert_eq!(
@@ -1115,4 +1100,19 @@ fn bank_numbers_read_whole_floats_and_are_refused_with_their_path() {
         error.contains("'cells[0][0]' expects a whole number"),
         "{error}"
     );
+}
+
+/// Two `next_cell` triggers landing at one sample are two events: they
+/// advance two cells.
+#[test]
+fn two_next_cell_triggers_at_one_sample_advance_two_cells() {
+    use crate::control_request::{apply_declared, RtValue};
+    let mut seq = CellSequencer::new(1000).with_cells(vec![vec![Step::note(0)]; 3]);
+    seq.process(1);
+    for _ in 0..2 {
+        apply_declared(&mut seq, table::NEXT_CELL, RtValue::F32(1.0)).unwrap();
+    }
+    seq.process(1);
+    assert_eq!(seq.current_cell(), 2);
+    assert_eq!(seq.get_control("next_cell").unwrap(), 0.0);
 }

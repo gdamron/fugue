@@ -15,9 +15,7 @@ use crate::control_request::{scheduled_surface, while_held};
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::module_config::tests::registry::eight_frame_wav;
 use crate::modules::sample_instrument::{LoopSpec, SampleInstrument, ZoneSpec};
-use crate::modules::{
-    CellSequencerControls, MelodyControls, SampleInstrumentControls, SamplePlayerControls,
-};
+use crate::modules::{MelodyControls, SampleInstrumentControls, SamplePlayerControls};
 use crate::{ControlSurface, ControlValue, Module};
 
 /// The families that kept state behind locks, kept to hold what locks they
@@ -27,7 +25,6 @@ struct Locking {
     player: SamplePlayerControls,
     instrument: SampleInstrumentControls,
     sounding: SampleInstrument,
-    cells: CellSequencerControls,
 }
 
 impl Locking {
@@ -50,14 +47,11 @@ impl Locking {
             SampleInstrumentControls::new(48_000, 0.1, vec![zone]).unwrap();
         let sounding =
             SampleInstrument::new_with_controls(instrument.clone(), audio, notes, 8, 48_000);
-        let cells = CellSequencerControls::new();
-        cells.set_cells_json("[[60], [62], [64]]").unwrap();
         Self {
             melody: MelodyControls::new(60, vec![0, 2, 4]),
             player: SamplePlayerControls::with_mode(48_000, Some(wav), None, None, false).unwrap(),
             instrument,
             sounding,
-            cells,
         }
     }
 
@@ -81,7 +75,6 @@ impl Locking {
             "sample_instrument".into(),
             Arc::new(self.instrument.clone()),
         );
-        map.insert("cell_sequencer".into(), Arc::new(self.cells.clone()));
         Arc::new(Mutex::new(map))
     }
 
@@ -179,9 +172,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
         ramp("sample_player", "pitch_ratio", 2.0),
         entry(0, "sample_instrument", "note_on", Number(64.0)),
         ramp("sample_instrument", "level.0", 0.5),
-        entry(0, "cell_sequencer", "select_cell", Number(1.0)),
-        entry(0, "cell_sequencer", "follow_cell_length", Bool(true)),
-        ramp("cell_sequencer", "gate_length", 0.25),
     ];
     let mut scheduler = scheduler(entries, &directory);
     for gate in [1.0, 0.0, 1.0, 0.0, 1.0, 0.0] {
@@ -198,14 +188,11 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
         ("melody", "degree_count", 2.0),
         ("sample_player", "pitch_ratio", 2.0),
         ("sample_instrument", "level.0", 0.5),
-        ("cell_sequencer", "select_cell", 1.0),
-        ("cell_sequencer", "gate_length", 0.25),
     ] {
         let landed = number(&directory, module, control);
         assert!((landed - to).abs() < 1e-4, "{module}.{control}: {landed}");
     }
     assert!(locking.player.play());
-    assert!(locking.cells.follow_cell_length());
     assert_eq!(locking.sounding.sounding(), [64]);
 }
 
@@ -219,7 +206,6 @@ fn a_write_lands_while_control_threads_hold_every_lock_left() {
             entry(1, "melody", "degree.1", Number(5.0)),
             entry(1, "sample_player", "loop", Bool(true)),
             entry(1, "sample_instrument", "note_on", Number(64.0)),
-            entry(1, "cell_sequencer", "select_cell", Number(2.0)),
             // A ramp starting while the table is mid-edit still starts.
             ScheduleEntry {
                 ramp_steps: Some(1),
@@ -233,12 +219,11 @@ fn a_write_lands_while_control_threads_hold_every_lock_left() {
     assert_eq!(locking.block(&mut scheduler, 0.0), (0, 0));
     // Step 1 plays while control threads hold every lock these families
     // have left: the melody's whole-table edit, the player's and the
-    // instrument's sample swaps, the cell bank.
-    let (melody, player, instrument, cells) = (
+    // instrument's sample swaps.
+    let (melody, player, instrument) = (
         locking.melody.clone(),
         locking.player.clone(),
         locking.instrument.clone(),
-        locking.cells.clone(),
     );
     let held = while_held(
         || melody.table.editing(),
@@ -248,12 +233,7 @@ fn a_write_lands_while_control_threads_hold_every_lock_left() {
                 || {
                     while_held(
                         || instrument.hold_swap_lock(),
-                        || {
-                            while_held(
-                                || cells.shared.sequences.lock().unwrap(),
-                                || locking.block(&mut scheduler, 1.0),
-                            )
-                        },
+                        || locking.block(&mut scheduler, 1.0),
                     )
                 },
             )
@@ -263,7 +243,6 @@ fn a_write_lands_while_control_threads_hold_every_lock_left() {
     assert_eq!(locking.melody.degree(1), Ok(5), "landed mid-edit");
     assert!(locking.player.loop_enabled());
     assert_eq!(locking.sounding.sounding(), [64]);
-    assert_eq!(locking.cells.selected_cell(), 2);
     // The next step's entries land as ever.
     assert_eq!(locking.block(&mut scheduler, 0.0), (0, 0));
     assert_eq!(locking.block(&mut scheduler, 1.0), (0, 0), "step 2");
