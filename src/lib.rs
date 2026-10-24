@@ -68,7 +68,7 @@ pub use rpc::{
 
 // Re-export modules
 pub use modules::{
-    default_sample_rate, Adsr, AdsrControls, AdsrFactory, AgentControls, AgentFactory,
+    default_sample_rate, Adsr, AdsrFactory, AgentControls, AgentFactory,
     AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver, AudioFileSink,
     AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats, Clock, ClockFactory,
     CodeControls, CodeFactory, ControlScheduler, ControlSchedulerControls, ControlSchedulerFactory,

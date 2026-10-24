@@ -1,14 +1,19 @@
 //! ADSR envelope generator module.
 
-use std::any::Any;
 use std::sync::Arc;
 
+use crate::control_request::{
+    apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
+    Refusal, RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
-pub use self::controls::AdsrControls;
+use self::controls::{ATTACK as ATTACK_CONTROL, DECAY as DECAY_CONTROL};
+use self::controls::{RELEASE as RELEASE_CONTROL, SUSTAIN as SUSTAIN_CONTROL, TABLE};
 
 mod controls;
 mod inputs;
@@ -44,17 +49,18 @@ impl ModuleFactory for AdsrFactory {
         let sustain = reader.float(&SUSTAIN)?.unwrap_or(0.7);
         let release = reader.float(&RELEASE)?.unwrap_or(0.2);
 
-        // Create controls with initial values
-        let controls = AdsrControls::new(attack, decay, sustain, release);
-        let adsr = Adsr::new_with_controls(sample_rate, controls.clone());
+        let cells = Arc::new(ControlCells::new(controls::defaults()));
+        cells.publish(ATTACK_CONTROL, RtValue::F32(attack));
+        cells.publish(DECAY_CONTROL, RtValue::F32(decay));
+        cells.publish(SUSTAIN_CONTROL, RtValue::F32(sustain));
+        cells.publish(RELEASE_CONTROL, RtValue::F32(release));
+        let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
+        let adsr = Adsr::with_cells(sample_rate, cells);
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(adsr)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
     }
@@ -95,8 +101,12 @@ impl ModuleFactory for AdsrFactory {
 pub struct Adsr {
     sample_rate: u32,
 
-    // Controls (shared with AdsrControls handle)
-    ctrl: AdsrControls,
+    // Controls, applied on the thread running the envelope.
+    attack: f32,
+    decay: f32,
+    sustain: f32,
+    release: f32,
+    cells: Arc<ControlCells>,
 
     // Signal inputs (set each block when connected)
     inputs: inputs::AdsrInputs,
@@ -122,27 +132,40 @@ enum EnvelopePhase {
 impl Adsr {
     /// Creates a new ADSR envelope generator with default controls.
     pub fn new(sample_rate: u32) -> Self {
-        let controls = AdsrControls::new(0.01, 0.1, 0.7, 0.2);
-        Self::new_with_controls(sample_rate, controls)
+        Self::with_cells(
+            sample_rate,
+            Arc::new(ControlCells::new(controls::defaults())),
+        )
     }
 
-    /// Creates a new ADSR envelope generator with the given controls.
-    pub fn new_with_controls(sample_rate: u32, controls: AdsrControls) -> Self {
-        Self {
+    /// An envelope holding what `cells` hold, applied (so clamped).
+    fn with_cells(sample_rate: u32, cells: Arc<ControlCells>) -> Self {
+        let mut adsr = Self {
             sample_rate,
-            ctrl: controls,
+            attack: 0.0,
+            decay: 0.0,
+            sustain: 0.0,
+            release: 0.0,
+            cells,
             inputs: inputs::AdsrInputs::new(),
             outputs: outputs::AdsrOutputs::new(),
             envelope_value: 0.0,
             last_gate_high: false,
             phase: EnvelopePhase::Idle,
+        };
+        for index in 0..TABLE.len() {
+            let index = ControlIndex(index as u16);
+            if let Some(value) = adsr.cells.load(index) {
+                let _ = apply_declared(&mut adsr, index, value);
+            }
         }
+        adsr
     }
 
     /// Returns the effective attack time (signal or control) at frame `i`.
     #[cfg(test)]
     fn effective_attack(&self, i: usize) -> f32 {
-        self.inputs.attack(i, self.ctrl.attack())
+        self.inputs.attack(i, self.attack)
     }
 
     /// Computes rate of change per sample for a given time duration.
@@ -229,22 +252,22 @@ impl Module for Adsr {
         let control_attack = if self.inputs.attack_connected() {
             0.0
         } else {
-            self.ctrl.attack()
+            self.attack
         };
         let control_decay = if self.inputs.decay_connected() {
             0.0
         } else {
-            self.ctrl.decay()
+            self.decay
         };
         let control_sustain = if self.inputs.sustain_connected() {
             0.0
         } else {
-            self.ctrl.sustain()
+            self.sustain
         };
         let control_release = if self.inputs.release_connected() {
             0.0
         } else {
-            self.ctrl.release()
+            self.release
         };
 
         let mut i = 0;
@@ -289,53 +312,40 @@ impl Module for Adsr {
         self.inputs.set_connected(index, connected);
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        let RtValue::F32(value) = value else {
+            return Err(Refusal::Unsupported);
+        };
+        let field = match control {
+            ATTACK_CONTROL => &mut self.attack,
+            DECAY_CONTROL => &mut self.decay,
+            SUSTAIN_CONTROL => {
+                self.sustain = value.clamp(0.0, 1.0);
+                return Ok(RtValue::F32(self.sustain));
+            }
+            RELEASE_CONTROL => &mut self.release,
+            _ => return Err(Refusal::Unsupported),
+        };
+        *field = value.max(0.0);
+        Ok(RtValue::F32(*field))
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::new("attack", "Attack time in seconds")
-                .with_range(0.0, 10.0)
-                .with_default(0.01),
-            ControlMeta::new("decay", "Decay time in seconds")
-                .with_range(0.0, 10.0)
-                .with_default(0.1),
-            ControlMeta::new("sustain", "Sustain level")
-                .with_range(0.0, 1.0)
-                .with_default(0.7),
-            ControlMeta::new("release", "Release time in seconds")
-                .with_range(0.0, 10.0)
-                .with_default(0.2),
-        ]
+        local_controls(self)
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
-        match key {
-            "attack" => Ok(self.ctrl.attack()),
-            "decay" => Ok(self.ctrl.decay()),
-            "sustain" => Ok(self.ctrl.sustain()),
-            "release" => Ok(self.ctrl.release()),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_get(self, key)
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
-        match key {
-            "attack" => {
-                self.ctrl.set_attack(value);
-                Ok(())
-            }
-            "decay" => {
-                self.ctrl.set_decay(value);
-                Ok(())
-            }
-            "sustain" => {
-                self.ctrl.set_sustain(value);
-                Ok(())
-            }
-            "release" => {
-                self.ctrl.set_release(value);
-                Ok(())
-            }
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_set(self, key, value)
     }
 }
 
@@ -459,5 +469,56 @@ mod tests {
         // After disconnecting the attack port, should use control again
         adsr.set_input_connected(1, false);
         assert_eq!(adsr.effective_attack(0), 0.5);
+    }
+
+    /// Renders `frames` with the gate held at `gate`, a block at a time.
+    fn render(adsr: &mut Adsr, gate: f32, frames: usize) {
+        for _ in 0..frames {
+            adsr.input_block_mut(0)[0] = gate;
+            adsr.process(1);
+        }
+    }
+
+    #[test]
+    fn test_changing_attack_mid_stage_keeps_the_level_and_changes_the_rate() {
+        let mut adsr = Adsr::new(1000);
+        adsr.set_control("attack", 1.0).unwrap();
+        render(&mut adsr, 1.0, 100);
+        let level = adsr.get_output("envelope").unwrap();
+        assert!((level - 0.1).abs() < 1e-4, "{level}");
+
+        // Twice as fast from here: the level carries on from where it was.
+        adsr.set_control("attack", 0.5).unwrap();
+        render(&mut adsr, 1.0, 1);
+        let level = adsr.get_output("envelope").unwrap();
+        assert!((level - 0.102).abs() < 1e-4, "{level}");
+    }
+
+    #[test]
+    fn test_changing_release_mid_stage_keeps_the_level_and_changes_the_rate() {
+        let mut adsr = Adsr::new(1000);
+        adsr.set_control("attack", 0.0).unwrap();
+        adsr.set_control("decay", 0.0).unwrap();
+        adsr.set_control("sustain", 1.0).unwrap();
+        adsr.set_control("release", 1.0).unwrap();
+        render(&mut adsr, 1.0, 10);
+        render(&mut adsr, 0.0, 100);
+        let level = adsr.get_output("envelope").unwrap();
+        assert!((level - 0.9).abs() < 1e-4, "{level}");
+
+        adsr.set_control("release", 0.5).unwrap();
+        render(&mut adsr, 0.0, 1);
+        let level = adsr.get_output("envelope").unwrap();
+        assert!((level - 0.898).abs() < 1e-4, "{level}");
+    }
+
+    #[test]
+    fn test_controls_are_clamped_as_they_always_were() {
+        let mut adsr = Adsr::new(44100);
+        adsr.set_control("attack", -1.0).unwrap();
+        adsr.set_control("sustain", 2.0).unwrap();
+        assert_eq!(adsr.get_control("attack").unwrap(), 0.0);
+        assert_eq!(adsr.get_control("sustain").unwrap(), 1.0);
+        assert!(adsr.set_control("attack", f32::NAN).is_err());
     }
 }

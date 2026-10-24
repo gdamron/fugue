@@ -58,7 +58,6 @@ impl Locking {
     fn directory(&self) -> SurfaceDirectory {
         let mut map: IndexMap<String, ControlSurfaceInstance> = IndexMap::new();
         for type_id in [
-            "adsr",
             "filter",
             "lfo",
             "mixer",
@@ -157,7 +156,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
     let mut locking = Locking::new();
     let directory = locking.directory();
     let entries = vec![
-        ramp("adsr", "attack", 0.5),
         entry(0, "filter", "cutoff", Number(500.0)),
         ramp("lfo", "rate", 4.0),
         ramp("mixer", "level.0", 0.25),
@@ -173,7 +171,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
         assert_eq!(locking.block(&mut scheduler, gate), (0, 0));
     }
     for (module, control, to) in [
-        ("adsr", "attack", 0.5),
         ("filter", "cutoff", 500.0),
         ("lfo", "rate", 4.0),
         ("mixer", "level.0", 0.25),

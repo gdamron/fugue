@@ -417,14 +417,11 @@ fn writes_that_reach_a_module_without_a_request_make_the_log_inexact() {
     pump.render(1);
     let log = running.request_log();
     assert_eq!((log.requests.len(), log.unlogged), (1, 0));
-    // Not declared yet: straight to the module.
-    snapshot.set_control("adsr", "attack", 0.1.into()).unwrap();
-    assert_eq!(running.request_log().unlogged, 1);
-    // An input write.
+    // An input write: straight to the module.
     running.set_module_input("osc", "frequency", 220.0).unwrap();
     pump.render(1);
     let log = running.request_log();
-    assert_eq!(log.unlogged, 2);
+    assert_eq!(log.unlogged, 1);
     assert!(!log.is_exact());
     running.stop();
 }
