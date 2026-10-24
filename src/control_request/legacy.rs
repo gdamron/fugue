@@ -11,7 +11,6 @@ pub(crate) const LEGACY_CONTROLS: &[&str] = &[
     "sample_instrument",
     "sample_kit",
     "sample_player",
-    "sample_slicer",
 ];
 
 /// Why a scheduled write to a legacy control did not land. `Copy`, so a
