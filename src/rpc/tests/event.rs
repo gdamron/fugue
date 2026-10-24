@@ -32,6 +32,7 @@ fn poll_events_request_and_page_round_trip() {
                 module_id: "mixer".to_string(),
                 key: "master".to_string(),
                 value: ControlValue::Number(0.7),
+                request: None,
             },
         }],
         latest_seq: 8,

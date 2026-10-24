@@ -135,6 +135,27 @@ pub struct ControlWrite {
     /// back-compatibility with clients that omit it.
     #[serde(default)]
     pub intent: ControlWriteIntent,
+    /// Who makes the write; a user when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<RequestSource>,
+    /// Its rank among writes of its tier to the same control at the same
+    /// sample: the higher wins. 0 when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i16>,
+}
+
+/// Who makes a control write over the wire, which pending requests list
+/// it under. A user's and an agent's writes rank alike, above a script's
+/// and automation's; [`ControlWrite::priority`] orders them. A front door
+/// names its own: an agent's tools tag every write `agent`, and only
+/// surfaces a person drives tag theirs `user`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum RequestSource {
+    #[default]
+    User,
+    Agent,
 }
 
 impl ControlWrite {
@@ -145,6 +166,8 @@ impl ControlWrite {
             key: key.into(),
             value,
             intent: ControlWriteIntent::Author,
+            source: None,
+            priority: None,
         }
     }
 
@@ -209,6 +232,12 @@ pub enum RpcCommand {
         /// [`ControlWriteIntent::Author`] for wire back-compatibility.
         #[serde(default)]
         intent: ControlWriteIntent,
+        /// Who makes the write (see [`ControlWrite::source`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<RequestSource>,
+        /// Its rank within its tier (see [`ControlWrite::priority`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        priority: Option<i16>,
     },
     /// Apply several control writes in one round trip. The daemon applies them
     /// in order within a single command, so a multi-control conducting gesture
