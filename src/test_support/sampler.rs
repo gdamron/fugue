@@ -16,8 +16,11 @@ use crate::{GraphModule, Module, ModuleBuildResult, ModuleFactory, MAX_BLOCK};
 pub(crate) const SAMPLER: &str = "sampler";
 const SLOTS: usize = 2;
 
-const DECLS: &[ControlDecl] =
-    &[ControlDecl::payload("asset", SAMPLE_ASSET, "A slot's sample").indexed(SLOTS as u16)];
+const DECLS: &[ControlDecl] = &[
+    ControlDecl::payload("asset", SAMPLE_ASSET, "A slot's sample")
+        .loads_on_write()
+        .indexed(SLOTS as u16),
+];
 
 static TABLE: ControlTable = ControlTable::of(DECLS);
 

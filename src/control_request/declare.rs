@@ -84,6 +84,29 @@ impl ControlContext<'_> {
     }
 }
 
+/// How a control's writes are read when its kind's rules cannot read them
+/// alone: on a control thread, with its module's context, as a kit's `play`
+/// reads a slot's key or name as the slot it names. A control read so lists
+/// as text and reads back as empty text, and no schedule writes it, since a
+/// schedule carries the value as its kind holds it. A development aliasing
+/// one holds no context, so it refuses each write with the reason.
+#[derive(Clone, Copy)]
+pub(crate) struct ValueReader {
+    pub(crate) read: fn(&ControlContext<'_>, &ControlValue) -> Result<RtValue, String>,
+}
+
+impl PartialEq for ValueReader {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::fn_addr_eq(self.read, other.read)
+    }
+}
+
+impl std::fmt::Debug for ValueReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ValueReader(..)")
+    }
+}
+
 impl PartialEq for PayloadCodec {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::fn_addr_eq(self.prepare, other.prepare)
@@ -180,6 +203,12 @@ pub(crate) struct ControlDecl {
     /// For a payload, how its writes are built; without one it refuses
     /// every write.
     pub(crate) codec: Option<PayloadCodec>,
+    /// For a control its module reads each write of (see [`ValueReader`]).
+    pub(crate) reader: Option<ValueReader>,
+    /// For a payload whose value names what its write loads (a sample
+    /// file): validating a write checks the name alone, since whether it
+    /// loads is known only by loading it, which the write does and reports.
+    pub(crate) loads_on_write: bool,
     /// For an indexed control, the control whose value bounds which of its
     /// indices clients list: `key.N` is listed while `N` is below it. Every
     /// index is still read and written, unless the count is read-only: then
@@ -215,6 +244,8 @@ impl ControlDecl {
             writer: Writer::Parameter,
             description: Cow::Borrowed(description),
             codec: None,
+            reader: None,
+            loads_on_write: false,
             listed_below: None,
             whole: false,
         }
@@ -235,6 +266,18 @@ impl ControlDecl {
     pub(crate) const fn indexed(mut self, count: u16) -> Self {
         self.indexed = true;
         self.count = count;
+        self
+    }
+
+    /// Has its module read each write (see [`ValueReader`]).
+    pub(crate) const fn read_by(mut self, reader: ValueReader) -> Self {
+        self.reader = Some(reader);
+        self
+    }
+
+    /// Has a write's value name what the write loads (see the field).
+    pub(crate) const fn loads_on_write(mut self) -> Self {
+        self.loads_on_write = true;
         self
     }
 
@@ -372,6 +415,11 @@ impl ControlTable {
         if decl.writer == Writer::Telemetry {
             return Err(format!("Control '{key}' is read-only"));
         }
+        if decl.reader.is_some() {
+            return Err(format!(
+                "Control '{key}' is read by its module's own surface"
+            ));
+        }
         let text = match value {
             ControlValue::String(text) => Some(text.trim()),
             _ => None,
@@ -437,6 +485,9 @@ impl ControlTable {
     /// `None` for a payload, which no scalar holds.
     pub(crate) fn value(&self, index: ControlIndex, value: RtValue) -> Option<ControlValue> {
         let (decl, _) = self.decl(index)?;
+        if decl.reader.is_some() {
+            return Some(ControlValue::String(String::new()));
+        }
         Some(match (decl.kind, value) {
             (DeclKind::Payload, _) => return None,
             (DeclKind::Choice(options), RtValue::U32(position)) => {
@@ -469,6 +520,7 @@ impl ControlTable {
                     }
                 }
                 let kind = match decl.kind {
+                    _ if decl.reader.is_some() => ControlKind::String { options: None },
                     DeclKind::Number { min, max } => ControlKind::Number {
                         min,
                         max,
@@ -630,5 +682,7 @@ const fn same_bytes(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
+#[cfg(test)]
+mod surface_tests;
 #[cfg(test)]
 mod tests;
