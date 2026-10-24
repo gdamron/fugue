@@ -9,6 +9,7 @@
 //! is recorded when it lands, as the publisher adopts it: at the next call
 //! that takes the publisher.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
@@ -22,6 +23,7 @@ use super::{
     publisher, Committed, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher, Refused,
 };
 use crate::control_request::{BeatSpec, BeatTime, RequestId, When};
+use crate::invention::audio_assets;
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::request_log::{LoggedBeat, LoggedEdit, LoggedWhen};
 use crate::invention::runtime::ControlSurfaceInstance;
@@ -152,11 +154,17 @@ impl LiveGraph {
     /// plays, and what is recorded. One that keeps the module folds the
     /// write into its own document, so the write is recorded again as the
     /// edit is adopted.
-    pub(crate) fn record_authored(
+    ///
+    /// A relative asset path is recorded as it names, from the retained
+    /// document's directory, the file it named from `origin`, the invention
+    /// file the write was resolved against (see
+    /// `audio_assets::rebase_asset_write`): a timed edit adopted since may
+    /// have brought in a document from another directory.
+    pub(crate) fn record_authored_from(
         &self,
-        module_id: &str,
-        key: &str,
+        (module_id, key): (&str, &str),
         value: &ControlValue,
+        origin: Option<&std::path::Path>,
         (seen, safe): (u64, Option<RequestId>),
     ) -> Authored {
         let mut publisher = self.lock();
@@ -181,10 +189,30 @@ impl LiveGraph {
                 return Authored::Overtaken;
             }
         }
-        publisher.fold_timed(module_id, key, value);
         let mut state = self.state.lock().unwrap();
+        let value = &audio_assets::rebase_asset_write(origin, state.source_path(), key, value);
+        publisher.fold_timed(module_id, key, value);
         state.record_authored_control(module_id, key, value);
         Authored::Recorded
+    }
+
+    /// [`Self::record_authored_from`] for a write made against the retained
+    /// document's own directory.
+    #[cfg(test)]
+    pub(crate) fn record_authored(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: &ControlValue,
+        seen: (u64, Option<RequestId>),
+    ) -> Authored {
+        let origin = self
+            .state
+            .lock()
+            .unwrap()
+            .source_path()
+            .map(Path::to_path_buf);
+        self.record_authored_from((module_id, key), value, origin.as_deref(), seen)
     }
 
     /// Cancels the timed edit waiting, if any, as the invention stops, or
@@ -379,11 +407,19 @@ fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
         schedule.record();
     }
     let retain = move |state: &mut RuntimeState| {
+        let origin = state.source_path().map(Path::to_path_buf);
         retain(state);
         // Written to the graph that was playing, to modules this edit
-        // kept, after its document was prepared.
+        // kept, after its document was prepared; a relative asset path
+        // named from the document that was playing.
         for (module_id, key, value) in &folded {
-            state.record_authored_control(module_id, key, value);
+            let value = audio_assets::rebase_asset_write(
+                origin.as_deref(),
+                state.source_path(),
+                key,
+                value,
+            );
+            state.record_authored_control(module_id, key, &value);
         }
     };
     let committed = LiveGraph::commit_mirrors(mirrors, publisher, published, &port, retain);

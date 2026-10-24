@@ -56,6 +56,43 @@ pub(crate) fn resolve_checked_asset_write(
     resolve_asset_write(source_path, key, value).unwrap_or_else(|_| value.clone())
 }
 
+/// A write made against the invention at `from`, as the invention at `to`
+/// records it: a relative asset path re-expressed so it names the same file
+/// from `to`'s directory (relative when the file sits under it, absolute
+/// otherwise). Recording follows a timed edit that brought in a document
+/// from another directory after the write was made. Anything else, and a
+/// path both directories share, comes back unchanged.
+pub(crate) fn rebase_asset_write(
+    from: Option<&Path>,
+    to: Option<&Path>,
+    key: &str,
+    value: &ControlValue,
+) -> ControlValue {
+    let from_dir = from.and_then(Path::parent);
+    let to_dir = to.and_then(Path::parent);
+    let ControlValue::String(text) = value else {
+        return value.clone();
+    };
+    let Some(from_dir) = from_dir.filter(|dir| Some(*dir) != to_dir) else {
+        return value.clone();
+    };
+    if !is_asset_control(key) || !is_relative_path(text) {
+        return value.clone();
+    }
+    let file = join(from_dir, text);
+    let absolute = |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let relative = to_dir.and_then(|dir| {
+        let file = absolute(Path::new(&file));
+        let relative = file.strip_prefix(absolute(dir)).ok()?;
+        Some(
+            relative
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/"),
+        )
+    });
+    ControlValue::String(relative.unwrap_or(file))
+}
+
 /// Whether the loader would join `text` to the invention's directory: a
 /// local path that is not rooted, a URL or a package ref.
 #[cfg(not(target_arch = "wasm32"))]

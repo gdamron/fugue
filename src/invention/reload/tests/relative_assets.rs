@@ -201,3 +201,88 @@ fn package_refs_urls_and_rooted_paths_pass_through() {
     assert_eq!(resolve_asset_write(None, "pattern", &value).unwrap(), value);
     assert_eq!(resolve_asset_write(None, "asset.x", &value).unwrap(), value);
 }
+
+/// A relative write made while a timed reload of a file in another
+/// directory waits names the file it played from the incoming document too,
+/// so the saved document loads that file.
+#[test]
+fn a_relative_write_folded_into_a_timed_reload_from_elsewhere_keeps_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let (original, relative) = layout(dir.path());
+    let kit = |asset: &str| json!({ "type": "sample_kit", "config": { "samples": [{ "key": 36, "asset": asset }] } });
+    let with_clock = |mut invention: Invention| {
+        let clock = json!({ "id": "clock", "type": "clock", "config": { "bpm": 480.0 } });
+        invention
+            .modules
+            .push(serde_json::from_value(clock).unwrap());
+        invention
+    };
+    let mut first = with_clock(document(kit("level-0.5.wav")));
+    let a = dir.path().join("piece.json");
+    first.save_to_file(&a).unwrap();
+    first = Invention::from_file(&a.to_string_lossy()).unwrap();
+    // The same piece saved elsewhere, with one module more.
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let mut incoming = with_clock(document(kit(&original)));
+    let extra = json!({ "id": "extra", "type": "oscillator", "config": {} });
+    incoming
+        .modules
+        .push(serde_json::from_value(extra).unwrap());
+    let b = elsewhere.join("piece.json");
+    incoming.save_to_file(&b).unwrap();
+
+    let (mut running, pump) = start_pumped(first);
+    let when = crate::rpc::EditWhen::NextBar {
+        beats_per_bar: 4.0,
+        clock: None,
+    };
+    let incoming = Invention::from_file(&b.to_string_lossy()).unwrap();
+    let queued = running.reload_at(incoming, &when, None).unwrap();
+    running
+        .set_control("m", "asset.0", ControlValue::String(relative.clone()))
+        .unwrap();
+    pump.render(2 * 24_000 / 64 + 4);
+    let adopted = running.request_status(&queued.id).unwrap();
+    assert_eq!(
+        adopted.state,
+        crate::rpc::RequestState::Adopted,
+        "{adopted:?}"
+    );
+    assert!((peak(&running, &pump, ("play", 36.0)) - 0.25).abs() < 1e-3);
+
+    let saved = running.document().unwrap();
+    let recorded = saved.modules.iter().find(|spec| spec.id == "m").unwrap();
+    let recorded = recorded.config["samples"][0]["asset"].as_str().unwrap();
+    assert!(std::path::Path::new(recorded).is_absolute(), "{recorded}");
+    saved.save_to_file(&b).unwrap();
+    let (loaded, loaded_pump) = start_pumped(Invention::from_file(&b.to_string_lossy()).unwrap());
+    assert_eq!(
+        loaded.get_control("m", "asset.0").unwrap(),
+        running.get_control("m", "asset.0").unwrap()
+    );
+    assert!((peak(&loaded, &loaded_pump, ("play", 36.0)) - 0.25).abs() < 1e-3);
+}
+
+#[test]
+fn a_rebased_write_names_the_same_file_from_the_other_directory() {
+    use crate::invention::audio_assets::rebase_asset_write;
+    use std::path::Path;
+    let text = |text: &str| ControlValue::String(text.into());
+    let (from, under, beside) = (
+        Path::new("/songs/a/piece.json"),
+        Path::new("/songs/piece.json"),
+        Path::new("/other/piece.json"),
+    );
+    let rebased = |to, value: &str| rebase_asset_write(Some(from), to, "asset.0", &text(value));
+    assert_eq!(rebased(Some(from), "kick.wav"), text("kick.wav"));
+    assert_eq!(rebased(Some(under), "kick.wav"), text("a/kick.wav"));
+    assert_eq!(rebased(Some(beside), "kick.wav"), text("/songs/a/kick.wav"));
+    assert_eq!(rebased(None, "kick.wav"), text("/songs/a/kick.wav"));
+    assert_eq!(
+        rebased(Some(beside), "/abs/kick.wav"),
+        text("/abs/kick.wav")
+    );
+    let level = rebase_asset_write(Some(from), Some(beside), "level", &text("kick.wav"));
+    assert_eq!(level, text("kick.wav"));
+}

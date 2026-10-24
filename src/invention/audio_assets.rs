@@ -61,7 +61,9 @@ pub(crate) fn stored_asset_write<'a>(key: &str, value: &'a ControlValue) -> Cow<
 }
 
 mod live;
-pub(crate) use live::{is_relative_path, resolve_asset_write, resolve_checked_asset_write};
+pub(crate) use live::{
+    is_relative_path, rebase_asset_write, resolve_asset_write, resolve_checked_asset_write,
+};
 
 /// Rewrites every module-config `asset` reference in `invention` to its
 /// resolved file path, recording package resolutions in the lockfile beside
