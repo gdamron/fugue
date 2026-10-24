@@ -39,8 +39,10 @@ pub(super) struct DevelopmentControlSurface {
     pub(super) declared: Option<DeclaredSurface>,
     /// What a payload's inner order is computed from (see `retarget`).
     order: InnerOrder,
-    /// Held from a payload's recording through its write, so the order
-    /// each write carries counts every write before it.
+    /// Held by a declared key's write from its ranking through its
+    /// delivery: so a write that loses offline loses before it records or
+    /// writes anything (see `DeclaredSurface::admits`), and the order each
+    /// payload write carries counts every write before it.
     writing: Mutex<()>,
 }
 
@@ -133,16 +135,15 @@ impl DevelopmentControlSurface {
     /// Writes payload key `key`, whose one alias builds the payload (a
     /// scheduler's resolved schedule). The alias records `value` first, so
     /// the inner order the payload carries counts what it now writes; a
-    /// write that fails, or loses offline to a higher-ranked one, restores
-    /// what it recorded. A payload key reaches one alias and no legacy
-    /// one, so recording touches nothing else.
+    /// write that fails restores what it recorded. A payload key reaches
+    /// one alias and no legacy one, so recording touches nothing else.
+    /// Under the writing lock, ranked first (see [`Self::submit`]).
     fn write_payload(
         &self,
         declared: &DeclaredSurface,
         (key, value): (&str, ControlValue),
         options: &WriteOptions,
     ) -> Result<Queued, String> {
-        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         // What the alias records now, whichever key or development wrote
         // it last (a nested development shows every key on it as recorded,
         // see `set_legacy`), and what this one's keys on it read back as:
@@ -158,7 +159,8 @@ impl DevelopmentControlSurface {
                 .and_then(|(payload, shown)| declared.submit_payload(key, payload, shown, options)),
             None => declared.submit(key, value, options),
         };
-        if written.as_ref().map_or(true, |queued| queued.lost) {
+        debug_assert!(written.as_ref().map_or(true, |queued| !queued.lost));
+        if written.is_err() {
             let _ = self.set_legacy(key, was);
             if let Some(declared) = &self.declared {
                 for (shared, value) in shown {
@@ -227,22 +229,31 @@ impl ControlSurface for DevelopmentControlSurface {
         // fan-out: a scheduler still writes it from the audio thread, where
         // checking would allocate.
         //
-        // The declared part goes first: its delivery can still fail (a full
-        // request queue, a module being installed), and a failed write must
-        // leave the legacy aliases as they were, as must one lost offline to
-        // a higher-ranked write. Once it is on its way the legacy aliases,
+        // Ranked first: offline, a write that loses to a higher-ranked one
+        // at this sample loses before it records or writes anything, so
+        // nothing is to be restored (the writing lock keeps the ranking
+        // standing until it is delivered). The declared part then goes
+        // first: its delivery can still fail (a full request queue, a
+        // module being installed), and a failed write must leave the legacy
+        // aliases as they were. Once it is on its way the legacy aliases,
         // already checked, take the value.
         if let Some(declared) = self.declared(key) {
             self.validate_control(key, &value, &self.surfaces)?;
+            let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+            if !declared.admits(key, options) {
+                return Ok(Queued {
+                    lost: true,
+                    ..Queued::default()
+                });
+            }
             // A payload only its alias's own surface can build (a
             // scheduler's resolved schedule) is built there and handed on.
             if declared.is_payload(key) {
                 return self.write_payload(declared, (key, value), options);
             }
             let queued = declared.submit(key, value.clone(), options)?;
-            if !queued.lost {
-                self.set_legacy(key, value)?;
-            }
+            debug_assert!(!queued.lost, "ranked first");
+            self.set_legacy(key, value)?;
             return Ok(queued);
         }
         self.set_legacy(key, value).map(|()| Queued::default())
