@@ -49,6 +49,11 @@ pub(super) fn check_rewrites(
     let Some((table, _)) = module.declared() else {
         return;
     };
+    // A development's writes rewrite its inner modules' tables: it checks
+    // them itself, knowing which inner controls each exposed key reaches.
+    if module.enclosure().is_some() {
+        return;
+    }
     for index in 0..table.len() {
         let control = ControlIndex(index as u16);
         let Some((decl, _)) = table.decl(control) else {
@@ -57,7 +62,6 @@ pub(super) fn check_rewrites(
         let replaced = replaced_by(keys, &decl.key);
         let mut rewritten: Vec<&str> = Vec::new();
         module.for_each_alias(control, &mut |aliased, _, alias| {
-            // A development's aliases live in its inner modules' tables.
             if !std::ptr::eq(aliased, table) {
                 return;
             }

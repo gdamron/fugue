@@ -246,6 +246,15 @@ impl DevelopmentControls {
         (&self.table, &self.cells)
     }
 
+    /// The inner controls `control` reaches directly: each declared
+    /// alias's module and index.
+    #[cfg(debug_assertions)]
+    pub(super) fn targets(&self, control: ControlIndex) -> Vec<(usize, ControlIndex)> {
+        let aliases = self.aliases.get(usize::from(control.0));
+        let aliases = aliases.into_iter().flatten();
+        aliases.map(|alias| (alias.module, alias.index)).collect()
+    }
+
     /// Applies `value` to every declared alias of `control` in turn, each
     /// as its own kind holds it, publishing each inner control's new value.
     /// Returns what the first alias then holds. A value an alias cannot
