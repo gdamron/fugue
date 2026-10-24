@@ -22,7 +22,8 @@ pub enum PendingDetail {
 }
 
 /// Who submitted a pending write: a front door's user or agent, a script,
-/// or automation (a schedule, a timed edit's writes).
+/// or automation (a schedule). A timed edit's writes, made as it lands,
+/// are the user's, the rank an edit's writes have.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
