@@ -9,6 +9,7 @@
 //! is recorded when it lands, as the publisher adopts it: at the next call
 //! that takes the publisher.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
@@ -20,7 +21,8 @@ use super::timed_status::{CancelCause, EditStatus};
 use super::watch::{condition_of, Part};
 use super::{authored, rebind};
 use super::{
-    publisher, Committed, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher, Refused,
+    publisher, Committed, DocumentStep, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher,
+    Refused,
 };
 use crate::control_request::{BeatSpec, BeatTime, RequestId, When};
 use crate::invention::audio_assets;
@@ -293,7 +295,11 @@ impl LiveGraph {
 /// document, as a commit does.
 /// Commits the runtime mirrors and document for a timed edit the audio
 /// thread has landed, as `LiveGraph::commit_with` commits a change.
-pub(super) fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
+pub(super) fn adopt_into(
+    publisher: &mut Publisher,
+    (pending, mirrors): (&Mutex<PendingLog>, Mirrors<'_>),
+    later: &mut VecDeque<DocumentStep>,
+) {
     let Some(publisher::Adopted {
         id,
         published,
@@ -301,6 +307,7 @@ pub(super) fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
         port,
         written,
         folded,
+        chained,
     }) = publisher.adopt()
     else {
         return;
@@ -325,7 +332,12 @@ pub(super) fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
             state.record_authored_control(module_id, key, &value);
         }
     };
+    // The edit's document was planned without the authored writes not yet
+    // recorded; those it replaced are forgotten.
+    let fence = authored::Fence::open(pending, mirrors.2, (later, Some(id)));
     let committed = LiveGraph::commit_mirrors(mirrors, publisher, published, &port, retain);
+    let replaced = (&*committed.stopped, &*chained);
+    fence.close((pending, mirrors.2), replaced, (later, Some(id)));
     publisher.ledger().adopted(id, committed);
 }
 

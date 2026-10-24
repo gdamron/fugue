@@ -377,6 +377,7 @@ impl GraphChange {
                 built: self.built,
                 rescheduling: Rescheduling::default(),
                 publication: None,
+                writes: Vec::new(),
             };
         }
         // Attached, so each new instance can do its one-time setup here
@@ -410,6 +411,7 @@ impl GraphChange {
             built: self.built,
             rescheduling: self.rescheduling,
             publication: Some(publication),
+            writes: Vec::new(),
         }
     }
 }
@@ -437,6 +439,10 @@ pub(crate) struct PreparedChange {
     pub(crate) rescheduling: Rescheduling,
     /// The compiled next topology; `None` when the change edits nothing.
     pub(crate) publication: Option<Box<Publication>>,
+    /// The controls its caller writes once it commits, as an edit batch or
+    /// a reload does: an authored write to one, not yet recorded, is
+    /// replaced (see `authored::Fence`), whatever value it writes.
+    pub(crate) writes: Vec<(String, String)>,
 }
 
 impl PreparedChange {

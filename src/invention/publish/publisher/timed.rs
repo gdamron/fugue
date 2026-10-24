@@ -66,6 +66,8 @@ pub(crate) struct Adopted {
     pub(crate) written: Vec<Written>,
     /// Authored writes folded into it, to record after `retain`.
     pub(crate) folded: Vec<(String, String, ControlValue)>,
+    /// The controls of modules it kept that it wrote as it landed.
+    pub(crate) chained: Vec<(String, String)>,
 }
 
 impl Publisher {
@@ -198,6 +200,7 @@ impl Publisher {
             port: waiting.port,
             written: waiting.packed.written,
             folded: waiting.folded,
+            chained: waiting.chained,
         })
     }
 
