@@ -1,8 +1,15 @@
 //! Requests apply on the thread running the player, between blocks: a
-//! retrigger is never lost to a one-shot's end.
+//! retrigger is never lost to a one-shot's end, and an asset swap neither
+//! allocates, frees nor waits there.
+
+use std::thread;
 
 use super::{read, write, write_test_wav};
+use crate::alloc_counter::allocator_events;
+use crate::audio_thread::AudioThreadScope;
+use crate::modules::sample_player::table::ASSET;
 use crate::modules::sample_player::{build, SamplePlayer};
+use crate::ControlSurface;
 use crate::Module;
 
 /// A stopped classic one-shot of `frames`.
@@ -51,4 +58,47 @@ fn a_retrigger_while_playing_starts_again_and_a_stop_stays_stopped() {
     player.process(1);
     assert_eq!(player.get_output("start").unwrap(), 1.0);
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn an_asset_swap_during_playback_allocates_frees_and_waits_on_nothing() {
+    for mode in ["classic", "elastic"] {
+        let first = write_test_wav(44_100, 1, &[[0.2, 0.0]; 64]);
+        let second = write_test_wav(44_100, 1, &[[0.6, 0.0]; 64]);
+        let config = serde_json::json!({
+            "asset": first.to_str().unwrap(),
+            "mode": mode,
+            "autoplay": true,
+            "loop": true,
+        });
+        let (mut player, surface) = build(44_100, &config).unwrap();
+        player.process(8);
+
+        // Loaded on this, the control thread.
+        let (payload, _) = surface
+            .prepare_payload("asset", &second.to_str().unwrap().into())
+            .unwrap()
+            .unwrap();
+        let replaced = thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let (replaced, allocs, frees) = allocator_events(|| {
+                        let _scope = AudioThreadScope::enter();
+                        let replaced = player.apply_payload(ASSET, payload).ok().unwrap();
+                        player.process(4);
+                        replaced
+                    });
+                    assert_eq!((allocs, frees), (0, 0), "{mode}: audio side");
+                    replaced
+                })
+                .join()
+                .unwrap()
+        });
+        // Freed here, off the audio thread.
+        drop(replaced);
+        assert!(player.get_output("audio_left").unwrap() > 0.3, "{mode}");
+        assert_eq!(read(&player, "playing"), true.into(), "{mode}");
+        let _ = std::fs::remove_file(first);
+        let _ = std::fs::remove_file(second);
+    }
 }
