@@ -338,3 +338,22 @@ fn a_kept_writes_copy_holds_no_outcome_once_its_reply_is_sent() {
     running.announce_applied();
     assert_eq!(running.live.held(), 0);
 }
+
+#[test]
+fn an_authored_write_pending_at_its_reply_moves_the_authored_epoch_once_it_applies() {
+    let (running, pump, _sink) = on_manual();
+    let epoch = running.authored_epoch();
+    let authored = ControlWrite::new("osc", "frequency", 330.0.into());
+    let acks = running.write_controls(&[authored]);
+    assert_eq!(acks.controls[0].state, Some(ControlRequestState::Pending));
+    assert_eq!(running.authored_epoch(), epoch);
+
+    pump.block();
+    assert_eq!(running.authored_epoch(), epoch + 1);
+    pump.render(4);
+    assert_eq!(running.authored_epoch(), epoch + 1);
+    // A performed write is never recorded.
+    running.write_controls(&[frequency(440.0, RequestSource::User)]);
+    pump.render(2);
+    assert_eq!(running.authored_epoch(), epoch + 1);
+}
