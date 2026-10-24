@@ -336,7 +336,7 @@ fn a_saved_melody_rebuilds_what_shrinking_and_growing_left_playing() {
         module_type: "melody".into(),
         config: json!({ "degrees": [0, 2, 4, 5, 7, 9, 11], "note_weights": [4, 1, 2] }),
     });
-    let (mut running, _pump) = start_doc(document);
+    let (mut running, pump) = start_doc(document);
     running
         .set_control("tune", "degree.6", number(1.0))
         .unwrap();
@@ -355,6 +355,8 @@ fn a_saved_melody_rebuilds_what_shrinking_and_growing_left_playing() {
     running
         .set_control("tune", "degree_count", number(9.0))
         .unwrap();
+    // The writes land as the audio thread applies them.
+    pump.render(1);
     assert_document_rebuilds_the_live_melody(&running);
 }
 
@@ -371,7 +373,7 @@ fn with_melody(scale: serde_json::Value) -> Invention {
 
 #[test]
 fn a_write_to_a_control_an_earlier_edit_removed_is_refused_at_its_index() {
-    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    let (mut running, pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
     let before = running.document().unwrap();
     let error = running
         .apply_edits(&[
@@ -382,6 +384,7 @@ fn a_write_to_a_control_an_earlier_edit_removed_is_refused_at_its_index() {
     assert_eq!(error.code, RpcErrorCode::InvalidEdit);
     assert_eq!(error.edit.as_ref().unwrap().index, 1);
     // Nothing changed: not the count, not the document.
+    pump.render(1);
     assert_eq!(
         running.get_control("tune", "degree_count").unwrap(),
         number(7.0)
@@ -391,7 +394,7 @@ fn a_write_to_a_control_an_earlier_edit_removed_is_refused_at_its_index() {
 
 #[test]
 fn a_write_to_a_control_an_earlier_edit_added_commits() {
-    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2])));
+    let (mut running, pump) = start_doc(with_melody(json!([0, 1, 2])));
     let report = running
         .apply_edits(&[
             set("tune", "degree_count", number(7.0)),
@@ -399,6 +402,7 @@ fn a_write_to_a_control_an_earlier_edit_added_commits() {
         ])
         .expect("degree 6 exists once the count is 7");
     assert!(report.controls_failed.is_empty(), "{report:?}");
+    pump.render(1);
     assert_eq!(
         running.get_control("tune", "degree.6").unwrap(),
         number(12.0)
@@ -410,7 +414,7 @@ fn writes_land_in_batch_order() {
     // Valid in order: the degree is written while it exists, then hidden or
     // removed by the count. Applying the final values in another order would
     // fail the degree's write.
-    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    let (mut running, pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
     let report = running
         .apply_edits(&[
             set("tune", "degree_count", number(9.0)),
@@ -419,6 +423,7 @@ fn writes_land_in_batch_order() {
         ])
         .expect("each write is valid where it stands");
     assert!(report.controls_failed.is_empty(), "{report:?}");
+    pump.render(1);
     assert_eq!(
         running.get_control("tune", "degree_count").unwrap(),
         number(3.0)
@@ -432,6 +437,7 @@ fn writes_land_in_batch_order() {
             set("second", "degree.6", number(12.0)),
         ])
         .expect("the batch commits");
+    pump.render(1);
     assert_eq!(
         running.get_control("second", "degree.6").unwrap(),
         number(12.0)
@@ -443,13 +449,14 @@ fn a_batch_sees_controls_an_earlier_authored_write_added() {
     // The melody's factory does not read a recorded `degree_count`; the
     // copy a batch checks against still has the degrees the authored write
     // added.
-    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2])));
+    let (mut running, pump) = start_doc(with_melody(json!([0, 1, 2])));
     running
         .set_control("tune", "degree_count", number(7.0))
         .unwrap();
     running
         .apply_edits(&[set("tune", "degree.6", number(12.0))])
         .expect("degree 6 exists since the authored write");
+    pump.render(1);
     assert_eq!(
         running.get_control("tune", "degree.6").unwrap(),
         number(12.0)
@@ -478,7 +485,7 @@ fn a_control_is_settled_by_its_last_write() {
     // A live gesture shrank the melody below its authored count, so the
     // batch's first write to degree 6 fails when made; the count it then
     // restores lets the last write land. The control is written, not failed.
-    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    let (mut running, pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
     running
         .snapshot()
         .set_control_with_intent(
@@ -500,6 +507,7 @@ fn a_control_is_settled_by_its_last_write() {
         .controls_written
         .iter()
         .any(|written| written.key == "degree.6"));
+    pump.render(1);
     assert_eq!(
         running.get_control("tune", "degree.6").unwrap(),
         number(13.0)
@@ -623,13 +631,14 @@ fn a_development_alias_hidden_by_a_later_count_is_not_refused() {
         "connections": []
     }))
     .unwrap();
-    let (mut running, _pump) = start_doc(document);
+    let (mut running, pump) = start_doc(document);
     running
         .apply_edits(&[
             set("t", "deg6", number(12.0)),
             set("t", "count", number(3.0)),
         ])
         .expect("each write is valid where it stands");
+    pump.render(1);
     assert_eq!(running.get_control("t", "count").unwrap(), number(3.0));
 }
 
@@ -661,7 +670,7 @@ fn the_document_and_events_carry_what_a_write_left_after_later_writes() {
     // A shrinking count hides a degree written before it and the regrowing
     // count shows it as written, so the document and the event, which carry
     // the written value, match what the module plays.
-    let (mut running, _pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
+    let (mut running, pump) = start_doc(with_melody(json!([0, 1, 2, 3, 4, 5, 6])));
     let events = super::Events::listen(&running);
     running
         .apply_edits(&[
@@ -670,6 +679,7 @@ fn the_document_and_events_carry_what_a_write_left_after_later_writes() {
             set("tune", "degree_count", number(7.0)),
         ])
         .expect("the batch commits");
+    pump.render(1);
     let live = running.get_control("tune", "degree.6").unwrap();
     let document = running.document().unwrap();
     let tune = document

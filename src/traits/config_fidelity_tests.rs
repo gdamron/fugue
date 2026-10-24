@@ -41,6 +41,8 @@ fn probes(key: &str, meta: &ControlMeta) -> Vec<ControlValue> {
             r#"[64, null, 67]"#,
         ]),
         (_, "cells") => text(&[r#"[[{"note": 64}, null]]"#, r#"[[64, null, 67]]"#]),
+        (_, "degrees") => text(&["[0, 3, 7]"]),
+        (_, "note_weights") => text(&["[2, 1]"]),
         (
             ControlKind::String {
                 options: Some(options),

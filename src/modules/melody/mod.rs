@@ -1,37 +1,44 @@
 //! Melody generation module.
 
-use std::any::Any;
 use std::sync::Arc;
 
+use crate::control_request::{
+    local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
+    RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{finite_f32, ConfigKey, ConfigReader};
 use crate::music::{Note, Scale};
+use crate::payload::{Payload, Retired};
 use crate::traits::ControlMeta;
 use crate::Module;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-pub use self::controls::MelodyControls;
+use self::declared::{
+    degree_index, weight_index, Scale as ScalePayload, Weights, DEGREES, DEGREE_COUNT, MAX_DEGREES,
+    NOTE_WEIGHTS, ROOT_NOTE, SEED, TABLE,
+};
+use self::degrees::Degrees;
 
-mod controls;
-// The declared table and the degrees it plays, unused until the melody
-// moves onto them.
-#[allow(dead_code)]
 mod declared;
-#[allow(dead_code)]
 mod degrees;
 mod inputs;
 mod outputs;
-mod snapshot;
 
 /// Factory for constructing MelodyGenerator modules from configuration.
+///
+/// `degrees` and `note_weights` are arrays, or the same arrays as JSON text
+/// (the form a written control records). `degree_count`, `degree.N` and
+/// `note_weight.N` restore what was written to them: a position past the
+/// count stays hidden until it grows.
 pub struct MelodyFactory;
 
-const TYPE_ID: &str = "melody";
-const ROOT_NOTE: ConfigKey = ConfigKey::int::<u8>("root_note");
-const SEED: ConfigKey = ConfigKey::seed("seed");
-const DEGREES: ConfigKey = ConfigKey::json("degrees");
-const NOTE_WEIGHTS: ConfigKey = ConfigKey::json("note_weights");
+pub(crate) const TYPE_ID: &str = "melody";
+const ROOT_NOTE_KEY: ConfigKey = ConfigKey::int::<u8>("root_note");
+const SEED_KEY: ConfigKey = ConfigKey::seed("seed");
+const DEFAULT_SCALE: [i32; 7] = [0, 2, 4, 5, 7, 9, 11];
 
 impl ModuleFactory for MelodyFactory {
     fn type_id(&self) -> &'static str {
@@ -41,10 +48,12 @@ impl ModuleFactory for MelodyFactory {
     fn config_keys(&self) -> &'static [ConfigKey] {
         const {
             &[
-                ROOT_NOTE,
-                SEED,
-                DEGREES,
-                NOTE_WEIGHTS,
+                ROOT_NOTE_KEY,
+                SEED_KEY,
+                // A whole scale sets the count and every degree; whole
+                // weights set every weight.
+                ConfigKey::json("degrees").replacing(&["degree_count", "degree"]),
+                ConfigKey::json("note_weights").replacing(&["note_weight"]),
                 // Kept past the active count, so declared as families.
                 ConfigKey::json("degree.N"),
                 ConfigKey::json("note_weight.N"),
@@ -57,71 +66,83 @@ impl ModuleFactory for MelodyFactory {
         _sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
+        // A note or seed written as a fraction was held truncated.
         let reader = ConfigReader::new(TYPE_ID, config);
-        let root_note = reader.int::<u8>(&ROOT_NOTE)?.unwrap_or(60);
-        let degrees = reader
-            .whole_numbers::<i32>(&DEGREES)?
-            .unwrap_or_else(|| vec![0, 2, 4, 5, 7, 9, 11]);
-        let seed = reader.int::<u64>(&SEED)?;
-        let weights = reader.floats(&NOTE_WEIGHTS)?;
-
-        let controls = MelodyControls::new(root_note, degrees);
-        if let Some(seed) = seed {
-            controls.set_seed(seed);
-        }
-        if let Some(weights) = weights {
-            controls.set_note_weights(weights);
-        }
-
-        crate::factory::apply_control_keys(&controls, config, |key| key == "degree_count")?;
-        // Degrees and weights written to single positions, as a document
-        // records them; one past the count stays hidden until it grows. Taken
-        // as the setters take them: a number, or a number as text.
-        let written = |prefix: &str| -> Result<Vec<(usize, f32)>, String> {
-            let mut written = Vec::new();
-            for (key, value) in config.as_object().into_iter().flatten() {
-                let Some(index) = key.strip_prefix(prefix) else {
-                    continue;
-                };
-                let refuse = |reason: &str| format!("config '{key}': {reason}");
-                let index = index
-                    .parse::<usize>()
-                    .map_err(|_| refuse("invalid index"))?;
-                let value = match value {
-                    serde_json::Value::Number(_) => {
-                        finite_f32(value).map_err(|refusal| format!("config '{key}' {refusal}"))?
-                    }
-                    serde_json::Value::String(text) => text
-                        .trim()
-                        .parse::<f32>()
-                        .ok()
-                        .filter(|value| value.is_finite())
-                        .ok_or_else(|| refuse("expected a number"))?,
-                    _ => return Err(refuse("expected a number")),
-                };
-                written.push((index, value));
+        let refused = |refusal: String| format!("{TYPE_ID} config {refusal}");
+        let root_note = reader.int::<u8>(&ROOT_NOTE_KEY)?.unwrap_or(60);
+        let seed = reader.int::<u64>(&SEED_KEY)?;
+        let scale = match reader.get("degrees") {
+            Some(value) => {
+                declared::list("degrees", value, declared::degree_of).map_err(refused)?
             }
-            Ok(written)
+            None => DEFAULT_SCALE.to_vec(),
         };
-        controls.restore_written(
-            written("degree.")?
-                .into_iter()
-                // Through f32, as the setter takes a control value.
-                .map(|(index, value)| (index, value as i32)),
-            written("note_weight.")?,
+        let mut table = Degrees::new(&scale);
+        let weights = reader.get("note_weights");
+        let weights =
+            weights.map(|value| declared::list("note_weights", value, declared::weight_of));
+        let weights = weights.transpose().map_err(refused)?;
+        if let Some(weights) = &weights {
+            table.set_weights(weights);
+        }
+        if let Some(value) = reader.get("degree_count") {
+            table.set_count(number("degree_count", value)? as usize);
+        }
+        // Degrees and weights written to single positions, as a document
+        // records them; one past the count stays hidden until it grows.
+        for (key, value) in config.as_object().into_iter().flatten() {
+            let (prefix, is_weight) = match key {
+                key if key.starts_with("degree.") => ("degree.", false),
+                key if key.starts_with("note_weight.") => ("note_weight.", true),
+                _ => continue,
+            };
+            let position = key[prefix.len()..]
+                .parse::<usize>()
+                .map_err(|_| format!("config '{key}': invalid index"))?;
+            let value = number(key, value)?;
+            match (position < MAX_DEGREES, is_weight) {
+                (false, _) => {}
+                // Through f32, as a control write takes it.
+                (true, false) => {
+                    table.set_degree(position, value as i32);
+                }
+                (true, true) => {
+                    table.set_weight(position, value);
+                }
+            }
+        }
+
+        let cells = Arc::new(ControlCells::new(declared::defaults()));
+        let melody = MelodyGenerator::with_parts(root_note, seed, table, cells.clone());
+        let surface = DeclaredSurface::new(TABLE.clone(), cells);
+        surface.show_payload("degrees", declared::shown(&scale));
+        surface.show_payload(
+            "note_weights",
+            declared::shown(&weights.unwrap_or_default()),
         );
-
-        let melody = MelodyGenerator::new(controls.clone());
-
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(melody)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
+    }
+}
+
+/// A config number written to a control: a number, or a number as text.
+fn number(key: &str, value: &serde_json::Value) -> Result<f32, String> {
+    let refuse = || format!("config '{key}': expected a number");
+    match value {
+        serde_json::Value::Number(_) => {
+            finite_f32(value).map_err(|refusal| format!("config '{key}' {refusal}"))
+        }
+        serde_json::Value::String(text) => text
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(refuse),
+        _ => Err(refuse()),
     }
 }
 
@@ -139,71 +160,92 @@ impl ModuleFactory for MelodyFactory {
 /// - `gate`: Pass-through of the input gate signal
 ///
 /// # Controls
+/// - `root_note`: Root MIDI note (0-127)
+/// - `seed`: RNG seed; setting it restarts the stream
+/// - `degrees`, `note_weights`: The whole scale and base weights (JSON text)
 /// - `degree_count`: Number of active scale degrees (1-128)
-/// - `degree.{n}`: Scale degree index at position n (0-127)
+/// - `degree.{n}`: Scale degree at position n (±127)
 /// - `note_weight.{n}`: Probability weight for degree n (0.0-10.0)
 pub struct MelodyGenerator {
-    ctrl: MelodyControls,
+    degrees: Degrees,
+    root_note: u8,
     rng: StdRng,
-    /// Seed version last applied to `rng`; re-seeds when the control changes.
-    last_seed_version: u64,
-    /// Audio-thread copy of the degree table, refreshed without blocking.
-    degrees: snapshot::DegreeSnapshot,
+    cells: Arc<ControlCells>,
     current_note: Note,
-    // Modular inputs
     inputs: inputs::MelodyInputs,
     last_gate: f32,
-    // Cached outputs (computed in process())
     outputs: outputs::MelodyOutputs,
 }
 
 impl MelodyGenerator {
-    /// Creates a new melody generator.
-    ///
-    /// Notes are selected from the given scale according to the controls.
-    /// Note changes are triggered by the rising edge of the `gate` input.
-    pub fn new(controls: MelodyControls) -> Self {
-        let current_note = Note::new(60);
-        // A configured seed makes the generator fully deterministic; without
-        // one the historical entropy-seeded behavior is preserved.
-        let rng = match controls.seed() {
+    /// Creates a melody over `degrees` from `root_note`, seeded from
+    /// entropy. Note changes are triggered by the rising edge of the
+    /// `gate` input.
+    pub fn new(root_note: u8, degrees: Vec<i32>) -> Self {
+        let cells = Arc::new(ControlCells::new(declared::defaults()));
+        Self::with_parts(root_note, None, Degrees::new(&degrees), cells)
+    }
+
+    /// A melody playing `degrees`, holding its controls in `cells`, which
+    /// it fills with what it holds. A configured seed makes it fully
+    /// deterministic; without one it runs from entropy.
+    fn with_parts(
+        root_note: u8,
+        seed: Option<u64>,
+        degrees: Degrees,
+        cells: Arc<ControlCells>,
+    ) -> Self {
+        let rng = match seed {
             Some(seed) => StdRng::seed_from_u64(seed),
             None => rand::make_rng(),
         };
-        let last_seed_version = controls.seed_version();
-        let degrees = snapshot::DegreeSnapshot::new(&controls);
-        Self {
-            ctrl: controls,
-            rng,
-            last_seed_version,
+        let current_note = Note::new(60);
+        let melody = Self {
             degrees,
+            root_note: root_note.min(127),
+            rng,
+            cells,
             current_note,
             inputs: inputs::MelodyInputs::new(),
             last_gate: 0.0,
             outputs: outputs::MelodyOutputs::new(current_note.frequency()),
+        };
+        let cells = &melody.cells;
+        cells.publish(ROOT_NOTE, RtValue::F32(f32::from(melody.root_note)));
+        cells.publish(SEED, RtValue::F32(seed.unwrap_or(0) as f32));
+        melody.publish_table(true);
+        melody
+    }
+
+    /// Republishes what every position holds, and the count with the
+    /// degrees, after a whole scale or whole weights replaced them.
+    fn publish_table(&self, degrees: bool) {
+        let table = &self.degrees;
+        if degrees {
+            let count = table.count() as f32;
+            self.cells.publish(DEGREE_COUNT, RtValue::F32(count));
+        }
+        for position in 0..MAX_DEGREES {
+            if degrees {
+                let degree = table.degree(position) as f32;
+                self.cells
+                    .publish(degree_index(position), RtValue::F32(degree));
+            }
+            let weight = table.weight(position);
+            self.cells
+                .publish(weight_index(position), RtValue::F32(weight));
         }
     }
 
     /// Selects the next note using weighted random choice.
     ///
     /// Returns middle C (MIDI 60) if no degrees are allowed.
-    ///
-    /// Runs on the audio thread: it never blocks or allocates. Degree and
-    /// weight edits are picked up when the control table is uncontended.
     pub fn next_note(&mut self) -> Note {
-        self.degrees.sync(&self.ctrl);
-
         if self.degrees.is_empty() {
             return Note::new(60);
         }
-
-        let scale = Scale::new(Note::new(self.ctrl.root_note()));
+        let scale = Scale::new(Note::new(self.root_note));
         scale.get_note(self.degrees.choose(self.rng.random::<f32>()))
-    }
-
-    /// Returns a reference to the melody controls.
-    pub fn controls(&self) -> &MelodyControls {
-        &self.ctrl
     }
 }
 
@@ -213,16 +255,6 @@ impl Module for MelodyGenerator {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        // Re-seed when the seed control changed (checked once per block;
-        // seeding a ChaCha-based StdRng is stack-only, no allocation).
-        let seed_version = self.ctrl.seed_version();
-        if seed_version != self.last_seed_version {
-            if let Some(seed) = self.ctrl.seed() {
-                self.rng = StdRng::seed_from_u64(seed);
-            }
-            self.last_seed_version = seed_version;
-        }
-
         for i in 0..frames {
             // Detect rising edge of gate input
             let gate = self.inputs.gate(i);
@@ -234,10 +266,7 @@ impl Module for MelodyGenerator {
                 self.current_note = self.next_note();
             }
 
-            // Cache outputs
             self.outputs.set(i, self.current_note.frequency(), gate);
-
-            // Remember last gate state for edge detection
             self.last_gate = gate;
         }
 
@@ -268,93 +297,102 @@ impl Module for MelodyGenerator {
         self.outputs.get(port)
     }
 
-    fn controls(&self) -> Vec<ControlMeta> {
-        let degree_count = self.ctrl.degree_count();
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
 
-        let mut controls = Vec::with_capacity(3 + degree_count * 2);
+    /// Every number is truncated toward zero where the melody holds a whole
+    /// one, as a scheduler's ramp has always written them. A seed always
+    /// restarts the stream, even the seed it holds.
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        let RtValue::F32(value) = value else {
+            return Err(Refusal::Invalid);
+        };
+        let held = match control {
+            ROOT_NOTE => {
+                self.root_note = (value as u8).min(127);
+                f32::from(self.root_note)
+            }
+            DEGREE_COUNT => self.degrees.set_count(value as usize) as f32,
+            SEED => {
+                let seed = value.max(0.0) as u64;
+                self.rng = StdRng::seed_from_u64(seed);
+                seed as f32
+            }
+            control => match declared::position(control) {
+                Some((false, position)) => self.degrees.set_degree(position, value as i32) as f32,
+                Some((true, position)) => self.degrees.set_weight(position, value),
+                None => return Err(Refusal::Unsupported),
+            },
+        };
+        Ok(RtValue::F32(held))
+    }
 
-        controls.push(
-            ControlMeta::new("root_note", "Root MIDI note number")
-                .with_range(0.0, 127.0)
-                .with_default(self.ctrl.root_note() as f32),
-        );
-        controls.push(
-            ControlMeta::new("degree_count", "Number of active scale degrees")
-                .with_range(1.0, 128.0)
-                .with_default(7.0),
-        );
-
-        for i in 0..degree_count {
-            controls.push(
-                ControlMeta::new(
-                    format!("degree.{}", i),
-                    format!("Scale degree at position {}", i),
-                )
-                .with_range(-127.0, 127.0)
-                .with_default(i as f32),
-            );
-            controls.push(
-                ControlMeta::new(
-                    format!("note_weight.{}", i),
-                    format!("Probability weight for degree {}", i),
-                )
-                .with_range(0.0, 10.0)
-                .with_default(1.0),
-            );
+    /// Takes a whole scale or whole weights: copied into the table, and the
+    /// written list retired off the audio thread.
+    #[allow(private_interfaces)]
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        let applied = match control {
+            DEGREES => payload
+                .peek::<ScalePayload>()
+                .map(|scale| self.degrees.set_scale(&scale.0))
+                .is_some(),
+            NOTE_WEIGHTS => payload
+                .peek::<Weights>()
+                .map(|weights| self.degrees.set_weights(&weights.0))
+                .is_some(),
+            _ => return Err((Refusal::Unsupported, payload)),
+        };
+        if !applied {
+            return Err((Refusal::Invalid, payload));
         }
+        self.publish_table(control == DEGREES);
+        Ok(payload.into())
+    }
 
-        controls
+    /// A whole scale rewrites the count and every degree, and every weight
+    /// not written to its own position; whole weights rewrite every
+    /// weight. The count rewrites none: it only decides which play.
+    #[allow(private_interfaces)]
+    fn for_each_alias(
+        &self,
+        control: ControlIndex,
+        f: &mut dyn FnMut(&ControlTable, &ControlCells, ControlIndex),
+    ) {
+        let whole_scale = match control {
+            DEGREES => true,
+            NOTE_WEIGHTS => false,
+            _ => return,
+        };
+        if whole_scale {
+            f(&TABLE, &self.cells, DEGREE_COUNT);
+        }
+        for position in 0..MAX_DEGREES {
+            if whole_scale {
+                f(&TABLE, &self.cells, degree_index(position));
+            }
+            if !whole_scale || !self.degrees.weight_written(position) {
+                f(&TABLE, &self.cells, weight_index(position));
+            }
+        }
+    }
+
+    fn controls(&self) -> Vec<ControlMeta> {
+        local_controls(self)
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
-        match key {
-            "root_note" => Ok(self.ctrl.root_note() as f32),
-            "degree_count" => Ok(self.ctrl.degree_count() as f32),
-            "seed" => Ok(self.ctrl.seed().unwrap_or(0) as f32),
-            _ => {
-                if let Some(rest) = key.strip_prefix("degree.") {
-                    if let Ok(idx) = rest.parse::<usize>() {
-                        return self.ctrl.degree(idx).map(|d| d as f32);
-                    }
-                }
-                if let Some(rest) = key.strip_prefix("note_weight.") {
-                    if let Ok(idx) = rest.parse::<usize>() {
-                        return self.ctrl.note_weight(idx);
-                    }
-                }
-                Err(format!("Unknown control: {}", key))
-            }
-        }
+        local_get(self, key)
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
-        match key {
-            "root_note" => {
-                self.ctrl.set_root_note(value as u8);
-                Ok(())
-            }
-            "degree_count" => {
-                self.ctrl.set_degree_count(value as usize);
-                Ok(())
-            }
-            "seed" => {
-                self.ctrl.set_seed(value.max(0.0) as u64);
-                Ok(())
-            }
-            _ => {
-                if let Some(rest) = key.strip_prefix("degree.") {
-                    if let Ok(idx) = rest.parse::<usize>() {
-                        return self.ctrl.set_degree(idx, value as i32);
-                    }
-                }
-                if let Some(rest) = key.strip_prefix("note_weight.") {
-                    if let Ok(idx) = rest.parse::<usize>() {
-                        return self.ctrl.set_note_weight(idx, value);
-                    }
-                }
-                Err(format!("Unknown control: {}", key))
-            }
-        }
+        local_set(self, key, value)
     }
 }
 

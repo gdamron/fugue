@@ -1,168 +1,114 @@
 use super::*;
+use crate::{ControlValue, ModuleBuildResult};
 
 fn make_melody() -> MelodyGenerator {
-    let controls = MelodyControls::new(60, vec![0, 2, 3, 5, 7, 9, 10]);
-    MelodyGenerator::new(controls)
+    MelodyGenerator::new(60, vec![0, 2, 3, 5, 7, 9, 10])
+}
+
+/// Writes whole-list control `key` (`degrees`, `note_weights`) as its JSON
+/// text, as the drain would.
+fn write_list(melody: &mut MelodyGenerator, key: &str, text: &str) {
+    let index = TABLE.resolve(key).unwrap();
+    let codec = TABLE.decl(index).unwrap().0.codec.unwrap();
+    let (payload, _) = (codec.prepare)(&text.into()).unwrap();
+    let applied = melody.apply_payload(index, payload);
+    assert!(applied.is_ok(), "{key} {text}");
+}
+
+fn keys(controls: &[ControlMeta]) -> Vec<&str> {
+    controls.iter().map(|meta| meta.key.as_str()).collect()
 }
 
 #[test]
-fn test_melody_controls_metadata() {
-    let melody = make_melody();
+fn the_positions_in_play_are_listed() {
+    let mut melody = make_melody();
     let controls = Module::controls(&melody);
-
-    // root_note + degree_count + 7 degrees + 7 weights = 16
-    // (the seed control lives on the ControlSurface, not this legacy list)
-    assert_eq!(controls.len(), 16);
-
-    let keys: Vec<&str> = controls.iter().map(|c| c.key.as_str()).collect();
-    assert!(keys.contains(&"root_note"));
-    assert!(keys.contains(&"degree_count"));
-    assert!(keys.contains(&"degree.0"));
-    assert!(keys.contains(&"degree.6"));
-    assert!(keys.contains(&"note_weight.0"));
-    assert!(keys.contains(&"note_weight.6"));
-}
-
-#[test]
-fn test_melody_get_degree_controls() {
-    let melody = make_melody();
-
-    assert_eq!(melody.get_control("degree_count").unwrap(), 7.0);
-    assert_eq!(melody.get_control("degree.0").unwrap(), 0.0);
-    assert_eq!(melody.get_control("degree.3").unwrap(), 5.0);
-    assert_eq!(melody.get_control("note_weight.0").unwrap(), 1.0);
-}
-
-#[test]
-fn test_melody_set_degree_controls() {
-    let mut melody = make_melody();
-
-    // Set a specific degree
-    melody.set_control("degree.2", 5.0).unwrap();
-    assert_eq!(melody.get_control("degree.2").unwrap(), 5.0);
-
-    // Set a weight
-    melody.set_control("note_weight.1", 3.5).unwrap();
-    assert_eq!(melody.get_control("note_weight.1").unwrap(), 3.5);
-}
-
-#[test]
-fn test_melody_degree_count_grow() {
-    let mut melody = make_melody();
+    // root_note, degree_count, seed + 7 degrees + 7 weights; the whole
+    // lists are payloads, which no number holds.
+    assert_eq!(controls.len(), 17);
+    let listed = keys(&controls);
+    for key in [
+        "root_note",
+        "degree_count",
+        "seed",
+        "degree.6",
+        "note_weight.6",
+    ] {
+        assert!(listed.contains(&key), "{key}");
+    }
+    assert!(!listed.contains(&"degree.7"));
 
     melody.set_control("degree_count", 9.0).unwrap();
-    assert_eq!(melody.get_control("degree_count").unwrap(), 9.0);
-
-    // Past the scale [0, 2, 3, 5, 7, 9, 10], degrees repeat it from the start.
-    assert_eq!(melody.get_control("degree.7").unwrap(), 0.0);
-    assert_eq!(melody.get_control("degree.8").unwrap(), 2.0);
-
-    // With no weights of their own, they repeat the scale's (1.0 here).
-    assert_eq!(melody.get_control("note_weight.7").unwrap(), 1.0);
-    assert_eq!(melody.get_control("note_weight.8").unwrap(), 1.0);
-
-    // Controls metadata should reflect new count
-    let controls = Module::controls(&melody);
-    // root_note + degree_count + 9 degrees + 9 weights = 20
-    assert_eq!(controls.len(), 20);
+    assert_eq!(Module::controls(&melody).len(), 21);
 }
 
 #[test]
-fn test_melody_degree_count_shrink() {
+fn positions_read_and_write_as_numbers() {
     let mut melody = make_melody();
+    assert_eq!(melody.get_control("degree_count").unwrap(), 7.0);
+    assert_eq!(melody.get_control("degree.3").unwrap(), 5.0);
+    assert_eq!(melody.get_control("note_weight.0").unwrap(), 1.0);
 
-    melody.set_control("degree_count", 3.0).unwrap();
-    assert_eq!(melody.get_control("degree_count").unwrap(), 3.0);
-
-    // Accessing beyond the new count should error
-    assert!(melody.get_control("degree.3").is_err());
-    assert!(melody.get_control("note_weight.3").is_err());
+    melody.set_control("degree.2", 5.0).unwrap();
+    melody.set_control("note_weight.1", 3.5).unwrap();
+    melody.set_control("degree.0", -3.0).unwrap();
+    assert_eq!(melody.get_control("degree.2").unwrap(), 5.0);
+    assert_eq!(melody.get_control("note_weight.1").unwrap(), 3.5);
+    assert_eq!(melody.get_control("degree.0").unwrap(), -3.0);
+    assert!(melody.get_control("unknown").is_err());
+    assert!(melody.get_control("degree.128").is_err());
 }
 
 #[test]
-fn shrinking_hides_degrees_and_growing_shows_them_as_they_were() {
+fn whole_numbers_are_truncated_and_clamped_as_written() {
+    let mut melody = make_melody();
+    for (key, written, held) in [
+        ("degree.1", 4.7, 4.0),
+        ("degree.1", -2.7, -2.0),
+        ("degree.1", 300.0, 127.0),
+        ("degree_count", 3.9, 3.0),
+        ("degree_count", 0.0, 1.0),
+        ("degree_count", 500.0, 128.0),
+        ("root_note", 61.5, 61.0),
+        ("root_note", 200.0, 127.0),
+        ("note_weight.0", 12.0, 10.0),
+    ] {
+        melody.set_control(key, written).unwrap();
+        assert_eq!(melody.get_control(key).unwrap(), held, "{key} {written}");
+    }
+}
+
+#[test]
+fn growing_the_count_repeats_the_scale_and_shows_hidden_positions() {
     let mut melody = make_melody();
     melody.set_control("degree.6", 11.0).unwrap();
-    melody.set_control("note_weight.5", 4.0).unwrap();
-
     melody.set_control("degree_count", 3.0).unwrap();
-    assert!(melody.get_control("degree.6").is_err());
-    melody.set_control("degree_count", 7.0).unwrap();
-
-    let degrees: Vec<f32> = (0..7)
+    // A position past the count is kept, and written, while hidden.
+    melody.set_control("note_weight.5", 4.0).unwrap();
+    melody.set_control("degree_count", 9.0).unwrap();
+    let degrees: Vec<f32> = (0..9)
         .map(|i| melody.get_control(&format!("degree.{i}")).unwrap())
         .collect();
-    assert_eq!(degrees, [0.0, 2.0, 3.0, 5.0, 7.0, 9.0, 11.0]);
+    assert_eq!(degrees, [0.0, 2.0, 3.0, 5.0, 7.0, 9.0, 11.0, 0.0, 2.0]);
     assert_eq!(melody.get_control("note_weight.5").unwrap(), 4.0);
+    assert_eq!(melody.get_control("note_weight.8").unwrap(), 1.0);
 }
 
 #[test]
-fn growing_past_the_scale_repeats_its_degrees_and_weights() {
-    let controls = MelodyControls::new(60, vec![0, 4, 7]);
-    controls.set_note_weights(vec![3.0, 1.0, 2.0]);
-    controls.set_degree_count(8);
-    assert_eq!(controls.allowed_degrees(), [0, 4, 7, 0, 4, 7, 0, 4]);
-    assert_eq!(
-        controls.note_weights(),
-        [3.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0]
-    );
-
-    // A weight configured past the scale is that position's own.
-    controls.set_note_weights(vec![3.0, 1.0, 2.0, 9.0]);
-    assert_eq!(controls.note_weights()[3..5], [9.0, 1.0]);
-}
-
-#[test]
-fn the_table_is_the_same_whatever_order_its_sources_are_set_in() {
-    // What a saved document records (the count and single-position writes)
-    // rebuilds the table the live writes made, in any order.
-    let live = MelodyControls::new(60, vec![0, 2, 4, 5, 7, 9, 11]);
-    live.set_degree(6, 1).unwrap();
-    live.set_degree_count(3);
-    live.set_degree(1, 3).unwrap();
-    live.set_degree_count(10);
-    live.set_note_weight(8, 5.0).unwrap();
-    live.set_degree_count(9);
-
-    let rebuilt = MelodyControls::new(60, vec![0, 2, 4, 5, 7, 9, 11]);
-    rebuilt.set_degree_count(9);
-    rebuilt.restore_written([(1, 3), (6, 1)], [(8, 5.0)]);
-    assert_eq!(rebuilt.allowed_degrees(), live.allowed_degrees());
-    assert_eq!(rebuilt.note_weights(), live.note_weights());
-}
-
-#[test]
-fn test_melody_out_of_range_degree_errors() {
-    let melody = make_melody();
-
-    assert!(melody.get_control("degree.7").is_err());
-    assert!(melody.get_control("note_weight.7").is_err());
-}
-
-#[test]
-fn test_melody_unknown_control_errors() {
-    let melody = make_melody();
-
-    assert!(melody.get_control("unknown").is_err());
-}
-
-#[test]
-fn test_melody_negative_degrees() {
-    let controls = MelodyControls::new(60, vec![-2, 0, 2, 5]);
-    let melody = MelodyGenerator::new(controls);
-
-    assert_eq!(melody.get_control("degree.0").unwrap(), -2.0);
-    assert_eq!(melody.get_control("degree.1").unwrap(), 0.0);
-    assert_eq!(melody.get_control("degree.2").unwrap(), 2.0);
-    assert_eq!(melody.get_control("degree.3").unwrap(), 5.0);
-}
-
-#[test]
-fn test_melody_set_negative_degree() {
+fn a_whole_scale_and_whole_weights_republish_every_position() {
     let mut melody = make_melody();
+    melody.set_control("degree.1", 9.0).unwrap();
+    melody.set_control("note_weight.4", 2.0).unwrap();
+    write_list(&mut melody, "degrees", "[0, 4, 7]");
+    assert_eq!(melody.get_control("degree_count").unwrap(), 3.0);
+    assert_eq!(melody.get_control("degree.1").unwrap(), 4.0);
+    // Written weights are kept; positions past the scale repeat it.
+    assert_eq!(melody.get_control("note_weight.4").unwrap(), 2.0);
+    assert_eq!(melody.get_control("degree.4").unwrap(), 4.0);
 
-    melody.set_control("degree.0", -3.0).unwrap();
-    assert_eq!(melody.get_control("degree.0").unwrap(), -3.0);
+    write_list(&mut melody, "note_weights", "[3, 1]");
+    assert_eq!(melody.get_control("note_weight.4").unwrap(), 1.0);
+    assert_eq!(melody.get_control("note_weight.3").unwrap(), 3.0);
 }
 
 /// Drives one gate pulse and returns the resulting frequency.
@@ -179,84 +125,35 @@ fn notes(melody: &mut MelodyGenerator, count: usize) -> Vec<f32> {
 }
 
 fn seeded_melody(seed: u64) -> MelodyGenerator {
-    let controls = MelodyControls::new(60, vec![0, 2, 3, 5, 7, 9, 10]);
-    controls.set_seed(seed);
-    MelodyGenerator::new(controls)
+    let mut melody = make_melody();
+    melody.set_control("seed", seed as f32).unwrap();
+    melody
 }
 
 #[test]
-fn test_same_seed_produces_identical_melodies() {
+fn the_same_seed_produces_identical_melodies() {
     let a = notes(&mut seeded_melody(42), 32);
     let b = notes(&mut seeded_melody(42), 32);
     assert_eq!(a, b, "same seed must reproduce the same note stream");
-
     let c = notes(&mut seeded_melody(43), 32);
     assert_ne!(a, c, "different seeds should diverge");
 }
 
 #[test]
-fn test_reseeding_restarts_the_stream() {
+fn reseeding_restarts_the_stream() {
     let mut melody = seeded_melody(7);
     let first = notes(&mut melody, 8);
-
-    // Setting the same seed again restarts the stream from the top.
-    melody.controls().set_seed(7);
-    let replay = notes(&mut melody, 8);
-    assert_eq!(first, replay);
+    // Setting the seed it holds again restarts the stream from the top.
+    melody.set_control("seed", 7.0).unwrap();
+    assert_eq!(notes(&mut melody, 8), first);
+    assert_eq!(melody.get_control("seed").unwrap(), 7.0);
 }
 
 #[test]
-fn test_seed_control_surface_round_trip() {
-    use crate::{ControlSurface, ControlValue};
-    let controls = MelodyControls::new(60, vec![0, 2, 4]);
-    assert_eq!(controls.seed(), None, "unseeded by default");
-
-    controls
-        .set_control("seed", ControlValue::Number(1234.0))
-        .unwrap();
-    assert_eq!(controls.seed(), Some(1234));
-    assert_eq!(
-        controls.get_control("seed").unwrap(),
-        ControlValue::Number(1234.0)
-    );
-    assert!(controls.controls().iter().any(|meta| meta.key == "seed"));
-}
-
-#[test]
-fn test_next_note_does_not_wait_on_a_whole_table_edit() {
-    let mut melody = seeded_melody(5);
-    melody.controls().set_allowed_degrees(vec![7]);
-
-    // A control thread mid-way through an edit of the whole table. Once
-    // this deadlocked the audio thread; now the table as published is used.
-    let controls = melody.controls().clone();
-    let editing = controls.table.editing();
-    assert_eq!(without_waiting(move || melody.next_note().midi_note), 67);
-    drop(editing);
-}
-
-/// Runs `read` on another thread and returns what it read, failing rather
-/// than hanging should it not finish in ten seconds: waiting on a lock
-/// this thread holds, say.
-pub(super) fn without_waiting<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'static) -> T {
-    use std::sync::mpsc::RecvTimeoutError;
-    let (sent, received) = std::sync::mpsc::channel();
-    let worker = std::thread::spawn(move || sent.send(read()));
-    match received.recv_timeout(std::time::Duration::from_secs(10)) {
-        Ok(read) => read,
-        Err(RecvTimeoutError::Timeout) => panic!("the read did not finish in ten seconds"),
-        Err(RecvTimeoutError::Disconnected) => match worker.join() {
-            Err(panicked) => std::panic::resume_unwind(panicked),
-            Ok(_) => unreachable!("the read sends before it finishes"),
-        },
-    }
-}
-
-#[test]
-fn test_live_degree_and_root_changes_reach_the_audio_path() {
+fn degree_root_and_weight_changes_reach_the_notes() {
     let mut melody = seeded_melody(9);
-    melody.controls().set_allowed_degrees(vec![0, 4]);
-    melody.controls().set_note_weights(vec![0.0, 1.0]);
+    write_list(&mut melody, "degrees", "[0, 4]");
+    write_list(&mut melody, "note_weights", "[0, 1]");
     assert_eq!(pulse_note(&mut melody), Note::new(64).frequency());
 
     melody.set_control("root_note", 62.0).unwrap();
@@ -268,195 +165,162 @@ fn test_live_degree_and_root_changes_reach_the_audio_path() {
 }
 
 #[test]
-fn test_no_degrees_yields_middle_c() {
-    let mut melody = MelodyGenerator::new(MelodyControls::new(67, vec![]));
+fn no_degrees_yields_middle_c() {
+    let mut melody = MelodyGenerator::new(67, vec![]);
     assert_eq!(melody.next_note().midi_note, 60);
 }
 
+/// Every write the audio thread applies, and the notes they shape, allocate
+/// and free nothing: a scheduler may ramp any of them every sample.
 #[test]
-fn test_factory_seed_config() {
-    use crate::factory::ModuleFactory;
-    let factory = MelodyFactory;
-    let build = |seed: u64| {
-        let config = serde_json::json!({
-            "root_note": 60,
-            "degrees": [0, 2, 4, 5, 7],
-            "seed": seed
-        });
-        factory.build(48_000, &config).unwrap()
-    };
-    let mut first = build(99);
-    let mut second = build(99);
-    let a: Vec<f32> = (0..16)
-        .map(|_| {
-            first.module.module_mut().set_input("gate", 1.0).unwrap();
-            first.module.module_mut().process(1);
-            first.module.module_mut().set_input("gate", 0.0).unwrap();
-            first.module.module_mut().process(1);
-            first.module.module().get_output("frequency").unwrap()
-        })
+fn writes_and_the_notes_they_shape_do_not_allocate() {
+    let mut melody = seeded_melody(3);
+    let index = |key: &str| TABLE.resolve(key).unwrap();
+    let scale = index("degrees");
+    let codec = TABLE.decl(scale).unwrap().0.codec.unwrap();
+    let mut payloads: Vec<_> = (0..8)
+        .map(|n| (codec.prepare)(&format!("[0, 2, {n}]").into()).unwrap().0)
         .collect();
-    let b: Vec<f32> = (0..16)
-        .map(|_| {
-            second.module.module_mut().set_input("gate", 1.0).unwrap();
-            second.module.module_mut().process(1);
-            second.module.module_mut().set_input("gate", 0.0).unwrap();
-            second.module.module_mut().process(1);
-            second.module.module().get_output("frequency").unwrap()
-        })
-        .collect();
-    assert_eq!(a, b, "config seed flows through the factory");
-}
-
-#[test]
-fn a_degree_recorded_past_a_later_shrunk_count_is_hidden_on_rebuild() {
-    // `degree.6` was written while the scale had seven degrees, then the
-    // count shrank to three; the config still holds the stale index.
-    let config = serde_json::json!({ "degree_count": 3, "degree.6": 11, "note_weight.6": 2.0 });
-    let built = crate::ModuleRegistry::default()
-        .build("melody", 48_000, &config)
-        .expect("the index is hidden, not an error");
-    let surface = built.control_surface.unwrap();
-    assert_eq!(
-        surface.get_control("degree_count").unwrap(),
-        crate::ControlValue::Number(3.0)
-    );
-    assert!(surface.get_control("degree.6").is_err());
-
-    // Growing shows it again, as it was written.
-    surface
-        .set_control("degree_count", crate::ControlValue::Number(7.0))
-        .unwrap();
-    assert_eq!(
-        surface.get_control("degree.6").unwrap(),
-        crate::ControlValue::Number(11.0)
-    );
-}
-
-#[test]
-fn an_empty_scale_grows_with_degree_zero() {
-    let controls = MelodyControls::new(60, vec![]);
-    assert_eq!(controls.degree_count(), 0);
-    controls.set_degree_count(3);
-    assert_eq!(controls.allowed_degrees(), [0, 0, 0]);
-    controls.set_degree(1, 7).unwrap();
-    assert_eq!(controls.allowed_degrees(), [0, 7, 0]);
-}
-
-#[test]
-fn single_position_and_count_writes_do_not_allocate() {
-    // A control_scheduler ramp may write a degree or weight every sample,
-    // from the audio thread.
-    let controls = MelodyControls::new(60, vec![0, 2, 4, 5, 7]);
-    controls.set_note_weights(vec![1.0, 2.0]);
-    controls.set_degree_count(controls::MAX_DEGREES);
-    controls.set_degree_count(5);
+    let mut retired = Vec::with_capacity(payloads.len());
+    let keys = [
+        "degree_count",
+        "degree.4",
+        "note_weight.4",
+        "root_note",
+        "seed",
+    ];
     let ((), allocs, frees) = crate::alloc_counter::allocator_events(|| {
+        let _audio = crate::audio_thread::AudioThreadScope::enter();
         for step in 0..64 {
-            controls.set_note_weight(0, step as f32 / 64.0).unwrap();
-            controls.set_degree(1, step % 12).unwrap();
-            controls.set_degree_count(3 + step as usize % 9);
+            for key in keys {
+                let value = RtValue::F32(step as f32 / 4.0);
+                crate::control_request::apply_declared(&mut melody, index(key), value).unwrap();
+            }
+            if let Some(payload) = payloads.pop() {
+                retired.push(melody.apply_payload(scale, payload).ok().unwrap());
+            }
+            pulse_note(&mut melody);
         }
     });
     assert_eq!((allocs, frees), (0, 0));
 }
 
-#[test]
-fn indexed_config_values_are_taken_as_the_setters_take_them() {
-    let registry = crate::ModuleRegistry::default();
-    let built = registry
-        .build(
-            "melody",
-            48_000,
-            &serde_json::json!({ "degree.0": "7", "note_weight.1": "0" }),
-        )
-        .unwrap();
-    let surface = built.control_surface.unwrap();
-    assert_eq!(
-        surface.get_control("degree.0").unwrap(),
-        crate::ControlValue::Number(7.0)
-    );
-    assert_eq!(
-        surface.get_control("note_weight.1").unwrap(),
-        crate::ControlValue::Number(0.0)
-    );
+fn built(config: serde_json::Value) -> Result<ModuleBuildResult, String> {
+    MelodyFactory
+        .build(48_000, &config)
+        .map_err(|error| error.to_string())
+}
 
-    let near = registry
-        .build(
-            "melody",
-            48_000,
-            &serde_json::json!({ "degree.0": 1.99999999 }),
-        )
-        .unwrap();
-    assert_eq!(
-        near.control_surface
-            .unwrap()
-            .get_control("degree.0")
-            .unwrap(),
-        crate::ControlValue::Number(2.0)
-    );
+fn read(built: &ModuleBuildResult, key: &str) -> ControlValue {
+    built
+        .control_surface
+        .as_ref()
+        .unwrap()
+        .get_control(key)
+        .unwrap()
+}
+
+#[test]
+fn a_config_seed_flows_through_the_factory() {
+    let config = serde_json::json!({ "root_note": 60, "degrees": [0, 2, 4, 5, 7], "seed": 99 });
+    let run = |built: &mut ModuleBuildResult| -> Vec<f32> {
+        let melody = built.module.module_mut();
+        (0..16)
+            .map(|_| {
+                for gate in [1.0, 0.0] {
+                    melody.set_input("gate", gate).unwrap();
+                    melody.process(1);
+                }
+                melody.get_output("frequency").unwrap()
+            })
+            .collect()
+    };
+    let first = run(&mut built(config.clone()).unwrap());
+    assert_eq!(first, run(&mut built(config).unwrap()));
+}
+
+#[test]
+fn a_degree_recorded_past_a_later_shrunk_count_is_hidden_on_rebuild() {
+    // `degree.6` was written while the scale had seven degrees, then the
+    // count shrank to three; the config still holds the index.
+    let config = serde_json::json!({ "degree_count": 3, "degree.6": 11, "note_weight.6": 2.0 });
+    let mut built = built(config).expect("the index is hidden, not an error");
+    assert_eq!(read(&built, "degree_count"), ControlValue::Number(3.0));
+    let listed = built.control_surface.as_ref().unwrap().controls();
+    assert!(!keys(&listed).contains(&"degree.6"));
+
+    // Growing shows it again, as it was written.
+    let melody = built.module.module_mut();
+    melody.set_control("degree_count", 7.0).unwrap();
+    assert_eq!(melody.get_control("degree.6").unwrap(), 11.0);
+    assert_eq!(melody.get_control("note_weight.6").unwrap(), 2.0);
+}
+
+#[test]
+fn indexed_config_values_are_taken_as_writes_take_them() {
+    let built_ok = built(serde_json::json!({ "degree.0": "7", "note_weight.1": "0" })).unwrap();
+    assert_eq!(read(&built_ok, "degree.0"), ControlValue::Number(7.0));
+    assert_eq!(read(&built_ok, "note_weight.1"), ControlValue::Number(0.0));
+
+    let near = built(serde_json::json!({ "degree.0": 1.99999999 })).unwrap();
+    assert_eq!(read(&near, "degree.0"), ControlValue::Number(2.0));
 
     for config in [
         serde_json::json!({ "degree.0": "high" }),
         serde_json::json!({ "note_weight.1": true }),
         serde_json::json!({ "degree.x": 3 }),
     ] {
-        assert!(
-            registry.build("melody", 48_000, &config).is_err(),
-            "{config}"
-        );
+        assert!(built(config.clone()).is_err(), "{config}");
     }
 }
 
 #[test]
-fn an_unchanged_count_is_not_an_edit() {
-    let controls = MelodyControls::new(60, vec![0, 2, 4, 5, 7]);
-    let version = controls.table_version();
-    controls.set_degree_count(5);
-    assert_eq!(controls.table_version(), version);
-    controls.set_degree_count(4);
-    assert_ne!(controls.table_version(), version);
-}
-
-/// The controls a melody built from `config` starts with, or the refusal.
-fn built_controls(config: serde_json::Value) -> Result<MelodyControls, String> {
-    use crate::factory::ModuleFactory;
-    let built = MelodyFactory
-        .build(48_000, &config)
-        .map_err(|error| error.to_string())?;
-    let (_, handle) = &built.handles[0];
-    Ok(handle.downcast_ref::<MelodyControls>().unwrap().clone())
-}
-
-#[test]
 fn a_whole_float_root_note_and_seed_read_as_written() {
-    let controls = built_controls(serde_json::json!({ "root_note": 72.0, "seed": 99.0 })).unwrap();
-    assert_eq!(controls.root_note(), 72);
-    assert_eq!(controls.seed(), Some(99));
+    let built = built(serde_json::json!({ "root_note": 72.0, "seed": 99.0 })).unwrap();
+    assert_eq!(read(&built, "root_note"), ControlValue::Number(72.0));
+    assert_eq!(read(&built, "seed"), ControlValue::Number(99.0));
 }
 
 #[test]
 fn a_fractional_or_out_of_range_root_note_is_refused() {
-    let error = built_controls(serde_json::json!({ "root_note": 72.5 })).err();
     assert_eq!(
-        error.as_deref(),
+        built(serde_json::json!({ "root_note": 72.5 }))
+            .err()
+            .as_deref(),
         Some("melody config 'root_note' expects a whole number from 0 to 255, got 72.5")
     );
     // Was read `as u8`, so 256 played as 0.
-    let error = built_controls(serde_json::json!({ "root_note": 256 })).err();
     assert_eq!(
-        error.as_deref(),
+        built(serde_json::json!({ "root_note": 256 }))
+            .err()
+            .as_deref(),
         Some("melody config 'root_note' expects a whole number from 0 to 255, got 256")
     );
 }
 
 #[test]
-fn degrees_and_note_weights_refuse_a_non_number_rather_than_drop_it() {
-    let controls =
-        built_controls(serde_json::json!({ "degrees": [0, 4.0, 7], "note_weights": [1, 0.5] }))
-            .unwrap();
-    assert_eq!(controls.allowed_degrees(), [0, 4, 7]);
-    assert_eq!(controls.note_weights(), [1.0, 0.5, 1.0]);
+fn whole_lists_are_read_as_arrays_or_as_the_text_a_write_records() {
+    let config = serde_json::json!({ "degrees": [0, 4.0, 7], "note_weights": [1, 0.5] });
+    let built_ok = built(config).unwrap();
+    assert_eq!(
+        read(&built_ok, "degrees"),
+        ControlValue::String("[0,4,7]".into())
+    );
+    assert_eq!(
+        read(&built_ok, "note_weights"),
+        ControlValue::String("[1.0,0.5]".into())
+    );
+    assert_eq!(read(&built_ok, "note_weight.2"), ControlValue::Number(1.0));
+
+    let text = built(serde_json::json!({ "degrees": "[0,4,7]", "note_weights": "[2]" })).unwrap();
+    assert_eq!(read(&text, "degree.2"), ControlValue::Number(7.0));
+    assert_eq!(read(&text, "note_weight.0"), ControlValue::Number(2.0));
+    assert_eq!(
+        read(&text, "note_weight.3"),
+        ControlValue::Number(2.0),
+        "repeats the scale's"
+    );
+
     for (config, refusal) in [
         (
             serde_json::json!({ "degrees": [0, "4", 7] }),
@@ -479,7 +343,43 @@ fn degrees_and_note_weights_refuse_a_non_number_rather_than_drop_it() {
             "melody config 'note_weights' expects an array of numbers, got 2",
         ),
     ] {
-        let error = built_controls(config.clone()).err().unwrap_or_default();
+        let error = built(config.clone()).err().unwrap_or_default();
         assert!(error.starts_with(refusal), "{config}: {error}");
+    }
+}
+
+/// Before the melody runs, its surface holds a written number as the
+/// melody will once it applies it.
+#[test]
+fn a_built_surface_holds_its_whole_numbers_truncated() {
+    let built = built(serde_json::json!({})).unwrap();
+    let surface = built.control_surface.as_ref().unwrap();
+    for (key, written, held) in [
+        ("root_note", 61.75, 61.0),
+        ("degree_count", 3.5, 3.0),
+        ("seed", 9.9, 9.0),
+        ("degree.1", -2.5, -2.0),
+        ("note_weight.1", 2.5, 2.5),
+    ] {
+        surface.set_control(key, written.into()).unwrap();
+        assert_eq!(read(&built, key), ControlValue::Number(held), "{key}");
+    }
+}
+
+/// Automation holds a whole number truncated as it writes it, so a ramp
+/// starting from a write still waiting starts where the melody will be.
+#[test]
+fn automation_holds_its_whole_numbers_truncated() {
+    let built = built(serde_json::json!({})).unwrap();
+    let surface = built.control_surface.as_ref().unwrap();
+    for (key, written, held) in [
+        ("root_note", 61.75, 61.0),
+        ("degree.0", 4.7, 4.0),
+        ("degree.1", -2.5, -2.0),
+        ("note_weight.1", 2.5, 2.5),
+    ] {
+        let automation = surface.automation(key).unwrap();
+        automation.write_number(written);
+        assert_eq!(automation.current(), Some(held), "{key}");
     }
 }

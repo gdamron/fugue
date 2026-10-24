@@ -167,7 +167,7 @@ let running = runtime.start()?;
 
 // Control parameters at runtime
 running.tempo().set_bpm(140.0);
-running.melody_params().set_note_weights(vec![1.0, 0.5, 1.0]);
+running.set_control("melody", "note_weights", ControlValue::String("[1, 0.5, 1]".into()))?;
 ```
 
 ### Audio Output
