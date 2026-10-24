@@ -133,8 +133,9 @@ impl DevelopmentControlSurface {
     /// Writes payload key `key`, whose one alias builds the payload (a
     /// scheduler's resolved schedule). The alias records `value` first, so
     /// the inner order the payload carries counts what it now writes; a
-    /// write that fails restores what it recorded. A payload key reaches
-    /// one alias and no legacy one, so recording touches nothing else.
+    /// write that fails, or loses offline to a higher-ranked one, restores
+    /// what it recorded. A payload key reaches one alias and no legacy
+    /// one, so recording touches nothing else.
     fn write_payload(
         &self,
         declared: &DeclaredSurface,
@@ -157,7 +158,7 @@ impl DevelopmentControlSurface {
                 .and_then(|(payload, shown)| declared.submit_payload(key, payload, shown, options)),
             None => declared.submit(key, value, options),
         };
-        if written.is_err() {
+        if written.as_ref().map_or(true, |queued| queued.lost) {
             let _ = self.set_legacy(key, was);
             if let Some(declared) = &self.declared {
                 for (shared, value) in shown {

@@ -151,3 +151,41 @@ fn a_retarget_through_nested_developments_plays_as_loaded() {
     assert_eq!(first, None);
     assert_eq!(loaded, render(&document(NEW), None), "as one development");
 }
+
+/// `OLD` at another step, writing `m` as `OLD` does.
+const LATER: &str = r#"[{"at_step":7,"module":"m","control":"frequency","value":220.0}]"#;
+
+/// A script's offline `schedule` write losing to a user's at one sample
+/// leaves the user's playing and read back, the development's record of
+/// it included, so the render matches the user's write alone.
+fn a_losing_offline_write_restores(doc: &str) {
+    use crate::control_request::Source;
+    use crate::invention::declared::WriteOptions;
+    let mut engine = RenderEngine::new(RATE);
+    engine.load_json(doc).unwrap();
+    let mut out = vec![0.0f32; RATE as usize * 2];
+    engine.render_interleaved(&mut out).unwrap();
+    engine.set_control("p", "schedule", NEW.into()).unwrap();
+    let script = WriteOptions::performed(Source::Script);
+    let perform = crate::ControlWriteIntent::Perform;
+    let lost = engine
+        .snapshot()
+        .submit_control("p", "schedule", LATER.into(), perform, script);
+    assert!(lost.is_ok(), "{lost:?}");
+    let read = engine.get_control("p", "schedule").unwrap();
+    assert_eq!(read, ControlValue::String(NEW.into()), "the user's holds");
+    let mut rest = vec![0.0f32; RATE as usize * 8];
+    engine.render_interleaved(&mut rest).unwrap();
+    out.extend(rest);
+    assert_eq!(out, render(doc, Some(NEW)));
+}
+
+#[test]
+fn a_losing_offline_write_restores_what_its_development_recorded() {
+    a_losing_offline_write_restores(&document(OLD));
+}
+
+#[test]
+fn a_losing_offline_write_restores_what_a_nested_development_recorded() {
+    a_losing_offline_write_restores(&nested(OLD));
+}
