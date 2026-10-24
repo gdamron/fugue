@@ -169,8 +169,10 @@ fn a_ramp_starts_from_the_latest_write_in_the_same_block() {
     assert_eq!(knob.level, 1.0);
 }
 
+/// An event resolves like any scalar (`event_controls_can_be_scheduled`
+/// plays one).
 #[test]
-fn an_event_control_cannot_be_scheduled() {
+fn an_event_control_can_be_scheduled() {
     let cells = Arc::new(ControlCells::new(DECLS.iter().map(|decl| decl.default)));
     let surface: Arc<dyn ControlSurface + Send + Sync> =
         Arc::new(DeclaredSurface::new(TABLE.clone(), cells));
@@ -179,8 +181,7 @@ fn an_event_control_cannot_be_scheduled() {
     let directory: SurfaceDirectory = Arc::new(Mutex::new(map));
     let schedule = r#"[{ "at_step": 0, "module": "knob", "control": "tap", "value": true }]"#;
     let ctrl = ControlSchedulerControls::new(parse_schedule_json(schedule).unwrap());
-    let refused = ctrl.attach("sched", &directory).unwrap_err();
-    assert!(refused.contains("cannot be scheduled"), "{refused}");
+    ctrl.attach("sched", &directory).unwrap();
 }
 
 #[test]

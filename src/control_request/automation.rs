@@ -132,6 +132,10 @@ pub(crate) struct Automation {
     /// written, so a ramp starting from a pending write starts where the
     /// module will be.
     pub(crate) clamp: Option<(f32, f32)>,
+    /// An event (see [`ControlDecl::event`](super::ControlDecl)): a write
+    /// fires it, so it is jumped to and never ramped. A development's is an
+    /// event when any alias is.
+    pub(crate) event: bool,
     /// A development's control: the inner controls it aliases, in order.
     /// A write lands in each alias's own slot, never in these cells, so
     /// every key reaching an inner control writes the same slot, in the

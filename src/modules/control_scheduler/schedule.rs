@@ -303,7 +303,16 @@ pub(crate) fn resolve_schedule_counting(
         if automation.is_none() && surface.declares(&entry.control) {
             return Err(format!(
                 "schedule entry at step {}: control '{}.{}' cannot be scheduled \
-                 (an event, read-only or payload control)",
+                 (a read-only or payload control)",
+                entry.at_step, entry.module, entry.control
+            ));
+        }
+        // A ramp writes on every block it crosses, so it would fire an
+        // event again and again: an event is jumped to, once.
+        if entry.ramp_steps.is_some() && automation.as_ref().is_some_and(|a| a.event) {
+            return Err(format!(
+                "schedule entry at step {}: control '{}.{}' is a trigger; \
+                 it fires at a step and cannot be ramped",
                 entry.at_step, entry.module, entry.control
             ));
         }

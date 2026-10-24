@@ -75,6 +75,7 @@ pub(crate) fn number(value: f32) -> Automation {
             max: f32::MAX,
         },
         clamp: None,
+        event: false,
         aliases: None,
     }
 }

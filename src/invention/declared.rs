@@ -758,7 +758,9 @@ impl ControlSurface for DeclaredSurface {
     fn automation(&self, key: &str) -> Option<Automation> {
         let index = self.table.resolve(key)?;
         let (decl, _) = self.table.decl(index)?;
-        let writable = decl.writer == Writer::Parameter && !decl.event;
+        // An event is automated too: a schedule entry on it fires it, at
+        // most once a block (automation writes coalesce per block).
+        let writable = decl.writer == Writer::Parameter;
         let scalar = matches!(
             decl.kind,
             DeclKind::Number { .. } | DeclKind::Integer { .. } | DeclKind::Bool
@@ -768,6 +770,7 @@ impl ControlSurface for DeclaredSurface {
             index,
             kind: decl.kind,
             clamp: decl.clamp,
+            event: decl.event,
             aliases: None,
         })
     }
