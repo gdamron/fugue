@@ -90,22 +90,24 @@ pub type EventSinkSlot = Arc<Mutex<Option<Arc<dyn RpcEventSink>>>>;
 /// What a front door is told when a control write is taken: the value as
 /// coerced, and the request it was submitted as. `request` is `None` when
 /// the write applied as it was made (offline, while building, a legacy
-/// control) or travels in a publication; `lost` when, made offline, it
-/// lost to a higher-ranked write and applied nothing.
+/// control) or travels in `published`, the publication it applies with;
+/// `lost` when it lost to a higher-ranked write as it was made and
+/// applied nothing.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ControlAck {
     pub(crate) value: ControlValue,
     pub(crate) request: Option<RequestId>,
     pub(crate) lost: bool,
+    pub(crate) published: Option<u64>,
 }
 
 impl ControlAck {
     fn new(value: ControlValue, queued: &Queued) -> Self {
-        let (request, lost) = (queued.id, queued.lost);
         Self {
             value,
-            request,
-            lost,
+            request: queued.id,
+            lost: queued.lost,
+            published: queued.published,
         }
     }
 }
@@ -285,11 +287,13 @@ impl RuntimeSnapshot {
         } else {
             self.set_control_performed(module_id, key, value, &options)?
         };
-        match ack.request {
-            // Announced once it applies, maybe already.
-            Some(_) => self.announce_applied(),
-            None if !ack.lost => self.emit_control_changed(module_id, key, ack.value.clone(), None),
-            None => {}
+        // Those that applied earlier go first.
+        self.announce_applied();
+        // One submitted as a request is announced once it applies, maybe
+        // already. One travelling in a publication applies with it, at the
+        // next block unless the stream stalls, and is announced now.
+        if ack.request.is_none() && !ack.lost {
+            self.emit_control_changed(module_id, key, ack.value.clone(), None);
         }
         Ok(ack)
     }

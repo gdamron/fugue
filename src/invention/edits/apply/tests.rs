@@ -226,6 +226,8 @@ fn a_twenty_edit_batch_commits_as_one_publication_and_untouched_modules_keep_the
     edits.push(set("v6", "frequency", ControlValue::String("7".into())));
     assert_eq!(edits.len(), 20);
 
+    // The retune before is announced, so only the batch's writes are heard.
+    edited.announce_applied();
     let events = Events::listen(&edited);
     let report = edited.apply_edits(&edits).expect("the batch commits");
     assert_eq!(report.edit_count, 20);

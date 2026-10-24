@@ -201,6 +201,8 @@ impl RunningInvention {
         drop(previous);
 
         self.follow_up(committed);
+        // Writes that applied before the batch's are announced first.
+        snapshot.announce_applied();
         for (write, value) in announced {
             snapshot.emit_control_changed(&write.module_id, &write.key, value, None);
         }

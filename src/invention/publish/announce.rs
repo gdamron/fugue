@@ -15,9 +15,10 @@ pub(crate) enum Progress {
     Waiting,
     /// Settled, as the outcome says.
     Settled(Outcome),
-    /// Settled, its outcome lost or taken: announced as applied, as most
-    /// are (see `PendingLog::settle`).
-    Forgotten,
+    /// Applied, with no outcome to say when: one applied as it was made,
+    /// a publication installed, or a request whose outcome was lost or
+    /// taken, announced as applied as most are (see `PendingLog::settle`).
+    Applied,
 }
 
 impl LiveGraph {
@@ -27,13 +28,18 @@ impl LiveGraph {
         self.pending.lock().unwrap().take_announcements()
     }
 
+    /// Whether the audio thread has installed publication `generation`.
+    pub(crate) fn installed(&self, generation: u64) -> bool {
+        self.publisher.lock().unwrap().applied() >= generation
+    }
+
     /// How far request `id` got.
     pub(crate) fn progress(&self, id: RequestId) -> Progress {
         let mut pending = self.pending.lock().unwrap();
         match pending.outcome_of(id) {
             Some(outcome) => Progress::Settled(outcome),
             None if pending.waiting(id) => Progress::Waiting,
-            None => Progress::Forgotten,
+            None => Progress::Applied,
         }
     }
 }

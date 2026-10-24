@@ -158,6 +158,10 @@ pub(crate) struct Queued {
     /// An offline write that lost to a higher-ranked write at the same
     /// sample, so nothing was applied (see `control_request::hold`).
     pub(crate) lost: bool,
+    /// The publication a write travels in instead of a request (see
+    /// `publish::retarget`): it applies once the audio thread installs
+    /// that generation.
+    pub(crate) published: Option<u64>,
 }
 
 /// How a front door submits a write: whether it is authored (and what the
@@ -710,6 +714,7 @@ impl DeclaredSurface {
                         if let Some(checked) = checked {
                             (checked.record)();
                         }
+                        let generation = publisher.generation();
                         // What the recompile replaced is freed off the lock.
                         drop(publisher);
                         drop(published);
@@ -720,9 +725,8 @@ impl DeclaredSurface {
                         // none while one does), so none can overtake it, and
                         // a payload is never kept.
                         return Ok(Queued {
-                            safe: None,
-                            id: None,
-                            lost: false,
+                            published: Some(generation),
+                            ..Queued::default()
                         });
                     }
                     (_, value) => value,
@@ -838,7 +842,7 @@ impl DeclaredSurface {
                 Ok(Queued {
                     safe,
                     id: Some(id),
-                    lost: false,
+                    ..Queued::default()
                 })
             }
             Route::Offline { graph, module_id } => {
