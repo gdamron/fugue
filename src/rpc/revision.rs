@@ -252,6 +252,7 @@ impl RpcCommand {
             | Self::ExportRequestLog { .. }
             | Self::FlushSession { .. }
             | Self::GetRequest { .. }
+            | Self::ListPendingRequests { .. }
             | Self::Shutdown => false,
         }
     }

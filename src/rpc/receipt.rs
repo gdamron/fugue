@@ -171,6 +171,7 @@ impl super::RpcCommand {
             | Self::DescribeModule(_)
             | Self::FlushSession { .. }
             | Self::GetRequest { .. }
+            | Self::ListPendingRequests { .. }
             | Self::Shutdown => false,
         }
     }

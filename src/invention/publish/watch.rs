@@ -15,9 +15,7 @@ use std::any::Any;
 
 use super::change::{SurfaceMap, TopologyMirror};
 use super::{LiveGraph, PendingWrite, PreparedChange, Publisher};
-use crate::control_request::{
-    Condition, Edge, Predicate, Request, RequestId, RequestValue, Source, When,
-};
+use crate::control_request::{Condition, Edge, Predicate, Request, RequestId, RequestValue, When};
 use crate::invention::declared::DeclaredSurface;
 use crate::invention::runtime::GraphCommandError;
 use crate::ControlValue;
@@ -123,7 +121,7 @@ impl LiveGraph {
         request.when = When::Condition(condition);
         request.ttl = ttl;
         request.event = write.event;
-        let automated = request.source == Source::Automation;
+        let (source, when) = (request.source, request.when);
 
         // Recorded as a declared surface records its writes (see
         // `invention::declared`): the log locked before the submission.
@@ -139,7 +137,8 @@ impl LiveGraph {
                 value,
                 raw: Some(write.raw),
                 beat: None,
-                automated,
+                source,
+                when,
                 authored: None,
                 announced: false,
                 awaited: false,

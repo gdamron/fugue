@@ -15,7 +15,7 @@ use crate::{LoggedBeat, LoggedRequest, LoggedValue, RequestLog};
 impl LiveGraph {
     /// Submits `value` for declared control `key` of `module_id` at `when`
     /// as a front door would, logging it with `beat` as its musical time.
-    /// For tests, until a front door submits timed requests (FUG-317).
+    /// For tests, until a front door submits timed requests.
     pub(crate) fn submit_logged(
         &self,
         (module_id, key): (&str, &str),
@@ -61,7 +61,8 @@ impl LiveGraph {
             value: shown,
             raw: Some(value),
             beat,
-            automated: source == crate::control_request::Source::Automation,
+            source,
+            when: crate::control_request::When::Now,
             announced: false,
             awaited: false,
             authored: None,

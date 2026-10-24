@@ -26,7 +26,7 @@ fn runtime() -> InventionRuntime {
     InventionBuilder::new(48_000).build(invention).unwrap().0
 }
 
-fn frequency(value: f32, source: RequestSource) -> ControlWrite {
+pub(super) fn frequency(value: f32, source: RequestSource) -> ControlWrite {
     ControlWrite {
         intent: ControlWriteIntent::Perform,
         source: Some(source),
@@ -47,7 +47,7 @@ fn announced(sink: &RecordingSink) -> Vec<(ControlValue, Option<String>)> {
         .collect()
 }
 
-fn on_manual() -> (RunningInvention, Pump, Arc<RecordingSink>) {
+pub(super) fn on_manual() -> (RunningInvention, Pump, Arc<RecordingSink>) {
     let (running, pump) = start_manual(runtime());
     let sink = Arc::new(RecordingSink::default());
     running.set_event_sink(sink.clone());
@@ -236,7 +236,7 @@ fn a_batch_wider_than_the_shared_outcomes_says_what_became_of_each() {
 }
 
 /// Queues an edit adding an lfo and retuning osc, landing 256 samples on.
-fn retune_waiting(running: &mut RunningInvention) {
+pub(super) fn retune_waiting(running: &mut RunningInvention) {
     let lfo = crate::rpc::StructuralEdit::AddModule {
         id: "lfo".into(),
         module_type: "oscillator".into(),
