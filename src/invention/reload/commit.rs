@@ -194,7 +194,16 @@ impl RunningInvention {
             mut report,
         } = prepared;
         let (registry, definitions) = adopt.unzip();
+        let replacing = registry.as_deref().map(crate::registry::ReplacingKeys::of);
         let committed = self.live.commit_adopting(change, registry, |state| {
+            if let Some(replacing) = replacing {
+                state.replacing = replacing;
+            }
+            // Every module's config is the document's now, unchanged or
+            // refreshed: none holds a whole value written since.
+            if document.is_some() {
+                state.wholes_written.clear();
+            }
             for (module_id, config) in refreshed_configs {
                 if let Some(info) = state.modules.get_mut(&module_id) {
                     info.config = config;

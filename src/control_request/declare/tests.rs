@@ -319,3 +319,77 @@ fn a_clamped_integer_takes_any_unambiguous_whole_number_for_its_module_to_clamp(
     ];
     assert!(ControlTable::built(choice.to_vec()).is_err());
 }
+
+#[test]
+fn an_indexed_control_listed_below_a_count_lists_only_the_indices_under_it() {
+    let table = ControlTable::built(vec![
+        ControlDecl::new(
+            "count",
+            DeclKind::Number { min: 1.0, max: 4.0 },
+            RtValue::F32(2.0),
+            "Count",
+        ),
+        ControlDecl::new(
+            "pos",
+            DeclKind::Number { min: 0.0, max: 1.0 },
+            RtValue::F32(0.0),
+            "Position",
+        )
+        .indexed(4)
+        .listed_below("count"),
+    ])
+    .unwrap();
+    let listed = |count: Option<f32>| -> Vec<String> {
+        let current = |index| match index {
+            ControlIndex(0) => count.map(ControlValue::Number),
+            _ => None,
+        };
+        let metas = table.metas(current);
+        metas.into_iter().map(|meta| meta.key).collect()
+    };
+    assert_eq!(listed(Some(2.0)), ["count", "pos.0", "pos.1"]);
+    assert_eq!(listed(Some(4.0)).len(), 5);
+    assert_eq!(listed(None).len(), 5, "with no count to read, all of them");
+    assert!(table.resolve("pos.3").is_some(), "every index resolves");
+}
+
+#[test]
+fn whole_and_listed_below_are_refused_where_they_mean_nothing() {
+    let built = |decl: ControlDecl| ControlTable::built(vec![decl]).map(|_| ());
+    let flag = ControlDecl::new("x", DeclKind::Bool, RtValue::Bool(false), "X");
+    assert_eq!(
+        built(flag.clone().whole()),
+        Err("only a number is held whole")
+    );
+    assert_eq!(
+        built(flag.listed_below("x")),
+        Err("only an indexed control is listed below a count")
+    );
+}
+
+#[test]
+fn automation_holds_a_whole_number_truncated_then_clamped() {
+    use crate::invention::declared::DeclaredSurface;
+    use crate::ControlSurface;
+    const NOTE: &[ControlDecl] = &[ControlDecl::new(
+        "note",
+        DeclKind::Number {
+            min: -8.0,
+            max: 8.0,
+        },
+        RtValue::F32(0.0),
+        "Note",
+    )
+    .clamped(-8.0, 8.0)
+    .whole()];
+    static TABLE: ControlTable = ControlTable::of(NOTE);
+    let cells = std::sync::Arc::new(crate::control_request::ControlCells::new([RtValue::F32(
+        0.0,
+    )]));
+    let surface = DeclaredSurface::new(TABLE.clone(), cells);
+    let automation = surface.automation("note").unwrap();
+    for (written, held) in [(4.7, 4.0), (-2.5, -2.0), (9.5, 8.0)] {
+        automation.write_number(written);
+        assert_eq!(automation.current(), Some(held), "{written}");
+    }
+}

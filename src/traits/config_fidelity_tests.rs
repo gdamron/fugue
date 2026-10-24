@@ -132,7 +132,13 @@ fn every_control_rebuilds_from_the_value_recorded_in_its_config() {
             )
             .unwrap();
             document.modules[0].config = base.clone();
-            crate::invention::authored_document::write_control(&mut document, "m", key, &applied);
+            crate::invention::authored_document::write_control(
+                &mut document,
+                "m",
+                key,
+                &applied,
+                |_| registry.config_keys(type_id),
+            );
             let config = &document.modules[0].config;
             let rebuilt = registry
                 .build(type_id, 48_000, config)

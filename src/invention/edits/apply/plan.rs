@@ -14,10 +14,11 @@ use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
-use crate::invention::authored_document;
+use crate::invention::authored_document::{self, forget_replaced};
 use crate::invention::edits::EditedCandidate;
 use crate::invention::reload::{plan_reload, ReloadPlan};
 use crate::invention::state::{RuntimeModuleInfo, RuntimeState};
+use crate::module_config::replaced_by;
 use crate::rpc::{RpcError, RpcErrorCode};
 use crate::ModuleRegistry;
 
@@ -51,6 +52,14 @@ pub(super) fn plan_edits(
             let mut info = info.clone();
             if let Some(config) = authored.get(id.as_str()) {
                 info.config = (*config).clone();
+            }
+            // What the batch's writes replace is theirs to drop, as the
+            // candidate's document already has.
+            for write in &candidate.control_writes {
+                if write.write.module_id == *id {
+                    let keys = registry.config_keys(&info.module_type);
+                    forget_replaced(&mut info.config, replaced_by(keys, &write.write.key));
+                }
             }
             (id.clone(), info)
         })

@@ -7,6 +7,7 @@ use serde_json::json;
 
 use super::*;
 use crate::invention::builder::InventionBuilder;
+use crate::module_config::ConfigKey;
 use crate::modules::NullBackend;
 use crate::ModuleRegistry;
 
@@ -34,6 +35,10 @@ impl RegistryFacts {
 }
 
 impl EditFacts for RegistryFacts {
+    fn config_keys(&self, module_type: &str) -> &'static [ConfigKey] {
+        self.registry.config_keys(module_type)
+    }
+
     fn module(&self, id: &str) -> Option<ModuleFacts> {
         self.running.get(id).cloned()
     }

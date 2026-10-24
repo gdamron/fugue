@@ -79,6 +79,9 @@ pub struct ConfigKey {
     pub key: &'static str,
     /// What the key holds.
     pub kind: ConfigKind,
+    /// The keys a value of this key rewrites wholesale (see
+    /// [`Self::replacing`]); none for most.
+    pub replaces: &'static [&'static str],
 }
 
 impl ConfigKey {
@@ -93,6 +96,7 @@ impl ConfigKey {
         Self {
             key,
             kind: ConfigKind::Integer { min, max },
+            replaces: &[],
         }
     }
 
@@ -106,6 +110,7 @@ impl ConfigKey {
         Self {
             key,
             kind: ConfigKind::Float,
+            replaces: &[],
         }
     }
 
@@ -114,6 +119,7 @@ impl ConfigKey {
         Self {
             key,
             kind: ConfigKind::Text,
+            replaces: &[],
         }
     }
 
@@ -122,6 +128,7 @@ impl ConfigKey {
         Self {
             key,
             kind: ConfigKind::Bool,
+            replaces: &[],
         }
     }
 
@@ -130,7 +137,39 @@ impl ConfigKey {
         Self {
             key,
             kind: ConfigKind::Json,
+            replaces: &[],
         }
+    }
+
+    /// Declares that a value of this key rewrites `keys` wholesale, each
+    /// with its positions (`key.N`), as a melody's whole scale rewrites its
+    /// count and every degree. Writing it forgets them from the recorded
+    /// config, and a reload writing it writes them again after it, as a
+    /// cold build applies the config. Names exactly what the module's own
+    /// writes rewrite at runtime (`Module::for_each_alias`), which debug
+    /// builds check as a module is built.
+    pub const fn replacing(mut self, keys: &'static [&'static str]) -> Self {
+        self.replaces = keys;
+        self
+    }
+}
+
+/// The keys a write to `key` replaces, among a type's config `keys` (see
+/// [`ConfigKey::replacing`]).
+pub(crate) fn replaced_by(keys: &[ConfigKey], key: &str) -> &'static [&'static str] {
+    (keys.iter())
+        .find(|declared| declared.key == key)
+        .map_or(&[], |declared| declared.replaces)
+}
+
+/// Whether `name` is `key`, or one of its positions (`key.3`).
+pub(crate) fn names(key: &str, name: &str) -> bool {
+    match name.strip_prefix(key) {
+        Some("") => true,
+        Some(rest) => rest
+            .strip_prefix('.')
+            .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit())),
+        None => false,
     }
 }
 

@@ -9,6 +9,7 @@
 //! [`RuntimeState`]: super::state::RuntimeState
 
 use crate::invention::format::{Invention, ModuleSpec};
+use crate::module_config::{names, replaced_by, ConfigKey};
 use crate::ControlValue;
 
 /// Records a module added, replaced, or swapped: updates the spec with the
@@ -38,11 +39,47 @@ pub(crate) fn remove_module(document: &mut Invention, id: &str) {
 }
 
 /// Writes a control value into a module's config so the document reproduces
-/// it on a cold rebuild. Does nothing when no module has that id.
-pub(crate) fn write_control(document: &mut Invention, id: &str, key: &str, value: &ControlValue) {
+/// it on a cold rebuild, dropping the keys the write replaces (see
+/// [`forget_replaced`]) among those `keys_of` its type declares. Does
+/// nothing when no module has that id.
+pub(crate) fn write_control(
+    document: &mut Invention,
+    id: &str,
+    key: &str,
+    value: &ControlValue,
+    keys_of: impl FnOnce(&str) -> &'static [ConfigKey],
+) {
     if let Some(spec) = document.modules.iter_mut().find(|spec| spec.id == id) {
+        forget_replaced(
+            &mut spec.config,
+            replaced_by(keys_of(&spec.module_type), key),
+        );
         write_config_control(&mut spec.config, key, value);
     }
+}
+
+/// Drops from a config the `replaced` keys, with their positions, that a
+/// write rewrites wholesale (see [`ConfigKey::replacing`]), so the config
+/// never rebuilds what the write discarded. Returns whether it replaces
+/// any.
+pub(crate) fn forget_replaced(config: &mut serde_json::Value, replaced: &[&str]) -> bool {
+    if replaced.is_empty() {
+        return false;
+    }
+    if let Some(config) = config.as_object_mut() {
+        config.retain(|name, _| !replaced.iter().any(|gone| names(gone, name)));
+    }
+    true
+}
+
+/// The keys of `config` among the `replaced` (see [`forget_replaced`]), in
+/// the config's order.
+pub(crate) fn replaced_in<'a>(
+    config: &'a serde_json::Value,
+    replaced: &'a [&'a str],
+) -> impl Iterator<Item = (&'a String, &'a serde_json::Value)> {
+    (config.as_object().into_iter().flatten())
+        .filter(move |(name, _)| replaced.iter().any(|gone| names(gone, name)))
 }
 
 /// Writes a control value into one config under the control's key, making

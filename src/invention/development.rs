@@ -139,6 +139,13 @@ fn apply_development_config(
         })?;
         pending.push((key, value));
     }
+    // A payload (a melody's whole scale) applies before the scalars, which
+    // may write within it.
+    pending.sort_by_key(|(key, _)| {
+        !surface
+            .declaration(key)
+            .is_some_and(|found| found.decl.kind == crate::control_request::DeclKind::Payload)
+    });
     // Keys are applied in passes, a failed one again after the rest, since
     // one control can size what another reaches (a count and a degree
     // behind it). A key still failing whose control is listed but cannot be
