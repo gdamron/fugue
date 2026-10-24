@@ -57,9 +57,7 @@ impl Locking {
     /// locking ones these.
     fn directory(&self) -> SurfaceDirectory {
         let mut map: IndexMap<String, ControlSurfaceInstance> = IndexMap::new();
-        for type_id in ["sample_kit"] {
-            map.insert(type_id.into(), scheduled_surface(type_id));
-        }
+        map.insert("sample_kit".into(), scheduled_surface("sample_kit"));
         map.insert("sample_player".into(), Arc::new(self.player.clone()));
         map.insert(
             "sample_instrument".into(),
