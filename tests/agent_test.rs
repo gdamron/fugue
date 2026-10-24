@@ -368,7 +368,7 @@ fn agent_telemetry_is_read_only_through_set_control() {
         .unwrap();
     let agent: AgentControls = handles.get("agent.controls").unwrap();
     complete_requests(&running, &agent, 1.0);
-    // The request counts itself before its last write, going idle.
+    // The request counts itself before its final write, going idle.
     wait_for_status(&running, "idle");
 
     let ControlValue::String(parsed) = running
