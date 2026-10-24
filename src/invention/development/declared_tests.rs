@@ -12,11 +12,14 @@ use crate::control_request::take_automation;
 use crate::invention::declared::add_offline;
 use crate::invention::graph::{MasterObservers, SignalGraph};
 use crate::test_support::dial::DialFactory;
+use crate::test_support::legacy_dial::LegacyDialFactory;
 
-/// A development factory over `definition`, with dials registered.
+/// A development factory over `definition`, with dials and legacy dials
+/// registered.
 pub(super) fn factory(name: &str, definition: serde_json::Value) -> DevelopmentFactory {
     let mut registry = ModuleRegistry::default();
     registry.register(DialFactory);
+    registry.register(LegacyDialFactory);
     DevelopmentFactory {
         name: name.to_string(),
         definition: serde_json::from_value(definition).unwrap(),
@@ -26,13 +29,13 @@ pub(super) fn factory(name: &str, definition: serde_json::Value) -> DevelopmentF
     }
 }
 
-/// A dial and a (legacy) lfo behind one exposed `mix`, with the lfo's rate
-/// also exposed alone as `rate`, and `form` reaching the dial's shape and
-/// the lfo's waveform, which share no option.
+/// A dial and a legacy dial behind one exposed `mix`, with the legacy dial's
+/// rate also exposed alone as `rate`, and `form` reaching the dial's shape
+/// and the legacy dial's waveform, which share no option.
 fn mixed() -> serde_json::Value {
     json!({
         "version": "1.0.0",
-        "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "lfo" }],
+        "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "legacy_dial" }],
         "connections": [],
         "outputs": [{ "name": "a", "from": "a", "from_port": "out" }],
         "controls": [
@@ -160,7 +163,11 @@ fn inner_surfaces_are_reached_only_through_the_development() {
 fn a_key_mixing_declared_and_legacy_aliases_reaches_both_but_cannot_be_scheduled() {
     let (graph, surface) = running_from(factory("mixed", mixed()), json!({ "mix": 3.0 }));
     assert_eq!(outputs_a(&graph), 1.0, "the dial, clamped");
-    assert_eq!(surface.get_control("rate").unwrap(), 3.0.into(), "the lfo");
+    assert_eq!(
+        surface.get_control("rate").unwrap(),
+        3.0.into(),
+        "the legacy dial"
+    );
     surface.set_control("mix", 0.5.into()).unwrap();
     assert_eq!(outputs_a(&graph), 0.5);
     assert_eq!(surface.get_control("rate").unwrap(), 0.5.into());
@@ -193,7 +200,7 @@ fn a_value_one_alias_cannot_hold_changes_no_alias_and_fails_a_cold_load() {
     let (graph, surface) = running_from(factory("mixed", mixed()), json!({}));
     assert!(
         surface.set_control("form", "steep".into()).is_err(),
-        "no lfo waveform"
+        "no legacy dial waveform"
     );
     outputs_a(&graph);
     assert_eq!(
@@ -292,7 +299,7 @@ fn a_scheduled_ramp_on_a_legacy_only_key_allocates_nothing() {
     };
     let definition = json!({
         "version": "1.0.0",
-        "modules": [{ "id": "l", "type": "lfo" }],
+        "modules": [{ "id": "l", "type": "legacy_dial" }],
         "connections": [],
         "controls": [{ "name": "rate", "module": "l", "control": "rate" }]
     });

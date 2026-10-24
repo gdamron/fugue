@@ -8,7 +8,11 @@ pub(super) const FREQUENCY_MOD_DEPTH: ControlIndex = ControlIndex(2);
 pub(super) const AMPLITUDE_MOD_DEPTH: ControlIndex = ControlIndex(3);
 
 /// The waveforms, in [`super::OscillatorType`] order.
-pub(super) const WAVEFORMS: &[&str] = &["sine", "square", "sawtooth", "triangle"];
+pub(crate) const WAVEFORMS: &[&str] = &["sine", "square", "sawtooth", "triangle"];
+
+/// Other spellings of the waveforms that have always loaded, with the
+/// option each means.
+pub(crate) const WAVEFORM_SPELLINGS: &[(&str, &str)] = &[("saw", "sawtooth"), ("tri", "triangle")];
 
 const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
@@ -30,7 +34,7 @@ const DECLS: &[ControlDecl] = &[
         RtValue::U32(0),
         "Waveform",
     )
-    .spellings(&[("saw", "sawtooth"), ("tri", "triangle")]),
+    .spellings(WAVEFORM_SPELLINGS),
     ControlDecl::new(
         "frequency_mod_depth",
         DeclKind::Number {

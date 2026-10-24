@@ -12,7 +12,7 @@ use crate::{ControlValue, ModuleFactory};
 fn a_scheduled_write_fans_out_to_every_legacy_alias_without_allocating() {
     let definition = json!({
         "version": "1.0.0",
-        "modules": [{ "id": "a", "type": "lfo" }, { "id": "b", "type": "lfo" }],
+        "modules": [{ "id": "a", "type": "legacy_dial" }, { "id": "b", "type": "legacy_dial" }],
         "connections": [],
         "controls": [
             { "name": "rate", "module": "a", "control": "rate" },

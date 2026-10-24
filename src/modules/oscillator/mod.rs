@@ -14,6 +14,7 @@ use crate::Module;
 use std::f32::consts::PI;
 
 use self::controls::{AMPLITUDE_MOD_DEPTH, FREQUENCY, FREQUENCY_MOD_DEPTH, TABLE, WAVEFORM};
+pub(crate) use self::controls::{WAVEFORMS, WAVEFORM_SPELLINGS};
 pub use self::waveform::OscillatorType;
 
 mod controls;
