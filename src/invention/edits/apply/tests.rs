@@ -15,6 +15,7 @@ use crate::{ControlValue, Invention, ModuleRegistry};
 mod after_timed_edit;
 mod commit;
 mod config_refusals;
+mod payload_order;
 mod real_modules;
 mod refusals;
 mod scheduled_targets;

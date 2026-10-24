@@ -33,7 +33,7 @@ fn upsert_tape(rig: &Rig, note: f32) {
 }
 
 fn notes(values: &[f32]) -> RequestValue {
-    RequestValue::Payload(Payload::new(Notes(values.to_vec())))
+    RequestValue::Payload(Payload::new(Notes(values.to_vec(), None)))
 }
 
 fn submit(rig: &Rig, values: &[f32], when: When) -> RequestId {

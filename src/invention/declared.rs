@@ -62,7 +62,9 @@ use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 /// Where a declared surface's writes go (see the module docs).
 #[derive(Clone)]
 pub(crate) enum Route {
-    /// The controls written so far, each once.
+    /// The controls written so far, each once, in the order of its last
+    /// write: a payload rewriting controls (a melody's whole scale) applies
+    /// after those written before it and before those written after.
     Building(Vec<ControlIndex>),
     Live(RequestPort),
     Offline {
@@ -400,6 +402,8 @@ impl DeclaredSurface {
                         if let Some(checked) = checked {
                             (checked.record)();
                         }
+                        written.retain(|earlier| *earlier != index);
+                        written.push(index);
                         return Ok(Queued::default());
                     }
                 };
@@ -414,9 +418,8 @@ impl DeclaredSurface {
                     _ => value,
                 };
                 self.cells.publish(index, held);
-                if !written.contains(&index) {
-                    written.push(index);
-                }
+                written.retain(|earlier| *earlier != index);
+                written.push(index);
                 return Ok(Queued::default());
             }
             route.clone()
@@ -706,17 +709,28 @@ impl ControlSurface for DeclaredSurface {
             "a declared surface binds only its own module"
         );
         if let Route::Building(written) = &*current {
-            for index in written {
-                if let Some(value) = self.cells.load(*index) {
-                    let _ = apply_declared(module, *index, value);
-                }
-            }
-            // Payloads written meanwhile; what they replace, or a refused
-            // one, is dropped here, on this control thread.
-            for written in self.payloads.lock().unwrap().iter_mut() {
-                if let Some(payload) = written.staged.take() {
-                    let applied = module.apply_payload(written.index, payload);
-                    debug_assert!(applied.is_ok(), "a module takes what its codec builds");
+            // In the order written, each scalar as written: read before any
+            // payload applies, as a payload republishes the cells it
+            // rewrites. What a payload replaces, or a refused one, is
+            // dropped here, on this control thread.
+            let values: Vec<_> = written
+                .iter()
+                .map(|index| self.cells.load(*index))
+                .collect();
+            let mut payloads = self.payloads.lock().unwrap();
+            for (index, value) in written.iter().zip(values) {
+                match payloads.iter_mut().find(|payload| payload.index == *index) {
+                    Some(payload) => {
+                        if let Some(staged) = payload.staged.take() {
+                            let applied = module.apply_payload(*index, staged);
+                            debug_assert!(applied.is_ok(), "a module takes what its codec builds");
+                        }
+                    }
+                    None => {
+                        if let Some(value) = value {
+                            let _ = apply_declared(module, *index, value);
+                        }
+                    }
                 }
             }
         }

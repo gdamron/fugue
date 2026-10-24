@@ -1,7 +1,9 @@
 //! A test module with a payload control, built by [`TapeFactory`] as type
 //! `tape`: it keeps `notes`, a JSON array of numbers, whole as a payload
-//! and outputs their sum times its `gain`. Its notes count their drops on
-//! the thread that frees them ([`freed`]).
+//! and outputs their sum times its `gain`. Notes written as
+//! `{"notes": [..], "gain": g}` carry the gain they play at, so they rewrite
+//! `gain` too (not weighed against its holds). Its notes count their drops
+//! on the thread that frees them ([`freed`]).
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -41,8 +43,9 @@ pub(crate) fn freed() -> usize {
     FREED.with(Cell::get)
 }
 
-/// A tape's notes; counts its drop on the thread freeing it.
-pub(crate) struct Notes(pub(crate) Vec<f32>);
+/// A tape's notes, and the gain they carry; counts its drop on the thread
+/// freeing it.
+pub(crate) struct Notes(pub(crate) Vec<f32>, pub(crate) Option<f32>);
 
 impl Drop for Notes {
     fn drop(&mut self) {
@@ -50,10 +53,21 @@ impl Drop for Notes {
     }
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(untagged)]
+enum Written {
+    Notes(Vec<f32>),
+    Carrying { notes: Vec<f32>, gain: f32 },
+}
+
 fn parse(text: &str) -> Result<(Notes, ControlValue), String> {
-    let notes: Vec<f32> = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    let shown = serde_json::to_string(&notes).map_err(|error| error.to_string())?;
-    Ok((Notes(notes), shown.into()))
+    let written: Written = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let shown = serde_json::to_string(&written).map_err(|error| error.to_string())?;
+    let notes = match written {
+        Written::Notes(notes) => Notes(notes, None),
+        Written::Carrying { notes, gain } => Notes(notes, Some(gain)),
+    };
+    Ok((notes, shown.into()))
 }
 
 fn prepare(value: &ControlValue) -> Result<(Payload, ControlValue), String> {
@@ -87,11 +101,18 @@ impl ModuleFactory for TapeFactory {
             None => "[]".to_string(),
         };
         let (notes, shown) = parse(&text)?;
+        // A gain given beside the notes wins over the one they carry.
+        let gain = (config.get("gain").and_then(serde_json::Value::as_f64))
+            .map(|gain| gain as f32)
+            .or(notes.1)
+            .unwrap_or(1.0)
+            .clamp(0.0, 1.0);
         let cells = Arc::new(ControlCells::new(DECLS.iter().map(|decl| decl.default)));
+        cells.publish(GAIN, RtValue::F32(gain));
         let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
         surface.show_payload("notes", shown);
         let tape = Tape {
-            gain: 1.0,
+            gain,
             notes: Shared::new(notes),
             cells,
             out: [0.0; MAX_BLOCK],
@@ -163,7 +184,13 @@ impl Module for Tape {
             return Err((Refusal::Unsupported, payload));
         }
         match payload.downcast::<Notes>() {
-            Ok(notes) => Ok(std::mem::replace(&mut self.notes, notes).into()),
+            Ok(notes) => {
+                if let Some(gain) = notes.1 {
+                    self.gain = gain.clamp(0.0, 1.0);
+                    self.cells.publish(GAIN, RtValue::F32(self.gain));
+                }
+                Ok(std::mem::replace(&mut self.notes, notes).into())
+            }
             Err(payload) => Err((Refusal::Invalid, payload)),
         }
     }
