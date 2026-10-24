@@ -4,24 +4,37 @@ use indexmap::IndexMap;
 
 use super::schedule::{compile_tempo_map, parse_schedule, parse_schedule_json, SurfaceMap};
 use super::*;
-use crate::modules::cell_sequencer::CellSequencerControls;
+use crate::factory::{GraphModule, ModuleFactory};
+use crate::modules::cell_sequencer::CellSequencerFactory;
 use crate::modules::mixer::MixerControls;
 use crate::{ControlSurface, ControlValue};
 
 /// Builds a scheduler attached to a directory containing a 2-channel mixer
 /// (id `mixer`, all levels 1.0) and a cell sequencer (id `cells`).
 pub(super) fn setup(schedule_json: &str) -> (ControlScheduler, MixerControls, SurfaceDirectory) {
+    let (module, mixer, directory, _cells) = setup_with_cells(schedule_json);
+    (module, mixer, directory)
+}
+
+/// [`setup`], with the cell sequencer the directory's `cells` controls.
+fn setup_with_cells(
+    schedule_json: &str,
+) -> (
+    ControlScheduler,
+    MixerControls,
+    SurfaceDirectory,
+    GraphModule,
+) {
     let mixer = MixerControls::new(2);
-    let cells = CellSequencerControls::new();
+    let config = serde_json::json!({ "cells": [[0], [2]] });
+    let built = CellSequencerFactory.build(48_000, &config);
+    let built = built.unwrap();
     let mut map: SurfaceMap = IndexMap::new();
     map.insert(
         "mixer".to_string(),
         Arc::new(mixer.clone()) as Arc<dyn ControlSurface + Send + Sync>,
     );
-    map.insert(
-        "cells".to_string(),
-        Arc::new(cells) as Arc<dyn ControlSurface + Send + Sync>,
-    );
+    map.insert("cells".to_string(), built.control_surface.unwrap());
     let directory: SurfaceDirectory = Arc::new(Mutex::new(map));
 
     let spec = parse_schedule_json(schedule_json).unwrap();
@@ -30,7 +43,7 @@ pub(super) fn setup(schedule_json: &str) -> (ControlScheduler, MixerControls, Su
     let mut module = ControlScheduler::new(48_000, ctrl);
     module.settle();
     module.settle();
-    (module, mixer, directory)
+    (module, mixer, directory, built.module)
 }
 
 /// Sends one gate rising edge (one high frame, then `low_frames` low frames),
@@ -179,16 +192,53 @@ fn schedule_replaced_during_playback_skips_past_entries() {
 
 #[test]
 fn bool_controls_can_be_scheduled() {
-    let (mut module, _mixer, dir) = setup(
+    let (mut module, _mixer, dir, mut cells) = setup_with_cells(
         r#"[{ "at_step": 0, "module": "cells", "control": "wait_for_cycle_end", "value": true }]"#,
     );
 
     pulse(&mut module, 1);
+    crate::control_request::take_automation(cells.module_mut());
     let cells = dir.lock().unwrap().get("cells").unwrap().clone();
     assert_eq!(
         cells.get_control("wait_for_cycle_end").unwrap(),
         crate::ControlValue::Bool(true)
     );
+}
+
+/// A trigger is scheduled like any control: the entry fires it once.
+#[test]
+fn event_controls_can_be_scheduled() {
+    let (mut module, _mixer, dir, mut cells) = setup_with_cells(
+        r#"[{ "at_step": 0, "module": "cells", "control": "next_cell", "value": 1.0 }]"#,
+    );
+
+    pulse(&mut module, 1);
+    crate::control_request::take_automation(cells.module_mut());
+    cells.module_mut().process(1);
+    let surface = dir.lock().unwrap().get("cells").unwrap().clone();
+    assert_eq!(
+        surface.get_control("cell").unwrap(),
+        ControlValue::Number(1.0)
+    );
+    assert_eq!(
+        surface.get_control("next_cell").unwrap(),
+        ControlValue::Number(0.0)
+    );
+}
+
+/// A ramp would fire a trigger on every block it crosses: it is refused.
+#[test]
+fn an_event_control_cannot_be_ramped() {
+    let built = CellSequencerFactory.build(48_000, &serde_json::json!({}));
+    let mut map: SurfaceMap = IndexMap::new();
+    map.insert("cells".to_string(), built.unwrap().control_surface.unwrap());
+    let directory: SurfaceDirectory = Arc::new(Mutex::new(map));
+    let schedule = r#"[
+        { "at_step": 0, "module": "cells", "control": "next_cell", "value": 1.0, "ramp_steps": 4 }
+    ]"#;
+    let ctrl = ControlSchedulerControls::new(parse_schedule_json(schedule).unwrap());
+    let refused = ctrl.attach("sched", &directory).unwrap_err();
+    assert!(refused.contains("cannot be ramped"), "{refused}");
 }
 
 #[test]

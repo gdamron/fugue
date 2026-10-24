@@ -77,7 +77,9 @@ fn other_wav() -> String {
 fn base_config(type_id: &str) -> serde_json::Value {
     let wav = crate::module_config::tests::registry::eight_frame_wav;
     match type_id {
-        "cell_sequencer" => serde_json::json!({ "cells": [[60, null], [62]] }),
+        // Four cells, so a probed `select_cell` names a cell in the bank (a
+        // selection past it plays the bank's last cell).
+        "cell_sequencer" => serde_json::json!({ "cells": [[60, null], [62], [64], [65]] }),
         "sample_kit" => serde_json::json!({ "samples": [{ "key": 36, "asset": wav() }] }),
         "sample_instrument" => {
             serde_json::json!({ "zones": [{ "root_note": 60, "asset": wav() }] })

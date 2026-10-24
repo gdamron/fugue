@@ -98,13 +98,12 @@ impl CellSequencerInputs {
         self.previous_cell[i]
     }
 
+    /// The cell the `select_cell` input names at sample `i`, while it is
+    /// connected.
     #[inline]
-    pub fn select_cell(&self, i: usize, control: usize) -> usize {
-        if self.select_cell_connected {
-            self.select_cell[i].max(0.0).round() as usize
-        } else {
-            control
-        }
+    pub fn select_cell(&self, i: usize) -> Option<usize> {
+        self.select_cell_connected
+            .then(|| self.select_cell[i].max(0.0).round() as usize)
     }
 
     #[inline]

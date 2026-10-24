@@ -1,4 +1,5 @@
-//! Thread-safe controls for the CellSequencer module.
+//! Thread-safe controls for the CellSequencer module: the legacy surface,
+//! no longer used by the sequencer, which declares its controls in `table`.
 //!
 //! Hot-path scalar fields live in atomics so the audio thread can read them
 //! lock-free at sample rate. The sequence bank itself sits behind a separate
@@ -268,6 +269,7 @@ impl CellSequencerControls {
         self.shared.ended.load(Ordering::Relaxed)
     }
 
+    #[allow(dead_code)] // The sequencer no longer writes this surface; it is removed next.
     pub(crate) fn set_ended(&self, ended: bool) {
         self.shared.ended.store(ended, Ordering::Relaxed);
     }
@@ -305,6 +307,7 @@ impl CellSequencerControls {
         self.shared.loop_count.load(Ordering::Relaxed)
     }
 
+    #[allow(dead_code)] // The sequencer no longer writes this surface; it is removed next.
     pub(crate) fn set_loop_count(&self, value: u32) {
         self.shared.loop_count.store(value, Ordering::Relaxed);
     }
@@ -313,6 +316,7 @@ impl CellSequencerControls {
         self.shared.cell.load(Ordering::Relaxed)
     }
 
+    #[allow(dead_code)] // The sequencer no longer writes this surface; it is removed next.
     pub(crate) fn set_cell(&self, value: usize) {
         self.shared.cell.store(value, Ordering::Relaxed);
     }
