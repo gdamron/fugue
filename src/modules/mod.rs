@@ -54,7 +54,7 @@ pub use agent::AgentControls;
 pub use audio_file_sink::{
     AudioFileSink, AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats,
 };
-pub use cell_sequencer::{CellSequencer, CellSequencerControls};
+pub use cell_sequencer::CellSequencer;
 pub use clock::Clock;
 pub use code::CodeControls;
 pub use control_scheduler::{
