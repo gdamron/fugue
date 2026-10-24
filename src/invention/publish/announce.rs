@@ -33,18 +33,12 @@ impl LiveGraph {
         self.publisher.lock().unwrap().applied() >= generation
     }
 
-    /// How far request `id` got. One not applied whose copy kept over a
-    /// timed edit still waits may yet apply with it.
+    /// How far request `id` got.
     pub(crate) fn progress(&self, id: RequestId) -> Progress {
         let mut pending = self.pending.lock().unwrap();
-        let outcome = pending.outcome_of(id);
-        let applied = matches!(
-            outcome,
-            Some(Outcome::Applied { .. } | Outcome::AppliedLate { .. })
-        );
-        match outcome {
-            _ if !applied && pending.waiting(id) => Progress::Waiting,
+        match pending.outcome_of(id) {
             Some(outcome) => Progress::Settled(outcome),
+            None if pending.waiting(id) => Progress::Waiting,
             None => Progress::Applied,
         }
     }

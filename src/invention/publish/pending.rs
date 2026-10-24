@@ -51,28 +51,13 @@ pub(crate) struct PendingWrite {
     /// is authored.
     pub(crate) authored: Option<Authoring>,
     /// Announced as a `ControlChanged` event once it applies: a front
-    /// door's write (see `RuntimeSnapshot::submit_control`), not
-    /// telemetry: the write or its copy kept over a timed edit (see
-    /// [`Twin`]), whichever applies first.
+    /// door's write (see `RuntimeSnapshot::submit_control`), not a copy
+    /// kept over a timed edit, which the edit owns, nor telemetry.
     pub(crate) announced: bool,
     /// A reply awaits its outcome, which is held apart from the shared
     /// ring of outcomes until the reply releases it (see
     /// [`PendingLog::release`]).
     pub(crate) awaited: bool,
-    /// The other of a write kept over a timed edit and its copy.
-    pub(crate) twin: Option<Twin>,
-}
-
-/// A write kept over a timed edit is two requests: the write, and a copy
-/// that lands with the edit, which may yet apply if the write is
-/// superseded. The first of the two to apply is announced, naming the
-/// write's own request.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Twin {
-    /// On the write: its copy's request.
-    Copy(RequestId),
-    /// On the copy: the write's request.
-    Write(RequestId),
 }
 
 /// A front door's write that applied, for its `ControlChanged` event.
@@ -211,7 +196,6 @@ impl PendingLog {
                 }
                 self.timed_outcomes.push_back((id, outcome));
                 self.steps.push_back(DocumentStep::Timed);
-                self.received(id, outcome);
             } else {
                 let write = self.writes.iter().position(|(pending, _)| *pending == id);
                 let write = write
@@ -228,21 +212,13 @@ impl PendingLog {
                     self.authored(write);
                     self.announce(id, write);
                 }
-                // A copy applying is its write applying, superseded or not:
-                // the write's request reads as the copy's, as announced.
-                let copied = write
-                    .as_ref()
-                    .filter(|_| applied)
-                    .and_then(|write| write.twin);
                 self.record(write, outcome, latched);
-                self.received(id, outcome);
-                if let Some(Twin::Write(of)) = copied {
-                    if let Some(held) = self.held.iter_mut().find(|(held, _)| *held == of) {
-                        held.1 = outcome;
-                    }
-                    self.received(of, outcome);
-                }
             }
+            if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
+                self.outcomes.pop_front();
+                self.lost += 1;
+            }
+            self.outcomes.push_back((id, outcome));
         }
         let dropped = self.dropped.take(self.receiver.dropped());
         if dropped > 0 {
@@ -250,28 +226,13 @@ impl PendingLog {
             self.log.lost(u64::from(dropped));
             // Which applied cannot be known; most do, and an author's
             // write is not to be lost from the document.
-            let writes = std::mem::take(&mut self.writes);
-            for (id, write) in &writes {
-                self.authored(write);
-                // A copy and its write are one write, announced once.
-                let twin = |of| writes.iter().any(|(listed, _)| *listed == of);
-                if !matches!(write.twin, Some(Twin::Write(of)) if twin(of)) {
-                    self.announce(*id, write);
-                }
+            for (id, write) in std::mem::take(&mut self.writes) {
+                self.authored(&write);
+                self.announce(id, &write);
             }
             self.timed.clear();
             self.timed_lost = true;
         }
-    }
-
-    /// Lists request `id`'s outcome among those received, forgetting the
-    /// oldest past [`OUTCOME_QUEUE_CAPACITY`].
-    fn received(&mut self, id: RequestId, outcome: Outcome) {
-        if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
-            self.outcomes.pop_front();
-            self.lost += 1;
-        }
-        self.outcomes.push_back((id, outcome));
     }
 
     /// Timed edits' outcomes received since the last call, oldest first,
@@ -376,22 +337,11 @@ impl PendingLog {
         if !write.announced {
             return;
         }
-        // The first of a write and its copy to apply is announced, for
-        // the write; the other is not.
-        let request = match write.twin {
-            Some(Twin::Write(of)) => of,
-            _ => id,
-        };
-        if let Some(Twin::Copy(other) | Twin::Write(other)) = write.twin {
-            if let Some((_, twin)) = self.writes.iter_mut().find(|(at, _)| *at == other) {
-                twin.announced = false;
-            }
-        }
         if self.announcements.len() == OUTCOME_QUEUE_CAPACITY {
             self.announcements.pop_front();
         }
         self.announcements.push_back(Announcement {
-            request,
+            request: id,
             module_id: write.module_id.clone(),
             key: write.key.clone(),
             value: write.value.clone(),
@@ -417,11 +367,9 @@ impl PendingLog {
             .map(|(_, outcome)| *outcome)
     }
 
-    /// Whether request `id` still waits to apply, or its copy kept over a
-    /// timed edit does.
+    /// Whether request `id` still waits to apply.
     pub(crate) fn waiting(&self, id: RequestId) -> bool {
-        (self.writes.iter())
-            .any(|(waiting, write)| *waiting == id || write.twin == Some(Twin::Write(id)))
+        self.writes.iter().any(|(waiting, _)| *waiting == id)
     }
 
     /// Makes room to hold the outcomes of `writes` more awaited writes, so
