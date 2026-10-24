@@ -57,7 +57,7 @@ impl Locking {
     /// locking ones these.
     fn directory(&self) -> SurfaceDirectory {
         let mut map: IndexMap<String, ControlSurfaceInstance> = IndexMap::new();
-        for type_id in ["sample_slicer", "sample_kit"] {
+        for type_id in ["sample_kit"] {
             map.insert(type_id.into(), scheduled_surface(type_id));
         }
         map.insert("sample_player".into(), Arc::new(self.player.clone()));
@@ -150,7 +150,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
     let mut locking = Locking::new();
     let directory = locking.directory();
     let entries = vec![
-        entry(0, "sample_slicer", "time_ratio", Number(2.0)),
         ramp("sample_kit", "level.0", 0.5),
         entry(0, "sample_player", "play", Bool(true)),
         ramp("sample_player", "pitch_ratio", 2.0),
@@ -162,7 +161,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
         assert_eq!(locking.block(&mut scheduler, gate), (0, 0));
     }
     for (module, control, to) in [
-        ("sample_slicer", "time_ratio", 2.0),
         ("sample_kit", "level.0", 0.5),
         ("sample_player", "pitch_ratio", 2.0),
         ("sample_instrument", "level.0", 0.5),
