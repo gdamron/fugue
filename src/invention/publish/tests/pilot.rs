@@ -169,6 +169,90 @@ fn an_oscillator_takes_the_waveform_spellings_it_always_took() {
     assert_eq!(read(&rig, "osc", "waveform"), "sawtooth".into());
 }
 
+const ADSR_PATCH: &str = r#"{
+    "version": "1.0.0",
+    "modules": [
+        { "id": "adsr", "type": "adsr", "config": { "attack": 0.5, "sustain": 0.4 } },
+        { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
+    ],
+    "connections": [
+        { "from": "adsr", "from_port": "envelope", "to": "dac", "to_port": "audio" }
+    ]
+}"#;
+
+#[test]
+fn adsr_writes_apply_on_the_audio_thread_and_read_back() {
+    let mut rig = Rig::new(ADSR_PATCH);
+    rig.render(1);
+    assert_eq!(read(&rig, "adsr", "attack"), 0.5.into(), "from config");
+    assert_eq!(read(&rig, "adsr", "decay"), 0.1.into(), "its default");
+    write(&rig, "adsr", "attack", 2.0.into());
+    write(&rig, "adsr", "decay", (-1.0).into());
+    write(&rig, "adsr", "sustain", 3.0.into());
+    write(&rig, "adsr", "release", 0.75.into());
+    assert_eq!(read(&rig, "adsr", "attack"), 0.5.into(), "pending");
+
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert_eq!(read(&rig, "adsr", "attack"), 2.0.into());
+    assert_eq!(
+        read(&rig, "adsr", "decay"),
+        0.0.into(),
+        "as the adsr clamped it"
+    );
+    assert_eq!(
+        read(&rig, "adsr", "sustain"),
+        1.0.into(),
+        "as the adsr clamped it"
+    );
+    assert_eq!(read(&rig, "adsr", "release"), 0.75.into());
+}
+
+#[test]
+fn a_scheduler_ramps_every_adsr_control_without_allocating() {
+    let mut rig = Rig::new(ADSR_PATCH);
+    let ramps: Vec<_> = [
+        ("attack", 1.0),
+        ("decay", 0.5),
+        ("sustain", 0.8),
+        ("release", 1.0),
+    ]
+    .iter()
+    .map(|(control, to)| {
+        serde_json::json!({
+            "at_step": 0, "module": "adsr", "control": control, "value": to, "ramp_steps": 4
+        })
+    })
+    .collect();
+    let scheduler = rig.build(
+        "sched",
+        "control_scheduler",
+        serde_json::json!({ "schedule": ramps }),
+    );
+    rig.live
+        .edit(|change| {
+            change.upsert("sched", scheduler);
+            Ok(())
+        })
+        .unwrap();
+    rig.render(1);
+    for gate in [1.0, 0.0, 1.0, 0.0] {
+        rig.live.write_input("sched", "clock", gate).unwrap();
+        assert_eq!(counted_block(&mut rig), (0, 0));
+    }
+    for (control, was, to) in [
+        ("attack", 0.5, 1.0),
+        ("decay", 0.1, 0.5),
+        ("sustain", 0.4, 0.8),
+        ("release", 0.2, 1.0),
+    ] {
+        let ControlValue::Number(now) = read(&rig, "adsr", control) else {
+            panic!("a number");
+        };
+        assert_ne!(now, was, "{control} moved");
+        assert!(now >= was.min(to) && now <= was.max(to), "{control}: {now}");
+    }
+}
+
 #[test]
 fn clock_writes_apply_on_the_audio_thread_and_retime_its_gates() {
     // 22500 bpm at 48 kHz is 128 samples a beat; 45000 is 64.

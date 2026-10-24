@@ -8,7 +8,7 @@
 //! - [`Mixer`] / [`MixerControls`] - Multi-channel audio mixer
 //! - [`MelodyGenerator`] - Algorithmic melody generation
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
-//! - [`Adsr`] / [`AdsrControls`] - Envelope generator
+//! - [`Adsr`] - Envelope generator
 //! - [`Vca`] - Voltage controlled amplifier
 //! - [`DacModule`] - Audio output sink module
 //! - [`AudioFileSink`] - Audio file recording sink module
@@ -49,7 +49,7 @@ pub mod vca;
 pub mod youtube_sink;
 
 // Re-export module types
-pub use adsr::{Adsr, AdsrControls};
+pub use adsr::Adsr;
 pub use agent::AgentControls;
 pub use audio_file_sink::{
     AudioFileSink, AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats,

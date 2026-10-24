@@ -8,7 +8,6 @@ use super::table::TableValue;
 /// its entry; the list must end empty (the catalog-wide guardrail then
 /// enforces it).
 pub(crate) const LEGACY_CONTROLS: &[&str] = &[
-    "adsr",
     "filter",
     "lfo",
     "mixer",
