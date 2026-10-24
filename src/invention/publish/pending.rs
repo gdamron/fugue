@@ -11,7 +11,9 @@ use std::collections::VecDeque;
 
 use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
 use crate::control_request::{EventCursor, Outcome, OutcomeReceiver, RequestId, RtValue};
-use crate::invention::request_log::{LoggedBeat, LoggedEdit, LoggedRequest, Recorder, RequestLog};
+use crate::invention::request_log::{
+    LoggedBeat, LoggedEdit, LoggedRequest, LoggedWhen, Recorder, RequestLog,
+};
 use crate::ControlValue;
 
 /// The most writes the log remembers: every request the queue, the
@@ -99,7 +101,7 @@ impl PendingLog {
     /// settled cannot be known, so the log forgets every write it holds
     /// rather than list one as pending for ever.
     pub(crate) fn settle(&mut self) {
-        while let Some((id, outcome)) = self.receiver.try_recv() {
+        while let Some((id, outcome, latched)) = self.receiver.try_recv() {
             if let Some(at) = self.timed.iter().position(|(timed, _)| *timed == id) {
                 let edit = self.timed.remove(at).and_then(|(_, edit)| edit);
                 let landed = matches!(
@@ -107,10 +109,16 @@ impl PendingLog {
                     Outcome::Applied { .. } | Outcome::AppliedLate { .. }
                 );
                 match edit {
-                    Some(edit) => self.log.timed_edit(edit.settled(outcome)),
+                    Some(edit) => {
+                        // Refused on its beat, it latched its clock there.
+                        if let (Some(at), LoggedWhen::Beat { beat }) = (latched, &edit.when) {
+                            self.log.latched(at, beat.clock());
+                        }
+                        self.log.timed_edit(edit.settled(outcome));
+                    }
                     // One the log cannot replay counts as a commit, if it
-                    // landed.
-                    None if landed => self.log.edited(),
+                    // landed or latched a clock.
+                    None if landed || latched.is_some() => self.log.edited(),
                     None => {}
                 }
                 if self.timed_outcomes.len() == TIMED_CAPACITY {
@@ -123,7 +131,7 @@ impl PendingLog {
                 let write = write
                     .and_then(|at| self.writes.remove(at))
                     .map(|(_, write)| write);
-                self.record(write, outcome);
+                self.record(write, outcome, latched);
             }
             if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
                 self.outcomes.pop_front();
@@ -150,12 +158,22 @@ impl PendingLog {
     }
 
     /// Records `write` in the session log when `outcome` applied it, or
-    /// counts it lost when the write is no longer remembered.
-    fn record(&mut self, write: Option<PendingWrite>, outcome: Outcome) {
+    /// the clock it `latched` on its beat when it did not, or counts it
+    /// lost when the write is no longer remembered.
+    fn record(&mut self, write: Option<PendingWrite>, outcome: Outcome, latched: Option<u64>) {
         let (sample, due) = match outcome {
             Outcome::Applied { at } => (at, None),
             Outcome::AppliedLate { at, due } => (at, Some(due)),
-            Outcome::Superseded | Outcome::Overridden | Outcome::Refused(_) => return,
+            Outcome::Superseded | Outcome::Overridden | Outcome::Refused(_) => {
+                let Some(at) = latched else {
+                    return;
+                };
+                match write.as_ref().and_then(|write| write.beat.as_ref()) {
+                    Some(beat) => self.log.latched(at, beat.clock()),
+                    None => self.log.lost(1),
+                }
+                return;
+            }
         };
         let Some(write) = write else {
             self.log.lost(1);

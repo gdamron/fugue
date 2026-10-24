@@ -148,8 +148,10 @@ impl RenderEngine {
     /// replay in progress; loading an invention ends it. Fails, replaying
     /// nothing, when the log was played at another sample rate or block
     /// size, is out of time order, names a control not declared here, or
-    /// holds a timed edit whose modules this engine's registry cannot build
-    /// (a development type, say). A request after an edit naming a control
+    /// holds a timed edit whose modules this engine's registry cannot build:
+    /// the built-in types and the developments the loaded invention
+    /// declares build, so a type the session's graph had from elsewhere
+    /// does not. A request after an edit naming a control
     /// the edit did not leave counts as refused (see
     /// [`Self::replay_refused`]).
     pub fn replay(&mut self, log: &crate::RequestLog) -> Result<(), Box<dyn std::error::Error>> {

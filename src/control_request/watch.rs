@@ -525,7 +525,9 @@ impl Watches {
             if result.is_ok() {
                 self.ramps.supersede(&target, &*host);
             }
-            outcomes.record(id, payload, outcome(result));
+            // Refused or overridden on its beat, it still latched there.
+            let latched = (due == now && result.is_err()).then_some(now);
+            outcomes.record_on_beat(id, payload, outcome(result), latched);
         }
         // Then the tables, as a scheduler wrote after the requests due at
         // its sample: at the same tier, the table's entry wins.

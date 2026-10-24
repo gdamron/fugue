@@ -55,7 +55,8 @@ impl Watches {
             Ok(_) => Outcome::Applied { at: now },
             Err(outcome) => outcome,
         };
-        outcomes.record(watch.request.id, false, outcome);
+        let latched = (due == now && result.is_err()).then_some(now);
+        outcomes.record_on_beat(watch.request.id, false, outcome, latched);
         let (Ok(from), Some(standing)) = (result, standing) else {
             return;
         };
