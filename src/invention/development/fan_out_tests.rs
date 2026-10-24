@@ -54,8 +54,18 @@ fn running(
     factory: DevelopmentFactory,
     config: serde_json::Value,
 ) -> (Arc<Mutex<SignalGraph>>, ControlSurfaceInstance) {
+    running_after(factory, config, |_| {})
+}
+
+/// [`running`], with `written` writing its surface before it runs.
+fn running_after(
+    factory: DevelopmentFactory,
+    config: serde_json::Value,
+    written: impl FnOnce(&ControlSurfaceInstance),
+) -> (Arc<Mutex<SignalGraph>>, ControlSurfaceInstance) {
     let built = factory.build(48_000, &config).unwrap();
     let surface = built.control_surface.unwrap();
+    written(&surface);
     let graph = Arc::new(Mutex::new(SignalGraph::new(
         IndexMap::new(),
         Vec::new(),
@@ -136,4 +146,43 @@ fn a_fanned_out_swap_neither_allocates_nor_frees_on_the_audio_thread() {
         (module.output_block(0)[0], module.output_block(1)[0]),
         (960.0, 960.0)
     );
+}
+
+/// `all` reaching both players, `q_sample` the second alone.
+fn overlapping() -> serde_json::Value {
+    json!([
+        { "name": "all", "module": "p", "control": "asset.0" },
+        { "name": "all", "module": "q", "control": "asset.0" },
+        { "name": "q_sample", "module": "q", "control": "asset.0" }
+    ])
+}
+
+#[test]
+fn overlapping_keys_written_before_the_development_runs_each_land_in_write_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (wav(dir.path(), "a.wav", 441), wav(dir.path(), "b.wav", 882));
+    let c = wav(dir.path(), "c.wav", 1764);
+    let config = json!({ "all": b, "q_sample": c });
+    let (graph, _) = running(factory(&a, overlapping()), config);
+    assert_eq!(lengths(&graph), (960.0, 1920.0), "from its config");
+
+    let (graph, _) = running_after(factory(&a, overlapping()), json!({}), |surface| {
+        surface.set_control("q_sample", c.as_str().into()).unwrap();
+        surface.set_control("all", b.as_str().into()).unwrap();
+    });
+    assert_eq!(lengths(&graph), (960.0, 960.0), "the later write wins");
+}
+
+#[test]
+fn a_refused_overlapping_write_keeps_what_was_written_before_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (wav(dir.path(), "a.wav", 441), wav(dir.path(), "b.wav", 882));
+    let missing = dir.path().join("missing.wav");
+    let (graph, surface) = running_after(factory(&a, overlapping()), json!({}), |surface| {
+        surface.set_control("all", b.as_str().into()).unwrap();
+        let refused = surface.set_control("q_sample", missing.to_string_lossy().as_ref().into());
+        assert!(refused.unwrap_err().contains("missing.wav"));
+    });
+    assert_eq!(lengths(&graph), (960.0, 960.0));
+    assert_eq!(surface.get_control("all").unwrap(), b.as_str().into());
 }

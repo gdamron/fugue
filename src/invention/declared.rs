@@ -223,11 +223,23 @@ impl DeclaredSurface {
     }
 
     /// Records `value` as what payload control `key` reads back as, for
-    /// the payload its module was built with; nothing for a key that
-    /// names no control (see [`Self::index`]). Control thread.
+    /// the payload its module was built with, or as another key on the
+    /// same inner control wrote it; nothing for a key that names no
+    /// control (see [`Self::index`]). A payload still waiting for the
+    /// module stays: the bind applies every key's last write in the order
+    /// written, so an inner control still takes the later one, and an
+    /// alias only the earlier key reaches keeps it. Control thread.
     pub(crate) fn show_payload(&self, key: &str, value: ControlValue) {
         if let Ok(index) = self.index(key) {
-            self.show(index, value, None);
+            let mut payloads = self.payloads.lock().unwrap();
+            match payloads.iter_mut().find(|written| written.index == index) {
+                Some(written) => written.shown = value,
+                None => payloads.push(Written {
+                    index,
+                    shown: value,
+                    staged: None,
+                }),
+            }
         }
     }
 
