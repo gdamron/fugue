@@ -3,9 +3,7 @@
 
 use super::super::RenderEngine;
 use crate::invention::publish::{edge, BuiltModule, GraphChange};
-use crate::{
-    LoggedBeat, LoggedConnection, LoggedEditOutcome, LoggedWhen, ModuleRegistry, RequestLog,
-};
+use crate::{LoggedConnection, ModuleRegistry, RequestLog};
 
 /// A timed edit that landed live, due to land again.
 #[derive(Default)]
@@ -16,9 +14,6 @@ pub(in crate::invention::render) struct DueEdit {
     /// Its modules, built when the replay began, in order.
     built: Vec<(String, BuiltModule)>,
     connections: Vec<LoggedConnection>,
-    /// The clock it was taken on the beat of, latched once this many
-    /// logged requests have applied, as live latched it as it took it.
-    pub(super) latch: Option<(usize, String)>,
 }
 
 /// The timed edits in `log` that landed, their modules built from
@@ -66,19 +61,7 @@ pub(super) fn build(
                 })
             })
             .collect::<Result<_, _>>()?;
-        // Live latches a clock for an edit taken on its beat, not for one
-        // taken late.
-        let latch = match (&edit.when, &edit.outcome) {
-            (
-                LoggedWhen::Beat {
-                    beat: LoggedBeat::After { clock, .. } | LoggedBeat::Grid { clock, .. },
-                },
-                LoggedEditOutcome::Landed { due: None, .. },
-            ) => Some((edit.requests_before, clock.clone())),
-            _ => None,
-        };
         edits.push(DueEdit {
-            latch,
             sample,
             removed: edit.removed.clone(),
             built,

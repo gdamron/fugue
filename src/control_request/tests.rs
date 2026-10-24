@@ -306,15 +306,15 @@ fn a_full_outcome_queue_counts_what_it_drops() {
     let (mut sender, receiver) = outcome_channel(2);
     let mut cursor = EventCursor::new();
     for id in 1..=3 {
-        sender.send(RequestId(id), Outcome::Superseded);
+        sender.send(RequestId(id), Outcome::Superseded, None);
     }
     assert_eq!(
         receiver.try_recv(),
-        Some((RequestId(1), Outcome::Superseded))
+        Some((RequestId(1), Outcome::Superseded, None))
     );
     assert_eq!(
         receiver.try_recv(),
-        Some((RequestId(2), Outcome::Superseded))
+        Some((RequestId(2), Outcome::Superseded, None))
     );
     assert_eq!(receiver.try_recv(), None);
     assert_eq!(cursor.take(receiver.dropped()), 1);

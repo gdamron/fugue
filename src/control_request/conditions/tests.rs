@@ -138,7 +138,7 @@ pub(super) fn insert(
 
 pub(super) fn log(outcomes: &OutcomeReceiver) -> Vec<(u64, Outcome)> {
     std::iter::from_fn(|| outcomes.try_recv())
-        .map(|(id, outcome)| (id.0, outcome))
+        .map(|(id, outcome, _)| (id.0, outcome))
         .collect()
 }
 

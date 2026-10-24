@@ -7,6 +7,11 @@ use super::pending::Outcome;
 use super::request::RequestId;
 use crate::spsc::{Producer, Ring};
 
+/// A request's outcome, and the sample it latched its clock on when it
+/// was timed on a beat and refused or overridden there: the latch held,
+/// though nothing applied, so the session's log records it.
+pub(crate) type Settled = (RequestId, Outcome, Option<u64>);
+
 /// Creates a channel for up to `capacity` outcomes (rounded up to a power
 /// of two). Allocates once: call it on a control thread.
 pub(crate) fn outcome_channel(capacity: usize) -> (OutcomeSender, OutcomeReceiver) {
@@ -22,16 +27,18 @@ pub(crate) fn outcome_channel(capacity: usize) -> (OutcomeSender, OutcomeReceive
 /// The audio side's end: the pending store's `Outcomes` sends every
 /// settled request's outcome through it.
 pub(crate) struct OutcomeSender {
-    producer: Producer<(RequestId, Outcome)>,
+    producer: Producer<Settled>,
     dropped: Arc<EventCounter>,
 }
 
 impl OutcomeSender {
-    /// Queues an outcome, or counts it dropped when no control thread has
-    /// made room: the audio thread never waits for one. Wait-free,
-    /// allocation-, free- and lock-free.
-    pub(crate) fn send(&mut self, id: RequestId, outcome: Outcome) {
-        if self.producer.push((id, outcome)).is_err() {
+    /// Queues an outcome, with the sample a request timed in beats latched
+    /// its clock on when it did not apply there (see [`Settled`]), or
+    /// counts it dropped when no control thread has made room: the audio
+    /// thread never waits for one. Wait-free, allocation-, free- and
+    /// lock-free.
+    pub(crate) fn send(&mut self, id: RequestId, outcome: Outcome, latched: Option<u64>) {
+        if self.producer.push((id, outcome, latched)).is_err() {
             self.dropped.record();
         }
     }
@@ -42,14 +49,14 @@ impl OutcomeSender {
 /// received once, by whichever clone pops it.
 #[derive(Clone)]
 pub(crate) struct OutcomeReceiver {
-    queue: Arc<Ring<(RequestId, Outcome)>>,
+    queue: Arc<Ring<Settled>>,
     dropped: Arc<EventCounter>,
 }
 
 impl OutcomeReceiver {
     /// The oldest outcome not yet received. Control thread only: takes the
     /// queue's consumer lock, which the audio side never touches.
-    pub(crate) fn try_recv(&self) -> Option<(RequestId, Outcome)> {
+    pub(crate) fn try_recv(&self) -> Option<Settled> {
         self.queue.pop()
     }
 

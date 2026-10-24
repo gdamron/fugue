@@ -5,11 +5,12 @@
 //! and through the same apply a live request takes (automation still
 //! waiting first, then the module's declared control). A request that
 //! applied on its clock's beat latches the clock first, as the live watch
-//! did, so a tempo it changes there takes effect from the same sample. (A
+//! did, so a tempo it changes there takes effect from the same sample. A
 //! watch refused or overridden on its beat, a timed edit's among them,
-//! latched its clock live, unlogged: a late
-//! request changing that clock's tempo in the same sample would then take
-//! effect a sample apart. Rare enough to leave.)
+//! latched its clock live too: the log records each such latch, and the
+//! replay splits the render there and latches the clock after the requests
+//! logged before it, so a tempo written to that clock later in the sample
+//! takes effect from the next one, as it did live.
 //! Replay is by sample:
 //! a render of the invention as loaded, at the session's sample rate and
 //! block grid, then reproduces what played (see
@@ -30,7 +31,10 @@
 //! at its segment start; the render makes it through the offline edit path
 //! (see `editing`), as a timed edit lands live: what it displaces plays
 //! first, and one taken on its clock's beat latches the clock where live
-//! did, before the requests after it. One refused live is left out. Requests after an edit
+//! did, before the requests after it. One refused live is left out, but
+//! for the latch it made if it was refused on its beat. Every latch at a
+//! sample comes before an edit landing there, as the live watches pass
+//! before the landing. Requests after an edit
 //! resolve against the graph it left: one naming a control not declared
 //! there is counted refused.
 
@@ -39,9 +43,10 @@ use indexmap::IndexMap;
 use crate::control_request::{take_automation, ControlIndex, RtValue};
 use crate::invention::graph::SignalGraph;
 use crate::invention::runtime::ControlSurfaceInstance;
-use crate::{LoggedBeat, ModuleRegistry, RequestLog};
+use crate::{ModuleRegistry, RequestLog};
 
 mod edits;
+mod latches;
 
 pub(super) use edits::DueEdit;
 
@@ -77,6 +82,9 @@ pub(super) struct Replay {
     resolved: usize,
     edits: Vec<DueEdit>,
     next_edit: usize,
+    /// The clock latches apart from the requests' (see [`latches`]).
+    latches: Vec<latches::DueLatch>,
+    next_latch: usize,
     /// Requests the render's graph refused (it would not have logged them).
     pub(super) refused: usize,
 }
@@ -108,10 +116,7 @@ impl Replay {
                 // Live latches a clock for a watch applied on its beat, not
                 // for one that applied late.
                 let latch = match (&request.beat, request.due) {
-                    (
-                        Some(LoggedBeat::After { clock, .. } | LoggedBeat::Grid { clock, .. }),
-                        None,
-                    ) => Some(clock.clone()),
+                    (Some(beat), None) => Some(beat.clock().to_string()),
                     _ => None,
                 };
                 Due {
@@ -128,6 +133,7 @@ impl Replay {
         let mut replay = Self {
             due,
             edits: edits::build(log, registry, sample_rate)?,
+            latches: latches::build(log),
             ..Self::default()
         };
         let through = replay.edits.first().map(|edit| edit.sample);
@@ -166,18 +172,15 @@ impl Replay {
         missing
     }
 
-    /// Latches the clock of the next timed edit, one taken on its beat,
-    /// once it is due and the requests applied before it live have applied.
-    fn latch_edit(&mut self, graph: &mut SignalGraph, now: u64) {
-        let Some(edit) = self.edits.get_mut(self.next_edit) else {
-            return;
-        };
-        let taken = |(before, _): &(usize, String)| *before <= self.next;
-        if edit.sample > now || !edit.latch.as_ref().is_some_and(taken) {
-            return;
-        }
-        if let Some((_, clock)) = edit.latch.take() {
-            latch(graph, &clock);
+    /// Makes each latch due by `now` once the requests applied before it
+    /// live have applied.
+    fn latch_due(&mut self, graph: &mut SignalGraph, now: u64) {
+        while let Some(due) = self.latches.get(self.next_latch) {
+            if due.sample > now || due.requests_before > self.next {
+                return;
+            }
+            latch(graph, &due.clock);
+            self.next_latch += 1;
         }
     }
 
@@ -198,13 +201,15 @@ impl Replay {
 
     /// Fails naming the first clock a logged beat names that keeps no beat
     /// timeline in `graph`: its latch would silently do nothing.
-    /// Only those resolved yet, and the first timed edit's: a later one may
-    /// name a clock an edit adds.
+    /// Only those resolved yet, and the latches made before the first
+    /// timed edit lands: a later one may name a clock an edit adds.
     pub(super) fn check_clocks(&self, graph: &mut SignalGraph) -> Result<(), String> {
         let resolved = &self.due[..self.resolved];
-        let edit = self.edits.first().and_then(|edit| edit.latch.as_ref());
+        let first = self.edits.first().map(|edit| edit.sample);
+        let before = |due: &&latches::DueLatch| first.is_none_or(|first| due.sample <= first);
+        let latched = self.latches.iter().take_while(before).map(|due| &due.clock);
         let clocks = resolved.iter().filter_map(|due| due.latch.as_ref());
-        for clock in clocks.chain(edit.map(|(_, clock)| clock)) {
+        for clock in clocks.chain(latched) {
             let module = graph.modules.get_mut(clock);
             if module.is_none_or(|module| module.module_mut().timeline_mut().is_none()) {
                 return Err(format!(
@@ -222,7 +227,7 @@ impl Replay {
     pub(super) fn apply_due(&mut self, graph: &mut SignalGraph, frames: usize) -> Next {
         let now = graph.current_sample;
         loop {
-            self.latch_edit(graph, now);
+            self.latch_due(graph, now);
             let Some(due) = self.due.get(self.next).filter(|due| due.sample <= now) else {
                 break;
             };
@@ -242,7 +247,10 @@ impl Replay {
             return Next::Edit;
         }
         let request = self.due.get(self.next).map(|due| due.sample);
-        let until = [request, edit].into_iter().flatten().min();
+        // A latch splits the render where live split it, on its beat.
+        let latch = (self.latches.get(self.next_latch)).map(|due| due.sample);
+        let latch = latch.filter(|sample| *sample > now);
+        let until = [request, edit, latch].into_iter().flatten().min();
         Next::Render(until.map_or(frames, |at| (at - now).min(frames as u64) as usize))
     }
 }
@@ -259,10 +267,14 @@ fn latch(graph: &mut SignalGraph, clock: &str) {
 }
 
 #[cfg(test)]
+mod development_tests;
+#[cfg(test)]
 mod edit_tests;
 #[cfg(test)]
 mod hold_tests;
 #[cfg(test)]
 mod landing_tests;
+#[cfg(test)]
+mod latch_tests;
 #[cfg(test)]
 mod tests;

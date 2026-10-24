@@ -21,7 +21,11 @@
 //! Superseded, overridden and refused requests are not: they never
 //! applied. (A request overridden at its due sample lost to a write that
 //! applied there, which is logged, or came late and was weighed at a block
-//! start: it splits no block the log does not.)
+//! start: it splits no block the log does not.) One timed on a beat that
+//! was refused or overridden on that beat, a timed edit's among them, did
+//! latch its clock there, though: the audio thread reports the sample with
+//! its outcome, and the log records the latch ([`LoggedLatch`]) for a
+//! replay to make.
 //!
 //! # Bounded
 //!
@@ -51,7 +55,9 @@
 //!   on, or leaves it out when it was refused;
 //! - the invention runs code or agent modules, whose wall-clock writes are
 //!   logged and would act again in the render: [`RequestLog::actors`];
-//! - a repeating beat grid applied (it reports its first application only).
+//! - a repeating beat grid applied (it reports its first application
+//!   only), or latched its clock on a beat it lost and never applied
+//!   (counted in [`RequestLog::unlogged`]).
 //!
 //! A write's hold against a control scheduler is no exception: a replay
 //! holds each control as the session did (see the replay's docs).
@@ -62,7 +68,9 @@
 //! device callback is a whole number of blocks. A module whose output
 //! depends on how a block is split (a control scheduler keeps the last
 //! write of each piece it processes) can tell a split the log does not
-//! record: the due sample of a request refused when it came to apply.
+//! record: the due sample of a request refused when it came to apply
+//! without latching a clock (one refused on its beat is logged as a
+//! latch, which a replay splits at).
 
 use std::collections::VecDeque;
 
@@ -133,6 +141,30 @@ pub enum LoggedBeat {
     },
 }
 
+impl LoggedBeat {
+    /// The clock it counts on.
+    pub fn clock(&self) -> &str {
+        match self {
+            Self::After { clock, .. } | Self::Grid { clock, .. } => clock,
+        }
+    }
+}
+
+/// A clock latched on the beat of a request or timed edit that was then
+/// refused or overridden there: nothing applied, but the clock held that
+/// sample at the position it predicted, so a tempo written to it later in
+/// the same sample took effect from the next (see the replay's docs).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
+pub struct LoggedLatch {
+    /// The engine sample it latched on.
+    pub sample: u64,
+    pub clock: String,
+    /// How many logged requests applied before it, so a replay latches
+    /// where live did: after those, before the rest.
+    pub requests_before: usize,
+}
+
 /// One applied request.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
@@ -173,8 +205,10 @@ pub struct RequestLog {
     /// Writes that reached the graph without a logged request: input
     /// writes, writes to controls not declared, applied payload writes
     /// (a step sequencer's `pattern`), which a [`LoggedValue`] cannot carry,
-    /// and applied automation-tier requests, which a replay cannot hold as
-    /// they held.
+    /// applied automation-tier requests, which a replay cannot hold as
+    /// they held, and repeating beat grids that never applied but latched
+    /// their clock on a beat they lost, or are still waiting at export and
+    /// may have, which they do not report beat by beat.
     #[serde(default)]
     pub unlogged: u64,
     /// Commits attempted on the graph at once during the session
@@ -187,6 +221,10 @@ pub struct RequestLog {
     /// Timed structural edits, in the order they settled, landed or not.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub timed_edits: Vec<LoggedEdit>,
+    /// Clocks latched on the beat of a request or timed edit refused or
+    /// overridden there, in the order they latched.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub latches: Vec<LoggedLatch>,
     /// Code and agent modules in the invention, which write on wall-clock
     /// time and would write again in a replay.
     #[serde(default)]
@@ -211,6 +249,7 @@ impl RequestLog {
 pub(crate) struct Recorder {
     requests: VecDeque<LoggedRequest>,
     timed_edits: Vec<LoggedEdit>,
+    latches: Vec<LoggedLatch>,
     full: bool,
     lost: u64,
     unlogged: u64,
@@ -238,6 +277,20 @@ impl Recorder {
         self.timed_edits.push(edit);
     }
 
+    /// Records `clock` latched at `sample` by a watch that then did not
+    /// apply, unless the log is full.
+    pub(crate) fn latched(&mut self, sample: u64, clock: &str) {
+        if self.full || self.latches.len() == REQUEST_LOG_CAPACITY {
+            self.full = true;
+            return;
+        }
+        self.latches.push(LoggedLatch {
+            sample,
+            clock: clock.to_string(),
+            requests_before: self.requests.len(),
+        });
+    }
+
     /// Counts applied requests that could not be recorded.
     pub(crate) fn lost(&mut self, count: u64) {
         self.lost += count;
@@ -263,6 +316,7 @@ impl Recorder {
             unlogged: self.unlogged,
             edits: self.edits,
             timed_edits: self.timed_edits.clone(),
+            latches: self.latches.clone(),
             ..RequestLog::default()
         }
     }

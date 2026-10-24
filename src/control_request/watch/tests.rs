@@ -133,7 +133,7 @@ fn request(id: u64, module_idx: usize, beats: f32) -> Request {
 
 fn log(outcomes: &OutcomeReceiver) -> Vec<(u64, Outcome)> {
     std::iter::from_fn(|| outcomes.try_recv())
-        .map(|(id, outcome)| (id.0, outcome))
+        .map(|(id, outcome, _)| (id.0, outcome))
         .collect()
 }
 

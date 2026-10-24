@@ -120,22 +120,45 @@ impl Outcomes {
     /// here exactly once, applied, superseded or refused, and a payload it
     /// still carries is retired. Allocation-, free- and lock-free.
     pub(crate) fn settle(&mut self, request: Request, outcome: Outcome) {
+        self.settle_on_beat(request, outcome, None);
+    }
+
+    /// [`Self::settle`] for a request timed in beats, with the sample it
+    /// latched its clock on, if it did and then did not apply.
+    pub(crate) fn settle_on_beat(
+        &mut self,
+        request: Request,
+        outcome: Outcome,
+        latched: Option<u64>,
+    ) {
         let Request { value, id, .. } = request;
         let payload = value.is_payload();
         if let RequestValue::Payload(payload) | RequestValue::Edit(payload) = value {
             self.retirer.retire(payload);
         }
-        self.record(id, payload, outcome);
+        self.record_on_beat(id, payload, outcome, latched);
     }
 
     /// Records the outcome of a request whose value is already disposed of,
     /// releases its reservation and sends the outcome to the control side.
     pub(super) fn record(&mut self, id: super::RequestId, payload: bool, outcome: Outcome) {
+        self.record_on_beat(id, payload, outcome, None);
+    }
+
+    /// [`Self::record`] for a request timed in beats, with the sample it
+    /// latched its clock on, if it did and then did not apply.
+    pub(super) fn record_on_beat(
+        &mut self,
+        id: super::RequestId,
+        payload: bool,
+        outcome: Outcome,
+        latched: Option<u64>,
+    ) {
         if payload {
             self.reserved -= MAX_RETIRES_PER_REQUEST;
         }
         self.chains.settled(id, outcome);
-        self.sender.send(id, outcome);
+        self.sender.send(id, outcome, latched);
     }
 }
 
