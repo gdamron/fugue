@@ -52,7 +52,7 @@ use super::runtime::ControlSurfaceInstance;
 use super::runtime::{GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
-    Intent, PayloadCodec, Refusal, Request, RequestId, RequestSender, RequestValue, RtValue,
+    Intent, PayloadCodec, Rank, Refusal, Request, RequestId, RequestSender, RequestValue, RtValue,
     Source, Writer,
 };
 use crate::payload::Payload;
@@ -262,36 +262,40 @@ impl DeclaredSurface {
         payload: Payload,
         shown: ControlValue,
     ) -> Result<(), String> {
+        let options = WriteOptions::default();
+        self.submit_payload(key, payload, shown, &options).map(drop)
+    }
+
+    /// [`Self::write_payload`] as `options` say, saying what the write saw
+    /// as it was queued. Control thread.
+    pub(crate) fn submit_payload(
+        &self,
+        key: &str,
+        payload: Payload,
+        shown: ControlValue,
+        options: &WriteOptions,
+    ) -> Result<Queued, String> {
         let (index, _) = self
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
-        let options = WriteOptions::default();
-        self.deliver(index, Write::Payload(payload, shown, None), &options, None)
-            .map(drop)
+        self.deliver(index, Write::Payload(payload, shown, None), options, None)
     }
 
     /// [`Self::write_payload`] for a payload built against the live graph's
     /// control-surface directory: refused as [`STALE`] when a graph change
     /// published since `checked.generation`, and recorded as
-    /// `checked.record` says. Control thread.
+    /// `checked.record` says, submitted as `options` say. Control thread.
     pub(crate) fn write_payload_checked(
         &self,
-        key: &str,
-        payload: Payload,
-        shown: ControlValue,
+        (key, payload, shown): (&str, Payload, ControlValue),
         checked: Checked<'_>,
-    ) -> Result<(), String> {
+        options: &WriteOptions,
+    ) -> Result<Queued, String> {
         let (index, _) = self
             .payload_decl(key)
             .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
-        let options = WriteOptions::default();
-        self.deliver(
-            index,
-            Write::Payload(payload, shown, Some(checked)),
-            &options,
-            None,
-        )
-        .map(drop)
+        let write = Write::Payload(payload, shown, Some(checked));
+        self.deliver(index, write, options, None)
     }
 
     /// [`ControlSurface::set_control`] as `options` say, saying what the
@@ -603,7 +607,8 @@ impl DeclaredSurface {
                 let kept = match (&request.value, authored) {
                     (RequestValue::Value(raw), Some(key)) if clocked => {
                         let module = (port.module_id.as_str(), key);
-                        publisher.keep_authored(module, target, (*raw, event), &port.requests)
+                        let write = (*raw, event, options);
+                        publisher.keep_authored(module, target, write, &port.requests)
                     }
                     _ => None,
                 };
@@ -668,11 +673,12 @@ impl DeclaredSurface {
                 })
             }
             Route::Offline { graph, module_id } => {
+                let rank = Rank::new(options.source, options.priority);
                 let graph = graph.upgrade().ok_or("The render has been replaced")?;
                 let mut graph = graph.lock().unwrap();
                 self.check_still(|route| matches!(route, Route::Offline { .. }))?;
                 match write {
-                    Write::Value(value) => graph.apply_control(&module_id, index, value),
+                    Write::Value(value) => graph.apply_control(&module_id, index, value, rank),
                     Write::Payload(payload, shown, checked) => {
                         // Resolved before an offline edit installed: it may
                         // name what the edit replaced (see `Checked`).
@@ -680,8 +686,8 @@ impl DeclaredSurface {
                         if generation.is_some_and(|seen| seen != graph.offline_edits) {
                             return Err(STALE.into());
                         }
-                        let applied = graph.apply_payload(&module_id, index, payload);
-                        if applied.is_ok() {
+                        let applied = graph.apply_payload(&module_id, index, payload, rank);
+                        if applied == Ok(true) {
                             self.show(index, shown, None);
                             if let Some(checked) = checked {
                                 (checked.record)();
@@ -691,7 +697,7 @@ impl DeclaredSurface {
                         applied
                     }
                 }
-                .map(|()| Queued::default())
+                .map(|_| Queued::default())
                 .map_err(|refusal| refused(&self.table, index, refusal))
             }
             Route::Inner => Err("This control is set through its development".into()),
