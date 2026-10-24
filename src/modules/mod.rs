@@ -3,7 +3,7 @@
 //! This module contains all the building blocks for creating modular synthesis setups:
 //! - [`Clock`] - Timing and tempo control
 //! - [`Oscillator`] / [`OscillatorType`] - Waveform generation
-//! - [`Lfo`] / [`LfoControls`] - Low frequency oscillator for modulation
+//! - [`Lfo`] - Low frequency oscillator for modulation
 //! - [`Filter`] / [`FilterControls`] / [`FilterType`] - Resonant filter for subtractive synthesis
 //! - [`Mixer`] - Multi-channel audio mixer
 //! - [`MelodyGenerator`] - Algorithmic melody generation
@@ -70,7 +70,7 @@ pub use dac::{
     DacModule, NullBackend, StreamErrorKind,
 };
 pub use filter::{Filter, FilterControls, FilterType};
-pub use lfo::{Lfo, LfoControls};
+pub use lfo::Lfo;
 pub use melody::MelodyGenerator;
 
 pub use mixer::Mixer;

@@ -74,12 +74,12 @@ pub(crate) use super::step_sequencer::grace::{
 };
 use super::step_sequencer::{parse_pattern, GraceChain, Step, StepError};
 
+pub use self::factory::CellSequencerFactory;
 use self::table::{
     Bank, CELL, CELLS, CELL_COUNT, ENDED, FOLLOW_CELL_LENGTH, GATE_LENGTH, GRACE_DURATION,
     GRACE_PLACEMENT, GRACE_VELOCITY, LOOP_COUNT, MODE, NEXT_CELL, ROOT_NOTE, SELECT_CELL,
     STEP_COUNT, TABLE, WAIT_FOR_CYCLE_END,
 };
-pub use self::factory::CellSequencerFactory;
 
 mod apply;
 mod factory;

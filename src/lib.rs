@@ -68,15 +68,15 @@ pub use rpc::{
 
 // Re-export modules
 pub use modules::{
-    default_sample_rate, Adsr, AdsrFactory, AgentControls, AgentFactory,
-    AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver, AudioFileSink,
-    AudioFileSinkFactory, AudioFileSinkHandle, AudioFileSinkStats, Clock, ClockFactory,
-    CodeControls, CodeFactory, ControlScheduler, ControlSchedulerControls, ControlSchedulerFactory,
-    DacFactory, DacModule, Filter, FilterControls, FilterFactory, FilterType, Lfo, LfoControls,
-    LfoFactory, MelodyFactory, MelodyGenerator, Mixer, MixerFactory, NullBackend,
-    Oscillator, OscillatorFactory, OscillatorType, SampleKit, SampleKitControls, SampleKitFactory,
-    SamplePlayer, SamplePlayerControls, SamplePlayerFactory, SampleSlicer, SampleSlicerFactory,
-    StreamErrorKind, Vca, VcaFactory,
+    default_sample_rate, Adsr, AdsrFactory, AgentControls, AgentFactory, AudioBackend,
+    AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver, AudioFileSink, AudioFileSinkFactory,
+    AudioFileSinkHandle, AudioFileSinkStats, Clock, ClockFactory, CodeControls, CodeFactory,
+    ControlScheduler, ControlSchedulerControls, ControlSchedulerFactory, DacFactory, DacModule,
+    Filter, FilterControls, FilterFactory, FilterType, Lfo, LfoFactory, MelodyFactory,
+    MelodyGenerator, Mixer, MixerFactory, NullBackend, Oscillator, OscillatorFactory,
+    OscillatorType, SampleKit, SampleKitControls, SampleKitFactory, SamplePlayer,
+    SamplePlayerControls, SamplePlayerFactory, SampleSlicer, SampleSlicerFactory, StreamErrorKind,
+    Vca, VcaFactory,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

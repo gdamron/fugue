@@ -26,42 +26,25 @@
 //! }
 //! ```
 
-use std::any::Any;
 use std::f32::consts::PI;
 use std::sync::Arc;
 
-use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::control_request::{
+    apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
+    Refusal, RtValue,
+};
+use crate::factory::{apply_control_keys, GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::modules::OscillatorType;
 use crate::traits::ControlMeta;
 use crate::Module;
 
-pub use self::controls::LfoControls;
+use self::controls::{RATE, RATE_MOD_DEPTH, TABLE, WAVEFORM};
 
 mod controls;
 mod inputs;
 mod outputs;
-
-/// Converts oscillator type to f32 index.
-fn waveform_to_index(waveform: OscillatorType) -> f32 {
-    match waveform {
-        OscillatorType::Sine => 0.0,
-        OscillatorType::Square => 1.0,
-        OscillatorType::Sawtooth => 2.0,
-        OscillatorType::Triangle => 3.0,
-    }
-}
-
-/// Converts f32 index to oscillator type.
-fn index_to_waveform(index: f32) -> OscillatorType {
-    match index.round() as i32 {
-        0 => OscillatorType::Sine,
-        1 => OscillatorType::Square,
-        2 => OscillatorType::Sawtooth,
-        3 => OscillatorType::Triangle,
-        _ => OscillatorType::Sine,
-    }
-}
 
 /// Low Frequency Oscillator for modulation.
 ///
@@ -88,8 +71,11 @@ pub struct Lfo {
     phase: f32,
     sample_rate: u32,
 
-    // Controls (shared with LfoControls handle)
-    ctrl: LfoControls,
+    // Controls, applied on the thread running the LFO.
+    rate: f32,
+    rate_mod_depth: f32,
+    waveform: OscillatorType,
+    cells: Arc<ControlCells>,
 
     // Input values
     inputs: inputs::LfoInputs,
@@ -102,42 +88,54 @@ pub struct Lfo {
 impl Lfo {
     /// Creates a new LFO with default controls.
     pub fn new(sample_rate: u32) -> Self {
-        let controls = LfoControls::new(1.0, OscillatorType::Sine, 1.0);
-        Self::new_with_controls(sample_rate, controls)
+        Self::with_cells(
+            sample_rate,
+            Arc::new(ControlCells::new(controls::defaults())),
+        )
     }
 
-    /// Creates a new LFO with the given controls.
-    pub fn new_with_controls(sample_rate: u32, controls: LfoControls) -> Self {
-        Self {
+    /// An LFO holding what `cells` hold, applied (so clamped).
+    fn with_cells(sample_rate: u32, cells: Arc<ControlCells>) -> Self {
+        let mut lfo = Self {
             phase: 0.0,
             sample_rate,
-            ctrl: controls,
+            rate: 1.0,
+            rate_mod_depth: 1.0,
+            waveform: OscillatorType::Sine,
+            cells,
             inputs: inputs::LfoInputs::new(),
             prev_sync: 0.0,
             outputs: outputs::LfoOutputs::new(),
+        };
+        for index in 0..TABLE.len() {
+            let index = ControlIndex(index as u16);
+            if let Some(value) = lfo.cells.load(index) {
+                let _ = apply_declared(&mut lfo, index, value);
+            }
         }
+        lfo
     }
 
     /// Sets the waveform type (legacy API).
-    pub fn with_waveform(self, waveform: OscillatorType) -> Self {
-        self.ctrl.set_waveform(waveform);
+    pub fn with_waveform(mut self, waveform: OscillatorType) -> Self {
+        self.set_waveform(waveform);
         self
     }
 
     /// Sets the rate in Hz (legacy API).
-    pub fn with_rate(self, rate: f32) -> Self {
-        self.ctrl.set_rate(rate);
+    pub fn with_rate(mut self, rate: f32) -> Self {
+        self.set_rate(rate);
         self
     }
 
     /// Sets the waveform type (legacy API).
     pub fn set_waveform(&mut self, waveform: OscillatorType) {
-        self.ctrl.set_waveform(waveform);
+        let _ = apply_declared(self, WAVEFORM, RtValue::U32(waveform.position()));
     }
 
     /// Sets the rate in Hz (legacy API).
     pub fn set_rate(&mut self, rate: f32) {
-        self.ctrl.set_rate(rate);
+        let _ = apply_declared(self, RATE, RtValue::F32(rate));
     }
 
     /// Resets the phase to zero.
@@ -153,9 +151,9 @@ impl Lfo {
         }
         self.prev_sync = self.inputs.sync(i);
 
-        let base_rate = self.ctrl.rate();
-        let rate_mod_depth = self.ctrl.rate_mod_depth();
-        let waveform = self.ctrl.waveform();
+        let base_rate = self.rate;
+        let rate_mod_depth = self.rate_mod_depth;
+        let waveform = self.waveform;
 
         // Calculate effective rate with modulation
         let effective_freq =
@@ -220,50 +218,41 @@ impl Module for Lfo {
         self.outputs.get(port)
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        let applied = match (control, value) {
+            (RATE, RtValue::F32(rate)) => {
+                self.rate = rate.clamp(0.001, 100.0);
+                RtValue::F32(self.rate)
+            }
+            (RATE_MOD_DEPTH, RtValue::F32(depth)) => {
+                self.rate_mod_depth = depth.max(0.0);
+                RtValue::F32(self.rate_mod_depth)
+            }
+            (WAVEFORM, RtValue::U32(position)) => {
+                self.waveform = OscillatorType::from_position(position).ok_or(Refusal::Invalid)?;
+                value
+            }
+            _ => return Err(Refusal::Unsupported),
+        };
+        Ok(applied)
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::new("rate", "LFO rate in Hz")
-                .with_range(0.001, 100.0)
-                .with_default(1.0),
-            ControlMeta::new("rate_mod_depth", "Rate modulation depth in Hz")
-                .with_range(0.0, 100.0)
-                .with_default(1.0),
-            ControlMeta::new("waveform", "Waveform type")
-                .with_default(0.0)
-                .with_variants(vec![
-                    "Sine".to_string(),
-                    "Square".to_string(),
-                    "Sawtooth".to_string(),
-                    "Triangle".to_string(),
-                ]),
-        ]
+        local_controls(self)
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
-        match key {
-            "rate" => Ok(self.ctrl.rate()),
-            "rate_mod_depth" => Ok(self.ctrl.rate_mod_depth()),
-            "waveform" => Ok(waveform_to_index(self.ctrl.waveform())),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_get(self, key)
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
-        match key {
-            "rate" => {
-                self.ctrl.set_rate(value);
-                Ok(())
-            }
-            "rate_mod_depth" => {
-                self.ctrl.set_rate_mod_depth(value);
-                Ok(())
-            }
-            "waveform" => {
-                self.ctrl.set_waveform(index_to_waveform(value));
-                Ok(())
-            }
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_set(self, key, value)
     }
 }
 
@@ -271,8 +260,8 @@ impl Module for Lfo {
 pub struct LfoFactory;
 
 const TYPE_ID: &str = "lfo";
-const RATE: ConfigKey = ConfigKey::float("rate");
-const RATE_MOD_DEPTH: ConfigKey = ConfigKey::float("rate_mod_depth");
+const RATE_KEY: ConfigKey = ConfigKey::float("rate");
+const RATE_MOD_DEPTH_KEY: ConfigKey = ConfigKey::float("rate_mod_depth");
 
 impl ModuleFactory for LfoFactory {
     fn type_id(&self) -> &'static str {
@@ -280,7 +269,7 @@ impl ModuleFactory for LfoFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const { &[RATE, RATE_MOD_DEPTH, ConfigKey::text("waveform")] }
+        &[RATE_KEY, RATE_MOD_DEPTH_KEY]
     }
 
     fn build(
@@ -288,40 +277,23 @@ impl ModuleFactory for LfoFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let waveform = parse_waveform(
-            config
-                .get("waveform")
-                .and_then(|v| v.as_str())
-                .unwrap_or("sine"),
-        )?;
-
         let reader = ConfigReader::new(TYPE_ID, config);
-        let rate = reader.float(&RATE)?.unwrap_or(1.0);
-        let rate_mod_depth = reader.float(&RATE_MOD_DEPTH)?.unwrap_or(1.0);
+        let rate = reader.float(&RATE_KEY)?.unwrap_or(1.0);
+        let rate_mod_depth = reader.float(&RATE_MOD_DEPTH_KEY)?.unwrap_or(1.0);
 
-        let controls = LfoControls::new(rate, waveform, rate_mod_depth);
-        let lfo = Lfo::new_with_controls(sample_rate, controls.clone());
+        let cells = Arc::new(ControlCells::new(controls::defaults()));
+        cells.publish(RATE, RtValue::F32(rate));
+        cells.publish(RATE_MOD_DEPTH, RtValue::F32(rate_mod_depth));
+        let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
+        apply_control_keys(&surface, config, |key| key == "waveform")?;
+        let lfo = Lfo::with_cells(sample_rate, cells);
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(lfo)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
-    }
-}
-
-/// Parses a waveform string into an OscillatorType enum.
-fn parse_waveform(s: &str) -> Result<OscillatorType, Box<dyn std::error::Error>> {
-    match s.to_lowercase().as_str() {
-        "sine" => Ok(OscillatorType::Sine),
-        "square" => Ok(OscillatorType::Square),
-        "sawtooth" | "saw" => Ok(OscillatorType::Sawtooth),
-        "triangle" | "tri" => Ok(OscillatorType::Triangle),
-        _ => Err(format!("Unknown waveform type: {}", s).into()),
     }
 }
 
@@ -409,8 +381,56 @@ mod tests {
         let module = result.module.module();
         assert_eq!(module.name(), "Lfo");
 
-        // Check that controls handle is returned
-        assert_eq!(result.handles.len(), 1);
-        assert_eq!(result.handles[0].0, "controls");
+        assert!(result.control_surface.is_some());
+    }
+
+    #[test]
+    fn a_waveform_change_keeps_the_phase() {
+        let mut lfo = Lfo::new(1000);
+        lfo.set_rate(10.0);
+        lfo.process(25);
+        let phase = lfo.phase;
+        assert!(phase > 0.0);
+
+        lfo.set_control("waveform", 2.0).unwrap();
+        assert_eq!(lfo.phase, phase, "the phase is not reset");
+        lfo.process(1);
+        // A sawtooth read at the phase the sine had reached.
+        let expected = 2.0 * phase - 1.0;
+        assert_eq!(lfo.get_output("bipolar").unwrap(), expected);
+    }
+
+    #[test]
+    fn every_waveform_spelling_still_loads() {
+        let registry = crate::ModuleRegistry::default();
+        for (spelled, read) in [
+            ("sine", "sine"),
+            ("Square", "square"),
+            ("sawtooth", "sawtooth"),
+            ("SAW", "sawtooth"),
+            ("saw", "sawtooth"),
+            ("triangle", "triangle"),
+            ("tri", "triangle"),
+        ] {
+            let config = serde_json::json!({ "waveform": spelled });
+            let built = registry.build("lfo", 48_000, &config).unwrap();
+            let surface = built.control_surface.unwrap();
+            assert_eq!(surface.get_control("waveform").unwrap(), read.into());
+            surface.set_control("waveform", spelled.into()).unwrap();
+        }
+        let config = serde_json::json!({ "waveform": "wobble" });
+        assert!(registry.build("lfo", 48_000, &config).is_err());
+    }
+
+    #[test]
+    fn controls_clamp_as_they_always_did() {
+        let mut lfo = Lfo::new(1000);
+        lfo.set_control("rate", 500.0).unwrap();
+        assert_eq!(lfo.get_control("rate").unwrap(), 100.0);
+        lfo.set_control("rate", 0.0).unwrap();
+        assert_eq!(lfo.get_control("rate").unwrap(), 0.001);
+        lfo.set_control("rate_mod_depth", -3.0).unwrap();
+        assert_eq!(lfo.get_control("rate_mod_depth").unwrap(), 0.0);
+        assert!(lfo.set_control("rate", f32::NAN).is_err());
     }
 }

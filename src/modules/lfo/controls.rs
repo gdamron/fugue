@@ -1,146 +1,50 @@
-//! Thread-safe controls for the LFO.
+//! The Lfo's declared controls.
 
-use crate::atomic::AtomicF32;
-use crate::control_request::{scheduled_number, LegacyRefusal, TableValue};
-use crate::modules::OscillatorType;
-use crate::traits::{check_listed_control, ControlSurfaceMap};
-use crate::{ControlMeta, ControlSurface, ControlValue};
+use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
+use crate::modules::oscillator::{WAVEFORMS, WAVEFORM_SPELLINGS};
 
-/// Thread-safe controls for the LFO.
-///
-/// All fields are wrapped in `Arc<Mutex<_>>` for real-time adjustment
-/// from any thread while audio is playing.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let controls: LfoControls = handles.get("lfo1.controls").unwrap();
-///
-/// // Adjust LFO in real-time
-/// controls.set_rate(5.0);
-/// controls.set_waveform(OscillatorType::Triangle);
-/// ```
-#[derive(Clone)]
-pub struct LfoControls {
-    pub(crate) rate: AtomicF32,
-    pub(crate) rate_mod_depth: AtomicF32,
-    pub(crate) waveform: AtomicF32,
-}
+pub(super) const RATE: ControlIndex = ControlIndex(0);
+pub(super) const RATE_MOD_DEPTH: ControlIndex = ControlIndex(1);
+pub(super) const WAVEFORM: ControlIndex = ControlIndex(2);
 
-impl LfoControls {
-    /// Creates new LFO controls with the given initial values.
-    pub fn new(rate: f32, waveform: OscillatorType, rate_mod_depth: f32) -> Self {
-        Self {
-            rate: AtomicF32::new(rate.clamp(0.001, 100.0)),
-            rate_mod_depth: AtomicF32::new(rate_mod_depth.max(0.0)),
-            waveform: AtomicF32::new(waveform.to_index()),
-        }
-    }
+const DECLS: &[ControlDecl] = &[
+    ControlDecl::new(
+        "rate",
+        DeclKind::Number {
+            min: 0.001,
+            max: 100.0,
+        },
+        RtValue::F32(1.0),
+        "LFO rate in Hz",
+    )
+    .unit("Hz")
+    .log()
+    .precision(3)
+    .clamped(0.001, 100.0),
+    ControlDecl::new(
+        "rate_mod_depth",
+        DeclKind::Number {
+            min: 0.0,
+            max: 100.0,
+        },
+        RtValue::F32(1.0),
+        "Rate modulation depth in Hz",
+    )
+    .unit("Hz")
+    .clamped(0.0, f32::MAX),
+    ControlDecl::new(
+        "waveform",
+        DeclKind::Choice(WAVEFORMS),
+        RtValue::U32(0),
+        "Waveform type",
+    )
+    .spellings(WAVEFORM_SPELLINGS),
+];
 
-    /// Gets the rate in Hz.
-    pub fn rate(&self) -> f32 {
-        self.rate.load()
-    }
+pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
 
-    /// Sets the rate in Hz.
-    pub fn set_rate(&self, value: f32) {
-        self.rate.store(value.clamp(0.001, 100.0));
-    }
-
-    /// Gets the rate modulation depth in Hz per unit of `rate_mod`.
-    pub fn rate_mod_depth(&self) -> f32 {
-        self.rate_mod_depth.load()
-    }
-
-    /// Sets the rate modulation depth in Hz per unit of `rate_mod`.
-    pub fn set_rate_mod_depth(&self, value: f32) {
-        self.rate_mod_depth.store(value.max(0.0));
-    }
-
-    /// Gets the waveform type.
-    pub fn waveform(&self) -> OscillatorType {
-        OscillatorType::from_index(self.waveform.load())
-    }
-
-    /// Sets the waveform type.
-    pub fn set_waveform(&self, value: OscillatorType) {
-        self.waveform.store(value.to_index());
-    }
-}
-
-impl ControlSurface for LfoControls {
-    fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::number("rate", "LFO rate in Hz")
-                .with_range(0.001, 100.0)
-                .with_unit("Hz")
-                .with_log_scale()
-                .with_precision(3)
-                .with_default(self.rate()),
-            ControlMeta::number("rate_mod_depth", "Rate modulation depth in Hz")
-                .with_range(0.0, 100.0)
-                .with_unit("Hz")
-                .with_default(self.rate_mod_depth()),
-            ControlMeta::string("waveform", "Waveform type")
-                .with_default(self.waveform().as_str())
-                .with_options(vec![
-                    "sine".to_string(),
-                    "square".to_string(),
-                    "sawtooth".to_string(),
-                    "triangle".to_string(),
-                ]),
-        ]
-    }
-
-    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
-        match key {
-            "rate" => Ok(self.rate().into()),
-            "rate_mod_depth" => Ok(self.rate_mod_depth().into()),
-            "waveform" => Ok(self.waveform().as_str().into()),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
-    }
-
-    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        match key {
-            "rate" => self.set_rate(value.as_number()?),
-            "rate_mod_depth" => self.set_rate_mod_depth(value.as_number()?),
-            "waveform" => self.set_waveform(OscillatorType::parse(value.as_string()?)?),
-            _ => return Err(format!("Unknown control: {}", key)),
-        }
-        Ok(())
-    }
-
-    /// `waveform` is a string: a schedule cannot write it.
-    #[allow(private_interfaces)]
-    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
-        let value = scheduled_number(value)?;
-        match key {
-            "rate" => self.set_rate(value),
-            "rate_mod_depth" => self.set_rate_mod_depth(value),
-            _ => return Err(LegacyRefusal::Unsupported),
-        }
-        Ok(())
-    }
-
-    #[allow(private_interfaces)]
-    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
-        match key {
-            "rate" => Ok(self.rate()),
-            "rate_mod_depth" => Ok(self.rate_mod_depth()),
-            _ => Err(LegacyRefusal::Unsupported),
-        }
-    }
-
-    fn validate_control(
-        &self,
-        key: &str,
-        value: &ControlValue,
-        _surfaces: &ControlSurfaceMap,
-    ) -> Result<(), String> {
-        match key {
-            "waveform" => OscillatorType::parse(value.as_string()?).map(drop),
-            _ => check_listed_control(&self.controls(), key, value),
-        }
-    }
+/// The table's defaults, in index order: where every LFO's cells start
+/// before it applies its own values.
+pub(super) fn defaults() -> impl Iterator<Item = RtValue> {
+    DECLS.iter().map(|decl| decl.default)
 }
