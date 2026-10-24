@@ -216,6 +216,8 @@ fn a_write_over_an_older_saves_top_level_asset_keeps_the_module() {
     running
         .set_control("m", "asset.0", ControlValue::String(written.clone()))
         .unwrap();
+    // Recorded once it applies.
+    pump.block();
     let config = saved(&running).modules[0].config.clone();
     assert!(config.get("asset.0").is_none(), "{config}");
     assert_eq!(config[entries][0]["asset"], json!(written));
@@ -294,6 +296,7 @@ fn a_written_package_ref_reloads_without_rebuilding() {
             running
                 .set_control("m", "asset.0", ControlValue::String(reference.clone()))
                 .unwrap();
+            pump.block();
             let document = saved(&running);
             assert_eq!(
                 document.modules[0].config[entries][0]["asset"],

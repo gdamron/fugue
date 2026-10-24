@@ -10,7 +10,7 @@ use crate::control_request::RequestId;
 use crate::invention::declared::WriteOptions;
 use crate::invention::orchestration::RuntimeSnapshot;
 use crate::invention::publish::timed::EditTime;
-use crate::invention::publish::{Authored, CancelCause, EditState, Touched};
+use crate::invention::publish::{CancelCause, EditState, Touched};
 use crate::{ControlValue, ControlWriteIntent};
 
 /// Blocks before a timed edit at [`LANDING`] has landed.
@@ -62,14 +62,17 @@ pub(super) fn queue_writing(rig: &Rig, frequency: f32) -> RequestId {
     let mut change = rig.live.begin();
     change.upsert("osc1", square);
     let prepared = change.prepare().unwrap();
+    // The edit's document holds the value it writes, as an edit's batch
+    // does.
     let document = rig.live.state.lock().unwrap().document.clone();
-    let retain = move |state: &mut RuntimeState| state.document = document;
+    let value = ControlValue::Number(frequency);
+    let written = value.clone();
+    let retain = move |state: &mut RuntimeState| {
+        state.document = document;
+        state.record_authored_control("osc2", "frequency", &written);
+    };
     let time = EditTime::AtSample(LANDING);
-    let write = (
-        "osc2".to_string(),
-        "frequency".to_string(),
-        ControlValue::Number(frequency),
-    );
+    let write = ("osc2".to_string(), "frequency".to_string(), value);
     rig.live
         .commit_built_when(prepared, None, time, None, retain, &[write])
         .unwrap()
@@ -79,8 +82,10 @@ pub(super) fn state_of(rig: &Rig, id: RequestId) -> EditState {
     rig.live.timed_status(id).unwrap().state
 }
 
-/// `id.key` as the retained document and the module's stored config hold it.
+/// `id.key` as the retained document and the module's stored config hold
+/// it, once caught up with what the audio thread applied.
 pub(super) fn recorded(rig: &Rig, id: &str, key: &str) -> (f64, f64) {
+    rig.live.adopt_landed();
     let state = rig.live.state.lock().unwrap();
     let document = state.document.as_ref().unwrap();
     let spec = document.modules.iter().find(|spec| spec.id == id).unwrap();
@@ -182,6 +187,7 @@ fn an_authored_write_to_a_kept_module_is_folded_into_the_edit() {
     let mut rig = Rig::new(BASE);
     let id = queue(&rig, false, None);
     write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
+    rig.render(1); // applied, before the landing
     assert_eq!(state_of(&rig, id), EditState::Queued);
     assert_eq!(recorded(&rig, "osc2", "frequency").0, 660.0);
 
@@ -265,57 +271,38 @@ fn a_refused_authored_write_leaves_the_edit_waiting() {
     assert_eq!(state_of(&rig, id), EditState::Queued);
 }
 
+/// An authored write that applies before a timed edit rebuilding its
+/// module lands is recorded, then replaced by the edit's document, as the
+/// module it wrote is replaced in what plays.
 #[test]
-fn a_write_to_a_module_replaced_before_it_is_recorded_is_made_again() {
+fn a_write_applied_before_a_landing_that_rebuilds_its_module_is_replaced() {
     let mut rig = Rig::new(BASE);
+    write(&rig, "osc1", "frequency", 330.0, ControlWriteIntent::Author);
     let id = queue(&rig, false, None);
-    let seen = rig.live.generation();
-    let value = ControlValue::Number(330.0);
-    let door = front_door(&rig);
-    door.set_control_transient("osc1", "frequency", value.clone())
-        .unwrap();
-    // The edit lands after the write reached the oscillator it replaces.
-    rig.render(BLOCKS);
-    let recorded = rig
-        .live
-        .record_authored("osc1", "frequency", &value, (seen, None));
-    assert_eq!(
-        recorded,
-        Authored::Overtaken,
-        "the caller writes again, to the one playing"
-    );
+    rig.render(BLOCKS); // the write applies, then the edit lands
     assert_eq!(state_of(&rig, id), EditState::Adopted);
+    let playing = rig.live.control_surfaces.lock().unwrap()["osc1"].clone();
+    let frequency = playing.get_control("frequency").unwrap();
+    assert_eq!(frequency, ControlValue::Number(440.0), "the square plays");
     let state = rig.live.state.lock().unwrap();
     let config = &state.modules["osc1"].config;
     assert_eq!(config.get("frequency"), None, "{config}");
 }
 
+/// An authored write that applies before a timed edit writing its control
+/// lands is recorded, then replaced by the edit's write, as it is in what
+/// plays: never made again.
 #[test]
-fn an_authored_write_a_landing_overtakes_is_made_again() {
+fn a_write_applied_before_a_landing_that_writes_its_control_is_replaced() {
     let mut rig = Rig::new(BASE);
-    let id = queue_writing(&rig, 440.0);
-    let seen = rig.live.generation();
-    let value = ControlValue::Number(660.0);
-    let door = front_door(&rig);
-    door.set_control_transient("osc2", "frequency", value.clone())
-        .unwrap();
-    // The write plays, then the edit lands, writing 440 as it does.
-    rig.render(BLOCKS);
-    let recorded_it = rig
-        .live
-        .record_authored("osc2", "frequency", &value, (seen, None));
-    assert_eq!(
-        recorded_it,
-        Authored::Overtaken,
-        "the caller writes again, so it plays last"
-    );
-    assert_eq!(state_of(&rig, id), EditState::Adopted);
-
     write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
+    let id = queue_writing(&rig, 440.0);
+    rig.render(BLOCKS); // the write applies, then the edit lands
+    assert_eq!(state_of(&rig, id), EditState::Adopted);
     rig.render(1);
     let playing = rig.live.control_surfaces.lock().unwrap()["osc2"].clone();
-    assert_eq!(playing.get_control("frequency").unwrap(), value);
-    assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
+    assert_eq!(playing.get_control("frequency").unwrap(), 440.0.into());
+    assert_eq!(recorded_document(&rig, "osc2"), 440.0);
 }
 
 #[test]
@@ -331,6 +318,7 @@ fn an_authored_write_after_the_edit_lands_reaches_the_module_playing() {
     assert_eq!(frequency, ControlValue::Number(330.0));
     // Recorded in the document; the square wave's stored config names no
     // frequency, so it stays unrecorded there.
+    rig.live.adopt_landed();
     let state = rig.live.state.lock().unwrap();
     let document = state.document.as_ref().unwrap();
     let osc1 = document.modules.iter().find(|spec| spec.id == "osc1");
@@ -356,17 +344,12 @@ fn a_landing_sample_after_adoption_is_not_announced_again() {
     assert_eq!((read.state, read.sample), (EditState::Adopted, Some(4_096)));
 }
 
-/// Only a timed edit landing after a write makes it be written again: an
-/// untimed change published meanwhile was resolved before the write
-/// reached the audio thread, so the write is what plays.
+/// An untimed change published between an authored write and its
+/// applying leaves the write to be recorded as it applies.
 #[test]
-fn an_untimed_change_between_a_write_and_its_record_does_not_write_it_again() {
+fn an_untimed_change_before_a_write_applies_leaves_it_recorded() {
     let mut rig = Rig::new(BASE);
-    let seen = rig.live.generation();
-    let value = ControlValue::Number(330.0);
-    front_door(&rig)
-        .set_control_transient("osc2", "frequency", value.clone())
-        .unwrap();
+    write(&rig, "osc2", "frequency", 330.0, ControlWriteIntent::Author);
     let saw = rig.build(
         "osc1",
         "oscillator",
@@ -375,32 +358,19 @@ fn an_untimed_change_between_a_write_and_its_record_does_not_write_it_again() {
     let mut change = rig.live.begin();
     change.upsert("osc1", saw);
     rig.live.commit(change.prepare().unwrap()).unwrap();
-    assert!(rig.live.generation() > seen);
-
-    let recorded = rig
-        .live
-        .record_authored("osc2", "frequency", &value, (seen, None));
-    assert_eq!(recorded, Authored::Recorded);
     rig.render(1);
     assert_eq!(recorded_document(&rig, "osc2"), 330.0);
 }
 
-/// A timed edit landing after a write to a module it keeps leaves the
-/// write playing: it is recorded, not made again.
+/// A timed edit keeping the module, landing after an authored write to it
+/// applied, takes the write into its own document: the write plays on and
+/// stays recorded.
 #[test]
-fn a_timed_edit_keeping_the_module_between_a_write_and_its_record_does_not_write_it_again() {
+fn a_timed_edit_keeping_the_module_keeps_a_write_applied_before_it_lands() {
     let mut rig = Rig::new(BASE);
+    write(&rig, "osc2", "frequency", 330.0, ControlWriteIntent::Author);
     let id = queue(&rig, false, None);
-    let seen = rig.live.generation();
-    let value = ControlValue::Number(330.0);
-    front_door(&rig)
-        .set_control_transient("osc2", "frequency", value.clone())
-        .unwrap();
     rig.render(BLOCKS);
-    let recorded = rig
-        .live
-        .record_authored("osc2", "frequency", &value, (seen, None));
-    assert_eq!(recorded, Authored::Recorded);
     assert_eq!(state_of(&rig, id), EditState::Adopted);
     rig.render(1);
     let playing = rig.live.control_surfaces.lock().unwrap()["osc2"].clone();
@@ -409,110 +379,48 @@ fn a_timed_edit_keeping_the_module_between_a_write_and_its_record_does_not_write
     assert_eq!(recorded_document(&rig, "osc2"), 330.0);
 }
 
-/// The reviewer's case: a write to `osc1` is made, a timed edit rebuilding
-/// `osc1` lands after it, and making the write again is refused (the queue
-/// full). Nothing is recorded, so the document still says what plays, and
-/// the caller is told to make the write again.
+/// An authored write that loses at its sample, to a write of higher
+/// priority, is never recorded: the document says what plays.
 #[test]
-fn a_write_overtaken_and_refused_on_its_retry_is_not_recorded() {
-    use crate::invention::orchestration::authored::{write_authored, WRITE_ATTEMPTS};
-    use crate::invention::runtime::GraphCommandError;
+fn an_authored_write_that_loses_is_never_recorded() {
     let mut rig = Rig::new(BASE);
-    let id = queue(&rig, false, None);
-    let live = rig.live.clone();
     let door = front_door(&rig);
-    let value = ControlValue::Number(330.0);
-    let mut writes = 0;
-    let ended = write_authored(
-        WRITE_ATTEMPTS,
-        ("osc1", "frequency"),
-        || live.generation(),
-        || {
-            writes += 1;
-            if writes > 1 {
-                return Err(GraphCommandError::QueueFull);
-            }
-            door.set_control_transient("osc1", "frequency", value.clone())?;
-            rig.render(BLOCKS); // the edit lands after the write
-            Ok(crate::invention::declared::Queued::default())
-        },
-        |seen| live.record_authored("osc1", "frequency", &value, seen),
-    );
-    let Err(GraphCommandError::ControlError(message)) = ended else {
-        panic!("expected a ControlError, got {ended:?}");
+    let first = WriteOptions {
+        priority: 1,
+        ..WriteOptions::default()
     };
-    assert!(message.contains("make the write again"), "{message}");
-    assert_eq!(state_of(&rig, id), EditState::Adopted);
-    rig.render(1);
-    let playing = rig.live.control_surfaces.lock().unwrap()["osc1"].clone();
-    let frequency = playing.get_control("frequency").unwrap();
-    assert_eq!(frequency, ControlValue::Number(440.0), "the square plays");
-    assert_eq!(recorded_document(&rig, "osc1"), 440.0, "and is recorded");
-}
-
-/// A write a timed edit overtook is reported before anything else is done:
-/// an edit queued since, which rebuilds the same module, is left waiting.
-#[test]
-fn an_overtaken_write_leaves_an_edit_queued_since_alone() {
-    let mut rig = Rig::new(BASE);
-    queue(&rig, false, None);
-    let seen = rig.live.generation();
-    let value = ControlValue::Number(330.0);
-    front_door(&rig)
-        .set_control_transient("osc1", "frequency", value.clone())
+    let perform = ControlWriteIntent::Perform;
+    door.submit_control("osc2", "frequency", 330.0.into(), perform, first)
         .unwrap();
-    rig.render(BLOCKS); // lands after the write
-    let saw = rig.build(
-        "osc1",
-        "oscillator",
-        serde_json::json!({ "waveform": "saw" }),
-    );
-    let mut change = rig.live.begin(); // adopts the first edit
-    change.upsert("osc1", saw);
-    let prepared = change.prepare().unwrap();
-    let time = EditTime::AtSample(LANDING + 64 * 20);
-    let later = rig.live.commit_when(prepared, time, None, |_| {}).unwrap();
-    let recorded = rig
-        .live
-        .record_authored("osc1", "frequency", &value, (seen, None));
-    assert_eq!(recorded, Authored::Overtaken);
-    assert_eq!(state_of(&rig, later), EditState::Queued, "left waiting");
+    let author = ControlWriteIntent::Author;
+    let options = WriteOptions::default();
+    let ack = door.submit_control("osc2", "frequency", 660.0.into(), author, options);
+    assert!(ack.unwrap().request.is_some(), "submitted as a request");
+    rig.render(1);
+    let playing = rig.live.control_surfaces.lock().unwrap()["osc2"].clone();
+    assert_eq!(playing.get_control("frequency").unwrap(), 330.0.into());
+    assert_ne!(recorded_document(&rig, "osc2"), 660.0, "never recorded");
+    assert_ne!(recorded_document(&rig, "osc2"), 330.0, "performed");
 }
 
-/// A write queued once a timed edit has been adopted is recorded at once,
-/// however stale the generation read before it.
+/// An authored write recorded is the last applied: after a performed
+/// write, the author's recorded once it applies, not before.
 #[test]
-fn a_write_queued_after_an_adoption_is_recorded_at_once() {
-    use crate::invention::orchestration::authored::{write_authored, WRITE_ATTEMPTS};
+fn an_authored_write_is_recorded_once_it_applies() {
     let mut rig = Rig::new(BASE);
-    let stale = rig.live.generation();
-    let id = queue(&rig, false, None);
-    rig.render(BLOCKS);
-    let live = rig.live.clone();
-    let door = front_door(&rig);
-    let value = ControlValue::Number(330.0);
-    let mut writes = 0;
-    let ended = write_authored(
-        WRITE_ATTEMPTS,
-        ("osc1", "frequency"),
-        || stale,
-        || {
-            writes += 1;
-            let adopted = live.timed_status(id).unwrap().state;
-            assert_eq!(adopted, EditState::Adopted, "adopted before the write");
-            door.make_authored("osc1", "frequency", value.clone(), &WriteOptions::default())
-        },
-        |seen| live.record_authored("osc1", "frequency", &value, seen),
-    );
-    assert!(ended.is_ok(), "{ended:?}");
-    assert_eq!(writes, 1);
+    let before = recorded_document(&rig, "osc2");
+    write(&rig, "osc2", "frequency", 660.0, ControlWriteIntent::Author);
+    let state = rig.live.state.lock().unwrap();
+    let document = state.document.as_ref().unwrap();
+    let spec = document.modules.iter().find(|spec| spec.id == "osc2");
+    assert_eq!(spec.unwrap().config["frequency"], before, "not yet applied");
+    drop(state);
     rig.render(1);
-    let playing = rig.live.control_surfaces.lock().unwrap()["osc1"].clone();
-    assert_eq!(playing.get_control("frequency").unwrap(), value);
-    assert_eq!(recorded_document(&rig, "osc1"), 330.0);
+    assert_eq!(recorded_document(&rig, "osc2"), 660.0);
 }
 
 fn recorded_document(rig: &Rig, id: &str) -> f64 {
+    rig.live.adopt_landed();
     let state = rig.live.state.lock().unwrap();
     let document = state.document.as_ref().unwrap();
     let spec = document.modules.iter().find(|spec| spec.id == id).unwrap();
@@ -524,7 +432,7 @@ fn recorded_document(rig: &Rig, id: &str) -> f64 {
 /// its turn waits for it, rather than make its write and record it first.
 #[test]
 fn authored_writers_take_turns_from_write_to_record() {
-    let rig = Rig::new(BASE);
+    let mut rig = Rig::new(BASE);
     let turn = rig.live.authoring();
     let door = front_door(&rig);
     let writer = std::thread::spawn(move || {
@@ -536,5 +444,6 @@ fn authored_writers_take_turns_from_write_to_record() {
     assert_ne!(document, 660.0, "the writer waits its turn");
     drop(turn);
     writer.join().unwrap().unwrap();
+    rig.render(1);
     assert_eq!(recorded(&rig, "osc2", "frequency"), (660.0, 660.0));
 }

@@ -444,6 +444,7 @@ fn an_earlier_authored_write_does_not_count_as_a_change_of_the_batch() {
     running
         .set_control("spare", "frequency", number(7.0))
         .unwrap();
+    pump.render(1); // recorded as it applies
     let report = running
         .apply_edits(&[connect("osc1", "audio", "osc2", "frequency_mod")])
         .expect("the batch commits");

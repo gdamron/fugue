@@ -59,10 +59,12 @@ fn a_live_relative_write_loads_the_file_the_saved_document_loads() {
     let dir = tempfile::tempdir().unwrap();
     let (original, relative) = layout(dir.path());
     for (module, key) in modules(&original) {
-        let (running, _pump) = start_pumped(from_file(dir.path(), module));
+        let (running, pump) = start_pumped(from_file(dir.path(), module));
         running
             .set_control("m", key, ControlValue::String(relative.clone()))
             .unwrap_or_else(|error| panic!("{key}: {error}"));
+        // Recorded once it applies.
+        pump.block();
         // The document keeps the path as written.
         let saved = running.document().unwrap();
         let config = &saved.modules[0].config;
@@ -130,10 +132,11 @@ fn saving_elsewhere_rebases_a_relative_asset() {
     let elsewhere = tempfile::tempdir().unwrap();
     let (original, relative) = layout(dir.path());
     for (module, key) in modules(&original) {
-        let (running, _pump) = start_pumped(from_file(dir.path(), module));
+        let (running, pump) = start_pumped(from_file(dir.path(), module));
         running
             .set_control("m", key, ControlValue::String(relative.clone()))
             .unwrap();
+        pump.block();
         let path = elsewhere.path().join("copy.json");
         running.document().unwrap().save_to_file(&path).unwrap();
         let (loaded, _) = start_pumped(Invention::from_file(&path.to_string_lossy()).unwrap());

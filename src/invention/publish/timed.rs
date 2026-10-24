@@ -11,14 +11,14 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use indexmap::IndexMap;
 
 use super::change::BuiltModule;
-use super::rebind;
-use super::timed_status::{CancelCause, EditStatus, Touched};
+use super::timed_status::{CancelCause, EditStatus};
 use super::watch::{condition_of, Part};
+use super::{authored, rebind};
 use super::{
     publisher, Committed, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher, Refused,
 };
@@ -31,19 +31,6 @@ use crate::invention::runtime::GraphCommandError;
 use crate::invention::state::RuntimeState;
 use crate::ControlValue;
 use crate::ModuleRegistry;
-
-/// What became of an authored write as it was recorded (see
-/// [`LiveGraph::record_authored`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Authored {
-    /// Recorded: what plays.
-    Recorded,
-    /// Not recorded: a timed edit landed after the write and rebuilt or
-    /// removed its module (or re-resolved its schedule), or wrote the
-    /// control itself, so what plays may not be the write. It is to be
-    /// made again.
-    Overtaken,
-}
 
 /// When a timed edit lands, resolved against the graph that is playing.
 #[derive(Clone, Copy, Debug)]
@@ -73,23 +60,19 @@ pub(crate) enum EditTime<'a> {
 const FOLLOWED_UP: [&str; 2] = ["code", "agent"];
 
 impl LiveGraph {
-    /// Takes the publisher, first adopting a timed edit the audio thread
-    /// has landed, so whatever is resolved under it sees the graph playing.
+    /// Takes the publisher, first catching the document up with the audio
+    /// thread: recording the authored writes it applied and adopting a
+    /// timed edit it landed, in order (see `publish::authored`), so
+    /// whatever is resolved under it sees the graph playing.
     pub(super) fn lock(&self) -> MutexGuard<'_, Publisher> {
         let mut publisher = self.publisher.lock().unwrap();
-        self.adopt(&mut publisher);
+        self.catch_up(&mut publisher);
         publisher
     }
 
-    /// Commits the runtime mirrors and document for a timed edit the audio
-    /// thread has landed, as [`Self::commit_with`] commits a change.
-    fn adopt(&self, publisher: &mut Publisher) {
-        let mirrors = (&*self.control_surfaces, &*self.module_ports, &*self.state);
-        adopt_into(publisher, mirrors);
-    }
-
-    /// Adopts a timed edit the audio thread has landed, if any, so what is
-    /// read next describes the graph that is playing.
+    /// Adopts a timed edit the audio thread has landed, if any, and records
+    /// every authored write applied, in the order they took effect, so what
+    /// is read next describes what is playing (see `publish::authored`).
     pub(crate) fn adopt_landed(&self) {
         drop(self.lock());
     }
@@ -103,6 +86,7 @@ impl LiveGraph {
             surfaces: Arc::downgrade(&self.control_surfaces),
             ports: Arc::downgrade(&self.module_ports),
             state: Arc::downgrade(&self.state),
+            pending: Arc::downgrade(&self.pending),
         }
     }
 
@@ -132,95 +116,12 @@ impl LiveGraph {
         sync_ledger(publisher, &mut self.pending.lock().unwrap());
     }
 
-    /// Records an authored write to control `key` of `module_id`, queued
-    /// at generation `seen` and `safe` from the timed edit it names (see
-    /// `declared::Queued`), in the retained document. Runs under the
-    /// publisher, so no timed edit can be adopted in between.
-    ///
-    /// [`Authored::Overtaken`], with nothing recorded and nothing else
-    /// done, when a timed edit adopted since `seen` may have landed after
-    /// the write and replaced what it wrote (see
-    /// [`Publisher::timed_overtook`]): the caller makes it again. One that
-    /// touched neither the module, its schedule nor the control leaves the
-    /// write playing, so it is recorded, as it is when only untimed changes
-    /// were published since `seen` (they publish nothing after the write
-    /// reaches the audio thread).
-    ///
-    /// Otherwise a timed edit waiting that rebuilds or removes the module
-    /// is cancelled, and the edit reports why, as is one that writes the
-    /// control as it lands but did not keep the write over its own (see
-    /// [`Publisher::keep_authored`]): the write may reach the audio thread
-    /// before or after the edit lands, so only that makes the write what
-    /// plays, and what is recorded. One that keeps the module folds the
-    /// write into its own document, so the write is recorded again as the
-    /// edit is adopted.
-    ///
-    /// A relative asset path is recorded as it names, from the retained
-    /// document's directory, the file it named from `origin`, the invention
-    /// file the write was resolved against (see
-    /// `audio_assets::rebase_asset_write`): a timed edit adopted since may
-    /// have brought in a document from another directory.
-    pub(crate) fn record_authored_from(
-        &self,
-        (module_id, key): (&str, &str),
-        value: &ControlValue,
-        origin: Option<&std::path::Path>,
-        (seen, safe): (u64, Option<RequestId>),
-    ) -> Authored {
-        let mut publisher = self.lock();
-        if publisher.timed_overtook(seen, (module_id, key), safe) {
-            return Authored::Overtaken;
-        }
-        let touches = match publisher.timed_replaces(module_id) {
-            Some(true) => Some(Touched::Removed),
-            Some(false) => Some(Touched::Rebuilt),
-            None => (publisher.timed_chains(module_id, key) && publisher.timed_id() != safe)
-                .then_some(Touched::Written),
-        };
-        if let Some(touches) = touches {
-            let cause = || CancelCause::AuthoredWrite {
-                module_id: module_id.to_string(),
-                key: key.to_string(),
-                touches,
-            };
-            // Landed meanwhile, after the write: adopted, it overtook it.
-            if !publisher.cancel_timed(cause) {
-                self.adopt(&mut publisher);
-                return Authored::Overtaken;
-            }
-        }
-        let mut state = self.state.lock().unwrap();
-        let value = &audio_assets::rebase_asset_write(origin, state.source_path(), key, value);
-        publisher.fold_timed(module_id, key, value);
-        state.record_authored_control(module_id, key, value);
-        Authored::Recorded
-    }
-
-    /// [`Self::record_authored_from`] for a write made against the retained
-    /// document's own directory.
-    #[cfg(test)]
-    pub(crate) fn record_authored(
-        &self,
-        module_id: &str,
-        key: &str,
-        value: &ControlValue,
-        seen: (u64, Option<RequestId>),
-    ) -> Authored {
-        let origin = self
-            .state
-            .lock()
-            .unwrap()
-            .source_path()
-            .map(Path::to_path_buf);
-        self.record_authored_from((module_id, key), value, origin.as_deref(), seen)
-    }
-
     /// Cancels the timed edit waiting, if any, as the invention stops, or
     /// adopts it when it has landed (see `RunningInvention::settle_requests`).
     pub(crate) fn settle_timed(&self) {
         let mut publisher = self.lock();
         if !publisher.cancel_timed(|| CancelCause::Stopping) {
-            self.adopt(&mut publisher);
+            self.catch_up(&mut publisher);
         }
     }
 
@@ -390,7 +291,9 @@ impl LiveGraph {
 /// Adopts the timed edit the audio thread landed, if any, under
 /// `publisher`: the publisher's side, then the runtime's mirrors and
 /// document, as a commit does.
-fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
+/// Commits the runtime mirrors and document for a timed edit the audio
+/// thread has landed, as `LiveGraph::commit_with` commits a change.
+pub(super) fn adopt_into(publisher: &mut Publisher, mirrors: Mirrors<'_>) {
     let Some(publisher::Adopted {
         id,
         published,
@@ -488,11 +391,20 @@ pub(super) struct Adopter {
     surfaces: Weak<Mutex<IndexMap<String, ControlSurfaceInstance>>>,
     ports: Weak<Mutex<IndexMap<String, ModulePorts>>>,
     state: Weak<Mutex<RuntimeState>>,
+    pending: Weak<Mutex<PendingLog>>,
 }
 
 impl Adopter {
     pub(super) fn tick(&self) {
-        if !self.waiting.load(Ordering::Relaxed) {
+        let Some(pending) = self.pending.upgrade() else {
+            return;
+        };
+        // An authored write waiting to apply, or applied and not yet
+        // recorded, is caught up as a landed edit is.
+        let authored = (pending.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .authoring();
+        if !authored && !self.waiting.load(Ordering::Relaxed) {
             return;
         }
         let Some(publisher) = self.publisher.upgrade() else {
@@ -503,14 +415,14 @@ impl Adopter {
         let Ok(mut publisher) = publisher.try_lock() else {
             return;
         };
-        if !publisher.timed_waiting() {
+        if !authored && !publisher.timed_waiting() {
             return;
         }
         let surfaces = self.surfaces.upgrade();
         let ports = self.ports.upgrade();
         let state = self.state.upgrade();
         if let (Some(surfaces), Some(ports), Some(state)) = (surfaces, ports, state) {
-            adopt_into(&mut publisher, (&surfaces, &ports, &state));
+            authored::catch_up(&mut publisher, &pending, (&surfaces, &ports, &state));
         }
     }
 }
