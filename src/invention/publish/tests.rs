@@ -37,6 +37,7 @@ mod request_tiers;
 mod request_timing;
 mod request_watch;
 mod requests;
+mod sample_kit;
 mod sample_player;
 mod schedule_payload;
 mod schedule_rebind;

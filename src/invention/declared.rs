@@ -431,6 +431,13 @@ impl DeclaredSurface {
         matches!(*self.route.lock().unwrap(), Route::Building(_))
     }
 
+    /// Takes the locks a control thread writing it takes, in its order,
+    /// holding them while the guards live.
+    #[cfg(test)]
+    pub(crate) fn hold_state(&self) -> impl Sized + '_ {
+        (self.route.lock().unwrap(), self.payloads.lock().unwrap())
+    }
+
     /// The control `key` names, refused when it does not exist: unknown,
     /// or past the read-only count it is listed below.
     fn index(&self, key: &str) -> Result<ControlIndex, String> {

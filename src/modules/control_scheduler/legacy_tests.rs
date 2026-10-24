@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 use super::*;
 use crate::alloc_counter::allocator_events;
 use crate::audio_thread::AudioThreadScope;
-use crate::control_request::{scheduled_surface, while_held};
+use crate::control_request::while_held;
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::module_config::tests::registry::eight_frame_wav;
 use crate::modules::sample_instrument::{LoopSpec, SampleInstrument, ZoneSpec};
@@ -51,11 +51,9 @@ impl Locking {
         }
     }
 
-    /// A directory of every legacy family: the atomic ones fresh, the
-    /// locking ones these.
+    /// A directory of every legacy family, each one these.
     fn directory(&self) -> SurfaceDirectory {
         let mut map: IndexMap<String, ControlSurfaceInstance> = IndexMap::new();
-        map.insert("sample_kit".into(), scheduled_surface("sample_kit"));
         map.insert(
             "sample_instrument".into(),
             Arc::new(self.instrument.clone()),
@@ -145,7 +143,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
     let mut locking = Locking::new();
     let directory = locking.directory();
     let entries = vec![
-        ramp("sample_kit", "level.0", 0.5),
         entry(0, "sample_instrument", "note_on", Number(64.0)),
         ramp("sample_instrument", "level.0", 0.5),
     ];
@@ -153,13 +150,8 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
     for gate in [1.0, 0.0, 1.0, 0.0, 1.0, 0.0] {
         assert_eq!(locking.block(&mut scheduler, gate), (0, 0));
     }
-    for (module, control, to) in [
-        ("sample_kit", "level.0", 0.5),
-        ("sample_instrument", "level.0", 0.5),
-    ] {
-        let landed = number(&directory, module, control);
-        assert!((landed - to).abs() < 1e-4, "{module}.{control}: {landed}");
-    }
+    let landed = number(&directory, "sample_instrument", "level.0");
+    assert!((landed - 0.5).abs() < 1e-4, "sample_instrument.level.0: {landed}");
     assert_eq!(locking.sounding.sounding(), [64]);
 }
 
