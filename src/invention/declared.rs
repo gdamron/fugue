@@ -39,6 +39,7 @@
 //! it reach the module that replaced it.
 
 use indexmap::IndexMap;
+use std::any::Any;
 use std::sync::{Arc, Mutex, Weak};
 
 #[cfg(test)]
@@ -51,9 +52,9 @@ use super::runtime::ControlSurfaceInstance;
 #[cfg(test)]
 use super::runtime::{GraphCommandError, ModuleInstance};
 use crate::control_request::{
-    apply_declared, Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind,
-    PayloadCodec, Refusal, Request, RequestId, RequestSender, RequestValue, RtValue, Source,
-    Writer,
+    apply_declared, Automation, ControlCells, ControlContext, ControlDecl, ControlIndex,
+    ControlTable, DeclKind, PayloadCodec, Refusal, Request, RequestId, RequestSender, RequestValue,
+    RtValue, Source, Writer,
 };
 use crate::payload::Payload;
 use crate::traits::ControlSurfaceMap;
@@ -123,6 +124,9 @@ pub(crate) struct DeclaredSurface {
     /// Each payload control written so far. The innermost lock: never held
     /// while taking another.
     payloads: Mutex<Vec<Written>>,
+    /// What its codecs build with, attached by its module at build (see
+    /// [`Self::with_context`]).
+    context: Vec<Arc<dyn Any + Send + Sync>>,
 }
 
 /// A payload control's last write: what reads report, and while its module
@@ -200,7 +204,20 @@ impl DeclaredSurface {
             route: Mutex::new(Route::Building(Vec::new())),
             clamps: true,
             payloads: Mutex::new(Vec::new()),
+            context: Vec::new(),
         }
+    }
+
+    /// Adds `context` to what its payload codecs build each write with (see
+    /// [`ControlContext`]): a part of what its module was built with that a
+    /// write needs, such as an asset control's sample rate and build lock.
+    /// A codec finds a part by its type, so a module attaches one part per
+    /// need. Only this surface can then build its payloads, so a
+    /// development aliasing one has it built here
+    /// ([`ControlSurface::prepare_payload`]).
+    pub(crate) fn with_context(mut self, context: Arc<dyn Any + Send + Sync>) -> Self {
+        self.context.push(context);
+        self
     }
 
     /// Records `value` as what payload control `key` reads back as, for
@@ -353,7 +370,12 @@ impl DeclaredSurface {
         let Some(codec) = codec else {
             return Some(Err(format!("Control '{key}' cannot be written")));
         };
-        Some((codec.prepare)(value).map(|(payload, shown)| (index, payload, shown)))
+        let context = ControlContext {
+            position: self.table.decl(index).map_or(0, |(_, position)| position),
+            parts: &self.context,
+        };
+        let prepared = (codec.prepare)(&context, value);
+        Some(prepared.map(|(payload, shown)| (index, payload, shown)))
     }
 
     /// A development's surface over `cells`: a write before it runs is
@@ -698,6 +720,22 @@ impl ControlSurface for DeclaredSurface {
             return Err(EVENT_WHILE_BUILDING.into());
         }
         Ok(())
+    }
+
+    /// A payload built with this surface's context, which a development
+    /// aliasing it does not hold: `None` when it holds none, and the
+    /// development's own surface builds the write from the value alone.
+    #[allow(private_interfaces)]
+    fn prepare_payload(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Option<Result<(Payload, ControlValue), String>> {
+        if self.context.is_empty() {
+            return None;
+        }
+        let prepared = self.prepare(key, value)?;
+        Some(prepared.map(|(_, payload, shown)| (payload, shown)))
     }
 
     fn bind(&self, route: Route, module: &mut dyn Module) {

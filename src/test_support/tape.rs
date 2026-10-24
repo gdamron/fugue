@@ -10,7 +10,8 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use crate::control_request::{
-    ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec, Refusal, RtValue,
+    ControlCells, ControlContext, ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec,
+    Prepared, Refusal, RtValue,
 };
 use crate::invention::declared::DeclaredSurface;
 use crate::module_config::ConfigKey;
@@ -72,7 +73,7 @@ fn parse(text: &str) -> Result<(Notes, ControlValue), String> {
     Ok((notes, shown.into()))
 }
 
-fn prepare(value: &ControlValue) -> Result<(Payload, ControlValue), String> {
+fn prepare(_: &ControlContext<'_>, value: &ControlValue) -> Prepared {
     let (notes, shown) = parse(value.as_string()?)?;
     Ok((Payload::new(notes), shown))
 }

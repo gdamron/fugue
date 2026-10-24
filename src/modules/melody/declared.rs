@@ -7,7 +7,8 @@
 use serde_json::Value;
 
 use crate::control_request::{
-    ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec, RtValue,
+    ControlContext, ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec, Prepared,
+    RtValue,
 };
 use crate::module_config::{finite_f32, whole_number};
 use crate::payload::Payload;
@@ -182,7 +183,7 @@ pub(super) fn shown<T: serde::Serialize>(list: &[T]) -> ControlValue {
         .into()
 }
 
-fn prepare_degrees(value: &ControlValue) -> Result<(Payload, ControlValue), String> {
+fn prepare_degrees(_: &ControlContext<'_>, value: &ControlValue) -> Prepared {
     let degrees = list(
         "degrees",
         &Value::String(value.as_string()?.into()),
@@ -192,7 +193,7 @@ fn prepare_degrees(value: &ControlValue) -> Result<(Payload, ControlValue), Stri
     Ok((Payload::new(Scale(degrees)), shown))
 }
 
-fn prepare_weights(value: &ControlValue) -> Result<(Payload, ControlValue), String> {
+fn prepare_weights(_: &ControlContext<'_>, value: &ControlValue) -> Prepared {
     let weights = list(
         "note_weights",
         &Value::String(value.as_string()?.into()),

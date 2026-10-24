@@ -106,6 +106,17 @@ impl Payload {
         Self(Some(Erased::Shared(Arc::new(value))))
     }
 
+    /// Shares a value the control side already holds by `Arc`, such as a
+    /// cached sample, without wrapping it again: the module keeps that same
+    /// `Arc` as its [`Shared<T>`], and only that handle is retired. Other
+    /// clones of `value` stay outside this discipline, so whoever holds
+    /// them must never let the last one drop on the audio thread (the
+    /// sample cache keeps every buffer it hands out; see `AssetLoader`).
+    /// Allocation-free.
+    pub(crate) fn from_arc<T: Send + Sync + 'static>(value: Arc<T>) -> Self {
+        Self(Some(Erased::Shared(value)))
+    }
+
     /// Wraps a boxed `value` to hand over whole. Converting the box never
     /// allocates; the box itself was built on a control thread.
     pub(crate) fn owned<T: Send + 'static>(value: Box<T>) -> Self {
@@ -187,6 +198,12 @@ impl<T: Send + Sync + 'static> Shared<T> {
     /// A module's initial value. Control thread only: allocates.
     pub(crate) fn new(value: T) -> Self {
         Self(Some(Arc::new(value)))
+    }
+
+    /// A module's initial value, shared with what the control side holds
+    /// by `Arc`, as [`Payload::from_arc`] shares a written one.
+    pub(crate) fn from_arc(value: Arc<T>) -> Self {
+        Self(Some(value))
     }
 }
 

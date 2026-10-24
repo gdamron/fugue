@@ -558,3 +558,45 @@ mod debug_checks {
         retirer.retire(Box::new(3u32));
     }
 }
+
+#[test]
+fn a_payload_from_an_arc_shares_it_and_its_last_drop_is_the_drainers() {
+    let ledger = Ledger::default();
+    let queue = RetireQueue::with_capacity(4);
+    let (submit, requests) = mpsc::sync_channel::<Payload>(4);
+    let mut audio = (
+        requests,
+        Retirer::new(Arc::clone(&queue), 2),
+        Module {
+            current: Shared::new(ledger.value(0)),
+        },
+    );
+    // What a cache holds: the payload is this very Arc, not a wrap of it.
+    let cached = Arc::new(ledger.value(1));
+    submit.send(Payload::from_arc(Arc::clone(&cached))).unwrap();
+    let ((), audio_thread) = on_audio(&mut audio, |(requests, retirer, module)| {
+        module.apply(requests.try_recv().unwrap(), retirer);
+    });
+    assert_eq!(audio.2.current.id, 1);
+    assert_eq!(
+        Arc::strong_count(&cached),
+        2,
+        "the module shares the cache's"
+    );
+
+    // Only the replaced handle retires; the shared value lives on.
+    let (drained, control) = drain_on_control(&queue);
+    assert_eq!(drained, 1);
+    assert_eq!(ledger.drops(), [(0, control)]);
+    assert_ne!(control, audio_thread);
+
+    // A later write retires the cache's Arc too, freeing nothing while the
+    // cache holds it.
+    submit.send(Payload::new(ledger.value(2))).unwrap();
+    on_audio(&mut audio, |(requests, retirer, module)| {
+        module.apply(requests.try_recv().unwrap(), retirer);
+    });
+    drain_on_control(&queue);
+    assert_eq!(ledger.dropped_ids(), [0]);
+    assert_eq!(Arc::strong_count(&cached), 1);
+}

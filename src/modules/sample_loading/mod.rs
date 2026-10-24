@@ -15,13 +15,26 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex, OnceLock};
 
+mod asset;
 pub(crate) mod elastic;
 mod local;
+
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use asset::{AssetLoader, SAMPLE_ASSET};
 
 #[cfg(test)]
 mod tests;
 
 /// A decoded stereo sample at the engine sample rate.
+///
+/// # Ownership
+///
+/// Every `Arc<SampleData>` comes from the process-wide sample cache
+/// ([`load_cached_sample`]), which holds each buffer for as long as anything
+/// else does. So the last drop of any other clone never frees one: an
+/// audio-side clone (a voice letting go of a replaced sample) may drop on
+/// the audio thread. An asset payload ([`asset`]) carries the cache's `Arc`
+/// itself, and only the module's handle on it is retired.
 pub(crate) struct SampleData {
     pub(crate) left: Vec<f32>,
     pub(crate) right: Vec<f32>,

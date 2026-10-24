@@ -7,6 +7,7 @@ use crate::invention::runtime::module_ports;
 use crate::{Invention, InventionBuilder};
 
 mod alloc;
+mod asset_payloads;
 mod carry;
 mod declared;
 mod declared_routes;

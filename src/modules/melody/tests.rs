@@ -1,4 +1,5 @@
 use super::*;
+use crate::control_request::ControlContext;
 use crate::{ControlValue, ModuleBuildResult};
 
 fn make_melody() -> MelodyGenerator {
@@ -10,7 +11,7 @@ fn make_melody() -> MelodyGenerator {
 fn write_list(melody: &mut MelodyGenerator, key: &str, text: &str) {
     let index = TABLE.resolve(key).unwrap();
     let codec = TABLE.decl(index).unwrap().0.codec.unwrap();
-    let (payload, _) = (codec.prepare)(&text.into()).unwrap();
+    let (payload, _) = (codec.prepare)(&ControlContext::NONE, &text.into()).unwrap();
     let applied = melody.apply_payload(index, payload);
     assert!(applied.is_ok(), "{key} {text}");
 }
@@ -179,7 +180,11 @@ fn writes_and_the_notes_they_shape_do_not_allocate() {
     let scale = index("degrees");
     let codec = TABLE.decl(scale).unwrap().0.codec.unwrap();
     let mut payloads: Vec<_> = (0..8)
-        .map(|n| (codec.prepare)(&format!("[0, 2, {n}]").into()).unwrap().0)
+        .map(|n| {
+            (codec.prepare)(&ControlContext::NONE, &format!("[0, 2, {n}]").into())
+                .unwrap()
+                .0
+        })
         .collect();
     let mut retired = Vec::with_capacity(payloads.len());
     let keys = [
