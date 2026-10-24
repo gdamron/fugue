@@ -6,12 +6,12 @@ use super::schedule::{compile_tempo_map, parse_schedule, parse_schedule_json, Su
 use super::*;
 use crate::factory::{GraphModule, ModuleFactory};
 use crate::modules::cell_sequencer::CellSequencerFactory;
-use crate::modules::mixer::MixerControls;
+use crate::test_support::legacy_levels::LegacyLevels;
 use crate::{ControlSurface, ControlValue};
 
-/// Builds a scheduler attached to a directory containing a 2-channel mixer
+/// Builds a scheduler attached to a directory containing two legacy levels
 /// (id `mixer`, all levels 1.0) and a cell sequencer (id `cells`).
-pub(super) fn setup(schedule_json: &str) -> (ControlScheduler, MixerControls, SurfaceDirectory) {
+pub(super) fn setup(schedule_json: &str) -> (ControlScheduler, LegacyLevels, SurfaceDirectory) {
     let (module, mixer, directory, _cells) = setup_with_cells(schedule_json);
     (module, mixer, directory)
 }
@@ -21,11 +21,11 @@ fn setup_with_cells(
     schedule_json: &str,
 ) -> (
     ControlScheduler,
-    MixerControls,
+    LegacyLevels,
     SurfaceDirectory,
     GraphModule,
 ) {
-    let mixer = MixerControls::new(2);
+    let mixer = LegacyLevels::new(2);
     let config = serde_json::json!({ "cells": [[0], [2]] });
     let built = CellSequencerFactory.build(48_000, &config);
     let built = built.unwrap();
@@ -272,7 +272,7 @@ fn attach_resolving_resolves_against_a_pending_directory() {
     let mut pending: SurfaceMap = IndexMap::new();
     pending.insert(
         "mixer".to_string(),
-        Arc::new(MixerControls::new(2)) as Arc<dyn ControlSurface + Send + Sync>,
+        Arc::new(LegacyLevels::new(2)) as Arc<dyn ControlSurface + Send + Sync>,
     );
     ctrl.attach_resolving("sched", &directory, &pending)
         .unwrap();

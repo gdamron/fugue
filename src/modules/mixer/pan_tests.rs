@@ -3,6 +3,7 @@
 
 use super::tests::{left_blocks, ramp_frames, BLOCK};
 use super::*;
+use crate::factory::ModuleFactory;
 
 /// How close a frame is to the pan law at the pan it should be at: f32
 /// rounding gathered over a glide, far below the step a click would be.
