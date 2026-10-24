@@ -44,7 +44,7 @@ pub trait OrchestrationRuntime {
     ) -> Result<(), GraphCommandError>;
 
     /// Updates a control value, recording it in the retained document only
-    /// when the write is meant as the module's new starting state (FUG-266).
+    /// when the write is meant as the module's new starting state.
     ///
     /// Defaults to [`Self::set_control`] — authoring — for runtimes with no
     /// concurrent clients to conflict with, notably offline render.
@@ -224,12 +224,12 @@ impl RuntimeSnapshot {
     ///
     /// This is the choke point for externally-initiated control writes — RPC
     /// commands, conducting scripts, and agents — so an observer sees every one
-    /// of them as a `ControlChanged` event regardless of intent (finding
-    /// FUG-239 #7). What intent changes is whether the value is *authored*:
+    /// of them as a `ControlChanged` event regardless of intent. What intent
+    /// changes is whether the value is *authored*:
     /// a [`ControlWriteIntent::Perform`] write is a live gesture that must
     /// neither land in a saved document nor advance the daemon's revision, so
     /// a scheduler running at musical rate cannot make every peer's structural
-    /// edit stale (FUG-266).
+    /// edit stale.
     ///
     /// Every write is coerced to the control's declared kind first. A write
     /// whose value is a number that is not finite after coercion (NaN, an
@@ -319,8 +319,8 @@ impl RuntimeSnapshot {
         options: &WriteOptions,
     ) -> Result<ControlAck, GraphCommandError> {
         // Coerce to the control's declared kind before applying and recording,
-        // so a stringified write lands and the retained document stays typed
-        // (see FUG-240). set_control_transient stays uncoerced: its callers are
+        // so a stringified write lands and the retained document stays typed.
+        // set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
         let value = self.coerced(module_id, key, value)?;
         let (load, origin) = self.asset_to_load(key, &value)?;
@@ -456,8 +456,10 @@ impl RuntimeSnapshot {
             .submit(key, value, options)
             .map_err(GraphCommandError::ControlError)?;
         // A declared control's write is a request, and logged; any other
-        // reaches its module directly.
-        if let Some(live) = self.live.as_ref().filter(|_| !surface.declares(key)) {
+        // reaches its module directly, as does one to a development's
+        // legacy aliases beside its declared part.
+        let unlogged = surface.writes_legacy(key) && !queued.lost;
+        if let Some(live) = self.live.as_ref().filter(|_| unlogged) {
             live.note_unlogged();
         }
         Ok(queued)

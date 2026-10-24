@@ -1,5 +1,5 @@
 use super::*;
-use crate::control_request::{Automation, LegacyRefusal, TableValue};
+use crate::control_request::{Automation, LegacyRefusal, RtValue, TableValue};
 use crate::invention::declared::{Declaration, DeclaredSurface, Queued, Route, WriteOptions};
 use crate::modules::control_scheduler::SurfaceDirectory;
 use std::sync::PoisonError;
@@ -256,6 +256,10 @@ impl ControlSurface for DevelopmentControlSurface {
                 return self.write_payload(declared, (key, value), options);
             }
             let queued = declared.submit(key, value.clone(), options)?;
+            // The legacy aliases take the value as the write is made, not
+            // as its declared part applies: until their types migrate, a
+            // live write that later loses on the audio thread leaves them
+            // playing it.
             if !queued.lost {
                 self.set_legacy(key, value)?;
             }
@@ -374,6 +378,27 @@ impl ControlSurface for DevelopmentControlSurface {
 
     fn declares(&self, key: &str) -> bool {
         self.declared(key).is_some()
+    }
+
+    fn writes_legacy(&self, key: &str) -> bool {
+        let reaches = |control: &&AliasedControl| {
+            (self.surfaces.get(&control.module_id))
+                .is_some_and(|inner| inner.writes_legacy(&control.key))
+        };
+        self.controls
+            .iter()
+            .filter(|entry| entry.meta.key == key)
+            .any(|control| reaches(&control))
+    }
+
+    fn follow_declared(&self, key: &str, value: RtValue) -> Result<(), String> {
+        let value = self
+            .declared(key)
+            .and_then(|declared| declared.value_of(key, value));
+        match value {
+            Some(value) if self.writes_legacy(key) => self.set_legacy(key, value),
+            _ => Ok(()),
+        }
     }
 
     /// Only for a key every alias of which automation can write: a key
