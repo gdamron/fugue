@@ -173,7 +173,14 @@ fn parse_key(
 /// One playback voice per slot. Retriggering a slot restarts it (per-slot
 /// choke); different slots mix freely.
 struct Voice {
+    /// What the slot's next play plays.
     sample: Shared<SampleData>,
+    /// The sample a swap replaced while it sounded, which rings out rather
+    /// than stopping dead (a click). Held until a later swap retires it;
+    /// the sample cache holds its buffer anyway.
+    previous: Shared<SampleData>,
+    /// Whether the voice is playing `previous`.
+    ringing_out: bool,
     level: f32,
     position: usize,
     active: bool,
@@ -181,8 +188,27 @@ struct Voice {
 
 impl Voice {
     fn start(&mut self) {
+        self.ringing_out = false;
         self.position = 0;
         self.active = self.sample.len() > 0;
+    }
+
+    fn sounding(&self) -> &SampleData {
+        match self.ringing_out {
+            true => &self.previous,
+            false => &self.sample,
+        }
+    }
+
+    /// Takes `sample` for the next play, handing back the handle it no
+    /// longer needs: the sounding one rings out to its end.
+    fn swap(&mut self, sample: Shared<SampleData>) -> Shared<SampleData> {
+        let replaced = std::mem::replace(&mut self.sample, sample);
+        if !self.active || self.ringing_out {
+            return replaced;
+        }
+        self.ringing_out = true;
+        std::mem::replace(&mut self.previous, replaced)
     }
 }
 
@@ -215,7 +241,9 @@ impl SampleKit {
                     _ => 1.0,
                 };
                 Voice {
+                    previous: sample.clone(),
                     sample,
+                    ringing_out: false,
                     level,
                     position: 0,
                     active: false,
@@ -266,11 +294,13 @@ impl Module for SampleKit {
                 if !voice.active {
                     continue;
                 }
-                let (l, r) = voice.sample.frame_at(voice.position);
+                let sample = voice.sounding();
+                let (l, r) = sample.frame_at(voice.position);
+                let len = sample.len();
                 left += l * voice.level;
                 right += r * voice.level;
                 voice.position += 1;
-                if voice.position >= voice.sample.len() {
+                if voice.position >= len {
                     voice.active = false;
                     voice.position = 0;
                 }
@@ -332,8 +362,8 @@ impl Module for SampleKit {
         }
     }
 
-    /// A slot's new sample waits for its next play: cutting to it
-    /// mid-buffer would click. The one it replaces is retired.
+    /// A slot's new sample waits for its next play, and the one sounding
+    /// rings out: cutting either mid-buffer would click.
     #[allow(private_interfaces)]
     fn apply_payload(
         &mut self,
@@ -346,10 +376,7 @@ impl Module for SampleKit {
         let sample = payload
             .downcast::<SampleData>()
             .map_err(|payload| (Refusal::Invalid, payload))?;
-        let voice = &mut self.voices[slot];
-        voice.active = false;
-        voice.position = 0;
-        Ok(std::mem::replace(&mut voice.sample, sample).into())
+        Ok(self.voices[slot].swap(sample).into())
     }
 
     fn controls(&self) -> Vec<ControlMeta> {

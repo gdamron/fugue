@@ -398,6 +398,37 @@ fn a_play_while_building_fires_once_the_kit_binds() {
 }
 
 #[test]
+fn a_sample_swapped_out_while_it_sounds_plays_to_its_end() {
+    let kick = write_levels_wav(&[0.5, 0.4, 0.3]);
+    let quiet = write_level_wav(0.125, 4);
+    let slot = serde_json::json!([{ "key": 36, "asset": kick.to_str().unwrap() }]);
+    let (mut kit, _surface) = build_kit(serde_json::json!({ "samples": slot }));
+    let quiet = crate::modules::sample_loading::load_cached_sample(quiet.to_str().unwrap(), 44_100);
+    let payload = crate::payload::Payload::from_arc(quiet.unwrap());
+    let asset = controls::index_of(KitControl::Asset(0), 1);
+
+    kit.set_input("play", 36.0).unwrap();
+    kit.process(1);
+    let retired = kit.apply_payload(asset, payload).ok().unwrap();
+    let mut heard = Vec::new();
+    for _ in 0..3 {
+        kit.process(1);
+        heard.push(kit.get_output("audio_left").unwrap());
+    }
+    drop(retired);
+    assert!(
+        (heard[0] - 0.4).abs() < TOL && (heard[1] - 0.3).abs() < TOL,
+        "{heard:?}"
+    );
+    assert_eq!(heard[2], 0.0, "it ends, and the new one waits for a play");
+    kit.set_input("play", 0.0).unwrap();
+    kit.process(1);
+    kit.set_input("play", 36.0).unwrap();
+    kit.process(1);
+    assert!((kit.get_output("audio_left").unwrap() - 0.125).abs() < TOL);
+}
+
+#[test]
 fn the_modules_own_setter_refuses_play_which_its_surface_reads() {
     let kick = write_level_wav(0.5, 4);
     let slot = serde_json::json!([{ "key": 36, "asset": kick.to_str().unwrap() }]);
