@@ -5,11 +5,11 @@ use cpal::traits::DeviceTrait;
 use std::sync::Arc;
 
 use super::device::{output_device, requested_output_device};
+#[cfg(doc)]
+use super::OUTPUT_DEVICE_ENV;
 use super::diagnostics::StreamErrorKind;
 use super::supervisor::Supervisor;
 use super::AudioDiagnostics;
-#[cfg(doc)]
-use super::OUTPUT_DEVICE_ENV;
 
 /// Renders a block of `frames` planar stereo samples, where
 /// `frames == left.len() == right.len()`. Called from the audio thread.
