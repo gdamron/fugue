@@ -255,6 +255,25 @@ pub trait ControlSurface: Send + Sync {
         self.set_control(key, value)
     }
 
+    /// Whether a write to `key` reaches a control on the legacy path, which
+    /// takes it without a request, so a request log cannot replay it: the
+    /// whole of a legacy control, and a development's legacy aliases.
+    #[doc(hidden)]
+    fn writes_legacy(&self, key: &str) -> bool {
+        !self.declares(key)
+    }
+
+    /// Writes `key`'s legacy aliases to `value`, just applied to its
+    /// declared part without a front door (a request log's replay), as a
+    /// front door's write to `key` writes them. Nothing for a surface with
+    /// no such alias. Control thread.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn follow_declared(&self, key: &str, value: RtValue) -> Result<(), String> {
+        let _ = (key, value);
+        Ok(())
+    }
+
     /// Writes legacy control `key` as a scheduler's table does, on the
     /// audio thread: what [`Self::set_control`] would write, allocation-,
     /// free- and lock-free, never waiting on a lock a control thread may

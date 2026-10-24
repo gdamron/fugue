@@ -481,6 +481,12 @@ impl DeclaredSurface {
         body()
     }
 
+    /// `value`, held by control `key`, as a write to it would carry it: a
+    /// choice by name. `None` for a payload, or a key not declared.
+    pub(crate) fn value_of(&self, key: &str, value: RtValue) -> Option<ControlValue> {
+        self.table.value(self.table.resolve(key)?, value)
+    }
+
     fn index(&self, key: &str) -> Result<ControlIndex, String> {
         self.table
             .resolve(key)
