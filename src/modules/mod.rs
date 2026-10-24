@@ -79,7 +79,7 @@ pub use reverb::Reverb;
 #[cfg(not(target_arch = "wasm32"))]
 pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};
 pub use sample_instrument::{SampleInstrument, SampleInstrumentControls};
-pub use sample_kit::{SampleKit, SampleKitControls};
+pub use sample_kit::SampleKit;
 pub use sample_player::SamplePlayer;
 pub use sample_slicer::SampleSlicer;
 pub use step_sequencer::{GraceChain, Step, StepSequencer, MAX_GRACE_NOTES, STEP_KEYS};

@@ -2,6 +2,7 @@ use super::*;
 use crate::factory::ModuleFactory;
 use crate::{ControlSurface, ControlValue};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Process-unique suffix so parallel tests never collide on a temp path.
@@ -46,22 +47,19 @@ fn write_level_wav(level: f32, frames: usize) -> PathBuf {
     write_levels_wav(&vec![level; frames])
 }
 
-fn build_kit(config: serde_json::Value) -> (Box<dyn crate::Module + Send>, SampleKitControls) {
+fn build_kit(
+    config: serde_json::Value,
+) -> (
+    Box<dyn crate::Module + Send>,
+    Arc<dyn ControlSurface + Send + Sync>,
+) {
     let result = SampleKitFactory.build(44_100, &config).unwrap();
-    let controls = result
-        .handles
-        .iter()
-        .find(|(name, _)| name == "controls")
-        .unwrap()
-        .1
-        .downcast_ref::<SampleKitControls>()
-        .unwrap()
-        .clone();
+    let surface = result.control_surface.unwrap();
     let module = match result.module {
         crate::factory::GraphModule::Module(module) => module,
         crate::factory::GraphModule::Sink(_) => panic!("sample_kit is not a sink"),
     };
-    (module, controls)
+    (module, surface)
 }
 
 fn two_slot_config(kick: &std::path::Path, snare: &std::path::Path) -> serde_json::Value {
@@ -80,7 +78,7 @@ const TOL: f32 = 2e-3;
 fn test_play_value_selects_slot() {
     let kick = write_level_wav(0.5, 4);
     let snare = write_level_wav(0.25, 4);
-    let (mut kit, _controls) = build_kit(two_slot_config(&kick, &snare));
+    let (mut kit, _surface) = build_kit(two_slot_config(&kick, &snare));
 
     // No `key` connection: the `play` input's own value carries the key.
     kit.set_input("play", 36.0).unwrap();
@@ -96,7 +94,7 @@ fn test_play_value_selects_slot() {
 fn test_key_input_selects_slot() {
     let kick = write_level_wav(0.5, 4);
     let snare = write_level_wav(0.25, 4);
-    let (mut kit, _controls) = build_kit(two_slot_config(&kick, &snare));
+    let (mut kit, _surface) = build_kit(two_slot_config(&kick, &snare));
 
     kit.set_input("key", 38.0).unwrap();
     kit.set_input("play", 1.0).unwrap();
@@ -111,7 +109,7 @@ fn test_key_input_selects_slot() {
 fn test_unmatched_key_stays_silent() {
     let kick = write_level_wav(0.5, 4);
     let snare = write_level_wav(0.25, 4);
-    let (mut kit, _controls) = build_kit(two_slot_config(&kick, &snare));
+    let (mut kit, _surface) = build_kit(two_slot_config(&kick, &snare));
 
     kit.set_input("play", 40.0).unwrap();
     kit.process(1);
@@ -125,7 +123,7 @@ fn test_unmatched_key_stays_silent() {
 fn test_slots_overlap_and_voice_ends() {
     let kick = write_level_wav(0.5, 4);
     let snare = write_level_wav(0.25, 2);
-    let (mut kit, _controls) = build_kit(two_slot_config(&kick, &snare));
+    let (mut kit, _surface) = build_kit(two_slot_config(&kick, &snare));
 
     kit.set_input("key", 36.0).unwrap();
     kit.set_input("play", 1.0).unwrap();
@@ -160,7 +158,7 @@ fn test_replay_restarts_slot() {
     let config = serde_json::json!({
         "samples": [ { "key": 36, "asset": path.to_str().unwrap() } ]
     });
-    let (mut kit, _controls) = build_kit(config);
+    let (mut kit, _surface) = build_kit(config);
 
     kit.set_input("play", 36.0).unwrap();
     kit.process(1);
@@ -175,102 +173,6 @@ fn test_replay_restarts_slot() {
     assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
 
     let _ = std::fs::remove_file(path);
-}
-
-#[test]
-fn test_play_control_by_name_and_numeric_string() {
-    let kick = write_level_wav(0.5, 4);
-    let ride = write_level_wav(0.25, 4);
-    let config = serde_json::json!({
-        "samples": [
-            { "key": 36, "asset": kick.to_str().unwrap() },
-            { "key": "ride", "asset": ride.to_str().unwrap() }
-        ]
-    });
-    let (mut kit, controls) = build_kit(config);
-
-    controls
-        .set_control("play", ControlValue::String("ride".to_string()))
-        .unwrap();
-    kit.process(1);
-    assert!((kit.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
-
-    controls
-        .set_control("play", ControlValue::String("36".to_string()))
-        .unwrap();
-    kit.process(1);
-    // Kick starts while the ride continues.
-    assert!((kit.get_output("audio_left").unwrap() - 0.75).abs() < TOL);
-
-    let err = controls
-        .set_control("play", ControlValue::String("crash".to_string()))
-        .unwrap_err();
-    assert!(err.contains("No sample slot named 'crash'"), "{err}");
-
-    let _ = std::fs::remove_file(kick);
-    let _ = std::fs::remove_file(ride);
-}
-
-#[test]
-fn test_level_control_scales_slot() {
-    let kick = write_level_wav(0.5, 4);
-    let config = serde_json::json!({
-        "samples": [ { "key": 36, "asset": kick.to_str().unwrap(), "level": 0.5 } ]
-    });
-    let (mut kit, controls) = build_kit(config);
-
-    kit.set_input("play", 36.0).unwrap();
-    kit.process(1);
-    assert!((kit.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
-
-    controls
-        .set_control("level.0", ControlValue::Number(2.0))
-        .unwrap();
-    kit.set_input("play", 0.0).unwrap();
-    kit.process(1);
-    kit.set_input("play", 36.0).unwrap();
-    kit.process(1);
-    assert!((kit.get_output("audio_left").unwrap() - 1.0).abs() < 2.0 * TOL);
-
-    let _ = std::fs::remove_file(kick);
-}
-
-#[test]
-fn test_asset_control_swaps_slot_sample() {
-    let kick = write_level_wav(0.5, 8);
-    let replacement = write_level_wav(0.25, 8);
-    let config = serde_json::json!({
-        "samples": [ { "key": 36, "asset": kick.to_str().unwrap() } ]
-    });
-    let (mut kit, controls) = build_kit(config);
-
-    kit.set_input("play", 36.0).unwrap();
-    kit.process(1);
-    assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
-
-    // The swap lands at the next block; the new sample waits for a play
-    // instead of jumping in mid-buffer.
-    controls
-        .set_control(
-            "asset.0",
-            ControlValue::String(replacement.to_str().unwrap().to_string()),
-        )
-        .unwrap();
-    assert_eq!(
-        controls.get_control("asset.0").unwrap(),
-        ControlValue::String(replacement.to_str().unwrap().to_string())
-    );
-    kit.process(1);
-    assert_eq!(kit.get_output("audio_left").unwrap(), 0.0);
-
-    controls
-        .set_control("play", ControlValue::Number(36.0))
-        .unwrap();
-    kit.process(1);
-    assert!((kit.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
-
-    let _ = std::fs::remove_file(kick);
-    let _ = std::fs::remove_file(replacement);
 }
 
 #[test]
@@ -364,10 +266,10 @@ fn test_package_ref_slot_resolves_through_cache() {
         "samples": [ { "key": 36, "asset": "fugue.test.kit@1.0.0:kick.wav" } ]
     });
     crate::pkg::audio_asset::with_packs_dir(tmp.path(), || {
-        let (mut kit, controls) = build_kit(config);
+        let (mut kit, surface) = build_kit(config);
         // The authored ref stays the control value.
         assert_eq!(
-            controls.get_control("asset.0").unwrap(),
+            surface.get_control("asset.0").unwrap(),
             ControlValue::String("fugue.test.kit@1.0.0:kick.wav".to_string())
         );
         kit.set_input("play", 36.0).unwrap();
@@ -438,13 +340,74 @@ fn the_retired_spellings_are_refused() {
         .into_iter()
         .map(|meta| meta.key)
         .collect();
-    assert_eq!(keys, ["play", "key.0", "asset.0", "level.0"]);
+    assert_eq!(keys, ["play", "asset.0", "level.0", "key.0"]);
 
-    let mut kit = SampleKit::new_with_controls(
-        SampleKitControls::new(44_100, Vec::new()).unwrap().0,
-        Vec::new(),
-    );
+    let (mut kit, _) = build_kit(serde_json::Value::Null);
     assert!(kit.set_input("trigger", 1.0).is_err());
     assert_eq!(kit.inputs(), ["play", "key"]);
+    let _ = std::fs::remove_file(kick);
+}
+
+#[test]
+fn a_recorded_level_wins_over_the_authored_one_and_a_recorded_key_is_refused() {
+    let kick = write_level_wav(0.5, 4);
+    let asset = kick.to_str().unwrap();
+    let slot = serde_json::json!([{ "key": 36, "asset": asset, "level": 0.5 }]);
+    let (mut kit, surface) = build_kit(serde_json::json!({ "samples": slot, "level.0": 0.25 }));
+    assert_eq!(
+        surface.get_control("level.0"),
+        Ok(ControlValue::Number(0.25))
+    );
+    kit.set_input("play", 36.0).unwrap();
+    kit.process(1);
+    assert!((kit.get_output("audio_left").unwrap() - 0.125).abs() < TOL);
+
+    let error = SampleKitFactory
+        .build(
+            44_100,
+            &serde_json::json!({ "samples": slot, "key.0": "38" }),
+        )
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("fixed at build time"), "{error}");
+    let _ = std::fs::remove_file(kick);
+}
+
+#[test]
+fn a_play_while_building_fires_once_the_kit_binds() {
+    use crate::invention::declared::offline_route;
+    use crate::invention::graph::{MasterObservers, SignalGraph};
+    let kick = write_level_wav(0.5, 4);
+    let slot = serde_json::json!([{ "key": 36, "asset": kick.to_str().unwrap() }]);
+    let (mut kit, surface) = build_kit(serde_json::json!({ "samples": slot }));
+    surface.set_control("play", 36.0.into()).unwrap();
+    kit.process(1);
+    assert_eq!(kit.get_output("audio_left").unwrap(), 0.0, "held until it runs");
+
+    let graph = Arc::new(std::sync::Mutex::new(SignalGraph::new(
+        Default::default(),
+        Vec::new(),
+        Vec::new(),
+        MasterObservers::default(),
+    )));
+    surface.bind(offline_route(&graph, "kit"), kit.as_mut());
+    kit.process(1);
+    assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
+    let _ = std::fs::remove_file(kick);
+}
+
+#[test]
+fn the_modules_own_setter_refuses_play_which_its_surface_reads() {
+    let kick = write_level_wav(0.5, 4);
+    let slot = serde_json::json!([{ "key": 36, "asset": kick.to_str().unwrap() }]);
+    let (mut kit, _surface) = build_kit(serde_json::json!({ "samples": slot }));
+    for value in [0.0, 36.0] {
+        let error = kit.set_control("play", value).unwrap_err();
+        assert!(error.contains("read by its module's own surface"), "{error}");
+    }
+    kit.process(1);
+    assert_eq!(kit.get_output("audio_left").unwrap(), 0.0, "nothing played");
+    assert!(kit.set_control("level.0", 0.5).is_ok());
     let _ = std::fs::remove_file(kick);
 }

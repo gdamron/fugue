@@ -7,7 +7,7 @@ use super::table::TableValue;
 /// declared table, requests and `apply`. Each family's migration removes
 /// its entry; the list must end empty (the catalog-wide guardrail then
 /// enforces it).
-pub(crate) const LEGACY_CONTROLS: &[&str] = &["sample_instrument", "sample_kit"];
+pub(crate) const LEGACY_CONTROLS: &[&str] = &["sample_instrument"];
 
 /// Why a scheduled write to a legacy control did not land. `Copy`, so a
 /// refusal on the audio thread allocates nothing, where the control

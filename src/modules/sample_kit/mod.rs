@@ -15,19 +15,25 @@
 //! ```
 //!
 //! Every slot's buffer is decoded and resampled to the engine rate at build
-//! time (or in a control-thread `asset.<i>` call), so the audio thread only
-//! mixes: one voice per slot, retrigger restarts the slot, distinct slots
-//! overlap freely.
+//! time (or on a control thread, for an `asset.<i>` write), so the audio
+//! thread only mixes: one voice per slot, retrigger restarts the slot,
+//! distinct slots overlap freely. Every control is declared (see
+//! `controls`): writes reach the kit as requests it applies between blocks.
 
-use std::any::Any;
 use std::sync::Arc;
 
+use crate::control_request::{
+    local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
+    RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{finite_f32, whole_number, ConfigReader};
 use crate::modules::sample_loading::{check_entry_fields, SampleData};
-use crate::Module;
+use crate::payload::{Payload, Retired, Shared};
+use crate::{ControlMeta, Module};
 
-pub use self::controls::{SampleKitControls, SlotKey, SlotSpec};
+use self::controls::{control_at, KitControl};
+pub use self::controls::{SlotKey, SlotSpec};
 
 mod controls;
 mod inputs;
@@ -55,21 +61,25 @@ impl ModuleFactory for SampleKitFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let specs = parse_config(config)?;
-        let (controls, samples) = SampleKitControls::new(sample_rate, specs)?;
+        let numeric_keys = specs
+            .iter()
+            .map(|spec| match spec.key {
+                SlotKey::Number(key) => Some(key),
+                SlotKey::Name(_) => None,
+            })
+            .collect();
+        let built = controls::build(sample_rate, specs)?;
         // A recorded `level.N` write is later than the slot's authored
         // level, so it wins; a `key.N` is refused, as a live write is.
-        crate::factory::apply_control_keys(&controls, config, |key| {
+        crate::factory::apply_control_keys(&built.surface, config, |key| {
             key.starts_with("level.") || key.starts_with("key.")
         })?;
-        let kit = SampleKit::new_with_controls(controls.clone(), samples);
+        let kit = SampleKit::new(built.table, built.cells, built.samples, numeric_keys);
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(kit)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(built.surface)),
             sink: None,
         })
     }
@@ -163,7 +173,8 @@ fn parse_key(
 /// One playback voice per slot. Retriggering a slot restarts it (per-slot
 /// choke); different slots mix freely.
 struct Voice {
-    sample: Arc<SampleData>,
+    sample: Shared<SampleData>,
+    level: f32,
     position: usize,
     active: bool,
 }
@@ -176,57 +187,54 @@ impl Voice {
 }
 
 pub struct SampleKit {
-    ctrl: SampleKitControls,
+    table: ControlTable,
+    cells: Arc<ControlCells>,
     inputs: inputs::SampleKitInputs,
     outputs: outputs::SampleKitOutputs,
     voices: Vec<Voice>,
     /// Slot keys mirrored as plain integers (`None` for named slots) so the
     /// per-frame play path never touches strings.
     numeric_keys: Vec<Option<i32>>,
-    /// Per-block scratch, sized once at build: slot levels and staged swaps.
-    levels: Vec<f32>,
-    swap_scratch: Vec<Option<Arc<SampleData>>>,
-    last_play_counts: Vec<u64>,
-    last_swaps_version: u64,
     last_play_input: f32,
 }
 
 impl SampleKit {
-    pub(crate) fn new_with_controls(
-        controls: SampleKitControls,
-        samples: Vec<Arc<SampleData>>,
+    fn new(
+        table: ControlTable,
+        cells: Arc<ControlCells>,
+        samples: Vec<Shared<SampleData>>,
+        numeric_keys: Vec<Option<i32>>,
     ) -> Self {
-        let slot_count = samples.len();
-        let numeric_keys = (0..slot_count)
-            .map(|index| match controls.key(index) {
-                Some(SlotKey::Number(key)) => Some(key),
-                _ => None,
+        let slots = samples.len();
+        let voices = (samples.into_iter().enumerate())
+            .map(|(slot, sample)| {
+                // The authored level; a write made before the build is
+                // applied as the kit binds.
+                let level = match cells.load(controls::index_of(KitControl::Level(slot), slots)) {
+                    Some(RtValue::F32(level)) => level,
+                    _ => 1.0,
+                };
+                Voice {
+                    sample,
+                    level,
+                    position: 0,
+                    active: false,
+                }
             })
             .collect();
-        let voices = samples
-            .into_iter()
-            .map(|sample| Voice {
-                sample,
-                position: 0,
-                active: false,
-            })
-            .collect();
-
-        // From the controls, so a level written before the build (and
-        // restored by it) holds from the first frame.
-        let levels = (0..slot_count).map(|slot| controls.level(slot)).collect();
         Self {
-            ctrl: controls,
+            table,
+            cells,
             inputs: inputs::SampleKitInputs::new(),
             outputs: outputs::SampleKitOutputs::new(),
             voices,
             numeric_keys,
-            levels,
-            swap_scratch: (0..slot_count).map(|_| None).collect(),
-            last_play_counts: vec![0; slot_count],
-            last_swaps_version: 0,
             last_play_input: 0.0,
         }
+    }
+
+    fn control(&self, index: ControlIndex) -> Option<KitControl> {
+        control_at(index, self.voices.len())
     }
 }
 
@@ -236,39 +244,6 @@ impl Module for SampleKit {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        let slot_count = self.voices.len();
-
-        // Staged sample swaps (`asset.<i>` control): the lock is taken only
-        // when the version counter moved.
-        let swaps_version = self.ctrl.swaps_version();
-        if swaps_version != self.last_swaps_version {
-            self.last_swaps_version = swaps_version;
-            self.ctrl.take_swaps(&mut self.swap_scratch);
-            for (voice, staged) in self.voices.iter_mut().zip(self.swap_scratch.iter_mut()) {
-                if let Some(sample) = staged.take() {
-                    // The new sample waits for its next play; cutting to
-                    // it mid-buffer would click.
-                    voice.sample = sample;
-                    voice.active = false;
-                    voice.position = 0;
-                }
-            }
-        }
-
-        // Control-thread play requests, observed once per block.
-        for slot in 0..slot_count {
-            let count = self.ctrl.play_count(slot);
-            if count != self.last_play_counts[slot] {
-                self.last_play_counts[slot] = count;
-                self.voices[slot].start();
-            }
-        }
-
-        // Levels are control-rate: read once per block.
-        for slot in 0..slot_count {
-            self.levels[slot] = self.ctrl.level(slot);
-        }
-
         for i in 0..frames {
             let play = self.inputs.play(i);
             if play > 0.5 && self.last_play_input <= 0.5 {
@@ -287,14 +262,13 @@ impl Module for SampleKit {
 
             let mut left = 0.0;
             let mut right = 0.0;
-            for (slot, voice) in self.voices.iter_mut().enumerate() {
+            for voice in self.voices.iter_mut() {
                 if !voice.active {
                     continue;
                 }
                 let (l, r) = voice.sample.frame_at(voice.position);
-                let level = self.levels[slot];
-                left += l * level;
-                right += r * level;
+                left += l * voice.level;
+                right += r * voice.level;
                 voice.position += 1;
                 if voice.position >= voice.sample.len() {
                     voice.active = false;
@@ -332,6 +306,62 @@ impl Module for SampleKit {
 
     fn set_input_connected(&mut self, index: usize, connected: bool) {
         self.inputs.set_connected(index, connected);
+    }
+
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&self.table, &self.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        match (self.control(control), value) {
+            (Some(KitControl::Play), RtValue::I32(slot)) => {
+                let voice = usize::try_from(slot)
+                    .ok()
+                    .and_then(|slot| self.voices.get_mut(slot));
+                voice.ok_or(Refusal::Invalid)?.start();
+                Ok(value)
+            }
+            (Some(KitControl::Level(slot)), RtValue::F32(level)) => {
+                let voice = &mut self.voices[slot];
+                voice.level = level.clamp(0.0, 2.0);
+                Ok(RtValue::F32(voice.level))
+            }
+            _ => Err(Refusal::Unsupported),
+        }
+    }
+
+    /// A slot's new sample waits for its next play: cutting to it
+    /// mid-buffer would click. The one it replaces is retired.
+    #[allow(private_interfaces)]
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        let Some(KitControl::Asset(slot)) = self.control(control) else {
+            return Err((Refusal::Unsupported, payload));
+        };
+        let sample = payload
+            .downcast::<SampleData>()
+            .map_err(|payload| (Refusal::Invalid, payload))?;
+        let voice = &mut self.voices[slot];
+        voice.active = false;
+        voice.position = 0;
+        Ok(std::mem::replace(&mut voice.sample, sample).into())
+    }
+
+    fn controls(&self) -> Vec<ControlMeta> {
+        local_controls(self)
+    }
+
+    fn get_control(&self, key: &str) -> Result<f32, String> {
+        local_get(self, key)
+    }
+
+    fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        local_set(self, key, value)
     }
 }
 

@@ -1,20 +1,26 @@
-//! Thread-safe controls for the SampleKit module.
+//! The SampleKit's controls, all declared, in a table built for each kit
+//! since its slot count is fixed at build: `play`, and per slot `asset.N`,
+//! `level.N` and `key.N`. A slot past the count is no control at all.
 //!
-//! All non-realtime work (asset resolution, decode, resample) happens in
-//! control-thread calls here; the audio thread only observes atomics and,
-//! when a staged sample swap exists, takes one short lock gated behind
-//! `swaps_version` (the counter pattern from `AgentControls` /
-//! `cell_sequencer`).
+//! - `play` is an event naming a slot by key or name, read on a control
+//!   thread into the slot's index; a key or name no slot has is refused
+//!   with the reason.
+//! - `asset.N` is a sample loaded on a control thread at the engine rate
+//!   (`SAMPLE_ASSET`), adopted by the kit at a block boundary; the sample it
+//!   replaces is retired off the audio thread.
+//! - `level.N` is a number the kit clamps to 0..2.
+//! - `key.N` reads back the slot's key; it is fixed at build.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::atomic::AtomicF32;
-use crate::control_request::{scheduled_index, scheduled_number, LegacyRefusal, TableValue};
-use crate::modules::sample_loading::{load_cached_sample, resolve_source, SampleData};
-use crate::pkg::lock::BuildPolicy;
-use crate::traits::{check_finite, ControlSurfaceMap};
-use crate::{ControlMeta, ControlSurface, ControlValue};
+use crate::control_request::{
+    ControlCells, ControlContext, ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec,
+    Prepared, RtValue, ValueReader,
+};
+use crate::invention::declared::DeclaredSurface;
+use crate::modules::sample_loading::{AssetLoader, SampleData, SAMPLE_ASSET};
+use crate::payload::Shared;
+use crate::ControlValue;
 
 /// The key a slot answers to: an integer (a `play` value / MIDI note
 /// number) or a name (played from control and script threads).
@@ -40,306 +46,175 @@ pub struct SlotSpec {
     pub level: f32,
 }
 
-#[derive(Clone)]
-pub struct SampleKitControls {
-    inner: Arc<KitInner>,
+/// What a control index of a kit's table names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum KitControl {
+    Play,
+    Asset(usize),
+    Level(usize),
+    Key(usize),
 }
 
-struct KitInner {
-    sample_rate: u32,
-    /// The lock the kit was built under: every sample it loads, at build or
-    /// from a later write, loads under it (see `BuildPolicy`).
-    policy: BuildPolicy,
-    slots: Vec<SlotState>,
-    /// Bumped after staging a sample swap in `pending`; the audio thread
-    /// locks `pending` only when this counter moved.
-    swaps_version: AtomicU64,
-    pending: Mutex<Vec<Option<Arc<SampleData>>>>,
+/// The index of `control` in the table of a kit of `slots` slots: `play`,
+/// then each slot's `asset`, `level` and `key` in turn.
+pub(super) fn index_of(control: KitControl, slots: usize) -> ControlIndex {
+    let index = match control {
+        KitControl::Play => 0,
+        KitControl::Asset(slot) => 1 + slot,
+        KitControl::Level(slot) => 1 + slots + slot,
+        KitControl::Key(slot) => 1 + 2 * slots + slot,
+    };
+    ControlIndex(index as u16)
 }
 
-struct SlotState {
-    key: SlotKey,
-    level: AtomicF32,
-    /// Play requests from control/script threads: incremented here,
-    /// observed per block by the audio thread.
-    play_count: AtomicU64,
-    /// Authored asset ref, kept as the control value so saved documents
-    /// stay portable instead of carrying this machine's cache path.
-    asset: Mutex<String>,
+/// What `index` names in the table of a kit of `slots` slots.
+pub(super) fn control_at(index: ControlIndex, slots: usize) -> Option<KitControl> {
+    let index = usize::from(index.0);
+    if index == 0 {
+        return Some(KitControl::Play);
+    }
+    let (group, slot) = ((index - 1) / slots.max(1), (index - 1) % slots.max(1));
+    match group {
+        _ if slot >= slots => None,
+        0 => Some(KitControl::Asset(slot)),
+        1 => Some(KitControl::Level(slot)),
+        2 => Some(KitControl::Key(slot)),
+        _ => None,
+    }
 }
 
-impl SampleKitControls {
-    /// Builds controls from parsed slot specs, loading every referenced
-    /// sample (decode + resample happen here, off the audio thread). Returns
-    /// the controls and the preloaded buffer for each slot, in slot order.
-    pub(crate) fn new(
-        sample_rate: u32,
-        specs: Vec<SlotSpec>,
-    ) -> Result<(Self, Vec<Arc<SampleData>>), String> {
-        let policy = BuildPolicy::current();
-        let mut samples = Vec::with_capacity(specs.len());
-        let mut slots = Vec::with_capacity(specs.len());
-        for spec in specs {
-            let sample = load_slot_sample(&policy, &spec.asset, sample_rate)
-                .map_err(|err| format!("slot '{}': {}", spec.key, err))?;
-            samples.push(sample);
-            slots.push(SlotState {
-                key: spec.key,
-                level: AtomicF32::new(spec.level.clamp(0.0, 2.0)),
-                play_count: AtomicU64::new(0),
-                asset: Mutex::new(spec.asset),
-            });
-        }
+/// The most slots a kit takes: one control index per slot control.
+pub(super) const MAX_SLOTS: usize = (u16::MAX as usize - 1) / 3;
 
-        let pending = (0..slots.len()).map(|_| None).collect();
-        let controls = Self {
-            inner: Arc::new(KitInner {
-                sample_rate,
-                policy,
-                slots,
-                swaps_version: AtomicU64::new(0),
-                pending: Mutex::new(pending),
-            }),
-        };
-        Ok((controls, samples))
-    }
+/// The slot keys a kit was built with, attached to its surface for `play`.
+struct SlotKeys(Vec<SlotKey>);
 
-    pub fn slot_count(&self) -> usize {
-        self.inner.slots.len()
-    }
+/// Reads a `play` value as the slot it names: a number (or numeric string)
+/// names an integer key, any other string a named one.
+const SLOT: ValueReader = ValueReader { read: read_slot };
 
-    /// The authored key of slot `index`.
-    pub fn key(&self, index: usize) -> Option<SlotKey> {
-        self.inner.slots.get(index).map(|slot| slot.key.clone())
-    }
-
-    pub fn level(&self, index: usize) -> f32 {
-        self.inner
-            .slots
-            .get(index)
-            .map(|slot| slot.level.load())
-            .unwrap_or(0.0)
-    }
-
-    pub fn set_level(&self, index: usize, level: f32) -> Result<(), String> {
-        let slot = self.slot(index)?;
-        slot.level.store(level.clamp(0.0, 2.0));
-        Ok(())
-    }
-
-    pub fn asset(&self, index: usize) -> Result<String, String> {
-        Ok(self.slot(index)?.asset.lock().unwrap().clone())
-    }
-
-    /// Re-points slot `index` at a new asset: resolves and loads the sample
-    /// here (off the audio thread), then stages it for the audio thread to
-    /// swap in at the next block boundary.
-    pub fn set_asset(&self, index: usize, asset: &str) -> Result<(), String> {
-        let slot = self.slot(index)?;
-        let sample = load_slot_sample(&self.inner.policy, asset, self.inner.sample_rate)?;
-        *slot.asset.lock().unwrap() = asset.to_string();
-        self.inner.pending.lock().unwrap()[index] = Some(sample);
-        self.inner.swaps_version.fetch_add(1, Ordering::Release);
-        Ok(())
-    }
-
-    /// Requests a play of the slot matching `value`: a number (or numeric
-    /// string) matches an integer key, any other string matches a named key.
-    pub fn play(&self, value: &ControlValue) -> Result<(), String> {
-        let index = self.slot_for(value)?;
-        self.inner.slots[index]
-            .play_count
-            .fetch_add(1, Ordering::Release);
-        Ok(())
-    }
-
-    /// The slot a `play` value names.
-    fn slot_for(&self, value: &ControlValue) -> Result<usize, String> {
-        match value {
-            ControlValue::Number(number) => {
-                if !number.is_finite() {
-                    return Err(format!("Invalid slot key {}", number));
-                }
-                self.find_numeric(number.round() as i32)
+fn read_slot(context: &ControlContext<'_>, value: &ControlValue) -> Result<RtValue, String> {
+    let SlotKeys(keys) = context.module::<SlotKeys>()?;
+    let find = |key: SlotKey| keys.iter().position(|slot| *slot == key);
+    let slot = match value {
+        ControlValue::Number(number) => {
+            if !number.is_finite() {
+                return Err(format!("Invalid slot key {}", number));
             }
-            ControlValue::String(text) => match text.trim().parse::<i32>() {
-                Ok(key) => self.find_numeric(key),
-                Err(_) => self.find_named(text.trim()),
-            },
-            ControlValue::Bool(_) => Err("Expected a slot key or name, not a boolean".to_string()),
+            let key = number.round() as i32;
+            find(SlotKey::Number(key)).ok_or(format!("No sample slot with key {}", key))?
         }
-    }
-
-    /// Audio thread: the current swap counter, checked once per block.
-    pub(crate) fn swaps_version(&self) -> u64 {
-        self.inner.swaps_version.load(Ordering::Acquire)
-    }
-
-    /// Audio thread: moves staged swaps into `into` (slot-indexed). Called
-    /// only after `swaps_version` moved, so the lock is rarely taken.
-    pub(crate) fn take_swaps(&self, into: &mut [Option<Arc<SampleData>>]) {
-        let mut pending = self.inner.pending.lock().unwrap();
-        for (target, staged) in into.iter_mut().zip(pending.iter_mut()) {
-            if let Some(sample) = staged.take() {
-                *target = Some(sample);
+        ControlValue::String(text) => match text.trim().parse::<i32>() {
+            Ok(key) => {
+                find(SlotKey::Number(key)).ok_or(format!("No sample slot with key {key}"))?
             }
+            Err(_) => {
+                let name = text.trim();
+                (find(SlotKey::Name(name.to_string())))
+                    .ok_or_else(|| format!("No sample slot named '{}'", name))?
+            }
+        },
+        ControlValue::Bool(_) => {
+            return Err("Expected a slot key or name, not a boolean".to_string())
         }
-    }
-
-    /// Audio thread: the play-request counter for slot `index`.
-    pub(crate) fn play_count(&self, index: usize) -> u64 {
-        self.inner.slots[index].play_count.load(Ordering::Acquire)
-    }
-
-    fn slot(&self, index: usize) -> Result<&SlotState, String> {
-        self.inner
-            .slots
-            .get(index)
-            .ok_or_else(|| format!("No sample slot {}", index))
-    }
-
-    fn find_numeric(&self, key: i32) -> Result<usize, String> {
-        self.inner
-            .slots
-            .iter()
-            .position(|slot| slot.key == SlotKey::Number(key))
-            .ok_or_else(|| format!("No sample slot with key {}", key))
-    }
-
-    fn find_named(&self, name: &str) -> Result<usize, String> {
-        self.inner
-            .slots
-            .iter()
-            .position(|slot| matches!(&slot.key, SlotKey::Name(slot_name) if slot_name == name))
-            .ok_or_else(|| format!("No sample slot named '{}'", name))
-    }
+    };
+    Ok(RtValue::I32(slot as i32))
 }
 
-/// Resolves an authored ref (package ref, path, or https URL) and loads it
-/// through the shared decoded-buffer cache, under `policy`.
-fn load_slot_sample(
-    policy: &BuildPolicy,
-    asset: &str,
-    sample_rate: u32,
-) -> Result<Arc<SampleData>, String> {
-    policy.run(|| load_cached_sample(&resolve_source(asset)?, sample_rate))
+/// `key.N` reads back its slot's key, and refuses every write.
+const FIXED_KEY: PayloadCodec = PayloadCodec {
+    prepare: refuse_key,
+};
+
+fn refuse_key(_: &ControlContext<'_>, _: &ControlValue) -> Prepared {
+    Err("Slot keys are fixed at build time; edit the invention config".to_string())
 }
 
-impl ControlSurface for SampleKitControls {
-    fn controls(&self) -> Vec<ControlMeta> {
-        let mut metas = vec![ControlMeta::string(
+/// The table of a kit of `slots` slots, in [`index_of`] order.
+fn table(slots: usize) -> ControlTable {
+    let count = slots as u16;
+    let decls = vec![
+        ControlDecl::new(
             "play",
+            DeclKind::Integer {
+                min: 0,
+                max: slots.saturating_sub(1) as i32,
+            },
+            RtValue::I32(0),
             "Play a slot by key or name (e.g. '36' or 'kick')",
-        )];
-        for (index, slot) in self.inner.slots.iter().enumerate() {
-            metas.push(
-                ControlMeta::string(format!("key.{}", index), "Slot key (fixed at build time)")
-                    .with_default(slot.key.to_string()),
-            );
-            metas.push(
-                ControlMeta::string(
-                    format!("asset.{}", index),
-                    "Slot sample: path, https URL, or package ref like \
-                     'fugue.drums.808@1.2.0:kick.wav' (WAV or FLAC)",
-                )
-                .with_default(slot.asset.lock().unwrap().clone()),
-            );
-            metas.push(
-                ControlMeta::number(format!("level.{}", index), "Slot level (1.0 = unity)")
-                    .with_range(0.0, 2.0)
-                    .with_default(slot.level.load()),
-            );
-        }
-        metas
-    }
-
-    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
-        if key == "play" {
-            return Ok(String::new().into());
-        }
-        if let Some(index) = indexed_key(key, "key.") {
-            return Ok(self.slot(index)?.key.to_string().into());
-        }
-        if let Some(index) = indexed_key(key, "asset.") {
-            return Ok(self.asset(index)?.into());
-        }
-        if let Some(index) = indexed_key(key, "level.") {
-            self.slot(index)?;
-            return Ok(self.level(index).into());
-        }
-        Err(format!("Unknown control: {}", key))
-    }
-
-    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        if key == "play" {
-            return self.play(&value);
-        }
-        if let Some(index) = indexed_key(key, "key.") {
-            self.slot(index)?;
-            return Err("Slot keys are fixed at build time; edit the invention config".to_string());
-        }
-        if let Some(index) = indexed_key(key, "asset.") {
-            return self.set_asset(index, value.as_string()?);
-        }
-        if let Some(index) = indexed_key(key, "level.") {
-            return self.set_level(index, value.as_number()?);
-        }
-        Err(format!("Unknown control: {}", key))
-    }
-
-    /// Only a slot's `level.<i>`: `play` and `asset.<i>` are strings to a
-    /// schedule, and `key.<i>` is fixed at build time.
-    #[allow(private_interfaces)]
-    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
-        let value = scheduled_number(value)?;
-        let index = self.scheduled_slot(key)?;
-        // The slot exists: the setter cannot fail (and format an error).
-        self.set_level(index, value)
-            .map_err(|_| LegacyRefusal::Unsupported)
-    }
-
-    #[allow(private_interfaces)]
-    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
-        Ok(self.level(self.scheduled_slot(key)?))
-    }
-
-    /// Checks the slot and the value's shape; whether a new asset loads is
-    /// only known by loading it, on set.
-    fn validate_control(
-        &self,
-        key: &str,
-        value: &ControlValue,
-        _surfaces: &ControlSurfaceMap,
-    ) -> Result<(), String> {
-        if key == "play" {
-            return self.slot_for(value).map(drop);
-        }
-        if let Some(index) = indexed_key(key, "key.") {
-            self.slot(index)?;
-            return Err("Slot keys are fixed at build time; edit the invention config".to_string());
-        }
-        if let Some(index) = indexed_key(key, "asset.") {
-            self.slot(index)?;
-            return value.as_string().map(drop);
-        }
-        if let Some(index) = indexed_key(key, "level.") {
-            self.slot(index)?;
-            return check_finite(key, value.as_number()?);
-        }
-        Err(format!("Unknown control: {}", key))
-    }
+        )
+        .event()
+        .read_by(SLOT),
+        ControlDecl::payload(
+            "asset",
+            SAMPLE_ASSET,
+            "Slot sample: path, https URL, or package ref like \
+             'fugue.drums.808@1.2.0:kick.wav' (WAV or FLAC)",
+        )
+        .loads_on_write()
+        .indexed(count),
+        ControlDecl::new(
+            "level",
+            DeclKind::Number { min: 0.0, max: 2.0 },
+            RtValue::F32(1.0),
+            "Slot level (1.0 = unity)",
+        )
+        .clamped(0.0, 2.0)
+        .indexed(count),
+        ControlDecl::payload("key", FIXED_KEY, "Slot key (fixed at build time)").indexed(count),
+    ];
+    ControlTable::built(decls).expect("a kit's table is valid for every slot count it takes")
 }
 
-impl SampleKitControls {
-    /// The slot a schedule's `level.<i>` names, parsed without allocating.
-    fn scheduled_slot(&self, key: &str) -> Result<usize, LegacyRefusal> {
-        scheduled_index(key, "level.")
-            .filter(|&index| index < self.slot_count())
-            .ok_or(LegacyRefusal::Unsupported)
-    }
+/// A kit's controls as built: its table and cells, the surface clients
+/// write, and each slot's sample, loaded at the engine rate.
+pub(super) struct BuiltControls {
+    pub(super) table: ControlTable,
+    pub(super) cells: Arc<ControlCells>,
+    pub(super) surface: DeclaredSurface,
+    pub(super) samples: Vec<Shared<SampleData>>,
 }
 
-/// Parses hierarchical control keys like `level.3` into the slot index.
-fn indexed_key(key: &str, prefix: &str) -> Option<usize> {
-    key.strip_prefix(prefix)?.parse().ok()
+/// Builds a kit's controls from its slot specs, loading every sample here
+/// (decode and resample happen on this thread, under its build lock).
+pub(super) fn build(sample_rate: u32, specs: Vec<SlotSpec>) -> Result<BuiltControls, String> {
+    let slots = specs.len();
+    if slots > MAX_SLOTS {
+        return Err(format!(
+            "a kit takes at most {MAX_SLOTS} samples, not {slots}"
+        ));
+    }
+    let loader = AssetLoader::current(sample_rate);
+    let mut samples = Vec::with_capacity(slots);
+    for spec in &specs {
+        let sample =
+            (loader.load(&spec.asset)).map_err(|err| format!("slot '{}': {}", spec.key, err))?;
+        samples.push(Shared::from_arc(sample));
+    }
+
+    let table = table(slots);
+    let levels = specs
+        .iter()
+        .map(|spec| RtValue::F32(spec.level.clamp(0.0, 2.0)));
+    let unheld = || std::iter::repeat_n(RtValue::Bool(false), slots);
+    let cells = std::iter::once(RtValue::I32(0))
+        .chain(unheld())
+        .chain(levels)
+        .chain(unheld());
+    let cells = Arc::new(ControlCells::new(cells));
+    let surface = DeclaredSurface::new(table.clone(), cells.clone());
+    for (slot, spec) in specs.iter().enumerate() {
+        surface.show_payload(&format!("asset.{slot}"), spec.asset.as_str().into());
+        surface.show_payload(&format!("key.{slot}"), spec.key.to_string().into());
+    }
+    let keys = SlotKeys(specs.into_iter().map(|spec| spec.key).collect());
+    let surface = surface
+        .with_context(Arc::new(loader))
+        .with_context(Arc::new(keys));
+    Ok(BuiltControls {
+        table,
+        cells,
+        surface,
+        samples,
+    })
 }

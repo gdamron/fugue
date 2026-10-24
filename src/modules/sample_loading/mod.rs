@@ -251,6 +251,13 @@ fn sample_cache() -> &'static SampleCache {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Takes the sample cache's lock, as a load does, holding it while the
+/// guard lives.
+#[cfg(test)]
+pub(crate) fn hold_sample_cache() -> impl Sized {
+    sample_cache().lock().unwrap()
+}
+
 /// Returns the resampled buffer for `(source, target_sample_rate)`, decoding it
 /// (and caching) only on a miss. A decode error leaves the cache untouched.
 ///

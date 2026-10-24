@@ -74,7 +74,7 @@ pub use modules::{
     ControlScheduler, ControlSchedulerControls, ControlSchedulerFactory, DacFactory, DacModule,
     Filter, FilterFactory, FilterType, Lfo, LfoFactory, MelodyFactory, MelodyGenerator, Mixer,
     MixerFactory, NullBackend, Oscillator, OscillatorFactory, OscillatorType, SampleKit,
-    SampleKitControls, SampleKitFactory, SamplePlayer, SamplePlayerFactory, SampleSlicer,
+    SampleKitFactory, SamplePlayer, SamplePlayerFactory, SampleSlicer,
     SampleSlicerFactory, StreamErrorKind, Vca, VcaFactory,
 };
 
