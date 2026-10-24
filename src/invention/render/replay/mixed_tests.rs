@@ -3,17 +3,20 @@
 //! is not exact, and its replay writes the legacy alias as live did once
 //! the declared part applies.
 
+use serde_json::{json, Value};
+
 use crate::invention::manual_backend::{start_manual, SAMPLE_RATE};
-use crate::{ControlValue, Invention, InventionBuilder, RenderEngine};
+use crate::test_support::legacy_dial::LegacyDialFactory;
+use crate::{ControlValue, Invention, InventionBuilder, ModuleRegistry, RenderEngine};
 
 const BLOCK: usize = 64;
 
-/// Development `inner`, whose `mix` reaches a vca's level and a (legacy)
-/// lfo's rate, run as module `n` to the dac.
-fn document() -> String {
-    let inner = serde_json::json!({
+/// Development `inner`, whose `mix` reaches a vca's level and a legacy
+/// dial's rate, and `rate` the legacy dial's alone.
+fn inner() -> Value {
+    json!({
         "version": "1.0.0",
-        "modules": [{ "id": "a", "type": "vca" }, { "id": "l", "type": "lfo" }],
+        "modules": [{ "id": "a", "type": "vca" }, { "id": "l", "type": "legacy_dial" }],
         "connections": [],
         "outputs": [{ "name": "a", "from": "a", "from_port": "audio" }],
         "controls": [
@@ -21,12 +24,31 @@ fn document() -> String {
             { "name": "mix", "module": "l", "control": "rate" },
             { "name": "rate", "module": "l", "control": "rate" }
         ]
-    });
-    serde_json::json!({
+    })
+}
+
+/// Development `outer`, exposing `inner`'s `mix` and `rate`.
+fn outer() -> Value {
+    json!({
         "version": "1.0.0",
-        "developments": [{ "name": "inner", "definition": inner }],
+        "developments": [{ "name": "inner", "definition": inner() }],
+        "modules": [{ "id": "i", "type": "inner" }],
+        "connections": [],
+        "outputs": [{ "name": "a", "from": "i", "from_port": "a" }],
+        "controls": [
+            { "name": "mix", "module": "i", "control": "mix" },
+            { "name": "rate", "module": "i", "control": "rate" }
+        ]
+    })
+}
+
+/// Development `definition` run as module `n` to the dac.
+fn document(definition: Value) -> String {
+    json!({
+        "version": "1.0.0",
+        "developments": [{ "name": "dev", "definition": definition }],
         "modules": [
-            { "id": "n", "type": "inner" },
+            { "id": "n", "type": "dev" },
             { "id": "dac", "type": "dac", "config": { "soft_clip": false } }
         ],
         "connections": [
@@ -36,11 +58,17 @@ fn document() -> String {
     .to_string()
 }
 
-#[test]
-fn a_replayed_write_to_a_mixed_key_writes_its_legacy_alias() {
-    let doc = document();
+/// The catalog with the legacy dial a mixed key reaches.
+fn builder() -> InventionBuilder {
+    let mut registry = ModuleRegistry::default();
+    registry.register(LegacyDialFactory);
+    InventionBuilder::with_registry(SAMPLE_RATE, registry)
+}
+
+fn a_replayed_write_to_a_mixed_key_writes_its_legacy_alias(definition: Value) {
+    let doc = document(definition);
     let invention = Invention::from_json(&doc).unwrap();
-    let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(invention).unwrap();
+    let (runtime, _) = builder().build(invention.clone()).unwrap();
     let (running, pump) = start_manual(runtime);
     pump.render(10);
     running.set_control("n", "mix", 0.75.into()).unwrap();
@@ -55,7 +83,9 @@ fn a_replayed_write_to_a_mixed_key_writes_its_legacy_alias() {
     assert!(!log.is_exact());
 
     let mut engine = RenderEngine::new(SAMPLE_RATE);
-    engine.load_json(&doc).unwrap();
+    let (runtime, handles) = builder().build(invention).unwrap();
+    *engine.handles.lock().unwrap() = handles;
+    engine.install_runtime(runtime);
     engine.replay(&log).unwrap();
     let rate = |engine: &RenderEngine| engine.get_control("n", "rate").unwrap();
     assert_ne!(rate(&engine), ControlValue::from(0.75), "not yet due");
@@ -64,5 +94,15 @@ fn a_replayed_write_to_a_mixed_key_writes_its_legacy_alias() {
         engine.render_interleaved(&mut buffer).unwrap();
     }
     assert_eq!(engine.replay_refused(), 0);
-    assert_eq!(rate(&engine), ControlValue::from(0.75), "the lfo follows");
+    assert_eq!(rate(&engine), ControlValue::from(0.75), "the legacy dial follows");
+}
+
+#[test]
+fn a_replayed_write_to_a_mixed_key_writes_a_development_s_legacy_alias() {
+    a_replayed_write_to_a_mixed_key_writes_its_legacy_alias(inner());
+}
+
+#[test]
+fn a_replayed_write_to_a_nested_mixed_key_writes_the_inner_legacy_alias() {
+    a_replayed_write_to_a_mixed_key_writes_its_legacy_alias(outer());
 }
