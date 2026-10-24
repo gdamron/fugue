@@ -58,6 +58,9 @@ pub(crate) struct PendingWrite {
 pub(crate) struct Authoring {
     pub(crate) value: ControlValue,
     pub(crate) origin: Option<PathBuf>,
+    /// The timed edit the write is safe from (see `declared::Queued`),
+    /// whose document does not replace it.
+    pub(crate) safe: Option<RequestId>,
 }
 
 /// What the retained document takes from the outcomes, in the order the
@@ -289,6 +292,50 @@ impl PendingLog {
                 authoring: authoring.clone(),
             });
         }
+    }
+
+    /// The control of each authored write not yet recorded, waiting to
+    /// apply or listed, but those safe from timed edit `except`.
+    pub(crate) fn authored_keys(&self, except: Option<RequestId>) -> Vec<(String, String)> {
+        let watched = |authoring: &Authoring| except.is_none() || authoring.safe != except;
+        let waiting = (self.writes.iter())
+            .filter(|(_, write)| write.authored.as_ref().is_some_and(watched))
+            .map(|(_, write)| (write.module_id.clone(), write.key.clone()));
+        let listed = self.steps.iter().filter_map(|step| match step {
+            DocumentStep::Authored {
+                module_id,
+                key,
+                authoring,
+            } if watched(authoring) => Some((module_id.clone(), key.clone())),
+            _ => None,
+        });
+        waiting.chain(listed).collect()
+    }
+
+    /// Leaves each authored write waiting to `module_id.key` for which
+    /// `replaced` holds unrecorded when it applies (see `authored::Fence`).
+    pub(crate) fn forget_authored(
+        &mut self,
+        replaced: impl Fn(&str, &str) -> bool,
+        except: Option<RequestId>,
+    ) {
+        let safe = |authoring: &Authoring| except.is_some() && authoring.safe == except;
+        for (_, write) in &mut self.writes {
+            if !write.authored.as_ref().is_some_and(safe) && replaced(&write.module_id, &write.key)
+            {
+                write.authored = None;
+            }
+        }
+        // Listed since the publisher last took them: applied before the
+        // commit was recorded, so as replaced.
+        self.steps.retain(|step| match step {
+            DocumentStep::Authored {
+                module_id,
+                key,
+                authoring,
+            } => safe(authoring) || !replaced(module_id, key),
+            DocumentStep::Timed => true,
+        });
     }
 
     /// Whether an authored write waits to apply, or applied and is not yet

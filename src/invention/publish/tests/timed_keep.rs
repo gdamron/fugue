@@ -104,6 +104,7 @@ fn authoring_660() -> Authoring {
     Authoring {
         value: ControlValue::Number(660.0),
         origin: None,
+        safe: None,
     }
 }
 
