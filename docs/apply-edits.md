@@ -290,6 +290,12 @@ An added module's `$asset` and audio asset references resolve against the
 invention's assets, relative to its file, exactly as on load. The document
 keeps the reference as written.
 
+A `set_control` of an asset control (a sample player's `asset`, a kit slot's
+or instrument zone's `asset.N`) given a relative path resolves the same way,
+in a batch or as a standalone write, so it plays the file the saved document
+loads. An invention with no file has nothing to resolve it against, so such a
+write is refused: give an absolute path, or save the invention first.
+
 Developments are built from the definitions loaded with the invention, nested
 ones included. A development file changed or deleted on disk since then does
 not affect a batch; reload the invention to pick up the change.

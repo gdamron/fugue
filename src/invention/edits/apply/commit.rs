@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{check_writes, refused_write, Batch, Refused};
+use crate::invention::audio_assets;
 use crate::invention::edits::EditedCandidate;
 use crate::invention::format::ModuleSpec;
 use crate::invention::publish::{BuiltModule, GraphChange, PreparedChange};
@@ -135,8 +136,15 @@ impl RunningInvention {
                 continue;
             }
             // Unrecorded: the retained document already holds the value.
-            let written =
-                snapshot.set_control_transient(&write.module_id, &write.key, write.value.clone());
+            let written = snapshot.set_control_transient(
+                &write.module_id,
+                &write.key,
+                audio_assets::resolve_checked_asset_write(
+                    document.source_path.as_deref(),
+                    &write.key,
+                    &write.value,
+                ),
+            );
             let outcome = written.err().map(|error| match error {
                 GraphCommandError::ControlError(message) => message,
                 other => other.to_string(),
@@ -207,6 +215,7 @@ fn write_built(
     // settled by its last write: a failure a later write made good (a sample
     // replaced by one that loads) does not refuse the batch.
     let mut last: HashMap<&str, Option<String>> = HashMap::new();
+    let source_path = candidate.document.source_path.as_deref();
     for candidate in &candidate.control_writes {
         let write = &candidate.write;
         if write.module_id != id {
@@ -216,10 +225,11 @@ fn write_built(
             .surface
             .as_ref()
             .ok_or_else(|| refused_write(candidate, "the module has no controls".to_string()))?;
-        let outcome = surface.set_control(&write.key, write.value.clone()).err();
+        let load = audio_assets::resolve_checked_asset_write(source_path, &write.key, &write.value);
+        let outcome = surface.set_control(&write.key, load.clone()).err();
         last.insert(write.key.as_str(), outcome);
         // Made again on a replay, failures included, so it ends the same.
-        module.writes.push((write.key.clone(), write.value.clone()));
+        module.writes.push((write.key.clone(), load));
     }
     for candidate in candidate.final_writes() {
         if candidate.write.module_id != id {

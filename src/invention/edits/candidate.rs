@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{CandidateWrite, EditFacts, EditedCandidate, ModuleFacts};
-use crate::invention::authored_document;
 use crate::invention::format::{Connection, Invention};
+use crate::invention::{audio_assets, authored_document};
 use crate::rpc::{
     non_finite_refusal, truncate_on_char_boundary, ControlWrite, EditFailureReason, StructuralEdit,
     MODULE_ERROR_BYTES,
@@ -265,6 +265,16 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
         // Made on the module as the batch has it so far, so a value its
         // setter refuses at this point is refused here, and the edits after
         // this one see the controls it adds or removes.
+        // A relative asset path loads against the invention's directory,
+        // as a standalone write's does; the document keeps it as written.
+        let source_path = self.document.source_path.as_deref();
+        let load =
+            audio_assets::resolve_asset_write(source_path, key, &applied).map_err(|refusal| {
+                Refusal(
+                    EditFailureReason::InvalidControlValue,
+                    format!("control '{module_id}.{key}': {refusal}"),
+                )
+            })?;
         let modules: Vec<&str> = self
             .document
             .modules
@@ -273,7 +283,7 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
             .collect();
         let controls = self
             .facts
-            .write_control(module_id, key, &applied, &modules)
+            .write_control(module_id, key, &load, &modules)
             .map_err(|reason| {
                 Refusal(
                     EditFailureReason::InvalidControlValue,

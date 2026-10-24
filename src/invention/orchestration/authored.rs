@@ -1,8 +1,11 @@
 //! Making an authored control write and recording it, when a timed edit may
 //! land between the two (see `LiveGraph::record_authored`).
 
+use std::path::PathBuf;
+
 use super::RuntimeSnapshot;
 use crate::control_request::RequestId;
+use crate::invention::audio_assets;
 use crate::invention::declared::{DeclaredSurface, Queued};
 use crate::invention::publish::Authored;
 use crate::invention::runtime::GraphCommandError;
@@ -83,6 +86,26 @@ impl RuntimeSnapshot {
         declared
             .set_control_queued(key, value, true)
             .map_err(GraphCommandError::ControlError)
+    }
+
+    /// The value a write to `key` hands its module: a relative path written
+    /// to an asset control resolved against the invention's directory, as
+    /// the loader resolves the document's, or refused when there is none
+    /// (see `audio_assets::resolve_asset_write`). The document records the
+    /// value as written, so the invention file it was resolved against comes
+    /// back too, for recording it (see `LiveGraph::record_authored_from`).
+    pub(super) fn asset_to_load(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Result<(ControlValue, Option<PathBuf>), GraphCommandError> {
+        if !audio_assets::is_asset_control(key) {
+            return Ok((value.clone(), None));
+        }
+        let source_path = self.state.lock().unwrap().source_path().map(PathBuf::from);
+        let load = audio_assets::resolve_asset_write(source_path.as_deref(), key, value)
+            .map_err(GraphCommandError::ControlError)?;
+        Ok((load, source_path))
     }
 }
 

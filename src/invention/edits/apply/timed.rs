@@ -6,6 +6,7 @@
 use super::commit::{plan_builds, PreparedEdits};
 use super::{Batch, Refused, RELOAD_ATTEMPTS};
 use crate::control_request::RequestId;
+use crate::invention::audio_assets;
 use crate::invention::publish::EditTime;
 use crate::invention::runtime::timed::edit_time;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
@@ -72,10 +73,18 @@ impl RunningInvention {
         let triple = |module_id: &String, key: &String, value: &ControlValue| {
             (module_id.clone(), key.clone(), value.clone())
         };
+        let source_path = batch.candidate.document.source_path.as_deref();
         let writes: Vec<_> = (batch.candidate.final_writes().into_iter())
             .map(|candidate| &candidate.write)
             .filter(|write| kept(&write.module_id))
-            .map(|write| triple(&write.module_id, &write.key, &write.value))
+            .map(|write| {
+                let load = audio_assets::resolve_checked_asset_write(
+                    source_path,
+                    &write.key,
+                    &write.value,
+                );
+                (write.module_id.clone(), write.key.clone(), load)
+            })
             .collect();
         // In batch order, so each stored config ends at its last write (see
         // `commit_edits`).
