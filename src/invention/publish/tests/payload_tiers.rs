@@ -14,7 +14,7 @@ use crate::test_support::tape::{freed, Notes, NOTES};
 fn submit_notes(rig: &Rig, value: f32, at: u64, source: Source) -> RequestId {
     let publisher = rig.live.publisher().lock().unwrap();
     let target = publisher.control_target("tape", NOTES).unwrap();
-    let notes = Payload::new(Notes(vec![value]));
+    let notes = Payload::new(Notes(vec![value], None));
     let mut request = Request::new(target, RequestValue::Payload(notes));
     request.when = When::AtSample(at);
     request.source = source;
@@ -78,7 +78,7 @@ fn a_late_payload_losing_to_a_held_one_is_retired() {
 fn a_payload_written_at_once_holds_its_control() {
     let mut rig = rig();
     let at = rig.graph.current_sample;
-    let notes = Payload::new(Notes(vec![2.0]));
+    let notes = Payload::new(Notes(vec![2.0], None));
     rig.graph.apply_payload("tape", NOTES, notes).unwrap();
     let script = submit_notes(&rig, 0.5, at, Source::Script);
     block(&mut rig);
