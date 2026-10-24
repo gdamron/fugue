@@ -156,11 +156,12 @@ fn a_retarget_through_nested_developments_plays_as_loaded() {
 const LATER: &str = r#"[{"at_step":7,"module":"m","control":"frequency","value":220.0}]"#;
 
 /// A script's offline `schedule` write losing to a user's at one sample
+/// (as it is applied, when `overtaken` by a replay after it was ranked)
 /// leaves the user's playing and read back, the development's record of
 /// it included, so the render matches the user's write alone.
-fn a_losing_offline_write_restores(doc: &str) {
+fn a_losing_offline_write_restores(doc: &str, overtaken: bool) {
     use crate::control_request::Source;
-    use crate::invention::declared::WriteOptions;
+    use crate::invention::declared::{DeclaredSurface, WriteOptions};
     let mut engine = RenderEngine::new(RATE);
     engine.load_json(doc).unwrap();
     let mut out = vec![0.0f32; RATE as usize * 2];
@@ -168,9 +169,14 @@ fn a_losing_offline_write_restores(doc: &str) {
     engine.set_control("p", "schedule", NEW.into()).unwrap();
     let script = WriteOptions::performed(Source::Script);
     let perform = crate::ControlWriteIntent::Perform;
-    let lost = engine
-        .snapshot()
-        .submit_control("p", "schedule", LATER.into(), perform, script);
+    let write = || {
+        let snapshot = engine.snapshot();
+        snapshot.submit_control("p", "schedule", LATER.into(), perform, script)
+    };
+    let lost = match overtaken {
+        true => DeclaredSurface::admitting_all(write),
+        false => write(),
+    };
     assert!(lost.is_ok(), "{lost:?}");
     let read = engine.get_control("p", "schedule").unwrap();
     assert_eq!(read, ControlValue::String(NEW.into()), "the user's holds");
@@ -182,10 +188,14 @@ fn a_losing_offline_write_restores(doc: &str) {
 
 #[test]
 fn a_losing_offline_write_restores_what_its_development_recorded() {
-    a_losing_offline_write_restores(&document(OLD));
+    for overtaken in [false, true] {
+        a_losing_offline_write_restores(&document(OLD), overtaken);
+    }
 }
 
 #[test]
 fn a_losing_offline_write_restores_what_a_nested_development_recorded() {
-    a_losing_offline_write_restores(&nested(OLD));
+    for overtaken in [false, true] {
+        a_losing_offline_write_restores(&nested(OLD), overtaken);
+    }
 }

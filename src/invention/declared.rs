@@ -133,6 +133,12 @@ struct Written {
     staged: Option<Payload>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// See [`DeclaredSurface::admitting_all`].
+    static ADMIT_ALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// What a write saw as it was queued for the live graph, under the
 /// publisher's lock (see `LiveGraph::record_authored`): its generation
 /// then, `None` when the module is not live, and the timed edit the write
@@ -435,7 +441,15 @@ impl DeclaredSurface {
     /// first, under a lock its writes to the control all take, so a write
     /// that loses has none. Live, the audio thread weighs the write, and
     /// its outcome says.
+    ///
+    /// A request log's replay may still take the control between the two
+    /// (it holds no front door's lock), so a write admitted here can yet
+    /// lose as it is applied, and says so (`Queued::lost`).
     pub(crate) fn admits(&self, key: &str, options: &WriteOptions) -> bool {
+        #[cfg(test)]
+        if ADMIT_ALL.get() {
+            return true;
+        }
         let Ok(index) = self.index(key) else {
             return true;
         };
@@ -450,6 +464,16 @@ impl DeclaredSurface {
         let rank = Rank::new(options.source, options.priority);
         let admits = graph.lock().unwrap().admits(&module_id, index, rank);
         admits
+    }
+
+    /// Runs `body` with every write admitted before it is applied, as one
+    /// that replay overtakes between the two is.
+    #[cfg(test)]
+    pub(crate) fn admitting_all<T>(body: impl FnOnce() -> T) -> T {
+        ADMIT_ALL.set(true);
+        let result = body();
+        ADMIT_ALL.set(false);
+        result
     }
 
     fn index(&self, key: &str) -> Result<ControlIndex, String> {
