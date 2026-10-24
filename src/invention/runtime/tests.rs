@@ -12,6 +12,7 @@ use std::time::Duration;
 mod acks;
 mod editing;
 mod non_finite;
+mod pending;
 #[cfg(feature = "spectrogram")]
 mod spectrum;
 mod timed;
@@ -515,7 +516,7 @@ fn performed_control_writes_are_announced_but_never_authored() {
     };
 
     // A performed gesture (a scheduler, a script, a live knob) is applied and
-    // announced, but the authored starting state is untouched (FUG-266).
+    // announced, but the authored starting state is untouched.
     running
         .snapshot()
         .set_control_with_intent(

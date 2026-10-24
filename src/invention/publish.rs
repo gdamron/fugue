@@ -60,9 +60,9 @@ pub(crate) use announce::Progress;
 pub(crate) use authored::APPLY_WAIT;
 pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
 pub(crate) use pending::{Authoring, DocumentStep, PendingLog, PendingWrite};
-pub(crate) use publisher::{Publisher, Refused};
 #[cfg(test)]
 pub(crate) use publisher::OUTCOME_QUEUE_CAPACITY;
+pub(crate) use publisher::{kept_until, Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use retarget::Retarget;
@@ -367,11 +367,17 @@ impl LiveGraph {
     }
 
     /// Control writes submitted and not yet applied (or refused), oldest
-    /// first. Reads return applied values; this is what is still pending.
-    // Listed to clients once the front doors submit requests themselves.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn pending_writes(&self) -> Vec<PendingWrite> {
+    /// first, each with its request. Reads return applied values; this is
+    /// what is still pending.
+    pub(crate) fn pending_requests(&self) -> Vec<(RequestId, PendingWrite)> {
         self.pending.lock().unwrap().pending()
+    }
+
+    /// [`Self::pending_requests`]' writes alone.
+    #[cfg(test)]
+    pub(crate) fn pending_writes(&self) -> Vec<PendingWrite> {
+        let requests = self.pending_requests().into_iter();
+        requests.map(|(_, write)| write).collect()
     }
 
     /// What became of each request since the last call, oldest first, and

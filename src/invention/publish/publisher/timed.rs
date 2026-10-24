@@ -345,7 +345,7 @@ impl Publisher {
         kept.source = options.source;
         kept.priority = options.priority;
         kept.ttl = options.ttl;
-        kept.when = When::Condition(Condition::all(&[Predicate::Applied(id)]).expect("one part"));
+        kept.when = kept_until(id);
         let copy = requests.submit(kept).ok()?;
         self.ledger.kept(id, format!("{module_id}.{key}"));
         Some((id, Some(copy)))
@@ -355,4 +355,10 @@ impl Publisher {
     pub(crate) fn ledger(&mut self) -> &mut Ledger {
         &mut self.ledger
     }
+}
+
+/// When a write kept over timed edit `edit` is copied to apply: as the
+/// edit lands.
+pub(crate) fn kept_until(edit: RequestId) -> When {
+    When::Condition(Condition::all(&[Predicate::Applied(edit)]).expect("one part"))
 }

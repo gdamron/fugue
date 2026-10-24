@@ -2,8 +2,8 @@
 
 use super::{
     ApplyEditsReport, AuthoredSnapshot, DaemonIdentity, EventPage, InspectionPage, MeterReading,
-    ModuleDescription, ModuleTypeList, MutationReceipt, PackageList, RequestStatus, RpcError,
-    RuntimeFullSnapshot, RuntimeRevision, RPC_SCHEMA_VERSION,
+    ModuleDescription, ModuleTypeList, MutationReceipt, PackageList, PendingRequests,
+    RequestStatus, RpcError, RuntimeFullSnapshot, RuntimeRevision, RPC_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +62,8 @@ pub enum RpcResponsePayload {
     /// A timed request's status: the reply to a command sent with a
     /// `when`, which queued it, and to `GetRequest`.
     Request(RequestStatus),
+    /// The reply to `ListPendingRequests`.
+    PendingRequests(PendingRequests),
     Events(EventPage),
     /// The latest sampled output levels, in reply to
     /// [`RpcRequestPayload::GetMeters`]. Empty when nothing is playing. A struct

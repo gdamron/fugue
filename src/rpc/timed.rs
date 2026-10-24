@@ -5,8 +5,8 @@
 //! a [`RequestStatus`] naming the request, and every later change of state
 //! is announced as a `RequestChanged` event and readable with
 //! [`RpcCommand::GetRequest`](super::RpcCommand::GetRequest). The shape is
-//! the timed-edit subset of the control request contract (FUG-317): a
-//! request id, where it lands, and one state.
+//! the timed-edit subset of the control request contract: a request id,
+//! where it lands, and one state.
 
 use serde::{Deserialize, Serialize};
 

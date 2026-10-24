@@ -2,8 +2,8 @@
 
 use super::{
     ControlWriteIntent, DescribeModuleQuery, EditTiming, InspectionQuery, ModuleTypeQuery,
-    MutationReply, MutationTicket, PackageInstallRequest, RpcSubscriptionTopic, RuntimeRevision,
-    SnapshotDelivery, StructuralEdit, RPC_SCHEMA_VERSION,
+    MutationReply, MutationTicket, PackageInstallRequest, PendingDetail, PendingSource,
+    RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, StructuralEdit, RPC_SCHEMA_VERSION,
 };
 use crate::{ControlValue, Invention};
 use serde::{Deserialize, Serialize};
@@ -325,6 +325,16 @@ pub enum RpcCommand {
     /// `RequestChanged` events.
     GetRequest {
         id: String,
+    },
+    /// The control writes submitted and not yet applied, oldest first,
+    /// with how many each source has. Compact by default: the oldest
+    /// [`super::COMPACT_PENDING_ITEMS`] and a count of the rest; `detail`
+    /// `full` lists them all. `source` lists only that source's.
+    ListPendingRequests {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<PendingSource>,
+        #[serde(default)]
+        detail: PendingDetail,
     },
     /// Inspect bounded authored selections with revision and source context.
     InspectInvention {
