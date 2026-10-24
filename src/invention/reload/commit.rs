@@ -210,7 +210,9 @@ impl RunningInvention {
         let (registry, definitions) = adopt.unzip();
         let replacing = registry.as_deref().map(crate::registry::ReplacingKeys::of);
         // The document as it was before the commit, when the commit replaced
-        // it; read back only should a write fail when made.
+        // it, or the one it kept; read back only should a write fail when
+        // made. `None` when there was none: a failing control is then left
+        // unauthored, to its default.
         let (mut previous, replaces) = (None, document.is_some());
         let committed = self.live.commit_adopting(change, registry, |state| {
             if let Some(replacing) = replacing {
