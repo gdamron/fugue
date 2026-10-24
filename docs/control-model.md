@@ -190,10 +190,15 @@ until the automation's next deliberate move. Holding forever would silently
 break the composition; yielding to the next ramp step would make the
 gesture inaudible.
 
-A hold covers the target control and the controls a write to it reaches.
-Today that means a development's exposed control and every inner control
-it aliases: a write through one alias is weighed against a hold on any of
-them. Events are never held. Hold state is one word per declared control,
+A hold covers the target control and the controls a write to it reaches:
+a development's exposed control and every inner control it aliases, or
+the controls of its own module a write rewrites (a whole-scale
+replacement rewrites every scale position). Such a write is weighed
+against a hold on any of them, and the strongest loss decides. A control
+that only brings others into play rewrites none of them. So when a
+scheduler ramps a count while a higher tier holds one of the positions it
+reveals, the ramp runs on and the held position keeps its value: the hold
+wins, and nothing re-derives it. Events are never held. Hold state is one word per declared control,
 allocated when the module is built, and belongs to the instance: a module
 that survives an edit keeps its holds; one rebuilt starts with none.
 
@@ -296,9 +301,4 @@ These are part of the model but not wired through yet:
 - **Pending requests and outcomes for clients.** The pending log and outcome
   stream exist but are not listed to clients yet. The intent is that agents
   see their own pending requests as users do, with a compact default.
-- **Derived-control holds.** When automation moves a source control (a
-  scheduler ramping a melody's `degree_count`) while a higher tier holds a
-  control derived from it (`degree.1`), the hold wins: re-deriving must not
-  overwrite the held control. This ships with the first module that has
-  derived controls, when the melody moves onto declared controls.
 - Ramp shapes, and controls declared by plugins.
