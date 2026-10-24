@@ -16,7 +16,10 @@
 //! with the fewest options, the narrowest integer range).
 //!
 //! A payload key reaches exactly one inner payload control: its payload is
-//! handed on whole, and the one value it replaces is retired.
+//! handed on whole, and the one value it replaces is retired. A payload
+//! that loads what its value names (`loads_on_write`, a sample file) is the
+//! exception: it may reach several, each built and retired on its own (see
+//! `fan_out`).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -31,6 +34,8 @@ use crate::control_request::{
 use crate::invention::declared::{DeclaredSurface, Route};
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::payload::{Payload, Retired};
+
+use super::fan_out::apply_fanned_out;
 use crate::{GraphModule, Invention};
 
 /// The declared aliases behind each of a development's declared controls.
@@ -182,7 +187,8 @@ impl DevelopmentControls {
             };
             let first = &decls[position];
             let payload = first.kind == DeclKind::Payload || found.decl.kind == DeclKind::Payload;
-            if payload && !aliases[position].is_empty() {
+            let fans_out = first.loads_on_write && found.decl.loads_on_write;
+            if payload && !fans_out && !aliases[position].is_empty() {
                 return Err(format!(
                     "Development control '{}': a payload control reaches exactly one \
                      inner control, and '{}' already reaches '{}'",
@@ -211,9 +217,11 @@ impl DevelopmentControls {
             return Ok(None);
         }
         // Nor may a legacy alias share a payload key.
-        for decl in decls.iter().filter(|decl| decl.kind == DeclKind::Payload) {
+        let payloads =
+            (decls.iter().zip(&aliases)).filter(|(decl, _)| decl.kind == DeclKind::Payload);
+        for (decl, declared) in payloads {
             let listed = definition.controls.iter();
-            if listed.filter(|control| control.name == decl.key).count() > 1 {
+            if listed.filter(|control| control.name == decl.key).count() > declared.len() {
                 return Err(format!(
                     "Development control '{}': a payload control reaches exactly one \
                      inner control",
@@ -359,26 +367,33 @@ impl DevelopmentControls {
 }
 
 impl DevelopmentControls {
-    /// Hands `payload` to payload control `control`'s one alias, returning
-    /// what it replaces, or refuses it and hands it back. Audio thread, as
-    /// [`Self::apply`].
+    /// Hands `payload` to payload control `control`'s alias, or to each of
+    /// its aliases the payload of its own it packs (see `fan_out`),
+    /// returning what it replaces, or refuses it and hands it back. Audio
+    /// thread, as [`Self::apply`].
     pub(super) fn apply_payload(
         &self,
         modules: &mut [GraphModule],
         control: ControlIndex,
         payload: Payload,
     ) -> Result<Retired, (Refusal, Payload)> {
-        let alias = match self.aliases.get(usize::from(control.0)).map(Vec::as_slice) {
-            Some([alias]) => alias,
+        let aliases = match self.aliases.get(usize::from(control.0)) {
+            Some(aliases) if !aliases.is_empty() => aliases,
             _ => return Err((Refusal::Unsupported, payload)),
         };
-        match modules.get_mut(alias.module) {
-            Some(module) => {
-                // Its own automation still waiting was written before this.
-                take_automation(module.module_mut());
-                module.module_mut().apply_payload(alias.index, payload)
-            }
-            None => Err((Refusal::TargetGone, payload)),
+        if aliases.iter().any(|alias| alias.module >= modules.len()) {
+            return Err((Refusal::TargetGone, payload));
+        }
+        let mut apply = |position: usize, payload| {
+            let alias: &Alias = &aliases[position];
+            let module = modules[alias.module].module_mut();
+            // Its own automation still waiting was written before this.
+            take_automation(module);
+            module.apply_payload(alias.index, payload)
+        };
+        match aliases.len() {
+            1 => apply(0, payload),
+            count => apply_fanned_out(count, payload, apply),
         }
     }
 }

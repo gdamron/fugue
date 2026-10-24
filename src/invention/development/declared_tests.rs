@@ -580,3 +580,28 @@ fn a_hold_reaches_through_a_development_without_allocating() {
     level.write_number(0.75);
     assert!(level.current() != Some(0.75), "held off");
 }
+
+#[test]
+fn a_saved_event_fires_once_as_the_development_runs() {
+    let (graph, _) = running(json!({ "pulse": true, "level": 0.5 }));
+    assert_eq!(outputs(&graph), (1.5, 0.5), "fired once, beside the scalar");
+    assert_eq!(outputs(&graph), (1.5, 0.5), "and not again");
+    let (graph, _) = running(json!({ "pulse": false }));
+    assert_eq!(outputs(&graph), (0.25, 0.25), "false fires nothing");
+
+    // Written twice before it runs, it fires once, as last written.
+    let built = pair().build(48_000, &json!({})).unwrap();
+    let surface = built.control_surface.unwrap();
+    for _ in 0..2 {
+        surface.set_control("pulse", true.into()).unwrap();
+    }
+    let graph = Arc::new(Mutex::new(SignalGraph::new(
+        IndexMap::new(),
+        Vec::new(),
+        Vec::new(),
+        MasterObservers::default(),
+    )));
+    let surfaces = Mutex::new(IndexMap::new());
+    add_offline(&graph, &surfaces, "pair", built.module, Some(surface)).unwrap();
+    assert_eq!(outputs(&graph), (1.25, 0.25));
+}

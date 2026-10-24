@@ -5,6 +5,7 @@ use crate::modules::NullBackend;
 
 mod authored;
 mod clock;
+mod development_events;
 mod development_wholes;
 mod melody;
 mod mixer_rebuild;
