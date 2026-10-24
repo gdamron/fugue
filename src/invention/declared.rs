@@ -787,7 +787,12 @@ impl DeclaredSurface {
                         raw,
                         beat: None,
                         automated,
-                        authored: options.authored.cloned(),
+                        // Safe from the timed edit it was kept over, or that
+                        // landed before it: its record follows that edit's.
+                        authored: options.authored.map(|authoring| Authoring {
+                            safe,
+                            ..authoring.clone()
+                        }),
                     };
                     // The copy applying, too, is this write's.
                     if let Some(copy) = copy.filter(|copy| *copy != id) {

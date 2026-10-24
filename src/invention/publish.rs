@@ -23,7 +23,7 @@
 
 use indexmap::IndexMap;
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use super::declared::RequestPort;
@@ -54,9 +54,9 @@ mod timed_swap;
 #[cfg_attr(not(test), allow(dead_code))]
 mod watch;
 
-pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use authored::APPLY_WAIT;
+pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
 pub(crate) use pending::{Authoring, DocumentStep, PendingLog, PendingWrite};
 pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;
@@ -544,7 +544,13 @@ impl LiveGraph {
                 drop(prepared);
                 return Err(GraphCommandError::TopologyMoved);
             }
+            let fence = authored::Fence::open(&self.pending, &self.state, (&VecDeque::new(), None));
             retain(&mut self.state.lock().unwrap());
+            fence.close(
+                (&self.pending, &self.state),
+                &[],
+                (&mut VecDeque::new(), None),
+            );
             drop(publisher);
             return Ok(Committed::default());
         }
@@ -581,7 +587,15 @@ impl LiveGraph {
                 retain(state);
             }
         };
+        // Authored writes not yet recorded that the change replaced are
+        // forgotten (see `authored::Fence`).
+        let fence = authored::Fence::open(&self.pending, &self.state, (&VecDeque::new(), None));
         let committed = self.commit_published(&publisher, published, &self.port(), retain);
+        fence.close(
+            (&self.pending, &self.state),
+            &committed.stopped,
+            (&mut VecDeque::new(), None),
+        );
         drop(publisher);
         self.settle();
         Ok(committed)

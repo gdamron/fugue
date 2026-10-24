@@ -9,7 +9,14 @@
 //! a write applied after it: so a write applied to a module an edit then
 //! rebuilt is recorded, and then replaced by the edit's document, as it was
 //! replaced in what plays.
+//!
+//! A commit recording a document of its own (an untimed change, a reload,
+//! an edit batch, a timed edit adopted) forgets the writes not yet
+//! recorded that it replaced, to a module it rebuilt or removed or to a
+//! control it wrote (see [`Fence`]): recorded after it, they would say
+//! what no longer plays.
 
+use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -112,17 +119,103 @@ pub(super) fn catch_up(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take_steps();
-    for step in steps {
+    let mut steps = steps;
+    while let Some(step) = steps.pop_front() {
         match step {
             DocumentStep::Authored {
                 module_id,
                 key,
                 authoring,
             } => record(publisher, mirrors.2, (&module_id, &key), &authoring),
-            DocumentStep::Timed => adopt_into(publisher, mirrors),
+            DocumentStep::Timed => adopt_into(publisher, (pending, mirrors), &mut steps),
         }
     }
-    adopt_into(publisher, mirrors);
+    adopt_into(publisher, (pending, mirrors), &mut steps);
+}
+
+/// The authored writes a commit may replace, not yet recorded: each
+/// control with what the retained document held for it before. A commit
+/// records its own document (a reload's, an edit batch's, a timed edit's
+/// as it is adopted), planned without them; one still to be recorded is
+/// recorded on top of it, unless the commit rebuilt or removed its module
+/// or wrote the control itself. Then what plays is the commit's: the write
+/// applied, if at all, to the module replaced, or before the commit's own
+/// write. So it is forgotten (see [`Fence::close`]).
+pub(super) struct Fence(Vec<((String, String), Option<serde_json::Value>)>);
+
+impl Fence {
+    /// Every authored write waiting in `pending`, and every one listed in
+    /// `later`, yet to be recorded, but those safe from the timed edit
+    /// being adopted, `except` (a write kept over it, or made once it had
+    /// landed, which follows its writes).
+    pub(super) fn open(
+        pending: &Mutex<PendingLog>,
+        state: &Mutex<RuntimeState>,
+        (later, except): (&VecDeque<DocumentStep>, Option<RequestId>),
+    ) -> Self {
+        let mut keys =
+            (pending.lock().unwrap_or_else(PoisonError::into_inner)).authored_keys(except);
+        keys.extend(later.iter().filter_map(|step| match step {
+            DocumentStep::Authored {
+                module_id,
+                key,
+                authoring,
+            } if except.is_none() || authoring.safe != except => {
+                Some((module_id.clone(), key.clone()))
+            }
+            _ => None,
+        }));
+        let state = state.lock().unwrap();
+        Self(
+            keys.into_iter()
+                .map(|key| {
+                    let held = held(&state, &key);
+                    (key, held)
+                })
+                .collect(),
+        )
+    }
+
+    /// Forgets, in `pending` and `later`, each write the commit replaced:
+    /// to a module it `stopped` (rebuilt or removed), or to a control
+    /// whose document value it changed.
+    pub(super) fn close(
+        self,
+        (pending, state): (&Mutex<PendingLog>, &Mutex<RuntimeState>),
+        stopped: &[String],
+        (later, except): (&mut VecDeque<DocumentStep>, Option<RequestId>),
+    ) {
+        if self.0.is_empty() {
+            return;
+        }
+        let replaced: Vec<_> = {
+            let state = state.lock().unwrap();
+            (self.0.into_iter())
+                .filter(|(key, was)| stopped.contains(&key.0) || held(&state, key) != *was)
+                .map(|(key, _)| key)
+                .collect()
+        };
+        let is_replaced =
+            |module_id: &str, key: &str| replaced.iter().any(|(m, k)| m == module_id && k == key);
+        let safe = |authoring: &Authoring| except.is_some() && authoring.safe == except;
+        later.retain(|step| match step {
+            DocumentStep::Authored {
+                module_id,
+                key,
+                authoring,
+            } => safe(authoring) || !is_replaced(module_id, key),
+            DocumentStep::Timed => true,
+        });
+        let mut pending = pending.lock().unwrap_or_else(PoisonError::into_inner);
+        pending.forget_authored(is_replaced, except);
+    }
+}
+
+/// What the retained document holds for control `key` of `module_id`.
+fn held(state: &RuntimeState, (module_id, key): &(String, String)) -> Option<serde_json::Value> {
+    let document = state.document.as_ref()?;
+    let spec = document.modules.iter().find(|spec| spec.id == *module_id)?;
+    spec.config.get(key).cloned()
 }
 
 /// Records an authored write that applied, under the publisher: in the

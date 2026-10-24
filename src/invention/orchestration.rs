@@ -340,7 +340,11 @@ impl RuntimeSnapshot {
         // is adopted first, so the write goes to the module playing.
         let _authoring = live.authoring();
         live.adopt_landed();
-        let authoring = Authoring { value, origin };
+        let authoring = Authoring {
+            value,
+            origin,
+            safe: None,
+        };
         let queued = self.make_authored(module_id, key, load, &options.authored_as(&authoring))?;
         let now = queued.id.is_none().then_some(&authoring);
         live.reconcile_authored((module_id, key), queued.safe, now);

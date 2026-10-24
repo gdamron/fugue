@@ -284,9 +284,11 @@ fn a_write_applied_before_a_landing_that_rebuilds_its_module_is_replaced() {
     let playing = rig.live.control_surfaces.lock().unwrap()["osc1"].clone();
     let frequency = playing.get_control("frequency").unwrap();
     assert_eq!(frequency, ControlValue::Number(440.0), "the square plays");
-    let state = rig.live.state.lock().unwrap();
-    let config = &state.modules["osc1"].config;
-    assert_eq!(config.get("frequency"), None, "{config}");
+    assert_eq!(
+        recorded_document(&rig, "osc1"),
+        440.0,
+        "the edit's document"
+    );
 }
 
 /// An authored write that applies before a timed edit writing its control
@@ -360,6 +362,48 @@ fn an_untimed_change_before_a_write_applies_leaves_it_recorded() {
     rig.live.commit(change.prepare().unwrap()).unwrap();
     rig.render(1);
     assert_eq!(recorded_document(&rig, "osc2"), 330.0);
+}
+
+/// An untimed change rebuilding a module, published while an authored
+/// write to it waits to apply, replaces it: the write applies, if at all,
+/// to the module replaced, so it is never recorded.
+#[test]
+fn an_untimed_rebuild_before_a_write_applies_forgets_it() {
+    let mut rig = Rig::new(BASE);
+    write(&rig, "osc1", "frequency", 330.0, ControlWriteIntent::Author);
+    let saw = rig.build(
+        "osc1",
+        "oscillator",
+        serde_json::json!({ "waveform": "saw" }),
+    );
+    let mut change = rig.live.begin();
+    change.upsert("osc1", saw);
+    rig.live.commit(change.prepare().unwrap()).unwrap();
+    rig.render(1);
+    rig.live.adopt_landed();
+    let state = rig.live.state.lock().unwrap();
+    let document = state.document.as_ref().unwrap();
+    let osc1 = document.modules.iter().find(|spec| spec.id == "osc1");
+    let config = &osc1.unwrap().config;
+    assert_eq!(config.get("frequency"), None, "the saw's own: {config}");
+}
+
+/// A commit recording a document that writes a control (a reload's, an
+/// edit batch's), made while an authored write to it waits to apply,
+/// replaces it, as its own write to the control follows it.
+#[test]
+fn a_commit_writing_a_control_before_a_write_to_it_applies_forgets_it() {
+    let mut rig = Rig::new(BASE);
+    write(&rig, "osc2", "frequency", 330.0, ControlWriteIntent::Author);
+    write(&rig, "osc1", "frequency", 220.0, ControlWriteIntent::Author);
+    let prepared = rig.live.begin().prepare().unwrap();
+    let retain = |state: &mut RuntimeState| {
+        state.record_authored_control("osc2", "frequency", &ControlValue::Number(660.0));
+    };
+    rig.live.commit_with(prepared, retain).unwrap();
+    rig.render(1);
+    assert_eq!(recorded_document(&rig, "osc2"), 660.0, "the commit's");
+    assert_eq!(recorded_document(&rig, "osc1"), 220.0, "not replaced");
 }
 
 /// A timed edit keeping the module, landing after an authored write to it
