@@ -470,10 +470,15 @@ impl DeclaredSurface {
     /// that replay overtakes between the two is.
     #[cfg(test)]
     pub(crate) fn admitting_all<T>(body: impl FnOnce() -> T) -> T {
-        ADMIT_ALL.set(true);
-        let result = body();
-        ADMIT_ALL.set(false);
-        result
+        /// Restores what was set before, should `body` panic too.
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                ADMIT_ALL.set(self.0);
+            }
+        }
+        let _restore = Restore(ADMIT_ALL.replace(true));
+        body()
     }
 
     fn index(&self, key: &str) -> Result<ControlIndex, String> {
