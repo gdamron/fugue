@@ -375,11 +375,25 @@ fn a_recorded_level_wins_over_the_authored_one_and_a_recorded_key_is_refused() {
 }
 
 #[test]
-fn a_play_while_building_is_refused_as_any_event_is() {
+fn a_play_while_building_fires_once_the_kit_binds() {
+    use crate::invention::declared::offline_route;
+    use crate::invention::graph::{MasterObservers, SignalGraph};
     let kick = write_level_wav(0.5, 4);
     let slot = serde_json::json!([{ "key": 36, "asset": kick.to_str().unwrap() }]);
-    let (_, surface) = build_kit(serde_json::json!({ "samples": slot }));
-    assert!(surface.set_control("play", 36.0.into()).is_err());
+    let (mut kit, surface) = build_kit(serde_json::json!({ "samples": slot }));
+    surface.set_control("play", 36.0.into()).unwrap();
+    kit.process(1);
+    assert_eq!(kit.get_output("audio_left").unwrap(), 0.0, "held until it runs");
+
+    let graph = Arc::new(std::sync::Mutex::new(SignalGraph::new(
+        Default::default(),
+        Vec::new(),
+        Vec::new(),
+        MasterObservers::default(),
+    )));
+    surface.bind(offline_route(&graph, "kit"), kit.as_mut());
+    kit.process(1);
+    assert!((kit.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
     let _ = std::fs::remove_file(kick);
 }
 
