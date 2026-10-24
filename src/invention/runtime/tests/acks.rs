@@ -338,3 +338,46 @@ fn a_kept_writes_copy_holds_no_outcome_once_its_reply_is_sent() {
     running.announce_applied();
     assert_eq!(running.live.held(), 0);
 }
+
+#[test]
+fn an_authored_write_pending_at_its_reply_moves_the_authored_epoch_once_it_applies() {
+    let (running, pump, _sink) = on_manual();
+    let epoch = running.authored_epoch();
+    let authored = ControlWrite::new("osc", "frequency", 330.0.into());
+    let acks = running.write_controls(&[authored]);
+    assert_eq!(acks.controls[0].state, Some(ControlRequestState::Pending));
+    assert_eq!(running.authored_epoch(), epoch);
+
+    pump.block();
+    assert_eq!(running.authored_epoch(), epoch + 1);
+    pump.render(4);
+    assert_eq!(running.authored_epoch(), epoch + 1);
+    // A performed write is never recorded.
+    running.write_controls(&[frequency(440.0, RequestSource::User)]);
+    pump.render(2);
+    assert_eq!(running.authored_epoch(), epoch + 1);
+}
+
+/// A document read with its epoch holds every write the epoch counts: the
+/// one applied since the last read is recorded and counted together.
+#[test]
+fn a_document_read_with_its_epoch_holds_every_write_counted() {
+    let (running, pump, _sink) = on_manual();
+    let frequency_in = |document: Option<Invention>| {
+        let document = document.unwrap();
+        let osc = document.modules.iter().find(|spec| spec.id == "osc");
+        osc.unwrap().config["frequency"].as_f64()
+    };
+    let (document, epoch) = running.document_with_epoch();
+    assert_eq!(frequency_in(document), Some(220.0));
+
+    let authored = ControlWrite::new("osc", "frequency", 330.0.into());
+    running.write_controls(&[authored]);
+    let (document, unmoved) = running.document_with_epoch();
+    assert_eq!((frequency_in(document), unmoved), (Some(220.0), epoch));
+
+    // Applied, and recorded only as the read takes it up.
+    pump.block();
+    let (document, moved) = running.document_with_epoch();
+    assert_eq!((frequency_in(document), moved), (Some(330.0), epoch + 1));
+}

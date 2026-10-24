@@ -287,18 +287,50 @@ kept over an edit that writes the same control as it lands.
 How revisions and preconditions protect concurrent editors is covered in
 [`shared-runtime.md`](shared-runtime.md).
 
+## Front doors
+
+Every write from outside the audio thread goes through one choke point,
+`RuntimeSnapshot::submit_control` (behind `set_control_with_intent`, in
+[`orchestration.rs`](../src/invention/orchestration.rs)). That covers RPC
+`SetControl` and `SetControls`, conducting scripts, agents, and the
+offline `RenderEngine` behind FFI and WASM. A write there is:
+
+- coerced to the control's kind, with a number that is not finite refused;
+- submitted as a request with its source (user, agent, script) and
+  priority;
+- announced as `ControlChanged`, naming its request, once it applies.
+
+`RunningInvention::write_controls` tells its caller what became of each
+write:
+
+- It waits up to four device blocks, clamped to 20–200 ms, and not at all
+  when no device is playing.
+- Each write is then reported applied, pending, superseded, overridden or
+  refused.
+- A pending write is announced if it applies later. Nothing is announced
+  for one lost after its reply.
+- `ListPendingRequests` lists what is still waiting. By default it is
+  compact (the oldest eight, and a count of the rest), and it can list in
+  full or by source.
+
+[`runtime/tests/front_doors.rs`](../src/invention/runtime/tests/front_doors.rs)
+guards the choke point in two ways:
+
+- Every control of a type that declares its controls is written as a
+  request through the front door. A schedule is the exception: it travels
+  in a publication. So are a few listed text controls a module reads on a
+  control thread.
+- Only a listed set of files may write a surface directly, each for a
+  stated reason (building a module, validating an edit, carrying values
+  into a rebuilt graph).
+
 ## Not yet built
 
 These are part of the model but not wired through yet:
 
-- **Source tagging.** Every front door submits as a user at priority 0, and
-  the request's `intent` field is not yet read (intent is applied above the
-  queue). The tiers and holds are implemented and tested; today they
-  separate automation from everything else.
+- **Intent on the queue.** The request's `intent` field is not yet read:
+  intent is applied above the queue.
 - **Timed control writes on the wire.** Requests timed on samples, beats or
   conditions are implemented on the audio side; only timed structural edits
   are exposed to clients so far.
-- **Pending requests and outcomes for clients.** The pending log and outcome
-  stream exist but are not listed to clients yet. The intent is that agents
-  see their own pending requests as users do, with a compact default.
 - Ramp shapes, and controls declared by plugins.
