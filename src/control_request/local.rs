@@ -31,7 +31,7 @@ pub(crate) fn local_get<M: Module + ?Sized>(module: &M, key: &str) -> Result<f32
     if is_payload(table, key) {
         return Err(unknown());
     }
-    let index = table.resolve(key).ok_or_else(unknown)?;
+    let index = table.resolve_present(key, |index| cells.load(index))?;
     Ok(match cells.load(index).ok_or_else(unknown)? {
         RtValue::F32(value) => value,
         RtValue::I32(value) => value as f32,
@@ -47,8 +47,8 @@ pub(crate) fn local_set<M: Module + ?Sized>(
     value: f32,
 ) -> Result<(), String> {
     let unknown = || format!("Unknown control: {key}");
-    let (table, _) = module.declared().ok_or_else(unknown)?;
-    let index = table.resolve(key).ok_or_else(unknown)?;
+    let (table, cells) = module.declared().ok_or_else(unknown)?;
+    let index = table.resolve_present(key, |index| cells.load(index))?;
     let (decl, _) = table.decl(index).ok_or_else(unknown)?;
     let whole = value.fract() == 0.0 && value.is_finite();
     let value = match decl.kind {

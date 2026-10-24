@@ -393,10 +393,11 @@ impl DeclaredSurface {
         matches!(*self.route.lock().unwrap(), Route::Building(_))
     }
 
+    /// The control `key` names, refused when it does not exist: unknown,
+    /// or past the read-only count it is listed below.
     fn index(&self, key: &str) -> Result<ControlIndex, String> {
         self.table
-            .resolve(key)
-            .ok_or_else(|| format!("Unknown control: {key}"))
+            .resolve_present(key, |index| self.cells.load(index))
     }
 
     /// `authored` names the control an authored write is to, as written.
@@ -791,7 +792,7 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn declares(&self, key: &str) -> bool {
-        self.table.resolve(key).is_some()
+        self.index(key).is_ok()
     }
 
     fn set_legacy(&self, key: &str, _value: ControlValue) -> Result<(), String> {
@@ -803,7 +804,7 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn declaration(&self, key: &str) -> Option<Declaration> {
-        let index = self.table.resolve(key)?;
+        let index = self.index(key).ok()?;
         Some(Declaration {
             index,
             decl: self.table.decl(index)?.0.clone(),
@@ -812,7 +813,7 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn automation(&self, key: &str) -> Option<Automation> {
-        let index = self.table.resolve(key)?;
+        let index = self.index(key).ok()?;
         let (decl, _) = self.table.decl(index)?;
         // An event is automated too: a schedule entry on it fires it, at
         // most once a block (automation writes coalesce per block).
