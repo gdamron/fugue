@@ -102,6 +102,8 @@ fn a_write_no_device_has_taken_is_pending_and_announced_once_applied() {
     // Announced once.
     running.announce_applied();
     assert_eq!(announced(&sink).len(), 1);
+    // Its reply sent, nothing holds its outcome.
+    assert_eq!(running.live.held(), 0);
 }
 
 #[test]
