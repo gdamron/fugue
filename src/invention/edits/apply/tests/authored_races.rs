@@ -167,3 +167,60 @@ fn a_timed_batch_an_authored_write_landed_under_keeps_it_as_it_lands() {
     assert_eq!(frequency(&running, "osc1"), 220.0);
     assert_eq!(frequency(&running, "osc2"), 660.0);
 }
+
+/// A tape beside BASE, and a timed batch queued to set its gain to 0.75
+/// at sample 256, adding a module so it is structural.
+fn tape_gain_waiting() -> (RunningInvention, Pump) {
+    let mut registry = crate::ModuleRegistry::default();
+    registry.register(crate::test_support::tape::TapeFactory);
+    let tape = r#"{ "id": "tape", "type": "tape", "config": { "gain": 0.5, "notes": [1] } }"#;
+    let (mut running, pump) = start_with(registry, &base_with(tape));
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 256 };
+    let batch = [
+        add("lfo", "oscillator", json!({ "frequency": 3.0 })),
+        set("tape", "gain", number(0.75)),
+    ];
+    running
+        .apply_edits_at(&batch, &when, None)
+        .expect("the batch is queued");
+    (running, pump)
+}
+
+fn author(running: &RunningInvention, module_id: &str, key: &str, value: ControlValue) {
+    let intent = ControlWriteIntent::Author;
+    (running.snapshot())
+        .set_control_with_intent(module_id, key, value, intent)
+        .unwrap();
+}
+
+#[test]
+fn a_timed_write_landing_after_an_authored_payload_is_recorded_after_it() {
+    let (running, pump) = tape_gain_waiting();
+    // Notes carrying a gain of their own, replacing the stored one, written
+    // while the batch waits: they apply first.
+    let notes = ControlValue::String(r#"{"notes": [2], "gain": 0.25}"#.into());
+    author(&running, "tape", "notes", notes.clone());
+    pump.block();
+    assert_eq!(running.get_control("tape", "gain").unwrap(), number(0.25));
+    pump.render(8);
+    running.live.adopt_landed();
+
+    // Live, the batch's gain follows the notes; so does the document.
+    assert_eq!(running.get_control("tape", "gain").unwrap(), number(0.75));
+    let config = config_of(&running, "tape");
+    assert_eq!(config["gain"], json!(0.75));
+    assert_eq!(config["notes"], json!(notes.as_string().unwrap()));
+}
+
+#[test]
+fn a_write_folded_into_a_timed_batch_to_a_module_it_does_not_write_keeps_its_value() {
+    let (running, pump) = tape_gain_waiting();
+    author(&running, "osc2", "frequency", number(660.0));
+    pump.block();
+    pump.render(8);
+    running.live.adopt_landed();
+
+    assert_eq!(frequency(&running, "osc2"), 660.0);
+    assert_eq!(config_of(&running, "tape")["gain"], json!(0.75));
+    assert_eq!(running.get_control("tape", "gain").unwrap(), number(0.75));
+}
