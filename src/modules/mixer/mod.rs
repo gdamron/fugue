@@ -17,8 +17,11 @@
 //!   audio-rate panning
 //! - A mixer rebuilt by an edit (a reload that changes its config) carries
 //!   on from the levels, pans and master its predecessor was playing, so the
-//!   rebuild glides rather than steps. A channel the rebuild
-//!   removes still stops at once: its input goes with it
+//!   rebuild glides rather than steps
+//! - A channel an edit removes, or whose input goes with the module that
+//!   fed it, fades out over the same glide rather than stopping at once.
+//!   Its source is gone, so it carries on from its last samples as it
+//!   fades (see `tail`)
 //!
 //! # Example Invention
 //!
@@ -64,6 +67,7 @@ mod controls;
 mod factory;
 mod inputs;
 mod outputs;
+mod tail;
 
 pub use self::factory::MixerFactory;
 
@@ -158,6 +162,8 @@ pub struct Mixer {
     /// mixer has. Zero until then, so the first block starts at the
     /// controls' values.
     heard: usize,
+    /// Channels that stopped being heard, playing out.
+    tails: tail::Tails,
     input_state: inputs::MixerInputs,
     outputs: outputs::MixerOutputs,
 }
@@ -181,6 +187,7 @@ impl Mixer {
             master: LinearRamp::new(0.0, frames),
             pan_gains: [PanGains::UNSET; MAX_CHANNELS],
             heard: 0,
+            tails: tail::Tails::new(frames),
             input_state: inputs::MixerInputs::new(channels),
             outputs: outputs::MixerOutputs::new(),
         }
@@ -194,6 +201,7 @@ impl Mixer {
         self.pans = [LinearRamp::new(0.0, frames); MAX_CHANNELS];
         self.master = LinearRamp::new(0.0, frames);
         self.heard = 0;
+        self.tails = tail::Tails::new(frames);
         self
     }
 
@@ -258,8 +266,13 @@ impl Mixer {
     /// heard at, and the master at its master, so the first block glides
     /// from there to this mixer's controls rather than jumping to them. A
     /// channel no one heard fades in from silence at its own pan. A
-    /// `previous` that never played hands nothing on. A channel this mixer
-    /// does not have stops at once, since its input went with it.
+    /// `previous` that never played hands nothing on.
+    ///
+    /// Every channel `previous` played also leaves a tail (see `tail`),
+    /// which fades out from the next block unless its input is connected
+    /// here before then: a channel this mixer does not have, or one whose
+    /// input module the edit removed, fades rather than stopping at once.
+    /// A tail `previous` was playing out carries on.
     ///
     /// Edits that install in the same block chain: a `previous` that has not
     /// played yet hands on what it took over, including channels it does not
@@ -282,11 +295,27 @@ impl Mixer {
         }
         self.master.snap(previous.master.value());
         self.heard = previous.heard;
+        self.tails.carry_on_from(&previous.tails);
+        if previous.tails.remembered() {
+            for ch in 0..previous.channels {
+                let last = previous.tails.last_two(ch);
+                self.tails.depart(ch, last, previous.heard_gains(ch));
+            }
+        }
         true
     }
 
-    /// Mixes all inputs at frame `i` and returns the stereo output sample.
-    fn mix(&mut self, i: usize) -> (f32, f32) {
+    /// Channel `ch`'s left and right gains as last heard: its level and pan.
+    fn heard_gains(&self, ch: usize) -> (f32, f32) {
+        let level = self.levels[ch].value();
+        let pan = self.pan_gains[ch];
+        (level * pan.left, level * pan.right)
+    }
+
+    /// Mixes all inputs at frame `i`, with `tail` (see `tail`) before the
+    /// master, and returns the stereo output sample.
+    #[inline]
+    fn mix(&mut self, i: usize, tail: (f32, f32)) -> (f32, f32) {
         let mut left = 0.0;
         let mut right = 0.0;
 
@@ -300,6 +329,10 @@ impl Mixer {
             left += channel_out * gains.left;
             right += channel_out * gains.right;
         }
+
+        // Adding a silent tail leaves the sum as it was, bit for bit.
+        left += tail.0;
+        right += tail.1;
 
         let master_level = self.master.next_value();
         let master_cv = self.input_state.master_cv(i);
@@ -358,10 +391,23 @@ impl Module for Mixer {
 
     fn process(&mut self, frames: usize) -> bool {
         self.follow_controls();
-        for i in 0..frames {
-            let (left, right) = self.mix(i);
-            self.outputs.set(i, left, right);
+        self.tails.start_block();
+        if self.tails.playing() {
+            for i in 0..frames {
+                let tail = self.tails.next_frame();
+                let (left, right) = self.mix(i, tail);
+                self.outputs.set(i, left, right);
+            }
+        } else {
+            for i in 0..frames {
+                let (left, right) = self.mix(i, (0.0, 0.0));
+                self.outputs.set(i, left, right);
+            }
         }
+        let inputs = &self.input_state;
+        self.tails.remember(self.channels, frames, |ch, i| {
+            inputs.audio(ch, i) * inputs.level_cv(ch, i)
+        });
         true
     }
 
@@ -389,7 +435,17 @@ impl Module for Mixer {
         self.outputs.get(port)
     }
 
+    /// An audio input that loses its connection leaves a tail (see
+    /// `tail`); one connected before the next block keeps being heard.
     fn set_input_connected(&mut self, index: usize, connected: bool) {
+        if index < self.channels {
+            if connected {
+                self.tails.cover(index);
+            } else if self.input_state.audio_connected(index) && self.tails.remembered() {
+                let last = self.tails.last_two(index);
+                self.tails.depart(index, last, self.heard_gains(index));
+            }
+        }
         self.input_state.set_connected(index, connected);
     }
 
@@ -453,5 +509,7 @@ impl Module for Mixer {
 mod pan_tests;
 #[cfg(test)]
 mod rebuild_tests;
+#[cfg(test)]
+mod tail_tests;
 #[cfg(test)]
 mod tests;

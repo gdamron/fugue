@@ -15,6 +15,7 @@ pub struct MixerInputs {
     level_cvs: Vec<[f32; MAX_BLOCK]>,
     pan_mods: Vec<[f32; MAX_BLOCK]>,
     master_cv: [f32; MAX_BLOCK],
+    audio_connected: Vec<bool>,
     level_cv_connected: Vec<bool>,
     pan_mod_connected: Vec<bool>,
     master_cv_connected: bool,
@@ -35,6 +36,7 @@ impl MixerInputs {
             level_cvs: vec![[1.0; MAX_BLOCK]; channels],
             pan_mods: vec![[0.0; MAX_BLOCK]; channels],
             master_cv: [1.0; MAX_BLOCK],
+            audio_connected: vec![false; channels],
             level_cv_connected: vec![false; channels],
             pan_mod_connected: vec![false; channels],
             master_cv_connected: false,
@@ -97,7 +99,7 @@ impl MixerInputs {
     pub fn set_connected(&mut self, index: usize, connected: bool) {
         let n = self.channels;
         if index < n {
-            // audio inputs do not arbitrate against a control default
+            self.audio_connected[index] = connected;
         } else if index < 2 * n {
             self.level_cv_connected[index - n] = connected;
         } else if index < 3 * n {
@@ -105,6 +107,11 @@ impl MixerInputs {
         } else if index == 3 * n {
             self.master_cv_connected = connected;
         }
+    }
+
+    /// Whether audio input `channel` is fed by an upstream connection.
+    pub fn audio_connected(&self, channel: usize) -> bool {
+        self.audio_connected.get(channel).copied().unwrap_or(false)
     }
 
     #[inline]

@@ -8,6 +8,7 @@ mod clock;
 mod development_wholes;
 mod melody;
 mod mixer_rebuild;
+mod mixer_removal;
 mod numeric;
 mod relative_assets;
 mod replacing;

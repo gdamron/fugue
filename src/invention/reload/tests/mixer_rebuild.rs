@@ -9,21 +9,21 @@ use super::*;
 use crate::invention::manual_backend::{start_manual, Pump, SAMPLE_RATE};
 
 /// A tone slow enough that its own slope is far below a gain step's.
-const TONE_HZ: f32 = 110.0;
+pub(super) const TONE_HZ: f32 = 110.0;
 /// Blocks played before the reload: at least a whole cycle of the tone, so
 /// the steepest slope of the tone itself is measured.
-const BLOCKS_BEFORE: usize = 16;
+pub(super) const BLOCKS_BEFORE: usize = 16;
 /// Blocks played after it: the glide, then at least a whole cycle of the
 /// tones as the new mixer settles on them.
-const BLOCKS_AFTER: usize = 24;
+pub(super) const BLOCKS_AFTER: usize = 24;
 /// How much steeper than the tones' own steepest slope, before the reload or
 /// once the new mixer has settled, a frame-to-frame change may be: room for
 /// the glide's own slope, far below a step.
-const SLOPE_MARGIN: f32 = 1.5;
+pub(super) const SLOPE_MARGIN: f32 = 1.5;
 
 /// Two tones and mixer `mix`, whose config is `mixer`, into the dac. The
 /// second tone feeds the mixer's second channel when the mixer has one.
-fn document(mixer: serde_json::Value) -> Invention {
+pub(super) fn document(mixer: serde_json::Value) -> Invention {
     document_wired(mixer, &[])
 }
 
@@ -55,13 +55,13 @@ fn document_wired(mixer: serde_json::Value, extra: &[serde_json::Value]) -> Inve
     Invention::from_json(&document.to_string()).unwrap()
 }
 
-fn start(document: Invention) -> (RunningInvention, Pump) {
+pub(super) fn start(document: Invention) -> (RunningInvention, Pump) {
     let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(document).unwrap();
     start_manual(runtime)
 }
 
 /// The largest change between two neighbouring frames.
-fn steepest(frames: &[f32]) -> f32 {
+pub(super) fn steepest(frames: &[f32]) -> f32 {
     frames
         .windows(2)
         .map(|pair| (pair[1] - pair[0]).abs())
