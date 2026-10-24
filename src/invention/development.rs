@@ -36,6 +36,8 @@ mod ramp_tests;
 mod replacing;
 mod retarget;
 #[cfg(test)]
+mod sample_player_tests;
+#[cfg(test)]
 mod scheduled_tests;
 #[cfg(test)]
 mod tests;
