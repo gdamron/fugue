@@ -56,6 +56,8 @@ pub(super) struct Batch {
     /// A throwaway copy of each running module the batch writes, with its
     /// writes made in order: what the prepared check sees for survivors.
     provisional: ControlSurfaceMap,
+    /// The retained document's authored epoch as it was read.
+    authored_at: u64,
 }
 
 /// Why one attempt at a batch did not commit.
@@ -237,8 +239,9 @@ impl RunningInvention {
     ///
     /// A control write that passed every check but still fails when made
     /// does not refuse the batch: it is listed in
-    /// [`ApplyEditsReport::controls_failed`] and the module's actual value is
-    /// written back to the retained document.
+    /// [`ApplyEditsReport::controls_failed`], and the retained document keeps
+    /// what it authored for the control before the batch, never a value a
+    /// performed write set.
     ///
     /// The batch is planned from the retained authored document, not from
     /// the configs the runtime built its modules from (see
@@ -246,9 +249,10 @@ impl RunningInvention {
     /// batch is planned or prepared, it is planned and prepared again from
     /// the same candidate, up to three times in all.
     pub fn apply_edits(&mut self, edits: &[StructuralEdit]) -> Result<ApplyEditsReport, RpcError> {
-        let batch = self.live.graph_policy().run(|| self.batch(edits))?;
+        let mut batch = self.live.graph_policy().run(|| self.batch(edits))?;
         let mut attempt = 1;
         loop {
+            self.rebatch(edits, &mut batch)?;
             // Read before planning, as reload does: a change landing after
             // this read is caught when the prepared change publishes.
             let base = self.live.generation();
@@ -266,6 +270,16 @@ impl RunningInvention {
         }
     }
 
+    /// Applies `edits` again, as [`Self::batch`] does, to the retained
+    /// document once it has recorded an authored write since `batch` read
+    /// it: the batch's document then holds it.
+    fn rebatch(&self, edits: &[StructuralEdit], batch: &mut Batch) -> Result<(), RpcError> {
+        if self.live.authored_epoch() != batch.authored_at {
+            *batch = self.live.graph_policy().run(|| self.batch(edits))?;
+        }
+        Ok(())
+    }
+
     /// Checks `edits`, applies them to a copy of the retained document and
     /// validates the result (steps 1 to 3), changing nothing.
     fn batch(&self, edits: &[StructuralEdit]) -> Result<Batch, RpcError> {
@@ -274,7 +288,11 @@ impl RunningInvention {
         // the document that is playing; adopted later (when the publisher
         // is next locked) its changes would read as the batch's own.
         self.live.adopt_landed();
-        let document = self.state.lock().unwrap().document().ok_or_else(|| {
+        let (authored_at, document) = {
+            let state = self.state.lock().unwrap();
+            (state.authored_epoch, state.document())
+        };
+        let document = document.ok_or_else(|| {
             RpcError::new(
                 RpcErrorCode::Unsupported,
                 "the running invention keeps no authored document to edit; nothing was applied",
@@ -296,6 +314,7 @@ impl RunningInvention {
             candidate,
             resolved,
             provisional,
+            authored_at,
         })
     }
 

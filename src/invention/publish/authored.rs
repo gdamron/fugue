@@ -17,16 +17,18 @@
 //! what no longer plays.
 
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use super::timed::adopt_into;
 use super::timed_status::{CancelCause, Touched};
-use super::{Authoring, DocumentStep, LiveGraph, Mirrors, PendingLog, Publisher};
+use super::{Authoring, DocumentStep, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher};
 use crate::control_request::RequestId;
 use crate::invention::audio_assets;
 use crate::invention::state::RuntimeState;
+use crate::ControlValue;
 
 /// The longest a caller waits for the audio thread to take what it was
 /// handed: a device stream takes a write within a block or two, so a write
@@ -211,6 +213,58 @@ impl Fence {
         });
         let mut pending = pending.lock().unwrap_or_else(PoisonError::into_inner);
         pending.forget_authored(is_replaced, except);
+    }
+}
+
+/// The authored writes the retained document recorded after a change was
+/// planned from it, which the document it records lacks, oldest first.
+pub(super) struct Since {
+    writes: Vec<(String, String, ControlValue)>,
+    /// The invention's path as they were recorded, which a relative asset
+    /// path they name is relative to.
+    origin: Option<PathBuf>,
+}
+
+impl Since {
+    /// What `state` recorded since `prepared` was planned; `None` when it
+    /// no longer keeps them all (see `RuntimeState::authored_log`).
+    pub(super) fn of(prepared: &PreparedChange, state: &Mutex<RuntimeState>) -> Option<Self> {
+        let state = state.lock().unwrap();
+        let writes = match prepared.authored_at {
+            Some(at) => state.authored_log.last(state.authored_epoch - at)?,
+            None => Vec::new(),
+        };
+        let origin = state.source_path().map(Path::to_path_buf);
+        Some(Self { writes, origin })
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.writes.is_empty()
+    }
+
+    /// Records them again on top of the document the commit just made
+    /// recorded, but those it replaced: to a module it `stopped` (the
+    /// module playing was built from its document) or a control it
+    /// `writes` (its write follows). Before the commit's fence closes, so a
+    /// write still to be recorded that follows one of them is kept.
+    pub(super) fn rebase(
+        self,
+        state: &Mutex<RuntimeState>,
+        (stopped, writes): (&[String], &[(String, String)]),
+    ) {
+        if self.writes.is_empty() {
+            return;
+        }
+        let mut state = state.lock().unwrap();
+        for (module_id, key, value) in self.writes {
+            let written = writes.iter().any(|(m, k)| *m == module_id && *k == key);
+            if written || stopped.contains(&module_id) {
+                continue;
+            }
+            let (from, to) = (self.origin.as_deref(), state.source_path());
+            let value = audio_assets::rebase_asset_write(from, to, &key, &value);
+            state.record_authored_control(&module_id, &key, &value);
+        }
     }
 }
 

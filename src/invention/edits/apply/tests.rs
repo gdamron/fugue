@@ -13,6 +13,7 @@ use crate::rpc::{StructuralEdit, WrittenControl};
 use crate::{ControlValue, Invention, ModuleRegistry};
 
 mod after_timed_edit;
+mod authored_races;
 mod commit;
 mod config_refusals;
 mod payload_order;
@@ -20,6 +21,7 @@ mod real_modules;
 mod refusals;
 mod scheduled_targets;
 mod scripted;
+mod write_back;
 
 use scripted::{Scripted, SCRIPTED};
 

@@ -32,6 +32,16 @@ pub(crate) struct PreparedCommit {
     pub(super) report: ReloadReport,
 }
 
+impl PreparedCommit {
+    /// The commit, refused `TopologyMoved` once the retained document has
+    /// recorded an authored write since `authored`, the epoch read before
+    /// planning (see `PreparedChange::authored_at`).
+    pub(super) fn planned_at(mut self, authored: u64) -> Self {
+        self.change.authored_at = Some(authored);
+        self
+    }
+}
+
 impl RunningInvention {
     /// Prepares `plan` without changing anything visible: builds added and
     /// swapped modules (against `adopt`'s registry when given, otherwise the
@@ -180,9 +190,9 @@ impl RunningInvention {
     /// new topology; a legacy control's may lead by up to one block. A
     /// validated update that still fails when written keeps the module's
     /// previous value, is moved from the report's `controls_updated` to its
-    /// `controls_failed`, and that previous value is written back to the
-    /// retained document and the module's stored config, so the next reload
-    /// tries it again.
+    /// `controls_failed`, and the retained document keeps what it authored
+    /// for the control before the reload, so the next reload tries it again
+    /// (see `RuntimeState::restore_authored_control`).
     pub(crate) fn commit_prepared(
         &mut self,
         prepared: PreparedCommit,
@@ -199,6 +209,7 @@ impl RunningInvention {
         } = prepared;
         let (registry, definitions) = adopt.unzip();
         let replacing = registry.as_deref().map(crate::registry::ReplacingKeys::of);
+        let mut previous = None;
         let committed = self.live.commit_adopting(change, registry, |state| {
             if let Some(replacing) = replacing {
                 state.replacing = replacing;
@@ -214,7 +225,7 @@ impl RunningInvention {
                 }
             }
             if let Some(document) = document {
-                state.document = Some(document);
+                previous = state.document.replace(document);
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -266,9 +277,12 @@ impl RunningInvention {
             // changes to the document.
             let mut state = self.state.lock().unwrap();
             for (module_id, key, actual) in &kept {
-                state.record_authored_control(module_id, key, actual);
+                let control = (module_id.as_str(), key.as_str());
+                state.restore_authored_control(previous.as_ref(), control, actual);
             }
         }
+        // The old document drops here, off the publisher's lock.
+        drop(previous);
 
         self.follow_up(committed);
         Ok(report)

@@ -124,6 +124,35 @@ pub(crate) fn write_entry_asset(
     true
 }
 
+/// What `document` authors for control `key` of module `id`: the scalar
+/// its config holds under the key, or in the entry a sample's `asset.N`
+/// names. `None` when it authors none.
+pub(crate) fn authored_control(document: &Invention, id: &str, key: &str) -> Option<ControlValue> {
+    let config = &document.modules.iter().find(|spec| spec.id == id)?.config;
+    let entry = key
+        .strip_prefix("asset.")
+        .and_then(|index| index.parse::<usize>().ok())
+        .and_then(|index| {
+            let entries = ["samples", "zones"].into_iter();
+            let mut entries = entries.filter_map(|list| config.get(list)?.get(index));
+            entries.find(|entry| entry.get("$asset").is_none() && entry.is_object())
+        });
+    let held = match entry {
+        Some(entry) => entry.get("asset"),
+        None => config.get(key),
+    };
+    held.and_then(crate::invention::reload::scalar_control_value)
+}
+
+/// Drops control `key` from module `id`'s config, as a document that
+/// authors none for it. A sample's `asset.N` stays, in the entry it names.
+pub(crate) fn unset_control(document: &mut Invention, id: &str, key: &str) {
+    let spec = document.modules.iter_mut().find(|spec| spec.id == id);
+    if let Some(config) = spec.and_then(|spec| spec.config.as_object_mut()) {
+        config.remove(key);
+    }
+}
+
 /// The `asset` of the entry an `asset.N` control names, when `config` lists
 /// its samples in a `samples` or `zones` array holding an object at `N`.
 ///

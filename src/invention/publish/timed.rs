@@ -166,7 +166,11 @@ impl LiveGraph {
         self.reclaim();
         let mut publisher = self.lock();
         let superseded = built_with.is_some_and(|registry| !self.registry.is_current(registry));
-        if superseded || prepared.base_generation != publisher.generation() {
+        let moved = prepared.base_generation != publisher.generation();
+        // Planned without an authored write recorded since, which its
+        // document, retained as it lands, would drop: planned again.
+        let authored = authored::Since::of(&prepared, &self.state);
+        if superseded || moved || !authored.is_some_and(|since| since.is_empty()) {
             drop(publisher);
             drop(prepared);
             return Err(GraphCommandError::TopologyMoved);
