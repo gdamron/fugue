@@ -224,7 +224,8 @@ impl RuntimeSnapshot {
     ///
     /// This is the choke point for externally-initiated control writes — RPC
     /// commands, conducting scripts, and agents — so an observer sees every one
-    /// of them as a `ControlChanged` event regardless of intent. What intent changes is whether the value is *authored*:
+    /// of them as a `ControlChanged` event regardless of intent. What intent
+    /// changes is whether the value is *authored*:
     /// a [`ControlWriteIntent::Perform`] write is a live gesture that must
     /// neither land in a saved document nor advance the daemon's revision, so
     /// a scheduler running at musical rate cannot make every peer's structural

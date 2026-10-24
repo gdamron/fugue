@@ -88,7 +88,8 @@ pub(super) struct Replay {
     /// The clock latches apart from the requests' (see [`latches`]).
     latches: Vec<latches::DueLatch>,
     next_latch: usize,
-    /// Requests the render's graph refused (it would not have logged them).
+    /// Requests the render's graph refused (it would not have logged them),
+    /// and those whose development's legacy alias refused the value.
     pub(super) refused: usize,
 }
 
