@@ -411,9 +411,19 @@ impl PendingLog {
         self.held.reserve(writes);
     }
 
-    /// Lets go of the held outcomes of `ids`, whose reply is built.
+    /// Lets go of the held outcomes of `ids`, whose reply is built, and
+    /// holds none of those still waiting once they settle.
     pub(crate) fn release(&mut self, ids: &[RequestId]) {
         self.held.retain(|(id, _)| !ids.contains(id));
+        for (_, write) in self.writes.iter_mut().filter(|(id, _)| ids.contains(id)) {
+            write.awaited = false;
+        }
+    }
+
+    /// How many outcomes are held for replies.
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> usize {
+        self.held.len()
     }
 
     /// The control of each authored write not yet recorded, waiting to

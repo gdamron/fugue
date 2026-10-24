@@ -59,4 +59,10 @@ impl LiveGraph {
     pub(crate) fn release(&self, ids: &[RequestId]) {
         self.pending.lock().unwrap().release(ids);
     }
+
+    /// How many outcomes are held for replies.
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> usize {
+        self.pending.lock().unwrap().held()
+    }
 }
