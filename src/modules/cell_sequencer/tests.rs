@@ -1,4 +1,5 @@
 use super::*;
+use crate::factory::ModuleFactory;
 use crate::{ControlSurface, ControlValue, ModuleRegistry};
 
 fn pulse(module: &mut CellSequencer, port: &str) {
