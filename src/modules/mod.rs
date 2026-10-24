@@ -78,7 +78,7 @@ pub use oscillator::{Oscillator, OscillatorType};
 pub use reverb::Reverb;
 #[cfg(not(target_arch = "wasm32"))]
 pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};
-pub use sample_instrument::{SampleInstrument, SampleInstrumentControls};
+pub use sample_instrument::SampleInstrument;
 pub use sample_kit::SampleKit;
 pub use sample_player::SamplePlayer;
 pub use sample_slicer::SampleSlicer;
