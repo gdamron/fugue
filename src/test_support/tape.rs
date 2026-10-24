@@ -1,9 +1,10 @@
 //! A test module with a payload control, built by [`TapeFactory`] as type
 //! `tape`: it keeps `notes`, a JSON array of numbers, whole as a payload
-//! and outputs their sum times its `gain`. Notes written as
-//! `{"notes": [..], "gain": g}` carry the gain they play at, so they rewrite
-//! `gain` too (not weighed against its holds). Its notes count their drops
-//! on the thread that frees them ([`freed`]).
+//! and outputs their sum times its `gain`. Notes play at the gain they
+//! carry, written as `{"notes": [..], "gain": g}`, or at full gain: they
+//! rewrite `gain`, as a melody's whole scale rewrites its count, and their
+//! config key declares it replaces it. Its notes count their drops on the
+//! thread that frees them ([`freed`]).
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use crate::control_request::{
     ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, PayloadCodec, Refusal, RtValue,
 };
 use crate::invention::declared::DeclaredSurface;
+use crate::module_config::ConfigKey;
 use crate::payload::{Payload, Retired, Shared};
 use crate::{ControlValue, GraphModule, Module, ModuleBuildResult, ModuleFactory, MAX_BLOCK};
 
@@ -89,6 +91,15 @@ impl ModuleFactory for TapeFactory {
         TAPE
     }
 
+    fn config_keys(&self) -> &'static [ConfigKey] {
+        const {
+            &[
+                ConfigKey::float("gain"),
+                ConfigKey::json("notes").replacing(&["gain"]),
+            ]
+        }
+    }
+
     fn build(
         &self,
         _sample_rate: u32,
@@ -101,7 +112,7 @@ impl ModuleFactory for TapeFactory {
             None => "[]".to_string(),
         };
         let (notes, shown) = parse(&text)?;
-        // A gain given beside the notes wins over the one they carry.
+        // A gain given beside the notes is written within them, after.
         let gain = (config.get("gain").and_then(serde_json::Value::as_f64))
             .map(|gain| gain as f32)
             .or(notes.1)
@@ -175,6 +186,16 @@ impl Module for Tape {
         }
     }
 
+    fn for_each_alias(
+        &self,
+        control: ControlIndex,
+        f: &mut dyn FnMut(&ControlTable, &ControlCells, ControlIndex),
+    ) {
+        if control == NOTES {
+            f(&TABLE, &self.cells, GAIN);
+        }
+    }
+
     fn apply_payload(
         &mut self,
         control: ControlIndex,
@@ -185,10 +206,8 @@ impl Module for Tape {
         }
         match payload.downcast::<Notes>() {
             Ok(notes) => {
-                if let Some(gain) = notes.1 {
-                    self.gain = gain.clamp(0.0, 1.0);
-                    self.cells.publish(GAIN, RtValue::F32(self.gain));
-                }
+                self.gain = notes.1.unwrap_or(1.0).clamp(0.0, 1.0);
+                self.cells.publish(GAIN, RtValue::F32(self.gain));
                 Ok(std::mem::replace(&mut self.notes, notes).into())
             }
             Err(payload) => Err((Refusal::Invalid, payload)),

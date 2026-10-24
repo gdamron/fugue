@@ -145,6 +145,14 @@ pub(crate) struct ControlDecl {
     /// For a payload, how its writes are built; without one it refuses
     /// every write.
     pub(crate) codec: Option<PayloadCodec>,
+    /// For an indexed control, the control whose value bounds which of its
+    /// indices clients list: `key.N` is listed while `N` is below it. Every
+    /// index is still read and written.
+    pub(crate) listed_below: Option<&'static str>,
+    /// For a number its module truncates toward zero as it applies (a
+    /// note, a count), so a ramp steps through whole values: held so
+    /// before its module runs too.
+    pub(crate) whole: bool,
 }
 
 impl ControlDecl {
@@ -171,6 +179,8 @@ impl ControlDecl {
             writer: Writer::Parameter,
             description: Cow::Borrowed(description),
             codec: None,
+            listed_below: None,
+            whole: false,
         }
     }
 
@@ -212,6 +222,19 @@ impl ControlDecl {
     /// for an integer, its own range (see the field).
     pub(crate) const fn clamped(mut self, min: f32, max: f32) -> Self {
         self.clamp = Some((min, max));
+        self
+    }
+
+    /// Lists only the indices below control `count`'s value (see the
+    /// field).
+    pub(crate) const fn listed_below(mut self, count: &'static str) -> Self {
+        self.listed_below = Some(count);
+        self
+    }
+
+    /// Holds a number truncated toward zero (see the field).
+    pub(crate) const fn whole(mut self) -> Self {
+        self.whole = true;
         self
     }
 
@@ -400,7 +423,15 @@ impl ControlTable {
         (0..self.len())
             .filter_map(|index| {
                 let index = ControlIndex(index as u16);
-                let (decl, _) = self.decl(index)?;
+                let (decl, position) = self.decl(index)?;
+                if let Some(count) = decl.listed_below {
+                    let count = self.resolve(count).and_then(&current);
+                    if count.is_some_and(|count| {
+                        count.as_number().is_ok_and(|n| f32::from(position) >= n)
+                    }) {
+                        return None;
+                    }
+                }
                 let kind = match decl.kind {
                     DeclKind::Number { min, max } => ControlKind::Number {
                         min,
@@ -462,6 +493,12 @@ const fn invalid(decls: &[ControlDecl]) -> Option<&'static str> {
             if !fits {
                 return Some("a number clamps to a range from min to max, an integer to its own");
             }
+        }
+        if decl.whole && !matches!(decl.kind, DeclKind::Number { .. }) {
+            return Some("only a number is held whole");
+        }
+        if decl.listed_below.is_some() && !decl.indexed {
+            return Some("only an indexed control is listed below a count");
         }
         if !holds_default(decl) {
             return Some("a control's default must be a value its kind holds");

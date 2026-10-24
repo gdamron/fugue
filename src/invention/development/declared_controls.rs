@@ -169,6 +169,9 @@ impl DevelopmentControls {
                             DeclKind::Integer { .. } => found.decl.clamp,
                             _ => None,
                         },
+                        // A key lists itself, whatever count its alias's
+                        // module lists it below.
+                        listed_below: None,
                         ..found.decl.clone()
                     });
                     current.push(found.current);

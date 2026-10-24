@@ -136,6 +136,10 @@ pub(crate) struct Automation {
     /// fires it, so it is jumped to and never ramped. A development's is an
     /// event when any alias is.
     pub(crate) event: bool,
+    /// A number its module truncates as it applies it (see
+    /// [`ControlDecl::whole`](super::ControlDecl)), held truncated as it is
+    /// written, for the same reason.
+    pub(crate) whole: bool,
     /// A development's control: the inner controls it aliases, in order.
     /// A write lands in each alias's own slot, never in these cells, so
     /// every key reaching an inner control writes the same slot, in the
@@ -148,17 +152,24 @@ pub(crate) struct Automation {
 impl Automation {
     /// Writes a number: as is to a number control, to an integer control
     /// only when whole and in its domain (otherwise counted refused). A
-    /// clamping control holds it clamped, as its module will; a
-    /// development's hands it to each alias as is, to clamp for itself.
+    /// clamping control holds it clamped, and a whole number truncated, as
+    /// its module will; a development's hands it to each alias as is, to
+    /// hold for itself.
     /// Returns whether it was let through: false when a higher tier holds
     /// the control (every alias, for a development), and it was dropped.
     #[inline]
     pub(crate) fn write_number(&self, value: f32) -> bool {
         let value = match self.kind {
-            DeclKind::Number { .. } => Some(RtValue::F32(match self.clamp {
-                Some((min, max)) => value.max(min).min(max),
-                None => value,
-            })),
+            DeclKind::Number { .. } => {
+                let value = match (self.whole, &self.aliases) {
+                    (true, None) => value.trunc(),
+                    _ => value,
+                };
+                Some(RtValue::F32(match self.clamp {
+                    Some((min, max)) => value.max(min).min(max),
+                    None => value,
+                }))
+            }
             DeclKind::Integer { min, max } => {
                 let (low, high) = integer_domain(min, max, self.clamp);
                 let whole = value.fract() == 0.0 && value >= low as f32 && value <= high as f32;

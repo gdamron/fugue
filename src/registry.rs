@@ -7,6 +7,10 @@ use crate::factory::{ModuleBuildResult, ModuleFactory};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod replacing;
+
+pub(crate) use replacing::ReplacingKeys;
+
 /// Registry of module factories for lookup by type name.
 ///
 /// The registry maps type identifiers (strings like "clock", "oscillator")
@@ -118,6 +122,8 @@ impl ModuleRegistry {
             BuildMode::Inspection => factory.build_for_inspection(sample_rate, config),
             BuildMode::Validation => factory.build_for_validation(sample_rate, config),
         }?;
+        #[cfg(debug_assertions)]
+        replacing::check_rewrites(type_id, declared, config, &built);
         if !undeclared.is_empty() {
             let controls = built
                 .control_surface

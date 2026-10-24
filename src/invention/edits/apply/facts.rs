@@ -11,6 +11,7 @@ use crate::invention::edits::{EditFacts, ModuleFacts};
 use crate::invention::format::{Invention, ModuleSpec};
 use crate::invention::orchestration::ModulePorts;
 use crate::invention::runtime::{ControlSurfaceInstance, RunningInvention};
+use crate::module_config::ConfigKey;
 use crate::modules::control_scheduler::name_unattached_from_handles;
 use crate::traits::ControlSurfaceMap;
 use crate::{ControlKind, ControlValue, ModuleRegistry};
@@ -190,6 +191,10 @@ impl LiveFacts {
 }
 
 impl EditFacts for LiveFacts {
+    fn config_keys(&self, module_type: &str) -> &'static [ConfigKey] {
+        self.registry.config_keys(module_type)
+    }
+
     fn module(&self, id: &str) -> Option<ModuleFacts> {
         let ports = self.ports.get(id)?;
         Some(ModuleFacts {

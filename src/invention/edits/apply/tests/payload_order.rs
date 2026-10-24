@@ -37,3 +37,33 @@ fn an_added_modules_writes_bind_in_the_order_made_each_as_written() {
     assert_eq!(running.get_control("after", "gain").unwrap(), number(0.75));
     assert_eq!(running.get_control("before", "gain").unwrap(), number(0.25));
 }
+
+#[test]
+fn a_batchs_payload_forgets_what_it_replaces_and_keeps_what_follows_it() {
+    let (mut running, pump) = start_with(registry(), BASE);
+    running
+        .apply_edits(&[add("tape", "tape", json!({ "gain": 0.5, "notes": [1] }))])
+        .expect("the tape is added");
+    let config = |running: &crate::RunningInvention| {
+        let document = running.document().unwrap();
+        let spec = document.modules.iter().find(|spec| spec.id == "tape");
+        spec.unwrap().config.clone()
+    };
+
+    running
+        .apply_edits(&[set("tape", "notes", carrying(0.25))])
+        .expect("the batch commits");
+    pump.render(1);
+    assert_eq!(running.get_control("tape", "gain").unwrap(), number(0.25));
+    assert_eq!(config(&running).get("gain"), None);
+
+    running
+        .apply_edits(&[
+            set("tape", "notes", carrying(0.25)),
+            set("tape", "gain", number(0.75)),
+        ])
+        .expect("the batch commits");
+    pump.render(1);
+    assert_eq!(running.get_control("tape", "gain").unwrap(), number(0.75));
+    assert_eq!(config(&running)["gain"], json!(0.75));
+}

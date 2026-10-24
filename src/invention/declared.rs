@@ -384,9 +384,9 @@ impl DeclaredSurface {
         write: Write,
         authored: Option<&str>,
     ) -> Result<Queued, String> {
-        let (event, clamp) = match self.table.decl(index) {
-            Some((decl, _)) => (decl.event, decl.clamp.filter(|_| self.clamps)),
-            None => (false, None),
+        let (event, clamp, whole) = match self.table.decl(index) {
+            Some((decl, _)) => (decl.event, decl.clamp.filter(|_| self.clamps), decl.whole),
+            None => (false, None, false),
         };
         let route = {
             let mut route = self.route.lock().unwrap();
@@ -409,6 +409,10 @@ impl DeclaredSurface {
                 };
                 // Held as the module will hold it once it applies it.
                 let held = match (value, clamp) {
+                    (RtValue::F32(number), _) if whole => {
+                        let (min, max) = clamp.unwrap_or((f32::MIN, f32::MAX));
+                        RtValue::F32(number.trunc().max(min).min(max))
+                    }
                     (RtValue::F32(number), Some((min, max))) => {
                         RtValue::F32(number.max(min).min(max))
                     }
@@ -785,6 +789,7 @@ impl ControlSurface for DeclaredSurface {
             kind: decl.kind,
             clamp: decl.clamp,
             event: decl.event,
+            whole: decl.whole,
             aliases: None,
         })
     }

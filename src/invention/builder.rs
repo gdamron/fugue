@@ -232,6 +232,8 @@ impl InventionBuilder {
             document: Some(document),
             #[cfg(not(target_arch = "wasm32"))]
             built_under: crate::pkg::lock::governing(),
+            replacing: crate::registry::ReplacingKeys::of(&self.registry),
+            wholes_written: Default::default(),
         }
     }
 

@@ -29,6 +29,7 @@ mod tests;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::invention::format::Invention;
+use crate::module_config::ConfigKey;
 use crate::rpc::{ControlWrite, EditFailure, StructuralEdit};
 use crate::{ControlKind, ControlSurface, ControlValue, GraphModule};
 
@@ -107,6 +108,12 @@ pub(crate) trait EditFacts {
         module_type: &str,
         config: &serde_json::Value,
     ) -> Result<ModuleFacts, String>;
+
+    /// The config keys `module_type` declares, which name what a write
+    /// replaces (see [`ConfigKey::replacing`]); none by default.
+    fn config_keys(&self, _module_type: &str) -> &'static [ConfigKey] {
+        &[]
+    }
 
     /// Called when `remove_module` removes `id` after an earlier
     /// [`Self::describe`] in this batch built it: drop anything kept for it.

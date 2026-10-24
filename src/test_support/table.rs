@@ -76,6 +76,7 @@ pub(crate) fn number(value: f32) -> Automation {
         },
         clamp: None,
         event: false,
+        whole: false,
         aliases: None,
     }
 }

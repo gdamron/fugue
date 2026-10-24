@@ -100,3 +100,34 @@ fn a_payload_key_reaching_two_controls_is_refused() {
         assert!(error.to_string().contains("exactly one"), "{error}");
     }
 }
+
+#[test]
+fn a_developments_config_writes_a_payload_before_the_scalars_beside_it() {
+    // The scalar's key sorts before the payload's, which carries a gain.
+    let controls = json!([
+        { "name": "a_gain", "module": "a", "control": "gain" },
+        { "name": "notes", "module": "a", "control": "notes" }
+    ]);
+    let config = json!({ "a_gain": 0.5, "notes": r#"{"notes": [2], "gain": 0.25}"# });
+    let built = factory(controls).build(48_000, &config).unwrap();
+    let graph = Arc::new(Mutex::new(SignalGraph::new(
+        IndexMap::new(),
+        Vec::new(),
+        Vec::new(),
+        MasterObservers::default(),
+    )));
+    let surfaces = Mutex::new(IndexMap::new());
+    add_offline(
+        &graph,
+        &surfaces,
+        "reel",
+        built.module,
+        built.control_surface,
+    )
+    .unwrap();
+    assert_eq!(
+        output(&graph),
+        1.0,
+        "two notes at the gain written beside them"
+    );
+}

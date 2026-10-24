@@ -22,7 +22,7 @@ use super::builder::{load_development_definition, resolve_invention_assets, Inve
 use super::format::ModuleSpec;
 use super::runtime::{GraphCommandError, RunningInvention};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
-use crate::module_config::{ConfigKey, ConfigKind};
+use crate::module_config::{replaced_by, ConfigKey, ConfigKind};
 use config_diff::{configs_equal, control_updates_for, without};
 
 /// Development definitions as loaded for a document, by declaration scope
@@ -239,10 +239,23 @@ pub(crate) fn plan_reload(
                 let updates = if configs_equal(&previous, &config, &kind) {
                     (!reload_only.is_empty() && info.config != spec.config).then(Vec::new)
                 } else {
-                    match control_updates_for(&previous, &config, &kind, |key| {
+                    // As a cold build applies the config: a value replacing
+                    // others (a melody's whole scale) first, then every key
+                    // it replaces, changed or not (see `ConfigKey::replacing`).
+                    let planned = control_updates_for(&previous, &config, &kind, |key| {
                         has_control(&spec.id, key)
-                    }) {
-                        Some(updates) => Some(updates),
+                    })
+                    .and_then(|mut updates| {
+                        let replayed = replay_replaced(keys, &config, &mut updates, |key| {
+                            has_control(&spec.id, key)
+                        });
+                        replayed.then_some(updates)
+                    });
+                    match planned {
+                        Some(mut updates) => {
+                            updates.sort_by_key(|(key, _)| replaced_by(keys, key).is_empty());
+                            Some(updates)
+                        }
                         None => {
                             plan.swapped.push(spec.clone());
                             continue;
@@ -306,6 +319,34 @@ pub(crate) fn plan_reload(
         .collect();
 
     Ok(plan)
+}
+
+/// Adds to `updates` the keys of `config` an update replaces among the
+/// type's `keys`, unchanged as they may be (a melody's count and degrees
+/// written within its scale), so they are written again after it, as a
+/// cold build of `config` holds them. `false` when one is not a value a
+/// control takes, or names no control: only a rebuild plays it as built.
+fn replay_replaced(
+    keys: &[ConfigKey],
+    config: &serde_json::Value,
+    updates: &mut Vec<(String, ControlValue)>,
+    mut has_control: impl FnMut(&str) -> bool,
+) -> bool {
+    let mut replayed = Vec::new();
+    for (key, _) in updates.iter() {
+        for (name, value) in super::authored_document::replaced_in(config, replaced_by(keys, key)) {
+            let pending = |(written, _): &(String, ControlValue)| written == name;
+            if updates.iter().any(pending) || replayed.iter().any(pending) {
+                continue;
+            }
+            match scalar_control_value(value) {
+                Some(value) if has_control(name) => replayed.push((name.clone(), value)),
+                _ => return false,
+            }
+        }
+    }
+    updates.extend(replayed);
+    true
 }
 
 pub(crate) fn scalar_control_value(value: &serde_json::Value) -> Option<ControlValue> {

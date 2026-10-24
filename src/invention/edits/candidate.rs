@@ -301,7 +301,10 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 }
             }
         }
-        authored_document::write_control(&mut self.document, module_id, key, &applied);
+        let facts = &self.facts;
+        authored_document::write_control(&mut self.document, module_id, key, &applied, |type_id| {
+            facts.config_keys(type_id)
+        });
         self.control_writes.push(CandidateWrite {
             edit_index: index,
             write: ControlWrite::new(module_id, key, applied),

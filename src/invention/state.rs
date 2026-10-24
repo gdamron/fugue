@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 use crate::invention::format::{Connection, Invention};
 use crate::invention::reload::scalar_control_value;
 use crate::invention::{audio_assets, authored_document};
+use crate::module_config::{names, replaced_by};
+use std::collections::HashMap;
+
 use crate::modules::AudioDiagnosticsSnapshot;
+use crate::registry::ReplacingKeys;
 use crate::ControlValue;
 
 /// Serializable description of a module in a running invention.
@@ -67,6 +71,15 @@ pub struct RuntimeState {
     /// under another policy rebuilds what may hold package content.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) built_under: crate::pkg::lock::Governance,
+    /// The config keys that replace others, per type, as the registry the
+    /// graph was built or last reloaded against declares them, for the
+    /// writes recorded here (see [`Self::write_stored_control`]).
+    pub(crate) replacing: ReplacingKeys,
+    /// The whole values (keys that replace others) written to each module
+    /// since its stored config was last taken from a document: within one,
+    /// a later write is recorded as the module plays it (see
+    /// [`Self::write_stored_control`]).
+    pub(crate) wholes_written: HashMap<String, Vec<&'static str>>,
 }
 
 impl RuntimeState {
@@ -105,8 +118,11 @@ impl RuntimeState {
     /// Writes a control change into the retained document module's config so
     /// a saved document reproduces the value on a cold rebuild.
     pub(crate) fn document_write_control(&mut self, id: &str, key: &str, value: &ControlValue) {
+        let replacing = &self.replacing;
         if let Some(document) = self.document.as_mut() {
-            authored_document::write_control(document, id, key, value);
+            authored_document::write_control(document, id, key, value, |module_type| {
+                replacing.config_keys(module_type)
+            });
         }
     }
 
@@ -146,8 +162,7 @@ impl RuntimeState {
     /// A number is compared in the control's f32 domain: a write the stored
     /// number already holds as an f32 is left as stored, so neither a write
     /// of 440 over an authored `440.0` nor 261.63 over `261.6300048828125`
-    /// makes the next reload see a difference in the JSON alone. Does
-    /// nothing when no module has `id`.
+    /// makes the next reload see a difference in the JSON alone.
     ///
     /// A sample's `asset.N` is written into the entry it names, as the
     /// document records it (see `authored_document::entry_asset_mut`), so a
@@ -158,11 +173,48 @@ impl RuntimeState {
     /// relative asset path, against the invention's directory (see
     /// `audio_assets::resolve_asset_write`): the next reload compares the
     /// file a write names, not its spelling.
+    ///
+    /// A write replacing other keys (a melody's whole scale, see
+    /// [`ConfigKey::replacing`](crate::module_config::ConfigKey::replacing)) rewrites what the module
+    /// plays wholesale, so the stored config forgets the keys it replaced
+    /// and records it, whatever was stored; until the config is next taken
+    /// from a document, a later write to one of those keys is recorded too,
+    /// stored or not, as the module plays it within that value. Within a
+    /// whole value the document holds, such a write is recorded only when
+    /// stored, as any other is. Reloading the document saved
+    /// after it then changes nothing, and reloading the original brings
+    /// back what the write discarded: by control writes, or by a rebuild
+    /// when the original's value is not one a control takes (a scale
+    /// written as an array). Does nothing when no module has `id`.
     pub(crate) fn write_stored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
         let value = &audio_assets::resolve_checked_asset_write(self.source_path(), key, value);
         let Some(info) = self.modules.get_mut(id) else {
             return;
         };
+        let keys = self.replacing.config_keys(&info.module_type);
+        // Within a whole value written since the config was taken from a
+        // document, a key is played as that value rewrote it, so it is
+        // recorded whether or not it was stored. Within one the document
+        // holds, it is not: a live write survives a reload that leaves it
+        // be, as any write to a key the config does not hold does.
+        let written = self.wholes_written.get(id).map_or(&[][..], Vec::as_slice);
+        let within = keys.iter().any(|whole| {
+            written.contains(&whole.key)
+                && whole.replaces.iter().any(|replaced| names(replaced, key))
+        });
+        if let Some(whole) = keys
+            .iter()
+            .find(|whole| whole.key == key && !whole.replaces.is_empty())
+        {
+            let written = self.wholes_written.entry(id.to_string()).or_default();
+            if !written.contains(&whole.key) {
+                written.push(whole.key);
+            }
+        }
+        if authored_document::forget_replaced(&mut info.config, replaced_by(keys, key)) || within {
+            authored_document::write_config_control(&mut info.config, key, value);
+            return;
+        }
         let value = &*audio_assets::stored_asset_write(key, value);
         let asset = authored_document::control_json(value);
         if authored_document::write_entry_asset(&mut info.config, key, &asset) {
