@@ -45,7 +45,7 @@ use std::sync::{Arc, Mutex, Weak};
 use super::graph::GraphCommand;
 use super::graph::SignalGraph;
 use super::publish::{
-    CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
+    Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
 };
 use super::runtime::ControlSurfaceInstance;
 #[cfg(test)]
@@ -140,12 +140,10 @@ thread_local! {
 }
 
 /// What a write saw as it was queued for the live graph, under the
-/// publisher's lock (see `LiveGraph::record_authored`): its generation
-/// then, `None` when the module is not live, and the timed edit the write
-/// is safe from (see `Publisher::keep_authored`).
+/// publisher's lock: the timed edit the write is safe from (see
+/// `Publisher::keep_authored`), and the request it was submitted as.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Queued {
-    pub(crate) generation: Option<u64>,
     pub(crate) safe: Option<RequestId>,
     /// The request the write was submitted as, whose outcome says when it
     /// applied; `None` when it applied as it was made (building, offline,
@@ -156,38 +154,50 @@ pub(crate) struct Queued {
     pub(crate) lost: bool,
 }
 
-/// How a front door submits a write: whether it is authored, who wrote it
-/// and its rank within that tier (see `control_request::hold`), and how
-/// many samples it may wait before it is refused `Expired`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct WriteOptions {
-    pub(crate) authored: bool,
+/// How a front door submits a write: whether it is authored (and what the
+/// retained document records once it applies), who wrote it and its rank
+/// within that tier (see `control_request::hold`), and how many samples it
+/// may wait before it is refused `Expired`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct WriteOptions<'a> {
+    pub(crate) authored: Option<&'a Authoring>,
     pub(crate) source: Source,
     pub(crate) priority: i16,
     pub(crate) ttl: Option<u64>,
 }
 
-impl WriteOptions {
+impl WriteOptions<'_> {
     /// A performed write from `source` at priority 0, with no ttl.
     pub(crate) const fn performed(source: Source) -> Self {
         Self {
-            authored: false,
+            authored: None,
             source,
             priority: 0,
             ttl: None,
         }
     }
 
-    /// The same write, authored.
-    pub(crate) const fn authoring(self) -> Self {
+    /// The same write, authored: recorded as `authoring` says once it
+    /// applies.
+    pub(crate) const fn authored_as(self, authoring: &Authoring) -> WriteOptions<'_> {
+        WriteOptions {
+            authored: Some(authoring),
+            source: self.source,
+            priority: self.priority,
+            ttl: self.ttl,
+        }
+    }
+
+    /// The same write, performed.
+    pub(crate) const fn performing(self) -> Self {
         Self {
-            authored: true,
+            authored: None,
             ..self
         }
     }
 }
 
-impl Default for WriteOptions {
+impl Default for WriteOptions<'_> {
     /// A user's performed write: what a control write without options is.
     fn default() -> Self {
         Self::performed(Source::User)
@@ -323,7 +333,7 @@ impl DeclaredSurface {
         }
         let index = self.index(key)?;
         let value = self.table.coerce(index, &value)?;
-        let authored = options.authored.then_some(key);
+        let authored = options.authored.is_some().then_some(key);
         self.deliver(index, Write::Value(value), options, authored)
     }
 
@@ -598,7 +608,6 @@ impl DeclaredSurface {
                     // whatever its rank or ttl, as the last write made, and
                     // reads back as what plays.
                     (Some(prepared), RequestValue::Payload(payload)) => {
-                        let generation = Some(publisher.generation());
                         let change = (prepared, port.module_id.as_str());
                         let handed = (index, payload);
                         let published =
@@ -628,7 +637,6 @@ impl DeclaredSurface {
                         // none while one does), so none can overtake it, and
                         // a payload is never kept.
                         return Ok(Queued {
-                            generation,
                             safe: None,
                             id: None,
                             lost: false,
@@ -648,14 +656,13 @@ impl DeclaredSurface {
                 let mut request = Request::new(target, value);
                 request.event = event;
                 request.intent = match options.authored {
-                    true => Intent::Author,
-                    false => Intent::Perform,
+                    Some(_) => Intent::Author,
+                    None => Intent::Perform,
                 };
                 request.source = options.source;
                 request.priority = options.priority;
                 request.ttl = options.ttl;
                 let automated = request.source == Source::Automation;
-                let generation = Some(publisher.generation());
                 // Never kept on a graph with no clock: there the copy's
                 // hold, at a sample that never passes, would refuse every
                 // later write to the control. The edit is cancelled instead.
@@ -709,6 +716,7 @@ impl DeclaredSurface {
                         raw,
                         beat: None,
                         automated,
+                        authored: options.authored.cloned(),
                     };
                     // The copy applying, too, is this write's.
                     if let Some(copy) = copy.filter(|copy| *copy != id) {
@@ -728,7 +736,6 @@ impl DeclaredSurface {
                     settler.settle();
                 }
                 Ok(Queued {
-                    generation,
                     safe,
                     id: Some(id),
                     lost: false,

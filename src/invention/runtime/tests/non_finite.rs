@@ -96,6 +96,9 @@ fn set_control_refuses_non_finite_numbers_on_both_intents() {
         running
             .set_control("osc", "frequency", ControlValue::Number(extreme))
             .unwrap();
+        // Recorded as the audio thread applies it.
+        let lands = || authored_frequency(&running).as_f64().map(|n| n as f32) == Some(extreme);
+        assert!(crate::test_support::wait_until(lands), "{extreme} recorded");
         let authored = authored_frequency(&running);
         assert_eq!(
             authored.as_f64().map(|number| number as f32),

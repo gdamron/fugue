@@ -51,6 +51,7 @@ fn reloading_the_original_restores_an_authored_value_through_a_control_write() {
     running
         .set_control("osc1", "frequency", number(330.0))
         .unwrap();
+    running.pump.block(); // recorded as it applies
 
     let report = running.reload(doc(BASE)).expect("diff applies");
 
@@ -273,6 +274,7 @@ fn reloading_the_saved_document_after_a_write_to_a_key_the_stored_config_lacks_r
     ] {
         let mut running = start(&original);
         running.set_control("osc1", key, value.clone()).unwrap();
+        running.pump.block(); // recorded as it applies
 
         let report = {
             let saved = saved(&running);
