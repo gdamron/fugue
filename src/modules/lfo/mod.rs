@@ -285,7 +285,12 @@ impl ModuleFactory for LfoFactory {
         cells.publish(RATE, RtValue::F32(rate));
         cells.publish(RATE_MOD_DEPTH, RtValue::F32(rate_mod_depth));
         let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
-        apply_control_keys(&surface, config, |key| key == "waveform")?;
+        // Only text names a waveform; anything else leaves the default, as
+        // it always has.
+        let named = config
+            .get("waveform")
+            .is_some_and(|value| value.is_string());
+        apply_control_keys(&surface, config, |key| named && key == "waveform")?;
         let lfo = Lfo::with_cells(sample_rate, cells);
 
         Ok(ModuleBuildResult {
@@ -420,6 +425,15 @@ mod tests {
         }
         let config = serde_json::json!({ "waveform": "wobble" });
         assert!(registry.build("lfo", 48_000, &config).is_err());
+        // Anything but text still leaves the default.
+        for config in [
+            serde_json::json!({ "waveform": null }),
+            serde_json::json!({ "waveform": 3 }),
+        ] {
+            let built = registry.build("lfo", 48_000, &config).unwrap();
+            let surface = built.control_surface.unwrap();
+            assert_eq!(surface.get_control("waveform").unwrap(), "sine".into());
+        }
     }
 
     #[test]
