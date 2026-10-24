@@ -812,6 +812,20 @@ impl SignalGraph {
         }
     }
 
+    /// Whether a write of `rank` to declared control `control` of module
+    /// `module_id` would take it now, as [`Self::apply_control`] weighs it
+    /// (true for a module not in the graph, which that refuses). A front
+    /// door whose write has effects of its own asks first, so one that
+    /// loses has none.
+    pub(crate) fn admits(&self, module_id: &str, control: ControlIndex, rank: Rank) -> bool {
+        let standing = Standing {
+            rank,
+            due: self.current_sample,
+        };
+        (self.modules.get(module_id))
+            .is_none_or(|instance| admits_hold(instance.module(), control, standing).is_ok())
+    }
+
     /// Applies `value` to declared control `control` of module `module_id`
     /// at once: an offline render's control write of `rank`, made under the
     /// lock its renders take (see [`crate::invention::declared::Route`]).

@@ -495,6 +495,30 @@ impl DeclaredSurface {
         (self.route.lock().unwrap(), self.payloads.lock().unwrap())
     }
 
+    /// Whether a write to `key` as `options` say would take its control
+    /// now: false only offline, when a higher-ranked write holds it at this
+    /// sample (see `control_request::hold`). A front door with effects of
+    /// its own (a development's alias records and legacy aliases) asks
+    /// first, under a lock its writes to the control all take, so a write
+    /// that loses has none. Live, the audio thread weighs the write, and
+    /// its outcome says.
+    pub(crate) fn admits(&self, key: &str, options: &WriteOptions) -> bool {
+        let Ok(index) = self.index(key) else {
+            return true;
+        };
+        // The route lock is released before the graph's is taken.
+        let route = self.route.lock().unwrap().clone();
+        let Route::Offline { graph, module_id } = route else {
+            return true;
+        };
+        let Some(graph) = graph.upgrade() else {
+            return true;
+        };
+        let rank = Rank::new(options.source, options.priority);
+        let admits = graph.lock().unwrap().admits(&module_id, index, rank);
+        admits
+    }
+
     /// The control `key` names, refused when it does not exist: unknown,
     /// or past the read-only count it is listed below.
     fn index(&self, key: &str) -> Result<ControlIndex, String> {
