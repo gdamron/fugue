@@ -45,6 +45,15 @@ fn layout(dir: &std::path::Path) -> (String, String) {
     (original, "sub/level-0.25.wav".to_string())
 }
 
+/// Asserts two asset controls name the same file, however each spells its
+/// separators (a saved path is normalized on Windows; a joined one is not).
+fn assert_same_file(left: ControlValue, right: ControlValue) {
+    let (ControlValue::String(left), ControlValue::String(right)) = (left, right) else {
+        panic!("asset controls hold paths");
+    };
+    assert_eq!(std::path::Path::new(&left), std::path::Path::new(&right));
+}
+
 #[test]
 fn a_live_relative_write_loads_the_file_the_saved_document_loads() {
     let dir = tempfile::tempdir().unwrap();
@@ -128,10 +137,9 @@ fn saving_elsewhere_rebases_a_relative_asset() {
         let path = elsewhere.path().join("copy.json");
         running.document().unwrap().save_to_file(&path).unwrap();
         let (loaded, _) = start_pumped(Invention::from_file(&path.to_string_lossy()).unwrap());
-        assert_eq!(
+        assert_same_file(
             running.get_control("m", key).unwrap(),
             loaded.get_control("m", key).unwrap(),
-            "{key}"
         );
     }
 }
@@ -257,9 +265,9 @@ fn a_relative_write_folded_into_a_timed_reload_from_elsewhere_keeps_its_file() {
     assert!(std::path::Path::new(recorded).is_absolute(), "{recorded}");
     saved.save_to_file(&b).unwrap();
     let (loaded, loaded_pump) = start_pumped(Invention::from_file(&b.to_string_lossy()).unwrap());
-    assert_eq!(
+    assert_same_file(
         loaded.get_control("m", "asset.0").unwrap(),
-        running.get_control("m", "asset.0").unwrap()
+        running.get_control("m", "asset.0").unwrap(),
     );
     assert!((peak(&loaded, &loaded_pump, ("play", 36.0)) - 0.25).abs() < 1e-3);
 }
