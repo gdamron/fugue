@@ -38,7 +38,17 @@
 //!   and two keys sharing an inner control are two targets: at one sample
 //!   the one applied first holds the other off, so they resolve in the
 //!   order they apply, not by rank.
-//! - Events (triggers) are never held: two are two events.
+//! - A write that rewrites other controls of its module, as a melody's
+//!   whole-scale replacement rewrites every position, is weighed and holds
+//!   as a development's key does: against every control it rewrites
+//!   ([`crate::Module::for_each_alias`] names them). A control that only
+//!   decides which others are in play, as the melody's count does,
+//!   rewrites none, so moving it (a ramp included) never overwrites a held
+//!   one: the hold wins. Automation is weighed only against the hold on the
+//!   control it writes, so a rewriting control is a payload, which no
+//!   automation writes (every one is today).
+//! - Events (triggers) are never held: two are two events, and a write
+//!   reaching one through a key or a rewrite does not hold it either.
 //! - A payload control ranks and holds as a value does. No automation
 //!   writes one, so its hold only weighs requests. A payload that loses is
 //!   retired with the request, never dropped on the audio thread.
@@ -258,8 +268,10 @@ impl Holds {
 
 /// Whether a write of `standing` may apply to declared `control` of
 /// `module` ([`Holds::admits`]): weighed against the hold on it, and on
-/// every inner control a development's key reaches, which another key may
-/// hold. Allocation-, free- and lock-free.
+/// every control it reaches (a development key's inner controls, or the
+/// controls it rewrites), which another write may hold. The strongest
+/// loss decides, whatever the order they are met in. Allocation-, free-
+/// and lock-free.
 pub(crate) fn admits_hold<M: Module + ?Sized>(
     module: &M,
     control: ControlIndex,
@@ -282,26 +294,32 @@ pub(crate) fn admits_hold<M: Module + ?Sized>(
 }
 
 /// Records that a write of `standing` applied to declared `control` of
-/// `module` ([`Holds::take`]), and to every inner control a development's
-/// key reaches, so automation writing those directly is held off too. An
-/// event control is never held. Allocation-, free- and lock-free.
+/// `module` ([`Holds::take`]), and to every control it reaches (a
+/// development key's inner controls, or the controls it rewrites), so
+/// automation writing those directly is held off too. An event control is
+/// never held. Allocation-, free- and lock-free.
 pub(crate) fn take_hold<M: Module + ?Sized>(module: &M, control: ControlIndex, standing: Standing) {
     let Some((table, cells)) = module.declared() else {
         return;
     };
-    if table.decl(control).is_some_and(|(decl, _)| decl.event) {
+    if is_event(table, control) {
         return;
     }
     cells.holds.take(control, standing);
-    module.for_each_alias(control, &mut |_, cells, index| {
-        cells.holds.take(index, standing);
+    module.for_each_alias(control, &mut |table, cells, index| {
+        if !is_event(table, index) {
+            cells.holds.take(index, standing);
+        }
     });
 }
 
+fn is_event(table: &ControlTable, control: ControlIndex) -> bool {
+    table.decl(control).is_some_and(|(decl, _)| decl.event)
+}
+
 /// Whether every hold a write of `standing` to declared `control` of
-/// `module` took ([`take_hold`]) is still its own ([`Holds::kept`]): on a
-/// development, on every inner control its key reaches too. Allocation-,
-/// free- and lock-free.
+/// `module` took ([`take_hold`]) is still its own ([`Holds::kept`]): on
+/// every control it reaches too. Allocation-, free- and lock-free.
 pub(crate) fn kept_hold<M: Module + ?Sized>(
     module: &M,
     control: ControlIndex,
@@ -311,11 +329,13 @@ pub(crate) fn kept_hold<M: Module + ?Sized>(
         return false;
     };
     let mut kept = cells.holds.kept(control, standing);
-    module.for_each_alias(control, &mut |_, cells, index| {
-        kept &= cells.holds.kept(index, standing);
+    module.for_each_alias(control, &mut |table, cells, index| {
+        kept &= is_event(table, index) || cells.holds.kept(index, standing);
     });
     kept
 }
 
+#[cfg(test)]
+mod derived_tests;
 #[cfg(test)]
 mod tests;

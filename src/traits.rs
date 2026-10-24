@@ -582,10 +582,14 @@ pub trait Module: Send {
         Err(Refusal::Unsupported)
     }
 
-    /// Calls `f` with each inner declared control a write to `control`
-    /// reaches beyond the module's own (a development's aliases, and
-    /// theirs in a nested one), so a write's hold reaches them too (see
-    /// `control_request::take_hold`). Allocation-, free- and lock-free.
+    /// Calls `f` with each other declared control a write to `control`
+    /// reaches, so the write is weighed against their holds and its hold
+    /// covers them (see `control_request::take_hold`): a development's
+    /// aliases, and theirs in a nested one; or the module's own controls
+    /// the write rewrites, as a whole-scale replacement rewrites each
+    /// position. Name only what the write overwrites, never a control it
+    /// merely brings into play. Allocation-, free- and lock-free, and
+    /// bounded: called on the audio thread for every write.
     #[doc(hidden)]
     #[allow(private_interfaces)]
     fn for_each_alias(
