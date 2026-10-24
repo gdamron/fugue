@@ -1,6 +1,6 @@
 use super::*;
 use crate::control_request::{Automation, LegacyRefusal, TableValue};
-use crate::invention::declared::{Declaration, DeclaredSurface, Route};
+use crate::invention::declared::{Declaration, DeclaredSurface, Queued, Route, WriteOptions};
 use crate::modules::control_scheduler::SurfaceDirectory;
 use std::sync::PoisonError;
 
@@ -222,6 +222,16 @@ impl ControlSurface for DevelopmentControlSurface {
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
+        self.submit(key, value, &WriteOptions::default()).map(drop)
+    }
+
+    #[allow(private_interfaces)]
+    fn submit(
+        &self,
+        key: &str,
+        value: ControlValue,
+        options: &WriteOptions,
+    ) -> Result<Queued, String> {
         // A development may list the same key several times to fan a control
         // out across internal modules (e.g. one `decay` reaching every voice
         // of a bank); apply the write to every aliased target. Aliases on
@@ -241,11 +251,15 @@ impl ControlSurface for DevelopmentControlSurface {
             // A payload only its alias's own surface can build (a
             // scheduler's resolved schedule) is built there and handed on.
             if declared.is_payload(key) {
-                return self.write_payload(declared, key, value);
+                return self
+                    .write_payload(declared, key, value)
+                    .map(|()| Queued::default());
             }
-            declared.set_control(key, value.clone())?;
+            let queued = declared.submit(key, value.clone(), options)?;
+            self.set_legacy(key, value)?;
+            return Ok(queued);
         }
-        self.set_legacy(key, value)
+        self.set_legacy(key, value).map(|()| Queued::default())
     }
 
     /// Built by the alias a payload key reaches, when its surface builds

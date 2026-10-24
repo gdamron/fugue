@@ -55,8 +55,8 @@ use super::runtime::ControlSurfaceInstance;
 use super::runtime::{GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlContext, ControlDecl, ControlIndex,
-    ControlTable, DeclKind, PayloadCodec, Refusal, Request, RequestId, RequestSender, RequestValue,
-    RtValue, Source, Writer,
+    ControlTable, DeclKind, Intent, PayloadCodec, Refusal, Request, RequestId, RequestSender,
+    RequestValue, RtValue, Source, Writer,
 };
 use crate::payload::Payload;
 use crate::traits::ControlSurfaceMap;
@@ -147,6 +147,48 @@ struct Written {
 pub(crate) struct Queued {
     pub(crate) generation: Option<u64>,
     pub(crate) safe: Option<RequestId>,
+    /// The request the write was submitted as, whose outcome says when it
+    /// applied; `None` when it applied as it was made (building, offline,
+    /// a legacy control) or travels in a publication, which reports none.
+    pub(crate) id: Option<RequestId>,
+}
+
+/// How a front door submits a write: whether it is authored, who wrote it
+/// and its rank within that tier (see `control_request::hold`), and how
+/// many samples it may wait before it is refused `Expired`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WriteOptions {
+    pub(crate) authored: bool,
+    pub(crate) source: Source,
+    pub(crate) priority: i16,
+    pub(crate) ttl: Option<u64>,
+}
+
+impl WriteOptions {
+    /// A performed write from `source` at priority 0, with no ttl.
+    pub(crate) const fn performed(source: Source) -> Self {
+        Self {
+            authored: false,
+            source,
+            priority: 0,
+            ttl: None,
+        }
+    }
+
+    /// The same write, authored.
+    pub(crate) const fn authoring(self) -> Self {
+        Self {
+            authored: true,
+            ..self
+        }
+    }
+}
+
+impl Default for WriteOptions {
+    /// A user's performed write: what a control write without options is.
+    fn default() -> Self {
+        Self::performed(Source::User)
+    }
 }
 
 /// A write resolved for a request the live graph times itself.
@@ -253,7 +295,8 @@ impl DeclaredSurface {
         shown: ControlValue,
     ) -> Result<(), String> {
         let index = self.payload_index(key)?;
-        self.deliver(index, Write::Payload(payload, shown, None), None)
+        let options = WriteOptions::default();
+        self.deliver(index, Write::Payload(payload, shown, None), &options, None)
             .map(drop)
     }
 
@@ -269,27 +312,34 @@ impl DeclaredSurface {
         checked: Checked<'_>,
     ) -> Result<(), String> {
         let index = self.payload_index(key)?;
-        self.deliver(index, Write::Payload(payload, shown, Some(checked)), None)
-            .map(drop)
+        let options = WriteOptions::default();
+        self.deliver(
+            index,
+            Write::Payload(payload, shown, Some(checked)),
+            &options,
+            None,
+        )
+        .map(drop)
     }
 
-    /// [`ControlSurface::set_control`], saying what the write saw as it
-    /// was queued. An `authored` write to a live module is kept over a
-    /// timed edit waiting that writes the control as it lands (see
-    /// `Publisher::keep_authored`). Control thread.
+    /// [`ControlSurface::set_control`] as `options` say, saying what the
+    /// write saw as it was queued. An authored write to a live module is
+    /// kept over a timed edit waiting that writes the control as it lands
+    /// (see `Publisher::keep_authored`). Control thread.
     pub(crate) fn set_control_queued(
         &self,
         key: &str,
         value: ControlValue,
-        authored: bool,
+        options: &WriteOptions,
     ) -> Result<Queued, String> {
         if let Some(prepared) = self.prepare(key, &value) {
             let (index, payload, shown) = prepared?;
-            return self.deliver(index, Write::Payload(payload, shown, None), None);
+            return self.deliver(index, Write::Payload(payload, shown, None), options, None);
         }
         let index = self.index(key)?;
         let value = self.coerce(index, &value)?;
-        self.deliver(index, Write::Value(value), authored.then_some(key))
+        let authored = options.authored.then_some(key);
+        self.deliver(index, Write::Value(value), options, authored)
     }
 
     /// The live graph's publisher generation, read under its lock (so
@@ -450,6 +500,7 @@ impl DeclaredSurface {
         &self,
         index: ControlIndex,
         write: Write,
+        options: &WriteOptions,
         authored: Option<&str>,
     ) -> Result<Queued, String> {
         let (event, clamp, whole) = match self.table.decl(index) {
@@ -580,6 +631,7 @@ impl DeclaredSurface {
                         return Ok(Queued {
                             generation,
                             safe: None,
+                            id: None,
                         });
                     }
                     (_, value) => value,
@@ -595,6 +647,13 @@ impl DeclaredSurface {
                 };
                 let mut request = Request::new(target, value);
                 request.event = event;
+                request.intent = match options.authored {
+                    true => Intent::Author,
+                    false => Intent::Perform,
+                };
+                request.source = options.source;
+                request.priority = options.priority;
+                request.ttl = options.ttl;
                 let automated = request.source == Source::Automation;
                 let generation = Some(publisher.generation());
                 // Never kept on a graph with no clock: there the copy's
@@ -667,7 +726,11 @@ impl DeclaredSurface {
                 if let Some(settler) = &port.settler {
                     settler.settle();
                 }
-                Ok(Queued { generation, safe })
+                Ok(Queued {
+                    generation,
+                    safe,
+                    id: Some(id),
+                })
             }
             Route::Offline { graph, module_id } => {
                 let graph = graph.upgrade().ok_or("The render has been replaced")?;
@@ -742,7 +805,17 @@ impl ControlSurface for DeclaredSurface {
     }
 
     fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        self.set_control_queued(key, value, false).map(drop)
+        self.submit(key, value, &WriteOptions::default()).map(drop)
+    }
+
+    #[allow(private_interfaces)]
+    fn submit(
+        &self,
+        key: &str,
+        value: ControlValue,
+        options: &WriteOptions,
+    ) -> Result<Queued, String> {
+        self.set_control_queued(key, value, options)
     }
 
     fn validate_control(

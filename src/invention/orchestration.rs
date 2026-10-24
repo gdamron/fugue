@@ -1,4 +1,5 @@
-use crate::control_request::DeclKind;
+use crate::control_request::{DeclKind, RequestId, Source};
+use crate::invention::declared::{Queued, WriteOptions};
 use crate::invention::graph::SignalGraph;
 use crate::invention::publish::{edge, edit_offline, Committed, GraphChange, LiveGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
@@ -87,6 +88,23 @@ pub trait OrchestrationRuntime {
 /// the sink once it is installed. Emission runs on control/script threads, never
 /// the audio callback, so the mutex here does not touch the hot path.
 pub type EventSinkSlot = Arc<Mutex<Option<Arc<dyn RpcEventSink>>>>;
+
+/// What a front door is told when a control write is taken: the value as
+/// coerced, and the request it was submitted as. `request` is `None` when
+/// the write applied as it was made (offline, while building, a legacy
+/// control) or travels in a publication.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ControlAck {
+    pub(crate) value: ControlValue,
+    pub(crate) request: Option<RequestId>,
+}
+
+impl ControlAck {
+    fn new(value: ControlValue, queued: &Queued) -> Self {
+        let request = queued.id;
+        Self { value, request }
+    }
+}
 
 /// Cloneable read-oriented view over runtime state and control surfaces.
 #[derive(Clone)]
@@ -235,14 +253,36 @@ impl RuntimeSnapshot {
         value: ControlValue,
         intent: ControlWriteIntent,
     ) -> Result<(), GraphCommandError> {
-        // An event (a clock's reset) fires; there is no state to author.
-        let applied = if intent.is_authoring() && !self.is_event(module_id, key) {
-            self.set_control_recorded(module_id, key, value)?
-        } else {
-            self.set_control_performed(module_id, key, value)?
+        let options = WriteOptions::performed(Source::User);
+        self.submit_control(module_id, key, value, intent, options)
+            .map(drop)
+    }
+
+    /// Submits a control write as [`Self::set_control_with_intent`] does,
+    /// for a front door that says who it is and how the write ranks
+    /// (`options`; whether it is authored comes from `intent`), and tells it
+    /// what was taken: the value as coerced and the request it was submitted
+    /// as, when it was one.
+    pub(crate) fn submit_control(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+        intent: ControlWriteIntent,
+        options: WriteOptions,
+    ) -> Result<ControlAck, GraphCommandError> {
+        let options = WriteOptions {
+            authored: false,
+            ..options
         };
-        self.emit_control_changed(module_id, key, applied);
-        Ok(())
+        // An event (a clock's reset) fires; there is no state to author.
+        let ack = if intent.is_authoring() && !self.is_event(module_id, key) {
+            self.set_control_recorded(module_id, key, value, &options.authoring())?
+        } else {
+            self.set_control_performed(module_id, key, value, &options)?
+        };
+        self.emit_control_changed(module_id, key, ack.value.clone());
+        Ok(ack)
     }
 
     /// Coerces and applies a control write without recording it in the
@@ -258,11 +298,12 @@ impl RuntimeSnapshot {
         module_id: &str,
         key: &str,
         value: ControlValue,
-    ) -> Result<ControlValue, GraphCommandError> {
+        options: &WriteOptions,
+    ) -> Result<ControlAck, GraphCommandError> {
         let value = self.coerced(module_id, key, value)?;
         let (load, _) = self.asset_to_load(key, &value)?;
-        self.set_control_transient(module_id, key, load)?;
-        Ok(value)
+        let queued = self.submit_transient(module_id, key, load, options)?;
+        Ok(ControlAck::new(value, &queued))
     }
 
     /// Coerces, applies, and records a control write without emitting an event,
@@ -275,7 +316,8 @@ impl RuntimeSnapshot {
         module_id: &str,
         key: &str,
         value: ControlValue,
-    ) -> Result<ControlValue, GraphCommandError> {
+        options: &WriteOptions,
+    ) -> Result<ControlAck, GraphCommandError> {
         // Coerce to the control's declared kind before applying and recording,
         // so a stringified write lands and the retained document stays typed
         // (see FUG-240). set_control_transient stays uncoerced: its callers are
@@ -283,10 +325,10 @@ impl RuntimeSnapshot {
         let value = self.coerced(module_id, key, value)?;
         let (load, origin) = self.asset_to_load(key, &value)?;
         let Some(live) = &self.live else {
-            self.set_control_transient(module_id, key, load)?;
+            let queued = self.submit_transient(module_id, key, load, options)?;
             let mut state = self.state.lock().unwrap();
             state.record_authored_control(module_id, key, &value);
-            return Ok(value);
+            return Ok(ControlAck::new(value, &queued));
         };
         // Written first, so a write refused changes nothing, then recorded
         // under the publisher: a timed edit waiting takes the write into its
@@ -304,14 +346,19 @@ impl RuntimeSnapshot {
         } else {
             WRITE_ATTEMPTS
         };
+        let mut request = None;
         write_authored(
             attempts,
             (module_id, key),
             || live.generation(),
-            || self.make_authored(module_id, key, load.clone()),
+            || {
+                let queued = self.make_authored(module_id, key, load.clone(), options)?;
+                request = queued.id;
+                Ok(queued)
+            },
             |seen| live.record_authored_from((module_id, key), &value, origin.as_deref(), seen),
         )?;
-        Ok(value)
+        Ok(ControlAck { value, request })
     }
 
     /// Whether `key` of `module_id` is a declared payload control (a
@@ -382,6 +429,20 @@ impl RuntimeSnapshot {
         key: &str,
         value: ControlValue,
     ) -> Result<(), GraphCommandError> {
+        self.submit_transient(module_id, key, value, &WriteOptions::default())
+            .map(drop)
+    }
+
+    /// Makes a write as [`Self::set_control_transient`] does, submitted
+    /// with `options`, saying what it saw as it was queued (see
+    /// `declared::Queued`).
+    pub(crate) fn submit_transient(
+        &self,
+        module_id: &str,
+        key: &str,
+        value: ControlValue,
+        options: &WriteOptions,
+    ) -> Result<Queued, GraphCommandError> {
         // Invoke outside the directory lock: a scheduler's `schedule` write
         // re-resolves its targets against this same directory.
         let surface = {
@@ -391,15 +452,15 @@ impl RuntimeSnapshot {
                 .cloned()
                 .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
         };
-        surface
-            .set_control(key, value)
+        let queued = surface
+            .submit(key, value, options)
             .map_err(GraphCommandError::ControlError)?;
         // A declared control's write is a request, and logged; any other
         // reaches its module directly.
         if let Some(live) = self.live.as_ref().filter(|_| !surface.declares(key)) {
             live.note_unlogged();
         }
-        Ok(())
+        Ok(queued)
     }
 
     /// Returns the declarative document describing the current graph (see

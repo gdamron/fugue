@@ -38,9 +38,8 @@ pub(crate) struct PendingWrite {
     pub(crate) beat: Option<LoggedBeat>,
     /// Submitted at the automation tier, which takes a control back from a
     /// hold: a replay holds every logged write above automation, so it
-    /// cannot reproduce one (it counts as unlogged). Every front door
-    /// submits a user's requests until FUG-317 tags sources; one that tags
-    /// automation must set this.
+    /// cannot reproduce one (it counts as unlogged). Set for every request
+    /// submitted from automation.
     pub(crate) automated: bool,
 }
 

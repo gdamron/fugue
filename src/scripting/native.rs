@@ -9,6 +9,8 @@ use boa_engine::property::Attribute;
 use boa_engine::{js_string, Context, JsResult, JsString, JsValue, NativeFunction, Source};
 use serde_json::json;
 
+use crate::control_request::Source as WriteSource;
+use crate::invention::declared::WriteOptions;
 use crate::invention::{RuntimeController, RuntimeModuleInfo};
 use crate::{ControlValue, ControlWriteIntent};
 
@@ -248,9 +250,12 @@ fn install_graph_api(
             // A conducting script performs: its writes are live gestures, not
             // the invention's new starting state, so they stay out of the
             // retained document and out of the authoring revision (FUG-266).
+            // It ranks as a script, below a person's or an agent's write.
+            let options = WriteOptions::performed(WriteSource::Script);
+            let perform = ControlWriteIntent::Perform;
             set_control_controller
                 .snapshot
-                .set_control_with_intent(&module_id, &key, value, ControlWriteIntent::Perform)
+                .submit_control(&module_id, &key, value, perform, options)
                 .map_err(|err| js_err(err.to_string()))?;
             Ok(JsValue::undefined())
         })

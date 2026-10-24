@@ -16,7 +16,7 @@ use crate::control_request::CONDITION_CAPACITY;
 use crate::control_request::{
     Condition, Predicate, Request, RequestId, RequestValue, RtValue, When,
 };
-use crate::invention::declared::DeclaredSurface;
+use crate::invention::declared::{DeclaredSurface, WriteOptions};
 use crate::invention::publish::timed::EditTime;
 use crate::invention::publish::{Authored, CancelCause, EditState, Touched};
 use crate::{ControlValue, ControlWriteIntent};
@@ -107,7 +107,12 @@ fn a_write_kept_as_it_is_queued_plays_through_a_landing_before_its_record() {
     let mut rig = Rig::new(BASE);
     let id = queue_writing(&rig, 440.0);
     let value = ControlValue::Number(660.0);
-    let queued = front_door(&rig).make_authored("osc2", "frequency", value.clone());
+    let queued = front_door(&rig).make_authored(
+        "osc2",
+        "frequency",
+        value.clone(),
+        &WriteOptions::default(),
+    );
     let queued = queued.unwrap();
     assert_eq!(queued.safe, Some(id), "kept over the edit");
     for block in 1..=BLOCKS {
@@ -133,7 +138,7 @@ fn a_write_queued_once_the_edit_has_landed_plays_and_is_recorded() {
     rig.render(BLOCKS); // lands, writing 440
     let value = ControlValue::Number(660.0);
     let door = front_door(&rig);
-    let queued = door.make_authored("osc2", "frequency", value.clone());
+    let queued = door.make_authored("osc2", "frequency", value.clone(), &WriteOptions::default());
     let queued = queued.unwrap();
     assert_eq!(queued.safe, Some(id), "queued after the landing");
     let seen = queued.generation.unwrap();
