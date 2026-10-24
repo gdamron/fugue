@@ -148,7 +148,21 @@ impl RuntimeState {
     /// of 440 over an authored `440.0` nor 261.63 over `261.6300048828125`
     /// makes the next reload see a difference in the JSON alone. Does
     /// nothing when no module has `id`.
+    ///
+    /// A sample's `asset.N` is written into the entry it names, as the
+    /// document records it (see `authored_document::entry_asset_mut`), so a
+    /// reload of the saved document sees no change and keeps the module,
+    /// while a reload of a file naming another sample rebuilds it to play
+    /// that one.
     pub(crate) fn write_stored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
+        if let Some(slot) = self
+            .modules
+            .get_mut(id)
+            .and_then(|info| authored_document::entry_asset_mut(&mut info.config, key))
+        {
+            *slot = authored_document::control_json(value);
+            return;
+        }
         let Some(stored) = self
             .modules
             .get_mut(id)

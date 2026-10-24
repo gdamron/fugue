@@ -47,11 +47,22 @@ pub(crate) fn write_control(document: &mut Invention, id: &str, key: &str, value
 
 /// Writes a control value into one config under the control's key, making
 /// the config an object first when it is not one.
+///
+/// A sample's `asset.N` is the exception: it lands in the `asset` of the
+/// entry it names (see [`entry_asset_mut`]), and a top-level `asset.N` an
+/// older save recorded is dropped, as the entry now holds the write.
 pub(crate) fn write_config_control(
     config: &mut serde_json::Value,
     key: &str,
     value: &ControlValue,
 ) {
+    if let Some(slot) = entry_asset_mut(config, key) {
+        *slot = control_json(value);
+        if let Some(object) = config.as_object_mut() {
+            object.remove(key);
+        }
+        return;
+    }
     if !config.is_object() {
         *config = serde_json::Value::Object(serde_json::Map::new());
     }
@@ -59,6 +70,29 @@ pub(crate) fn write_config_control(
         .as_object_mut()
         .expect("config was just made an object")
         .insert(key.to_string(), control_json(value));
+}
+
+/// The `asset` of the entry an `asset.N` control names, when `config` lists
+/// its samples in a `samples` or `zones` array holding an object at `N`.
+///
+/// A sample's asset is authored in its entry, where the build loads it and
+/// the audio-asset scan, packaging and the read cap find it (see
+/// `audio_assets::module_asset_values`), so a write to it is recorded there
+/// too. Inserts the entry's `asset` when it has none.
+pub(crate) fn entry_asset_mut<'a>(
+    config: &'a mut serde_json::Value,
+    key: &str,
+) -> Option<&'a mut serde_json::Value> {
+    let index: usize = key.strip_prefix("asset.")?.parse().ok()?;
+    let object = config.as_object_mut()?;
+    let list = ["samples", "zones"].into_iter().find(|list| {
+        object
+            .get(*list)
+            .and_then(|entries| entries.get(index))
+            .is_some_and(serde_json::Value::is_object)
+    })?;
+    let entry = object.get_mut(list)?.get_mut(index)?.as_object_mut()?;
+    Some(entry.entry("asset").or_insert(serde_json::Value::Null))
 }
 
 /// A control value as config JSON.

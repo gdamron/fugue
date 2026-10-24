@@ -13,18 +13,13 @@ use crate::ModuleRegistry;
 const TELEMETRY: &[&str] = &["code.last_error", "code.status"];
 
 /// Controls whose value is checked elsewhere: an action rather than a state
-/// (a kit's `play`, a note, a cell `next_cell`), an asset load
-/// (`asset`; a slot's `asset.N` is not yet rebuilt from its write,
-/// FUG-345), or a schedule that needs a runtime to resolve against (see
-/// the scheduler's own tests).
+/// (a kit's `play`, a note, a cell `next_cell`), or a schedule that needs a
+/// runtime to resolve against (see the scheduler's own tests).
 const ELSEWHERE: &[&str] = &[
     "sample_kit.play",
     "sample_instrument.note_on",
     "sample_instrument.note_off",
     "cell_sequencer.next_cell",
-    "sample_player.asset",
-    "sample_kit.asset.0",
-    "sample_instrument.asset.0",
     "control_scheduler.schedule",
 ];
 
@@ -37,6 +32,10 @@ fn probes(key: &str, meta: &ControlMeta) -> Vec<ControlValue> {
             .collect()
     };
     match (&meta.kind, key) {
+        // A sample's asset (`asset`, a slot's `asset.N`) takes a file that
+        // loads.
+        (_, "asset") => vec![ControlValue::String(other_wav())],
+        (_, key) if key.starts_with("asset.") => vec![ControlValue::String(other_wav())],
         (_, "pattern") => text(&[
             r#"[{"note": 64, "gate_length": 1.0}, null]"#,
             r#"[64, null, 67]"#,
@@ -54,6 +53,22 @@ fn probes(key: &str, meta: &ControlMeta) -> Vec<ControlValue> {
             .map(ControlValue::Number)
             .to_vec(),
     }
+}
+
+/// A loadable WAV other than the one the base configs name.
+fn other_wav() -> String {
+    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let name = format!("fugue-config-fidelity-{}.wav", std::process::id());
+        let path = std::env::temp_dir().join(name);
+        std::fs::copy(
+            crate::module_config::tests::registry::eight_frame_wav(),
+            &path,
+        )
+        .unwrap();
+        path.to_string_lossy().into_owned()
+    })
+    .clone()
 }
 
 /// The config each type is built from before probing: enough that every
