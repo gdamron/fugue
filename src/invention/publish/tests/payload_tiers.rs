@@ -79,7 +79,8 @@ fn a_payload_written_at_once_holds_its_control() {
     let mut rig = rig();
     let at = rig.graph.current_sample;
     let notes = Payload::new(Notes(vec![2.0], None));
-    rig.graph.apply_payload("tape", NOTES, notes).unwrap();
+    let user = crate::control_request::Rank::USER;
+    rig.graph.apply_payload("tape", NOTES, notes, user).unwrap();
     let script = submit_notes(&rig, 0.5, at, Source::Script);
     block(&mut rig);
     assert_eq!(output(&rig), 2.0);

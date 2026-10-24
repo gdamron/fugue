@@ -162,11 +162,12 @@ fn a_schedule_resolved_before_a_change_published_is_refused_as_stale() {
         record: Box::new(|| recorded.set(true)),
     };
     let payload = crate::payload::Payload::new(0_u32);
-    let written =
-        controls
-            .declared()
-            .write_payload_checked("schedule", payload, "[]".into(), checked);
-    assert_eq!(written, Err(STALE.to_string()));
+    let written = controls.declared().write_payload_checked(
+        ("schedule", payload, "[]".into()),
+        checked,
+        &Default::default(),
+    );
+    assert_eq!(written.map(drop), Err(STALE.to_string()));
     assert!(!recorded.get());
     // Written afresh, it resolves against the module the change built.
     write(&rig, "sched", "schedule", NEXT.into());

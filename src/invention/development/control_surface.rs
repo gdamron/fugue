@@ -140,9 +140,9 @@ impl DevelopmentControlSurface {
     fn write_payload(
         &self,
         declared: &DeclaredSurface,
-        key: &str,
-        value: ControlValue,
-    ) -> Result<(), String> {
+        (key, value): (&str, ControlValue),
+        options: &WriteOptions,
+    ) -> Result<Queued, String> {
         let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         // What each alias records now, whichever key or development wrote
         // it last (a nested development shows every key on it as recorded,
@@ -156,10 +156,9 @@ impl DevelopmentControlSurface {
             .collect();
         self.set_legacy(key, value.clone())?;
         let written = match self.prepare_payload(key, &value) {
-            Some(prepared) => {
-                prepared.and_then(|(payload, shown)| declared.write_payload(key, payload, shown))
-            }
-            None => declared.set_control(key, value),
+            Some(prepared) => prepared
+                .and_then(|(payload, shown)| declared.submit_payload(key, payload, shown, options)),
+            None => declared.submit(key, value, options),
         };
         if written.is_err() {
             for (control, surface, was) in was {
@@ -251,9 +250,7 @@ impl ControlSurface for DevelopmentControlSurface {
             // A payload only its alias's own surface can build (a
             // scheduler's resolved schedule) is built there and handed on.
             if declared.is_payload(key) {
-                return self
-                    .write_payload(declared, key, value)
-                    .map(|()| Queued::default());
+                return self.write_payload(declared, (key, value), options);
             }
             let queued = declared.submit(key, value.clone(), options)?;
             self.set_legacy(key, value)?;
