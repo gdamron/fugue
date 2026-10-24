@@ -11,7 +11,7 @@ use super::request_beats::render_counted;
 use super::requests::counted_block;
 use super::*;
 use crate::control_request::{
-    BeatSpec, BeatTime, ControlIndex, Request, RequestValue, RtValue, Source, When,
+    BeatSpec, BeatTime, ControlContext, ControlIndex, Request, RequestValue, RtValue, Source, When,
 };
 use crate::ControlValue;
 
@@ -355,7 +355,7 @@ fn submit_list_at(rig: &Rig, key: &str, text: &str, at: u64) {
     let (table, _) = rig.graph.modules["tune"].module().declared().unwrap();
     let index = table.resolve(key).unwrap();
     let codec = table.decl(index).unwrap().0.codec.unwrap();
-    let (payload, _) = (codec.prepare)(&text.into()).unwrap();
+    let (payload, _) = (codec.prepare)(&ControlContext::NONE, &text.into()).unwrap();
     let target = publisher.control_target("tune", index).unwrap();
     let mut request = Request::new(target, RequestValue::Payload(payload));
     request.when = When::AtSample(at);
