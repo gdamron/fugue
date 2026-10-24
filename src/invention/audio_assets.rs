@@ -60,6 +60,9 @@ pub(crate) fn stored_asset_write<'a>(key: &str, value: &'a ControlValue) -> Cow<
     }
 }
 
+mod live;
+pub(crate) use live::{is_relative_path, resolve_asset_write, resolve_checked_asset_write};
+
 /// Rewrites every module-config `asset` reference in `invention` to its
 /// resolved file path, recording package resolutions in the lockfile beside
 /// the invention file. Idempotent: resolved path strings pass through
@@ -196,22 +199,21 @@ mod non_wasm {
 
     /// Local path resolution: URLs and rooted paths pass through; relative
     /// paths join the invention file's directory when one is known.
-    fn resolve_local(path: &str, base_dir: Option<&Path>) -> String {
-        if path.starts_with("https://") || path.starts_with("http://") {
-            return path.to_string();
+    pub(super) fn resolve_local(path: &str, base_dir: Option<&Path>) -> String {
+        match base_dir.filter(|_| is_relative_local(path)) {
+            Some(base) => base.join(path).to_string_lossy().into_owned(),
+            None => path.to_string(),
         }
-        let candidate = Path::new(path);
+    }
+
+    /// Whether a local path joins the invention file's directory: neither a
+    /// URL nor rooted.
+    pub(super) fn is_relative_local(path: &str) -> bool {
         // `has_root`, not `is_absolute`: on Windows a rooted path like
         // `/abs/kick.wav` is not "absolute" (no drive prefix), and `join`
         // would splice it onto the invention's drive instead of passing the
         // authored path through.
-        if candidate.has_root() {
-            return path.to_string();
-        }
-        match base_dir {
-            Some(base) => base.join(candidate).to_string_lossy().into_owned(),
-            None => path.to_string(),
-        }
+        !(path.starts_with("https://") || path.starts_with("http://") || Path::new(path).has_root())
     }
 
     /// The lockfile beside the invention file, read on first package ref and

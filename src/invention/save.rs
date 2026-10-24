@@ -6,15 +6,16 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::invention::audio_assets::{is_relative_path, module_asset_values};
 use crate::Invention;
 
 impl Invention {
     /// Writes the document to `path` as pretty JSON, atomically (temp file +
     /// rename) so a crash mid-write never leaves a half-written file behind.
     ///
-    /// Relative development and asset paths are authored relative to the
-    /// document's `source_path`; when saving to a different directory they
-    /// are rebased so the saved file still resolves them: relative to the
+    /// Relative development, asset and module audio asset paths are
+    /// authored relative to the document's `source_path`; when saving to a
+    /// different directory they are rebased so the saved file still resolves them: relative to the
     /// target directory when the referenced file sits under it, absolute
     /// otherwise. Documents without a `source_path` are written as-is.
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
@@ -55,6 +56,23 @@ impl Invention {
         }
         for asset in document.assets.values_mut() {
             asset.path = rebase(&asset.path, source_dir, &target_dir)?;
+        }
+        // A module's audio asset: a relative path, written as text or as a
+        // `{ "path": ... }` object. Package refs and URLs are left alone.
+        for module in &mut document.modules {
+            for value in module_asset_values(&mut module.config) {
+                let path = match value {
+                    serde_json::Value::String(path) => path,
+                    serde_json::Value::Object(object) => match object.get_mut("path") {
+                        Some(serde_json::Value::String(path)) => path,
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                if is_relative_path(path) {
+                    *path = rebase(path, source_dir, &target_dir)?;
+                }
+            }
         }
         Ok(document)
     }
@@ -137,6 +155,47 @@ mod tests {
         assert!(dev_path.ends_with("voice.json"));
         let asset_path = PathBuf::from(&saved.assets["score"].path);
         assert!(asset_path.is_absolute(), "{}", asset_path.display());
+    }
+
+    #[test]
+    fn save_into_other_directory_rebases_module_audio_assets() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+        let mut invention = Invention::from_json(
+            r#"{
+                "version": "1.0.0",
+                "modules": [
+                    { "id": "p", "type": "sample_player", "config": { "asset": "a.wav" } },
+                    { "id": "k", "type": "sample_kit", "config": { "samples": [
+                        { "key": 36, "asset": { "path": "kit/b.wav" } },
+                        { "key": 38, "asset": "fugue.drums.808@1.2.0:snare.wav" },
+                        { "key": 40, "asset": "https://example.com/c.wav" }
+                    ] } }
+                ],
+                "connections": []
+            }"#,
+        )
+        .unwrap();
+        invention.source_path = Some(source_dir.path().join("original.json"));
+        let target = target_dir.path().join("copy.json");
+
+        invention.save_to_file(&target).unwrap();
+
+        let saved = Invention::from_file(&target.to_string_lossy()).unwrap();
+        let source = std::path::absolute(source_dir.path()).unwrap();
+        let player = &saved.modules[0].config["asset"];
+        assert_eq!(
+            player,
+            &serde_json::json!(source.join("a.wav").to_string_lossy())
+        );
+        let samples = &saved.modules[1].config["samples"];
+        let kit = source.join("kit/b.wav");
+        assert_eq!(
+            samples[0]["asset"]["path"],
+            serde_json::json!(kit.to_string_lossy())
+        );
+        assert_eq!(samples[1]["asset"], "fugue.drums.808@1.2.0:snare.wav");
+        assert_eq!(samples[2]["asset"], "https://example.com/c.wav");
     }
 
     #[test]

@@ -7,6 +7,7 @@ mod authored;
 mod clock;
 mod mixer_rebuild;
 mod numeric;
+mod relative_assets;
 mod sample_assets;
 mod sample_levels;
 

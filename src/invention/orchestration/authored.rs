@@ -3,6 +3,7 @@
 
 use super::RuntimeSnapshot;
 use crate::control_request::RequestId;
+use crate::invention::audio_assets;
 use crate::invention::declared::{DeclaredSurface, Queued};
 use crate::invention::publish::Authored;
 use crate::invention::runtime::GraphCommandError;
@@ -82,6 +83,30 @@ impl RuntimeSnapshot {
         };
         declared
             .set_control_queued(key, value, true)
+            .map_err(GraphCommandError::ControlError)
+    }
+
+    /// The value a write to `key` hands its module: a relative path written
+    /// to an asset control resolved against the invention's directory, as
+    /// the loader resolves the document's, or refused when there is none
+    /// (see `audio_assets::resolve_asset_write`). The document records the
+    /// value as written.
+    pub(super) fn asset_to_load(
+        &self,
+        key: &str,
+        value: &ControlValue,
+    ) -> Result<ControlValue, GraphCommandError> {
+        if !audio_assets::is_asset_control(key) {
+            return Ok(value.clone());
+        }
+        let source_path = {
+            let state = self.state.lock().unwrap();
+            state
+                .document
+                .as_ref()
+                .and_then(|document| document.source_path.clone())
+        };
+        audio_assets::resolve_asset_write(source_path.as_deref(), key, value)
             .map_err(GraphCommandError::ControlError)
     }
 }

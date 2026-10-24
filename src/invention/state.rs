@@ -154,8 +154,16 @@ impl RuntimeState {
     /// reload of the saved document sees no change and keeps the module,
     /// while a reload of a file naming another sample rebuilds it to play
     /// that one. An asset's package ref is stored resolved, as the load
-    /// resolved it (see `audio_assets::stored_asset_write`).
+    /// resolved it (see `audio_assets::stored_asset_write`), and so is a
+    /// relative asset path, against the invention's directory (see
+    /// `audio_assets::resolve_asset_write`): the next reload compares the
+    /// file a write names, not its spelling.
     pub(crate) fn write_stored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
+        let source_path = self
+            .document
+            .as_ref()
+            .and_then(|document| document.source_path.as_deref());
+        let value = &audio_assets::resolve_checked_asset_write(source_path, key, value);
         let Some(info) = self.modules.get_mut(id) else {
             return;
         };

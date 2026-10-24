@@ -260,7 +260,8 @@ impl RuntimeSnapshot {
         value: ControlValue,
     ) -> Result<ControlValue, GraphCommandError> {
         let value = self.coerced(module_id, key, value)?;
-        self.set_control_transient(module_id, key, value.clone())?;
+        let load = self.asset_to_load(key, &value)?;
+        self.set_control_transient(module_id, key, load)?;
         Ok(value)
     }
 
@@ -280,8 +281,9 @@ impl RuntimeSnapshot {
         // (see FUG-240). set_control_transient stays uncoerced: its callers are
         // internal telemetry writes that already carry the right type.
         let value = self.coerced(module_id, key, value)?;
+        let load = self.asset_to_load(key, &value)?;
         let Some(live) = &self.live else {
-            self.set_control_transient(module_id, key, value.clone())?;
+            self.set_control_transient(module_id, key, load)?;
             let mut state = self.state.lock().unwrap();
             state.record_authored_control(module_id, key, &value);
             return Ok(value);
@@ -306,7 +308,7 @@ impl RuntimeSnapshot {
             attempts,
             (module_id, key),
             || live.generation(),
-            || self.make_authored(module_id, key, value.clone()),
+            || self.make_authored(module_id, key, load.clone()),
             |seen| live.record_authored(module_id, key, &value, seen),
         )?;
         Ok(value)
