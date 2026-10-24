@@ -30,6 +30,7 @@ mod order_tests;
 mod payload_tests;
 #[cfg(test)]
 mod ramp_tests;
+mod replacing;
 mod retarget;
 #[cfg(test)]
 mod scheduled_tests;
@@ -57,6 +58,10 @@ pub(crate) struct DevelopmentFactory {
 impl ModuleFactory for DevelopmentFactory {
     fn type_id(&self) -> &'static str {
         "__development__"
+    }
+
+    fn config_keys(&self) -> &'static [crate::module_config::ConfigKey] {
+        replacing::config_keys(&self.definition, &self.registry)
     }
 
     fn build_for_inspection(
@@ -104,6 +109,19 @@ impl ModuleFactory for DevelopmentFactory {
         let (module, control_surface) =
             DevelopmentModule::new(&self.name, runtime, &self.definition)?;
         apply_development_config(&self.name, config, control_surface.as_ref())?;
+        #[cfg(debug_assertions)]
+        if let Some(controls) = &module.controls {
+            let keys = self.config_keys();
+            let modules = &module.graph.modules;
+            replacing::check_rewrites(
+                &self.definition,
+                &self.name,
+                keys,
+                config,
+                controls,
+                modules,
+            );
+        }
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(module)),
