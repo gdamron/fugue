@@ -80,7 +80,7 @@ pub use reverb::Reverb;
 pub use rtmp_sink::{RtmpSink, RtmpSinkConfig, RtmpSinkHandle, RtmpSinkStats};
 pub use sample_instrument::{SampleInstrument, SampleInstrumentControls};
 pub use sample_kit::{SampleKit, SampleKitControls};
-pub use sample_player::{SamplePlayer, SamplePlayerControls};
+pub use sample_player::SamplePlayer;
 pub use sample_slicer::SampleSlicer;
 pub use step_sequencer::{GraceChain, Step, StepSequencer, MAX_GRACE_NOTES, STEP_KEYS};
 pub use sustain::{Sustain, SustainFactory};
