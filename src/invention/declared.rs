@@ -151,6 +151,9 @@ pub(crate) struct Queued {
     /// applied; `None` when it applied as it was made (building, offline,
     /// a legacy control) or travels in a publication, which reports none.
     pub(crate) id: Option<RequestId>,
+    /// An offline write that lost to a higher-ranked write at the same
+    /// sample, so nothing was applied (see `control_request::hold`).
+    pub(crate) lost: bool,
 }
 
 /// How a front door submits a write: whether it is authored, who wrote it
@@ -602,6 +605,10 @@ impl DeclaredSurface {
                     None => None,
                 };
                 let value = match (recompile, value) {
+                    // A schedule that changes its targets travels in the
+                    // recompile's publication, not as a request: it lands
+                    // whatever its rank or ttl, as the last write made, and
+                    // reads back as what plays.
                     (Some(prepared), RequestValue::Payload(payload)) => {
                         let generation = Some(publisher.generation());
                         let change = (prepared, port.module_id.as_str());
@@ -636,6 +643,7 @@ impl DeclaredSurface {
                             generation,
                             safe: None,
                             id: None,
+                            lost: false,
                         });
                     }
                     (_, value) => value,
@@ -735,6 +743,7 @@ impl DeclaredSurface {
                     generation,
                     safe,
                     id: Some(id),
+                    lost: false,
                 })
             }
             Route::Offline { graph, module_id } => {
@@ -762,7 +771,10 @@ impl DeclaredSurface {
                         applied
                     }
                 }
-                .map(|_| Queued::default())
+                .map(|applied| Queued {
+                    lost: !applied,
+                    ..Queued::default()
+                })
                 .map_err(|refusal| refused(&self.table, index, refusal))
             }
             Route::Inner => Err("This control is set through its development".into()),

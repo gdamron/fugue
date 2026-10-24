@@ -135,8 +135,9 @@ impl DevelopmentControlSurface {
     /// scheduler's resolved schedule), or whose aliases each build their
     /// own (a sample, see `fan_out`). Each alias records `value` first, so
     /// the inner order the payload carries counts what it now writes; a
-    /// write that fails restores what each recorded. A payload key reaches
-    /// no legacy alias, so recording touches nothing else.
+    /// write that fails, or loses offline to a higher-ranked one, restores
+    /// what each recorded. A payload key reaches no legacy alias, so
+    /// recording touches nothing else.
     fn write_payload(
         &self,
         declared: &DeclaredSurface,
@@ -160,7 +161,7 @@ impl DevelopmentControlSurface {
                 .and_then(|(payload, shown)| declared.submit_payload(key, payload, shown, options)),
             None => declared.submit(key, value, options),
         };
-        if written.is_err() {
+        if written.as_ref().map_or(true, |queued| queued.lost) {
             for (control, surface, was) in was {
                 let _ = surface.set_legacy(&control.key, was);
             }
