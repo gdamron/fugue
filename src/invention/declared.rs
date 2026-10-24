@@ -45,7 +45,7 @@ use std::sync::{Arc, Mutex, Weak};
 use super::graph::GraphCommand;
 use super::graph::SignalGraph;
 use super::publish::{
-    Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
+    Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched, Twin,
 };
 use super::runtime::ControlSurfaceInstance;
 #[cfg(test)]
@@ -170,6 +170,8 @@ pub(crate) struct WriteOptions<'a> {
     pub(crate) priority: i16,
     pub(crate) ttl: Option<u64>,
     pub(crate) announced: bool,
+    /// A reply awaits its outcome (see `PendingWrite::awaited`).
+    pub(crate) awaited: bool,
 }
 
 impl WriteOptions<'_> {
@@ -181,6 +183,7 @@ impl WriteOptions<'_> {
             priority: 0,
             ttl: None,
             announced: false,
+            awaited: false,
         }
     }
 
@@ -193,6 +196,7 @@ impl WriteOptions<'_> {
             priority: self.priority,
             ttl: self.ttl,
             announced: self.announced,
+            awaited: self.awaited,
         }
     }
 
@@ -200,6 +204,14 @@ impl WriteOptions<'_> {
     pub(crate) const fn announcing(self) -> Self {
         Self {
             announced: true,
+            ..self
+        }
+    }
+
+    /// The same write, its outcome awaited by a reply.
+    pub(crate) const fn awaiting(self) -> Self {
+        Self {
+            awaited: true,
             ..self
         }
     }
@@ -733,6 +745,8 @@ impl DeclaredSurface {
                         beat: None,
                         automated,
                         announced: options.announced,
+                        awaited: options.awaited,
+                        twin: copy.filter(|copy| *copy != id).map(Twin::Copy),
                         // Safe from the timed edit it was kept over, or that
                         // landed before it: its record follows that edit's.
                         authored: options.authored.map(|authoring| Authoring {
@@ -740,11 +754,12 @@ impl DeclaredSurface {
                             ..authoring.clone()
                         }),
                     };
-                    // The copy applying, too, is this write's, though only
-                    // the write is announced.
+                    // The copy applying, too, is this write's, announced for
+                    // it if the write did not apply first.
                     if let Some(copy) = copy.filter(|copy| *copy != id) {
                         let copy_write = PendingWrite {
-                            announced: false,
+                            awaited: false,
+                            twin: Some(Twin::Write(id)),
                             ..write.clone()
                         };
                         pending.submitted(copy, copy_write);

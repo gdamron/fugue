@@ -63,6 +63,8 @@ impl LiveGraph {
             beat,
             automated: source == crate::control_request::Source::Automation,
             announced: false,
+            awaited: false,
+            twin: None,
             authored: None,
         };
         pending.submitted(id, write);

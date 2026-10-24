@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::invention::manual_backend::{start_manual, Pump};
+use crate::invention::publish::Progress;
 use crate::rpc::{ControlRequestState, RequestSource};
 use crate::{ControlWrite, ControlWriteIntent, RpcEventPayload};
 use std::sync::Arc;
@@ -201,5 +202,95 @@ fn a_write_applied_before_an_edit_batch_is_announced_before_the_batchs() {
     assert_eq!(
         announced(&sink),
         [(330.0.into(), first), (440.0.into(), None)]
+    );
+}
+
+#[test]
+fn a_batch_wider_than_the_shared_outcomes_says_what_became_of_each() {
+    // Each write settles before the next is made, all at one sample, so
+    // the first, ranked highest, holds the control against the rest.
+    let backend = crate::modules::NullBackend::new(48_000);
+    let running = runtime().start_with_backend(backend).unwrap();
+    let ranked = ControlWrite {
+        priority: Some(1),
+        ..frequency(330.0, RequestSource::User)
+    };
+    let wider = crate::invention::publish::OUTCOME_QUEUE_CAPACITY + 1;
+    let rest = (0..wider).map(|step| frequency(400.0 + step as f32, RequestSource::User));
+    let writes: Vec<_> = std::iter::once(ranked).chain(rest).collect();
+
+    let acks = running.write_controls(&writes);
+
+    assert!(acks.error.is_none());
+    assert_eq!(acks.controls[0].state, Some(ControlRequestState::Applied));
+    let lost =
+        (acks.controls[1..].iter()).filter(|ack| ack.state != Some(ControlRequestState::Applied));
+    assert_eq!(lost.count(), wider, "none of the rest applied");
+    assert_eq!(
+        running.get_control("osc", "frequency").unwrap(),
+        330.0.into()
+    );
+    running.stop();
+}
+
+/// Queues an edit adding an lfo and retuning osc, landing 256 samples on.
+fn retune_waiting(running: &mut RunningInvention) {
+    let lfo = crate::rpc::StructuralEdit::AddModule {
+        id: "lfo".into(),
+        module_type: "oscillator".into(),
+        config: serde_json::json!({ "frequency": 3.0 }),
+    };
+    let retune = crate::rpc::StructuralEdit::SetControl {
+        module_id: "osc".into(),
+        key: "frequency".into(),
+        value: 550.0.into(),
+    };
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 256 };
+    (running.apply_edits_at(&[lfo, retune], &when, None)).expect("the edit is queued");
+}
+
+#[test]
+fn a_write_kept_over_a_timed_edit_is_announced_once_when_it_and_its_copy_apply() {
+    let (mut running, pump, sink) = on_manual();
+    retune_waiting(&mut running);
+    let authored = ControlWrite::new("osc", "frequency", 330.0.into());
+    let acks = running.write_controls(&[authored]);
+    pump.render(8);
+    running.announce_applied();
+    assert_eq!(
+        announced(&sink),
+        [(330.0.into(), acks.controls[0].request.clone())]
+    );
+}
+
+#[test]
+fn a_write_kept_over_a_timed_edit_is_announced_when_only_its_copy_applies() {
+    let (mut running, pump, sink) = on_manual();
+    retune_waiting(&mut running);
+
+    // Authored while the edit waits, so kept over it, then replaced at its
+    // sample by a gesture: the write applies only as its copy lands.
+    let authored = ControlWrite::new("osc", "frequency", 330.0.into());
+    let acks = running.write_controls(&[authored, frequency(440.0, RequestSource::User)]);
+    let (written, gesture) = (
+        acks.controls[0].request.clone(),
+        acks.controls[1].request.clone(),
+    );
+    pump.block();
+    running.announce_applied();
+    assert_eq!(announced(&sink), [(440.0.into(), gesture.clone())]);
+    // Replaced, it may yet apply with its copy.
+    let id = crate::control_request::RequestId(written.as_deref().unwrap().parse().unwrap());
+    assert_eq!(running.live.progress(id), Progress::Waiting);
+
+    pump.render(8);
+    running.announce_applied();
+    assert_eq!(
+        announced(&sink),
+        [(440.0.into(), gesture), (330.0.into(), written)]
+    );
+    assert_eq!(
+        running.get_control("osc", "frequency").unwrap(),
+        330.0.into()
     );
 }
