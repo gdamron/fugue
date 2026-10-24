@@ -90,7 +90,6 @@ fn a_module_type_declares_its_controls_or_is_listed_legacy() {
 fn scheduled_config(type_id: &str) -> Value {
     let wav = eight_frame_wav();
     match type_id {
-        "sample_kit" => json!({ "samples": [{ "key": 36, "asset": wav }] }),
         "sample_instrument" => json!({
             "zones": [{ "root_note": 60, "key_range": [0, 127], "asset": wav }]
         }),
