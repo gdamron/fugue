@@ -329,6 +329,18 @@ impl LiveGraph {
         epoch
     }
 
+    /// The retained document and its authored epoch, read together under
+    /// the publisher, every authored write applied so far recorded: no
+    /// write is recorded between the two.
+    pub(crate) fn document_with_epoch(&self) -> (Option<crate::Invention>, u64) {
+        let publisher = self.lock();
+        let state = self.state.lock().unwrap();
+        let read = (state.document(), state.authored_epoch);
+        drop(state);
+        drop(publisher);
+        read
+    }
+
     /// Every module's timeline context as of the latest publication, by
     /// module id (see `crate::invention::timelines`).
     pub(crate) fn timelines(&self) -> HashMap<String, crate::TimelineContext> {

@@ -357,3 +357,27 @@ fn an_authored_write_pending_at_its_reply_moves_the_authored_epoch_once_it_appli
     pump.render(2);
     assert_eq!(running.authored_epoch(), epoch + 1);
 }
+
+/// A document read with its epoch holds every write the epoch counts: the
+/// one applied since the last read is recorded and counted together.
+#[test]
+fn a_document_read_with_its_epoch_holds_every_write_counted() {
+    let (running, pump, _sink) = on_manual();
+    let frequency_in = |document: Option<Invention>| {
+        let document = document.unwrap();
+        let osc = document.modules.iter().find(|spec| spec.id == "osc");
+        osc.unwrap().config["frequency"].as_f64()
+    };
+    let (document, epoch) = running.document_with_epoch();
+    assert_eq!(frequency_in(document), Some(220.0));
+
+    let authored = ControlWrite::new("osc", "frequency", 330.0.into());
+    running.write_controls(&[authored]);
+    let (document, unmoved) = running.document_with_epoch();
+    assert_eq!((frequency_in(document), unmoved), (Some(220.0), epoch));
+
+    // Applied, and recorded only as the read takes it up.
+    pump.block();
+    let (document, moved) = running.document_with_epoch();
+    assert_eq!((frequency_in(document), moved), (Some(330.0), epoch + 1));
+}

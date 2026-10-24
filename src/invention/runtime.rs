@@ -380,9 +380,7 @@ impl RunningInvention {
     /// out, and recorded once it applies.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn document_to_save(&self) -> Option<crate::Invention> {
-        self.live
-            .settle_authored(crate::invention::publish::APPLY_WAIT);
-        self.document()
+        self.document_to_save_with_epoch().0
     }
 
     /// How many authored writes the retained document has recorded so
@@ -391,6 +389,23 @@ impl RunningInvention {
     /// this move between its own commands knows the document changed.
     pub fn authored_epoch(&self) -> u64 {
         self.live.authored_epoch()
+    }
+
+    /// [`Self::document`] and the [`Self::authored_epoch`] it holds every
+    /// recorded write up to, read together. A host that pairs a document
+    /// with its own revision of it reads them so: read apart, a write
+    /// recorded in between would be counted without being held.
+    pub fn document_with_epoch(&self) -> (Option<crate::Invention>, u64) {
+        self.live.document_with_epoch()
+    }
+
+    /// [`Self::document_to_save`] and its epoch, read together (see
+    /// [`Self::document_with_epoch`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn document_to_save_with_epoch(&self) -> (Option<crate::Invention>, u64) {
+        self.live
+            .settle_authored(crate::invention::publish::APPLY_WAIT);
+        self.document_with_epoch()
     }
 
     /// Exports the session's log of applied control requests, each with
