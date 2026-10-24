@@ -79,11 +79,9 @@ use self::table::{
     GRACE_PLACEMENT, GRACE_VELOCITY, LOOP_COUNT, MODE, NEXT_CELL, ROOT_NOTE, SELECT_CELL,
     STEP_COUNT, TABLE, WAIT_FOR_CYCLE_END,
 };
-pub use self::controls::CellSequencerControls;
 pub use self::factory::CellSequencerFactory;
 
 mod apply;
-mod controls;
 mod factory;
 mod inputs;
 mod outputs;
@@ -983,5 +981,7 @@ impl Module for CellSequencer {
     }
 }
 
+#[cfg(test)]
+mod request_tests;
 #[cfg(test)]
 mod tests;
