@@ -385,6 +385,14 @@ impl RunningInvention {
         self.document()
     }
 
+    /// How many authored writes the retained document has recorded so
+    /// far. An authored write is recorded as it applies, so one still
+    /// pending when its reply was sent is recorded later: a host that sees
+    /// this move between its own commands knows the document changed.
+    pub fn authored_epoch(&self) -> u64 {
+        self.live.authored_epoch()
+    }
+
     /// Exports the session's log of applied control requests, each with
     /// the sample it applied at, for an offline render of the invention as
     /// loaded to replay (see [`crate::invention::request_log`]).
