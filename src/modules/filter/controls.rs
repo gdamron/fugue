@@ -1,210 +1,75 @@
-//! Thread-safe controls for the Filter.
+//! The Filter's declared controls.
 
-use crate::atomic::AtomicF32;
-use crate::control_request::{scheduled_number, LegacyRefusal, TableValue};
-use crate::traits::{check_listed_control, ControlSurfaceMap};
-use crate::{ControlMeta, ControlSurface, ControlValue};
+use crate::control_request::{ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue};
 
-use super::FilterType;
+pub(super) const CUTOFF: ControlIndex = ControlIndex(0);
+pub(super) const RESONANCE: ControlIndex = ControlIndex(1);
+pub(super) const FILTER_TYPE: ControlIndex = ControlIndex(2);
+pub(super) const CUTOFF_MOD_DEPTH: ControlIndex = ControlIndex(3);
 
-fn filter_type_to_index(filter_type: FilterType) -> f32 {
-    match filter_type {
-        FilterType::LowPass => 0.0,
-        FilterType::HighPass => 1.0,
-        FilterType::BandPass => 2.0,
-    }
-}
+/// The filter types, in [`super::FilterType`] order.
+const FILTER_TYPES: &[&str] = &["lowpass", "highpass", "bandpass"];
 
-fn index_to_filter_type(index: f32) -> FilterType {
-    match index.round() as i32 {
-        0 => FilterType::LowPass,
-        1 => FilterType::HighPass,
-        2 => FilterType::BandPass,
-        _ => FilterType::LowPass,
-    }
-}
+/// Other spellings of the filter types that have always loaded, with the
+/// option each means.
+const FILTER_TYPE_SPELLINGS: &[(&str, &str)] = &[
+    ("low_pass", "lowpass"),
+    ("lpf", "lowpass"),
+    ("low", "lowpass"),
+    ("high_pass", "highpass"),
+    ("hpf", "highpass"),
+    ("high", "highpass"),
+    ("band_pass", "bandpass"),
+    ("bpf", "bandpass"),
+    ("band", "bandpass"),
+];
 
-/// Thread-safe controls for the Filter.
-///
-/// All fields are wrapped in `Arc<Mutex<_>>` for real-time adjustment
-/// from any thread while audio is playing.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let controls: FilterControls = handles.get("filter1.controls").unwrap();
-///
-/// // Adjust filter in real-time
-/// controls.set_cutoff(2000.0);
-/// controls.set_resonance(0.7);
-/// controls.set_filter_type(FilterType::HighPass);
-/// ```
-#[derive(Clone)]
-pub struct FilterControls {
-    pub(crate) cutoff: AtomicF32,
-    pub(crate) resonance: AtomicF32,
-    pub(crate) filter_type: AtomicF32,
-    pub(crate) cutoff_mod_depth: AtomicF32,
-}
+const DECLS: &[ControlDecl] = &[
+    ControlDecl::new(
+        "cutoff",
+        DeclKind::Number {
+            min: 20.0,
+            max: 20000.0,
+        },
+        RtValue::F32(1000.0),
+        "Cutoff frequency in Hz",
+    )
+    .unit("Hz")
+    .log()
+    .precision(0)
+    .clamped(20.0, 20000.0),
+    ControlDecl::new(
+        "resonance",
+        DeclKind::Number { min: 0.0, max: 1.0 },
+        RtValue::F32(0.0),
+        "Resonance/Q",
+    )
+    .clamped(0.0, 1.0),
+    ControlDecl::new(
+        "filter_type",
+        DeclKind::Choice(FILTER_TYPES),
+        RtValue::U32(0),
+        "Filter type",
+    )
+    .spellings(FILTER_TYPE_SPELLINGS),
+    ControlDecl::new(
+        "cutoff_mod_depth",
+        DeclKind::Number {
+            min: 0.0,
+            max: 20000.0,
+        },
+        RtValue::F32(5000.0),
+        "CV modulation depth in Hz",
+    )
+    .unit("Hz")
+    .precision(0)
+    .clamped(0.0, f32::MAX),
+];
 
-impl FilterControls {
-    /// Creates new filter controls with the given initial values.
-    pub fn new(
-        cutoff: f32,
-        resonance: f32,
-        filter_type: FilterType,
-        cutoff_mod_depth: f32,
-    ) -> Self {
-        Self {
-            cutoff: AtomicF32::new(cutoff.clamp(20.0, 20000.0)),
-            resonance: AtomicF32::new(resonance.clamp(0.0, 1.0)),
-            filter_type: AtomicF32::new(filter_type_to_index(filter_type)),
-            cutoff_mod_depth: AtomicF32::new(cutoff_mod_depth.max(0.0)),
-        }
-    }
+pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
 
-    /// Gets the cutoff frequency in Hz.
-    pub fn cutoff(&self) -> f32 {
-        self.cutoff.load()
-    }
-
-    /// Sets the cutoff frequency in Hz.
-    pub fn set_cutoff(&self, value: f32) {
-        self.cutoff.store(value.clamp(20.0, 20000.0));
-    }
-
-    /// Gets the resonance (0.0-1.0).
-    pub fn resonance(&self) -> f32 {
-        self.resonance.load()
-    }
-
-    /// Sets the resonance (0.0-1.0).
-    pub fn set_resonance(&self, value: f32) {
-        self.resonance.store(value.clamp(0.0, 1.0));
-    }
-
-    /// Gets the filter type.
-    pub fn filter_type(&self) -> FilterType {
-        index_to_filter_type(self.filter_type.load())
-    }
-
-    /// Sets the filter type.
-    pub fn set_filter_type(&self, value: FilterType) {
-        self.filter_type.store(filter_type_to_index(value));
-    }
-
-    /// Gets the CV modulation amount in Hz.
-    pub fn cutoff_mod_depth(&self) -> f32 {
-        self.cutoff_mod_depth.load()
-    }
-
-    /// Sets the CV modulation amount in Hz.
-    pub fn set_cutoff_mod_depth(&self, value: f32) {
-        self.cutoff_mod_depth.store(value.max(0.0));
-    }
-}
-
-impl FilterControls {
-    fn filter_type_name(value: FilterType) -> &'static str {
-        match value {
-            FilterType::LowPass => "lowpass",
-            FilterType::HighPass => "highpass",
-            FilterType::BandPass => "bandpass",
-        }
-    }
-
-    /// Parses a filter type name; the control and the config key
-    /// `filter_type` share this one spelling set.
-    pub(super) fn parse_filter_type(value: &str) -> Result<FilterType, String> {
-        match value.to_lowercase().as_str() {
-            "lowpass" | "low_pass" | "lpf" | "low" => Ok(FilterType::LowPass),
-            "highpass" | "high_pass" | "hpf" | "high" => Ok(FilterType::HighPass),
-            "bandpass" | "band_pass" | "bpf" | "band" => Ok(FilterType::BandPass),
-            _ => Err(format!("Unknown filter type: {}", value)),
-        }
-    }
-}
-
-impl ControlSurface for FilterControls {
-    fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::number("cutoff", "Cutoff frequency in Hz")
-                .with_range(20.0, 20000.0)
-                .with_unit("Hz")
-                .with_log_scale()
-                .with_precision(0)
-                .with_default(self.cutoff()),
-            ControlMeta::number("resonance", "Resonance/Q")
-                .with_range(0.0, 1.0)
-                .with_default(self.resonance()),
-            ControlMeta::string("filter_type", "Filter type")
-                .with_default(Self::filter_type_name(self.filter_type()))
-                .with_options(vec![
-                    "lowpass".to_string(),
-                    "highpass".to_string(),
-                    "bandpass".to_string(),
-                ]),
-            ControlMeta::number("cutoff_mod_depth", "CV modulation depth in Hz")
-                .with_range(0.0, 20000.0)
-                .with_unit("Hz")
-                .with_precision(0)
-                .with_default(self.cutoff_mod_depth()),
-        ]
-    }
-
-    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
-        match key {
-            "cutoff" => Ok(self.cutoff().into()),
-            "resonance" => Ok(self.resonance().into()),
-            "filter_type" => Ok(Self::filter_type_name(self.filter_type()).into()),
-            "cutoff_mod_depth" => Ok(self.cutoff_mod_depth().into()),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
-    }
-
-    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        match key {
-            "cutoff" => self.set_cutoff(value.as_number()?),
-            "resonance" => self.set_resonance(value.as_number()?),
-            "filter_type" => self.set_filter_type(Self::parse_filter_type(value.as_string()?)?),
-            "cutoff_mod_depth" => self.set_cutoff_mod_depth(value.as_number()?),
-            _ => return Err(format!("Unknown control: {}", key)),
-        }
-        Ok(())
-    }
-
-    /// `filter_type` is a string: a schedule cannot write it.
-    #[allow(private_interfaces)]
-    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
-        let value = scheduled_number(value)?;
-        match key {
-            "cutoff" => self.set_cutoff(value),
-            "resonance" => self.set_resonance(value),
-            "cutoff_mod_depth" => self.set_cutoff_mod_depth(value),
-            _ => return Err(LegacyRefusal::Unsupported),
-        }
-        Ok(())
-    }
-
-    #[allow(private_interfaces)]
-    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
-        match key {
-            "cutoff" => Ok(self.cutoff()),
-            "resonance" => Ok(self.resonance()),
-            "cutoff_mod_depth" => Ok(self.cutoff_mod_depth()),
-            _ => Err(LegacyRefusal::Unsupported),
-        }
-    }
-
-    fn validate_control(
-        &self,
-        key: &str,
-        value: &ControlValue,
-        _surfaces: &ControlSurfaceMap,
-    ) -> Result<(), String> {
-        match key {
-            "filter_type" => Self::parse_filter_type(value.as_string()?).map(drop),
-            _ => check_listed_control(&self.controls(), key, value),
-        }
-    }
+/// The table's defaults, in index order: where every filter's cells start
+/// before it applies its own values.
+pub(super) fn defaults() -> impl Iterator<Item = RtValue> {
+    DECLS.iter().map(|decl| decl.default)
 }

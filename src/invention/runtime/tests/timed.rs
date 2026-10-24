@@ -7,7 +7,6 @@
 use super::*;
 use crate::control_request::Timeline;
 use crate::invention::manual_backend::{start_manual, Pump};
-use crate::modules::filter::FilterControls;
 use crate::modules::Clock;
 use crate::rpc::{EditWhen, RequestState, RequestStatus};
 use crate::LoggedBeat;
@@ -106,9 +105,13 @@ fn an_effect_swapped_on_the_next_downbeat_lands_on_it() {
     assert!(adopted.removed.is_empty());
     assert!(running.take_request_changes().is_empty());
 
-    let handles = running.request_handles(&queued.id).unwrap();
-    let controls: FilterControls = handles.get("fx.controls").unwrap();
-    assert_eq!(controls.cutoff(), 2000.0, "the new filter's");
+    assert!(running.request_handles(&queued.id).is_some());
+    audio.render(1);
+    assert_eq!(
+        running.get_control("fx", "cutoff").unwrap(),
+        2000.0.into(),
+        "the new filter's"
+    );
     assert!(running.request_handles(&queued.id).is_none(), "taken once");
     let state = running.state.lock().unwrap();
     assert_eq!(state.modules["fx"].config["filter_type"], "highpass");

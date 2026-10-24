@@ -4,7 +4,7 @@
 //! - [`Clock`] - Timing and tempo control
 //! - [`Oscillator`] / [`OscillatorType`] - Waveform generation
 //! - [`Lfo`] - Low frequency oscillator for modulation
-//! - [`Filter`] / [`FilterControls`] / [`FilterType`] - Resonant filter for subtractive synthesis
+//! - [`Filter`] / [`FilterType`] - Resonant filter for subtractive synthesis
 //! - [`Mixer`] - Multi-channel audio mixer
 //! - [`MelodyGenerator`] - Algorithmic melody generation
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
@@ -69,7 +69,7 @@ pub use dac::{
     default_sample_rate, AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver,
     DacModule, NullBackend, StreamErrorKind,
 };
-pub use filter::{Filter, FilterControls, FilterType};
+pub use filter::{Filter, FilterType};
 pub use lfo::Lfo;
 pub use melody::MelodyGenerator;
 
