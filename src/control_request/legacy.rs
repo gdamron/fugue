@@ -11,7 +11,6 @@ pub(crate) const LEGACY_CONTROLS: &[&str] = &[
     "adsr",
     "filter",
     "lfo",
-    "melody",
     "mixer",
     "sample_instrument",
     "sample_kit",

@@ -15,13 +15,12 @@ use crate::control_request::{scheduled_surface, while_held};
 use crate::invention::runtime::ControlSurfaceInstance;
 use crate::module_config::tests::registry::eight_frame_wav;
 use crate::modules::sample_instrument::{LoopSpec, SampleInstrument, ZoneSpec};
-use crate::modules::{MelodyControls, SampleInstrumentControls, SamplePlayerControls};
-use crate::{ControlSurface, ControlValue, Module};
+use crate::modules::{SampleInstrumentControls, SamplePlayerControls};
+use crate::{ControlValue, Module};
 
 /// The families that kept state behind locks, kept to hold what locks they
 /// still have, with the instrument that plays the notes scheduled to it.
 struct Locking {
-    melody: MelodyControls,
     player: SamplePlayerControls,
     instrument: SampleInstrumentControls,
     sounding: SampleInstrument,
@@ -48,7 +47,6 @@ impl Locking {
         let sounding =
             SampleInstrument::new_with_controls(instrument.clone(), audio, notes, 8, 48_000);
         Self {
-            melody: MelodyControls::new(60, vec![0, 2, 4]),
             player: SamplePlayerControls::with_mode(48_000, Some(wav), None, None, false).unwrap(),
             instrument,
             sounding,
@@ -69,7 +67,6 @@ impl Locking {
         ] {
             map.insert(type_id.into(), scheduled_surface(type_id));
         }
-        map.insert("melody".into(), Arc::new(self.melody.clone()));
         map.insert("sample_player".into(), Arc::new(self.player.clone()));
         map.insert(
             "sample_instrument".into(),
@@ -166,8 +163,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
         ramp("mixer", "level.0", 0.25),
         entry(0, "sample_slicer", "time_ratio", Number(2.0)),
         ramp("sample_kit", "level.0", 0.5),
-        ramp("melody", "degree.0", 7.0),
-        entry(0, "melody", "degree_count", Number(2.0)),
         entry(0, "sample_player", "play", Bool(true)),
         ramp("sample_player", "pitch_ratio", 2.0),
         entry(0, "sample_instrument", "note_on", Number(64.0)),
@@ -184,8 +179,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
         ("mixer", "level.0", 0.25),
         ("sample_slicer", "time_ratio", 2.0),
         ("sample_kit", "level.0", 0.5),
-        ("melody", "degree.0", 7.0),
-        ("melody", "degree_count", 2.0),
         ("sample_player", "pitch_ratio", 2.0),
         ("sample_instrument", "level.0", 0.5),
     ] {
@@ -203,51 +196,28 @@ fn a_write_lands_while_control_threads_hold_every_lock_left() {
     let directory = locking.directory();
     let mut scheduler = scheduler(
         vec![
-            entry(1, "melody", "degree.1", Number(5.0)),
             entry(1, "sample_player", "loop", Bool(true)),
             entry(1, "sample_instrument", "note_on", Number(64.0)),
-            // A ramp starting while the table is mid-edit still starts.
-            ScheduleEntry {
-                ramp_steps: Some(1),
-                ..entry(1, "melody", "note_weight.0", Number(3.0))
-            },
-            entry(2, "melody", "degree.2", Number(9.0)),
         ],
         &directory,
     );
     assert_eq!(locking.block(&mut scheduler, 1.0), (0, 0), "step 0");
     assert_eq!(locking.block(&mut scheduler, 0.0), (0, 0));
     // Step 1 plays while control threads hold every lock these families
-    // have left: the melody's whole-table edit, the player's and the
-    // instrument's sample swaps.
-    let (melody, player, instrument) = (
-        locking.melody.clone(),
-        locking.player.clone(),
-        locking.instrument.clone(),
-    );
+    // have left: the player's and the instrument's sample swaps.
+    let (player, instrument) = (locking.player.clone(), locking.instrument.clone());
     let held = while_held(
-        || melody.table.editing(),
+        || player.hold_swap_lock(),
         || {
             while_held(
-                || player.hold_swap_lock(),
-                || {
-                    while_held(
-                        || instrument.hold_swap_lock(),
-                        || locking.block(&mut scheduler, 1.0),
-                    )
-                },
+                || instrument.hold_swap_lock(),
+                || locking.block(&mut scheduler, 1.0),
             )
         },
     );
     assert_eq!(held, (0, 0), "step 1");
-    assert_eq!(locking.melody.degree(1), Ok(5), "landed mid-edit");
     assert!(locking.player.loop_enabled());
     assert_eq!(locking.sounding.sounding(), [64]);
-    // The next step's entries land as ever.
-    assert_eq!(locking.block(&mut scheduler, 0.0), (0, 0));
-    assert_eq!(locking.block(&mut scheduler, 1.0), (0, 0), "step 2");
-    assert_eq!(locking.melody.degree(2), Ok(9));
-    assert_eq!(locking.melody.note_weight(0), Ok(3.0), "the ramp landed");
 }
 
 #[test]
@@ -278,33 +248,4 @@ fn a_scheduled_chord_plays_in_order_while_a_control_thread_sends_notes() {
         played, chord,
         "every note of the chord, in order, on its step"
     );
-}
-
-#[test]
-fn a_degree_count_ramp_lands_every_step_while_a_control_thread_reads_the_table() {
-    let mut locking = Locking::new();
-    let directory = locking.directory();
-    let mut scheduler = scheduler(
-        vec![ScheduleEntry {
-            ramp_steps: Some(7),
-            ..entry(1, "melody", "degree_count", ScheduleValue::Number(10.0))
-        }],
-        &directory,
-    );
-    let melody = locking.melody.clone();
-    let counts = while_busy(
-        || drop(melody.controls()),
-        || {
-            let mut counts = Vec::new();
-            for _ in 0..10 {
-                assert_eq!(locking.block(&mut scheduler, 1.0), (0, 0));
-                counts.push(locking.melody.degree_count());
-                assert_eq!(locking.block(&mut scheduler, 0.0), (0, 0));
-            }
-            counts
-        },
-    );
-    assert_eq!(counts, [3, 3, 4, 5, 6, 7, 8, 9, 10, 10]);
-    let degrees = locking.melody.allowed_degrees();
-    assert_eq!(degrees, [0, 2, 4, 0, 2, 4, 0, 2, 4, 0], "the scale repeats");
 }

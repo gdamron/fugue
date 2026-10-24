@@ -364,7 +364,11 @@ impl DevelopmentControls {
             _ => return Err((Refusal::Unsupported, payload)),
         };
         match modules.get_mut(alias.module) {
-            Some(module) => module.module_mut().apply_payload(alias.index, payload),
+            Some(module) => {
+                // Its own automation still waiting was written before this.
+                take_automation(module.module_mut());
+                module.module_mut().apply_payload(alias.index, payload)
+            }
             None => Err((Refusal::TargetGone, payload)),
         }
     }

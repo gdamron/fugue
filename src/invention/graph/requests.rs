@@ -789,6 +789,9 @@ impl SignalGraph {
                     retirer.retire(payload);
                     return Err(Refusal::TargetGone);
                 };
+                // Automation still waiting was written before this sample,
+                // and a payload may rewrite what it wrote.
+                take_automation(instance.module_mut());
                 match instance.module_mut().apply_payload(control, payload) {
                     Ok(replaced) => {
                         retirer.retire(replaced);
@@ -849,6 +852,7 @@ impl SignalGraph {
         payload: Payload,
     ) -> Result<(), Refusal> {
         let instance = self.modules.get_mut(module_id).ok_or(Refusal::TargetGone)?;
+        take_automation(instance.module_mut());
         instance
             .module_mut()
             .apply_payload(control, payload)

@@ -6,7 +6,7 @@
 //! - [`Lfo`] / [`LfoControls`] - Low frequency oscillator for modulation
 //! - [`Filter`] / [`FilterControls`] / [`FilterType`] - Resonant filter for subtractive synthesis
 //! - [`Mixer`] / [`MixerControls`] - Multi-channel audio mixer
-//! - [`MelodyGenerator`] / [`MelodyControls`] - Algorithmic melody generation
+//! - [`MelodyGenerator`] - Algorithmic melody generation
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
 //! - [`Adsr`] / [`AdsrControls`] - Envelope generator
 //! - [`Vca`] - Voltage controlled amplifier
@@ -62,16 +62,16 @@ pub use control_scheduler::{
 };
 
 // Deprecated type alias for backward compatibility
+#[cfg(not(target_arch = "wasm32"))]
+pub use dac::OUTPUT_DEVICE_ENV;
 #[allow(deprecated)]
 pub use dac::{
     default_sample_rate, AudioBackend, AudioDiagnostics, AudioDiagnosticsSnapshot, AudioDriver,
     DacModule, NullBackend, StreamErrorKind,
 };
-#[cfg(not(target_arch = "wasm32"))]
-pub use dac::OUTPUT_DEVICE_ENV;
 pub use filter::{Filter, FilterControls, FilterType};
 pub use lfo::{Lfo, LfoControls};
-pub use melody::{MelodyControls, MelodyGenerator};
+pub use melody::MelodyGenerator;
 
 pub use mixer::{Mixer, MixerControls};
 pub use oscillator::{Oscillator, OscillatorType};
