@@ -338,31 +338,18 @@ impl RenderEngine {
         super::runtime::end_reached_in(&surfaces, source)
     }
 
-    /// Sets a runtime control on a module, coercing it to the control's
-    /// declared kind and refusing a number that is not finite.
+    /// Sets a runtime control on a module as a live front door does (see
+    /// [`RuntimeSnapshot::set_control_with_intent`]): a performed gesture,
+    /// coerced to the control's declared kind, refused when it is a number
+    /// that is not finite, announced, and never recorded in the document.
     pub fn set_control(
         &self,
         module_id: &str,
         key: &str,
         value: ControlValue,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Invoke outside the directory lock: a scheduler's `schedule` write
-        // re-resolves its targets against this same directory.
-        let control_surface = {
-            let controls = self.control_surfaces.lock().unwrap();
-            controls
-                .get(module_id)
-                .cloned()
-                .ok_or_else(|| format!("unknown module: {}", module_id))?
-        };
-        // Coerce to the control's declared kind so a stringified write lands,
-        // matching the live runtime's behavior (see FUG-240). Then refuse a
-        // number that is not finite, as the live runtime does.
-        let value = control_surface.coerce_value(key, value);
-        if let Some(message) = crate::rpc::non_finite_refusal(module_id, key, &value) {
-            return Err(message.into());
-        }
-        control_surface.set_control(key, value)?;
+        let perform = crate::ControlWriteIntent::Perform;
+        (self.snapshot()).set_control_with_intent(module_id, key, value, perform)?;
         Ok(())
     }
 
