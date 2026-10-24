@@ -7,6 +7,7 @@
 use super::*;
 use crate::alloc_counter::allocator_events;
 use crate::control_request::{apply_declared, RtValue};
+use crate::factory::ModuleFactory;
 use crate::payload::{Payload, Retired};
 
 fn bank(cells: usize, steps: usize) -> Bank {
@@ -168,6 +169,43 @@ fn a_bank_change_beside_a_selection_keeps_it() {
     drop(replaced.unwrap());
     assert_eq!((seq.current_cell(), read(&seq, "cell")), (1, 1.0));
     assert_eq!(read(&seq, "cell_count"), 2.0);
+}
+
+/// A selection staged with a new bank plays in that bank whichever of the
+/// two lands first: it is clamped against the bank as it is acted on, not
+/// as it is applied, so the order a surface binds them in does not matter.
+/// It plays as a rebuild from the recorded document would.
+#[test]
+fn a_selection_staged_with_a_bank_plays_in_it_in_either_order() {
+    for selection_first in [true, false] {
+        let mut seq = CellSequencer::new(1000)
+            .with_step_count(2)
+            .with_cells(bank(1, 2));
+        if selection_first {
+            select(&mut seq, 2);
+        }
+        drop(
+            seq.apply_payload(table::CELLS, Payload::new(bank(3, 2)))
+                .unwrap(),
+        );
+        if !selection_first {
+            select(&mut seq, 2);
+        }
+        assert_eq!(read(&seq, "select_cell"), 2.0, "read back as asked for");
+        seq.process(1);
+        assert_eq!(
+            (seq.current_cell(), read(&seq, "cell")),
+            (2, 2.0),
+            "selection first: {selection_first}"
+        );
+    }
+
+    // The document records both writes; rebuilt, it starts on cell 2 too.
+    let config = serde_json::json!({ "cells": [[0], [1], [2]], "select_cell": 2 });
+    let mut built = CellSequencerFactory.build(1000, &config).unwrap().module;
+    let rebuilt = built.module_mut();
+    rebuilt.process(1);
+    assert_eq!(rebuilt.get_control("cell").unwrap(), 2.0);
 }
 
 #[test]
