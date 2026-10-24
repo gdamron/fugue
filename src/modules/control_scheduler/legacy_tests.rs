@@ -60,7 +60,6 @@ impl Locking {
         for type_id in [
             "filter",
             "lfo",
-            "mixer",
             "sample_slicer",
             "sample_kit",
         ] {
@@ -158,7 +157,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
     let entries = vec![
         entry(0, "filter", "cutoff", Number(500.0)),
         ramp("lfo", "rate", 4.0),
-        ramp("mixer", "level.0", 0.25),
         entry(0, "sample_slicer", "time_ratio", Number(2.0)),
         ramp("sample_kit", "level.0", 0.5),
         entry(0, "sample_player", "play", Bool(true)),
@@ -173,7 +171,6 @@ fn entries_and_ramps_into_every_legacy_family_allocate_nothing() {
     for (module, control, to) in [
         ("filter", "cutoff", 500.0),
         ("lfo", "rate", 4.0),
-        ("mixer", "level.0", 0.25),
         ("sample_slicer", "time_ratio", 2.0),
         ("sample_kit", "level.0", 0.5),
         ("sample_player", "pitch_ratio", 2.0),

@@ -17,7 +17,7 @@
 //!   audio-rate panning
 //! - A mixer rebuilt by an edit (a reload that changes its config) carries
 //!   on from the levels, pans and master its predecessor was playing, so the
-//!   rebuild glides rather than steps (FUG-375). A channel the rebuild
+//!   rebuild glides rather than steps. A channel the rebuild
 //!   removes still stops at once: its input goes with it
 //!
 //! # Example Invention
@@ -45,27 +45,36 @@
 
 use std::any::Any;
 use std::f32::consts::FRAC_PI_4;
+use std::sync::Arc;
 
+use crate::control_request::{
+    apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
+    Refusal, RtValue,
+};
 use crate::dsp::LinearRamp;
 use crate::traits::ControlMeta;
 use crate::Module;
 
-pub use self::controls::MixerControls;
-pub use self::factory::MixerFactory;
+use self::controls::{
+    level_index, pan_index, Channel, DEFAULT_LEVEL, DEFAULT_PAN, MASTER as MASTER_CONTROL,
+    MAX_LEVEL, TABLE,
+};
 
 mod controls;
 mod factory;
 mod inputs;
 mod outputs;
 
+pub use self::factory::MixerFactory;
+
 /// Maximum number of mixer channels supported.
 pub const MAX_CHANNELS: usize = 64;
 
 /// How long a level, pan or master change takes to arrive. A gain that
 /// changes between two samples steps the waveform, which is heard as a click
-/// (FUG-258 measured them on every fast fader move, on clicking a fader's
+/// (measured on every fast fader move, on clicking a fader's
 /// track and on a cancelled drag's restore). A pan change is a gain change on
-/// each side, so it glides the same way (FUG-376). Ten milliseconds removes
+/// each side, so it glides the same way. Ten milliseconds removes
 /// the step and is still shorter than one frame of a gesture at 60 Hz, so a
 /// moving fader never falls behind.
 pub const GAIN_RAMP_MS: f32 = 10.0;
@@ -106,9 +115,13 @@ pub fn gain_ramp_frames(sample_rate: u32) -> u32 {
 ///
 /// # Controls
 ///
-/// - `level.0` through `level.63` - Per-channel base levels
-/// - `pan.0` through `pan.63` - Per-channel base pan positions
+/// - `channel_count` - How many channels it has (read-only)
+/// - `level.0` through `level.{channel_count - 1}` - Per-channel base levels
+/// - `pan.0` through `pan.{channel_count - 1}` - Per-channel base pan positions
 /// - `master` - Master output level
+///
+/// Each is declared, so a write is a request the audio thread applies
+/// between blocks; a level or pan past the channel count does not exist.
 ///
 /// # Example
 ///
@@ -124,7 +137,12 @@ pub fn gain_ramp_frames(sample_rate: u32) -> u32 {
 /// ```
 pub struct Mixer {
     channels: usize,
-    ctrl: MixerControls,
+    /// What each control holds, published for control threads.
+    cells: Arc<ControlCells>,
+    /// The levels, pans and master the controls hold, as last applied.
+    level_targets: [f32; MAX_CHANNELS],
+    pan_targets: [f32; MAX_CHANNELS],
+    master_target: f32,
     /// The levels, pans and master the audio hears, gliding to the
     /// controls'. The pan glides before the pan law, so a glide stays
     /// equal-power all the way.
@@ -150,18 +168,14 @@ impl Mixer {
     /// Channel count is clamped to 1-64. Default levels are 1.0 (unity gain).
     pub fn new(channels: usize) -> Self {
         let channels = channels.clamp(1, MAX_CHANNELS);
-        let controls = MixerControls::new(channels);
-        Self::new_with_controls(channels, controls)
-    }
-
-    /// Creates a new mixer with the given controls.
-    pub fn new_with_controls(channels: usize, controls: MixerControls) -> Self {
-        let channels = channels.clamp(1, MAX_CHANNELS);
         let frames = gain_ramp_frames(DEFAULT_SAMPLE_RATE);
 
         Self {
             channels,
-            ctrl: controls,
+            cells: Arc::new(ControlCells::new(controls::defaults(channels))),
+            level_targets: [DEFAULT_LEVEL; MAX_CHANNELS],
+            pan_targets: [DEFAULT_PAN; MAX_CHANNELS],
+            master_target: DEFAULT_LEVEL,
             levels: [LinearRamp::new(0.0, frames); MAX_CHANNELS],
             pans: [LinearRamp::new(0.0, frames); MAX_CHANNELS],
             master: LinearRamp::new(0.0, frames),
@@ -184,36 +198,42 @@ impl Mixer {
     }
 
     /// Sets the level for a specific channel (0-indexed).
-    pub fn with_level(self, channel: usize, level: f32) -> Self {
-        self.ctrl.set_level(channel, level);
+    pub fn with_level(mut self, channel: usize, level: f32) -> Self {
+        self.set_level(channel, level);
         self
     }
 
     /// Sets the pan for a specific channel (0-indexed).
-    pub fn with_pan(self, channel: usize, pan: f32) -> Self {
-        self.ctrl.set_pan(channel, pan);
+    pub fn with_pan(mut self, channel: usize, pan: f32) -> Self {
+        self.set_pan(channel, pan);
         self
     }
 
     /// Sets the master output level.
-    pub fn with_master(self, level: f32) -> Self {
-        self.ctrl.set_master(level);
+    pub fn with_master(mut self, level: f32) -> Self {
+        self.set_master(level);
         self
     }
 
-    /// Sets the level for a specific channel.
+    /// Sets the level for a specific channel; one it does not have is
+    /// left alone.
     pub fn set_level(&mut self, channel: usize, level: f32) {
-        self.ctrl.set_level(channel, level);
+        if channel < self.channels {
+            let _ = apply_declared(self, level_index(channel), RtValue::F32(level));
+        }
     }
 
-    /// Sets the pan for a specific channel.
+    /// Sets the pan for a specific channel; one it does not have is left
+    /// alone.
     pub fn set_pan(&mut self, channel: usize, pan: f32) {
-        self.ctrl.set_pan(channel, pan);
+        if channel < self.channels {
+            let _ = apply_declared(self, pan_index(channel), RtValue::F32(pan));
+        }
     }
 
     /// Sets the master output level.
     pub fn set_master(&mut self, level: f32) {
-        self.ctrl.set_master(level);
+        let _ = apply_declared(self, MASTER_CONTROL, RtValue::F32(level));
     }
 
     /// Returns the number of channels.
@@ -221,20 +241,15 @@ impl Mixer {
         self.channels
     }
 
-    /// Returns a reference to the controls.
-    pub fn controls(&self) -> &MixerControls {
-        &self.ctrl
-    }
-
     /// Reads the controls once a block: a changed level, pan or master
     /// starts a glide; the first block starts at the controls' values.
     fn follow_controls(&mut self) {
         let started = self.heard > 0;
         for ch in 0..self.channels {
-            follow(&mut self.levels[ch], self.ctrl.level(ch), started);
-            follow(&mut self.pans[ch], self.ctrl.pan(ch), started);
+            follow(&mut self.levels[ch], self.level_targets[ch], started);
+            follow(&mut self.pans[ch], self.pan_targets[ch], started);
         }
-        follow(&mut self.master, self.ctrl.master(), started);
+        follow(&mut self.master, self.master_target, started);
         self.heard = self.channels;
     }
 
@@ -262,7 +277,7 @@ impl Mixer {
                 self.pans[ch].snap(previous.pans[ch].value());
             } else if ch < self.channels {
                 self.levels[ch].snap(UNHEARD_LEVEL);
-                self.pans[ch].snap(self.ctrl.pan(ch));
+                self.pans[ch].snap(self.pan_targets[ch]);
             }
         }
         self.master.snap(previous.master.value());
@@ -389,80 +404,48 @@ impl Module for Mixer {
             .is_some_and(|previous| self.carry_on_from(previous))
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    /// Holds a level, pan or master clamped to its range; the next block
+    /// glides to it. A channel the mixer does not have takes nothing, and
+    /// the channel count is its config's.
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        let RtValue::F32(value) = value else {
+            return Err(Refusal::Invalid);
+        };
+        let held = match (control, controls::channel(control)) {
+            (MASTER_CONTROL, _) => {
+                self.master_target = value.clamp(0.0, MAX_LEVEL);
+                self.master_target
+            }
+            (_, Some(Channel::Level(ch))) if ch < self.channels => {
+                self.level_targets[ch] = value.clamp(0.0, MAX_LEVEL);
+                self.level_targets[ch]
+            }
+            (_, Some(Channel::Pan(ch))) if ch < self.channels => {
+                self.pan_targets[ch] = value.clamp(-1.0, 1.0);
+                self.pan_targets[ch]
+            }
+            (_, Some(_)) => return Err(Refusal::Invalid),
+            _ => return Err(Refusal::Unsupported),
+        };
+        Ok(RtValue::F32(held))
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        let mut controls = Vec::with_capacity(self.channels * 2 + 1);
-
-        for i in 0..self.channels {
-            controls.push(
-                ControlMeta::new(format!("level.{}", i), format!("Channel {} level", i + 1))
-                    .with_range(0.0, 2.0)
-                    .with_default(1.0),
-            );
-            controls.push(
-                ControlMeta::new(format!("pan.{}", i), format!("Channel {} pan", i + 1))
-                    .with_range(-1.0, 1.0)
-                    .with_default(0.0),
-            );
-        }
-
-        controls.push(
-            ControlMeta::new("master", "Master output level")
-                .with_range(0.0, 2.0)
-                .with_default(1.0),
-        );
-
-        controls
+        local_controls(self)
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
-        if key == "master" {
-            return Ok(self.ctrl.master());
-        }
-
-        if let Some(rest) = key.strip_prefix("level.") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                if idx < self.channels {
-                    return Ok(self.ctrl.level(idx));
-                }
-            }
-        }
-
-        if let Some(rest) = key.strip_prefix("pan.") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                if idx < self.channels {
-                    return Ok(self.ctrl.pan(idx));
-                }
-            }
-        }
-
-        Err(format!("Unknown control: {}", key))
+        local_get(self, key)
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
-        if key == "master" {
-            self.ctrl.set_master(value);
-            return Ok(());
-        }
-
-        if let Some(rest) = key.strip_prefix("level.") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                if idx < self.channels {
-                    self.ctrl.set_level(idx, value);
-                    return Ok(());
-                }
-            }
-        }
-
-        if let Some(rest) = key.strip_prefix("pan.") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                if idx < self.channels {
-                    self.ctrl.set_pan(idx, value);
-                    return Ok(());
-                }
-            }
-        }
-
-        Err(format!("Unknown control: {}", key))
+        local_set(self, key, value)
     }
 }
 

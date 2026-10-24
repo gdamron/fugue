@@ -587,7 +587,7 @@ impl RunningInvention {
                 (keys, registry.reload_keys(module_type))
             },
             |module_id, key| self.control_kind(module_id, key),
-            |module_id, key| self.get_control(module_id, key).is_ok(),
+            |module_id, key| self.reload_writes(module_id, key),
         )
         .map_err(ReloadError::Invalid)?;
         #[cfg(not(target_arch = "wasm32"))]

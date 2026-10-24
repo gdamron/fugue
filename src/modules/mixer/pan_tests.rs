@@ -1,4 +1,4 @@
-//! Pan glides (FUG-376): a pan change moves the pan, not the gains, over
+//! Pan glides: a pan change moves the pan, not the gains, over
 //! [`GAIN_RAMP_MS`], and the pan CV input stays sample-exact.
 
 use super::tests::{left_blocks, ramp_frames, BLOCK};

@@ -472,7 +472,7 @@ impl ControlSurface for RecordingSurface {
 
 #[test]
 fn ramp_between_extreme_values_writes_only_finite_monotonic_values() {
-    // The FUG-302 repro: the control starts at f32::MIN and ramps to 3.4e38,
+    // The overflow repro: the control starts at f32::MIN and ramps to 3.4e38,
     // whose difference overflows f32.
     let surface = Arc::new(RecordingSurface {
         writes: Mutex::new(Vec::new()),
