@@ -11,6 +11,7 @@ use crate::control_request::{Outcome, Refusal, Request, RequestId, RequestValue,
 use crate::invention::publish::timed::EditTime;
 use crate::invention::runtime::GraphCommandError;
 use crate::test_support::dial::LEVEL;
+use crate::test_support::legacy_dial::LegacyDialFactory;
 use crate::ControlValue;
 
 /// Where the edits land: mid-block.
@@ -79,19 +80,20 @@ fn a_cancelled_edit_takes_its_writes_with_it() {
 #[test]
 fn a_write_the_edit_cannot_chain_refuses_it_with_nothing_queued() {
     let mut rig = beat_rig(97.0);
-    let filter = rig.build("fx", "filter", serde_json::json!({}));
+    rig.registry.register(LegacyDialFactory);
+    let legacy_dial = rig.build("fx", "legacy_dial", serde_json::json!({}));
     rig.live
         .edit(|change| {
-            change.upsert("fx", filter);
+            change.upsert("fx", legacy_dial);
             Ok(())
         })
         .unwrap();
-    let cutoff = ControlValue::Number(800.0);
-    let legacy = ("fx".to_string(), "cutoff".to_string(), cutoff);
+    let rate = ControlValue::Number(8.0);
+    let legacy = ("fx".to_string(), "rate".to_string(), rate);
     let error = queue(&rig, &[legacy]).unwrap_err();
     assert!(
         matches!(&error, GraphCommandError::ControlError(message)
-        if message.contains("fx.cutoff")),
+        if message.contains("fx.rate")),
         "{error}"
     );
     let too_loud = (

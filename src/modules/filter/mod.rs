@@ -33,16 +33,20 @@
 //! }
 //! ```
 
-use std::any::Any;
 use std::f32::consts::PI;
 use std::sync::Arc;
 
-use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::control_request::{
+    apply_declared, local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable,
+    Refusal, RtValue,
+};
+use crate::factory::{apply_control_keys, GraphModule, ModuleBuildResult, ModuleFactory};
+use crate::invention::declared::DeclaredSurface;
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::traits::ControlMeta;
 use crate::Module;
 
-pub use self::controls::FilterControls;
+use self::controls::{CUTOFF, CUTOFF_MOD_DEPTH, FILTER_TYPE, RESONANCE, TABLE};
 
 mod controls;
 mod inputs;
@@ -60,22 +64,24 @@ pub enum FilterType {
     BandPass,
 }
 
-/// Converts filter type to f32 index.
-fn filter_type_to_index(filter_type: FilterType) -> f32 {
-    match filter_type {
-        FilterType::LowPass => 0.0,
-        FilterType::HighPass => 1.0,
-        FilterType::BandPass => 2.0,
+impl FilterType {
+    /// Its position among the `filter_type` options.
+    fn position(self) -> u32 {
+        match self {
+            FilterType::LowPass => 0,
+            FilterType::HighPass => 1,
+            FilterType::BandPass => 2,
+        }
     }
-}
 
-/// Converts f32 index to filter type.
-fn index_to_filter_type(index: f32) -> FilterType {
-    match index.round() as i32 {
-        0 => FilterType::LowPass,
-        1 => FilterType::HighPass,
-        2 => FilterType::BandPass,
-        _ => FilterType::LowPass,
+    /// The type at `position` among the `filter_type` options.
+    fn from_position(position: u32) -> Option<Self> {
+        match position {
+            0 => Some(FilterType::LowPass),
+            1 => Some(FilterType::HighPass),
+            2 => Some(FilterType::BandPass),
+            _ => None,
+        }
     }
 }
 
@@ -116,8 +122,12 @@ fn fast_tan(x: f32) -> f32 {
 pub struct Filter {
     sample_rate: u32,
 
-    // Controls (shared with FilterControls handle)
-    ctrl: FilterControls,
+    // Controls, applied on the thread running the filter.
+    cutoff: f32,
+    resonance: f32,
+    filter_type: FilterType,
+    cutoff_mod_depth: f32,
+    cells: Arc<ControlCells>,
 
     // TPT SVF integrator state
     ic1eq: f32,
@@ -143,15 +153,21 @@ pub struct Filter {
 impl Filter {
     /// Creates a new filter with default controls.
     pub fn new(sample_rate: u32) -> Self {
-        let controls = FilterControls::new(1000.0, 0.0, FilterType::LowPass, 5000.0);
-        Self::new_with_controls(sample_rate, controls)
+        Self::with_cells(
+            sample_rate,
+            Arc::new(ControlCells::new(controls::defaults())),
+        )
     }
 
-    /// Creates a new filter with the given controls.
-    pub fn new_with_controls(sample_rate: u32, controls: FilterControls) -> Self {
-        Self {
+    /// A filter holding what `cells` hold, applied (so clamped).
+    fn with_cells(sample_rate: u32, cells: Arc<ControlCells>) -> Self {
+        let mut filter = Self {
             sample_rate,
-            ctrl: controls,
+            cutoff: 1000.0,
+            resonance: 0.0,
+            filter_type: FilterType::LowPass,
+            cutoff_mod_depth: 5000.0,
+            cells,
             ic1eq: 0.0,
             ic2eq: 0.0,
             inputs: inputs::FilterInputs::new(),
@@ -163,46 +179,53 @@ impl Filter {
             coeff_a1: 0.0,
             coeff_a2: 0.0,
             coeff_a3: 0.0,
+        };
+        for index in 0..TABLE.len() {
+            let index = ControlIndex(index as u16);
+            if let Some(value) = filter.cells.load(index) {
+                let _ = apply_declared(&mut filter, index, value);
+            }
         }
+        filter
     }
 
     /// Sets the filter type (legacy API).
-    pub fn with_filter_type(self, filter_type: FilterType) -> Self {
-        self.ctrl.set_filter_type(filter_type);
+    pub fn with_filter_type(mut self, filter_type: FilterType) -> Self {
+        self.set_filter_type(filter_type);
         self
     }
 
     /// Sets the cutoff frequency in Hz (legacy API).
-    pub fn with_cutoff(self, cutoff: f32) -> Self {
-        self.ctrl.set_cutoff(cutoff);
+    pub fn with_cutoff(mut self, cutoff: f32) -> Self {
+        self.set_cutoff(cutoff);
         self
     }
 
     /// Sets the resonance (legacy API).
-    pub fn with_resonance(self, resonance: f32) -> Self {
-        self.ctrl.set_resonance(resonance);
+    pub fn with_resonance(mut self, resonance: f32) -> Self {
+        self.set_resonance(resonance);
         self
     }
 
     /// Sets the CV modulation amount in Hz (legacy API).
-    pub fn with_cutoff_mod_depth(self, amount: f32) -> Self {
-        self.ctrl.set_cutoff_mod_depth(amount);
+    pub fn with_cutoff_mod_depth(mut self, amount: f32) -> Self {
+        let _ = apply_declared(&mut self, CUTOFF_MOD_DEPTH, RtValue::F32(amount));
         self
     }
 
     /// Sets the filter type (legacy API).
     pub fn set_filter_type(&mut self, filter_type: FilterType) {
-        self.ctrl.set_filter_type(filter_type);
+        let _ = apply_declared(self, FILTER_TYPE, RtValue::U32(filter_type.position()));
     }
 
     /// Sets the cutoff frequency in Hz (legacy API).
     pub fn set_cutoff(&mut self, cutoff: f32) {
-        self.ctrl.set_cutoff(cutoff);
+        let _ = apply_declared(self, CUTOFF, RtValue::F32(cutoff));
     }
 
     /// Sets the resonance (legacy API).
     pub fn set_resonance(&mut self, resonance: f32) {
-        self.ctrl.set_resonance(resonance);
+        let _ = apply_declared(self, RESONANCE, RtValue::F32(resonance));
     }
 
     /// Processes one sample through the filter using the trapezoidal integrated
@@ -272,15 +295,15 @@ impl Module for Filter {
         let control_cutoff = if self.inputs.cutoff_connected() {
             0.0
         } else {
-            self.ctrl.cutoff()
+            self.cutoff
         };
         let control_resonance = if self.inputs.resonance_connected() {
             0.0
         } else {
-            self.ctrl.resonance()
+            self.resonance
         };
-        let cutoff_mod_depth = self.ctrl.cutoff_mod_depth();
-        let filter_type = self.ctrl.filter_type();
+        let cutoff_mod_depth = self.cutoff_mod_depth;
+        let filter_type = self.filter_type;
 
         let mut i = 0;
         while i < frames {
@@ -325,57 +348,45 @@ impl Module for Filter {
         self.inputs.set_connected(index, connected);
     }
 
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&TABLE, &self.cells))
+    }
+
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        let applied = match (control, value) {
+            (CUTOFF, RtValue::F32(cutoff)) => {
+                self.cutoff = cutoff.clamp(20.0, 20000.0);
+                RtValue::F32(self.cutoff)
+            }
+            (RESONANCE, RtValue::F32(resonance)) => {
+                self.resonance = resonance.clamp(0.0, 1.0);
+                RtValue::F32(self.resonance)
+            }
+            (FILTER_TYPE, RtValue::U32(position)) => {
+                self.filter_type = FilterType::from_position(position).ok_or(Refusal::Invalid)?;
+                value
+            }
+            (CUTOFF_MOD_DEPTH, RtValue::F32(depth)) => {
+                self.cutoff_mod_depth = depth.max(0.0);
+                RtValue::F32(self.cutoff_mod_depth)
+            }
+            _ => return Err(Refusal::Unsupported),
+        };
+        Ok(applied)
+    }
+
     fn controls(&self) -> Vec<ControlMeta> {
-        vec![
-            ControlMeta::new("cutoff", "Cutoff frequency in Hz")
-                .with_range(20.0, 20000.0)
-                .with_default(1000.0),
-            ControlMeta::new("resonance", "Resonance/Q")
-                .with_range(0.0, 1.0)
-                .with_default(0.0),
-            ControlMeta::new("filter_type", "Filter type")
-                .with_default(0.0)
-                .with_variants(vec![
-                    "LowPass".to_string(),
-                    "HighPass".to_string(),
-                    "BandPass".to_string(),
-                ]),
-            ControlMeta::new("cutoff_mod_depth", "CV modulation depth in Hz")
-                .with_range(0.0, 10000.0)
-                .with_default(5000.0),
-        ]
+        local_controls(self)
     }
 
     fn get_control(&self, key: &str) -> Result<f32, String> {
-        match key {
-            "cutoff" => Ok(self.ctrl.cutoff()),
-            "resonance" => Ok(self.ctrl.resonance()),
-            "filter_type" => Ok(filter_type_to_index(self.ctrl.filter_type())),
-            "cutoff_mod_depth" => Ok(self.ctrl.cutoff_mod_depth()),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_get(self, key)
     }
 
     fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
-        match key {
-            "cutoff" => {
-                self.ctrl.set_cutoff(value);
-                Ok(())
-            }
-            "resonance" => {
-                self.ctrl.set_resonance(value);
-                Ok(())
-            }
-            "filter_type" => {
-                self.ctrl.set_filter_type(index_to_filter_type(value));
-                Ok(())
-            }
-            "cutoff_mod_depth" => {
-                self.ctrl.set_cutoff_mod_depth(value);
-                Ok(())
-            }
-            _ => Err(format!("Unknown control: {}", key)),
-        }
+        local_set(self, key, value)
     }
 }
 
@@ -383,9 +394,9 @@ impl Module for Filter {
 pub struct FilterFactory;
 
 const TYPE_ID: &str = "filter";
-const CUTOFF: ConfigKey = ConfigKey::float("cutoff");
-const RESONANCE: ConfigKey = ConfigKey::float("resonance");
-const CUTOFF_MOD_DEPTH: ConfigKey = ConfigKey::float("cutoff_mod_depth");
+const CUTOFF_KEY: ConfigKey = ConfigKey::float("cutoff");
+const RESONANCE_KEY: ConfigKey = ConfigKey::float("resonance");
+const CUTOFF_MOD_DEPTH_KEY: ConfigKey = ConfigKey::float("cutoff_mod_depth");
 
 impl ModuleFactory for FilterFactory {
     fn type_id(&self) -> &'static str {
@@ -393,14 +404,7 @@ impl ModuleFactory for FilterFactory {
     }
 
     fn config_keys(&self) -> &'static [ConfigKey] {
-        const {
-            &[
-                CUTOFF,
-                RESONANCE,
-                CUTOFF_MOD_DEPTH,
-                ConfigKey::text("filter_type"),
-            ]
-        }
+        &[CUTOFF_KEY, RESONANCE_KEY, CUTOFF_MOD_DEPTH_KEY]
     }
 
     fn build(
@@ -408,36 +412,31 @@ impl ModuleFactory for FilterFactory {
         sample_rate: u32,
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
-        let filter_type = parse_filter_type(
-            config
-                .get("filter_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("lowpass"),
-        )?;
-
         let reader = ConfigReader::new(TYPE_ID, config);
-        let cutoff = reader.float(&CUTOFF)?.unwrap_or(1000.0);
-        let resonance = reader.float(&RESONANCE)?.unwrap_or(0.0);
-        let cutoff_mod_depth = reader.float(&CUTOFF_MOD_DEPTH)?.unwrap_or(5000.0);
+        let cutoff = reader.float(&CUTOFF_KEY)?.unwrap_or(1000.0);
+        let resonance = reader.float(&RESONANCE_KEY)?.unwrap_or(0.0);
+        let cutoff_mod_depth = reader.float(&CUTOFF_MOD_DEPTH_KEY)?.unwrap_or(5000.0);
 
-        let controls = FilterControls::new(cutoff, resonance, filter_type, cutoff_mod_depth);
-        let filter = Filter::new_with_controls(sample_rate, controls.clone());
+        let cells = Arc::new(ControlCells::new(controls::defaults()));
+        cells.publish(CUTOFF, RtValue::F32(cutoff));
+        cells.publish(RESONANCE, RtValue::F32(resonance));
+        cells.publish(CUTOFF_MOD_DEPTH, RtValue::F32(cutoff_mod_depth));
+        let surface = DeclaredSurface::new(TABLE.clone(), cells.clone());
+        // Only text names a filter type; anything else leaves the default,
+        // as it always has.
+        let named = config
+            .get("filter_type")
+            .is_some_and(|value| value.is_string());
+        apply_control_keys(&surface, config, |key| named && key == "filter_type")?;
+        let filter = Filter::with_cells(sample_rate, cells);
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(filter)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(surface)),
             sink: None,
         })
     }
-}
-
-/// Parses a filter type string into a FilterType enum.
-fn parse_filter_type(s: &str) -> Result<FilterType, Box<dyn std::error::Error>> {
-    FilterControls::parse_filter_type(s).map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -503,9 +502,7 @@ mod tests {
         let module = result.module.module();
         assert_eq!(module.name(), "Filter");
 
-        // Check that controls handle is returned
-        assert_eq!(result.handles.len(), 1);
-        assert_eq!(result.handles[0].0, "controls");
+        assert!(result.control_surface.is_some());
     }
 
     #[test]
@@ -533,5 +530,74 @@ mod tests {
         let mut filter = Filter::new(44100);
         assert!(filter.set_input("cutoff_mod", 1.0).is_ok());
         assert!(filter.set_input("cutoff_cv", 1.0).is_err());
+    }
+
+    #[test]
+    fn every_filter_type_spelling_still_loads() {
+        let registry = crate::ModuleRegistry::default();
+        for (spelled, read) in [
+            ("lowpass", "lowpass"),
+            ("low_pass", "lowpass"),
+            ("LPF", "lowpass"),
+            ("low", "lowpass"),
+            ("highpass", "highpass"),
+            ("high_pass", "highpass"),
+            ("hpf", "highpass"),
+            ("High", "highpass"),
+            ("bandpass", "bandpass"),
+            ("band_pass", "bandpass"),
+            ("bpf", "bandpass"),
+            ("band", "bandpass"),
+        ] {
+            let config = serde_json::json!({ "filter_type": spelled });
+            let built = registry.build("filter", 48_000, &config).unwrap();
+            let surface = built.control_surface.unwrap();
+            assert_eq!(surface.get_control("filter_type").unwrap(), read.into());
+            surface.set_control("filter_type", spelled.into()).unwrap();
+            assert_eq!(surface.get_control("filter_type").unwrap(), read.into());
+        }
+        let config = serde_json::json!({ "filter_type": "notch" });
+        assert!(registry.build("filter", 48_000, &config).is_err());
+        // Anything but text still leaves the default.
+        for config in [
+            serde_json::json!({ "filter_type": null }),
+            serde_json::json!({ "filter_type": 2 }),
+        ] {
+            let built = registry.build("filter", 48_000, &config).unwrap();
+            let surface = built.control_surface.unwrap();
+            assert_eq!(
+                surface.get_control("filter_type").unwrap(),
+                "lowpass".into()
+            );
+        }
+    }
+
+    #[test]
+    fn there_is_no_type_alias_for_the_filter_type() {
+        // Neither a document's config nor a control write has ever taken
+        // `type` for `filter_type`; the declared table does not start to.
+        let registry = crate::ModuleRegistry::default();
+        let config = serde_json::json!({ "type": "highpass" });
+        assert!(registry.build("filter", 48_000, &config).is_err());
+        let built = registry
+            .build("filter", 48_000, &serde_json::json!({}))
+            .unwrap();
+        let surface = built.control_surface.unwrap();
+        assert!(surface.set_control("type", "highpass".into()).is_err());
+    }
+
+    #[test]
+    fn controls_clamp_as_they_always_did() {
+        let mut filter = Filter::new(44100);
+        filter.set_control("cutoff", 5.0).unwrap();
+        assert_eq!(filter.get_control("cutoff").unwrap(), 20.0);
+        filter.set_control("cutoff", 99999.0).unwrap();
+        assert_eq!(filter.get_control("cutoff").unwrap(), 20000.0);
+        filter.set_control("resonance", 3.0).unwrap();
+        assert_eq!(filter.get_control("resonance").unwrap(), 1.0);
+        filter.set_control("cutoff_mod_depth", -1.0).unwrap();
+        assert_eq!(filter.get_control("cutoff_mod_depth").unwrap(), 0.0);
+        assert!(filter.set_control("filter_type", 3.0).is_err());
+        assert!(filter.set_control("cutoff", f32::NAN).is_err());
     }
 }

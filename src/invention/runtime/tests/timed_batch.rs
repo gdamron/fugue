@@ -8,6 +8,7 @@ use crate::control_request::Timeline;
 use crate::invention::manual_backend::{start_manual, Pump};
 use crate::modules::Clock;
 use crate::rpc::{EditWhen, RequestState, RpcErrorCode, StructuralEdit};
+use crate::test_support::legacy_dial::LegacyDialFactory;
 
 const DOCUMENT: &str = r#"{
     "version": "1.0.0",
@@ -150,11 +151,21 @@ fn a_reload_on_the_next_downbeat_lands_whole_on_it() {
 
 #[test]
 fn what_cannot_land_whole_is_refused_with_nothing_queued() {
-    let (mut running, audio) = start();
+    let mut registry = crate::ModuleRegistry::default();
+    registry.register(LegacyDialFactory);
+    let document = DOCUMENT.replace(
+        r#"{ "id": "dac""#,
+        r#"{ "id": "ld", "type": "legacy_dial" }, { "id": "dac""#,
+    );
+    let invention = Invention::from_json(&document).unwrap();
+    let (runtime, _) = InventionBuilder::with_registry(48_000, registry)
+        .build(invention)
+        .unwrap();
+    let (mut running, audio) = start_manual(runtime);
     // A legacy control of a module it keeps, which cannot be timed yet.
     let legacy = vec![
         add("lfo", "lfo", serde_json::json!({})),
-        set("fx", "cutoff", 800.0),
+        set("ld", "rate", 8.0),
     ];
     // No structure: a control write, for set_control to time.
     let controls_only = vec![set("osc", "frequency", 330.0)];
