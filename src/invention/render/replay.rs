@@ -167,7 +167,7 @@ impl Replay {
             let surface = surfaces.get(&due.module_id);
             due.control = (surface.and_then(|surface| surface.declaration(&due.key)))
                 .map(|declaration| declaration.index);
-            due.follow = surface
+            due.follow = (surface.filter(|_| due.control.is_some()))
                 .filter(|surface| surface.writes_legacy(&due.key))
                 .cloned();
             if due.control.is_none() {
@@ -243,12 +243,13 @@ impl Replay {
             let applied = due.control.map(|control| {
                 graph.apply_control_due(&due.module_id, control, due.value, due.due)
             });
-            if !matches!(applied, Some(Ok(_))) {
+            // A development's legacy aliases took the value as live wrote
+            // it, unlogged (the log is not exact); one refusing it counts.
+            let follow = |surface: &ControlSurfaceInstance| {
+                surface.follow_declared(&due.key, due.value).is_ok()
+            };
+            if !matches!(applied, Some(Ok(_))) || !due.follow.as_ref().is_none_or(follow) {
                 self.refused += 1;
-            } else if let Some(surface) = &due.follow {
-                // A development's legacy aliases took the value as live
-                // wrote it; they are never logged (the log is not exact).
-                let _ = surface.follow_declared(&due.key, due.value);
             }
             self.next += 1;
         }
