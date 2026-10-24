@@ -140,6 +140,7 @@ impl LiveGraph {
                 raw: Some(write.raw),
                 beat: None,
                 automated,
+                authored: None,
             };
             pending.submitted(id, write);
         }

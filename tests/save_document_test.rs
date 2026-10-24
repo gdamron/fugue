@@ -107,7 +107,8 @@ fn mutated_invention_round_trips_to_an_equivalent_graph() {
         .set_control("lead", "level", ControlValue::Number(0.7))
         .unwrap();
 
-    let document = running.document().expect("document retained");
+    // What a save writes: every authored write made, once applied.
+    let document = running.document_to_save().expect("document retained");
     running.stop();
 
     // The mutations landed in the document.
@@ -153,7 +154,7 @@ fn integral_control_values_save_as_json_integers() {
     running
         .set_control("lead", "level", ControlValue::Number(16.0))
         .unwrap();
-    let document = running.document().expect("document retained");
+    let document = running.document_to_save().expect("document retained");
     running.stop();
 
     let lead = document

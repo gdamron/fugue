@@ -517,7 +517,8 @@ fn performed_control_writes_are_announced_but_never_authored() {
             ControlValue::Number(550.0),
         )])
         .unwrap();
-    assert_eq!(authored_frequency(&running), Some(550.0));
+    // Recorded as the audio thread applies it.
+    assert!(wait_until(|| authored_frequency(&running) == Some(550.0)));
 
     running.stop();
     assert_eq!(
