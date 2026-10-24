@@ -52,18 +52,3 @@ impl AudioBackend for NullAudioBackend {
         }
     }
 }
-
-/// Polls `done` until it holds, for up to ten seconds: a write is recorded
-/// in the document as the audio thread applies it, a block or so after it
-/// is made.
-#[allow(dead_code)] // not every test binary waits
-pub fn wait_until(mut done: impl FnMut() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        if done() {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
-    done()
-}

@@ -370,3 +370,28 @@ fn an_authored_write_the_stored_number_holds_as_an_f32_leaves_it_alone() {
         number(300.0)
     );
 }
+
+/// What a save writes waits for the audio thread to apply an authored
+/// write, a bounded time: a stream that never takes it leaves it out, and
+/// the write is recorded once it applies.
+#[test]
+fn a_document_to_save_waits_a_bounded_time_for_authored_writes() {
+    let frequency = |document: Option<Invention>| {
+        let document = document.unwrap();
+        let osc1 = document.modules.iter().find(|spec| spec.id == "osc1");
+        osc1.unwrap().config["frequency"].clone()
+    };
+    let (running, pump) = start_pumped(BASE);
+    running
+        .set_control("osc1", "frequency", number(330.0))
+        .unwrap();
+    let started = std::time::Instant::now();
+    assert_eq!(frequency(running.document_to_save()), json!(440.0));
+    let waited = started.elapsed();
+    assert!(
+        waited >= crate::invention::publish::APPLY_WAIT,
+        "{waited:?}"
+    );
+    pump.block();
+    assert_eq!(frequency(running.document_to_save()), json!(330));
+}

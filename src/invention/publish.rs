@@ -55,6 +55,8 @@ mod timed_swap;
 mod watch;
 
 pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use authored::APPLY_WAIT;
 pub(crate) use pending::{Authoring, DocumentStep, PendingLog, PendingWrite};
 pub(crate) use publisher::{Publisher, Refused};
 pub(crate) use reclaim::Reclaimer;

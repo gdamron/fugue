@@ -45,14 +45,6 @@ fn invention_with_path_development(dir: &Path) -> PathBuf {
     path
 }
 
-/// The `level` the retained document holds for `lead`, once the write
-/// making it has applied.
-fn lead_level(running: &RunningInvention) -> serde_json::Value {
-    let document = running.document().expect("document retained");
-    let lead = document.modules.iter().find(|module| module.id == "lead");
-    lead.unwrap().config["level"].clone()
-}
-
 fn start_from_file(path: &Path) -> RunningInvention {
     let invention = Invention::from_file(path.to_str().unwrap()).unwrap();
     let (runtime, _) = InventionBuilder::new(SAMPLE_RATE).build(invention).unwrap();
@@ -114,9 +106,9 @@ fn mutated_invention_round_trips_to_an_equivalent_graph() {
     running
         .set_control("lead", "level", ControlValue::Number(0.7))
         .unwrap();
-    assert!(support::wait_until(|| lead_level(&running) == 0.7));
 
-    let document = running.document().expect("document retained");
+    // What a save writes: every authored write made, once applied.
+    let document = running.document_to_save().expect("document retained");
     running.stop();
 
     // The mutations landed in the document.
@@ -162,8 +154,7 @@ fn integral_control_values_save_as_json_integers() {
     running
         .set_control("lead", "level", ControlValue::Number(16.0))
         .unwrap();
-    assert!(support::wait_until(|| lead_level(&running) == 16.0));
-    let document = running.document().expect("document retained");
+    let document = running.document_to_save().expect("document retained");
     running.stop();
 
     let lead = document
