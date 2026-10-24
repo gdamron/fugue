@@ -11,6 +11,8 @@
 //! replaced in what plays.
 
 use std::sync::{Mutex, PoisonError};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
 
 use super::timed::adopt_into;
 use super::timed_status::{CancelCause, Touched};
@@ -19,7 +21,35 @@ use crate::control_request::RequestId;
 use crate::invention::audio_assets;
 use crate::invention::state::RuntimeState;
 
+/// The longest a caller waits for the audio thread to take what it was
+/// handed: a device stream takes a write within a block or two, so a write
+/// still waiting after this is held up by something other than the audio
+/// thread's next callback (a stream stopped or stalled).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const APPLY_WAIT: Duration = Duration::from_millis(200);
+
 impl LiveGraph {
+    /// Waits, at most `bound`, until every authored write made so far has
+    /// applied and been recorded, or been refused. Returns whether none is
+    /// still waiting. A graph with no clock settles each write before the
+    /// call making it returns, so it never waits.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn settle_authored(&self, bound: Duration) -> bool {
+        let deadline = std::time::Instant::now() + bound;
+        loop {
+            self.adopt_landed();
+            let pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+            if !pending.authoring() {
+                return true;
+            }
+            drop(pending);
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     /// Catches the retained document up with the audio thread, under the
     /// publisher (see the module docs).
     pub(super) fn catch_up(&self, publisher: &mut Publisher) {
