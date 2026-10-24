@@ -283,6 +283,16 @@ fn a_rebased_write_names_the_same_file_from_the_other_directory() {
         rebased(Some(beside), "/abs/kick.wav"),
         text("/abs/kick.wav")
     );
+    // Relative invention paths, as `from_file` keeps them: the fallback is
+    // absolute, so the incoming directory does not re-root it.
+    let rebased = rebase_asset_write(
+        Some(Path::new("a/piece.json")),
+        Some(Path::new("b/piece.json")),
+        "asset.0",
+        &text("sub/new.wav"),
+    );
+    let expected = std::path::absolute("a/sub/new.wav").unwrap();
+    assert_eq!(rebased, text(&expected.to_string_lossy()));
     let level = rebase_asset_write(Some(from), Some(beside), "level", &text("kick.wav"));
     assert_eq!(level, text("kick.wav"));
 }

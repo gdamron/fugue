@@ -79,10 +79,11 @@ pub(crate) fn rebase_asset_write(
     if !is_asset_control(key) || !is_relative_path(text) {
         return value.clone();
     }
-    let file = join(from_dir, text);
+    // Absolute, so the fallback names the file whatever directory a
+    // relative invention path is later read against.
     let absolute = |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let file = absolute(Path::new(&join(from_dir, text)));
     let relative = to_dir.and_then(|dir| {
-        let file = absolute(Path::new(&file));
         let relative = file.strip_prefix(absolute(dir)).ok()?;
         Some(
             relative
@@ -90,7 +91,7 @@ pub(crate) fn rebase_asset_write(
                 .replace(std::path::MAIN_SEPARATOR, "/"),
         )
     });
-    ControlValue::String(relative.unwrap_or(file))
+    ControlValue::String(relative.unwrap_or_else(|| file.to_string_lossy().into_owned()))
 }
 
 /// Whether the loader would join `text` to the invention's directory: a
