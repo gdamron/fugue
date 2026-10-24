@@ -22,6 +22,7 @@ use crate::payload::Payload;
 use crate::traits::check_finite;
 use crate::{ControlKind, ControlMeta, ControlScale, ControlValue};
 
+mod bounds;
 mod hints;
 
 /// What a declared control holds, and so which [`RtValue`] carries it.
@@ -181,7 +182,8 @@ pub(crate) struct ControlDecl {
     pub(crate) codec: Option<PayloadCodec>,
     /// For an indexed control, the control whose value bounds which of its
     /// indices clients list: `key.N` is listed while `N` is below it. Every
-    /// index is still read and written.
+    /// index is still read and written, unless the count is read-only: then
+    /// none at or past it exists (see [`bounds`]).
     pub(crate) listed_below: Option<&'static str>,
     /// For a number its module truncates toward zero as it applies (a
     /// note, a count), so a ramp steps through whole values: held so
