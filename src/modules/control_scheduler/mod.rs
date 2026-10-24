@@ -759,6 +759,8 @@ mod payload_tests;
 #[cfg(test)]
 mod player_tests;
 #[cfg(test)]
+mod queued_event_tests;
+#[cfg(test)]
 mod refused_tests;
 #[cfg(test)]
 mod tests;

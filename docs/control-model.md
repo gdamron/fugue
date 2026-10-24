@@ -114,8 +114,10 @@ editor hints, and whether a write is an event.
   Automation, a scheduler's writes from the audio thread, is the
   exception. It keeps one write per control per block, so a schedule
   entry on an event (a cell sequencer's `next_cell`, a clock's `reset`)
-  fires it once. A ramp on an event is refused, since it would fire on
-  every block it crosses.
+  fires it once. A module whose every event must play, such as an
+  instrument whose notes form chords, queues its automation events
+  instead: each applies, in the order written. A ramp on an event is
+  refused, since it would fire on every block it crosses.
 
 Module types not yet migrated are listed in
 [`LEGACY_CONTROLS`](../src/control_request/legacy.rs). They keep their old
@@ -215,6 +217,11 @@ drain, so each entry lands on the exact sample of its step.
 
 - A slot holds only the latest write, so automation coalesces to the last
   value per block, or per sample inside a feedback group.
+- A module may queue its event controls' writes instead
+  (`ControlCells::queuing_events`): every one is kept, in write order, and
+  applied after its slots. The queue is bounded; a write finding no room
+  is refused and counted. Its last places can be kept for one control, a
+  release, so note ons crowding it cannot strand the notes they start.
 - A write to a held control is dropped and counted.
 - A refused write is counted, never formatted: no allocation on the audio
   thread for an error message.

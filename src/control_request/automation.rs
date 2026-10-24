@@ -23,6 +23,9 @@
 //! automation's next event on its control ([`Automation::begin`]): it
 //! frees the control first, and replaces every ramp an earlier entry on it
 //! started, whoever played either (see [`Automation::begun`]).
+//!
+//! A module whose events must each play, a chord's notes at one step,
+//! queues them instead of coalescing them (see [`events`]).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -32,6 +35,10 @@ use super::declare::{integer_domain, DeclKind};
 use super::event::EventCounter;
 use super::request::{ControlIndex, RtValue};
 use crate::Module;
+
+mod events;
+
+pub(crate) use events::{EventQueue, EventReserve};
 
 /// An empty slot: no tag [`encode`] makes.
 const EMPTY: u64 = u64::MAX;
@@ -45,27 +52,42 @@ pub(crate) struct AutomationSlots {
     /// Per control, when a schedule entry last began on it (see
     /// [`Automation::begun`]).
     begun: Box<[AtomicU64]>,
+    /// Writes to event controls, each kept, for a module that queues
+    /// them; empty for one whose events coalesce in their slots.
+    events: EventQueue,
     pending: AtomicBool,
     refused: EventCounter,
     overridden: EventCounter,
 }
 
 impl AutomationSlots {
-    pub(super) fn new(len: usize) -> Self {
+    pub(super) fn new(len: usize, events: EventQueue) -> Self {
         Self {
             slots: (0..len).map(|_| AtomicU64::new(EMPTY)).collect(),
             begun: (0..len).map(|_| AtomicU64::new(0)).collect(),
+            events,
             pending: AtomicBool::new(false),
             refused: EventCounter::new(),
             overridden: EventCounter::new(),
         }
     }
 
-    fn write(&self, index: ControlIndex, value: RtValue) {
-        if let Some(slot) = self.slots.get(usize::from(index.0)) {
-            slot.store(encode(value), Ordering::Relaxed);
-            self.pending.store(true, Ordering::Relaxed);
+    /// Stores a write in `index`'s slot, or queues it when `index` is an
+    /// event and the module queues its events (counted refused when there
+    /// is no room).
+    fn write(&self, index: ControlIndex, value: RtValue, event: bool) {
+        if usize::from(index.0) >= self.slots.len() {
+            return;
         }
+        if event && self.events.queues() {
+            if !self.events.push(index, value) {
+                self.refused.record();
+                return;
+            }
+        } else {
+            self.slots[usize::from(index.0)].store(encode(value), Ordering::Relaxed);
+        }
+        self.pending.store(true, Ordering::Relaxed);
     }
 
     /// The latest write to `index` waiting for the module to process.
@@ -91,9 +113,9 @@ impl AutomationSlots {
 }
 
 /// Applies every automation write waiting for `module`, in control order,
-/// counting refusals. Call it on the audio thread just before the module
-/// processes. Allocation-, free- and lock-free; one `Relaxed` load when
-/// nothing is waiting.
+/// then its queued events in the order written, counting refusals. Call it
+/// on the audio thread just before the module processes. Allocation-,
+/// free- and lock-free; one `Relaxed` load when nothing is waiting.
 #[inline]
 pub(crate) fn take_automation<M: Module + ?Sized>(module: &mut M) {
     let len = match module.declared() {
@@ -117,6 +139,26 @@ pub(crate) fn take_automation<M: Module + ?Sized>(module: &mut M) {
                 cells.automation.refused.record();
             }
         }
+    }
+    let queued = match module.declared() {
+        Some((_, cells)) => cells.automation.events.len(),
+        None => return,
+    };
+    for position in 0..queued {
+        let Some((index, value)) = module
+            .declared()
+            .and_then(|(_, cells)| cells.automation.events.get(position))
+        else {
+            break;
+        };
+        if apply_declared(module, index, value).is_err() {
+            if let Some((_, cells)) = module.declared() {
+                cells.automation.refused.record();
+            }
+        }
+    }
+    if let Some((_, cells)) = module.declared() {
+        cells.automation.events.clear();
     }
 }
 
@@ -247,7 +289,7 @@ impl Automation {
                 false
             }
             (Some(value), None) => {
-                self.cells.automation.write(self.index, value);
+                self.cells.automation.write(self.index, value, self.event);
                 true
             }
         }

@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::automation::AutomationSlots;
+use super::automation::{AutomationSlots, EventQueue, EventReserve};
 use super::hold::Holds;
 use super::pending::Refusal;
 use super::request::{ControlIndex, RtValue};
@@ -47,11 +47,29 @@ impl ControlCells {
     /// Cells holding `values`, in control index order. Allocates: call it on
     /// a control thread, as the module is built.
     pub(crate) fn new(values: impl IntoIterator<Item = RtValue>) -> Self {
+        Self::with_events(values, EventQueue::none())
+    }
+
+    /// Cells holding `values` whose module queues its event controls'
+    /// automation writes, every one kept in the order made, up to
+    /// `capacity` a block, rather than coalescing them (see
+    /// [`super::automation`]): a note is not lost to another at the same
+    /// step. The last places of `reserve` are kept for its control, a
+    /// release. Allocates: control thread.
+    pub(crate) fn queuing_events(
+        values: impl IntoIterator<Item = RtValue>,
+        capacity: usize,
+        reserve: Option<EventReserve>,
+    ) -> Self {
+        Self::with_events(values, EventQueue::new(capacity, reserve))
+    }
+
+    fn with_events(values: impl IntoIterator<Item = RtValue>, events: EventQueue) -> Self {
         let cells: Box<[AtomicU64]> = values
             .into_iter()
             .map(|value| AtomicU64::new(encode(value)))
             .collect();
-        let automation = AutomationSlots::new(cells.len());
+        let automation = AutomationSlots::new(cells.len(), events);
         let holds = Holds::new(cells.len());
         Self {
             cells,
