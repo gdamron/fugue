@@ -1,6 +1,7 @@
 //! Control reads and writes on a running invention.
 
 use super::{GraphCommandError, RunningInvention};
+use crate::control_request::Writer;
 use crate::{ControlMeta, ControlValue};
 
 impl RunningInvention {
@@ -38,6 +39,19 @@ impl RunningInvention {
         let surfaces = self.control_surfaces.lock().unwrap();
         let declaration = surfaces.get(module_id)?.declaration(key)?;
         Some(declaration.decl.kind.config_kind())
+    }
+
+    /// Whether a reload can write `key` of `module_id` as a control: one
+    /// the module reads back and clients write. A read-only control (a
+    /// mixer's `channel_count`) changes only as its module is rebuilt.
+    pub(crate) fn reload_writes(&self, module_id: &str, key: &str) -> bool {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        let Some(surface) = surfaces.get(module_id) else {
+            return false;
+        };
+        let read_only = (surface.declaration(key))
+            .is_some_and(|declared| declared.decl.writer == Writer::Telemetry);
+        surface.get_control(key).is_ok() && !read_only
     }
 
     /// Gets the current value of a module control.

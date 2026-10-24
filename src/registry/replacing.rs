@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 
 use super::ModuleRegistry;
-use crate::control_request::ControlIndex;
-use crate::factory::ModuleBuildResult;
-use crate::module_config::{replaced_by, ConfigKey};
+use crate::module_config::ConfigKey;
+#[cfg(debug_assertions)]
+use crate::{
+    control_request::ControlIndex, factory::ModuleBuildResult, module_config::replaced_by,
+};
 
 /// The config keys of each type that declares a replacing key, as a
 /// registry declares them.
@@ -39,6 +41,7 @@ impl ReplacingKeys {
 /// from what it does hold (a melody's whole scale rederives the weights
 /// not written to single positions, and keeps the written ones). For debug
 /// builds: a mismatch is a programming error.
+#[cfg(debug_assertions)]
 pub(super) fn check_rewrites(
     type_id: &str,
     keys: &[ConfigKey],

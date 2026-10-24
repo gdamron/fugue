@@ -15,6 +15,7 @@ mod drops;
 mod inputs;
 mod melody;
 mod migrated;
+mod mixer;
 mod null_backend;
 mod orchestration;
 mod payload_controls;

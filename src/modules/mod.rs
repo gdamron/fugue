@@ -5,7 +5,7 @@
 //! - [`Oscillator`] / [`OscillatorType`] - Waveform generation
 //! - [`Lfo`] / [`LfoControls`] - Low frequency oscillator for modulation
 //! - [`Filter`] / [`FilterControls`] / [`FilterType`] - Resonant filter for subtractive synthesis
-//! - [`Mixer`] / [`MixerControls`] - Multi-channel audio mixer
+//! - [`Mixer`] - Multi-channel audio mixer
 //! - [`MelodyGenerator`] - Algorithmic melody generation
 //! - [`StepSequencer`] / [`Step`] - Deterministic step sequencer
 //! - [`Adsr`] - Envelope generator
@@ -73,7 +73,7 @@ pub use filter::{Filter, FilterControls, FilterType};
 pub use lfo::{Lfo, LfoControls};
 pub use melody::MelodyGenerator;
 
-pub use mixer::{Mixer, MixerControls};
+pub use mixer::Mixer;
 pub use oscillator::{Oscillator, OscillatorType};
 pub use reverb::Reverb;
 #[cfg(not(target_arch = "wasm32"))]

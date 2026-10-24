@@ -1,5 +1,5 @@
 //! A mixer rebuilt by an edit carries on from what the mixer it replaces
-//! was playing (FUG-375), so a reload that rebuilds it glides, not steps.
+//! was playing, so a reload that rebuilds it glides, not steps.
 
 use super::tests::{glides, left_blocks, left_outputs, ramp_frames, BLOCK};
 use super::*;

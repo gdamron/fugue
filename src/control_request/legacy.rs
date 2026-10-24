@@ -10,7 +10,6 @@ use super::table::TableValue;
 pub(crate) const LEGACY_CONTROLS: &[&str] = &[
     "filter",
     "lfo",
-    "mixer",
     "sample_instrument",
     "sample_kit",
     "sample_player",

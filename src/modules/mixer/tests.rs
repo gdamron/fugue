@@ -222,13 +222,26 @@ fn test_mixer_controls() {
     let mut mixer = Mixer::new(2);
 
     // Test control metadata
-    let control_meta = Module::controls(&mixer);
-    assert_eq!(control_meta.len(), 5); // level.0, pan.0, level.1, pan.1, master
-    assert_eq!(control_meta[0].key, "level.0");
-    assert_eq!(control_meta[1].key, "pan.0");
-    assert_eq!(control_meta[2].key, "level.1");
-    assert_eq!(control_meta[3].key, "pan.1");
-    assert_eq!(control_meta[4].key, "master");
+    let keys: Vec<String> = Module::controls(&mixer)
+        .into_iter()
+        .map(|meta| meta.key)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "channel_count",
+            "master",
+            "level.0",
+            "level.1",
+            "pan.0",
+            "pan.1"
+        ]
+    );
+    assert_eq!(mixer.get_control("channel_count").unwrap(), 2.0);
+    assert!(
+        mixer.set_control("channel_count", 3.0).is_err(),
+        "read-only"
+    );
 
     // Test get/set controls
     mixer.set_control("level.0", 0.5).unwrap();
@@ -242,8 +255,15 @@ fn test_mixer_controls() {
 
     // Test invalid control
     assert!(mixer.get_control("invalid").is_err());
-    assert!(mixer.get_control("level.5").is_err()); // Only 2 channels
-    assert!(mixer.get_control("pan.5").is_err()); // Only 2 channels
+    // Only 2 channels: the others do not exist, and say why.
+    let refusal = mixer.set_control("level.2", 0.5).unwrap_err();
+    assert_eq!(
+        refusal,
+        "Unknown control: level.2: channel_count is 2, so only 'level.0' to 'level.1' exist"
+    );
+    assert!(mixer.get_control("level.5").is_err());
+    assert!(mixer.get_control("pan.5").is_err());
+    assert!(mixer.set_control("pan.63", 0.5).is_err());
 }
 
 #[test]
@@ -456,4 +476,55 @@ fn a_glide_never_allocates() {
         }
     });
     assert_eq!((allocs, frees), (0, 0));
+}
+
+#[test]
+fn every_existing_config_spelling_still_loads() {
+    let config = serde_json::json!({
+        "channel_count": 3,
+        "levels": [0.5, 0.25, 0.75],
+        "pans": [-0.5],
+        "master": 0.8,
+        "level.1": 0.4,
+        "pan.2": "0.3",
+        "level.02": 0.6
+    });
+    let built = MixerFactory.build(44_100, &config).unwrap();
+    let surface = built.control_surface.unwrap();
+    for (key, value) in [
+        ("master", 0.8),
+        ("level.0", 0.5),
+        ("level.1", 0.4),
+        ("level.2", 0.6),
+        ("pan.0", -0.5),
+        ("pan.1", 0.0),
+        ("pan.2", 0.3),
+    ] {
+        assert_eq!(surface.get_control(key).unwrap(), value.into(), "{key}");
+    }
+}
+
+#[test]
+fn a_config_level_past_the_channel_count_is_refused_saying_why() {
+    let config = serde_json::json!({ "channel_count": 4, "level.5": 0.5 });
+    let error = MixerFactory
+        .build(44_100, &config)
+        .err()
+        .map(|e| e.to_string());
+    assert_eq!(
+        error.as_deref(),
+        Some(
+            "config 'level.5': Unknown control: level.5: channel_count is 4, \
+             so only 'level.0' to 'level.3' exist"
+        )
+    );
+    let config = serde_json::json!({ "channel_count": 1, "pan.1": 0.5 });
+    let error = MixerFactory
+        .build(44_100, &config)
+        .err()
+        .map(|e| e.to_string());
+    assert_eq!(
+        error.as_deref(),
+        Some("config 'pan.1': Unknown control: pan.1: channel_count is 1, so only 'pan.0' exists")
+    );
 }
