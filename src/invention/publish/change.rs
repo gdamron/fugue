@@ -378,6 +378,7 @@ impl GraphChange {
                 rescheduling: Rescheduling::default(),
                 publication: None,
                 writes: Vec::new(),
+                authored_at: None,
             };
         }
         // Attached, so each new instance can do its one-time setup here
@@ -412,6 +413,7 @@ impl GraphChange {
             rescheduling: self.rescheduling,
             publication: Some(publication),
             writes: Vec::new(),
+            authored_at: None,
         }
     }
 }
@@ -443,6 +445,13 @@ pub(crate) struct PreparedChange {
     /// a reload does: an authored write to one, not yet recorded, is
     /// replaced (see `authored::Fence`), whatever value it writes.
     pub(crate) writes: Vec<(String, String)>,
+    /// The retained document's authored epoch it was planned at, for a
+    /// change that records a document planned from it (an edit batch's, a
+    /// reload's), which lacks the authored writes recorded since: an
+    /// untimed commit records them again on top of it, and a timed one is
+    /// refused `TopologyMoved`, as is an untimed one once they are no
+    /// longer all kept (see `RuntimeState::authored_log`).
+    pub(crate) authored_at: Option<u64>,
 }
 
 impl PreparedChange {

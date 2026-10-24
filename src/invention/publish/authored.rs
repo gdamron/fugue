@@ -14,19 +14,25 @@
 //! an edit batch, a timed edit adopted) forgets the writes not yet
 //! recorded that it replaced, to a module it rebuilt or removed or to a
 //! control it wrote (see [`Fence`]): recorded after it, they would say
-//! what no longer plays.
+//! what no longer plays. The writes recorded while its document was planned,
+//! which that document lacks, are recorded again on top of it, but those it
+//! replaced the same way (see [`Since`]).
 
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use super::timed::adopt_into;
 use super::timed_status::{CancelCause, Touched};
-use super::{Authoring, DocumentStep, LiveGraph, Mirrors, PendingLog, Publisher};
+use super::{Authoring, DocumentStep, LiveGraph, Mirrors, PendingLog, PreparedChange, Publisher};
 use crate::control_request::RequestId;
-use crate::invention::audio_assets;
+use crate::invention::reload::scalar_control_value;
 use crate::invention::state::RuntimeState;
+use crate::invention::{audio_assets, authored_document};
+use crate::module_config::{names, replaced_by};
+use crate::ControlValue;
 
 /// The longest a caller waits for the audio thread to take what it was
 /// handed: a device stream takes a write within a block or two, so a write
@@ -212,6 +218,112 @@ impl Fence {
         let mut pending = pending.lock().unwrap_or_else(PoisonError::into_inner);
         pending.forget_authored(is_replaced, except);
     }
+}
+
+/// The authored writes the retained document recorded after a change was
+/// planned from it, which the document it records lacks, oldest first.
+pub(super) struct Since {
+    writes: Vec<(String, String, ControlValue)>,
+    /// The invention's path as they were recorded, which a relative asset
+    /// path they name is relative to.
+    origin: Option<PathBuf>,
+}
+
+impl Since {
+    /// What `state` recorded since `prepared` was planned; `None` when it
+    /// no longer keeps them all (see `RuntimeState::authored_log`).
+    pub(super) fn of(prepared: &PreparedChange, state: &Mutex<RuntimeState>) -> Option<Self> {
+        let state = state.lock().unwrap();
+        let writes = match prepared.authored_at {
+            Some(at) => state
+                .authored_log
+                .last(state.authored_epoch.checked_sub(at)?)?,
+            None => Vec::new(),
+        };
+        let origin = state.source_path().map(Path::to_path_buf);
+        Some(Self { writes, origin })
+    }
+
+    /// Records them again on top of the document the commit just retained,
+    /// all but those it replaced: to a module it `stopped` (the module
+    /// playing was built from its document) or a control it `writes` (its
+    /// write follows). Before the commit's fence closes, so a write still
+    /// to be recorded that follows one of them is kept.
+    pub(super) fn rebase(
+        self,
+        state: &Mutex<RuntimeState>,
+        (stopped, writes): (&[String], &[(String, String)]),
+    ) {
+        if self.writes.is_empty() {
+            return;
+        }
+        let mut state = state.lock().unwrap();
+        let replaced = |module_id: &str, key: &str| {
+            stopped.iter().any(|m| m == module_id)
+                || writes.iter().any(|(m, k)| m == module_id && k == key)
+        };
+        let mut earlier = self.writes;
+        earlier.retain(|(module_id, key, _)| !replaced(module_id, key));
+        let overtaken = overtaken(&state, &earlier, writes);
+        for (module_id, key, value) in earlier {
+            let (from, to) = (self.origin.as_deref(), state.source_path());
+            let value = audio_assets::rebase_asset_write(from, to, &key, &value);
+            state.record_authored_control(&module_id, &key, &value);
+        }
+        // Then those of the commit's own they would hide, made after.
+        for (module_id, key, value) in &overtaken {
+            state.record_authored_control(module_id, key, value);
+        }
+    }
+
+    /// Folds them into the document of the timed edit just queued, as a
+    /// write recorded while it waits is (see `record`): all but those to a
+    /// module it rebuilds or a control it writes as it lands.
+    pub(super) fn fold_into(self, publisher: &mut Publisher) {
+        for (module_id, key, value) in self.writes {
+            let replaced = publisher.timed_replaces(&module_id).is_some();
+            if !replaced && !publisher.timed_chains(&module_id, &key) {
+                publisher.fold_timed(&module_id, &key, &value);
+            }
+        }
+    }
+}
+
+/// The controls a change writes (`writes`) that applied after `earlier`
+/// authored writes to their module where one of the two replaces the other
+/// (see [`ConfigKey::replacing`](crate::module_config::ConfigKey::replacing)),
+/// with the values `state`'s document holds for them: recorded again after
+/// `earlier` is, so the document records them in the order they applied.
+/// One no control takes is left as the document holds it.
+pub(super) fn overtaken(
+    state: &RuntimeState,
+    earlier: &[(String, String, ControlValue)],
+    writes: &[(String, String)],
+) -> Vec<(String, String, ControlValue)> {
+    let Some(document) = state.document.as_ref() else {
+        return Vec::new();
+    };
+    let replaces = |module_id: &str, whole: &str, key: &str| {
+        let Some(info) = state.modules.get(module_id) else {
+            return false;
+        };
+        let keys = state.replacing.config_keys(&info.module_type);
+        replaced_by(keys, whole)
+            .iter()
+            .any(|replaced| names(replaced, key))
+    };
+    let hidden = |module_id: &str, key: &str| {
+        (earlier.iter())
+            .any(|(m, k, _)| m == module_id && (replaces(m, k, key) || replaces(m, key, k)))
+    };
+    (writes.iter())
+        .filter(|(module_id, key)| hidden(module_id, key))
+        .filter_map(|(module_id, key)| {
+            let held = authored_document::held_control(document, module_id, key)?;
+            let value = scalar_control_value(&held)?;
+            Some((module_id.clone(), key.clone(), value))
+        })
+        .collect()
 }
 
 /// What the retained document holds for control `key` of `module_id`.

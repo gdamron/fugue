@@ -42,9 +42,10 @@ impl RunningInvention {
     ) -> Result<RequestStatus, RpcError> {
         let time = edit_time(when, None)?;
         let ttl = self.ttl_samples(ttl_ms);
-        let batch = self.live.graph_policy().run(|| self.batch(edits))?;
+        let mut batch = self.live.graph_policy().run(|| self.batch(edits))?;
         let mut attempt = 1;
         loop {
+            self.rebatch(edits, &mut batch)?;
             let base = self.live.generation();
             // Built under the running graph's policy, read after `base`.
             let policy = self.live.graph_policy();

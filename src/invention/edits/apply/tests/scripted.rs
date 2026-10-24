@@ -32,6 +32,7 @@ pub(crate) struct Scripted {
     steps: Arc<Mutex<VecDeque<Option<Step>>>>,
     writes: Arc<Mutex<Vec<(String, ControlValue)>>>,
     builds: Arc<Mutex<usize>>,
+    refusing: Arc<Mutex<Option<String>>>,
 }
 
 impl Scripted {
@@ -39,6 +40,12 @@ impl Scripted {
     pub(crate) fn then(&self, step: Option<Step>) -> &Self {
         self.steps.lock().unwrap().push_back(step);
         self
+    }
+
+    /// Makes every instance, built or to be built, refuse writes with this
+    /// reason when they are made, though they still pass every check.
+    pub(crate) fn refuse_writes(&self, reason: &str) {
+        *self.refusing.lock().unwrap() = Some(reason.to_string());
     }
 
     /// Every control write any instance received, in order.
@@ -63,6 +70,7 @@ struct Controls {
     level: Mutex<f32>,
     hidden: bool,
     refusal: Option<String>,
+    refusing: Arc<Mutex<Option<String>>>,
     writes: Arc<Mutex<Vec<(String, ControlValue)>>>,
 }
 
@@ -103,8 +111,12 @@ impl ControlSurface for Controls {
             .lock()
             .unwrap()
             .push((key.to_string(), value.clone()));
-        if let Some(refusal) = &self.refusal {
-            return Err(refusal.clone());
+        if let Some(refusal) = self
+            .refusal
+            .clone()
+            .or_else(|| self.refusing.lock().unwrap().clone())
+        {
+            return Err(refusal);
         }
         *self.level.lock().unwrap() = value.as_number()?;
         Ok(())
@@ -161,6 +173,7 @@ impl crate::ModuleFactory for Scripted {
                 level: Mutex::new(level as f32),
                 hidden,
                 refusal,
+                refusing: self.refusing.clone(),
                 writes: self.writes.clone(),
             })),
             sink: None,
