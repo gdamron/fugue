@@ -143,6 +143,26 @@ fn an_input_that_is_not_a_number_leaves_no_tail() {
 }
 
 #[test]
+fn a_quiet_bright_channel_leaves_no_louder_tail() {
+    // A 12 kHz tone at a thousandth of full scale, ending between a peak
+    // and a zero crossing: its last slope is as steep as it gets.
+    const AMPLITUDE: f32 = 0.001;
+    let mut mixer = connected(1);
+    let block = mixer.input_block_mut(0);
+    for (i, sample) in block[..BLOCK].iter_mut().enumerate() {
+        *sample = AMPLITUDE * (i as f32 * std::f32::consts::FRAC_PI_2).sin();
+    }
+    mixer.process(BLOCK);
+    let before = mixer.output_block(0)[..BLOCK]
+        .iter()
+        .fold(0.0, |m: f32, v| m.max(v.abs()));
+    disconnect(&mut mixer, 0);
+    let after = play(&mut mixer, 0, 0, 8, false);
+    let tail = after.iter().fold(0.0, |m: f32, v| m.max(v.abs()));
+    assert!(tail <= before, "tail {tail} over the tone's {before}");
+}
+
+#[test]
 fn a_fading_tail_never_allocates() {
     let mut mixer = connected(4);
     play(&mut mixer, 2, 0, 2, true);

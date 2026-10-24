@@ -18,13 +18,22 @@ use crate::dsp::LinearRamp;
 /// the value it left at and fades from there.
 const SLOPE_DECAY: f32 = 0.9;
 
-/// The furthest a coasting tail may stray from the value it left at. A
-/// steep slope (bright content) is limited to what reaches this, so a tail
-/// never swells past the signal it carries on.
+/// The furthest a coasting tail may stray from the value it left at, as
+/// its slope dies away: a slope that would carry it further (bright
+/// content) is limited to what reaches this.
 const MAX_COAST: f32 = 0.25;
 
+/// How many of a block's last frames a channel's peak is taken over. A
+/// coast never carries past the channel's peak over them, so a quiet
+/// channel never leaves a loud tail: these frames are about as long as the
+/// coast's own slope takes to die away.
+const PEAK_FRAMES: usize = 32;
+
+/// The slope that coasts one unit as it dies away.
+const SLOPE_SCALE: f32 = (1.0 - SLOPE_DECAY) / SLOPE_DECAY;
+
 /// The steepest slope a tail starts with: the one that coasts [`MAX_COAST`].
-const MAX_SLOPE: f32 = MAX_COAST * (1.0 - SLOPE_DECAY) / SLOPE_DECAY;
+const MAX_SLOPE: f32 = MAX_COAST * SLOPE_SCALE;
 
 /// One side of a coasting tail: where it is and how fast it is moving.
 #[derive(Clone, Copy, Debug, Default)]
@@ -87,14 +96,21 @@ struct Departure {
     right: Coast,
 }
 
+/// What a mixer last heard of a channel's input (after its level CV).
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Heard {
+    last: f32,
+    before_last: f32,
+    /// The largest magnitude over the block's last [`PEAK_FRAMES`] frames.
+    peak: f32,
+}
+
 /// A mixer's departing channels: those waiting for the next block, and the
 /// stereo tail they play out as.
 pub(super) struct Tails {
-    /// Each channel's last two input samples (after its level CV), once a
-    /// block has played.
-    last: [f32; MAX_CHANNELS],
-    before_last: [f32; MAX_CHANNELS],
-    /// Whether `last` holds what this mixer last played, rather than
+    /// What each channel was heard at as the last block ended.
+    heard: [Heard; MAX_CHANNELS],
+    /// Whether `heard` holds what this mixer last played, rather than
     /// nothing (it has not played yet).
     remembered: bool,
     departures: [Departure; MAX_CHANNELS],
@@ -109,8 +125,7 @@ impl Tails {
     /// No tail, fading over `frames` once there is one.
     pub(super) fn new(frames: u32) -> Self {
         Self {
-            last: [0.0; MAX_CHANNELS],
-            before_last: [0.0; MAX_CHANNELS],
+            heard: [Heard::default(); MAX_CHANNELS],
             remembered: false,
             departures: [Departure::default(); MAX_CHANNELS],
             any_waiting: false,
@@ -120,7 +135,7 @@ impl Tails {
         }
     }
 
-    /// Records the last two samples of each channel's input, after a block.
+    /// Records what each channel's input was heard at, after a block.
     #[inline]
     pub(super) fn remember(
         &mut self,
@@ -131,14 +146,23 @@ impl Tails {
         if frames == 0 {
             return;
         }
-        for ch in 0..channels {
+        for (ch, heard) in self.heard[..channels].iter_mut().enumerate() {
             let last = sample(ch, frames - 1);
-            self.before_last[ch] = if frames > 1 {
+            let before_last = if frames > 1 {
                 sample(ch, frames - 2)
             } else {
-                self.last[ch]
+                heard.last
             };
-            self.last[ch] = last;
+            // A block shorter than two frames also keeps the one before.
+            let mut peak = last.abs().max(before_last.abs());
+            for i in frames.saturating_sub(PEAK_FRAMES)..frames.saturating_sub(2) {
+                peak = peak.max(sample(ch, i).abs());
+            }
+            *heard = Heard {
+                last,
+                before_last,
+                peak,
+            };
         }
         self.remembered = true;
     }
@@ -150,6 +174,19 @@ impl Tails {
             if departure.waiting == Waiting::Pending {
                 departure.waiting = Waiting::Covered;
             }
+        }
+    }
+
+    /// Channel `ch`'s input loses its connection: a tail its connection
+    /// covered waits to play out again. Returns whether there was one.
+    pub(super) fn uncover(&mut self, ch: usize) -> bool {
+        match self.departures.get_mut(ch) {
+            Some(departure) if departure.waiting == Waiting::Covered => {
+                departure.waiting = Waiting::Pending;
+                self.any_waiting = true;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -180,19 +217,28 @@ impl Tails {
         }
     }
 
-    /// The last two samples this mixer remembers for channel `ch`.
-    pub(super) fn last_two(&self, ch: usize) -> (f32, f32) {
-        (self.last[ch], self.before_last[ch])
+    /// What this mixer last heard of channel `ch`.
+    pub(super) fn heard(&self, ch: usize) -> Heard {
+        self.heard[ch]
     }
 
-    /// Starts channel `ch` leaving from its last two samples `last` and
-    /// `before` (see [`Self::last_two`]), at left and right `gains` (its
-    /// level and pan as last heard). A silent channel leaves nothing.
-    pub(super) fn depart(&mut self, ch: usize, (last, before): (f32, f32), gains: (f32, f32)) {
-        if (last == 0.0 && before == 0.0) || ch >= MAX_CHANNELS {
+    /// Starts channel `ch` leaving from what was last `heard` of it (see
+    /// [`Self::heard`]), at left and right `gains` (its level and pan as
+    /// last heard). A silent channel leaves nothing.
+    pub(super) fn depart(&mut self, ch: usize, heard: Heard, gains: (f32, f32)) {
+        let Heard {
+            last,
+            before_last,
+            peak,
+        } = heard;
+        if (last == 0.0 && before_last == 0.0) || ch >= MAX_CHANNELS {
             return;
         }
-        let slope = last - before;
+        // The coast stays within the channel's recent peak. A slope that
+        // is not a number leaves the value alone (see `Coast::leaving`).
+        let room = (peak - last.abs()).max(0.0) * SLOPE_SCALE;
+        let steepest = if room.is_finite() { room } else { 0.0 };
+        let slope = (last - before_last).max(-steepest).min(steepest);
         self.departures[ch] = Departure {
             waiting: Waiting::Pending,
             left: Coast::leaving(last, slope, gains.0),

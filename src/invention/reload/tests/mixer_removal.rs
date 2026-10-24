@@ -27,9 +27,20 @@ fn without_high(document: Invention) -> Invention {
 /// once the fade is over: no step, only the glide's own slope. Returns the
 /// modules the reload rebuilt.
 fn a_removal_does_not_step(from: Invention, to: Invention) -> Vec<String> {
+    removals_do_not_step(from, &[to])
+}
+
+/// [`a_removal_does_not_step`] for reloads to each of `to` in turn, all
+/// before the next block, so they install together. Returns the modules
+/// the last one rebuilt.
+fn removals_do_not_step(from: Invention, to: &[Invention]) -> Vec<String> {
     let (mut running, pump) = start(from);
     let before = pump.render(BLOCKS_BEFORE);
-    let report = running.reload(to).expect("the reload applies");
+    let mut report = None;
+    for to in to {
+        report = Some(running.reload(to.clone()).expect("the reload applies"));
+    }
+    let report = report.expect("a reload");
     let after = pump.render(BLOCKS_AFTER);
 
     let mut across = before[before.len() - 1..].to_vec();
@@ -67,4 +78,19 @@ fn a_channel_whose_input_module_goes_fades_out() {
     let mixer = json!({ "channel_count": 2 });
     let swapped = a_removal_does_not_step(document(mixer.clone()), without_high(document(mixer)));
     assert!(swapped.is_empty(), "the mixer itself stays: {swapped:?}");
+}
+
+#[test]
+fn an_input_module_removed_just_after_a_rebuild_fades_out() {
+    // The first reload rebuilds the mixer, both channels still fed; the
+    // second, before a block plays, removes the second channel's tone.
+    let rebuilt = json!({ "channel_count": 2, "levels": [1.0, 0.8] });
+    let swapped = removals_do_not_step(
+        document(json!({ "channel_count": 2 })),
+        &[document(rebuilt.clone()), without_high(document(rebuilt))],
+    );
+    assert!(
+        swapped.is_empty(),
+        "the second keeps the mixer: {swapped:?}"
+    );
 }

@@ -298,8 +298,8 @@ impl Mixer {
         self.tails.carry_on_from(&previous.tails);
         if previous.tails.remembered() {
             for ch in 0..previous.channels {
-                let last = previous.tails.last_two(ch);
-                self.tails.depart(ch, last, previous.heard_gains(ch));
+                let heard = previous.tails.heard(ch);
+                self.tails.depart(ch, heard, previous.heard_gains(ch));
             }
         }
         true
@@ -436,14 +436,19 @@ impl Module for Mixer {
     }
 
     /// An audio input that loses its connection leaves a tail (see
-    /// `tail`); one connected before the next block keeps being heard.
+    /// `tail`), or brings back the one a rebuild left it that its
+    /// connection covered; one connected before the next block keeps being
+    /// heard.
     fn set_input_connected(&mut self, index: usize, connected: bool) {
         if index < self.channels {
             if connected {
                 self.tails.cover(index);
-            } else if self.input_state.audio_connected(index) && self.tails.remembered() {
-                let last = self.tails.last_two(index);
-                self.tails.depart(index, last, self.heard_gains(index));
+            } else if self.input_state.audio_connected(index)
+                && !self.tails.uncover(index)
+                && self.tails.remembered()
+            {
+                let heard = self.tails.heard(index);
+                self.tails.depart(index, heard, self.heard_gains(index));
             }
         }
         self.input_state.set_connected(index, connected);
