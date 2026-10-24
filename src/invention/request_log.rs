@@ -207,8 +207,8 @@ pub struct RequestLog {
     /// (a step sequencer's `pattern`), which a [`LoggedValue`] cannot carry,
     /// applied automation-tier requests, which a replay cannot hold as
     /// they held, and repeating beat grids that never applied but latched
-    /// their clock on a beat they lost, which they do not report beat by
-    /// beat.
+    /// their clock on a beat they lost, or are still waiting at export and
+    /// may have, which they do not report beat by beat.
     #[serde(default)]
     pub unlogged: u64,
     /// Commits attempted on the graph at once during the session

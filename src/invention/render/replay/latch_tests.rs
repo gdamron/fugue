@@ -194,3 +194,32 @@ fn a_repeating_beat_request_refused_on_its_beat_leaves_the_log_inexact() {
     assert_eq!(log.unlogged, 1);
     assert!(!log.is_exact());
 }
+
+#[test]
+fn a_repeating_beat_request_still_waiting_leaves_the_log_inexact() {
+    let (log, _) = session(|running| {
+        let (When::Beat(mut time), LoggedBeat::Grid { clock, .. }) = bar(running, "clock") else {
+            unreachable!();
+        };
+        // Far off: still waiting when the log is exported.
+        time.spec = BeatSpec::Grid {
+            every: 4096.0,
+            offset: 0.0,
+            repeat: true,
+        };
+        let beat = LoggedBeat::Grid {
+            clock,
+            every: 4096.0,
+            offset: 0.0,
+            repeat: true,
+        };
+        let waveform = ("osc", "waveform");
+        running
+            .live
+            .submit_logged(waveform, RtValue::U32(1), When::Beat(time), Some(beat));
+    });
+    // It may have lost beats it latched on, and reports them only as it
+    // ends.
+    assert_eq!(log.unlogged, 1);
+    assert!(!log.is_exact());
+}

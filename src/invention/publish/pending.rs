@@ -211,7 +211,14 @@ impl PendingLog {
     /// received first.
     pub(crate) fn request_log(&mut self) -> RequestLog {
         self.settle();
-        self.log.export()
+        let mut log = self.log.export();
+        // A repeat still waiting may have latched its clock on beats it
+        // lost: it reports that only as it ends.
+        let repeats = (self.writes.iter())
+            .filter(|(_, write)| matches!(write.beat, Some(LoggedBeat::Grid { repeat: true, .. })))
+            .count();
+        log.unlogged += repeats as u64;
+        log
     }
 
     /// Records a write just submitted as request `id`. Call it under the
