@@ -169,6 +169,9 @@ impl PendingLog {
                     return;
                 };
                 match write.as_ref().and_then(|write| write.beat.as_ref()) {
+                    // A repeat may have lost more beats than it reports:
+                    // the log cannot say where it latched.
+                    Some(LoggedBeat::Grid { repeat: true, .. }) => self.log.unlogged(),
                     Some(beat) => self.log.latched(at, beat.clock()),
                     None => self.log.lost(1),
                 }

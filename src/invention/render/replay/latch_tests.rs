@@ -166,3 +166,31 @@ fn a_log_from_before_latches_were_recorded_replays_as_it_did() {
     let parted = replay(&old, &played).expect("the tempo is heard");
     assert!(parted as u64 >= at, "parted at {parted}, latched on {at}");
 }
+
+#[test]
+fn a_repeating_beat_request_refused_on_its_beat_leaves_the_log_inexact() {
+    let (log, _) = session(|running| {
+        let (When::Beat(mut time), LoggedBeat::Grid { clock, .. }) = bar(running, "clock") else {
+            unreachable!();
+        };
+        time.spec = BeatSpec::Grid {
+            every: 4.0,
+            offset: 0.0,
+            repeat: true,
+        };
+        let beat = LoggedBeat::Grid {
+            clock,
+            every: 4.0,
+            offset: 0.0,
+            repeat: true,
+        };
+        let waveform = ("osc", "waveform");
+        running
+            .live
+            .submit_logged(waveform, RtValue::U32(99), When::Beat(time), Some(beat));
+    });
+    // It may have lost more beats than it reports: no latch says where.
+    assert!(log.latches.is_empty());
+    assert_eq!(log.unlogged, 1);
+    assert!(!log.is_exact());
+}

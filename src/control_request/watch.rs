@@ -116,6 +116,9 @@ struct Watch {
     applied: Option<u64>,
     /// Whether a repeat has settled: at the first beat it applied on.
     settled: bool,
+    /// The latest sample a repeat latched its clock on and lost the beat,
+    /// reported as it ends if it never applied.
+    latched: Option<u64>,
 }
 
 impl Watch {
@@ -325,6 +328,7 @@ impl Watches {
             goal,
             applied: None,
             settled: false,
+            latched: None,
         });
     }
 
@@ -383,7 +387,7 @@ impl Watches {
     fn end(&mut self, i: usize, outcomes: &mut Outcomes, outcome: Outcome) {
         let watch = self.entries.remove(i);
         if !watch.settled {
-            outcomes.settle(watch.request, outcome);
+            outcomes.settle_on_beat(watch.request, outcome, watch.latched);
         }
     }
 
@@ -493,6 +497,9 @@ impl Watches {
                     value,
                     &mut outcomes.retirer,
                 );
+                if result.is_err() && due == now {
+                    self.entries[i].latched = Some(now);
+                }
                 // A beat lost to a higher rank at its sample is only that
                 // beat: the next is the grid's next event, and it runs on.
                 if let Err(Outcome::Refused(_)) = result {

@@ -55,7 +55,9 @@
 //!   on, or leaves it out when it was refused;
 //! - the invention runs code or agent modules, whose wall-clock writes are
 //!   logged and would act again in the render: [`RequestLog::actors`];
-//! - a repeating beat grid applied (it reports its first application only).
+//! - a repeating beat grid applied (it reports its first application
+//!   only), or latched its clock on a beat it lost and never applied
+//!   (counted in [`RequestLog::unlogged`]).
 //!
 //! A write's hold against a control scheduler is no exception: a replay
 //! holds each control as the session did (see the replay's docs).
@@ -203,8 +205,10 @@ pub struct RequestLog {
     /// Writes that reached the graph without a logged request: input
     /// writes, writes to controls not declared, applied payload writes
     /// (a step sequencer's `pattern`), which a [`LoggedValue`] cannot carry,
-    /// and applied automation-tier requests, which a replay cannot hold as
-    /// they held.
+    /// applied automation-tier requests, which a replay cannot hold as
+    /// they held, and repeating beat grids that never applied but latched
+    /// their clock on a beat they lost, which they do not report beat by
+    /// beat.
     #[serde(default)]
     pub unlogged: u64,
     /// Commits attempted on the graph at once during the session
