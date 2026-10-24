@@ -41,9 +41,9 @@ pub(super) struct DevelopmentControlSurface {
     /// What a payload's inner order is computed from (see `retarget`).
     order: InnerOrder,
     /// Held by a declared key's write from its ranking through its
-    /// delivery: so a write that loses offline loses before it records or
-    /// writes anything (see `DeclaredSurface::admits`), and the order each
-    /// payload write carries counts every write before it.
+    /// delivery: so a write that loses offline almost always loses before
+    /// it records or writes anything (see `DeclaredSurface::admits`), and
+    /// the order each payload write carries counts every write before it.
     writing: Mutex<()>,
 }
 
@@ -137,8 +137,9 @@ impl DevelopmentControlSurface {
     /// scheduler's resolved schedule), or whose aliases each build their
     /// own (a sample, see `fan_out`). Each alias records `value` first, so
     /// the inner order the payload carries counts what it now writes; a
-    /// write that fails restores what each recorded. A payload key reaches
-    /// no legacy alias, so recording touches nothing else. Under the
+    /// write that is not applied, failing or losing offline as it is
+    /// applied, restores what each recorded. A payload key reaches no
+    /// legacy alias, so recording touches nothing else. Under the
     /// writing lock, ranked first (see [`Self::submit`]).
     fn write_payload(
         &self,
@@ -162,8 +163,8 @@ impl DevelopmentControlSurface {
                 .and_then(|(payload, shown)| declared.submit_payload(key, payload, shown, options)),
             None => declared.submit(key, value, options),
         };
-        debug_assert!(written.as_ref().map_or(true, |queued| !queued.lost));
-        if written.is_err() {
+        // Every effect made before delivery is undone here, and only here.
+        if written.as_ref().map_or(true, |queued| queued.lost) {
             for (control, surface, was) in was {
                 let _ = surface.set_legacy(&control.key, was);
             }
@@ -245,13 +246,16 @@ impl ControlSurface for DevelopmentControlSurface {
         // checking would allocate.
         //
         // Ranked first: offline, a write that loses to a higher-ranked one
-        // at this sample loses before it records or writes anything, so
-        // nothing is to be restored (the writing lock keeps the ranking
-        // standing until it is delivered). The declared part then goes
+        // at this sample loses before it records or writes anything. The
+        // writing lock keeps the ranking standing against every other
+        // front door until the write is delivered; only a request log's
+        // replay can still take the control in between, and a write it
+        // overtakes loses as it is applied. The declared part then goes
         // first: its delivery can still fail (a full request queue, a
-        // module being installed), and a failed write must leave the legacy
-        // aliases as they were. Once it is on its way the legacy aliases,
-        // already checked, take the value.
+        // module being installed) or lose so, and a write not applied must
+        // leave the legacy aliases as they were. Once it applies the legacy
+        // aliases, already checked, take the value. A payload's one alias
+        // records it before delivery, and `write_payload` undoes that.
         if let Some(declared) = self.declared(key) {
             self.validate_control(key, &value, &self.surfaces)?;
             let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
@@ -267,8 +271,9 @@ impl ControlSurface for DevelopmentControlSurface {
                 return self.write_payload(declared, (key, value), options);
             }
             let queued = declared.submit(key, value.clone(), options)?;
-            debug_assert!(!queued.lost, "ranked first");
-            self.set_legacy(key, value)?;
+            if !queued.lost {
+                self.set_legacy(key, value)?;
+            }
             return Ok(queued);
         }
         self.set_legacy(key, value).map(|()| Queued::default())
