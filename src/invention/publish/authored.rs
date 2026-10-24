@@ -177,12 +177,13 @@ impl Fence {
     }
 
     /// Forgets, in `pending` and `later`, each write the commit replaced:
-    /// to a module it `stopped` (rebuilt or removed), or to a control
-    /// whose document value it changed.
+    /// to a module it `stopped` (rebuilt or removed), to a control it
+    /// `writes` (to any value, the one the document holds included), or to
+    /// a control whose document value it changed otherwise.
     pub(super) fn close(
         self,
         (pending, state): (&Mutex<PendingLog>, &Mutex<RuntimeState>),
-        stopped: &[String],
+        (stopped, writes): (&[String], &[(String, String)]),
         (later, except): (&mut VecDeque<DocumentStep>, Option<RequestId>),
     ) {
         if self.0.is_empty() {
@@ -191,7 +192,9 @@ impl Fence {
         let replaced: Vec<_> = {
             let state = state.lock().unwrap();
             (self.0.into_iter())
-                .filter(|(key, was)| stopped.contains(&key.0) || held(&state, key) != *was)
+                .filter(|(key, was)| {
+                    stopped.contains(&key.0) || writes.contains(key) || held(&state, key) != *was
+                })
                 .map(|(key, _)| key)
                 .collect()
         };

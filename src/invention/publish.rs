@@ -527,6 +527,7 @@ impl LiveGraph {
             drop(prepared);
             return Err(GraphCommandError::TopologyMoved);
         }
+        let writes = std::mem::take(&mut prepared.writes);
         // Every commit counts, even one that publishes nothing (a reload or
         // an edit batch that only writes controls): conservative. Under the
         // publisher, as a write records itself (publisher, then the log).
@@ -548,7 +549,7 @@ impl LiveGraph {
             retain(&mut self.state.lock().unwrap());
             fence.close(
                 (&self.pending, &self.state),
-                &[],
+                (&[], &writes),
                 (&mut VecDeque::new(), None),
             );
             drop(publisher);
@@ -593,7 +594,7 @@ impl LiveGraph {
         let committed = self.commit_published(&publisher, published, &self.port(), retain);
         fence.close(
             (&self.pending, &self.state),
-            &committed.stopped,
+            (&committed.stopped, &writes),
             (&mut VecDeque::new(), None),
         );
         drop(publisher);

@@ -406,6 +406,21 @@ fn a_commit_writing_a_control_before_a_write_to_it_applies_forgets_it() {
     assert_eq!(recorded_document(&rig, "osc1"), 220.0, "not replaced");
 }
 
+/// A commit whose caller writes a control once it commits (an edit
+/// batch's revert), to the value the document already holds, replaces an
+/// authored write to it yet to be recorded: the document keeps the value
+/// the commit's write plays.
+#[test]
+fn a_commit_writing_a_control_back_forgets_a_write_to_it_not_yet_recorded() {
+    let mut rig = Rig::new(BASE);
+    write(&rig, "osc2", "frequency", 330.0, ControlWriteIntent::Author);
+    let mut prepared = rig.live.begin().prepare().unwrap();
+    prepared.writes = vec![("osc2".into(), "frequency".into())];
+    rig.live.commit_with(prepared, |_| {}).unwrap();
+    rig.render(1);
+    assert_eq!(recorded_document(&rig, "osc2"), 550.0, "the commit's");
+}
+
 /// A timed edit keeping the module, landing after an authored write to it
 /// applied, takes the write into its own document: the write plays on and
 /// stays recorded.

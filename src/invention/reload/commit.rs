@@ -152,12 +152,16 @@ impl RunningInvention {
         for conn in &plan.added_connections {
             change.connect(edge(&conn.from, &conn.from_port, &conn.to, &conn.to_port))?;
         }
+        let mut written = Vec::new();
         for (id, key, value) in writes {
             if let ("schedule", Ok(json)) = (key, value.as_string()) {
                 change.reschedule(id, json);
             }
+            written.push((id.to_owned(), key.to_owned()));
         }
-        change.prepare()
+        let mut prepared = change.prepare()?;
+        prepared.writes = written;
+        Ok(prepared)
     }
 
     /// Publishes a prepared plan as one topology change, then commits the
