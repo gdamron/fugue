@@ -217,10 +217,49 @@ fn a_write_folded_into_a_timed_batch_to_a_module_it_does_not_write_keeps_its_val
     let (running, pump) = tape_gain_waiting();
     author(&running, "osc2", "frequency", number(660.0));
     pump.block();
+    let epoch = running.live.authored_epoch();
     pump.render(8);
     running.live.adopt_landed();
 
     assert_eq!(frequency(&running, "osc2"), 660.0);
     assert_eq!(config_of(&running, "tape")["gain"], json!(0.75));
     assert_eq!(running.get_control("tape", "gain").unwrap(), number(0.75));
+    // Folded in and recorded again as the batch lands; nothing of the
+    // batch's own is recorded again.
+    assert_eq!(running.live.authored_epoch(), epoch + 1);
+}
+
+#[test]
+fn a_batch_write_made_after_an_authored_payload_landing_mid_batch_is_recorded_after_it() {
+    let scripted = Scripted::default();
+    let mut registry = scripted.registry();
+    registry.register(crate::test_support::tape::TapeFactory);
+    let tape = r#"{ "id": "tape", "type": "tape", "config": { "gain": 0.5, "notes": [1] } }"#;
+    let (mut running, pump) = start_with(registry, &base_with(tape));
+    let (snapshot, hook_pump) = (running.snapshot(), pump.clone());
+    let notes = ControlValue::String(r#"{"notes": [2], "gain": 0.25}"#.into());
+    let written = notes.clone();
+    let hook = Step::Run(Box::new(move || {
+        let author = ControlWriteIntent::Author;
+        (snapshot.set_control_with_intent("tape", "notes", written, author)).unwrap();
+        hook_pump.block();
+    }));
+    scripted.then(None).then(None).then(Some(hook));
+
+    running
+        .apply_edits(&[
+            add("t", SCRIPTED, json!({})),
+            set("tape", "gain", number(0.75)),
+        ])
+        .expect("the batch commits");
+    pump.block();
+
+    // The batch's gain is made after the notes landed: it plays, and the
+    // document and the stored config record it after them.
+    assert_eq!(running.get_control("tape", "gain").unwrap(), number(0.75));
+    let config = config_of(&running, "tape");
+    assert_eq!(config["gain"], json!(0.75));
+    assert_eq!(config["notes"], json!(notes.as_string().unwrap()));
+    let state = running.state.lock().unwrap();
+    assert_eq!(state.modules["tape"].config["gain"], json!(0.75));
 }
