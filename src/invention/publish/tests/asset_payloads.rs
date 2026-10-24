@@ -98,7 +98,7 @@ fn an_asset_write_loads_at_the_engine_rate_and_applies_without_allocating() {
 }
 
 #[test]
-fn an_asset_that_does_not_load_is_refused_with_its_reason_and_sends_nothing() {
+fn an_asset_that_does_not_load_is_refused_as_written_and_sends_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let (a, b) = (wav(dir.path(), "a.wav", 441), wav(dir.path(), "b.wav", 441));
     let mut rig = rig([&a, &b]);
@@ -106,17 +106,20 @@ fn an_asset_that_does_not_load_is_refused_with_its_reason_and_sends_nothing() {
     let surfaces = rig.live.control_surfaces.lock().unwrap().clone();
     let missing = dir.path().join("missing.wav");
     let missing = missing.to_string_lossy();
-    for bad in [
-        ControlValue::from(missing.as_ref()),
-        ControlValue::Number(1.0),
-    ] {
-        let refused = surface.validate_control("asset.0", &bad, &surfaces);
-        assert!(refused.is_err(), "{bad:?}");
-        let error = surface.set_control("asset.0", bad).unwrap_err();
-        assert_eq!(Err(error), refused, "the same reason");
-    }
-    let error = surface.set_control("asset.0", missing.as_ref().into());
-    assert!(error.unwrap_err().contains("missing.wav"), "names the file");
+
+    // Validating checks the name alone: whether it loads is known by
+    // loading it, which the write does (an edit batch reports it there).
+    let number = ControlValue::Number(1.0);
+    let refused = surface.validate_control("asset.0", &number, &surfaces);
+    assert_eq!(surface.set_control("asset.0", number), refused);
+    assert!(refused.is_err());
+    let named = ControlValue::from(missing.as_ref());
+    assert_eq!(
+        surface.validate_control("asset.0", &named, &surfaces),
+        Ok(())
+    );
+    let error = surface.set_control("asset.0", named).unwrap_err();
+    assert!(error.contains("missing.wav"), "names the file: {error}");
 
     assert_eq!(audio_block(&mut rig), (0, 0));
     assert!(outcomes(&mut rig).is_empty(), "no request was sent");

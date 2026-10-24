@@ -221,9 +221,10 @@ impl DeclaredSurface {
     }
 
     /// Records `value` as what payload control `key` reads back as, for
-    /// the payload its module was built with. Control thread.
+    /// the payload its module was built with; nothing for a key that
+    /// names no control (see [`Self::index`]). Control thread.
     pub(crate) fn show_payload(&self, key: &str, value: ControlValue) {
-        if let Some(index) = self.table.resolve(key) {
+        if let Ok(index) = self.index(key) {
             self.show(index, value, None);
         }
     }
@@ -237,9 +238,7 @@ impl DeclaredSurface {
         payload: Payload,
         shown: ControlValue,
     ) -> Result<(), String> {
-        let (index, _) = self
-            .payload_decl(key)
-            .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
+        let index = self.payload_index(key)?;
         self.deliver(index, Write::Payload(payload, shown, None), None)
             .map(drop)
     }
@@ -255,9 +254,7 @@ impl DeclaredSurface {
         shown: ControlValue,
         checked: Checked<'_>,
     ) -> Result<(), String> {
-        let (index, _) = self
-            .payload_decl(key)
-            .ok_or_else(|| format!("Control '{key}' is not a payload control"))?;
+        let index = self.payload_index(key)?;
         self.deliver(index, Write::Payload(payload, shown, Some(checked)), None)
             .map(drop)
     }
@@ -277,7 +274,7 @@ impl DeclaredSurface {
             return self.deliver(index, Write::Payload(payload, shown, None), None);
         }
         let index = self.index(key)?;
-        let value = self.table.coerce(index, &value)?;
+        let value = self.coerce(index, &value)?;
         self.deliver(index, Write::Value(value), authored.then_some(key))
     }
 
@@ -320,7 +317,7 @@ impl DeclaredSurface {
             return Err(format!("{key} cannot be timed by a condition"));
         }
         let index = self.index(key)?;
-        let raw = self.table.coerce(index, value)?;
+        let raw = self.coerce(index, value)?;
         let event = self.table.decl(index).is_some_and(|(decl, _)| decl.event);
         let shown = self.table.key(index).zip(self.table.value(index, raw));
         Ok(Resolved {
@@ -331,10 +328,22 @@ impl DeclaredSurface {
         })
     }
 
+    /// The payload control `key` names, with its codec: `None` when it
+    /// names none, or an index past the read-only count it is listed below.
     fn payload_decl(&self, key: &str) -> Option<(ControlIndex, Option<PayloadCodec>)> {
-        let index = self.table.resolve(key)?;
+        let index = self.index(key).ok()?;
         let (decl, _) = self.table.decl(index)?;
         (decl.kind == DeclKind::Payload).then_some((index, decl.codec))
+    }
+
+    /// The payload control `key` names, refused as [`Self::index`] refuses
+    /// it, or as no payload control.
+    fn payload_index(&self, key: &str) -> Result<ControlIndex, String> {
+        let index = self.index(key)?;
+        match self.table.decl(index) {
+            Some((decl, _)) if decl.kind == DeclKind::Payload => Ok(index),
+            _ => Err(format!("Control '{key}' is not a payload control")),
+        }
     }
 
     fn shown(&self, index: ControlIndex) -> Option<ControlValue> {
@@ -370,12 +379,27 @@ impl DeclaredSurface {
         let Some(codec) = codec else {
             return Some(Err(format!("Control '{key}' cannot be written")));
         };
-        let context = ControlContext {
+        let prepared = (codec.prepare)(&self.context(index), value);
+        Some(prepared.map(|(payload, shown)| (index, payload, shown)))
+    }
+
+    /// What a write to `index` is built or read with: its position, and
+    /// the parts its module attached.
+    fn context(&self, index: ControlIndex) -> ControlContext<'_> {
+        ControlContext {
             position: self.table.decl(index).map_or(0, |(_, position)| position),
             parts: &self.context,
-        };
-        let prepared = (codec.prepare)(&context, value);
-        Some(prepared.map(|(payload, shown)| (index, payload, shown)))
+        }
+    }
+
+    /// `value` as `index` holds it: read by its module when it declares a
+    /// reader (see [`crate::control_request::ValueReader`]), else by its
+    /// kind.
+    fn coerce(&self, index: ControlIndex, value: &ControlValue) -> Result<RtValue, String> {
+        match self.table.decl(index).and_then(|(decl, _)| decl.reader) {
+            Some(reader) => (reader.read)(&self.context(index), value),
+            None => self.table.coerce(index, value),
+        }
     }
 
     /// A development's surface over `cells`: a write before it runs is
@@ -711,11 +735,15 @@ impl ControlSurface for DeclaredSurface {
         value: &ControlValue,
         _surfaces: &ControlSurfaceMap,
     ) -> Result<(), String> {
+        let decl = (self.index(key).ok()).and_then(|index| self.table.decl(index));
+        if decl.is_some_and(|(decl, _)| decl.loads_on_write) {
+            return value.as_string().map(drop);
+        }
         if let Some(prepared) = self.prepare(key, value) {
             return prepared.map(drop);
         }
         let index = self.index(key)?;
-        self.table.coerce(index, value)?;
+        self.coerce(index, value)?;
         let event = matches!(self.table.decl(index), Some((decl, _)) if decl.event);
         if event && self.is_building() {
             return Err(EVENT_WHILE_BUILDING.into());
@@ -817,7 +845,9 @@ impl ControlSurface for DeclaredSurface {
         let (decl, _) = self.table.decl(index)?;
         // An event is automated too: a schedule entry on it fires it, at
         // most once a block (automation writes coalesce per block).
-        let writable = decl.writer == Writer::Parameter;
+        // A control its module reads (a kit's `play`, naming a slot) is not:
+        // a schedule writes the raw value, not what the module reads.
+        let writable = decl.writer == Writer::Parameter && decl.reader.is_none();
         let scalar = matches!(
             decl.kind,
             DeclKind::Number { .. } | DeclKind::Integer { .. } | DeclKind::Bool

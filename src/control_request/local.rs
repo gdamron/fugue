@@ -50,6 +50,13 @@ pub(crate) fn local_set<M: Module + ?Sized>(
     let (table, cells) = module.declared().ok_or_else(unknown)?;
     let index = table.resolve_present(key, |index| cells.load(index))?;
     let (decl, _) = table.decl(index).ok_or_else(unknown)?;
+    // A number here is not what its module reads (a kit's `play` names a
+    // slot by key, not by index): only its surface reads it.
+    if decl.reader.is_some() {
+        return Err(format!(
+            "Control '{key}' is read by its module's own surface"
+        ));
+    }
     let whole = value.fract() == 0.0 && value.is_finite();
     let value = match decl.kind {
         DeclKind::Number { .. } if value.is_finite() => RtValue::F32(value),

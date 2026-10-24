@@ -81,7 +81,7 @@ pub(crate) use condition::{Condition, Edge, Join, Predicate, GATE_LEVEL, MAX_PAR
 pub(crate) use conditions::{ConditionHost, Conditions, WatchSlots, CONDITION_CAPACITY};
 pub(crate) use declare::{
     integer_domain, ControlContext, ControlDecl, ControlTable, DeclKind, PayloadCodec, Prepared,
-    Writer,
+    ValueReader, Writer,
 };
 pub(crate) use event::{EventCounter, EventCursor};
 #[cfg(test)]
