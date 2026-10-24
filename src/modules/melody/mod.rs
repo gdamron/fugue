@@ -14,6 +14,12 @@ use rand::{RngExt, SeedableRng};
 pub use self::controls::MelodyControls;
 
 mod controls;
+// The declared table and the degrees it plays, unused until the melody
+// moves onto them.
+#[allow(dead_code)]
+mod declared;
+#[allow(dead_code)]
+mod degrees;
 mod inputs;
 mod outputs;
 mod snapshot;
