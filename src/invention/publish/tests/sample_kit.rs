@@ -13,7 +13,7 @@ use crate::alloc_counter::allocator_events;
 use crate::audio_thread::AudioThreadScope;
 use crate::control_request::Outcome;
 use crate::invention::declared::DeclaredSurface;
-use crate::modules::sample_loading::hold_sample_cache;
+use crate::modules::sample_loading::{hold_sample_cache, load_cached_sample};
 use crate::ControlValue;
 
 const DAC: &str = r#"{
@@ -188,23 +188,42 @@ fn a_level_write_scales_its_slot_clamped_to_twice_unity() {
 }
 
 #[test]
-fn an_asset_swap_waits_for_the_next_play_and_frees_nothing_on_the_audio_thread() {
+fn a_swap_waits_for_the_next_play_while_the_sounding_sample_rings_out() {
     let dir = tempfile::tempdir().unwrap();
     let mut rig = kick_and_ride(dir.path());
+    let kick = load_cached_sample(&dir.path().join("kick.wav").to_string_lossy(), SAMPLE_RATE);
+    let kick = kick.unwrap();
+    let held = Arc::strong_count(&kick);
+    let quiet = level_wav(dir.path(), "quiet.wav", 0.125, SAMPLE_RATE as usize);
+    let quieter = level_wav(dir.path(), "quieter.wav", 0.0625, SAMPLE_RATE as usize);
     set(&rig, "play", 36.0.into()).unwrap();
     rig.render(1);
-    assert!((heard(&rig) - 0.5).abs() < TOL);
 
-    let quiet = level_wav(dir.path(), "quiet.wav", 0.125, SAMPLE_RATE as usize);
-    set(&rig, "asset.0", quiet.as_str().into()).unwrap();
-    assert_eq!(read(&rig, "kit", "asset.0"), quiet.as_str().into());
-    assert_eq!(audio_block(&mut rig), (0, 0));
-    assert_eq!(heard(&rig), 0.0, "the old sample stops, the new one waits");
+    // Swapped while it sounds, the kick rings on; a second swap replaces
+    // the sample waiting, not the one sounding.
+    for asset in [&quiet, &quieter] {
+        set(&rig, "asset.0", asset.as_str().into()).unwrap();
+        assert_eq!(read(&rig, "kit", "asset.0"), asset.as_str().into());
+        assert_eq!(audio_block(&mut rig), (0, 0));
+        assert!((heard(&rig) - 0.5).abs() < TOL, "the kick rings out");
+    }
+    rig.live.reclaim();
+    assert_eq!(
+        Arc::strong_count(&kick),
+        held - 1,
+        "one handle held to ring"
+    );
 
     set(&rig, "play", 36.0.into()).unwrap();
     assert_eq!(audio_block(&mut rig), (0, 0));
-    assert!((heard(&rig) - 0.125).abs() < TOL);
+    assert!(
+        (heard(&rig) - 0.0625).abs() < TOL,
+        "the play takes the new one"
+    );
+    set(&rig, "asset.0", quiet.as_str().into()).unwrap();
+    assert_eq!(audio_block(&mut rig), (0, 0));
     rig.live.reclaim();
+    assert_eq!(Arc::strong_count(&kick), held - 2, "the kick is let go");
 }
 
 #[test]
