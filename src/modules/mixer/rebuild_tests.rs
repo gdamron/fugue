@@ -11,10 +11,13 @@ fn centre() -> f32 {
 }
 
 /// A replacement for `previous`, built with `next`'s controls, that has
-/// taken over from it.
+/// taken over from it, every audio input connected as the graph would.
 fn rebuilt(previous: &Mixer, next: Mixer) -> Mixer {
     let mut next = next;
     next.inherit(previous);
+    for ch in 0..next.channel_count() {
+        next.set_input_connected(ch, true);
+    }
     next
 }
 
