@@ -148,11 +148,10 @@ impl LiveGraph {
     }
 }
 
-/// What a chained write of `value` records as it applies: a number or a
-/// switch, never an event; anything else the edit's document records alone.
+/// What a chained write of `value` records as it applies: the value as
+/// the edit names it (a number, a switch or a choice), never an event.
 fn recorded(value: &ControlValue, event: bool) -> Option<Authoring> {
-    let scalar = matches!(value, ControlValue::Number(_) | ControlValue::Bool(_));
-    (scalar && !event).then(|| Authoring {
+    (!event).then(|| Authoring {
         value: value.clone(),
         origin: None,
         safe: None,

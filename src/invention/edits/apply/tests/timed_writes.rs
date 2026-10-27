@@ -38,6 +38,17 @@ fn author_at(running: &RunningInvention, osc: &str, value: f32, sample: u64) {
     author(running, (osc, "frequency"), number(value), sample);
 }
 
+/// Its `key` as the document records it and as it plays.
+fn heard_and_recorded_key(
+    running: &RunningInvention,
+    (osc, key): (&str, &str),
+) -> (serde_json::Value, ControlValue) {
+    let document = running.document().unwrap();
+    let spec = document.modules.iter().find(|spec| spec.id == osc).unwrap();
+    let recorded = spec.config[key].clone();
+    (recorded, running.get_control(osc, key).unwrap())
+}
+
 /// Its frequency as the document records it and as it plays.
 fn heard_and_recorded(running: &RunningInvention, osc: &str) -> (f64, ControlValue) {
     let document = running.document().unwrap();
@@ -171,5 +182,28 @@ fn a_timed_write_and_a_timed_batch_writing_its_control_are_recorded_as_they_play
         if write_at > at {
             assert_eq!(recorded, 330.0, "{case}");
         }
+    }
+}
+
+#[test]
+fn a_timed_choice_and_a_timed_batch_choosing_it_are_recorded_as_they_play() {
+    let at = 64 * 20 + 7;
+    let edit_at = crate::rpc::EditWhen::AtSample { sample: at };
+    let square = vec![
+        add("extra", "oscillator", json!({})),
+        set("osc1", "waveform", ControlValue::String("square".into())),
+    ];
+    let triangle = ControlValue::String("triangle".into());
+    for write_at in [at, at + 64 * 4] {
+        let (mut running, pump) = start(BASE);
+        running.apply_edits_at(&square, &edit_at, None).unwrap();
+        author(&running, ("osc1", "waveform"), triangle.clone(), write_at);
+        pump.render(40);
+        let (recorded, heard) = heard_and_recorded_key(&running, ("osc1", "waveform"));
+        let heard = match heard {
+            ControlValue::String(text) => serde_json::Value::String(text),
+            other => panic!("a choice plays as text, not {other:?}"),
+        };
+        assert_eq!(recorded, heard, "at {write_at}");
     }
 }
