@@ -72,8 +72,12 @@ fn running(
     (graph, surface)
 }
 
+/// The samples' level (`wav` writes half scale), which one note plays at.
+const ONE_NOTE: f32 = 0.5;
+
 /// How many engine-rate frames each instrument sounds for from now: the
-/// length of the sample its zone holds, once a note has started it.
+/// length of the sample its zone holds, once a note has started it. No
+/// frame is louder than one note.
 fn sounding(graph: &Arc<Mutex<SignalGraph>>) -> (usize, usize) {
     let mut graph = graph.lock().unwrap();
     let module = graph.modules["pair"].module_mut();
@@ -82,7 +86,14 @@ fn sounding(graph: &Arc<Mutex<SignalGraph>>) -> (usize, usize) {
         module.process(64);
         let count = |output: usize| {
             let block = &module.output_block(output)[..64];
-            block.iter().filter(|level| **level > 0.25).count()
+            let loudest = block
+                .iter()
+                .fold(0.0f32, |most, level| most.max(level.abs()));
+            assert!(loudest < ONE_NOTE + 0.01, "one note at a time: {loudest}");
+            block
+                .iter()
+                .filter(|level| **level > ONE_NOTE / 2.0)
+                .count()
         };
         sounding = (sounding.0 + count(0), sounding.1 + count(1));
     }

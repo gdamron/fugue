@@ -132,13 +132,46 @@ fn a_block_renders_while_a_control_thread_holds_the_instruments_state() {
 #[test]
 fn notes_apply_in_the_order_written() {
     let dir = tempfile::tempdir().unwrap();
-    let mut rig = rig(dir.path());
+    // Two zones, so what sounds tells the notes apart: 60 at 0.5 and 64
+    // at 0.25.
+    let asset = level_wav(dir.path(), "half.wav", 0.5);
+    let mut rig = Rig::new(DAC);
+    let zones = serde_json::json!({
+        "release": 0.001,
+        "zones": [
+            { "root_note": 60, "key_range": [0, 62], "asset": asset },
+            { "root_note": 64, "key_range": [63, 127], "asset": asset, "level": 0.5 }
+        ]
+    });
+    upsert(&rig, rig.build("inst", "sample_instrument", zones));
+    rig.render(1);
     set(&rig, "note_on", 60.0.into()).unwrap();
     set(&rig, "note_on", 64.0.into()).unwrap();
     set(&rig, "note_off", 60.0.into()).unwrap();
     rig.render(1);
-    assert!((heard(&rig) - 0.5).abs() < TOL, "64 alone: {}", heard(&rig));
-    all_applied(&mut rig, 3);
+    assert!(
+        (heard(&rig) - 0.25).abs() < TOL,
+        "64 alone: {}",
+        heard(&rig)
+    );
+    // 64 restruck and released: 60, struck again between, sounds alone.
+    for (key, note) in [("note_on", 64.0), ("note_on", 60.0), ("note_off", 64.0)] {
+        set(&rig, key, note.into()).unwrap();
+    }
+    // Past the restrike's declick fade.
+    rig.render(10);
+    assert!((heard(&rig) - 0.5).abs() < TOL, "60 alone: {}", heard(&rig));
+    // Struck, released and struck again in one block, 64 is held.
+    for (key, note) in [("note_on", 64.0), ("note_off", 64.0), ("note_on", 64.0)] {
+        set(&rig, key, note.into()).unwrap();
+    }
+    rig.render(10);
+    assert!(
+        (heard(&rig) - 0.75).abs() < TOL,
+        "60 and 64: {}",
+        heard(&rig)
+    );
+    all_applied(&mut rig, 9);
 }
 
 #[test]
@@ -216,26 +249,27 @@ fn a_zone_swap_under_playback_allocates_and_frees_nothing_on_the_audio_thread() 
 fn a_scheduled_chord_plays_whole_on_its_step_and_releases_on_the_next() {
     let dir = tempfile::tempdir().unwrap();
     let mut rig = rig(dir.path());
-    let entry = |step: u32, control: &str, note: f32| {
-        serde_json::json!({ "at_step": step, "module": "inst", "control": control, "value": note })
-    };
+    let entry = |step: u32, control: &str, note: f32| serde_json::json!({ "at_step": step, "module": "inst", "control": control, "value": note });
     let chord = [60.0, 64.0, 67.0];
     let entries: Vec<_> = (chord.iter().map(|&note| entry(0, "note_on", note)))
         .chain(chord.iter().map(|&note| entry(1, "note_off", note)))
         .collect();
     schedule(&mut rig, serde_json::json!({ "schedule": entries }));
 
+    assert_eq!(counted_block(&mut rig), (0, 0));
+    assert!(heard(&rig).abs() < TOL, "silent before the step");
+    // Each step's notes all land in the block its edge falls in.
     rig.live.write_input("sched", "clock", 1.0).unwrap();
-    for _ in 0..2 {
-        assert_eq!(counted_block(&mut rig), (0, 0));
-    }
+    assert_eq!(counted_block(&mut rig), (0, 0));
     assert!((heard(&rig) - 1.5).abs() < 2.0 * TOL, "{}", heard(&rig));
     rig.live.write_input("sched", "clock", 0.0).unwrap();
     assert_eq!(counted_block(&mut rig), (0, 0));
+    assert!(
+        (heard(&rig) - 1.5).abs() < 2.0 * TOL,
+        "held to the next step"
+    );
     rig.live.write_input("sched", "clock", 1.0).unwrap();
-    for _ in 0..2 {
-        assert_eq!(counted_block(&mut rig), (0, 0));
-    }
+    assert_eq!(counted_block(&mut rig), (0, 0));
     assert!(heard(&rig).abs() < TOL, "{}", heard(&rig));
 }
 
@@ -243,10 +277,16 @@ fn a_scheduled_chord_plays_whole_on_its_step_and_releases_on_the_next() {
 fn root_notes_are_read_only_and_a_zone_past_the_count_is_no_control() {
     let dir = tempfile::tempdir().unwrap();
     let rig = rig(dir.path());
-    assert_eq!(read(&rig, "inst", "root_note.0"), ControlValue::Number(60.0));
+    assert_eq!(
+        read(&rig, "inst", "root_note.0"),
+        ControlValue::Number(60.0)
+    );
     let error = set(&rig, "root_note.0", 62.0.into()).unwrap_err();
     assert!(error.contains("read-only"), "{error}");
-    assert_eq!(read(&rig, "inst", "root_note.0"), ControlValue::Number(60.0));
+    assert_eq!(
+        read(&rig, "inst", "root_note.0"),
+        ControlValue::Number(60.0)
+    );
 
     for key in ["asset.1", "level.1", "root_note.1"] {
         assert!(set(&rig, key, 1.0.into()).is_err(), "{key}");
@@ -259,6 +299,13 @@ fn root_notes_are_read_only_and_a_zone_past_the_count_is_no_control() {
         .collect();
     assert_eq!(
         keys,
-        ["release", "note_on", "note_off", "root_note.0", "asset.0", "level.0"]
+        [
+            "release",
+            "note_on",
+            "note_off",
+            "root_note.0",
+            "asset.0",
+            "level.0"
+        ]
     );
 }
