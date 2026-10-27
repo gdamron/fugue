@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
 use crate::control_request::{
-    EventCursor, Outcome, OutcomeReceiver, Refusal, RequestId, RequestSender, RtValue, Source, When,
+    EventCursor, Outcome, OutcomeReceiver, Refusal, RequestId, RtValue, Source, When,
 };
 use crate::invention::request_log::{
     LoggedBeat, LoggedEdit, LoggedRequest, LoggedWhen, Recorder, RequestLog,
@@ -25,7 +25,6 @@ use crate::invention::request_log::{
 use crate::ControlValue;
 
 mod authored;
-mod lost;
 
 /// The most writes the log remembers: every request the queue, the
 /// pending store and the watches can hold at once.
@@ -64,9 +63,6 @@ pub(crate) struct PendingWrite {
     /// ring of outcomes until the reply releases it (see
     /// [`PendingLog::release`]).
     pub(crate) awaited: bool,
-    /// The count rendered when it was submitted, set by
-    /// [`PendingLog::submitted`]: an untimed write applies no earlier.
-    pub(crate) submitted: u64,
 }
 
 /// A front door's write that applied, for its `ControlChanged` event, or
@@ -148,16 +144,6 @@ pub(crate) struct PendingLog {
     outcomes: VecDeque<(RequestId, Outcome)>,
     receiver: OutcomeReceiver,
     dropped: EventCursor,
-    /// The graph's request queue, read for what it has rendered and taken
-    /// up, to tell a write timed on a sample that passed from one that
-    /// still waits once outcomes are lost.
-    requests: RequestSender,
-    /// Writes timed on a sample that were waiting when outcomes were lost
-    /// (see `pending::lost`).
-    suspect: Vec<lost::Suspect>,
-    /// Each control's latest authored write that applied, which a suspect
-    /// write taken to have applied must not be recorded over.
-    latest: lost::Latest,
     /// Outcomes lost since they were last taken: dropped by the audio
     /// thread for want of room, or evicted here unreported.
     lost: u64,
@@ -184,11 +170,8 @@ pub(crate) struct PendingLog {
 }
 
 impl PendingLog {
-    pub(crate) fn new(receiver: OutcomeReceiver, requests: RequestSender) -> Self {
+    pub(crate) fn new(receiver: OutcomeReceiver) -> Self {
         Self {
-            requests,
-            suspect: Vec::new(),
-            latest: lost::Latest::default(),
             writes: VecDeque::new(),
             outcomes: VecDeque::new(),
             receiver,
@@ -218,14 +201,9 @@ impl PendingLog {
 
     /// Receives every outcome waiting, settling the writes they belong to.
     /// When the audio thread had to drop outcomes, which writes they
-    /// settled cannot be known: an untimed write is taken to have applied,
-    /// and one timed on a sample is once the graph has surely rendered it
-    /// (see `pending::lost`), rather than list one as pending for ever.
+    /// settled cannot be known, so the log forgets every write it holds
+    /// rather than list one as pending for ever.
     pub(crate) fn settle(&mut self) {
-        // Read before the outcomes: every block finished by then has queued
-        // (or dropped) its outcomes, so a write due before it that is still
-        // here once they are received lost its own.
-        let rendered = self.taken_up();
         while let Some((id, outcome, latched)) = self.receiver.try_recv() {
             if let Some(at) = self.timed.iter().position(|(timed, _)| *timed == id) {
                 let edit = self.timed.remove(at).and_then(|(_, edit)| edit);
@@ -264,7 +242,6 @@ impl PendingLog {
                 if let Some(write) = write.as_ref() {
                     if applied {
                         self.authored(write);
-                        self.latest.applied(write, id, outcome);
                     }
                     self.announce(id, write, Some(outcome));
                 }
@@ -278,9 +255,26 @@ impl PendingLog {
         }
         let dropped = self.dropped.take(self.receiver.dropped());
         if dropped > 0 {
-            self.lost_outcomes(dropped);
+            self.lost += u64::from(dropped);
+            self.log.lost(u64::from(dropped));
+            // Which applied cannot be known; most do, and an author's
+            // write is not to be lost from the document. Not one timed: its
+            // outcome has room kept for it (see `timed_write`), so it stays
+            // for its own. Past that room, one whose outcome was lost stays
+            // listed until it is forgotten (see `submitted`) or the
+            // invention stops.
+            let writes = std::mem::take(&mut self.writes);
+            let (timed, settled): (VecDeque<_>, VecDeque<_>) = writes
+                .into_iter()
+                .partition(|(_, write)| write.when != When::Now);
+            self.writes = timed;
+            for (id, write) in settled {
+                self.authored(&write);
+                self.announce(id, &write, None);
+            }
+            self.timed.clear();
+            self.timed_lost = true;
         }
-        self.settle_lost(rendered);
     }
 
     /// Timed edits' outcomes received since the last call, oldest first,
@@ -358,15 +352,15 @@ impl PendingLog {
     /// Records a write just submitted as request `id`. Call it under the
     /// log's lock, taken before the submission, so the outcome cannot be
     /// received before the write is recorded.
-    pub(crate) fn submitted(&mut self, id: RequestId, mut write: PendingWrite) {
-        write.submitted = self.requests.rendered();
+    pub(crate) fn submitted(&mut self, id: RequestId, write: PendingWrite) {
         if self.writes.len() == LOG_CAPACITY {
-            // Forgotten unsettled: recorded as the dropped are, but for one
-            // timed, which is not taken to have applied (its outcome, if it
+            // Forgotten unsettled: the oldest untimed one, recorded as the
+            // dropped are. Only past the timed writes' bound is one timed
+            // forgotten, and not taken to have applied (its outcome, if it
             // comes, is counted lost).
-            if let Some((id, oldest)) = self.writes.pop_front() {
+            let oldest = (self.writes.iter()).position(|(_, write)| write.when == When::Now);
+            if let Some((id, oldest)) = self.writes.remove(oldest.unwrap_or(0)) {
                 if oldest.when == When::Now {
-                    self.latest.untimed(&oldest, id);
                     self.authored(&oldest);
                     self.announce(id, &oldest, None);
                 }
@@ -411,8 +405,6 @@ impl PendingLog {
     /// announced so.
     pub(crate) fn abandon(&mut self) {
         self.settle();
-        self.suspect.clear();
-        self.latest = lost::Latest::default();
         for (id, write) in std::mem::take(&mut self.writes) {
             self.announce(id, &write, Some(Refusal::Stopped.into()));
         }
@@ -445,6 +437,14 @@ impl PendingLog {
         self.writes
             .iter()
             .filter(|(_, write)| on_sample(write))
+            .count()
+    }
+
+    /// How many timed writes wait (see
+    /// `timed_write::TIMED_WRITE_CAPACITY`).
+    pub(crate) fn timed_waiting(&self) -> usize {
+        (self.writes.iter())
+            .filter(|(_, write)| write.when != When::Now)
             .count()
     }
 

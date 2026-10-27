@@ -8,8 +8,8 @@ use super::change::{BuiltModule, PreparedChange, TopologyMirror};
 use super::timed_status::{CancelCause, Ledger};
 use crate::audio_thread::debug_assert_control_thread;
 use crate::control_request::{
-    outcome_channel, request_channel, ControlIndex, ControlTarget, OutcomeReceiver, QueueFull,
-    Request, RequestSender, RequestValue, CONDITION_CAPACITY,
+    outcome_channel_reserving, request_channel, ControlIndex, ControlTarget, OutcomeReceiver,
+    QueueFull, Request, RequestSender, RequestValue, CONDITION_CAPACITY,
 };
 use crate::invention::graph::{
     AudioLink, InputWrite, Publication, RequestDrain, SignalGraph, MAX_INPUT_PORT_NAME,
@@ -75,6 +75,14 @@ pub(crate) const WAITING_CAPACITY: usize =
 /// request one block can settle: every waiting one and a full queue (a
 /// repeating request settles once, at its first application).
 pub(crate) const OUTCOME_QUEUE_CAPACITY: usize = WAITING_CAPACITY + REQUEST_QUEUE_CAPACITY;
+
+/// Outcome slots beyond [`OUTCOME_QUEUE_CAPACITY`] only timed requests'
+/// outcomes may take, so none is dropped however many untimed ones a slow
+/// control thread leaves unreceived: every timed write the front doors keep
+/// waiting (`timed_write::TIMED_WRITE_CAPACITY`), and as many again for the
+/// timed edits, their kept copies and chained writes, made without that
+/// check. The control side then never has to guess whether one applied.
+pub(crate) const TIMED_OUTCOME_RESERVE: usize = 2 * super::timed_write::TIMED_WRITE_CAPACITY;
 
 /// Payload retirements the request drain's retirer can hold while the
 /// reclaimer is behind: enough for every pending request and a full queue,
@@ -142,7 +150,8 @@ impl Publisher {
         let retired = RetireRing::with_capacity(RETIRE_CAPACITY);
         let (requests, request_rx) = request_channel(QUEUE_SLOTS, Arc::clone(&graph.transport));
         let payloads = RetireQueue::with_capacity(payload::RETIRE_CAPACITY);
-        let (outcome_tx, outcomes) = outcome_channel(OUTCOME_QUEUE_CAPACITY);
+        let (outcome_tx, outcomes) =
+            outcome_channel_reserving(OUTCOME_QUEUE_CAPACITY, TIMED_OUTCOME_RESERVE);
         let published = Arc::new(AtomicU64::new(0));
         graph.requests = Some(RequestDrain::new(
             request_rx,

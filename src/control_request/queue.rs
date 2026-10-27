@@ -204,26 +204,6 @@ impl<T> QueueProducer<T> {
         shared.slot(ahead).seq.load(Ordering::Acquire) == ahead
     }
 
-    /// The next position a producer claims: every item pushed so far sits
-    /// before it. Wait-free.
-    pub(crate) fn position(&self) -> u64 {
-        self.shared.tail.load(Ordering::Acquire)
-    }
-
-    /// Whether the consumer has popped every item before `position`, one
-    /// [`Self::position`] returned. Seen true, so is everything the
-    /// consumer did before that pop. Wait-free.
-    pub(crate) fn taken_before(&self, position: u64) -> bool {
-        // The consumer pops in order, so the last item before `position`
-        // tells. Claimed, its slot's `seq` is its position, then one more
-        // once published, and a lap or more on once popped. A stamp from a
-        // lap before it (still seen when the claim was seen without the
-        // reuse before it) is behind, so the distance is signed.
-        let last = position.wrapping_sub(1);
-        let seq = self.shared.slot(last).seq.load(Ordering::Acquire);
-        seq.wrapping_sub(last) as i64 >= 2
-    }
-
     /// Whether the consumer closed the queue ([`QueueConsumer::close`]).
     pub(crate) fn is_closed(&self) -> bool {
         self.shared.closed.load(Ordering::Acquire)

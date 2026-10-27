@@ -312,7 +312,6 @@ fn submit_timed(running: &RunningInvention, id: &str, key: &str, value: f32, whe
             when: crate::control_request::When::Now,
             announced: false,
             awaited: false,
-            submitted: 0,
             authored: None,
         };
         pending.submitted(request, write);

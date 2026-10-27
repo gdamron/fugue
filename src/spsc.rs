@@ -165,6 +165,19 @@ impl<T> Producer<T> {
         Self { ring }
     }
 
+    /// Values queued and not yet popped: at most the ring's capacity, and
+    /// no more than are, as pops may have freed some since. Wait-free.
+    pub(crate) fn queued(&self) -> usize {
+        let ring = &*self.ring;
+        let head = ring.head.load(Ordering::Acquire);
+        ring.tail.load(Ordering::Relaxed).wrapping_sub(head)
+    }
+
+    /// How many values the ring holds.
+    pub(crate) fn capacity(&self) -> usize {
+        self.ring.slots.len()
+    }
+
     /// Queues `value`, or hands it back at once when the ring is full.
     pub(crate) fn push(&mut self, value: T) -> Result<(), T> {
         self.push_paused(value, || {})

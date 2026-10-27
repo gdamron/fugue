@@ -233,16 +233,9 @@ impl RequestSender {
         self.shared.transport.rendered()
     }
 
-    /// Where the queue stands: every request submitted so far sits before
-    /// it (see [`Self::taken_before`]).
-    pub(crate) fn queued(&self) -> u64 {
-        self.queue.position()
-    }
-
-    /// Whether the drain has taken up every request submitted before
-    /// `queued`, a position [`Self::queued`] returned.
-    pub(crate) fn taken_before(&self, queued: u64) -> bool {
-        self.queue.taken_before(queued)
+    /// The transport the channel times relative requests against.
+    pub(crate) fn transport(&self) -> Arc<Transport> {
+        Arc::clone(&self.shared.transport)
     }
 
     /// The count the channel's drain releases requests timed by a

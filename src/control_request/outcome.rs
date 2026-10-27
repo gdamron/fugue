@@ -15,10 +15,24 @@ pub(crate) type Settled = (RequestId, Outcome, Option<u64>);
 /// Creates a channel for up to `capacity` outcomes (rounded up to a power
 /// of two). Allocates once: call it on a control thread.
 pub(crate) fn outcome_channel(capacity: usize) -> (OutcomeSender, OutcomeReceiver) {
-    let queue = Ring::with_capacity(capacity);
+    outcome_channel_reserving(capacity, 0)
+}
+
+/// [`outcome_channel`], with `timed` more slots that only timed requests'
+/// outcomes may take: an untimed one finding only those free is dropped.
+/// While no more timed requests wait unreceived than `timed`, none of
+/// their outcomes is ever dropped.
+pub(crate) fn outcome_channel_reserving(
+    capacity: usize,
+    timed: usize,
+) -> (OutcomeSender, OutcomeReceiver) {
+    let queue = Ring::with_capacity(capacity + timed);
     let dropped = Arc::new(EventCounter::new());
+    let producer = Producer::claim(Arc::clone(&queue));
+    let untimed_room = producer.capacity() - timed;
     let sender = OutcomeSender {
-        producer: Producer::claim(Arc::clone(&queue)),
+        producer,
+        untimed_room,
         dropped: Arc::clone(&dropped),
     };
     (sender, OutcomeReceiver { queue, dropped })
@@ -28,6 +42,9 @@ pub(crate) fn outcome_channel(capacity: usize) -> (OutcomeSender, OutcomeReceive
 /// settled request's outcome through it.
 pub(crate) struct OutcomeSender {
     producer: Producer<Settled>,
+    /// Slots an untimed request's outcome may fill; the rest are timed
+    /// requests' alone.
+    untimed_room: usize,
     dropped: Arc<EventCounter>,
 }
 
@@ -38,6 +55,16 @@ impl OutcomeSender {
     /// thread never waits for one. Wait-free, allocation-, free- and
     /// lock-free.
     pub(crate) fn send(&mut self, id: RequestId, outcome: Outcome, latched: Option<u64>) {
+        if self.producer.queued() >= self.untimed_room {
+            self.dropped.record();
+            return;
+        }
+        self.send_timed(id, outcome, latched);
+    }
+
+    /// [`Self::send`] for a timed request's outcome, which may take the
+    /// slots reserved for those too.
+    pub(crate) fn send_timed(&mut self, id: RequestId, outcome: Outcome, latched: Option<u64>) {
         if self.producer.push((id, outcome, latched)).is_err() {
             self.dropped.record();
         }

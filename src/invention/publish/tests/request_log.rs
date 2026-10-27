@@ -65,7 +65,6 @@ impl LiveGraph {
             when: crate::control_request::When::Now,
             announced: false,
             awaited: false,
-            submitted: 0,
             authored: None,
         };
         pending.submitted(id, write);

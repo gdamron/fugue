@@ -443,7 +443,7 @@ impl Conditions {
             if fires && matches!(outcome, Outcome::AppliedLate { .. }) {
                 host.finish_events();
             }
-            outcomes.record(id, payload, outcome);
+            outcomes.record(id, payload, outcome, true);
             self.slots.release();
         }
         next

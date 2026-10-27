@@ -523,7 +523,7 @@ impl Watches {
                 // outcome queue holds one per request, and a repeat runs
                 // on.
                 if result.is_ok() && !watch.settled {
-                    outcomes.record(watch.request.id, false, outcome(result));
+                    outcomes.record(watch.request.id, false, outcome(result), true);
                     watch.settled = true;
                 }
                 watch.applied = Some(now);
@@ -546,7 +546,7 @@ impl Watches {
             }
             // Refused or overridden on its beat, it still latched there.
             let latched = (due == now && result.is_err()).then_some(now);
-            outcomes.record_on_beat(id, payload, outcome(result), latched);
+            outcomes.record_on_beat(id, payload, outcome(result), latched, true);
         }
         // Then the tables, as a scheduler wrote after the requests due at
         // its sample: at the same tier, the table's entry wins.

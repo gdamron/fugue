@@ -218,34 +218,6 @@ fn a_peek_sees_nothing_or_the_value_the_next_pop_returns() {
     });
 }
 
-/// A position read while another thread reuses the slot before it counts
-/// as taken only once everything before it is popped. The position can be
-/// seen without the reuse that came first, leaving the slot's stamp from a
-/// lap before, which must not pass for one popped.
-#[test]
-fn a_position_seen_before_its_slot_reuse_is_not_taken() {
-    loom::model(|| {
-        let (producer, mut consumer) = bounded(2);
-        producer.try_push(1u32).unwrap();
-        let reuser = {
-            let producer = producer.clone();
-            thread::spawn(move || {
-                assert_eq!(consumer.pop(), Some(1));
-                producer.try_push(2).unwrap();
-                producer.try_push(3).unwrap();
-                // Kept, as dropping it would drain the queue.
-                consumer
-            })
-        };
-        // Only the first item is ever popped.
-        let position = producer.position();
-        if producer.taken_before(position) {
-            assert!(position <= 1, "taken before {position}, never popped");
-        }
-        reuser.join().unwrap();
-    });
-}
-
 /// Items left in the queue are dropped once: by the consumer as it goes, or
 /// by the last producer for any pushed after that.
 #[test]
