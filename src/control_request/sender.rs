@@ -116,7 +116,8 @@ impl RequestSender {
     /// # Errors
     ///
     /// [`QueueFull`] with the request (id assigned) when the queue has no
-    /// room; the overflow is also counted in [`overflows`](Self::overflows).
+    /// room, or is [`closed`](Self::closed); the overflow is also counted
+    /// in [`overflows`](Self::overflows).
     // The request comes back by value, as large as it is (a condition makes
     // it 176 bytes), so a full queue never allocates.
     #[allow(clippy::result_large_err)]
@@ -186,6 +187,12 @@ impl RequestSender {
                 Err(QueueFull(request))
             }
         }
+    }
+
+    /// Whether the channel's drain stopped reading: a render panicked, and
+    /// every submission is refused (see `graph::unwind`).
+    pub(crate) fn closed(&self) -> bool {
+        self.queue.is_closed()
     }
 
     /// Whether a request submitted now would find room. Exact while

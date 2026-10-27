@@ -23,7 +23,7 @@
 
 mod sync {
     pub(super) use loom::cell::UnsafeCell;
-    pub(super) use loom::sync::atomic::{AtomicU32, Ordering};
+    pub(super) use loom::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     pub(super) use loom::sync::Arc;
     pub(super) use loom::thread::yield_now as spin_loop;
 

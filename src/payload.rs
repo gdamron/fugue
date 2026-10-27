@@ -43,7 +43,8 @@
 //! Release builds rely on this discipline; debug builds enforce it: inside
 //! an [`AudioThreadScope`](crate::audio_thread::AudioThreadScope) (which
 //! `SignalGraph::process_block` enters), dropping a `Payload`, `Shared<T>`
-//! or [`Retired`] panics.
+//! or [`Retired`] panics. A render that panics leaks, rather than frees,
+//! a `Payload` or `Shared<T>` it drops while unwinding ([`RenderScope`]).
 //!
 //! # Backpressure: defer at apply
 //!
@@ -74,6 +75,9 @@ use std::sync::Arc;
 
 use crate::audio_thread::on_audio_thread;
 use crate::spsc::{Producer, Ring};
+
+mod rendering;
+pub(crate) use rendering::{LeakOnUnwind, RenderScope};
 
 /// Retirements an engine's [`RetireQueue`] holds before its [`Retirer`]
 /// starts holding them. The reclaimer drains every few tens of ms.
@@ -185,6 +189,9 @@ impl fmt::Debug for Payload {
 impl Drop for Payload {
     fn drop(&mut self) {
         if self.0.is_some() {
+            if rendering::unwinding_a_render() {
+                return std::mem::forget(self.0.take());
+            }
             debug_assert_off_audio_thread("a Payload");
         }
     }
@@ -224,6 +231,9 @@ impl<T> Deref for Shared<T> {
 impl<T> Drop for Shared<T> {
     fn drop(&mut self) {
         if self.0.is_some() {
+            if rendering::unwinding_a_render() {
+                return std::mem::forget(self.0.take());
+            }
             debug_assert_off_audio_thread("a Shared value");
         }
     }
