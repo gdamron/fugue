@@ -286,7 +286,8 @@ impl RunningInvention {
         check_edit_batch(edits)?;
         // Authored writes still waiting to apply, read before the document
         // so none applies unseen in between (one read in both is made twice).
-        let waiting = self.live.pending_writes();
+        let waiting = self.live.pending_requests().into_iter();
+        let waiting = waiting.map(|(_, write)| write).collect();
         // A timed edit that has landed is adopted first, so the batch reads
         // the document that is playing; adopted later (when the publisher
         // is next locked) its changes would read as the batch's own.

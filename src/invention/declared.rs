@@ -48,7 +48,8 @@ use std::sync::{Arc, Mutex, Weak};
 use super::graph::GraphCommand;
 use super::graph::SignalGraph;
 use super::publish::{
-    Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler, Touched,
+    kept_until, Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler,
+    Touched,
 };
 use super::runtime::ControlSurfaceInstance;
 #[cfg(test)]
@@ -761,7 +762,7 @@ impl DeclaredSurface {
                 request.source = options.source;
                 request.priority = options.priority;
                 request.ttl = options.ttl;
-                let automated = request.source == Source::Automation;
+                let (source, when) = (request.source, request.when);
                 // Never kept on a graph with no clock: there the copy's
                 // hold, at a sample that never passes, would refuse every
                 // later write to the control. The edit is cancelled instead.
@@ -820,7 +821,8 @@ impl DeclaredSurface {
                         value: written,
                         raw,
                         beat: None,
-                        automated,
+                        source,
+                        when,
                         announced: options.announced,
                         awaited: options.awaited,
                         // Safe from the timed edit it was kept over, or that
@@ -834,6 +836,7 @@ impl DeclaredSurface {
                     // write is announced: the copy is the edit's.
                     if let Some(copy) = copy.filter(|copy| *copy != id) {
                         let copy_write = PendingWrite {
+                            when: safe.map_or(when, kept_until),
                             announced: false,
                             awaited: false,
                             ..write.clone()

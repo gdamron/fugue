@@ -16,7 +16,9 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
-use crate::control_request::{EventCursor, Outcome, OutcomeReceiver, RequestId, RtValue};
+use crate::control_request::{
+    EventCursor, Outcome, OutcomeReceiver, RequestId, RtValue, Source, When,
+};
 use crate::invention::request_log::{
     LoggedBeat, LoggedEdit, LoggedRequest, LoggedWhen, Recorder, RequestLog,
 };
@@ -42,11 +44,12 @@ pub(crate) struct PendingWrite {
     pub(crate) raw: Option<RtValue>,
     /// Its musical time, when it is timed in beats.
     pub(crate) beat: Option<LoggedBeat>,
-    /// Submitted at the automation tier, which takes a control back from a
-    /// hold: a replay holds every logged write above automation, so it
-    /// cannot reproduce one (it counts as unlogged). Set for every request
-    /// submitted from automation.
-    pub(crate) automated: bool,
+    /// Who submitted it. One from automation, which takes a control back
+    /// from a hold, a replay cannot reproduce: it holds every logged write
+    /// above automation (so it counts as unlogged).
+    pub(crate) source: Source,
+    /// When it was submitted to apply.
+    pub(crate) when: When,
     /// What the retained document records once the write applies, when it
     /// is authored.
     pub(crate) authored: Option<Authoring>,
@@ -268,7 +271,7 @@ impl PendingLog {
             self.log.lost(1);
             return;
         };
-        let Some(raw) = write.raw.filter(|_| !write.automated) else {
+        let Some(raw) = write.raw.filter(|_| write.source != Source::Automation) else {
             self.log.unlogged();
             return;
         };
@@ -482,10 +485,10 @@ impl PendingLog {
         std::mem::take(&mut self.steps)
     }
 
-    /// The writes still waiting, oldest first.
-    pub(crate) fn pending(&mut self) -> Vec<PendingWrite> {
+    /// The writes still waiting, oldest first, each with its request.
+    pub(crate) fn pending(&mut self) -> Vec<(RequestId, PendingWrite)> {
         self.settle();
-        self.writes.iter().map(|(_, write)| write.clone()).collect()
+        self.writes.iter().cloned().collect()
     }
 
     /// Every outcome received and not yet taken, oldest first, and how

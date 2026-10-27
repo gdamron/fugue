@@ -16,6 +16,7 @@ mod error;
 mod event;
 mod identity;
 mod package;
+mod pending;
 mod receipt;
 mod recovery;
 mod request;
@@ -48,6 +49,10 @@ pub use package::{
     PackageInfo, PackageInstallReport, PackageInstallRequest, PackageList, PackageListQuery,
     PackageSource, MAX_PACKAGE_DIAGNOSTICS, MAX_PACKAGE_LIST_BYTES, MAX_PACKAGE_SUMMARY_BYTES,
     PACKAGE_SCHEMA_VERSION,
+};
+pub use pending::{
+    PendingCounts, PendingDetail, PendingRequest, PendingRequests, PendingSource, PendingWait,
+    COMPACT_PENDING_ITEMS,
 };
 pub use receipt::{AppliedControl, ControlRequestState, MutationReceipt, MutationReply};
 pub(crate) use recovery::{truncate_on_char_boundary, MODULE_ERROR_BYTES};

@@ -234,3 +234,42 @@ fn a_refused_write_is_counted_and_ends_no_ramp() {
     assert_eq!(refused.count(), 2);
     assert!(Arc::ptr_eq(target.refused().unwrap(), &refused));
 }
+
+/// A write on the legacy path never reaches a declared control: that is
+/// the request's to apply, on the audio thread. Every built type is
+/// checked, each declared control holding a number or a boolean written
+/// a different value.
+#[test]
+fn a_legacy_write_leaves_every_declared_control_as_it_was() {
+    let registry = crate::ModuleRegistry::default();
+    let mut checked = 0;
+    for type_id in registry.types() {
+        if registry.is_sink(type_id) || UNBUILDABLE.iter().any(|(id, _)| *id == type_id) {
+            continue;
+        }
+        let built = registry.build(type_id, 48_000, &scheduled_config(type_id));
+        let built = built.unwrap_or_else(|error| panic!("'{type_id}' did not build: {error}"));
+        let Some(surface) = built.control_surface else {
+            continue;
+        };
+        for meta in surface.controls() {
+            let key = meta.key.as_str();
+            let Ok(before) = surface.get_control(key) else {
+                continue;
+            };
+            let other = match before {
+                ControlValue::Number(value) => ControlValue::Number(value + 1.0),
+                ControlValue::Bool(value) => ControlValue::Bool(!value),
+                _ => continue,
+            };
+            if !surface.declares(key) {
+                continue;
+            }
+            let _ = surface.set_legacy(key, other);
+            let after = surface.get_control(key);
+            assert_eq!(after.as_ref(), Ok(&before), "'{type_id}.{key}'");
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no declared control was checked");
+}

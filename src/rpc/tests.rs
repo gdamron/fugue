@@ -6,6 +6,7 @@ mod edits;
 mod error;
 mod event;
 mod package;
+mod pending;
 mod recovery;
 mod request;
 mod response;
