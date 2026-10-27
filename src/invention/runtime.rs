@@ -368,6 +368,20 @@ impl RunningInvention {
         self.state.lock().unwrap().document()
     }
 
+    /// [`Self::document`] once every authored write made so far has applied
+    /// (or been refused), waiting a bounded time for the audio thread to
+    /// take them: what a save or an export writes. An authored write is
+    /// recorded as it applies, a block or so after it is made, so a write
+    /// a caller was already told about is never left out. One the audio
+    /// thread has still not taken after the wait (a stalled stream) is left
+    /// out, and recorded once it applies.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn document_to_save(&self) -> Option<crate::Invention> {
+        self.live
+            .settle_authored(crate::invention::publish::APPLY_WAIT);
+        self.document()
+    }
+
     /// Exports the session's log of applied control requests, each with
     /// the sample it applied at, for an offline render of the invention as
     /// loaded to replay (see [`crate::invention::request_log`]).

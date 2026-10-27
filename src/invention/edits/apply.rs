@@ -270,6 +270,9 @@ impl RunningInvention {
     /// validates the result (steps 1 to 3), changing nothing.
     fn batch(&self, edits: &[StructuralEdit]) -> Result<Batch, RpcError> {
         check_edit_batch(edits)?;
+        // Authored writes still waiting to apply, read before the document
+        // so none applies unseen in between (one read in both is made twice).
+        let waiting = self.live.pending_writes();
         // A timed edit that has landed is adopted first, so the batch reads
         // the document that is playing; adopted later (when the publisher
         // is next locked) its changes would read as the batch's own.
@@ -280,7 +283,7 @@ impl RunningInvention {
                 "the running invention keeps no authored document to edit; nothing was applied",
             )
         })?;
-        let mut facts = LiveFacts::new(self, &document);
+        let mut facts = LiveFacts::new(self, &document, waiting);
         let candidate =
             apply_to_candidate(&document, edits, &mut facts).map_err(RpcError::invalid_edit)?;
         // Checked first against the directory as the batch will leave it, so

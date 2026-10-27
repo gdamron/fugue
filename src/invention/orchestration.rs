@@ -1,7 +1,7 @@
-use crate::control_request::{DeclKind, RequestId, Source};
+use crate::control_request::{RequestId, Source};
 use crate::invention::declared::{Queued, WriteOptions};
 use crate::invention::graph::SignalGraph;
-use crate::invention::publish::{edge, edit_offline, Committed, GraphChange, LiveGraph};
+use crate::invention::publish::{edge, edit_offline, Authoring, Committed, GraphChange, LiveGraph};
 use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
 use crate::rpc::non_finite_refusal;
@@ -17,8 +17,6 @@ use std::sync::{Arc, Mutex};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, RuntimeState, RuntimeStatus};
 
 pub(crate) mod authored;
-
-use authored::{write_authored, WRITE_ATTEMPTS};
 
 /// Read/write orchestration surface shared by live and render runtimes.
 pub trait OrchestrationRuntime {
@@ -271,13 +269,10 @@ impl RuntimeSnapshot {
         intent: ControlWriteIntent,
         options: WriteOptions,
     ) -> Result<ControlAck, GraphCommandError> {
-        let options = WriteOptions {
-            authored: false,
-            ..options
-        };
+        let options = options.performing();
         // An event (a clock's reset) fires; there is no state to author.
         let ack = if intent.is_authoring() && !self.is_event(module_id, key) {
-            self.set_control_recorded(module_id, key, value, &options.authoring())?
+            self.set_control_recorded(module_id, key, value, &options)?
         } else {
             self.set_control_performed(module_id, key, value, &options)?
         };
@@ -306,11 +301,12 @@ impl RuntimeSnapshot {
         Ok(ControlAck::new(value, &queued))
     }
 
-    /// Coerces, applies, and records a control write without emitting an event,
-    /// returning the applied (coerced) value: the authored half of
-    /// [`Self::set_control_with_intent`], which emits the event. Records into
-    /// the retained document and the module's stored config (see
-    /// `RuntimeState::record_authored_control`).
+    /// Coerces and submits an authored control write without emitting an
+    /// event, returning the coerced value and the request it was submitted
+    /// as: the authored half of [`Self::set_control_with_intent`], which
+    /// emits the event. The write is recorded into the retained document and
+    /// the module's stored config (see `RuntimeState::record_authored_control`)
+    /// once it applies, which may be after this returns.
     pub(crate) fn set_control_recorded(
         &self,
         module_id: &str,
@@ -326,49 +322,29 @@ impl RuntimeSnapshot {
         let (load, origin) = self.asset_to_load(key, &value)?;
         let Some(live) = &self.live else {
             let queued = self.submit_transient(module_id, key, load, options)?;
-            let mut state = self.state.lock().unwrap();
-            state.record_authored_control(module_id, key, &value);
+            // Offline, a write applies as it is made, unless it lost.
+            if !queued.lost {
+                let mut state = self.state.lock().unwrap();
+                state.record_authored_control(module_id, key, &value);
+            }
             return Ok(ControlAck::new(value, &queued));
         };
-        // Written first, so a write refused changes nothing, then recorded
-        // under the publisher: a timed edit waiting takes the write into its
-        // own document or, when it rebuilds or removes the module, is
-        // cancelled. When a timed edit adopted in between overtook the write
-        // (landed after it and replaced the module), the write is made
-        // again, so it plays last and what is recorded is what plays. A
-        // payload (a schedule) is made once: making it again is not the same
-        // as making it once. A write is recorded only when this returns Ok,
-        // so the caller's event follows every value recorded. Authored
-        // writers take turns, so the last recorded is the last made.
+        // Submitted as a request, the write is recorded in the document
+        // once it applies, in the order the audio thread applied it (see
+        // `publish::authored`): one refused, lost to a higher rank or
+        // replaced at its sample is never recorded. One applied as it was
+        // made (a legacy control, a schedule travelling in a publication)
+        // is recorded now. A timed edit waiting that rebuilds or removes
+        // the module is cancelled. Authored writers take turns, so the
+        // last submitted is the last recorded. A timed edit already landed
+        // is adopted first, so the write goes to the module playing.
         let _authoring = live.authoring();
-        let attempts = if self.is_payload(module_id, key) {
-            1
-        } else {
-            WRITE_ATTEMPTS
-        };
-        let mut request = None;
-        write_authored(
-            attempts,
-            (module_id, key),
-            || live.generation(),
-            || {
-                let queued = self.make_authored(module_id, key, load.clone(), options)?;
-                request = queued.id;
-                Ok(queued)
-            },
-            |seen| live.record_authored_from((module_id, key), &value, origin.as_deref(), seen),
-        )?;
-        Ok(ControlAck { value, request })
-    }
-
-    /// Whether `key` of `module_id` is a declared payload control (a
-    /// scheduler's schedule).
-    fn is_payload(&self, module_id: &str, key: &str) -> bool {
-        let surfaces = self.control_surfaces.lock().unwrap();
-        surfaces
-            .get(module_id)
-            .and_then(|surface| surface.declaration(key))
-            .is_some_and(|declaration| matches!(declaration.decl.kind, DeclKind::Payload))
+        live.adopt_landed();
+        let authoring = Authoring { value, origin };
+        let queued = self.make_authored(module_id, key, load, &options.authored_as(&authoring))?;
+        let now = queued.id.is_none().then_some(&authoring);
+        live.reconcile_authored((module_id, key), queued.safe, now);
+        Ok(ControlAck::new(authoring.value, &queued))
     }
 
     /// Whether `key` of `module_id` is a declared event control.

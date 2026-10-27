@@ -99,6 +99,7 @@ fn first_heard(audio: &Pump, twin: &Pump) -> Option<usize> {
 }
 
 fn frequency_of(running: &RunningInvention) -> (f64, f64) {
+    drop(running.document()); // caught up with what applied
     let state = running.state.lock().unwrap();
     let document = state.document.as_ref().unwrap();
     let osc = document

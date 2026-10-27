@@ -4,10 +4,14 @@
 //!
 //! The log is the outcome channel's one consumer: it settles its own
 //! writes, keeps every outcome it receives for whoever reports them (see
-//! [`PendingLog::take_outcomes`]), and records each applied write in the
-//! session's request log (see [`crate::invention::request_log`]).
+//! [`PendingLog::take_outcomes`]), records each applied write in the
+//! session's request log (see [`crate::invention::request_log`]), and
+//! lists each authored write that applied for the retained document to
+//! record, in the order the audio thread applied them (see
+//! [`PendingLog::take_steps`]).
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
 use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
 use crate::control_request::{EventCursor, Outcome, OutcomeReceiver, RequestId, RtValue};
@@ -41,6 +45,34 @@ pub(crate) struct PendingWrite {
     /// cannot reproduce one (it counts as unlogged). Set for every request
     /// submitted from automation.
     pub(crate) automated: bool,
+    /// What the retained document records once the write applies, when it
+    /// is authored.
+    pub(crate) authored: Option<Authoring>,
+}
+
+/// An authored write as the retained document records it once it applies:
+/// the value as written (coerced to its control's kind, an asset path as
+/// written) and the invention file a relative asset path was resolved
+/// against, which the document may no longer be by then.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Authoring {
+    pub(crate) value: ControlValue,
+    pub(crate) origin: Option<PathBuf>,
+}
+
+/// What the retained document takes from the outcomes, in the order the
+/// audio thread reported them (see `LiveGraph::catch_up`).
+#[derive(Debug)]
+pub(crate) enum DocumentStep {
+    /// An authored write applied, to be recorded.
+    Authored {
+        module_id: String,
+        key: String,
+        authoring: Authoring,
+    },
+    /// A timed edit settled, to be adopted first if it landed: an
+    /// authored write applied after it applied to the graph it built.
+    Timed,
 }
 
 /// Submitted writes, oldest first, until their outcome arrives, and the
@@ -66,6 +98,8 @@ pub(crate) struct PendingLog {
     /// whether any outcome was dropped meanwhile (see `timed_status`).
     timed_outcomes: VecDeque<(RequestId, Outcome)>,
     timed_lost: bool,
+    /// What the retained document has yet to take, oldest first.
+    steps: VecDeque<DocumentStep>,
 }
 
 impl PendingLog {
@@ -80,6 +114,7 @@ impl PendingLog {
             timed: VecDeque::new(),
             timed_outcomes: VecDeque::new(),
             timed_lost: false,
+            steps: VecDeque::new(),
         }
     }
 
@@ -125,11 +160,19 @@ impl PendingLog {
                     self.timed_lost = true;
                 }
                 self.timed_outcomes.push_back((id, outcome));
+                self.steps.push_back(DocumentStep::Timed);
             } else {
                 let write = self.writes.iter().position(|(pending, _)| *pending == id);
                 let write = write
                     .and_then(|at| self.writes.remove(at))
                     .map(|(_, write)| write);
+                let applied = matches!(
+                    outcome,
+                    Outcome::Applied { .. } | Outcome::AppliedLate { .. }
+                );
+                if let Some(write) = write.as_ref().filter(|_| applied) {
+                    self.authored(write);
+                }
                 self.record(write, outcome, latched);
             }
             if self.outcomes.len() == OUTCOME_QUEUE_CAPACITY {
@@ -142,7 +185,11 @@ impl PendingLog {
         if dropped > 0 {
             self.lost += u64::from(dropped);
             self.log.lost(u64::from(dropped));
-            self.writes.clear();
+            // Which applied cannot be known; most do, and an author's
+            // write is not to be lost from the document.
+            for (_, write) in std::mem::take(&mut self.writes) {
+                self.authored(&write);
+            }
             self.timed.clear();
             self.timed_lost = true;
         }
@@ -225,9 +272,41 @@ impl PendingLog {
     /// received before the write is recorded.
     pub(crate) fn submitted(&mut self, id: RequestId, write: PendingWrite) {
         if self.writes.len() == LOG_CAPACITY {
-            self.writes.pop_front();
+            // Forgotten unsettled: recorded as the dropped are.
+            if let Some((_, oldest)) = self.writes.pop_front() {
+                self.authored(&oldest);
+            }
         }
         self.writes.push_back((id, write));
+    }
+
+    /// Lists `write`, applied, for the document to record, if authored.
+    fn authored(&mut self, write: &PendingWrite) {
+        if let Some(authoring) = &write.authored {
+            self.steps.push_back(DocumentStep::Authored {
+                module_id: write.module_id.clone(),
+                key: write.key.clone(),
+                authoring: authoring.clone(),
+            });
+        }
+    }
+
+    /// Whether an authored write waits to apply, or applied and is not yet
+    /// recorded.
+    pub(crate) fn authoring(&self) -> bool {
+        !self.steps.is_empty()
+            || self
+                .writes
+                .iter()
+                .any(|(_, write)| write.authored.is_some())
+    }
+
+    /// What the retained document has yet to take, every outcome received
+    /// first: each authored write that applied and each timed edit that
+    /// settled, in the order the audio thread reported them.
+    pub(crate) fn take_steps(&mut self) -> VecDeque<DocumentStep> {
+        self.settle();
+        std::mem::take(&mut self.steps)
     }
 
     /// The writes still waiting, oldest first.

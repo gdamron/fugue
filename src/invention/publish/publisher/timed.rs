@@ -10,7 +10,6 @@
 //! nothing changed), as any change prepared against a generation that has
 //! moved is.
 
-use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -54,29 +53,6 @@ pub(crate) struct Waiting {
     /// The controls of modules it keeps that it writes as it lands (see
     /// [`Publisher::chain_timed`]).
     chained: Vec<(String, String)>,
-}
-
-/// How many recent adoptions [`Adoptions`] remembers.
-const ADOPTIONS: usize = 8;
-
-/// What the latest timed edits adopted did, for an authored write one may
-/// have overtaken (see [`Publisher::timed_overtook`]).
-#[derive(Default)]
-pub(crate) struct Adoptions {
-    recent: VecDeque<Adoption>,
-    /// The generation of the newest adoption forgotten, 0 before any.
-    forgotten: u64,
-}
-
-struct Adoption {
-    /// The generation it was adopted as.
-    generation: u64,
-    id: RequestId,
-    /// The modules it rebuilt or removed, or whose schedule it re-resolved
-    /// as it landed.
-    modules: HashSet<String>,
-    /// The controls of modules it kept that it wrote as it landed.
-    controls: Vec<(String, String)>,
 }
 
 /// A timed edit the audio thread landed, adopted by the publisher: what it
@@ -212,24 +188,6 @@ impl Publisher {
         // thread, which then knows nothing is tagged older (see `landing`).
         self.published.store(self.generation, Ordering::Release);
         let previous = std::mem::replace(&mut self.mirror, waiting.mirror);
-        let removed = previous
-            .modules
-            .keys()
-            .filter(|id| !self.mirror.modules.contains_key(*id));
-        let built = waiting.built.keys();
-        let rebound = waiting.packed.rebound.iter();
-        let modules = removed.chain(built).chain(rebound).cloned().collect();
-        self.adopted.recent.push_back(Adoption {
-            generation: self.generation,
-            id: waiting.id,
-            modules,
-            controls: waiting.chained,
-        });
-        if self.adopted.recent.len() > ADOPTIONS {
-            if let Some(oldest) = self.adopted.recent.pop_front() {
-                self.adopted.forgotten = oldest.generation;
-            }
-        }
         Some(Adopted {
             id: waiting.id,
             published: Published {
@@ -272,28 +230,6 @@ impl Publisher {
         }
         self.set_timed(None);
         true
-    }
-
-    /// Whether a timed edit adopted after generation `seen` may have
-    /// overtaken an authored write to control `key` of `module_id` queued
-    /// at `seen`: landing after it, the edit rebuilt or removed the module,
-    /// re-resolved its schedule, or wrote the control. Not by writing the
-    /// control, though, when it is `safe`: the edit the write was queued
-    /// after or kept over (see [`Self::keep_authored`]). True, to be safe,
-    /// when one adopted since is forgotten.
-    pub(crate) fn timed_overtook(
-        &self,
-        seen: u64,
-        (module_id, key): (&str, &str),
-        safe: Option<RequestId>,
-    ) -> bool {
-        let wrote = |(module, control): &(String, String)| module == module_id && control == key;
-        let overtook = |adoption: &Adoption| {
-            adoption.generation > seen
-                && (adoption.modules.contains(module_id)
-                    || (Some(adoption.id) != safe && adoption.controls.iter().any(wrote)))
-        };
-        self.adopted.forgotten > seen || self.adopted.recent.iter().any(overtook)
     }
 
     /// The id of the timed edit waiting, if any.
@@ -350,8 +286,9 @@ impl Publisher {
     /// Readies an authored write of `raw` to control `key` of `module_id`
     /// (at `target`, in the graph that is playing), about to be queued,
     /// against the timed edit waiting, and returns the edit it is safe from
-    /// (see [`Self::timed_overtook`]) with the id of the copy it queued, if
-    /// any. One landed already: the write follows its writes. One that
+    /// (one whose write to the control does not replace it, see
+    /// `LiveGraph::reconcile_authored`) with the id of the copy it queued,
+    /// if any. One landed already: the write follows its writes. One that
     /// writes the control as it lands: the write is kept over it, a copy
     /// chained to the landing as the edit's own write is, at the same rank.
     /// The audio thread meets requests in the order they are queued and

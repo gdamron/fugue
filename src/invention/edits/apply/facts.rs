@@ -11,6 +11,7 @@ use crate::invention::declared::{DeclaredSurface, Route};
 use crate::invention::edits::{EditFacts, ModuleFacts};
 use crate::invention::format::{Invention, ModuleSpec};
 use crate::invention::orchestration::ModulePorts;
+use crate::invention::publish::PendingWrite;
 use crate::invention::runtime::{ControlSurfaceInstance, RunningInvention};
 use crate::module_config::ConfigKey;
 use crate::modules::control_scheduler::name_unattached_from_handles;
@@ -34,6 +35,10 @@ pub(super) struct LiveFacts {
     /// Each running module's type and config as authored, for building the
     /// throwaway copy a batch writes to.
     authored: HashMap<String, (String, serde_json::Value)>,
+    /// Each running module's authored writes still waiting to apply, as
+    /// key and value, oldest first: the document records them only once
+    /// they apply, and the batch's writes follow them.
+    waiting: HashMap<String, Vec<(String, ControlValue)>>,
     /// A throwaway copy of each running module the batch writes, built in
     /// validation mode from its authored config, with the batch's writes so
     /// far made on it in order. The running module is never written before
@@ -50,7 +55,11 @@ pub(super) struct LiveFacts {
 }
 
 impl LiveFacts {
-    pub(super) fn new(running: &RunningInvention, document: &Invention) -> Self {
+    pub(super) fn new(
+        running: &RunningInvention,
+        document: &Invention,
+        pending: Vec<PendingWrite>,
+    ) -> Self {
         let assets = Invention {
             modules: Vec::new(),
             connections: Vec::new(),
@@ -65,6 +74,13 @@ impl LiveFacts {
                 (spec.id.clone(), typed)
             })
             .collect();
+        let mut waiting: HashMap<String, Vec<(String, ControlValue)>> = HashMap::new();
+        for write in pending {
+            if let Some(authoring) = write.authored {
+                let module = waiting.entry(write.module_id).or_default();
+                module.push((write.key, authoring.value));
+            }
+        }
         Self {
             registry: running.registry(),
             sample_rate: running.sample_rate,
@@ -73,6 +89,7 @@ impl LiveFacts {
             assets,
             described: HashMap::new(),
             authored,
+            waiting,
             provisional: HashMap::new(),
             copies: HashMap::new(),
             unbuildable: HashSet::new(),
@@ -145,6 +162,15 @@ impl LiveFacts {
             .ok_or_else(|| "the module has no controls".to_string())?;
         restore_authored(surface.as_ref(), &config);
         self.keep_copy(id, &surface, built.module);
+        // Then the authored writes made and not yet applied (a count that
+        // sizes other controls, say), which the document does not hold yet;
+        // a value the copy refuses is left as built.
+        if let Some(waiting) = self.waiting.get(id) {
+            for (key, value) in waiting {
+                let _ = surface.set_control(key, value.clone());
+            }
+            self.apply_on_copy(id, &surface);
+        }
         self.provisional.insert(id.to_string(), surface.clone());
         Ok(surface)
     }
