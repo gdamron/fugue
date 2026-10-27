@@ -3,7 +3,9 @@
 //! document records the same, with or without a publication and whether it
 //! applies before the batch is planned, while it is, or after it commits.
 //! A batch rebuilding its module replaces it in both. One landing after a
-//! whole scale written before it is recorded as a cold build reads it.
+//! whole scale written before it is recorded as a cold build reads it, and one
+//! against a timed batch writing its control is recorded in the order each
+//! applied, the batch's write included.
 
 use super::real_modules::assert_document_rebuilds_the_live_melody;
 use super::scripted::Step;
@@ -143,4 +145,31 @@ fn a_timed_degree_landing_after_a_whole_scale_is_recorded_as_a_cold_build_reads_
         number(9.0)
     );
     assert_document_rebuilds_the_live_melody(&running);
+}
+
+#[test]
+fn a_timed_write_and_a_timed_batch_writing_its_control_are_recorded_as_they_play() {
+    let at = 64 * 20 + 7;
+    let edit_at = crate::rpc::EditWhen::AtSample { sample: at };
+    // On the batch's own sample, submitted before it or after it; then
+    // after the batch's write has applied, which it follows.
+    for (write_at, write_first) in [(at, true), (at, false), (at + 64 * 4, false)] {
+        let (mut running, pump) = start(BASE);
+        if write_first {
+            author_at(&running, "osc1", 330.0, write_at);
+        }
+        running
+            .apply_edits_at(&retune(true), &edit_at, None)
+            .unwrap();
+        if !write_first {
+            author_at(&running, "osc1", 330.0, write_at);
+        }
+        pump.render(40);
+        let (recorded, heard) = heard_and_recorded(&running, "osc1");
+        let case = format!("at {write_at}, first: {write_first}");
+        assert_eq!(number(recorded as f32), heard, "{case}");
+        if write_at > at {
+            assert_eq!(recorded, 330.0, "{case}");
+        }
+    }
 }

@@ -153,6 +153,14 @@ impl RuntimeState {
         }
     }
 
+    /// Whether the retained document holds `value` for control `key` of
+    /// `id`, as a scalar.
+    pub(crate) fn holds(&self, id: &str, key: &str, value: &ControlValue) -> bool {
+        let held =
+            (self.document.as_ref()).and_then(|d| authored_document::held_control(d, id, key));
+        held.and_then(|held| scalar_control_value(&held)).as_ref() == Some(value)
+    }
+
     /// Writes a control change into the retained document module's config so
     /// a saved document reproduces the value on a cold rebuild.
     pub(crate) fn document_write_control(&mut self, id: &str, key: &str, value: &ControlValue) {

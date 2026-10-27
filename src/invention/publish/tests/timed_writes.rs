@@ -33,7 +33,13 @@ fn write_at(
     };
     let perform = ControlWriteIntent::Perform;
     front_door(rig)
-        .submit_control(module_id, key, ControlValue::Number(value), perform, options)
+        .submit_control(
+            module_id,
+            key,
+            ControlValue::Number(value),
+            perform,
+            options,
+        )
         .map_err(|error| error.to_string())
 }
 
@@ -123,14 +129,26 @@ fn a_write_that_cannot_wait_for_its_time_is_refused() {
     let mut rig = beat_rig(97.0);
     rig.registry.register(HostDialFactory);
     let host = rig.build("fx", HOST_DIAL, serde_json::json!({}));
+    // A script's status, too, which its own surface writes at once.
+    let script = rig.build("script", "code", serde_json::json!({}));
     rig.live
         .edit(|change| {
             change.upsert("fx", host);
+            change.upsert("script", script);
             Ok(())
         })
         .unwrap();
     let soon = WriteTime::AfterSamples(64);
     let error = write_at(&rig, ("fx", "rate"), 2.0, soon).unwrap_err();
+    assert!(error.contains("cannot be timed"), "{error}");
+    let options = WriteOptions {
+        time: Some(soon),
+        ..WriteOptions::performed(Source::Agent)
+    };
+    let status = ControlValue::String("timed".into());
+    let perform = ControlWriteIntent::Perform;
+    let refused = front_door(&rig).submit_control("script", "last_error", status, perform, options);
+    let error = refused.unwrap_err().to_string();
     assert!(error.contains("cannot be timed"), "{error}");
     assert!(rig.live.pending_requests().is_empty(), "nothing queued");
 }

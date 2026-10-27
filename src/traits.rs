@@ -242,12 +242,7 @@ pub trait ControlSurface: Send + Sync {
         value: ControlValue,
         options: &WriteOptions,
     ) -> Result<Queued, String> {
-        // Applied at once, it cannot wait for a time.
-        if options.time.is_some() {
-            return Err(format!(
-                "Control '{key}' cannot be timed: it is undeclared host state, written at once"
-            ));
-        }
+        let _ = options;
         self.set_control(key, value).map(|()| Queued::default())
     }
 

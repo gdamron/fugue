@@ -416,6 +416,11 @@ fn record(
     authoring: &Authoring,
 ) {
     let mut state = state.lock().unwrap();
+    // A timed edit's own write, applied after the edit, changes nothing
+    // unless a write recorded since has.
+    if authoring.chained && state.holds(module_id, key, &authoring.value) {
+        return;
+    }
     let origin = authoring.origin.as_deref();
     let value =
         audio_assets::rebase_asset_write(origin, state.source_path(), key, &authoring.value);

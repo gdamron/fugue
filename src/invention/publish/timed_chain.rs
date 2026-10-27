@@ -11,8 +11,13 @@
 //! before it, as it reaches the audio thread, so the edit's own write to
 //! that one control never sounds when the copy reaches it before the
 //! landing; held back past it, the copy plays as soon as it does.
+//!
+//! A timed write takes no part in that (see `publish::timed_write`), so a
+//! write the edit makes to a number or a switch is recorded again as it
+//! applies: the document then ends, as playback does, on whichever of the
+//! two applied later, however close their samples.
 
-use super::{LiveGraph, PendingLog, PendingWrite, Publisher};
+use super::{Authoring, LiveGraph, PendingLog, PendingWrite, Publisher};
 use crate::control_request::{
     Condition, Predicate, Request, RequestId, RequestValue, RtValue, When, CONDITION_CAPACITY,
 };
@@ -27,6 +32,8 @@ pub(super) struct Chained {
     request: Request,
     raw: RtValue,
     shown: Option<(String, ControlValue)>,
+    /// Recorded as it applies, after the edit's document.
+    authored: Option<Authoring>,
 }
 
 impl LiveGraph {
@@ -79,6 +86,7 @@ impl LiveGraph {
                 request,
                 raw: write.raw,
                 shown: write.shown,
+                authored: recorded(value, write.event),
             })
         };
         writes.iter().map(resolve).collect()
@@ -112,6 +120,7 @@ impl LiveGraph {
                 mut request,
                 raw,
                 shown,
+                authored,
             } = write;
             request.when = When::Condition(condition);
             let (source, when) = (request.source, request.when);
@@ -127,7 +136,7 @@ impl LiveGraph {
                     beat: None,
                     source,
                     when,
-                    authored: None,
+                    authored,
                     announced: false,
                     awaited: false,
                 };
@@ -137,4 +146,18 @@ impl LiveGraph {
         }
         Ok((chained, false))
     }
+}
+
+/// What a chained write of `value` records as it applies: a number or a
+/// switch, never an event; anything else the edit's document records alone.
+fn recorded(value: &ControlValue, event: bool) -> Option<Authoring> {
+    let scalar = matches!(value, ControlValue::Number(_) | ControlValue::Bool(_));
+    (scalar && !event).then(|| Authoring {
+        value: value.clone(),
+        origin: None,
+        safe: None,
+        then: Vec::new(),
+        timed: true,
+        chained: true,
+    })
 }

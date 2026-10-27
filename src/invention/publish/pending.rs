@@ -90,6 +90,10 @@ pub(crate) struct Authoring {
     /// A timed write: ordered against a commit by when it applies, not by
     /// a fence (see `publish::timed_write`).
     pub(crate) timed: bool,
+    /// A timed edit's own write, which its document holds already: recorded
+    /// again only once a write since has changed what the document holds
+    /// (see `publish::timed_chain`).
+    pub(crate) chained: bool,
 }
 
 /// What the retained document takes from the outcomes, in the order the

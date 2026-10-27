@@ -379,6 +379,7 @@ impl RuntimeSnapshot {
             safe: None,
             then: Vec::new(),
             timed: options.time.is_some(),
+            chained: false,
         };
         let queued = self.make_authored(module_id, key, load, &options.authored_as(&authoring))?;
         // A timed write is ordered against a timed edit by when each
@@ -479,6 +480,13 @@ impl RuntimeSnapshot {
                 .cloned()
                 .ok_or_else(|| GraphCommandError::UnknownModule(module_id.to_string()))?
         };
+        // Undeclared host state is written at once (whichever surface
+        // writes it), so it cannot wait for a time.
+        if options.time.is_some() && surface.writes_undeclared(key) {
+            return Err(GraphCommandError::ControlError(format!(
+                "Control '{key}' of '{module_id}' cannot be timed: it reaches undeclared host state, written at once"
+            )));
+        }
         let queued = surface
             .submit(key, value, options)
             .map_err(GraphCommandError::ControlError)?;
