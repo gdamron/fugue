@@ -26,7 +26,7 @@
 //! Reads come from the cells, which hold what each control was last set
 //! to: applied, never pending. A payload control is the exception: no cell
 //! holds it, so reads report the last write the surface accepted (built,
-//! staged, submitted or applied offline), held here, as the legacy
+//! staged, submitted or applied offline), held here, as the old
 //! setters did: a live write refused after it was submitted (its module
 //! replaced meanwhile, the pending store full at an install) still reads
 //! back until the next write.
@@ -168,7 +168,7 @@ pub(crate) struct Queued {
     pub(crate) safe: Option<RequestId>,
     /// The request the write was submitted as, whose outcome says when it
     /// applied; `None` when it applied as it was made (building, offline,
-    /// a legacy control) or travels in a publication, which reports none.
+    /// an undeclared control) or travels in a publication, which reports none.
     pub(crate) id: Option<RequestId>,
     /// An offline write that lost to a higher-ranked write at the same
     /// sample, so nothing was applied (see `control_request::hold`).
@@ -557,7 +557,7 @@ impl DeclaredSurface {
     /// Whether a write to `key` as `options` say would take its control
     /// now: false only offline, when a higher-ranked write holds it at this
     /// sample (see `control_request::hold`). A front door with effects of
-    /// its own (a development's alias records and legacy aliases) asks
+    /// its own (a development's alias records and undeclared aliases) asks
     /// first, under a lock its writes to the control all take, so a write
     /// that loses has none. Live, the audio thread weighs the write, and
     /// its outcome says.
@@ -1071,7 +1071,7 @@ impl ControlSurface for DeclaredSurface {
         self.index(key).is_ok()
     }
 
-    fn set_legacy(&self, key: &str, _value: ControlValue) -> Result<(), String> {
+    fn set_undeclared(&self, key: &str, _value: ControlValue) -> Result<(), String> {
         self.index(key).map(drop)
     }
 

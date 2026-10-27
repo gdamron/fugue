@@ -66,11 +66,6 @@ pub struct AudioDiagnosticsSnapshot {
     /// block, so this is expected to stay at zero.
     #[serde(default)]
     pub graph_rebuild_count: u64,
-    /// Number of scheduled writes and ramp starts to legacy controls their
-    /// modules refused (a full note queue, say), summed over the schedulers
-    /// in the graph now. Filled in by the runtime; zero from the backend.
-    #[serde(default)]
-    pub scheduled_writes_refused: u64,
 }
 
 /// Why the audio host reported a stream error other than an xrun.
@@ -272,7 +267,6 @@ impl AudioDiagnostics {
                 .map(|ns| ns_to_ms(ns as f64)),
             stream_restart_count: self.stream_restart_count.load(Ordering::Relaxed),
             graph_rebuild_count: self.graph_rebuild_count.load(Ordering::Relaxed),
-            scheduled_writes_refused: 0,
         }
     }
 

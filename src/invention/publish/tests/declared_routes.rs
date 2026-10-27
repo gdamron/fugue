@@ -8,7 +8,7 @@ use crate::control_request::{Outcome, RtValue, When};
 use crate::invention::declared::{add_offline, remove_offline, retire_offline, Route};
 use crate::invention::publish::PendingWrite;
 use crate::test_support::dial::DialFactory;
-use crate::test_support::legacy_dial::LegacyDialFactory;
+use crate::test_support::host_dial::HostDialFactory;
 use crate::ControlValue;
 
 fn surface(rig: &Rig, id: &str) -> ControlSurfaceInstance {
@@ -298,11 +298,11 @@ fn a_request_applies_after_automation_written_before_its_sample() {
 
 #[test]
 fn a_mixed_development_write_the_queue_cannot_take_changes_no_alias() {
-    // A dial and a legacy dial behind one `mix`, the legacy dial's rate also
+    // A dial and a host dial behind one `mix`, the host dial's rate also
     // alone.
     let definition = serde_json::json!({
         "version": "1.0.0",
-        "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "legacy_dial" }],
+        "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "host_dial" }],
         "connections": [],
         "controls": [
             { "name": "mix", "module": "a", "control": "level" },
@@ -311,7 +311,7 @@ fn a_mixed_development_write_the_queue_cannot_take_changes_no_alias() {
         ]
     });
     let mut rig = dial_rig();
-    rig.registry.register(LegacyDialFactory);
+    rig.registry.register(HostDialFactory);
     let factory = crate::invention::development::DevelopmentFactory {
         name: "mixed".to_string(),
         definition: serde_json::from_value(definition).unwrap(),
@@ -340,7 +340,7 @@ fn a_mixed_development_write_the_queue_cannot_take_changes_no_alias() {
     assert_eq!(
         dev.get_control("rate").unwrap(),
         rate,
-        "the legacy dial is untouched"
+        "the host dial is untouched"
     );
     rig.render(1);
     assert_eq!(dev.get_control("mix").unwrap(), mix, "and so is the dial");

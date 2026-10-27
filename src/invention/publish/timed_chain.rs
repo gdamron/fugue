@@ -32,8 +32,8 @@ pub(super) struct Chained {
 impl LiveGraph {
     /// Resolves `writes` (module, control, value) under `publisher`, before
     /// the edit is queued. Refused, so that nothing is queued, when a
-    /// module keeps its controls outside the request queue (a legacy
-    /// control surface), a value does not fit its control, or fewer
+    /// module keeps its controls outside the request queue (an
+    /// undeclared control), a value does not fit its control, or fewer
     /// requests can wait on conditions than there are writes.
     pub(super) fn resolve_chain(
         &self,

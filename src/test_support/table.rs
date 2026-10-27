@@ -88,6 +88,6 @@ pub(crate) fn entry(step: u64, ramp_steps: u64, value: f32, target: &Automation)
         step,
         ramp_steps,
         value: TableValue::Number(value),
-        target: TableTarget::Declared(target.clone()),
+        target: TableTarget(target.clone()),
     }
 }

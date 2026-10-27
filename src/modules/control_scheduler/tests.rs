@@ -6,12 +6,12 @@ use super::schedule::{compile_tempo_map, parse_schedule, parse_schedule_json, Su
 use super::*;
 use crate::factory::{GraphModule, ModuleFactory};
 use crate::modules::cell_sequencer::CellSequencerFactory;
-use crate::test_support::legacy_levels::LegacyLevels;
+use crate::test_support::levels::Levels;
 use crate::{ControlSurface, ControlValue};
 
-/// Builds a scheduler attached to a directory containing two legacy levels
-/// (id `mixer`, all levels 1.0) and a cell sequencer (id `cells`).
-pub(super) fn setup(schedule_json: &str) -> (ControlScheduler, LegacyLevels, SurfaceDirectory) {
+/// Builds a scheduler attached to a directory containing a two-channel
+/// mixer (id `mixer`, all levels 1.0) and a cell sequencer (id `cells`).
+pub(super) fn setup(schedule_json: &str) -> (ControlScheduler, Levels, SurfaceDirectory) {
     let (module, mixer, directory, _cells) = setup_with_cells(schedule_json);
     (module, mixer, directory)
 }
@@ -19,21 +19,13 @@ pub(super) fn setup(schedule_json: &str) -> (ControlScheduler, LegacyLevels, Sur
 /// [`setup`], with the cell sequencer the directory's `cells` controls.
 fn setup_with_cells(
     schedule_json: &str,
-) -> (
-    ControlScheduler,
-    LegacyLevels,
-    SurfaceDirectory,
-    GraphModule,
-) {
-    let mixer = LegacyLevels::new(2);
+) -> (ControlScheduler, Levels, SurfaceDirectory, GraphModule) {
+    let mixer = Levels::new();
     let config = serde_json::json!({ "cells": [[0], [2]] });
     let built = CellSequencerFactory.build(48_000, &config);
     let built = built.unwrap();
     let mut map: SurfaceMap = IndexMap::new();
-    map.insert(
-        "mixer".to_string(),
-        Arc::new(mixer.clone()) as Arc<dyn ControlSurface + Send + Sync>,
-    );
+    map.insert("mixer".to_string(), mixer.surface());
     map.insert("cells".to_string(), built.control_surface.unwrap());
     let directory: SurfaceDirectory = Arc::new(Mutex::new(map));
 
@@ -270,10 +262,7 @@ fn attach_resolving_resolves_against_a_pending_directory() {
 
     // The mixer exists only in the directory a pending change will leave.
     let mut pending: SurfaceMap = IndexMap::new();
-    pending.insert(
-        "mixer".to_string(),
-        Arc::new(LegacyLevels::new(2)) as Arc<dyn ControlSurface + Send + Sync>,
-    );
+    pending.insert("mixer".to_string(), Levels::new().surface());
     ctrl.attach_resolving("sched", &directory, &pending)
         .unwrap();
     assert_eq!(ctrl.control_targets(), vec!["mixer"]);
@@ -439,50 +428,32 @@ fn a_bound_scheduler_processes_its_first_block_without_allocating() {
     assert_eq!(mixer.level(0), 0.5);
 }
 
-/// A one-control surface (`raw.value`) that stores any number unclamped and
-/// records every write, so a test can see exactly what a ramp writes.
-struct RecordingSurface {
-    writes: Mutex<Vec<f32>>,
-    value: Mutex<f32>,
-}
+/// One unclamped number, `value`, starting at the lowest `f32`.
+const RAW_DECLS: &[crate::control_request::ControlDecl] =
+    &[crate::control_request::ControlDecl::new(
+        "value",
+        crate::control_request::DeclKind::Number {
+            min: f32::MIN,
+            max: f32::MAX,
+        },
+        crate::control_request::RtValue::F32(f32::MIN),
+        "Unclamped number",
+    )];
 
-impl ControlSurface for RecordingSurface {
-    fn controls(&self) -> Vec<ControlMeta> {
-        vec![ControlMeta::number("value", "Unclamped number")]
-    }
-
-    fn get_control(&self, key: &str) -> Result<ControlValue, String> {
-        match key {
-            "value" => Ok(ControlValue::Number(*self.value.lock().unwrap())),
-            _ => Err(format!("Unknown control: {}", key)),
-        }
-    }
-
-    fn set_control(&self, key: &str, value: ControlValue) -> Result<(), String> {
-        match (key, value) {
-            ("value", ControlValue::Number(number)) => {
-                *self.value.lock().unwrap() = number;
-                self.writes.lock().unwrap().push(number);
-                Ok(())
-            }
-            _ => Err(format!("Unsupported write to '{}'", key)),
-        }
-    }
-}
+static RAW: crate::control_request::ControlTable =
+    crate::control_request::ControlTable::of(RAW_DECLS);
 
 #[test]
 fn ramp_between_extreme_values_writes_only_finite_monotonic_values() {
+    use crate::control_request::{ControlCells, RtValue};
+    use crate::invention::declared::DeclaredSurface;
     // The overflow repro: the control starts at f32::MIN and ramps to 3.4e38,
     // whose difference overflows f32.
-    let surface = Arc::new(RecordingSurface {
-        writes: Mutex::new(Vec::new()),
-        value: Mutex::new(f32::MIN),
-    });
+    let cells = Arc::new(ControlCells::new([RtValue::F32(f32::MIN)]));
+    let surface: Arc<dyn ControlSurface + Send + Sync> =
+        Arc::new(DeclaredSurface::new(RAW.clone(), cells));
     let mut map: SurfaceMap = IndexMap::new();
-    map.insert(
-        "raw".to_string(),
-        surface.clone() as Arc<dyn ControlSurface + Send + Sync>,
-    );
+    map.insert("raw".to_string(), surface.clone());
     let directory: SurfaceDirectory = Arc::new(Mutex::new(map));
     let spec = parse_schedule_json(
         r#"[{ "at_step": 0, "module": "raw", "control": "value", "value": 3.4e38, "ramp_steps": 4 }]"#,
@@ -493,11 +464,20 @@ fn ramp_between_extreme_values_writes_only_finite_monotonic_values() {
     let mut module = ControlScheduler::new(48_000, ctrl);
     module.settle();
 
+    // Every value the ramp leaves, read after each frame.
+    let target = surface.automation("value").unwrap();
+    let mut writes = Vec::new();
     for _ in 0..6 {
-        pulse(&mut module, 15);
+        module.set_input("clock", 1.0).unwrap();
+        module.process(1);
+        writes.push(target.current().unwrap());
+        module.set_input("clock", 0.0).unwrap();
+        for _ in 0..15 {
+            module.process(1);
+            writes.push(target.current().unwrap());
+        }
     }
-
-    let writes = surface.writes.lock().unwrap();
+    writes.dedup();
     assert!(writes.len() > 4, "the ramp must write between boundaries");
     for pair in writes.windows(2) {
         assert!(pair[1] >= pair[0], "ramp moved backwards: {:?}", pair);

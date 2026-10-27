@@ -12,8 +12,7 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::control_request::{
-    Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, EventCounter,
-    RtValue,
+    Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue,
 };
 use crate::invention::declared::{
     Checked, Declaration, DeclaredSurface, Queued, Route, WriteOptions, STALE,
@@ -23,8 +22,7 @@ use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
 use super::resolved::{target_module_ids, ResolvedSchedule};
 use super::schedule::{
-    parse_schedule_json, resolve_schedule, resolve_schedule_counting, ResolvedEntry, ScheduleEntry,
-    SurfaceMap,
+    parse_schedule_json, resolve_schedule, ResolvedEntry, ScheduleEntry, SurfaceMap,
 };
 
 mod rebind;
@@ -78,9 +76,6 @@ struct Shared {
     /// before `state` and the publisher, never while holding a publisher or
     /// graph lock.
     writing: Mutex<()>,
-    /// Counts the legacy writes and reads the scheduler's surfaces refused,
-    /// whichever schedule it was playing.
-    refused: Arc<EventCounter>,
 }
 
 struct ScheduleState {
@@ -146,7 +141,6 @@ impl ControlSchedulerControls {
                     unattached_id: None,
                 }),
                 writing: Mutex::new(()),
-                refused: Arc::new(EventCounter::new()),
             }),
         }
     }
@@ -267,15 +261,14 @@ impl ControlSchedulerControls {
         self.resolve(spec, &own_id, &surfaces).map(Some)
     }
 
-    /// Resolves `spec`, its legacy targets counting refusals in this
-    /// scheduler's counter.
+    /// Resolves `spec` against `surfaces`.
     fn resolve(
         &self,
         spec: &[ScheduleEntry],
         own_id: &str,
         surfaces: &SurfaceMap,
     ) -> Result<Vec<ResolvedEntry>, String> {
-        resolve_schedule_counting(spec, own_id, surfaces, &self.shared.refused)
+        resolve_schedule(spec, own_id, surfaces)
     }
 
     /// Hands `resolved` to the scheduler by its surface's route, returning
@@ -453,7 +446,7 @@ impl ControlSurface for ControlSchedulerControls {
     /// already delivered, so this only records: it never resolves again,
     /// and fails only on text that does not parse, which
     /// `prepare_payload` refused already.
-    fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
+    fn set_undeclared(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match key {
             "schedule" => {
                 let spec = parse_schedule_json(value.as_string()?)?;
@@ -503,10 +496,6 @@ impl ControlSurface for ControlSchedulerControls {
     #[allow(private_interfaces)]
     fn automation(&self, key: &str) -> Option<Automation> {
         self.declared.automation(key)
-    }
-
-    fn scheduled_writes_refused(&self) -> u64 {
-        u64::from(self.shared.refused.count())
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {

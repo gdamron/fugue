@@ -8,16 +8,13 @@ use indexmap::IndexMap;
 use super::schedule::{parse_schedule_json, resolve_schedule, SurfaceMap};
 use super::*;
 use crate::alloc_counter::allocator_events;
-use crate::test_support::legacy_levels::LegacyLevels;
+use crate::test_support::levels::Levels;
 use crate::ControlSurface;
 
-fn mixer_directory() -> (LegacyLevels, SurfaceMap) {
-    let mixer = LegacyLevels::new(2);
+fn mixer_directory() -> (Levels, SurfaceMap) {
+    let mixer = Levels::new();
     let mut map: SurfaceMap = IndexMap::new();
-    map.insert(
-        "mixer".to_string(),
-        Arc::new(mixer.clone()) as Arc<dyn ControlSurface + Send + Sync>,
-    );
+    map.insert("mixer".to_string(), mixer.surface());
     (mixer, map)
 }
 
@@ -92,7 +89,7 @@ fn a_schedule_a_development_handed_on_is_recorded_without_resolving_again() {
     let ctrl = ControlSchedulerControls::new(Vec::new());
     ctrl.attach("sched", &directory).unwrap();
     let gone = r#"[{ "at_step": 0, "module": "gone", "control": "level.0", "value": 0.5 }]"#;
-    assert!(ctrl.set_legacy("schedule", gone.into()).is_ok());
+    assert!(ctrl.set_undeclared("schedule", gone.into()).is_ok());
     assert!(ctrl.schedule_json().contains("gone"));
     assert_eq!(ctrl.target_module_ids(), ["gone"]);
 }

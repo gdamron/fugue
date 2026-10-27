@@ -60,7 +60,7 @@ struct Due {
     /// Resolved against the graph as it will be when the request is due:
     /// as loaded, or as the last edit before it left it.
     control: Option<ControlIndex>,
-    /// The surface whose legacy aliases a development's key also writes,
+    /// The surface whose undeclared aliases a development's key also writes,
     /// as live, once its declared part applies.
     follow: Option<ControlSurfaceInstance>,
     value: RtValue,
@@ -89,7 +89,7 @@ pub(super) struct Replay {
     latches: Vec<latches::DueLatch>,
     next_latch: usize,
     /// Requests the render's graph refused (it would not have logged them),
-    /// and those whose development's legacy alias refused the value.
+    /// and those whose development's undeclared alias refused the value.
     pub(super) refused: usize,
 }
 
@@ -169,7 +169,7 @@ impl Replay {
             due.control = (surface.and_then(|surface| surface.declaration(&due.key)))
                 .map(|declaration| declaration.index);
             due.follow = (surface.filter(|_| due.control.is_some()))
-                .filter(|surface| surface.writes_legacy(&due.key))
+                .filter(|surface| surface.writes_undeclared(&due.key))
                 .cloned();
             if due.control.is_none() {
                 missing.get_or_insert(self.resolved);
@@ -244,7 +244,7 @@ impl Replay {
             let applied = due.control.map(|control| {
                 graph.apply_control_due(&due.module_id, control, due.value, due.due)
             });
-            // A development's legacy aliases took the value as live wrote
+            // A development's undeclared aliases took the value as live wrote
             // it, unlogged (the log is not exact); one refusing it counts.
             let follow = |surface: &ControlSurfaceInstance| {
                 surface.follow_declared(&due.key, due.value).is_ok()

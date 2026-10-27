@@ -1,22 +1,22 @@
-//! A development key reaching both a declared control and a legacy one: a
-//! live write to it reaches the legacy alias without a request, so the log
-//! is not exact, and its replay writes the legacy alias as live did once
-//! the declared part applies.
+//! A development key reaching both a declared control and an undeclared
+//! one: a live write to it reaches the undeclared alias without a request,
+//! so the log is not exact, and its replay writes the undeclared alias as
+//! live did once the declared part applies.
 
 use serde_json::{json, Value};
 
 use crate::invention::manual_backend::{start_manual, SAMPLE_RATE};
-use crate::test_support::legacy_dial::LegacyDialFactory;
+use crate::test_support::host_dial::HostDialFactory;
 use crate::{ControlValue, Invention, InventionBuilder, ModuleRegistry, RenderEngine};
 
 const BLOCK: usize = 64;
 
-/// Development `inner`, whose `mix` reaches a vca's level and a legacy
-/// dial's rate, and `rate` the legacy dial's alone.
+/// Development `inner`, whose `mix` reaches a vca's level and a host
+/// dial's rate, and `rate` the host dial's alone.
 fn inner() -> Value {
     json!({
         "version": "1.0.0",
-        "modules": [{ "id": "a", "type": "vca" }, { "id": "l", "type": "legacy_dial" }],
+        "modules": [{ "id": "a", "type": "vca" }, { "id": "l", "type": "host_dial" }],
         "connections": [],
         "outputs": [{ "name": "a", "from": "a", "from_port": "audio" }],
         "controls": [
@@ -58,14 +58,14 @@ fn document(definition: Value) -> String {
     .to_string()
 }
 
-/// The catalog with the legacy dial a mixed key reaches.
+/// The catalog with the host dial a mixed key reaches.
 fn builder() -> InventionBuilder {
     let mut registry = ModuleRegistry::default();
-    registry.register(LegacyDialFactory);
+    registry.register(HostDialFactory);
     InventionBuilder::with_registry(SAMPLE_RATE, registry)
 }
 
-fn a_replayed_write_to_a_mixed_key_writes_its_legacy_alias(definition: Value) {
+fn a_replayed_write_to_a_mixed_key_writes_its_undeclared_alias(definition: Value) {
     let doc = document(definition);
     let invention = Invention::from_json(&doc).unwrap();
     let (runtime, _) = builder().build(invention.clone()).unwrap();
@@ -79,7 +79,10 @@ fn a_replayed_write_to_a_mixed_key_writes_its_legacy_alias(definition: Value) {
     );
     let log = running.request_log();
     running.stop();
-    assert_eq!(log.unlogged, 1, "the legacy alias took the write unlogged");
+    assert_eq!(
+        log.unlogged, 1,
+        "the undeclared alias took the write unlogged"
+    );
     assert!(!log.is_exact());
 
     let mut engine = RenderEngine::new(SAMPLE_RATE);
@@ -94,15 +97,19 @@ fn a_replayed_write_to_a_mixed_key_writes_its_legacy_alias(definition: Value) {
         engine.render_interleaved(&mut buffer).unwrap();
     }
     assert_eq!(engine.replay_refused(), 0);
-    assert_eq!(rate(&engine), ControlValue::from(0.75), "the legacy dial follows");
+    assert_eq!(
+        rate(&engine),
+        ControlValue::from(0.75),
+        "the host dial follows"
+    );
 }
 
 #[test]
-fn a_replayed_write_to_a_mixed_key_writes_a_development_s_legacy_alias() {
-    a_replayed_write_to_a_mixed_key_writes_its_legacy_alias(inner());
+fn a_replayed_write_to_a_mixed_key_writes_a_development_s_undeclared_alias() {
+    a_replayed_write_to_a_mixed_key_writes_its_undeclared_alias(inner());
 }
 
 #[test]
-fn a_replayed_write_to_a_nested_mixed_key_writes_the_inner_legacy_alias() {
-    a_replayed_write_to_a_mixed_key_writes_its_legacy_alias(outer());
+fn a_replayed_write_to_a_nested_mixed_key_writes_the_inner_undeclared_alias() {
+    a_replayed_write_to_a_mixed_key_writes_its_undeclared_alias(outer());
 }

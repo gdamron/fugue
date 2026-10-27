@@ -187,7 +187,7 @@ impl RunningInvention {
     /// an edit that built against the previous registry is built again.
     /// Control updates are written right after the publication is queued. A
     /// declared control's update is a request behind it and never leads the
-    /// new topology; a legacy control's may lead by up to one block. A
+    /// new topology; an undeclared control's may lead by up to one block. A
     /// validated update that still fails when written keeps the module's
     /// previous value, is moved from the report's `controls_updated` to its
     /// `controls_failed`, and the retained document keeps what it authored
