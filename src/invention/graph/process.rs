@@ -6,6 +6,7 @@ use super::conditions::Segment;
 use super::SignalGraph;
 use crate::audio_thread::AudioThreadScope;
 use crate::control_request::{take_automation, FrameScope};
+use crate::payload::RenderScope;
 
 impl SignalGraph {
     /// Processes a block of `frames` frames (`frames == left.len() == right.len()`,
@@ -30,6 +31,7 @@ impl SignalGraph {
     /// silence and touches nothing.
     pub(crate) fn process_block(&mut self, left: &mut [f32], right: &mut [f32]) {
         let _audio_thread = AudioThreadScope::enter();
+        let _rendering = RenderScope::enter();
         if self.failed {
             left.fill(0.0);
             right.fill(0.0);

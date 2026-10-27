@@ -24,6 +24,7 @@
 use indexmap::IndexMap;
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use super::declared::RequestPort;
@@ -143,16 +144,25 @@ impl Settler {
                 self.reclaimer.reclaim();
             })
         };
-        for blocks in 1..=MAX_SETTLE_BLOCKS {
-            if !block() {
-                return;
-            }
-            if publisher.applied() >= published {
-                if blocks > 1 {
-                    block();
+        // A render that panics fails its graph, which refuses every later
+        // submission: the publisher is released before the panic goes on,
+        // so it is not poisoned and those submissions can be refused.
+        let settled = catch_unwind(AssertUnwindSafe(|| {
+            for blocks in 1..=MAX_SETTLE_BLOCKS {
+                if !block() {
+                    return;
                 }
-                return;
+                if publisher.applied() >= published {
+                    if blocks > 1 {
+                        block();
+                    }
+                    return;
+                }
             }
+        }));
+        drop(publisher);
+        if let Err(panic) = settled {
+            resume_unwind(panic);
         }
     }
 }
