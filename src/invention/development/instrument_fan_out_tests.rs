@@ -137,3 +137,31 @@ fn one_sample_key_loads_into_every_instrument_behind_it() {
         "neither changed: {p}, {q}"
     );
 }
+
+#[test]
+fn every_note_written_through_the_development_before_it_runs_plays() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = wav(dir.path(), "a.wav", 4410);
+    let built = factory(&a).build(48_000, &json!({})).unwrap();
+    let surface = built.control_surface.clone().unwrap();
+    // A chord, written while the development is still building.
+    for note in [60.0, 64.0, 67.0] {
+        surface.set_control("note", note.into()).unwrap();
+    }
+    let graph = Arc::new(Mutex::new(SignalGraph::new(
+        IndexMap::new(),
+        Vec::new(),
+        Vec::new(),
+        MasterObservers::default(),
+    )));
+    let surfaces = Mutex::new(IndexMap::new());
+    add_offline(&graph, &surfaces, "pair", built.module, Some(surface)).unwrap();
+    let mut graph = graph.lock().unwrap();
+    let module = graph.modules["pair"].module_mut();
+    module.process(64);
+    let heard = module.output_block(0)[63];
+    assert!(
+        (heard - 3.0 * ONE_NOTE).abs() < 0.01,
+        "the whole chord: {heard}"
+    );
+}

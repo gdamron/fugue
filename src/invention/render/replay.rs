@@ -292,6 +292,8 @@ mod edit_tests;
 #[cfg(test)]
 mod hold_tests;
 #[cfg(test)]
+mod instrument_tests;
+#[cfg(test)]
 mod landing_tests;
 #[cfg(test)]
 mod latch_tests;
