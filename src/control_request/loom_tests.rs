@@ -280,3 +280,33 @@ fn every_event_is_counted_and_publishes_earlier_stores() {
         assert_eq!(seen + cursor.take(&counter), 2, "an event was lost");
     });
 }
+
+/// A hint stored with `Release` after a push, and loaded with `Acquire`
+/// before a peek, never shows a pushed value that the peek cannot see. The
+/// publisher's `published` generation and the drain use this pattern: the
+/// drain treats a generation ahead of the installed one as an edit waiting
+/// in the queue. (The hint's atomic is loom's own and the orderings are
+/// restated here, as the publisher and drain are too heavy to compile
+/// against loom.)
+#[test]
+fn an_acquired_hint_guarantees_the_pushed_value_is_visible() {
+    loom::model(|| {
+        let (producer, mut consumer) = bounded(2);
+        let hint = Arc::new(loom::sync::atomic::AtomicU64::new(0));
+        let publisher = {
+            let hint = hint.clone();
+            thread::spawn(move || {
+                producer.try_push(1u32).unwrap();
+                hint.store(1, Ordering::Release);
+            })
+        };
+        if hint.load(Ordering::Acquire) > 0 {
+            assert_eq!(
+                consumer.peek(|value| *value),
+                Some(1),
+                "the hint was seen before the push it announces"
+            );
+        }
+        publisher.join().unwrap();
+    });
+}

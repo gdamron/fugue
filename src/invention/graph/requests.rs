@@ -177,12 +177,15 @@ pub(crate) struct RequestDrain {
     /// ahead of it are taken even into a full store (see the module docs).
     ///
     /// The publisher stores it with `Release` once everything tagged with
-    /// the generation before is queued, and [`Self::adopted`] loads it with
-    /// `Acquire` at block start: seeing a timed edit adopted then means
-    /// every request and input write tagged with the generation it replaced
-    /// is visible in the queues, so the bridge can be released (see
-    /// `publication::landing`). The full-store hint stays `Relaxed`: a stale
-    /// value holds back one more block.
+    /// the generation before is queued, and every load here is `Acquire`.
+    /// Seeing generation `g` therefore guarantees everything queued before
+    /// the store is visible, which for an edit applied at once includes the
+    /// edit itself: the drain takes requests in front of a waiting edit only
+    /// when the edit is there to peek. (A timed edit's generation is stored
+    /// once the audio thread has landed it, so none is left waiting.)
+    /// [`Self::adopted`] relies on the same guarantee to release the bridge
+    /// (see `publication::landing`). A stale value only holds back one more
+    /// block.
     published: Arc<AtomicU64>,
     /// Reserved requests queued and taken: one waiting is taken even into
     /// a full store, as an edit is.
@@ -443,7 +446,7 @@ impl SignalGraph {
         // (`Refusal::PendingFull`), so the first one installs this block,
         // or once the bridge they hold goes, the next.
         let unblocked = can_install || bridge.is_some();
-        let edit_waiting = unblocked && drain.published.load(Ordering::Relaxed) > installed;
+        let edit_waiting = unblocked && drain.published.load(Ordering::Acquire) > installed;
         let mut edit = None;
         let mut bridging = false;
         loop {

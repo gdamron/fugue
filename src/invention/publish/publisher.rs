@@ -445,7 +445,8 @@ impl Publisher {
             });
         }
         self.generation += 1;
-        // Release: see `published`.
+        // Release, after the push: seeing this generation shows the edit
+        // in the queue (see `published`).
         self.published.store(self.generation, Ordering::Release);
         let previous = std::mem::replace(&mut self.mirror, prepared.mirror);
         Ok(Published {
