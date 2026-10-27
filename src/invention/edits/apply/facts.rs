@@ -317,9 +317,12 @@ impl EditFacts for LiveFacts {
     }
 
     fn is_event(&self, id: &str, key: &str) -> bool {
-        let described = || self.described.get(id).and_then(Option::as_ref);
-        let surface =
-            (self.provisional.get(id).or_else(described)).or_else(|| self.surfaces.get(id));
+        // As `writable` finds it: a module the batch added (perhaps
+        // replacing one written earlier) before a running one's copy.
+        let surface = match self.described.get(id) {
+            Some(described) => described.as_ref(),
+            None => (self.provisional.get(id)).or_else(|| self.surfaces.get(id)),
+        };
         (surface.and_then(|surface| surface.declaration(key)))
             .is_some_and(|declared| declared.decl.event)
     }

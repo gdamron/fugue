@@ -120,3 +120,40 @@ fn a_config_key_naming_an_event_neither_fires_nor_rebuilds_on_reload() {
         assert_eq!(cell(&running, "seq"), ControlValue::Number(1.0), "{extra}");
     }
 }
+
+#[test]
+fn an_event_on_a_module_replacing_one_written_earlier_is_not_authored() {
+    let json = r#"{
+        "version": "1.0.0",
+        "modules": [
+            { "id": "x", "type": "oscillator", "config": { "frequency": 220.0 } },
+            { "id": "dac", "type": "dac" }
+        ],
+        "connections": [{ "from": "x", "from_port": "audio", "to": "dac", "to_port": "audio" }]
+    }"#;
+    let (mut running, pump) = started(json);
+    // `x` is written as an oscillator, then replaced by a sequencer, whose
+    // event the batch writes.
+    let tune = StructuralEdit::SetControl {
+        module_id: "x".into(),
+        key: "frequency".into(),
+        value: ControlValue::Number(330.0),
+    };
+    let add = StructuralEdit::AddModule {
+        id: "x".into(),
+        module_type: "cell_sequencer".into(),
+        config: serde_json::json!({ "cells": [[{ "note": 0 }], [{ "note": 7 }]] }),
+    };
+    let remove = StructuralEdit::RemoveModule { id: "x".into() };
+    let connect = StructuralEdit::Connect {
+        from: "x".into(),
+        from_port: "frequency".into(),
+        to: "dac".into(),
+        to_port: "audio".into(),
+    };
+    let edits = [tune, remove, add, connect, next_cell("x")];
+    let report = running.apply_edits(&edits).unwrap();
+    pump.render(2);
+    assert!(report.controls_failed.is_empty(), "{report:?}");
+    assert!(!saved(&running).1, "the document holds no event key");
+}
