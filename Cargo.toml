@@ -63,6 +63,10 @@ spectrogram = ["dep:base64"]
 # Exhaustive interleaving models of the request queue (src/control_request)
 # and the master level meter (src/invention/graph/master).
 loom = "0.7"
+# Parse the crate's own source for the audio-thread lock scan
+# (src/modules/lock_scan_tests.rs).
+proc-macro2 = { version = "1.0", default-features = false }
+syn = { version = "2.0.119", default-features = false, features = ["full", "parsing", "visit"] }
 tempfile = "3.27.0"
 wit-component = "0.258.0"
 wit-bindgen = "0.61.0"
