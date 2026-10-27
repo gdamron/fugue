@@ -59,6 +59,11 @@ impl Rig {
         while self.drain.pop().is_some() {}
     }
 
+    /// The drain takes up the next request queued.
+    fn take_one(&mut self) {
+        self.drain.pop().expect("queued");
+    }
+
     /// Others' outcomes fill the channel, and `then` is dropped.
     fn drop_outcome(&mut self, then: RequestId, outcome: Outcome) {
         fill(&mut self.outcomes);
@@ -203,4 +208,35 @@ fn a_suspect_write_refused_later_settles_as_refused() {
     );
     assert_eq!(recorded(&mut rig.log), 0, "refused: nothing authored");
     assert!(!rig.log.waiting(write_id));
+}
+
+#[test]
+fn suspects_queued_apart_each_settle_past_where_they_were_taken_up() {
+    let mut rig = rig();
+    let first = rig.queue(330.0, When::AtSample(100));
+    rig.drop_outcome(RequestId(20), Outcome::Applied { at: 0 });
+    assert!(rig.announced().is_empty());
+    let second = rig.queue(220.0, When::AtSample(200));
+    rig.drop_outcome(RequestId(21), Outcome::Applied { at: 0 });
+    assert!(rig.announced().is_empty());
+
+    rig.take_one();
+    rig.transport.publish(4096);
+    assert!(
+        rig.announced().is_empty(),
+        "the first seen taken up at 4096"
+    );
+    rig.transport.publish(4160);
+    assert_eq!(rig.announced(), [(first, None)], "taken to have applied");
+    assert!(rig.log.waiting(second), "the second still queued");
+
+    rig.take_up();
+    assert!(
+        rig.announced().is_empty(),
+        "the second seen taken up at 4160"
+    );
+    rig.transport.publish(4224);
+    assert_eq!(rig.announced(), [(second, None)], "taken to have applied");
+    assert_eq!(recorded(&mut rig.log), 2);
+    assert_eq!(rig.log.on_sample(), 0);
 }

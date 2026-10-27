@@ -36,24 +36,28 @@ pub(super) struct Suspect {
     at: u64,
     /// The queue's position when the drop was seen.
     queued: u64,
+    /// Seen taken up by the drain.
+    taken: bool,
     /// Past which count it has surely settled, once seen taken up.
     by: Option<u64>,
 }
 
 impl PendingLog {
     /// Notes which suspect writes the drain has surely taken up, then reads
-    /// the rendered count, in that order (see the module docs).
+    /// the rendered count: every check before the one read, so the count is
+    /// at least where each was taken up (see the module docs).
     pub(super) fn taken_up(&mut self) -> u64 {
         let requests = &self.requests;
-        let mut taken = (self.suspect.iter_mut())
-            .filter(|suspect| suspect.by.is_none() && requests.taken_before(suspect.queued))
-            .peekable();
-        if taken.peek().is_none() {
-            return requests.rendered();
+        for suspect in self
+            .suspect
+            .iter_mut()
+            .filter(|suspect| suspect.by.is_none())
+        {
+            suspect.taken = requests.taken_before(suspect.queued);
         }
         let rendered = requests.rendered();
-        for suspect in taken {
-            suspect.by = Some(suspect.at.max(rendered));
+        for suspect in self.suspect.iter_mut().filter(|suspect| suspect.taken) {
+            suspect.by.get_or_insert(suspect.at.max(rendered));
         }
         rendered
     }
@@ -90,8 +94,14 @@ impl PendingLog {
                 continue;
             };
             if !self.suspect.iter().any(|suspect| suspect.id == *id) {
-                let (id, by) = (*id, None);
-                self.suspect.push(Suspect { id, at, queued, by });
+                let (id, taken, by) = (*id, false, None);
+                self.suspect.push(Suspect {
+                    id,
+                    at,
+                    queued,
+                    taken,
+                    by,
+                });
             }
         }
     }
