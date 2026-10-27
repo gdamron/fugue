@@ -3,9 +3,10 @@
 //!
 //! `enabled` and `cooldown` are declared parameters, applied by the audio
 //! thread like any declared control and read back from their cells by the
-//! background worker. Rising edges on the `trigger` and `reset` inputs are
-//! counted on [`EventCounter`]s the audio module records and the worker
-//! reads. `request_count` is declared telemetry, written only by the worker.
+//! background worker. Rising edges on the `trigger` and `reset` inputs, and
+//! each write to the `trigger` and `reset` event controls, are counted on
+//! [`EventCounter`]s the audio module records and the worker reads.
+//! `request_count` is declared telemetry, written only by the worker.
 //!
 //! The strings (`prompt`, `system_prompt`, `backend`, and the telemetry
 //! `status`, `last_*` and `history`) sit behind a lock only control threads
@@ -27,6 +28,8 @@ use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 pub(super) const ENABLED: ControlIndex = ControlIndex(0);
 pub(super) const COOLDOWN: ControlIndex = ControlIndex(1);
 pub(super) const REQUEST_COUNT: ControlIndex = ControlIndex(2);
+pub(super) const TRIGGER: ControlIndex = ControlIndex(3);
+pub(super) const RESET: ControlIndex = ControlIndex(4);
 
 const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
@@ -57,6 +60,23 @@ const DECLS: &[ControlDecl] = &[
         "Completed request count (read-only)",
     )
     .telemetry(),
+    // Events: each write is one edge, as a rising input is. They hold no
+    // state, so the document never authors one and a reload never fires
+    // one.
+    ControlDecl::new(
+        "trigger",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Trigger: each write starts one agent request",
+    )
+    .event(),
+    ControlDecl::new(
+        "reset",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Trigger: each write clears the agent's history and errors",
+    )
+    .event(),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
@@ -72,8 +92,9 @@ pub(super) const TELEMETRY: &[&str] = &[
     "request_count",
 ];
 
-/// Rising edges on the `trigger` and `reset` inputs. The audio thread
-/// records them; the worker reads them.
+/// Rising edges on the `trigger` and `reset` inputs, and writes to the
+/// controls of those names. The audio thread records them; the worker
+/// reads them.
 #[derive(Default)]
 pub(super) struct Edges {
     pub(super) trigger: EventCounter,
@@ -220,11 +241,11 @@ impl AgentControls {
 
 impl ControlSurface for AgentControls {
     fn controls(&self) -> Vec<ControlMeta> {
-        let [enabled, cooldown, request_count]: [ControlMeta; 3] = self
+        let [enabled, cooldown, request_count, trigger, reset]: [ControlMeta; 5] = self
             .declared
             .controls()
             .try_into()
-            .expect("the agent declares three controls");
+            .expect("the agent declares five controls");
         let state = self.snapshot();
         vec![
             enabled,
@@ -248,6 +269,8 @@ impl ControlSurface for AgentControls {
                 .with_default(state.last_apply_error),
             request_count,
             cooldown,
+            trigger,
+            reset,
         ]
     }
 
@@ -440,22 +463,25 @@ mod tests {
                 "last_apply_error",
                 "request_count",
                 "cooldown",
+                "trigger",
+                "reset",
             ]
         );
     }
 
     #[test]
-    fn only_enabled_and_cooldown_can_be_scheduled() {
+    fn parameters_and_events_can_be_scheduled() {
         let controls = controls();
-        for key in ["enabled", "cooldown"] {
+        for key in ["enabled", "cooldown", "trigger", "reset"] {
             assert!(controls.automation(key).is_some(), "{key}");
         }
         // Declared but not automatable: a scheduler refuses it as it loads.
         assert!(controls.declares("request_count"));
         assert!(controls.automation("request_count").is_none());
-        // The edges are inputs, not controls.
+        // The edges are events: they read idle, holding no state.
         for key in ["trigger", "reset"] {
-            assert!(controls.get_control(key).is_err(), "{key}");
+            assert!(controls.declaration(key).unwrap().decl.event, "{key}");
+            assert_eq!(controls.get_control(key), Ok(false.into()), "{key}");
         }
         // The strings are never written from the audio thread: a scheduler
         // refuses string controls as it loads.
