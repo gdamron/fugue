@@ -792,4 +792,5 @@ fn the_retired_spellings_are_refused() {
     let _ = std::fs::remove_file(wav);
 }
 
+mod release_order;
 mod swaps;

@@ -132,7 +132,8 @@ editor hints, and whether a write is an event.
   - a request and a scheduler's write at one sample, the request first.
 
   A module whose event reads a value as it sounds, rather than as it
-  applies, keeps the rule on every path. A scheduler playing its own table
+  applies, keeps the rule on every path: a sample instrument's note off
+  takes the release in force as the note next renders. A scheduler playing its own table
   (one not stepped by the graph's drain) lands its block's writes on its
   targets together, at the block's start.
 

@@ -199,6 +199,14 @@ impl Voice {
         self.release_step = step;
     }
 
+    /// Sets the fade of a release begun with no step yet (a note off
+    /// waiting for the release in force as it sounds).
+    pub fn take_release(&mut self, step: f32) {
+        if self.active && !self.held && self.release_step == 0.0 {
+            self.release_step = step;
+        }
+    }
+
     /// Reads the current stereo frame, pre-gain. Inside a held sustain
     /// loop's crossfade region this blends toward the equivalent position
     /// before the loop start, so the wrap is continuous.

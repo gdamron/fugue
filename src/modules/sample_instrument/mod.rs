@@ -54,7 +54,7 @@
 //! events, and per zone `root_note.N` (fixed), `asset.N` and `level.N`. A
 //! note written by a control thread is a request, applied at a block
 //! boundary in the order sent; a scheduler's notes are queued, every one
-//! kept, so a chord at one step plays whole.
+//! kept, so a chord at one step plays whole (see [`controls`]).
 //!
 //! # Inputs
 //! - `frequency`: Note pitch in Hz, latched at note-on
@@ -291,6 +291,9 @@ pub struct SampleInstrument {
     level_targets: Vec<f32>,
     /// Release fade, in seconds.
     release: f32,
+    /// Whether a note off written since the last block waits for its
+    /// release fade (see [`Module::finish_events`]).
+    releasing: bool,
     /// Allocation ordinal handed to the next note-on (steal-oldest order).
     next_started: u64,
     sample_rate: f32,
@@ -342,6 +345,7 @@ impl SampleInstrument {
             level_targets: levels.clone(),
             levels,
             release,
+            releasing: false,
             next_started: 0,
             sample_rate: sample_rate as f32,
             declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
@@ -456,6 +460,10 @@ impl Module for SampleInstrument {
 
     fn process(&mut self, frames: usize) -> bool {
         let release_step = self.release_step();
+        // A note off written for this sample fades over the release in
+        // force as it sounds: one written beside it applies, whichever
+        // came first, and one written later never reaches back.
+        self.finish_events();
 
         // Levels are control-rate: taken once per block, after the notes
         // the block's writes played.
@@ -527,8 +535,19 @@ impl Module for SampleInstrument {
         Some((&self.table, &self.cells))
     }
 
-    /// A note plays as it applies, in the order written; it reads back 0,
-    /// as it holds no note of its own.
+    /// Note offs take the release in force.
+    fn finish_events(&mut self) {
+        if std::mem::take(&mut self.releasing) {
+            let release_step = self.release_step();
+            for voice in self.voices.iter_mut() {
+                voice.take_release(release_step);
+            }
+        }
+    }
+
+    /// A note plays as it applies, in the order written, and a note off
+    /// fades over the release in force as the instrument next renders. A
+    /// note reads back 0, as the instrument holds no note of its own.
     #[allow(private_interfaces)]
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         let RtValue::F32(number) = value else {
@@ -549,7 +568,9 @@ impl Module for SampleInstrument {
             }
             Some(InstrumentControl::NoteOff) => {
                 let note = midi_note(number).ok_or(Refusal::Invalid)?;
-                self.note_off(note, self.release_step(), false);
+                // Its fade is set as the block starts (see `process`).
+                self.note_off(note, 0.0, false);
+                self.releasing = true;
                 Ok(RtValue::F32(0.0))
             }
             Some(InstrumentControl::Level(zone)) => {

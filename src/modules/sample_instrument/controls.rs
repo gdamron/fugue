@@ -7,7 +7,10 @@
 //!   0.001..30.
 //! - `note_on` and `note_off` are events naming a MIDI note (rounded,
 //!   0..=127), each write a note. A control thread's notes are requests,
-//!   applied in the order sent. A scheduler's are queued, so a chord at one
+//!   applied in the order sent, after the values due beside them. A
+//!   note off fades over the release in force as it next sounds, so a
+//!   release written for its sample applies to it whichever came first.
+//!   A scheduler's are queued, so a chord at one
 //!   step plays every note, with the last [`NOTE_OFF_RESERVE`] places kept
 //!   for note offs: note ons crowding the queue cannot strand a note.
 //! - `root_note.N` reads back the zone's root; it is fixed at build.
