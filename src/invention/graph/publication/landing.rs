@@ -190,24 +190,23 @@ impl SignalGraph {
     /// Allocation-, free- and lock-free, but for the recompile an install
     /// may fall back to (as at a block start).
     pub(in crate::invention::graph) fn land_timed_edit(&mut self) -> bool {
-        let Some(mut link) = self.link.take() else {
-            return false;
-        };
-        let Some(mut publication) = link.landed.take() else {
-            self.link = Some(link);
-            return false;
-        };
-        let previous = link.installed;
-        self.install(&mut publication);
-        link.installed = publication.generation;
-        link.applied.fetch_add(1, Ordering::Relaxed);
-        self.remap_requests(link.installed, Some((previous, &publication)));
-        if self.topo_dirty {
-            self.recompile();
-        }
-        link.bridge = Some(publication);
-        self.link = Some(link);
-        true
+        self.with_link(|graph, link, in_hand| {
+            let Some(publication) = link.landed.take() else {
+                return false;
+            };
+            let publication = in_hand.insert(publication);
+            let previous = link.installed;
+            graph.install(publication);
+            link.installed = publication.generation;
+            link.applied.fetch_add(1, Ordering::Relaxed);
+            graph.remap_requests(link.installed, Some((previous, &**publication)));
+            if graph.topo_dirty {
+                graph.recompile();
+            }
+            link.bridge = in_hand.take();
+            true
+        })
+        .unwrap_or(false)
     }
 
     /// Hands the bridge back once nothing can need it: the publisher has
@@ -215,20 +214,30 @@ impl SignalGraph {
     /// and neither the request queue nor the input ring holds anything
     /// tagged with the generation it maps from. Drains the input ring
     /// through it to find out. Waits while a retirement is held, so the
-    /// link never holds two. Returns whether it went.
-    pub(super) fn release_bridge(&mut self, link: &mut AudioLink, adopted: bool) -> bool {
+    /// link never holds two. Returns whether it went. Holds the bridge
+    /// `in_hand` meanwhile, so a panic keeps it (see `graph::unwind`).
+    pub(super) fn release_bridge(
+        &mut self,
+        link: &mut AudioLink,
+        in_hand: &mut Option<Box<Publication>>,
+        adopted: bool,
+    ) -> bool {
         let Some(bridge) = link.bridge.take() else {
             return false;
         };
+        let bridge = in_hand.insert(bridge);
         let previous = bridge.generation - 1;
         let drained = adopted
             && self
                 .requests
                 .as_mut()
                 .is_none_or(|drain| drain.drained_through(previous))
-            && self.drain_inputs(link, Some((previous, &bridge)))
+            && self.drain_inputs(link, Some((previous, &**bridge)))
             // Never two retirements held at once.
             && link.flush_held();
+        let Some(bridge) = in_hand.take() else {
+            return false;
+        };
         if !drained {
             link.bridge = Some(bridge);
             return false;

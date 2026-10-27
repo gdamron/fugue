@@ -60,6 +60,18 @@ fn a_full_queue_hands_the_value_back() {
 }
 
 #[test]
+fn a_closed_queue_hands_every_later_value_back_and_keeps_what_it_holds() {
+    let (producer, mut consumer) = bounded(4);
+    assert_eq!(producer.try_push(1), Ok(()));
+    assert!(!producer.is_closed());
+    consumer.close();
+    assert!(producer.is_closed());
+    assert_eq!(producer.try_push(2), Err(2));
+    assert_eq!(consumer.pop(), Some(1));
+    assert_eq!(consumer.pop(), None);
+}
+
+#[test]
 fn positions_wrap_past_u64_max() {
     let (producer, mut consumer) = bounded_from(4, u64::MAX - 5);
     for i in 0..40u32 {

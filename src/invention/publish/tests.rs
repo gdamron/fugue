@@ -57,6 +57,7 @@ mod timed_rebind;
 mod timed_status;
 mod timed_swap;
 mod timelines;
+mod unwind;
 mod writes;
 
 use probe::{DropProbeFactory, DROP_PROBE};
