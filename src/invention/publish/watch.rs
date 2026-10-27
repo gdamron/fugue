@@ -141,6 +141,8 @@ impl LiveGraph {
                 beat: None,
                 automated,
                 authored: None,
+                announced: false,
+                awaited: false,
             };
             pending.submitted(id, write);
         }

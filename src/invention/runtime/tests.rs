@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+mod acks;
 mod editing;
 mod non_finite;
 #[cfg(feature = "spectrogram")]
@@ -20,6 +21,8 @@ struct TickBackend {
     sample_rate: u32,
     stop: Arc<AtomicBool>,
     diagnostics: Arc<AudioDiagnostics>,
+    /// The buffer period its diagnostics report, in nanoseconds.
+    period_ns: u64,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -29,8 +32,15 @@ impl TickBackend {
             sample_rate,
             stop: Arc::new(AtomicBool::new(false)),
             diagnostics: Arc::new(AudioDiagnostics::new()),
+            period_ns: 1_333_333,
             worker: None,
         }
+    }
+
+    /// The same, reporting a buffer period of `period`.
+    fn reporting_period(self, period: Duration) -> Self {
+        let period_ns = period.as_nanos() as u64;
+        Self { period_ns, ..self }
     }
 }
 
@@ -44,15 +54,16 @@ impl AudioBackend for TickBackend {
         mut render: Box<dyn FnMut(&mut [f32], &mut [f32]) + Send>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let stop = self.stop.clone();
-        let diagnostics = self.diagnostics.clone();
+        let (diagnostics, period_ns) = (self.diagnostics.clone(), self.period_ns);
         self.worker = Some(thread::spawn(move || {
             let mut left = [0.0f32; 64];
             let mut right = [0.0f32; 64];
             while !stop.load(Ordering::Relaxed) {
                 let started = std::time::Instant::now();
+                diagnostics.record_callback_at(started);
                 render(&mut left, &mut right);
                 let callback_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
-                diagnostics.record_callback(callback_ns, 1_333_333);
+                diagnostics.record_callback(callback_ns, period_ns);
                 thread::sleep(Duration::from_millis(2));
             }
         }));
@@ -276,10 +287,16 @@ fn installed_sink_observes_control_writes_with_the_applied_value() {
     running.set_event_sink(sink.clone());
 
     // A stringified write coerces to the frequency control's Number kind; the
-    // event must carry the *applied* value, not the raw string (FUG-239 #7).
+    // event must carry the *applied* value, not the raw string.
     running
         .set_control("osc", "frequency", ControlValue::String("660".to_string()))
         .unwrap();
+    // Applied before the next write, which would otherwise supersede it at
+    // its sample, unannounced.
+    assert!(wait_until(|| running
+        .get_control("osc", "frequency")
+        .unwrap()
+        == ControlValue::Number(660.0)));
     // A telemetry-only transient write must not surface as a control change.
     running
         .snapshot()
@@ -300,6 +317,13 @@ fn installed_sink_observes_control_writes_with_the_applied_value() {
             ),
         ])
         .unwrap();
+    // Each is announced once the audio thread has applied it.
+    let square = ControlValue::String("square".to_string());
+    assert!(wait_until(|| running
+        .get_control("osc", "waveform")
+        .unwrap()
+        == square));
+    running.announce_applied();
 
     running.stop();
 
@@ -518,8 +542,9 @@ fn performed_control_writes_are_announced_but_never_authored() {
             ControlValue::Number(550.0),
         )])
         .unwrap();
-    // Recorded as the audio thread applies it.
+    // Recorded as the audio thread applies it, and announced after.
     assert!(wait_until(|| authored_frequency(&running) == Some(550.0)));
+    running.announce_applied();
 
     running.stop();
     assert_eq!(

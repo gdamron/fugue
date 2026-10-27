@@ -359,6 +359,8 @@ fn a_live_write_is_listed_pending_until_the_audio_thread_applies_it() {
         raw: Some(raw),
         beat: None,
         automated: false,
+        announced: false,
+        awaited: false,
         authored: None,
     };
     assert_eq!(

@@ -35,6 +35,7 @@ use crate::control_request::{Outcome, RequestId, RequestSender};
 use crate::modules::dac::Settle;
 use crate::ModuleRegistry;
 
+mod announce;
 mod authored;
 mod change;
 mod pending;
@@ -50,15 +51,18 @@ mod timed;
 mod timed_chain;
 mod timed_status;
 mod timed_swap;
-// Submitted to by the front doors FUG-317 builds.
+// Submitted to by timed control writes, still to come.
 #[cfg_attr(not(test), allow(dead_code))]
 mod watch;
 
+pub(crate) use announce::Progress;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use authored::APPLY_WAIT;
 pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
 pub(crate) use pending::{Authoring, DocumentStep, PendingLog, PendingWrite};
 pub(crate) use publisher::{Publisher, Refused};
+#[cfg(test)]
+pub(crate) use publisher::OUTCOME_QUEUE_CAPACITY;
 pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use retarget::Retarget;
