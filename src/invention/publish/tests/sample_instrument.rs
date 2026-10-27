@@ -44,7 +44,7 @@ fn level_wav(dir: &std::path::Path, name: &str, level: f32) -> String {
 /// An instrument `inst` with one zone over every key, rooted at 60,
 /// playing a sample at 0.5, and a release short enough that a note
 /// released at a block's start is silent by its end. Live.
-fn rig(dir: &std::path::Path) -> Rig {
+pub(super) fn rig(dir: &std::path::Path) -> Rig {
     let mut rig = Rig::new(DAC);
     let inst = rig.build("inst", "sample_instrument", config(dir));
     upsert(&rig, inst);
@@ -69,7 +69,7 @@ fn upsert(rig: &Rig, inst: change::BuiltModule) {
     rig.live.edit(edit).unwrap();
 }
 
-fn set(rig: &Rig, key: &str, value: ControlValue) -> Result<(), String> {
+pub(super) fn set(rig: &Rig, key: &str, value: ControlValue) -> Result<(), String> {
     let surface = rig.live.control_surfaces.lock().unwrap()["inst"].clone();
     surface.set_control(key, value)
 }
@@ -108,7 +108,7 @@ fn all_applied(rig: &mut Rig, count: usize) {
 }
 
 /// 16-bit quantization tolerance.
-const TOL: f32 = 2e-3;
+pub(super) const TOL: f32 = 2e-3;
 
 #[test]
 fn a_block_renders_while_a_control_thread_holds_the_instruments_state() {
