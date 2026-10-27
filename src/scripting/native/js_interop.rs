@@ -177,3 +177,25 @@ pub(super) fn set_error(controller: &RuntimeController, module_id: &str, error: 
         ControlValue::String(error.to_string()),
     );
 }
+
+/// A `setControl` write's optional fourth argument, `{ when, ttl_ms }` in
+/// the wire's terms (see [`crate::rpc::ControlTiming`]): when it applies,
+/// and how long it may wait. Left out, or `undefined`, it applies at once.
+pub(super) fn timing_arg(
+    value: Option<&JsValue>,
+    context: &mut Context,
+) -> JsResult<crate::rpc::ControlTiming> {
+    let json = json_arg(value, context)?;
+    if json.is_null() {
+        return Ok(Default::default());
+    }
+    let known = ["when", "ttl_ms"];
+    if let Some(unknown) = (json.as_object().into_iter().flat_map(|o| o.keys()))
+        .find(|key| !known.contains(&key.as_str()))
+    {
+        return Err(js_err(format!(
+            "setControl timing takes `when` and `ttl_ms`, not `{unknown}`"
+        )));
+    }
+    serde_json::from_value(json).map_err(|err| js_err(format!("setControl timing: {err}")))
+}

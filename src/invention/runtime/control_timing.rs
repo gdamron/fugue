@@ -14,7 +14,7 @@ use crate::rpc::{ControlRequestSettled, ControlWhen, EditWhen, RequestLanding};
 /// The time `when` names. A beat is checked as a timed edit's is (see
 /// [`edit_time`]), counting on the clock it names, otherwise on the written
 /// module's.
-pub(super) fn write_time(when: &ControlWhen) -> Result<WriteTime<'_>, GraphCommandError> {
+pub(crate) fn write_time(when: &ControlWhen) -> Result<WriteTime<'_>, GraphCommandError> {
     let refuse = |message: String| GraphCommandError::ControlError(message);
     let (clock, beat) = match when {
         ControlWhen::AtSample { sample } => return Ok(WriteTime::AtSample(*sample)),

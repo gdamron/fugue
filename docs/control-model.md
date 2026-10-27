@@ -358,7 +358,9 @@ These are part of the model but not wired through yet:
 - **Repeating, ramped and condition-timed control writes on the wire.**
   `SetControl` and `SetControls` take a `when` (a sample, a beat, or
   another request applying) and a `ttl_ms` (see
-  [`rpc/control_timing.rs`](../src/rpc/control_timing.rs)); repeating
+  [`rpc/control_timing.rs`](../src/rpc/control_timing.rs)), as a
+  conducting script's `graph.setControl(id, key, value, { when, ttl_ms })`
+  does, which returns the write's request for a later `after_request`; repeating
   grids, beat ramps and signal or control conditions are implemented on the
   audio side only.
 - Ramp shapes, and controls declared by plugins.

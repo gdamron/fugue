@@ -11,6 +11,7 @@ use serde_json::json;
 
 use crate::control_request::Source as WriteSource;
 use crate::invention::declared::WriteOptions;
+use crate::invention::runtime::control_timing::write_time;
 use crate::invention::{RuntimeController, RuntimeModuleInfo};
 use crate::{ControlValue, ControlWriteIntent};
 
@@ -265,17 +266,28 @@ fn install_graph_api(
             let module_id = string_arg(args.first(), context, "module_id")?;
             let key = string_arg(args.get(1), context, "key")?;
             let value = control_from_js(args.get(2), context)?;
+            let timing = timing_arg(args.get(3), context)?;
+            let snapshot = &set_control_controller.snapshot;
+            let time = (timing.when.as_ref().map(write_time).transpose())
+                .map_err(|err| js_err(err.to_string()))?;
             // A conducting script performs: its writes are live gestures, not
             // the invention's new starting state, so they stay out of the
-            // retained document and out of the authoring revision (FUG-266).
-            // It ranks as a script, below a person's or an agent's write.
-            let options = WriteOptions::performed(WriteSource::Script);
+            // retained document and out of the authoring revision. It ranks
+            // as a script, below a person's or an agent's write.
+            let options = WriteOptions {
+                ttl: (timing.ttl_ms)
+                    .map(|ms| ms.saturating_mul(u64::from(set_control_controller.sample_rate)) / 1000),
+                time,
+                ..WriteOptions::performed(WriteSource::Script)
+            };
             let perform = ControlWriteIntent::Perform;
-            set_control_controller
-                .snapshot
+            let ack = snapshot
                 .submit_control(&module_id, &key, value, perform, options)
                 .map_err(|err| js_err(err.to_string()))?;
-            Ok(JsValue::undefined())
+            // Its request, for a later write to follow (`after_request`).
+            Ok(ack.request.map_or(JsValue::undefined(), |id| {
+                JsValue::from(JsString::from(id.0.to_string()))
+            }))
         })
     };
 
@@ -350,7 +362,7 @@ fn install_graph_api(
         .function(list_connections_fn, js_string!("listConnections"), 0)
         .function(list_controls_fn, js_string!("listControls"), 1)
         .function(get_control_fn, js_string!("getControl"), 2)
-        .function(set_control_fn, js_string!("setControl"), 3)
+        .function(set_control_fn, js_string!("setControl"), 4)
         .function(add_module_fn, js_string!("addModule"), 3)
         .function(remove_module_fn, js_string!("removeModule"), 1)
         .function(connect_fn, js_string!("connect"), 4)
