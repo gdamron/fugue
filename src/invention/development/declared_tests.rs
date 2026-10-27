@@ -576,14 +576,21 @@ fn a_hold_reaches_through_a_development_without_allocating() {
 }
 
 #[test]
-fn a_saved_event_fires_once_as_the_development_runs() {
+fn a_saved_event_never_fires_as_the_development_runs() {
+    // As a plain module's build leaves an event key in its config alone,
+    // the scalar beside it still applies.
     let (graph, _) = running(json!({ "pulse": true, "level": 0.5 }));
-    assert_eq!(outputs(&graph), (1.5, 0.5), "fired once, beside the scalar");
-    assert_eq!(outputs(&graph), (1.5, 0.5), "and not again");
+    assert_eq!(outputs(&graph), (0.5, 0.5), "nothing fired");
+    assert_eq!(outputs(&graph), (0.5, 0.5), "nor later");
     let (graph, _) = running(json!({ "pulse": false }));
-    assert_eq!(outputs(&graph), (0.25, 0.25), "false fires nothing");
+    assert_eq!(outputs(&graph), (0.25, 0.25));
+    // The document still loads, whatever the key holds.
+    let (graph, _) = running(json!({ "pulse": [1, 2] }));
+    assert_eq!(outputs(&graph), (0.25, 0.25));
+}
 
-    // Written twice before it runs, it fires once, as last written.
+#[test]
+fn an_event_written_twice_before_the_development_runs_fires_once_as_last_written() {
     let built = pair().build(48_000, &json!({})).unwrap();
     let surface = built.control_surface.unwrap();
     for _ in 0..2 {

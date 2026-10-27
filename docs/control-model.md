@@ -300,9 +300,12 @@ A control write is either:
 The wire defaults to `author` for older clients. An event control (a
 clock's `reset`, a player's `play`) is never authored, whatever the intent:
 it fires and leaves the document as it was, from `SetControl` and from
-`ApplyEdits` alike. A config key naming an event (written by hand) neither
-fires nor rebuilds its module on reload; a clock that resets on reload
-asks for it with its own `reset_on_reload` key. Conducting scripts and
+`ApplyEdits` alike. A config key naming an event (written by hand) never
+fires: not as the module first runs, and not on reload, which does not
+rebuild the module for it either. That holds for a development instance's
+config too, where a key naming an exposed event (one an alias fires) loads
+and is ignored. A clock that resets on reload asks for it with its own
+`reset_on_reload` key. Conducting scripts and
 agents write with `perform`, and scheduler writes are automation that never
 reaches the document, so writes at musical rate never make every peer's
 edit stale. `ApplyEdits`'s `set_control` is otherwise always authoring.
