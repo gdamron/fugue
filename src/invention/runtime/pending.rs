@@ -37,6 +37,7 @@ impl RunningInvention {
                 requested: write.value,
                 source: from,
                 waiting: wait(write.when),
+                landing: None,
             });
         }
         pending.more = pending.total - pending.items.len();

@@ -20,6 +20,7 @@ fn rpc_commands_round_trip_json() {
             intent: ControlWriteIntent::Author,
             source: None,
             priority: None,
+            timing: Default::default(),
         },
         RpcCommand::SetControls {
             writes: vec![
@@ -254,6 +255,7 @@ fn advances_revision_separates_authoring_from_performance() {
         intent,
         source: None,
         priority: None,
+        timing: Default::default(),
     };
     assert!(author(ControlWriteIntent::Author).advances_revision());
     assert!(!author(ControlWriteIntent::Perform).advances_revision());

@@ -90,6 +90,7 @@ fn a_receipt_request_names_its_reply_and_a_default_one_does_not() {
         intent: ControlWriteIntent::Author,
         source: None,
         priority: None,
+        timing: Default::default(),
     };
 
     // A default request is byte-for-byte what a client before receipts sent.
@@ -163,6 +164,7 @@ fn a_receipt_reads_back_the_controls_a_command_wrote() {
         intent: ControlWriteIntent::Perform,
         source: None,
         priority: None,
+        timing: Default::default(),
     };
     assert_eq!(single.written_controls(), vec![("osc", "frequency")]);
 

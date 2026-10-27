@@ -36,6 +36,7 @@ fn a_listing_says_how_many_more_only_when_some_are_left_out() {
         requested: ControlValue::Number(330.0),
         source: PendingSource::User,
         waiting: PendingWait::Condition,
+        landing: None,
     };
     let all = PendingRequests {
         total: 1,
