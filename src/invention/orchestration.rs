@@ -396,6 +396,7 @@ impl RuntimeSnapshot {
                 module_id: module_id.to_string(),
                 key: key.to_string(),
                 value,
+                request: None,
             }));
         }
     }

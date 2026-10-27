@@ -46,10 +46,17 @@ pub enum RpcSubscriptionTopic {
 #[cfg_attr(feature = "rpc-schema", derive(schemars::JsonSchema))]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum RpcEventPayload {
+    /// A control write applied, carrying the value as applied.
     ControlChanged {
         module_id: String,
         key: String,
         value: ControlValue,
+        /// The request it was submitted as (see
+        /// [`AppliedControl::request`](super::AppliedControl::request)),
+        /// announced once the request applies. `None` for a write that
+        /// applied as it was made.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request: Option<String>,
     },
     /// The output's levels over the latest meter window. Streamed only, at
     /// the daemon's meter rate; never retained in polled history.
