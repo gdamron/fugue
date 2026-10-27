@@ -445,7 +445,9 @@ fn a_settle_whose_render_panics_unwinds_rather_than_hangs() {
 /// On a graph with no clock an authored write to a control a waiting
 /// timed edit writes as it lands is not kept over it (the copy would hold
 /// the control at a sample that never passes, refusing every later
-/// write): the edit is cancelled, and later writes play and are recorded.
+/// write): the edit is cancelled, and the write it would have made as it
+/// landed is refused with it, listed pending no longer; later writes play
+/// and are recorded.
 #[test]
 fn a_clockless_graph_cancels_an_edit_rather_than_keep_a_write_over_it() {
     use crate::invention::orchestration::RuntimeSnapshot;
@@ -475,6 +477,8 @@ fn a_clockless_graph_cancels_an_edit_rather_than_keep_a_write_over_it() {
         let value = ControlValue::Number(frequency);
         door.set_control_with_intent("osc", "frequency", value.clone(), author)
             .unwrap();
+        let pending = live.pending.lock().unwrap().pending();
+        assert!(pending.is_empty(), "left pending: {pending:?}");
         assert_eq!(door.get_control("osc", "frequency").unwrap(), value);
         let state = live.state.lock().unwrap();
         let spec = state

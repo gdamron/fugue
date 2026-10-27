@@ -97,18 +97,27 @@ impl LiveGraph {
             None => (publisher.timed_chains(module_id, key) && publisher.timed_id() != safe)
                 .then_some(Touched::Written),
         };
+        let mut cancelled = false;
         if let Some(touches) = touches {
             let cause = || CancelCause::AuthoredWrite {
                 module_id: module_id.to_string(),
                 key: key.to_string(),
                 touches,
             };
-            if !publisher.cancel_timed(cause) {
+            cancelled = publisher.cancel_timed(cause);
+            if !cancelled {
                 self.catch_up(&mut publisher);
             }
         }
         if let Some(authoring) = now {
             record(&mut publisher, &self.state, (module_id, key), authoring);
+        }
+        if cancelled {
+            // A graph with no clock renders only when asked: what waits on
+            // the edit is refused now, not at the next write, so nothing is
+            // left listed pending meanwhile.
+            drop(publisher);
+            self.settle();
         }
     }
 }
