@@ -379,7 +379,7 @@ impl SampleInstrument {
         // hand the old note to the crossfade slot so it rings out instead.
         if self.voices[slot].active {
             let voice = &self.voices[slot];
-            let amp = voice.velocity * self.levels[voice.zone] * voice.release_gain;
+            let amp = voice.velocity * self.levels[voice.zone] * voice.release_gain();
             self.voices[slot].begin_steal_fade(amp, self.declick_step);
         }
         self.voices[slot].start(
@@ -489,7 +489,7 @@ impl Module for SampleInstrument {
                 }
                 if voice.active {
                     let (l, r) = voice.sample_frame();
-                    let amp = voice.velocity * levels[voice.zone] * voice.release_gain;
+                    let amp = voice.velocity * levels[voice.zone] * voice.release_gain();
                     left += l * amp;
                     right += r * amp;
                 }
