@@ -231,11 +231,14 @@ fn test_gate_fall_releases_with_fade() {
 
 #[test]
 fn test_sustain_loop_holds_past_sample_end_and_releases_through_tail() {
-    // 8 frames: loop frames 2..6 sustain at 0.4; the tail (frames 6, 7)
-    // decays, distinguishing loop exit from continued wrapping.
-    let path = write_levels_wav(&[0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.2, 0.1]);
+    // Loop frames 2..6 sustain at 0.4; the tail is negative, so a frame
+    // read from it is unmistakably past the loop.
+    let mut levels = vec![0.4; 6];
+    levels.extend(std::iter::repeat_n(-0.2, 200));
+    let path = write_levels_wav(&levels);
     let config = serde_json::json!({
-        "release": 1.0,
+        // A ~44-frame fade, which the 200-frame tail holds.
+        "release": 0.001,
         "zones": [ {
             "root_note": 60,
             "key_range": [0, 127],
@@ -247,26 +250,69 @@ fn test_sustain_loop_holds_past_sample_end_and_releases_through_tail() {
 
     instrument.set_input("frequency", freq(60)).unwrap();
     instrument.set_input("gate", 1.0).unwrap();
-    // Hold far past the 8-frame sample: the loop keeps it sounding.
-    instrument.process(64);
+    // Hold far past the sample's length: the loop keeps it sounding.
+    instrument.process(400);
     assert!((instrument.get_output("audio_left").unwrap() - 0.4).abs() < TOL);
 
-    // Gate fall: playback exits the loop into the tail. With a 1-second
-    // release the fade is negligible over a few frames, so the tail's
-    // decaying levels show through.
+    // Gate fall: the tail can hold the fade, so playback exits the loop
+    // into it within one pass and the fade finishes there.
     instrument.set_input("gate", 0.0).unwrap();
     let mut saw_tail = false;
-    for _ in 0..8 {
+    for _ in 0..60 {
         instrument.process(1);
-        let level = instrument.get_output("audio_left").unwrap();
-        if (level - 0.1).abs() < 2.0 * TOL {
+        if instrument.get_output("audio_left").unwrap() < -TOL {
             saw_tail = true;
         }
     }
     assert!(saw_tail, "release never reached the sample tail");
-    // Past the sample end the voice retires.
-    instrument.process(4);
     assert_eq!(instrument.get_output("audio_left").unwrap(), 0.0);
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn test_release_longer_than_the_tail_keeps_looping_to_the_end_of_its_fade() {
+    // An 8-frame sample whose 2-frame tail cannot hold a 50 ms fade: the
+    // voice keeps wrapping the loop through the release rather than
+    // running off the end of the sample with the fade still sounding.
+    let path = write_levels_wav(&[0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.2, 0.1]);
+    let config = serde_json::json!({
+        "release": 0.05,
+        "zones": [ {
+            "root_note": 60,
+            "key_range": [0, 127],
+            "asset": path.to_str().unwrap(),
+            "loop": { "start_frames": 2, "end_frames": 6 }
+        } ]
+    });
+    let (mut instrument, _surface) = build_instrument(config);
+
+    instrument.set_input("frequency", freq(60)).unwrap();
+    instrument.set_input("gate", 1.0).unwrap();
+    instrument.process(64);
+    instrument.set_input("gate", 0.0).unwrap();
+
+    let fade = (0.05 * 44_100.0) as usize;
+    let mut last = instrument.get_output("audio_left").unwrap();
+    let mut sounding = 0;
+    for frame in 0..fade + 64 {
+        instrument.process(1);
+        let level = instrument.get_output("audio_left").unwrap();
+        assert!(
+            (level - last).abs() < 0.01,
+            "step of {} at release frame {frame}",
+            (level - last).abs()
+        );
+        if level.abs() > TOL {
+            sounding = frame;
+        }
+        last = level;
+    }
+    assert!(
+        sounding + 16 >= fade,
+        "the voice fell silent at frame {sounding} of a {fade}-frame fade"
+    );
+    assert_eq!(last, 0.0);
 
     let _ = std::fs::remove_file(path);
 }

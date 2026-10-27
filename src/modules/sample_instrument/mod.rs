@@ -37,8 +37,10 @@
 //! A zone may declare loop points (in the source file's frames) so a short
 //! sample holds a long note: while the gate is high the read head wraps the
 //! loop (with an optional crossfade for un-authored loop points); on gate
-//! fall playback exits the loop into the rest of the sample, fading over
-//! the `release` time.
+//! fall the voice fades over the `release` time and exits the loop into
+//! the rest of the sample once that rest can hold what is left of the
+//! fade. A release longer than the tail keeps wrapping until it can, so
+//! the sample never ends under a fade still sounding.
 //!
 //! # Pitch shift
 //!
@@ -377,7 +379,7 @@ impl SampleInstrument {
         // hand the old note to the crossfade slot so it rings out instead.
         if self.voices[slot].active {
             let voice = &self.voices[slot];
-            let amp = voice.velocity * self.levels[voice.zone] * voice.release_gain;
+            let amp = voice.velocity * self.levels[voice.zone] * voice.release_gain();
             self.voices[slot].begin_steal_fade(amp, self.declick_step);
         }
         self.voices[slot].start(
@@ -487,7 +489,7 @@ impl Module for SampleInstrument {
                 }
                 if voice.active {
                     let (l, r) = voice.sample_frame();
-                    let amp = voice.velocity * levels[voice.zone] * voice.release_gain;
+                    let amp = voice.velocity * levels[voice.zone] * voice.release_gain();
                     left += l * amp;
                     right += r * amp;
                 }

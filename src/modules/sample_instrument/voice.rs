@@ -61,7 +61,8 @@ pub(crate) fn note_from_freq(freq: f32) -> u8 {
 
 /// One pool voice. `active` is the lifetime flag; `held` distinguishes a
 /// sustaining note (gate high: the sustain loop wraps) from a releasing one
-/// (gate fell: playback exits the loop and fades over the release time).
+/// (gate fell: the fade runs over the release time, and playback exits the
+/// loop once the rest of the sample can hold what is left of the fade).
 pub(crate) struct Voice {
     /// The buffer latched at note-on. Latching the `Arc` (not the zone
     /// index) means an `asset.<i>` swap never yanks a sounding voice onto
@@ -78,8 +79,15 @@ pub(crate) struct Voice {
     pub velocity: f32,
     pub active: bool,
     pub held: bool,
-    pub release_gain: f32,
-    pub release_step: f32,
+    /// Whether the sustain loop wraps at its end this pass. Always true
+    /// while held; once released, true until a pass whose exit leaves the
+    /// tail long enough for the fade to finish in it.
+    wraps: bool,
+    /// The release fade, in f64 so a long fade at a high rate steps down
+    /// to zero in the frames it promises (f32 steps near 1.0 round away a
+    /// large share of a tiny slope, and the tail-fit test relies on it).
+    release_gain: f64,
+    release_step: f64,
     /// Allocation ordinal for steal-oldest.
     pub started: u64,
     /// The note this voice was playing before it was stolen, still being
@@ -88,6 +96,9 @@ pub(crate) struct Voice {
     fade_sample: Option<Arc<SampleData>>,
     fade_position: f64,
     fade_ratio: f64,
+    /// The stolen note's loop, kept wrapping (and blending) through the
+    /// declick when that note was still on its loop.
+    fade_loop: Option<ScaledLoop>,
     fade_amp: f32,
     fade_gain: f32,
     fade_step: f32,
@@ -105,12 +116,14 @@ impl Voice {
             velocity: 1.0,
             active: false,
             held: false,
+            wraps: true,
             release_gain: 1.0,
             release_step: 0.0,
             started: 0,
             fade_sample: None,
             fade_position: 0.0,
             fade_ratio: 1.0,
+            fade_loop: None,
             fade_amp: 0.0,
             fade_gain: 0.0,
             fade_step: 0.0,
@@ -124,6 +137,22 @@ impl Voice {
         self.active || self.fade_gain > 0.0
     }
 
+    /// The release fade's gain on this frame.
+    #[inline]
+    pub fn release_gain(&self) -> f32 {
+        self.release_gain as f32
+    }
+
+    /// The loop this voice wraps this pass, if any.
+    #[inline]
+    fn wrapping(&self) -> Option<ScaledLoop> {
+        if self.wraps {
+            self.loop_region
+        } else {
+            None
+        }
+    }
+
     /// Moves the note currently on this voice into the crossfade slot, to be
     /// read and faded over `step` per frame. Called just before
     /// [`Self::start`] takes the voice for a new note. `amp` is the gain the
@@ -135,6 +164,7 @@ impl Voice {
         self.fade_sample = self.sample.clone();
         self.fade_position = self.position;
         self.fade_ratio = self.ratio;
+        self.fade_loop = self.wrapping();
         self.fade_amp = amp;
         self.fade_gain = 1.0;
         self.fade_step = step;
@@ -156,9 +186,9 @@ impl Voice {
             return (0.0, 0.0);
         }
 
-        let (l, r) = sample.sample_at(self.fade_position);
+        let (l, r) = read(sample, self.fade_loop, self.fade_position);
         let amp = self.fade_amp * self.fade_gain;
-        self.fade_position += self.fade_ratio;
+        self.fade_position = wrap(self.fade_loop, self.fade_position + self.fade_ratio);
         self.fade_gain -= self.fade_step;
         if self.fade_gain <= 0.0 {
             self.fade_gain = 0.0;
@@ -187,27 +217,52 @@ impl Voice {
         self.ratio = ratio;
         self.velocity = velocity.max(0.0);
         self.held = true;
+        self.wraps = true;
         self.release_gain = 1.0;
         self.release_step = 0.0;
         self.started = started;
     }
 
-    /// Begins the release phase: the sustain loop stops wrapping (playback
-    /// runs on past the loop end) and the fade below takes `1/step` frames.
+    /// Begins the release phase: the fade below takes `1/step` frames, and
+    /// the sustain loop wraps only while the fade would outlast the rest of
+    /// the sample (see [`Self::still_wraps`]).
     pub fn release(&mut self, step: f32) {
         self.held = false;
-        self.release_step = step;
+        self.release_step = f64::from(step);
+        self.wraps = self.still_wraps();
     }
 
     /// Sets the fade of a release begun with no step yet (a note off
     /// waiting for the release in force as it sounds).
     pub fn take_release(&mut self, step: f32) {
         if self.active && !self.held && self.release_step == 0.0 {
-            self.release_step = step;
+            self.release_step = f64::from(step);
+            self.wraps = self.still_wraps();
         }
     }
 
-    /// Reads the current stereo frame, pre-gain. Inside a held sustain
+    /// Whether a releasing voice wraps its loop at the end of this pass.
+    /// Leaving the loop now plays the rest of the sample, so the voice
+    /// leaves only when that holds what remains of the fade; otherwise the
+    /// sample would end under a fade still sounding and cut it with a
+    /// tick. Wrapping once more never risks that (each pass only shortens
+    /// the fade left), so a voice inside the crossfade keeps wrapping
+    /// rather than jumping out of the blend, and a fade with no step yet
+    /// keeps wrapping until it has one.
+    fn still_wraps(&self) -> bool {
+        let (Some(sample), Some(lp)) = (self.sample.as_ref(), self.loop_region) else {
+            return false;
+        };
+        if self.release_step <= 0.0 || self.position >= lp.end - lp.crossfade {
+            return true;
+        }
+        // Frames of fade left against frames of sample left, in output
+        // frames: gain / step against (len - position) / ratio.
+        let rest = (sample.len() as f64 - self.position).max(0.0);
+        self.release_gain * self.ratio > rest * self.release_step
+    }
+
+    /// Reads the current stereo frame, pre-gain. Inside a wrapping sustain
     /// loop's crossfade region this blends toward the equivalent position
     /// before the loop start, so the wrap is continuous.
     #[inline]
@@ -215,22 +270,12 @@ impl Voice {
         let Some(sample) = self.sample.as_ref() else {
             return (0.0, 0.0);
         };
-        if self.held {
-            if let Some(lp) = self.loop_region {
-                let fade_start = lp.end - lp.crossfade;
-                if lp.crossfade > 0.0 && self.position >= fade_start {
-                    let t = ((self.position - fade_start) / lp.crossfade) as f32;
-                    let (l1, r1) = sample.sample_at(self.position);
-                    let (l2, r2) = sample.sample_at(self.position - (lp.end - lp.start));
-                    return (l1 + (l2 - l1) * t, r1 + (r2 - r1) * t);
-                }
-            }
-        }
-        sample.sample_at(self.position)
+        read(sample, self.wrapping(), self.position)
     }
 
-    /// Advances the read head one frame: wraps the sustain loop while held,
-    /// steps the release fade while releasing, and retires the voice at the
+    /// Advances the read head one frame: wraps the sustain loop while held
+    /// (and while releasing, until the tail can hold the fade), steps the
+    /// release fade while releasing, and retires the voice at the
     /// fade floor or the end of the buffer.
     #[inline]
     pub fn advance(&mut self) {
@@ -243,15 +288,12 @@ impl Voice {
         }
         self.position += self.ratio;
 
-        if self.held {
-            if let Some(lp) = self.loop_region {
-                if self.position >= lp.end {
-                    // `%=`-style wrap keeps the fractional phase bounded
-                    // without accumulating drift across loop passes.
-                    self.position = lp.start + (self.position - lp.start) % (lp.end - lp.start);
-                }
-            }
-        } else {
+        let unwrapped = self.position;
+        self.position = wrap(self.wrapping(), unwrapped);
+        if self.position != unwrapped && !self.held {
+            self.wraps = self.still_wraps();
+        }
+        if !self.held {
             self.release_gain -= self.release_step;
             if self.release_gain <= 0.0 {
                 self.active = false;
@@ -263,3 +305,34 @@ impl Voice {
         }
     }
 }
+
+/// Reads `sample` at `position`. Inside a wrapping loop's crossfade region
+/// this blends toward the equivalent position before the loop start, so the
+/// wrap is continuous.
+#[inline]
+fn read(sample: &SampleData, wrapping: Option<ScaledLoop>, position: f64) -> (f32, f32) {
+    if let Some(lp) = wrapping {
+        let fade_start = lp.end - lp.crossfade;
+        if lp.crossfade > 0.0 && position >= fade_start {
+            let t = ((position - fade_start) / lp.crossfade) as f32;
+            let (l1, r1) = sample.sample_at(position);
+            let (l2, r2) = sample.sample_at(position - (lp.end - lp.start));
+            return (l1 + (l2 - l1) * t, r1 + (r2 - r1) * t);
+        }
+    }
+    sample.sample_at(position)
+}
+
+/// Wraps `position` back into a wrapping loop once it passes the loop end.
+/// The `%`-style wrap keeps the fractional phase bounded without
+/// accumulating drift across loop passes.
+#[inline]
+fn wrap(wrapping: Option<ScaledLoop>, position: f64) -> f64 {
+    match wrapping {
+        Some(lp) if position >= lp.end => lp.start + (position - lp.start) % (lp.end - lp.start),
+        _ => position,
+    }
+}
+
+#[cfg(test)]
+mod tests;
