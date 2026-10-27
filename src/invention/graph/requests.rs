@@ -659,17 +659,20 @@ impl SignalGraph {
             .start(now, drain.installed, &*self, outcomes);
         self.apply_conditions(drain, None, now);
         let ramps = &mut drain.watches.ramps;
-        drain
-            .pending
-            .apply_due(now, drain.installed, |target, standing, value, retirer| {
-                let applied = self.apply_ranked(target, standing, value, retirer);
-                // At a ramp's own rank and sample, it leaves the hold as the
-                // ramp took it: end the ramp here.
-                if applied.is_ok() {
-                    ramps.supersede(target, &*self);
-                }
-                applied
-            });
+        while (drain.pending).apply_due(now, drain.installed, |target, standing, value, retirer| {
+            let applied = self.apply_ranked(target, standing, value, retirer);
+            // At a ramp's own rank and sample, it leaves the hold as the
+            // ramp took it: end the ramp here.
+            if applied.is_ok() {
+                ramps.supersede(target, &*self);
+            }
+            applied
+        }) {
+            // Late events, finished before any write due after them.
+            for (_, instance) in self.modules.iter_mut() {
+                instance.module_mut().finish_events();
+            }
+        }
         if let Some(mut publication) = self.installing.take() {
             self.hand_over_with_requests(&mut publication);
             self.installing = Some(publication);

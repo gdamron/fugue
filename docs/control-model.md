@@ -123,7 +123,8 @@ editor hints, and whether a write is an event.
   whatever order they were written in: a note off written just before a
   release, or just after it, takes the new release. Writes due at
   different samples apply in time order, inside a block too, and a value
-  never reaches back to an event due before it. The request store and a
+  never reaches back to an event due before it, even when both arrive
+  late: the graph finishes a late sample's events as they apply. The request store and a
   module's automation slots each order their own writes so. Some writes
   still apply in the order made:
   - an offline render's writes, each applied at once;

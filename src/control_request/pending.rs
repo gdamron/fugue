@@ -294,7 +294,11 @@ impl PendingStore {
     /// values (a state, a payload) in receipt order, then its events (see
     /// [`Request::fires`]), so an event reads what was written for its
     /// sample whichever came first (a note off takes a release written
-    /// beside it). Hands `apply` its
+    /// beside it). Stops after a late sample whose events applied, and
+    /// says so: its caller finishes those events
+    /// ([`crate::Module::finish_events`]) and calls again, so no write due
+    /// later, applied by this drain or the next, reaches back to them.
+    /// Hands `apply` its
     /// [`Standing`] (none for an event) and settling each applied, or as
     /// `apply` decides, or refused [`Refusal::Expired`] without
     /// calling `apply` when `now` is past its `expires` sample. Held
@@ -314,7 +318,7 @@ impl PendingStore {
             RequestValue,
             &mut Retirer,
         ) -> Result<(), Outcome>,
-    ) {
+    ) -> bool {
         let mut from = 0;
         loop {
             let due = self.entries.partition_point(|e| e.at <= now);
@@ -322,22 +326,27 @@ impl PendingStore {
                 .position(|e| e.request.target.generation == installed)
                 .map(|offset| from + offset)
             else {
-                return;
+                return false;
             };
             let at = self.entries[first].at;
+            let mut fired = false;
             for events in [false, true] {
                 let end = first + self.entries[first..].partition_point(|e| e.at == at);
                 let applied = self.entries.extract_if(first..end, |e| {
                     e.request.target.generation == installed && e.request.fires() == events
                 });
-                Self::apply_each(applied, &mut self.outcomes, now, &mut apply);
+                fired |= Self::apply_each(applied, &mut self.outcomes, now, &mut apply) && events;
             }
             // What is left at `at` is held.
             from = first + self.entries[first..].partition_point(|e| e.at == at);
+            if fired && at < now {
+                return true;
+            }
         }
     }
 
-    /// Applies each of `applied`, as [`Self::apply_due`] describes.
+    /// Applies each of `applied`, as [`Self::apply_due`] describes, and
+    /// says whether any applied.
     fn apply_each(
         applied: impl Iterator<Item = Pending>,
         outcomes: &mut Outcomes,
@@ -348,7 +357,8 @@ impl PendingStore {
             RequestValue,
             &mut Retirer,
         ) -> Result<(), Outcome>,
-    ) {
+    ) -> bool {
+        let mut applied_any = false;
         for Pending { request, at: due } in applied {
             if expired(&request, now) {
                 outcomes.settle(request, Outcome::Refused(Refusal::Expired));
@@ -364,8 +374,11 @@ impl PendingStore {
                 Ok(()) => Outcome::Applied { at: now },
                 Err(outcome) => outcome,
             };
+            applied_any |= matches!(outcome, Outcome::Applied { .. })
+                || matches!(outcome, Outcome::AppliedLate { .. });
             outcomes.record(id, payload, outcome);
         }
+        applied_any
     }
 
     /// The earliest `at` among entries in the `installed` generation.
