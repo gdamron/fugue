@@ -17,6 +17,24 @@ use crate::{ControlValue, ControlWriteIntent};
 mod js_interop;
 use js_interop::*;
 
+/// Fastest rate the host ticks a code module, matching the control's editor
+/// range. A declared `tick_rate` above this is stored as written, but the host
+/// ticks at this rate instead of busy-looping.
+const MAX_TICK_RATE_HZ: f32 = 1000.0;
+
+/// Longest the host waits between ticks. A positive rate too small to name a
+/// representable period (such as `1e-38`) waits this long instead of panicking.
+const MAX_TICK_PERIOD: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Period between ticks for a positive `tick_rate`, bounded to
+/// `1 / MAX_TICK_RATE_HZ` through `MAX_TICK_PERIOD`.
+fn tick_period(tick_rate: f32) -> Duration {
+    let rate = tick_rate.min(MAX_TICK_RATE_HZ);
+    Duration::try_from_secs_f32(1.0 / rate)
+        .unwrap_or(MAX_TICK_PERIOD)
+        .min(MAX_TICK_PERIOD)
+}
+
 enum HostCommand {
     Stop,
     Reset,
@@ -151,7 +169,7 @@ fn run_host(
             _ => 0.0,
         };
         let timeout = if enabled && tick_rate > 0.0 {
-            Duration::from_secs_f32(1.0 / tick_rate)
+            tick_period(tick_rate)
         } else {
             Duration::from_millis(250)
         };
@@ -369,4 +387,30 @@ fn install_graph_api(
         .map_err(|err| err.to_string())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tick_period_follows_the_rate_within_bounds() {
+        assert_eq!(tick_period(4.0), Duration::from_millis(250));
+        assert_eq!(tick_period(MAX_TICK_RATE_HZ), Duration::from_millis(1));
+    }
+
+    #[test]
+    fn tiny_tick_rate_waits_the_longest_period_instead_of_panicking() {
+        assert_eq!(tick_period(1e-38), MAX_TICK_PERIOD);
+        assert_eq!(tick_period(f32::MIN_POSITIVE), MAX_TICK_PERIOD);
+        assert_eq!(tick_period(1e-9), MAX_TICK_PERIOD);
+    }
+
+    #[test]
+    fn huge_tick_rate_ticks_no_faster_than_the_maximum_rate() {
+        let fastest = Duration::from_secs_f32(1.0 / MAX_TICK_RATE_HZ);
+        assert_eq!(tick_period(1e9), fastest);
+        assert_eq!(tick_period(f32::MAX), fastest);
+        assert_eq!(tick_period(f32::INFINITY), fastest);
+    }
 }
