@@ -2,9 +2,9 @@
 
 use super::{
     ControlTiming, ControlWriteIntent, DescribeModuleQuery, EditTiming, InspectionQuery,
-    ModuleTypeQuery,
-    MutationReply, MutationTicket, PackageInstallRequest, PendingDetail, PendingSource,
-    RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, StructuralEdit, RPC_SCHEMA_VERSION,
+    ModuleTypeQuery, MutationReply, MutationTicket, PackageInstallRequest, PendingDetail,
+    PendingSource, RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, StructuralEdit,
+    RPC_SCHEMA_VERSION,
 };
 use crate::{ControlValue, Invention};
 use serde::{Deserialize, Serialize};

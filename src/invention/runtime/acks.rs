@@ -1,7 +1,7 @@
 //! Control writes from a front door that tells its caller what became of
 //! each: applied, still pending, or lost and why.
 
-use super::control_timing::write_time;
+use super::control_timing::timing_time;
 use super::{GraphCommandError, RunningInvention};
 use crate::control_request::{Outcome, Refusal, Source};
 use crate::invention::declared::WriteOptions;
@@ -46,7 +46,7 @@ impl RunningInvention {
         // large batch or other writers could wrap, until the reply is built.
         self.live.hold_room(writes.len());
         for write in writes {
-            let time = write.timing.when.as_ref().map(write_time).transpose();
+            let time = timing_time(&write.timing);
             let time = match time {
                 Ok(time) => time,
                 Err(refusal) => {

@@ -9,12 +9,26 @@ use crate::control_request::{Outcome, When};
 use crate::invention::orchestration::ControlAck;
 use crate::invention::publish::{Announcement, EditTime, Progress, WriteTime};
 use crate::invention::request_log::LoggedBeat;
-use crate::rpc::{ControlRequestSettled, ControlWhen, EditWhen, RequestLanding};
+use crate::rpc::{ControlRequestSettled, ControlTiming, ControlWhen, EditWhen, RequestLanding};
+
+/// The time `timing` names, if any. A ttl bounds only a write with a
+/// `when`: one without is refused with nothing sent, as every front door
+/// refuses it.
+pub(crate) fn timing_time(
+    timing: &ControlTiming,
+) -> Result<Option<WriteTime<'_>>, GraphCommandError> {
+    match (&timing.when, timing.ttl_ms) {
+        (None, Some(_)) => Err(GraphCommandError::ControlError(
+            "`ttl_ms` applies only with a `when`; nothing was sent".into(),
+        )),
+        (when, _) => when.as_ref().map(write_time).transpose(),
+    }
+}
 
 /// The time `when` names. A beat is checked as a timed edit's is (see
 /// [`edit_time`]), counting on the clock it names, otherwise on the written
 /// module's.
-pub(crate) fn write_time(when: &ControlWhen) -> Result<WriteTime<'_>, GraphCommandError> {
+fn write_time(when: &ControlWhen) -> Result<WriteTime<'_>, GraphCommandError> {
     let refuse = |message: String| GraphCommandError::ControlError(message);
     let (clock, beat) = match when {
         ControlWhen::AtSample { sample } => return Ok(WriteTime::AtSample(*sample)),

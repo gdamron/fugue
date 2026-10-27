@@ -17,6 +17,7 @@ mod front_door_sources;
 mod inputs;
 mod instrument_note_off_room;
 mod instrument_release;
+mod lost_outcomes;
 mod melody;
 mod migrated;
 mod mixer;

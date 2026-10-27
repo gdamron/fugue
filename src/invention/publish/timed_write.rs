@@ -9,11 +9,21 @@
 //! it rebuilt or removed (see `authored::Fence`); one to a control a commit
 //! writes is ordered against that write by recording both as they apply
 //! (see `Committed::contested`).
+//!
+//! A write timed on a sample waits in the pending store, which applies
+//! back-pressure when full: what follows waits until room frees. So the
+//! front doors keep at most [`SAMPLE_TIMED_CAPACITY`] of them waiting, and
+//! a phrase written far ahead never holds up every write behind it.
 
+use super::publisher::PENDING_REQUEST_CAPACITY;
 use super::timed_status::EditState;
 use super::{PendingLog, Publisher};
 use crate::control_request::{BeatSpec, BeatTime, Condition, Outcome, Predicate, RequestId, When};
 use crate::invention::request_log::LoggedBeat;
+
+/// The most control writes timed on a sample kept waiting at once: half the
+/// pending store, the rest left for what applies within a block.
+pub(crate) const SAMPLE_TIMED_CAPACITY: usize = PENDING_REQUEST_CAPACITY / 2;
 
 /// When a timed control write applies.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,8 +51,26 @@ pub(crate) struct Timed {
 /// Resolves `time` for a write to module `module_id`, under `publisher`
 /// and the log, both locked as the write is submitted, every outcome
 /// received. `conditions` says whether a condition can be submitted (room
-/// among the watches, a value rather than a payload).
+/// among the watches, a value rather than a payload). One on a sample is
+/// refused while [`SAMPLE_TIMED_CAPACITY`] such writes wait.
 pub(crate) fn resolve(
+    time: WriteTime<'_>,
+    module_id: &str,
+    (publisher, pending): (&mut Publisher, &mut PendingLog),
+    conditions: Result<(), &str>,
+) -> Result<Timed, String> {
+    let timed = time_of(time, module_id, (publisher, pending), conditions)?;
+    let on_sample = matches!(timed.when, When::AtSample(_) | When::AfterSamples(_));
+    if on_sample && pending.on_sample() >= SAMPLE_TIMED_CAPACITY {
+        return Err(format!(
+            "{SAMPLE_TIMED_CAPACITY} writes already wait on a sample, as many as may at once; \
+             write it once some have applied"
+        ));
+    }
+    Ok(timed)
+}
+
+fn time_of(
     time: WriteTime<'_>,
     module_id: &str,
     (publisher, pending): (&mut Publisher, &mut PendingLog),
