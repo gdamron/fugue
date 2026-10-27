@@ -22,8 +22,8 @@ impl RunningInvention {
     /// Refused as an untimed reload is, and also, with nothing queued, when
     /// the document changes a development's definition (reload it untimed),
     /// changes no structure (time a control write instead), changes a
-    /// control of a module it keeps that cannot be timed yet (a legacy
-    /// surface), adds or removes a code or agent module, or names a time
+    /// control of a module it keeps that cannot be timed (an undeclared
+    /// control), adds or removes a code or agent module, or names a time
     /// that can never come.
     ///
     /// Its config changes to modules it keeps (a clock's reset included)

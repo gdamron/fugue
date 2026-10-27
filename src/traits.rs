@@ -7,8 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::control_request::{
-    Automation, BeatTable, ControlCells, ControlIndex, ControlTable, LegacyRefusal, Refusal,
-    RtValue, TableValue, Timeline,
+    Automation, BeatTable, ControlCells, ControlIndex, ControlTable, Refusal, RtValue, Timeline,
 };
 use crate::invention::declared::{Declaration, Queued, Route, WriteOptions};
 use crate::invention::timelines::Enclosure;
@@ -220,8 +219,8 @@ pub trait ControlSurface: Send + Sync {
     /// Binds a declared module's surface to the `route` its writes take
     /// from now on, applying to `module` (the instance behind this surface,
     /// not yet running) the controls written while it was building.
-    /// Called once by whatever is about to run the module; legacy surfaces
-    /// ignore it.
+    /// Called once by whatever is about to run the module; a surface
+    /// declaring nothing ignores it.
     #[doc(hidden)]
     #[allow(private_interfaces)]
     fn bind(&self, route: Route, module: &mut dyn Module) {
@@ -231,8 +230,8 @@ pub trait ControlSurface: Send + Sync {
     /// [`Self::set_control`] from a front door, as `options` say (who wrote
     /// it, its rank, its ttl, whether it is authored), saying what the
     /// write saw as it was queued and the request it became, if any. A
-    /// legacy surface takes the write in its setter and so applies it at
-    /// once: the default ignores `options`. Every surface over declared
+    /// surface declaring nothing takes the write in its setter, on the
+    /// control thread: the default ignores `options`. Every surface over declared
     /// controls, and a development or wrapper forwarding to one, overrides
     /// it. Control thread.
     #[doc(hidden)]
@@ -247,23 +246,24 @@ pub trait ControlSurface: Send + Sync {
         self.set_control(key, value).map(|()| Queued::default())
     }
 
-    /// Writes `key` where it is on the legacy path: the whole of a legacy
-    /// surface's control, nothing of a declared one, and a development's
-    /// legacy aliases. Control thread.
+    /// Writes `key` where it is undeclared: the whole of an undeclared
+    /// control (host state a control thread keeps, such as an agent's
+    /// prompt), nothing of a declared one, and a development's undeclared
+    /// aliases. Control thread.
     #[doc(hidden)]
-    fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
+    fn set_undeclared(&self, key: &str, value: ControlValue) -> Result<(), String> {
         self.set_control(key, value)
     }
 
-    /// Whether a write to `key` reaches a control on the legacy path, which
-    /// takes it without a request, so a request log cannot replay it: the
-    /// whole of a legacy control, and a development's legacy aliases.
+    /// Whether a write to `key` reaches an undeclared control, which takes
+    /// it without a request, so a request log cannot replay it: the whole
+    /// of an undeclared control, and a development's undeclared aliases.
     #[doc(hidden)]
-    fn writes_legacy(&self, key: &str) -> bool {
+    fn writes_undeclared(&self, key: &str) -> bool {
         !self.declares(key)
     }
 
-    /// Writes `key`'s legacy aliases to `value`, just applied to its
+    /// Writes `key`'s undeclared aliases to `value`, just applied to its
     /// declared part without a front door (a request log's replay), as a
     /// front door's write to `key` writes them. Nothing for a surface with
     /// no such alias. Control thread.
@@ -272,38 +272,6 @@ pub trait ControlSurface: Send + Sync {
     fn follow_declared(&self, key: &str, value: RtValue) -> Result<(), String> {
         let _ = (key, value);
         Ok(())
-    }
-
-    /// Writes legacy control `key` as a scheduler's table does, on the
-    /// audio thread: what [`Self::set_control`] would write, allocation-,
-    /// free- and lock-free, never waiting on a lock a control thread may
-    /// hold. What it cannot write so it refuses, with a `Copy` reason.
-    ///
-    /// The default is the setter itself, as a scheduler always wrote: every
-    /// type in `LEGACY_CONTROLS`, and a development forwarding to one,
-    /// overrides it (the catalog test in `control_request::legacy` checks
-    /// them).
-    #[doc(hidden)]
-    #[allow(private_interfaces)]
-    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
-        let value = match value {
-            TableValue::Number(number) => ControlValue::Number(number),
-            TableValue::Bool(flag) => ControlValue::Bool(flag),
-        };
-        self.set_control(key, value)
-            .map_err(|_| LegacyRefusal::Unsupported)
-    }
-
-    /// Reads legacy control `key`'s number where a scheduled ramp starts,
-    /// on the audio thread, as [`Self::set_scheduled`] writes: refused for
-    /// a control holding no number. The default is the getter itself.
-    #[doc(hidden)]
-    #[allow(private_interfaces)]
-    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
-        match self.get_control(key) {
-            Ok(ControlValue::Number(number)) => Ok(number),
-            _ => Err(LegacyRefusal::Unsupported),
-        }
     }
 
     /// Builds payload control `key`'s write of `value`: the payload and
@@ -323,8 +291,8 @@ pub trait ControlSurface: Send + Sync {
     }
 
     /// Opens a surface [`bound`](Self::bind) to a change still being
-    /// prepared to `route`, once that change has committed. Legacy surfaces
-    /// ignore it.
+    /// prepared to `route`, once that change has committed. A surface
+    /// declaring nothing ignores it.
     #[doc(hidden)]
     #[allow(private_interfaces)]
     fn activate(&self, route: Route) {
@@ -332,18 +300,9 @@ pub trait ControlSurface: Send + Sync {
     }
 
     /// Refuses every later write: the module behind this surface was
-    /// removed or replaced. Legacy surfaces ignore it.
+    /// removed or replaced. A surface declaring nothing ignores it.
     #[doc(hidden)]
     fn retire(&self) {}
-
-    /// How many scheduled writes and ramp starts to legacy controls this
-    /// surface's schedulers had refused (see [`Self::set_scheduled`]): a
-    /// scheduler's own, a development's inner ones summed, zero otherwise.
-    /// Each scheduler counts modulo 2^32. Control thread.
-    #[doc(hidden)]
-    fn scheduled_writes_refused(&self) -> u64 {
-        0
-    }
 
     /// Whether `key` is one of this surface's declared controls. Such a
     /// control is never written through [`Self::set_control`] from the
@@ -355,7 +314,7 @@ pub trait ControlSurface: Send + Sync {
     }
 
     /// The declared control `key`, for a development aliasing it, or `None`
-    /// for a legacy surface. Control thread.
+    /// for an undeclared one. Control thread.
     #[doc(hidden)]
     #[allow(private_interfaces)]
     fn declaration(&self, key: &str) -> Option<Declaration> {
@@ -364,8 +323,8 @@ pub trait ControlSurface: Send + Sync {
     }
 
     /// The declared control `key`, as automation on the audio thread writes
-    /// it (see [`crate::control_request::Automation`]), or `None` for a
-    /// legacy surface, or a control automation cannot write. Control
+    /// it (see [`crate::control_request::Automation`]), or `None` for an
+    /// undeclared control, or one automation cannot write. Control
     /// thread: resolved once, when a schedule is.
     #[doc(hidden)]
     #[allow(private_interfaces)]
@@ -593,7 +552,8 @@ pub trait Module: Send {
 
     /// This module's declared controls and the cells it publishes their
     /// values to, once it takes control requests. A module that
-    /// returns `None` keeps the legacy `set_control` path.
+    /// returns `None` declares none: its surface, if it has one, takes
+    /// every write in its setter, on the control thread.
     ///
     /// Crate-internal for now: first-party modules only, until the plugin
     /// interface can declare controls.
@@ -722,17 +682,17 @@ pub trait Module: Send {
     #[doc(hidden)]
     fn finish_events(&mut self) {}
 
-    /// Legacy module-local control metadata surface.
+    /// Module-local control metadata, for using a module outside a graph.
     fn controls(&self) -> Vec<ControlMeta> {
         vec![]
     }
 
-    /// Legacy module-local numeric control getter.
+    /// Module-local numeric control getter.
     fn get_control(&self, _key: &str) -> Result<f32, String> {
         Err("Module has no controls".to_string())
     }
 
-    /// Legacy module-local numeric control setter.
+    /// Module-local numeric control setter.
     fn set_control(&mut self, _key: &str, _value: f32) -> Result<(), String> {
         Err("Module has no controls".to_string())
     }

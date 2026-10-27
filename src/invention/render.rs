@@ -177,7 +177,7 @@ impl RenderEngine {
     }
 
     /// How many replayed requests the render refused so far (a value its
-    /// control does not hold, a module gone, a development's legacy alias
+    /// control does not hold, a module gone, a development's undeclared alias
     /// refusing what its declared part took): none, for a log of this
     /// invention.
     pub fn replay_refused(&self) -> usize {

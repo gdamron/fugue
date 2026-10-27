@@ -1,7 +1,7 @@
 //! An offline write that loses to a higher-ranked one at the same sample
 //! changes none of a development's aliases: the declared ones keep the
-//! winner, and so do the legacy ones the same key reaches, whether it loses
-//! as it is ranked or, overtaken by a replay after that, as it is applied.
+//! winner, and so do the undeclared ones the same key reaches, whether it
+//! loses as it is ranked or, overtaken by a replay after that, as it is applied.
 
 use serde_json::json;
 
@@ -11,7 +11,7 @@ use crate::control_request::Source;
 use crate::invention::declared::{DeclaredSurface, WriteOptions};
 
 /// A user's write of `mix`, then a script's at the same sample, which
-/// loses (as it is applied, when `overtaken`): the dial and the legacy
+/// loses (as it is applied, when `overtaken`): the dial and the host
 /// dial both keep the user's.
 fn a_losing_write_leaves_every_alias(factory: DevelopmentFactory, overtaken: bool) {
     let (graph, surface) = running_from(factory, json!({ "mix": 0.5 }));
@@ -26,18 +26,22 @@ fn a_losing_write_leaves_every_alias(factory: DevelopmentFactory, overtaken: boo
     };
     assert!(lost.lost, "the user's holds");
     assert_eq!(outputs_a(&graph), 0.75, "the dial");
-    assert_eq!(surface.get_control("rate").unwrap(), 0.75.into(), "the legacy dial");
+    assert_eq!(
+        surface.get_control("rate").unwrap(),
+        0.75.into(),
+        "the host dial"
+    );
 }
 
 #[test]
-fn a_losing_offline_write_leaves_a_mixed_keys_legacy_alias() {
+fn a_losing_offline_write_leaves_a_mixed_keys_host_alias() {
     for overtaken in [false, true] {
         a_losing_write_leaves_every_alias(factory("mixed", mixed()), overtaken);
     }
 }
 
 #[test]
-fn a_losing_offline_write_leaves_a_nested_mixed_keys_legacy_alias() {
+fn a_losing_offline_write_leaves_a_nested_mixed_keys_host_alias() {
     for overtaken in [false, true] {
         a_losing_write_leaves_every_alias(factory("outer", nested()), overtaken);
     }

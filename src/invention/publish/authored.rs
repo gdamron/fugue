@@ -73,7 +73,7 @@ impl LiveGraph {
     /// Readies the timed edit waiting, if any, for an authored write to
     /// control `key` of `module_id` just made, `safe` from the edit it
     /// names (see `declared::Queued`), and records `now`, when the write
-    /// applied as it was made rather than as a request (building, a legacy
+    /// applied as it was made rather than as a request (building, an undeclared
     /// control, a payload travelling in a publication).
     ///
     /// A timed edit waiting that rebuilds or removes the module is

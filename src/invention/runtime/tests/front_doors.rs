@@ -5,7 +5,7 @@
 //! no audio-thread state, are written directly.
 
 use super::*;
-use crate::control_request::{Source, LEGACY_CONTROLS};
+use crate::control_request::Source;
 use crate::invention::declared::WriteOptions;
 use crate::invention::manual_backend::{start_manual, Pump};
 use crate::module_config::tests::registry::{base_config, UNBUILDABLE};
@@ -48,9 +48,7 @@ fn a_declaring_types_front_door_writes_are_requests_or_publications() {
     let registry = crate::ModuleRegistry::default();
     let (mut checked, mut direct) = (Vec::new(), Vec::new());
     for type_id in registry.types() {
-        let skipped = registry.is_sink(type_id)
-            || LEGACY_CONTROLS.contains(&type_id)
-            || UNBUILDABLE.iter().any(|(id, _)| *id == type_id);
+        let skipped = registry.is_sink(type_id) || UNBUILDABLE.iter().any(|(id, _)| *id == type_id);
         if skipped {
             continue;
         }

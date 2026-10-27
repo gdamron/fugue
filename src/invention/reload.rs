@@ -449,8 +449,8 @@ impl RunningInvention {
     /// changed (directly or through a nested development) are rebuilt;
     /// everything else keeps its state. A config change expressible as
     /// controls is validated with the rest and written to the surviving
-    /// module right after publication (a legacy control's value may be heard
-    /// up to one block before the new topology); one that still fails when written is listed
+    /// module right after publication (an undeclared control's value may be
+    /// heard up to one block before the new topology); one that still fails when written is listed
     /// in [`ReloadReport::controls_failed`].
     ///
     /// When another edit (a script's, say) changes the graph while the

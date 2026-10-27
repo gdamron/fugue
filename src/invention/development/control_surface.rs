@@ -1,5 +1,5 @@
 use super::*;
-use crate::control_request::{Automation, LegacyRefusal, RtValue, TableValue};
+use crate::control_request::{Automation, RtValue};
 use crate::invention::declared::{Declaration, DeclaredSurface, Queued, Route, WriteOptions};
 use crate::modules::control_scheduler::SurfaceDirectory;
 use std::sync::PoisonError;
@@ -139,7 +139,7 @@ impl DevelopmentControlSurface {
     /// the inner order the payload carries counts what it now writes; a
     /// write that is not applied, failing or losing offline as it is
     /// applied, restores what each recorded. A payload key reaches no
-    /// legacy alias, so recording touches nothing else. Under the
+    /// undeclared alias, so recording touches nothing else. Under the
     /// writing lock, ranked first (see [`Self::submit`]).
     fn write_payload(
         &self,
@@ -149,7 +149,7 @@ impl DevelopmentControlSurface {
     ) -> Result<Queued, String> {
         // What each alias records now, whichever key or development wrote
         // it last (a nested development shows every key on it as recorded,
-        // see `set_legacy`), and what this one's keys on it read back as:
+        // see `set_undeclared`), and what this one's keys on it read back as:
         // a recording a codec builds from is not what it reads back as.
         let was = (self.aliases(key))
             .map(|(control, surface)| Ok((control, surface, surface.get_control(&control.key)?)))
@@ -157,7 +157,7 @@ impl DevelopmentControlSurface {
         let shown: Vec<(&str, ControlValue)> = (self.shared_payload_keys(key))
             .filter_map(|shared| Some((shared, self.get_control(shared).ok()?)))
             .collect();
-        self.set_legacy(key, value.clone())?;
+        self.set_undeclared(key, value.clone())?;
         let written = match self.prepare_payload(key, &value) {
             Some(prepared) => prepared
                 .and_then(|(payload, shown)| declared.submit_payload(key, payload, shown, options)),
@@ -166,7 +166,7 @@ impl DevelopmentControlSurface {
         // Every effect made before delivery is undone here, and only here.
         if written.as_ref().map_or(true, |queued| queued.lost) {
             for (control, surface, was) in was {
-                let _ = surface.set_legacy(&control.key, was);
+                let _ = surface.set_undeclared(&control.key, was);
             }
             if let Some(declared) = &self.declared {
                 for (shared, value) in shown {
@@ -237,13 +237,12 @@ impl ControlSurface for DevelopmentControlSurface {
     ) -> Result<Queued, String> {
         // A development may list the same key several times to fan a control
         // out across internal modules (e.g. one `decay` reaching every voice
-        // of a bank); apply the write to every aliased target. Aliases on
-        // the legacy path are written here; declared ones take it as one
-        // request for the development. Every alias of a declared key is
-        // checked first, so a value one of them cannot hold changes none of
-        // them. A key on the legacy path alone keeps its old, unchecked
-        // fan-out: a scheduler still writes it from the audio thread, where
-        // checking would allocate.
+        // of a bank); apply the write to every aliased target. Undeclared
+        // aliases are written here; declared ones take it as one request
+        // for the development. Every alias of a declared key is checked
+        // first, so a value one of them cannot hold changes none of them.
+        // A key reaching undeclared aliases alone is written through their
+        // setters, which check what they take.
         //
         // Ranked first: offline, a write that loses to a higher-ranked one
         // at this sample loses before it records or writes anything. The
@@ -253,8 +252,8 @@ impl ControlSurface for DevelopmentControlSurface {
         // overtakes loses as it is applied. The declared part then goes
         // first: its delivery can still fail (a full request queue, a
         // module being installed) or lose so, and a write not applied must
-        // leave the legacy aliases as they were. Once it applies the legacy
-        // aliases, already checked, take the value. A payload's one alias
+        // leave the undeclared aliases as they were. Once it applies the
+        // undeclared aliases, already checked, take the value. A payload's one alias
         // records it before delivery, and `write_payload` undoes that.
         if let Some(declared) = self.declared(key) {
             self.validate_control(key, &value, &self.surfaces)?;
@@ -271,16 +270,16 @@ impl ControlSurface for DevelopmentControlSurface {
                 return self.write_payload(declared, (key, value), options);
             }
             let queued = declared.submit(key, value.clone(), options)?;
-            // The legacy aliases take the value as the write is made, not
-            // as its declared part applies: until their types migrate, a
-            // live write that later loses on the audio thread leaves them
-            // playing it.
+            // The undeclared aliases (host state such as an agent's prompt)
+            // take the value as the write is made, not as its declared
+            // part applies: a live write that later loses on the audio
+            // thread leaves them holding it.
             if !queued.lost {
-                self.set_legacy(key, value)?;
+                self.set_undeclared(key, value)?;
             }
             return Ok(queued);
         }
-        self.set_legacy(key, value).map(|()| Queued::default())
+        self.set_undeclared(key, value).map(|()| Queued::default())
     }
 
     /// Built by the alias a payload key reaches, when its surface builds
@@ -315,16 +314,16 @@ impl ControlSurface for DevelopmentControlSurface {
         }))
     }
 
-    /// Writes `key`'s aliases still on the legacy path, and theirs in a
+    /// Writes `key`'s undeclared aliases, and theirs in a
     /// nested development, on this (control) thread.
-    fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
+    fn set_undeclared(&self, key: &str, value: ControlValue) -> Result<(), String> {
         let mut found = false;
         for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
             let surface = self
                 .surfaces
                 .get(&control.module_id)
                 .ok_or_else(|| format!("Unknown control module: {}", control.module_id))?;
-            surface.set_legacy(&control.key, value.clone())?;
+            surface.set_undeclared(&control.key, value.clone())?;
             found = true;
         }
         // A payload written through an outer development reads back as
@@ -340,42 +339,6 @@ impl ControlSurface for DevelopmentControlSurface {
         } else {
             Err(format!("Unknown control: {}", key))
         }
-    }
-
-    /// Writes every alias of `key`, a key on the legacy path alone (a
-    /// schedule writes no other), through its own surface's scheduled
-    /// setter: allocation-, free- and lock-free, as theirs are. An alias
-    /// refusing the write leaves the others written, and the first refusal
-    /// is returned.
-    #[allow(private_interfaces)]
-    fn set_scheduled(&self, key: &str, value: TableValue) -> Result<(), LegacyRefusal> {
-        let mut found = false;
-        let mut refused = None;
-        for control in self.controls.iter().filter(|entry| entry.meta.key == key) {
-            found = true;
-            let written = (self.surfaces.get(&control.module_id))
-                .ok_or(LegacyRefusal::Unsupported)
-                .and_then(|surface| surface.set_scheduled(&control.key, value));
-            if let Err(refusal) = written {
-                refused.get_or_insert(refusal);
-            }
-        }
-        match (found, refused) {
-            (true, None) => Ok(()),
-            (true, Some(refusal)) => Err(refusal),
-            (false, _) => Err(LegacyRefusal::Unsupported),
-        }
-    }
-
-    /// Reads `key`'s first alias, as [`Self::get_control`] does a key on
-    /// the legacy path.
-    #[allow(private_interfaces)]
-    fn get_scheduled(&self, key: &str) -> Result<f32, LegacyRefusal> {
-        let control = (self.controls.iter())
-            .find(|entry| entry.meta.key == key)
-            .ok_or(LegacyRefusal::Unsupported)?;
-        let surface = (self.surfaces.get(&control.module_id)).ok_or(LegacyRefusal::Unsupported)?;
-        surface.get_scheduled(&control.key)
     }
 
     fn bind(&self, route: Route, module: &mut dyn Module) {
@@ -396,21 +359,14 @@ impl ControlSurface for DevelopmentControlSurface {
         }
     }
 
-    fn scheduled_writes_refused(&self) -> u64 {
-        let inner = self.surfaces.values();
-        inner
-            .map(|surface| surface.scheduled_writes_refused())
-            .sum()
-    }
-
     fn declares(&self, key: &str) -> bool {
         self.declared(key).is_some()
     }
 
-    fn writes_legacy(&self, key: &str) -> bool {
+    fn writes_undeclared(&self, key: &str) -> bool {
         let reaches = |control: &&AliasedControl| {
             (self.surfaces.get(&control.module_id))
-                .is_some_and(|inner| inner.writes_legacy(&control.key))
+                .is_some_and(|inner| inner.writes_undeclared(&control.key))
         };
         self.controls
             .iter()
@@ -423,14 +379,14 @@ impl ControlSurface for DevelopmentControlSurface {
             .declared(key)
             .and_then(|declared| declared.value_of(key, value));
         match value {
-            Some(value) if self.writes_legacy(key) => self.set_legacy(key, value),
+            Some(value) if self.writes_undeclared(key) => self.set_undeclared(key, value),
             _ => Ok(()),
         }
     }
 
     /// Only for a key every alias of which automation can write: a key
-    /// still reaching a legacy alias cannot be scheduled (its setter would
-    /// lock on the audio thread). A write lands in every alias's own slot
+    /// reaching an undeclared alias cannot be scheduled (its setter runs
+    /// on a control thread). A write lands in every alias's own slot
     /// (see [`Automation::aliases`]), so keys sharing an inner control
     /// apply in the order they were written, and a ramp starts from what
     /// the first alias holds or is about to, whichever key (or inner
@@ -454,7 +410,7 @@ impl ControlSurface for DevelopmentControlSurface {
 
     /// Its declared part, to a development nesting this one: the nesting
     /// development reaches it by request, and the rest by
-    /// [`ControlSurface::set_legacy`].
+    /// [`ControlSurface::set_undeclared`].
     fn declaration(&self, key: &str) -> Option<Declaration> {
         self.declared(key)?.declaration(key)
     }

@@ -89,8 +89,8 @@ pub type EventSinkSlot = Arc<Mutex<Option<Arc<dyn RpcEventSink>>>>;
 
 /// What a front door is told when a control write is taken: the value as
 /// coerced, and the request it was submitted as. `request` is `None` when
-/// the write applied as it was made (offline, while building, a legacy
-/// control) or travels in `published`, the publication it applies with;
+/// the write applied as it was made (offline, while building, an
+/// undeclared control) or travels in `published`, the publication it applies with;
 /// `lost` when it lost to a higher-ranked write as it was made and
 /// applied nothing.
 #[derive(Clone, Debug, PartialEq)]
@@ -366,7 +366,7 @@ impl RuntimeSnapshot {
         // once it applies, in the order the audio thread applied it (see
         // `publish::authored`): one refused, lost to a higher rank or
         // replaced at its sample is never recorded. One applied as it was
-        // made (a legacy control, a schedule travelling in a publication)
+        // made (an undeclared control, a schedule travelling in a publication)
         // is recorded now. A timed edit waiting that rebuilds or removes
         // the module is cancelled. Authored writers take turns, so the
         // last submitted is the last recorded. A timed edit already landed
@@ -479,8 +479,8 @@ impl RuntimeSnapshot {
             .map_err(GraphCommandError::ControlError)?;
         // A declared control's write is a request, and logged; any other
         // reaches its module directly, as does one to a development's
-        // legacy aliases beside its declared part.
-        let unlogged = surface.writes_legacy(key) && !queued.lost;
+        // undeclared aliases beside its declared part.
+        let unlogged = surface.writes_undeclared(key) && !queued.lost;
         if let Some(live) = self.live.as_ref().filter(|_| unlogged) {
             live.note_unlogged();
         }

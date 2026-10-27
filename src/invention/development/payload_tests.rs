@@ -8,19 +8,19 @@ use serde_json::json;
 use super::*;
 use crate::invention::declared::add_offline;
 use crate::invention::graph::{MasterObservers, SignalGraph};
-use crate::test_support::legacy_dial::LegacyDialFactory;
+use crate::test_support::host_dial::HostDialFactory;
 use crate::test_support::tape::TapeFactory;
 
 fn factory(controls: serde_json::Value) -> DevelopmentFactory {
     let mut registry = ModuleRegistry::default();
     registry.register(TapeFactory);
-    registry.register(LegacyDialFactory);
+    registry.register(HostDialFactory);
     let definition = json!({
         "version": "1.0.0",
         "modules": [
             { "id": "a", "type": "tape", "config": { "notes": [1] } },
             { "id": "b", "type": "tape" },
-            { "id": "l", "type": "legacy_dial" }
+            { "id": "l", "type": "host_dial" }
         ],
         "connections": [],
         "outputs": [{ "name": "a", "from": "a", "from_port": "out" }],
@@ -92,12 +92,12 @@ fn a_payload_key_reaching_two_controls_is_refused() {
         { "name": "notes", "module": "a", "control": "notes" },
         { "name": "notes", "module": "b", "control": "notes" }
     ]);
-    // A legacy alias (a legacy dial's waveform) may not share it either.
-    let legacy = json!([
+    // An undeclared alias (a host dial's waveform) may not share it either.
+    let host = json!([
         { "name": "notes", "module": "l", "control": "waveform" },
         { "name": "notes", "module": "a", "control": "notes" }
     ]);
-    for controls in [both, legacy] {
+    for controls in [both, host] {
         let error = factory(controls).build(48_000, &json!({})).err().unwrap();
         assert!(error.to_string().contains("exactly one"), "{error}");
     }

@@ -4,9 +4,9 @@
 //! one `decay` reaching every voice). When any of them is declared, the key
 //! is declared on the development too, with that first declared alias's
 //! kind: a write to it is one request for the development, applied on the
-//! audio thread by fanning out to every declared alias. Aliases still on
-//! the legacy path are written by the development's surface directly, as
-//! before. The inner declared surfaces are bound to [`Route::Inner`]: their
+//! audio thread by fanning out to every declared alias. Undeclared aliases
+//! (host state, such as an agent's prompt) are written by the
+//! development's surface directly. The inner declared surfaces are bound to [`Route::Inner`]: their
 //! modules are reached only through the development.
 //!
 //! A declaration states exactly what its module accepts, and a development
@@ -226,7 +226,7 @@ impl DevelopmentControls {
         if decls.is_empty() {
             return Ok(None);
         }
-        // Nor may a legacy alias share a payload key.
+        // Nor may an undeclared alias share a payload key.
         let payloads =
             (decls.iter().zip(&aliases)).filter(|(decl, _)| decl.kind == DeclKind::Payload);
         for (decl, declared) in payloads {
