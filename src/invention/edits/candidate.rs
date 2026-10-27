@@ -301,10 +301,13 @@ impl<'f, F: EditFacts> Candidate<'f, F> {
                 }
             }
         }
-        let facts = &self.facts;
-        authored_document::write_control(&mut self.document, module_id, key, &applied, |type_id| {
-            facts.config_keys(type_id)
-        });
+        // An event fires as the batch commits; it holds no state for the
+        // document to author.
+        if !self.facts.is_event(module_id, key) {
+            let facts = &self.facts;
+            let keys = |type_id: &str| facts.config_keys(type_id);
+            authored_document::write_control(&mut self.document, module_id, key, &applied, keys);
+        }
         self.control_writes.push(CandidateWrite {
             edit_index: index,
             write: ControlWrite::new(module_id, key, applied),

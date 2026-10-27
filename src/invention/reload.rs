@@ -23,7 +23,7 @@ use super::format::ModuleSpec;
 use super::runtime::{GraphCommandError, RunningInvention};
 use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
 use crate::module_config::{replaced_by, ConfigKey, ConfigKind};
-use config_diff::{configs_equal, control_updates_for, without};
+use config_diff::{configs_equal, control_updates_for, stateless_keys, without};
 
 /// Development definitions as loaded for a document, by declaration scope
 /// (see [`LoadedDevelopments`]). Path-based definitions are captured at load
@@ -202,8 +202,13 @@ pub(crate) type TypeKeys = (&'static [ConfigKey], &'static [&'static str]);
 /// So does a key `control_kind` reports a running module declares as a
 /// control. A key only a reload reads (the second slice `config_keys`
 /// gives) never swaps the module: a change to it alone refreshes its
-/// config. `has_control` answers whether a module exposes a control key at
+/// config. So does a key `is_event` reports names one of a running
+/// module's event controls: an event holds no state for its config to
+/// set, so a key naming one never fires on reload (a clock's reset on
+/// reload is its own write, [`crate::ModuleFactory::writes_on_reload`]).
+/// `has_control` answers whether a module exposes a control key at
 /// runtime.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_reload(
     current_modules: &IndexMap<String, RuntimeModuleInfo>,
     current_connections: &[RuntimeConnectionInfo],
@@ -211,6 +216,7 @@ pub(crate) fn plan_reload(
     changed_types: &HashSet<String>,
     config_keys: impl Fn(&str) -> TypeKeys,
     control_kind: impl Fn(&str, &str) -> Option<ConfigKind>,
+    is_event: impl Fn(&str, &str) -> bool,
     mut has_control: impl FnMut(&str, &str) -> bool,
 ) -> Result<ReloadPlan, String> {
     let mut plan = ReloadPlan::default();
@@ -231,13 +237,18 @@ pub(crate) fn plan_reload(
             {
                 plan.swapped.push(spec.clone());
             }
-            // Keys only a reload reads never rebuild the module: compared
-            // without them, and kept in its config when only they changed.
+            // Keys the running module holds no state for (those only a
+            // reload reads, and its events) never rebuild or write it:
+            // compared without them, and kept in its config when only
+            // they changed.
             Some(info) => {
-                let previous = without(&info.config, reload_only);
-                let config = without(&spec.config, reload_only);
+                let stateless = stateless_keys(reload_only, [&info.config, &spec.config], |key| {
+                    is_event(&spec.id, key)
+                });
+                let previous = without(&info.config, &stateless);
+                let config = without(&spec.config, &stateless);
                 let updates = if configs_equal(&previous, &config, &kind) {
-                    (!reload_only.is_empty() && info.config != spec.config).then(Vec::new)
+                    (!stateless.is_empty() && info.config != spec.config).then(Vec::new)
                 } else {
                     // As a cold build applies the config: a value replacing
                     // others (a melody's whole scale) first, then every key
@@ -590,6 +601,7 @@ impl RunningInvention {
                 (keys, registry.reload_keys(module_type))
             },
             |module_id, key| self.control_kind(module_id, key),
+            |module_id, key| self.is_event_control(module_id, key),
             |module_id, key| self.reload_writes(module_id, key),
         )
         .map_err(ReloadError::Invalid)?;

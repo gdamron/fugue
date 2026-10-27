@@ -298,10 +298,14 @@ A control write is either:
   `ControlChanged`, and never recorded.
 
 The wire defaults to `author` for older clients. An event control (a
-clock's `reset`) is never authored, whatever the intent. Conducting scripts and
+clock's `reset`, a player's `play`) is never authored, whatever the intent:
+it fires and leaves the document as it was, from `SetControl` and from
+`ApplyEdits` alike. A config key naming an event (written by hand) neither
+fires nor rebuilds its module on reload; a clock that resets on reload
+asks for it with its own `reset_on_reload` key. Conducting scripts and
 agents write with `perform`, and scheduler writes are automation that never
 reaches the document, so writes at musical rate never make every peer's
-edit stale. `ApplyEdits`'s `set_control` is always authoring.
+edit stale. `ApplyEdits`'s `set_control` is otherwise always authoring.
 
 The choice is made in `RunningInvention::set_control_with_intent`
 ([`orchestration.rs`](../src/invention/orchestration.rs)). An authored
