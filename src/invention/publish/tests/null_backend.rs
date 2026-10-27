@@ -384,10 +384,9 @@ fn a_kept_snapshot_is_refused_once_a_null_backend_stops() {
     assert!(refused.to_string().contains("stopped"), "{refused}");
 }
 
-/// A settle whose render panics while requests apply (the drain is out of
-/// the graph then) unwinds rather than hanging on the publisher it holds:
-/// the drain dropped while unwinding neither closes the publisher nor
-/// frees what is queued.
+/// A settle whose render panics while requests apply unwinds rather than
+/// hanging on the publisher it holds, and releases it unpoisoned: every
+/// later submission is refused.
 #[test]
 fn a_settle_whose_render_panics_unwinds_rather_than_hangs() {
     fn panics(
@@ -430,16 +429,23 @@ fn a_settle_whose_render_panics_unwinds_rather_than_hangs() {
         live.requests.submit(request).unwrap();
     }
 
-    let settling = std::thread::spawn(move || live.settle());
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while !settling.is_finished() {
-        assert!(std::time::Instant::now() < deadline, "the settle hung");
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(
-        settling.join().is_err(),
-        "the render's panic reaches the settle"
-    );
+    std::thread::scope(|scope| {
+        let settling = scope.spawn(|| live.settle());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !settling.is_finished() {
+            assert!(std::time::Instant::now() < deadline, "the settle hung");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            settling.join().is_err(),
+            "the render's panic reaches the settle"
+        );
+    });
+    assert!(!live.publisher().is_poisoned());
+    assert!(matches!(
+        live.write_input("osc", "frequency", 440.0),
+        Err(GraphCommandError::AudioThreadStopped)
+    ));
 }
 
 /// On a graph with no clock an authored write to a control a waiting

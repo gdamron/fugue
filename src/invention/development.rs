@@ -47,6 +47,8 @@ mod retarget;
 mod sample_player_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod unwind_tests;
 
 use compiled_graph::{
     enclosure_of, module_indexes_slice, routes_of, unique_port_names, CompiledDevelopmentGraph,
