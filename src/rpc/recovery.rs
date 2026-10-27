@@ -29,7 +29,10 @@
 //! A committed original is answered with a compact
 //! [`RpcResponsePayload::MutationCommitted`] naming the revision it produced,
 //! never with the original (possibly large) payload. A rejected original is
-//! answered with the same rejection it produced the first time.
+//! answered with the same rejection it produced the first time, and one whose
+//! receipt names a control write's request with that receipt, no larger than
+//! its command: the request, what became of it by the reply (a timed write
+//! expired, say) and where it lands, which state read again cannot tell.
 //!
 //! # Lifetime and limits
 //!
@@ -106,8 +109,8 @@ use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ConflictReason, RevisionConflict, RevisionTracker, RpcCommand, RpcError, RpcErrorCode,
-    RpcRequest, RpcRequestPayload, RpcResponsePayload, RuntimeRevision,
+    ConflictReason, MutationReceipt, RevisionConflict, RevisionTracker, RpcCommand, RpcError,
+    RpcErrorCode, RpcRequest, RpcRequestPayload, RpcResponsePayload, RuntimeRevision,
 };
 
 /// How many ticketed outcomes a daemon session remembers.
@@ -252,6 +255,9 @@ enum RecordedOutcome {
     /// A timed edit queued: the reply naming its request, replayed as it
     /// was sent. The request's state now is for the client to ask.
     Queued(Box<RpcResponsePayload>),
+    /// Control writes submitted as requests: the receipt naming them,
+    /// replayed as it was sent, as `Queued` is.
+    Requested(Box<RpcResponsePayload>),
 }
 
 #[derive(Debug)]
@@ -352,9 +358,9 @@ impl MutationLedger {
                     mutation_id: entry.id.clone(),
                     committed_at: revision.clone(),
                 },
-                RecordedOutcome::Rejected(payload) | RecordedOutcome::Queued(payload) => {
-                    (**payload).clone()
-                }
+                RecordedOutcome::Rejected(payload)
+                | RecordedOutcome::Queued(payload)
+                | RecordedOutcome::Requested(payload) => (**payload).clone(),
             })));
         }
         if self
@@ -405,6 +411,9 @@ impl MutationLedger {
                 // It changes state when it lands, after it is recorded.
                 advanced = true;
                 RecordedOutcome::Queued(Box::new(response.clone()))
+            }
+            RpcResponsePayload::Receipt(receipt) if names_requests(receipt) => {
+                RecordedOutcome::Requested(Box::new(response.clone()))
             }
             _ => RecordedOutcome::Committed(after),
         };
@@ -479,6 +488,11 @@ fn fingerprint(command: &RpcCommand) -> u64 {
         Err(_) => format!("{command:?}").hash(&mut hasher),
     }
     hasher.finish()
+}
+
+/// Whether `receipt` names the request a control write was submitted as.
+fn names_requests(receipt: &MutationReceipt) -> bool {
+    (receipt.controls.iter()).any(|control| control.request.is_some())
 }
 
 fn bounded_error(error: &RpcError) -> RpcError {
