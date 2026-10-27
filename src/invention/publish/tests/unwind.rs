@@ -9,11 +9,12 @@
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::requests::try_submit_value;
 use super::requests::{hook, submit};
 use super::*;
 use crate::alloc_counter::foreign_frees;
-use crate::control_request::{Request, RequestSender, When};
-use crate::payload::Payload;
+use crate::control_request::{ControlIndex, Refusal, Request, RequestSender, RequestValue, When};
+use crate::payload::{Payload, Retired};
 use crate::{GraphModule, Module, ModuleBuildResult, ModuleFactory, MAX_BLOCK};
 
 const FRAGILE: &str = "fragile";
@@ -23,6 +24,7 @@ const FRAGILE: &str = "fragile";
 struct Armed {
     set_input: Arc<AtomicBool>,
     process: Arc<AtomicBool>,
+    apply_payload: Arc<AtomicBool>,
 }
 
 /// Builds modules that pass their `level` input through and panic where
@@ -100,6 +102,15 @@ impl Module for Fragile {
 
     fn get_output(&self, port: &str) -> Result<f32, String> {
         Err(format!("no output '{port}'"))
+    }
+
+    fn apply_payload(
+        &mut self,
+        _control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        panic_if(&self.armed.apply_payload);
+        Err((Refusal::Unsupported, payload))
     }
 }
 
@@ -247,6 +258,25 @@ fn a_panic_as_an_edit_installs_keeps_its_publication() {
 fn a_panic_in_process_refuses_later_submissions() {
     let (mut rig, armed) = fragile_rig();
     armed.process.store(true, Ordering::SeqCst);
+
+    assert_eq!(
+        panicking_block(&mut rig),
+        0,
+        "freed on the rendering thread"
+    );
+    assert_refused(&mut rig);
+}
+
+/// A module panics in `apply_payload` with the payload it was handed: the
+/// unwind leaks it rather than freeing it on the rendering thread.
+#[test]
+fn a_panic_applying_a_payload_does_not_free_it() {
+    let (mut rig, armed) = fragile_rig();
+    rig.graph.request_hook = None;
+    let payload = Payload::owned(Box::new([0.0f32; 64]));
+    let request = RequestValue::Payload(payload);
+    try_submit_value(&rig, "fragile", 0, request, When::Now).unwrap();
+    armed.apply_payload.store(true, Ordering::SeqCst);
 
     assert_eq!(
         panicking_block(&mut rig),

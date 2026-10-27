@@ -24,6 +24,10 @@
 //! render panic; a null backend settles no more), where the drain empties
 //! the queue as it goes.
 //!
+//! A payload moved into the panicking module itself (`apply_payload`, a
+//! handover) is beyond the graph's reach: the unwind drops it inside the
+//! module, so it is leaked there instead (`crate::payload::RenderScope`).
+//!
 //! Catching costs nothing until something panics. The unwind then goes on
 //! through [`resume_unwind`], which runs no panic hook again.
 
