@@ -46,33 +46,37 @@ fn write_level_wav(level: f32, frames: usize) -> PathBuf {
     write_levels_wav(&vec![level; frames])
 }
 
-fn build_instrument(
-    config: serde_json::Value,
-) -> (Box<dyn crate::Module + Send>, SampleInstrumentControls) {
+type Surface = Arc<dyn ControlSurface + Send + Sync>;
+
+/// An instrument and its surface. A test writes the instrument's controls
+/// on the module itself, applied at once, as the audio thread applies a
+/// request; [`swap_asset`] writes a zone's sample.
+fn build_instrument(config: serde_json::Value) -> (Box<dyn crate::Module + Send>, Surface) {
     let result = SampleInstrumentFactory.build(44_100, &config).unwrap();
-    let controls = result
-        .handles
-        .iter()
-        .find(|(name, _)| name == "controls")
-        .unwrap()
-        .1
-        .downcast_ref::<SampleInstrumentControls>()
-        .unwrap()
-        .clone();
+    let surface = result.control_surface.unwrap();
     let module = match result.module {
         crate::factory::GraphModule::Module(module) => module,
         crate::factory::GraphModule::Sink(_) => panic!("sample_instrument is not a sink"),
     };
-    (module, controls)
+    (module, surface)
 }
 
-impl SampleInstrument {
-    /// The notes sounding, oldest first.
-    pub(crate) fn sounding(&self) -> Vec<u8> {
-        let mut voices: Vec<_> = self.voices.iter().filter(|voice| voice.active).collect();
-        voices.sort_by_key(|voice| voice.started);
-        voices.iter().map(|voice| voice.note).collect()
-    }
+/// Loads `asset` into zone `zone` of an instrument of `zones` zones, as a
+/// control thread does, and applies it, as the audio thread does.
+fn swap_asset(
+    instrument: &mut Box<dyn crate::Module + Send>,
+    surface: &Surface,
+    (zone, zones): (usize, usize),
+    asset: &str,
+) {
+    let key = format!("asset.{zone}");
+    let (payload, _) = surface
+        .prepare_payload(&key, &asset.into())
+        .expect("a declared surface with context")
+        .unwrap();
+    let index = index_of(InstrumentControl::Asset(zone), zones);
+    let retired = instrument.apply_payload(index, payload).ok().unwrap();
+    drop(retired);
 }
 
 fn freq(note: u8) -> f32 {
@@ -96,7 +100,7 @@ fn test_gate_starts_note_at_zone_root() {
     let config = serde_json::json!({
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, _controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     // No gate yet: silence.
     instrument.process(1);
@@ -121,7 +125,7 @@ fn test_note_resolves_to_containing_zone() {
             { "root_note": 72, "key_range": [60, 84], "asset": high.to_str().unwrap() }
         ]
     });
-    let (mut instrument, _controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     // Note 62 lands in the second zone's range (constant sample, so the
     // pitch ratio does not change the level).
@@ -144,7 +148,7 @@ fn test_note_outside_all_ranges_resolves_to_nearest_zone() {
             { "root_note": 72, "key_range": [64, 80], "asset": high.to_str().unwrap() }
         ]
     });
-    let (mut instrument, _controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     // Note 30 is below every range: nearest is the low zone.
     instrument.set_input("frequency", freq(30)).unwrap();
@@ -175,7 +179,7 @@ fn test_pitch_ratio_derives_from_zone_root() {
     let config = serde_json::json!({
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, _controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     instrument.set_input("frequency", freq(72)).unwrap();
     instrument.set_input("gate", 1.0).unwrap();
@@ -198,7 +202,7 @@ fn test_gate_fall_releases_with_fade() {
         "release": 0.001,
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, _controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     instrument.set_input("frequency", freq(60)).unwrap();
     instrument.set_input("gate", 1.0).unwrap();
@@ -239,7 +243,7 @@ fn test_sustain_loop_holds_past_sample_end_and_releases_through_tail() {
             "loop": { "start_frames": 2, "end_frames": 6 }
         } ]
     });
-    let (mut instrument, _controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     instrument.set_input("frequency", freq(60)).unwrap();
     instrument.set_input("gate", 1.0).unwrap();
@@ -273,23 +277,17 @@ fn test_two_notes_in_same_zone_do_not_choke() {
     let config = serde_json::json!({
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     // Two held notes resolving to the same zone, via control-thread events.
-    controls
-        .set_control("note_on", ControlValue::Number(60.0))
-        .unwrap();
-    controls
-        .set_control("note_on", ControlValue::Number(64.0))
-        .unwrap();
+    instrument.set_control("note_on", 60.0).unwrap();
+    instrument.set_control("note_on", 64.0).unwrap();
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.6).abs() < 2.0 * TOL);
 
     // Releasing one leaves the other sustaining: after the default 0.1 s
     // release has run out, exactly one voice's level remains.
-    controls
-        .set_control("note_off", ControlValue::Number(60.0))
-        .unwrap();
+    instrument.set_control("note_off", 60.0).unwrap();
     run(&mut instrument, 44_100 / 5);
     assert!((instrument.get_output("audio_left").unwrap() - 0.3).abs() < 2.0 * TOL);
 
@@ -306,19 +304,15 @@ fn test_retrigger_same_note_reuses_its_voice() {
     let config = serde_json::json!({
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
-    controls
-        .set_control("note_on", ControlValue::Number(60.0))
-        .unwrap();
+    instrument.set_control("note_on", 60.0).unwrap();
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.1).abs() < TOL);
 
-    controls
-        .set_control("note_on", ControlValue::Number(60.0))
-        .unwrap();
+    instrument.set_control("note_on", 60.0).unwrap();
     instrument.process(1);
     // Restarted from the top of the sample on the same voice. The taken-over
     // note's 0.1 tail rides along under the declick ramp, so the frame is
@@ -342,7 +336,7 @@ fn test_gate_fall_releases_held_note_after_frequency_moves() {
         "release": 0.001,
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, _controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     instrument.set_input("frequency", freq(60)).unwrap();
     instrument.set_input("gate", 1.0).unwrap();
@@ -366,24 +360,18 @@ fn test_note_off_control_only_releases_its_own_note() {
         "release": 0.001,
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
-    controls
-        .set_control("note_on", ControlValue::Number(60.0))
-        .unwrap();
+    instrument.set_control("note_on", 60.0).unwrap();
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.4).abs() < TOL);
 
-    controls
-        .set_control("note_off", ControlValue::Number(64.0))
-        .unwrap();
+    instrument.set_control("note_off", 64.0).unwrap();
     run(&mut instrument, 64);
     // Note 60 is still held.
     assert!((instrument.get_output("audio_left").unwrap() - 0.4).abs() < TOL);
 
-    controls
-        .set_control("note_off", ControlValue::Number(60.0))
-        .unwrap();
+    instrument.set_control("note_off", 60.0).unwrap();
     run(&mut instrument, 64);
     assert_eq!(instrument.get_output("audio_left").unwrap(), 0.0);
 
@@ -396,7 +384,7 @@ fn test_velocity_scales_note_level() {
     let config = serde_json::json!({
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, _controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     instrument.set_input("frequency", freq(60)).unwrap();
     instrument.set_input("velocity", 0.5).unwrap();
@@ -413,16 +401,14 @@ fn test_zone_level_control_scales_output() {
     let config = serde_json::json!({
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap(), "level": 0.5 } ]
     });
-    let (mut instrument, controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     instrument.set_input("frequency", freq(60)).unwrap();
     instrument.set_input("gate", 1.0).unwrap();
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.25).abs() < TOL);
 
-    controls
-        .set_control("level.0", ControlValue::Number(1.0))
-        .unwrap();
+    instrument.set_control("level.0", 1.0).unwrap();
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
 
@@ -436,32 +422,24 @@ fn test_asset_swap_keeps_sounding_voice_on_old_buffer() {
     let config = serde_json::json!({
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": original.to_str().unwrap() } ]
     });
-    let (mut instrument, controls) = build_instrument(config);
+    let (mut instrument, surface) = build_instrument(config);
 
-    controls
-        .set_control("note_on", ControlValue::Number(60.0))
-        .unwrap();
+    instrument.set_control("note_on", 60.0).unwrap();
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
 
-    controls
-        .set_control(
-            "asset.0",
-            ControlValue::String(replacement.to_str().unwrap().to_string()),
-        )
-        .unwrap();
-    assert_eq!(
-        controls.get_control("asset.0").unwrap(),
-        ControlValue::String(replacement.to_str().unwrap().to_string())
+    swap_asset(
+        &mut instrument,
+        &surface,
+        (0, 1),
+        replacement.to_str().unwrap(),
     );
     // The sounding voice latched the old buffer at note-on.
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
 
     // A different note starts on the new buffer; both sound together.
-    controls
-        .set_control("note_on", ControlValue::Number(64.0))
-        .unwrap();
+    instrument.set_control("note_on", 64.0).unwrap();
     instrument.process(1);
     assert!((instrument.get_output("audio_left").unwrap() - 0.75).abs() < 2.0 * TOL);
 
@@ -476,12 +454,10 @@ fn test_voice_pool_steals_oldest_when_exhausted() {
         "voice_count": 2,
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
     for note in [60.0, 64.0, 67.0] {
-        controls
-            .set_control("note_on", ControlValue::Number(note))
-            .unwrap();
+        instrument.set_control("note_on", note).unwrap();
     }
     instrument.process(1);
     // Three notes into a 2-voice pool: the oldest was stolen. Two notes
@@ -529,19 +505,15 @@ fn test_stealing_a_sounding_voice_does_not_step_the_output() {
         "release": 5.0,
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (mut instrument, controls) = build_instrument(config);
+    let (mut instrument, _surface) = build_instrument(config);
 
-    controls
-        .set_control("note_on", ControlValue::Number(60.0))
-        .unwrap();
+    instrument.set_control("note_on", 60.0).unwrap();
     run(&mut instrument, ATTACK + 64);
     let before = instrument.get_output("audio_left").unwrap();
     assert!((before - 0.4).abs() < TOL, "{before}");
 
     // A different note steals the only voice while the first is sounding.
-    controls
-        .set_control("note_on", ControlValue::Number(67.0))
-        .unwrap();
+    instrument.set_control("note_on", 67.0).unwrap();
     instrument.process(1);
     let after = instrument.get_output("audio_left").unwrap();
     assert!(
@@ -656,26 +628,61 @@ fn test_config_validation_errors() {
     let _ = std::fs::remove_file(wav);
 }
 
+/// Every note written before the instrument runs plays as it binds, in
+/// the order written: a chord whole, a release where it was written.
+#[test]
+fn every_note_written_before_the_instrument_runs_plays_as_it_binds() {
+    let asset = write_level_wav(0.5, 44_100);
+    let config = serde_json::json!({
+        "release": 0.001,
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": asset.to_str().unwrap() } ]
+    });
+    let (mut instrument, surface) = build_instrument(config);
+    let notes = [
+        ("note_on", 60.0),
+        ("note_on", 64.0),
+        ("note_on", 67.0),
+        ("note_off", 60.0),
+        ("note_off", 72.0),
+    ];
+    for (key, note) in notes {
+        surface.set_control(key, note.into()).unwrap();
+    }
+    surface.bind(
+        crate::invention::declared::Route::Inner,
+        instrument.as_mut(),
+    );
+    run(&mut instrument, 200);
+    let heard = instrument.get_output("audio_left").unwrap();
+    assert!((heard - 1.0).abs() < 2.0 * TOL, "64 and 67: {heard}");
+
+    let _ = std::fs::remove_file(asset);
+}
+
 #[test]
 fn test_note_control_validation() {
     let path = write_level_wav(0.5, 8);
     let config = serde_json::json!({
         "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": path.to_str().unwrap() } ]
     });
-    let (_instrument, controls) = build_instrument(config);
+    let (mut instrument, surface) = build_instrument(config);
 
-    let err = controls
-        .set_control("note_on", ControlValue::Number(200.0))
-        .unwrap_err();
-    assert!(err.contains("outside MIDI range"), "{err}");
-    let err = controls
+    // Past MIDI's range a note is refused as it applies; a fraction rounds.
+    for note in [200.0, -1.0, 127.6] {
+        assert!(instrument.set_control("note_on", note).is_err(), "{note}");
+        assert!(instrument.set_control("note_off", note).is_err(), "{note}");
+    }
+    instrument.process(1);
+    assert_eq!(instrument.get_output("audio_left").unwrap(), 0.0);
+    instrument.set_control("note_on", 59.6).unwrap();
+    instrument.process(1);
+    assert!((instrument.get_output("audio_left").unwrap() - 0.5).abs() < TOL);
+    assert_eq!(instrument.get_control("note_on").unwrap(), 0.0);
+    // Not a number: refused as it is written.
+    let err = surface
         .set_control("note_on", ControlValue::String("loud".to_string()))
         .unwrap_err();
-    assert!(err.contains("expected a MIDI note number"), "{err}");
-    // Numeric strings are accepted.
-    controls
-        .set_control("note_on", ControlValue::String("60".to_string()))
-        .unwrap();
+    assert!(err.contains("Expected numeric control value"), "{err}");
 
     let _ = std::fs::remove_file(path);
 }
@@ -785,4 +792,5 @@ fn the_retired_spellings_are_refused() {
     let _ = std::fs::remove_file(wav);
 }
 
+mod release_order;
 mod swaps;

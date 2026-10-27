@@ -50,6 +50,9 @@ pub(crate) fn base_config(type_id: &str) -> Value {
         "audio_file_sink" => json!({ "path": "never-written.wav" }),
         "cell_sequencer" => json!({ "cells": [[60, null], [62]] }),
         "rtmp_sink" => with(&size, "url", json!("rtmp://example.test/live")),
+        "sample_instrument" => json!({
+            "zones": [{ "root_note": 60, "key_range": [0, 127], "asset": eight_frame_wav() }]
+        }),
         "sample_slicer" => json!({
             "asset": { "path": eight_frame_wav() },
             "slices": (0..4)

@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use crate::modules::sample_loading::SampleData;
+use crate::payload::Shared;
 
 use super::controls::{ScaledLoop, ZoneAudio};
 
@@ -20,9 +21,11 @@ pub const MAX_VOICES: usize = 16;
 pub const DECLICK_SECONDS: f32 = 0.003;
 
 /// A zone as the audio thread sees it: the swappable audio plus the fixed
-/// keymap data, with the root's frequency precomputed at build time.
+/// keymap data, with the root's frequency precomputed at build time. The
+/// audio is swapped in by `asset.N` and the one it replaces retired off
+/// the audio thread.
 pub(crate) struct ZoneRuntime {
-    pub audio: ZoneAudio,
+    pub audio: Shared<ZoneAudio>,
     pub key_low: u8,
     pub key_high: u8,
     pub root_note: u8,
@@ -194,6 +197,14 @@ impl Voice {
     pub fn release(&mut self, step: f32) {
         self.held = false;
         self.release_step = step;
+    }
+
+    /// Sets the fade of a release begun with no step yet (a note off
+    /// waiting for the release in force as it sounds).
+    pub fn take_release(&mut self, step: f32) {
+        if self.active && !self.held && self.release_step == 0.0 {
+            self.release_step = step;
+        }
     }
 
     /// Reads the current stereo frame, pre-gain. Inside a held sustain

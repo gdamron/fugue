@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use serde_json::{json, Value};
-
 use super::{LegacyRefusal, LEGACY_CONTROLS};
 use crate::alloc_counter::allocator_events;
 use crate::control_request::table::{TableTarget, TableValue};
 use crate::control_request::EventCounter;
 use crate::invention::runtime::ControlSurfaceInstance;
-use crate::module_config::tests::registry::{base_config, eight_frame_wav, UNBUILDABLE};
+use crate::module_config::tests::registry::{base_config, UNBUILDABLE};
 use crate::ControlValue;
 
 /// Runs `f` while another thread holds what `hold` takes (a lock's guard),
@@ -85,23 +83,11 @@ fn a_module_type_declares_its_controls_or_is_listed_legacy() {
     }
 }
 
-/// The config a listed type is built from: every control it has a schedule
-/// could write (a sample in each slot and zone).
-fn scheduled_config(type_id: &str) -> Value {
-    let wav = eight_frame_wav();
-    match type_id {
-        "sample_instrument" => json!({
-            "zones": [{ "root_note": 60, "key_range": [0, 127], "asset": wav }]
-        }),
-        _ => base_config(type_id),
-    }
-}
-
 /// A fresh surface of listed type `type_id`, with every control a
 /// schedule could write.
 pub(crate) fn scheduled_surface(type_id: &str) -> ControlSurfaceInstance {
     let registry = crate::ModuleRegistry::default();
-    let built = registry.build(type_id, 48_000, &scheduled_config(type_id));
+    let built = registry.build(type_id, 48_000, &base_config(type_id));
     let built = built.unwrap_or_else(|error| panic!("'{type_id}' did not build: {error}"));
     built.control_surface.expect("a listed type has controls")
 }
@@ -247,7 +233,7 @@ fn a_legacy_write_leaves_every_declared_control_as_it_was() {
         if registry.is_sink(type_id) || UNBUILDABLE.iter().any(|(id, _)| *id == type_id) {
             continue;
         }
-        let built = registry.build(type_id, 48_000, &scheduled_config(type_id));
+        let built = registry.build(type_id, 48_000, &base_config(type_id));
         let built = built.unwrap_or_else(|error| panic!("'{type_id}' did not build: {error}"));
         let Some(surface) = built.control_surface else {
             continue;

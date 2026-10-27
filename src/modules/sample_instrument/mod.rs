@@ -46,7 +46,15 @@
 //! `sample_loading` — the fractional read head advances by
 //! `frequency / root_frequency` per frame. The elastic (time-preserving)
 //! reader can replace this once uniform note durations across the keymap
-//! are needed (see FUG-136).
+//! are needed.
+//!
+//! # Controls
+//!
+//! All declared (see [`controls`]): `release`, the `note_on` / `note_off`
+//! events, and per zone `root_note.N` (fixed), `asset.N` and `level.N`. A
+//! note written by a control thread is a request, applied at a block
+//! boundary in the order sent; a scheduler's notes are queued, every one
+//! kept, so a chord at one step plays whole (see [`controls`]).
 //!
 //! # Inputs
 //! - `frequency`: Note pitch in Hz, latched at note-on
@@ -56,19 +64,24 @@
 //! # Outputs
 //! - `audio_left`, `audio_right`: Stereo mix of the voice pool
 
-use std::any::Any;
 use std::sync::Arc;
 
+use crate::control_request::{
+    local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
+    RtValue,
+};
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{finite_f32, whole_number, whole_number_in, ConfigKey, ConfigReader};
 use crate::modules::sample_loading::check_entry_fields;
 use crate::music::Note;
-use crate::Module;
+use crate::payload::{Payload, Retired, Shared};
+use crate::{ControlMeta, Module};
 
-pub use self::controls::{LoopSpec, SampleInstrumentControls, ZoneSpec};
+pub use self::controls::{LoopSpec, ZoneSpec};
 pub use self::voice::MAX_VOICES;
 
-use self::controls::{NoteQueues, ZoneAudio};
+use self::controls::RELEASE_RANGE;
+use self::controls::{control_at, index_of, midi_note, InstrumentControl, ZoneAudio};
 use self::voice::{note_from_freq, resolve_zone, Voice, ZoneRuntime, DECLICK_SECONDS};
 
 mod controls;
@@ -102,28 +115,25 @@ impl ModuleFactory for SampleInstrumentFactory {
         config: &serde_json::Value,
     ) -> Result<ModuleBuildResult, Box<dyn std::error::Error>> {
         let (specs, voices, release) = parse_config(config)?;
-        let (controls, zone_audio, notes) =
-            SampleInstrumentControls::new(sample_rate, release, specs)?;
+        let built = controls::build(sample_rate, release, &specs)?;
         // A recorded `level.N` write is later than the zone's authored
         // level, so it wins; a `root_note.N` is refused, as a live write is.
-        crate::factory::apply_control_keys(&controls, config, |key| {
+        crate::factory::apply_control_keys(&built.surface, config, |key| {
             key.starts_with("level.") || key.starts_with("root_note.")
         })?;
-        let instrument = SampleInstrument::new_with_controls(
-            controls.clone(),
-            zone_audio,
-            notes,
+        let instrument = SampleInstrument::new(
+            built.table,
+            built.cells,
+            &specs,
+            built.audio,
             voices,
             sample_rate,
         );
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(instrument)),
-            handles: vec![(
-                "controls".to_string(),
-                Arc::new(controls.clone()) as Arc<dyn Any + Send + Sync>,
-            )],
-            control_surface: Some(Arc::new(controls)),
+            handles: Vec::new(),
+            control_surface: Some(Arc::new(built.surface)),
             sink: None,
         })
     }
@@ -141,7 +151,7 @@ fn parse_config(config: &serde_json::Value) -> Result<(Vec<ZoneSpec>, usize, f32
 
     let release = match reader.float(&RELEASE).map_err(|error| error.to_string())? {
         None => DEFAULT_RELEASE,
-        Some(release) if release > 0.0 => release.clamp(1e-3, 30.0),
+        Some(release) if release > 0.0 => release.clamp(RELEASE_RANGE.0, RELEASE_RANGE.1),
         Some(_) => return Err("'release' must be a positive number of seconds".to_string()),
     };
 
@@ -267,67 +277,89 @@ fn parse_loop(
 }
 
 pub struct SampleInstrument {
-    ctrl: SampleInstrumentControls,
+    table: ControlTable,
+    cells: Arc<ControlCells>,
     inputs: inputs::SampleInstrumentInputs,
     outputs: outputs::SampleInstrumentOutputs,
     zones: Vec<ZoneRuntime>,
     voices: Vec<Voice>,
-    /// Per-block scratch, sized once at build: zone levels.
+    /// Zone levels as the mix plays them: taken from `level_targets` as a
+    /// block begins, after its notes, so a note stealing a voice fades the
+    /// old note out at the level it was sounding at.
     levels: Vec<f32>,
-    /// Note events from control threads and schedulers.
-    notes: NoteQueues,
+    /// Zone levels as last written.
+    level_targets: Vec<f32>,
+    /// Release fade, in seconds.
+    release: f32,
+    /// Whether a note off written since the last block waits for its
+    /// release fade (see [`Module::finish_events`]).
+    releasing: bool,
     /// Allocation ordinal handed to the next note-on (steal-oldest order).
     next_started: u64,
     sample_rate: f32,
     /// Per-frame decay of a stolen voice's declick ramp, fixed at build.
     declick_step: f32,
-    last_swaps_version: u64,
     last_gate: f32,
 }
 
 impl SampleInstrument {
-    pub(crate) fn new_with_controls(
-        controls: SampleInstrumentControls,
-        zone_audio: Vec<ZoneAudio>,
-        notes: NoteQueues,
+    fn new(
+        table: ControlTable,
+        cells: Arc<ControlCells>,
+        specs: &[ZoneSpec],
+        audio: Vec<Shared<ZoneAudio>>,
         voices: usize,
         sample_rate: u32,
     ) -> Self {
-        let zone_count = zone_audio.len();
-        let zones = zone_audio
-            .into_iter()
-            .enumerate()
-            .map(|(index, audio)| {
-                let (root_note, key_low, key_high) = controls.zone_key(index).unwrap_or((0, 0, 0));
-                ZoneRuntime {
-                    audio,
-                    key_low,
-                    key_high,
-                    root_note,
-                    root_freq: Note::new(root_note).frequency(),
-                }
+        let zone_count = audio.len();
+        let zones = (audio.into_iter().zip(specs))
+            .map(|(audio, spec)| ZoneRuntime {
+                audio,
+                key_low: spec.key_low,
+                key_high: spec.key_high,
+                root_note: spec.root_note,
+                root_freq: Note::new(spec.root_note).frequency(),
             })
             .collect();
 
-        // From the controls, so a level restored at build holds from the
-        // first frame, including a steal fade from a first-block note.
-        let levels = (0..zone_count).map(|zone| controls.level(zone)).collect();
+        // From the cells, so a level recorded in the config holds from the
+        // first frame, including a steal fade from a first-block note; a
+        // write made before the build is applied as the instrument binds.
+        let number = |control, default| match cells.load(index_of(control, zone_count)) {
+            Some(RtValue::F32(value)) => value,
+            _ => default,
+        };
+        let levels: Vec<f32> = (0..zone_count)
+            .map(|zone| number(InstrumentControl::Level(zone), 1.0))
+            .collect();
+        let release = number(InstrumentControl::Release, DEFAULT_RELEASE);
         Self {
-            ctrl: controls,
+            table,
+            cells,
             inputs: inputs::SampleInstrumentInputs::new(),
             outputs: outputs::SampleInstrumentOutputs::new(),
             zones,
             voices: (0..voices.clamp(1, MAX_VOICES))
                 .map(|_| Voice::new())
                 .collect(),
+            level_targets: levels.clone(),
             levels,
-            notes,
+            release,
+            releasing: false,
             next_started: 0,
             sample_rate: sample_rate as f32,
             declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
-            last_swaps_version: 0,
             last_gate: 0.0,
         }
+    }
+
+    fn control(&self, index: ControlIndex) -> Option<InstrumentControl> {
+        control_at(index, self.zones.len())
+    }
+
+    /// The release fade's per-frame slope.
+    fn release_step(&self) -> f32 {
+        1.0 / (self.release.max(RELEASE_RANGE.0) * self.sample_rate)
     }
 
     fn note_on(&mut self, freq: f32, velocity: f32) {
@@ -427,34 +459,15 @@ impl Module for SampleInstrument {
     }
 
     fn process(&mut self, frames: usize) -> bool {
-        // Staged zone swaps (`asset.<i>` control): the lock is tried only
-        // when the version counter moved, and a busy lock defers the swaps
-        // to a later block. Sounding voices latched the old buffer's Arc
-        // and finish on it; new notes get the new one.
-        let swaps_version = self.ctrl.swaps_version();
-        if swaps_version != self.last_swaps_version
-            && (self.ctrl).try_take_swaps(self.zones.iter_mut().map(|zone| &mut zone.audio))
-        {
-            self.last_swaps_version = swaps_version;
-        }
+        let release_step = self.release_step();
+        // A note off written for this sample fades over the release in
+        // force as it sounds: one written beside it applies, whichever
+        // came first, and one written later never reaches back.
+        self.finish_events();
 
-        // Release fade slope, from the control read once per block.
-        let release_step = 1.0 / (self.ctrl.release().max(1e-3) * self.sample_rate);
-
-        // Queued note events, in the order they were sent.
-        for index in 0..self.notes.drain().len() {
-            let event = self.notes.drained(index);
-            if event.on {
-                self.note_on(Note::new(event.note).frequency(), 1.0);
-            } else {
-                self.note_off(event.note, release_step, false);
-            }
-        }
-
-        // Levels are control-rate: read once per block.
-        for zone in 0..self.zones.len() {
-            self.levels[zone] = self.ctrl.level(zone);
-        }
+        // Levels are control-rate: taken once per block, after the notes
+        // the block's writes played.
+        self.levels.copy_from_slice(&self.level_targets);
 
         for i in 0..frames {
             let gate = self.inputs.gate(i);
@@ -515,6 +528,87 @@ impl Module for SampleInstrument {
 
     fn set_input_connected(&mut self, index: usize, connected: bool) {
         self.inputs.set_connected(index, connected);
+    }
+
+    #[allow(private_interfaces)]
+    fn declared(&self) -> Option<(&ControlTable, &ControlCells)> {
+        Some((&self.table, &self.cells))
+    }
+
+    /// Note offs take the release in force.
+    fn finish_events(&mut self) {
+        if std::mem::take(&mut self.releasing) {
+            let release_step = self.release_step();
+            for voice in self.voices.iter_mut() {
+                voice.take_release(release_step);
+            }
+        }
+    }
+
+    /// A note plays as it applies, in the order written, and a note off
+    /// fades over the release in force as the instrument next renders. A
+    /// note reads back 0, as the instrument holds no note of its own.
+    #[allow(private_interfaces)]
+    fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
+        let RtValue::F32(number) = value else {
+            return Err(Refusal::Unsupported);
+        };
+        match self.control(control) {
+            Some(InstrumentControl::Release) => {
+                if !(number.is_finite() && number > 0.0) {
+                    return Err(Refusal::Invalid);
+                }
+                self.release = number.clamp(RELEASE_RANGE.0, RELEASE_RANGE.1);
+                Ok(RtValue::F32(self.release))
+            }
+            Some(InstrumentControl::NoteOn) => {
+                let note = midi_note(number).ok_or(Refusal::Invalid)?;
+                self.note_on(Note::new(note).frequency(), 1.0);
+                Ok(RtValue::F32(0.0))
+            }
+            Some(InstrumentControl::NoteOff) => {
+                let note = midi_note(number).ok_or(Refusal::Invalid)?;
+                // Its fade is set as the block starts (see `process`).
+                self.note_off(note, 0.0, false);
+                self.releasing = true;
+                Ok(RtValue::F32(0.0))
+            }
+            Some(InstrumentControl::Level(zone)) => {
+                self.level_targets[zone] = number.clamp(0.0, 2.0);
+                Ok(RtValue::F32(self.level_targets[zone]))
+            }
+            _ => Err(Refusal::Unsupported),
+        }
+    }
+
+    /// A zone's new audio plays from its next note: a voice sounding on
+    /// the old buffer finishes on it, as each latched its own clone of the
+    /// cache's buffer. The zone audio it replaces is retired.
+    #[allow(private_interfaces)]
+    fn apply_payload(
+        &mut self,
+        control: ControlIndex,
+        payload: Payload,
+    ) -> Result<Retired, (Refusal, Payload)> {
+        let Some(InstrumentControl::Asset(zone)) = self.control(control) else {
+            return Err((Refusal::Unsupported, payload));
+        };
+        let audio = payload
+            .downcast::<ZoneAudio>()
+            .map_err(|payload| (Refusal::Invalid, payload))?;
+        Ok(std::mem::replace(&mut self.zones[zone].audio, audio).into())
+    }
+
+    fn controls(&self) -> Vec<ControlMeta> {
+        local_controls(self)
+    }
+
+    fn get_control(&self, key: &str) -> Result<f32, String> {
+        local_get(self, key)
+    }
+
+    fn set_control(&mut self, key: &str, value: f32) -> Result<(), String> {
+        local_set(self, key, value)
     }
 }
 

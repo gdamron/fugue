@@ -38,6 +38,10 @@ use crate::payload::{Payload, Retired};
 use super::fan_out::apply_fanned_out;
 use crate::{GraphModule, Invention};
 
+/// The events a development whose aliases queue them keeps for a block,
+/// as many as a sample instrument does.
+const EVENT_QUEUE: usize = 256;
+
 /// The declared aliases behind each of a development's declared controls.
 pub(super) struct DevelopmentControls {
     table: ControlTable,
@@ -150,6 +154,8 @@ impl DevelopmentControls {
         let mut aliases: Vec<Vec<Alias>> = Vec::new();
         // Each key's first declared alias, for the build error.
         let mut firsts: Vec<String> = Vec::new();
+        // Whether an event alias's module plays every event written.
+        let mut queued = false;
         for control in &definition.controls {
             let Some(found) = surfaces
                 .get(&control.module)
@@ -204,6 +210,7 @@ impl DevelopmentControls {
             }
             // One event alias makes the key an event: never coalesced.
             decls[position].event |= found.decl.event;
+            queued |= found.decl.event && found.queued;
             let (kind, choices) = reach(decls[position].kind, found.decl.kind);
             aliases[position].push(Alias {
                 module,
@@ -231,7 +238,11 @@ impl DevelopmentControls {
         }
         let table =
             ControlTable::built(decls).map_err(|why| format!("Development controls: {why}"))?;
-        let cells = Arc::new(ControlCells::new(current));
+        // So does the development, so a chord through it plays whole.
+        let cells = Arc::new(match queued {
+            true => ControlCells::queuing_events(current, EVENT_QUEUE, None),
+            false => ControlCells::new(current),
+        });
         let surface = DeclaredSurface::fanning_out(table.clone(), cells.clone());
         // A payload key reads back as its one alias does, until written.
         for control in &definition.controls {
