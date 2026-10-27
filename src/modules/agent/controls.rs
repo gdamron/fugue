@@ -3,15 +3,17 @@
 //!
 //! `enabled` and `cooldown` are declared parameters, applied by the audio
 //! thread like any declared control and read back from their cells by the
-//! background worker. Rising edges on the `trigger` and `reset` inputs are
-//! counted on [`EventCounter`]s the audio module records and the worker
-//! reads. `request_count` is declared telemetry, written only by the worker.
+//! background worker. Rising edges on the `trigger` and `reset` inputs, and
+//! each write to the `trigger` and `reset` event controls, are counted on
+//! [`EventCounter`]s the audio module records and the worker reads.
+//! `request_count` is declared telemetry, written only by the worker.
 //!
 //! The strings (`prompt`, `system_prompt`, `backend`, and the telemetry
 //! `status`, `last_*` and `history`) sit behind a lock only control threads
 //! take: the audio module holds the cells and the edge counters, never the
 //! lock, so no audio-thread path reaches it.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::audio_thread::ControlLock;
@@ -27,6 +29,8 @@ use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 pub(super) const ENABLED: ControlIndex = ControlIndex(0);
 pub(super) const COOLDOWN: ControlIndex = ControlIndex(1);
 pub(super) const REQUEST_COUNT: ControlIndex = ControlIndex(2);
+pub(super) const TRIGGER: ControlIndex = ControlIndex(3);
+pub(super) const RESET: ControlIndex = ControlIndex(4);
 
 const DECLS: &[ControlDecl] = &[
     ControlDecl::new(
@@ -57,6 +61,23 @@ const DECLS: &[ControlDecl] = &[
         "Completed request count (read-only)",
     )
     .telemetry(),
+    // Events: each true write is one edge, as a rising input is. They hold no
+    // state, so the document never authors one and a reload never fires
+    // one.
+    ControlDecl::new(
+        "trigger",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Trigger: a true write asks for a request (edges the worker sees together, or within cooldown, make one)",
+    )
+    .event(),
+    ControlDecl::new(
+        "reset",
+        DeclKind::Bool,
+        RtValue::Bool(false),
+        "Trigger: a true write clears the agent's history and errors",
+    )
+    .event(),
 ];
 
 pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
@@ -72,12 +93,33 @@ pub(super) const TELEMETRY: &[&str] = &[
     "request_count",
 ];
 
-/// Rising edges on the `trigger` and `reset` inputs. The audio thread
-/// records them; the worker reads them.
+/// Rising edges on the `trigger` and `reset` inputs, and writes to the
+/// controls of those names. The audio thread records them; the worker
+/// claims them.
 #[derive(Default)]
 pub(super) struct Edges {
     pub(super) trigger: EventCounter,
     pub(super) reset: EventCounter,
+    /// The counts workers have claimed up to. Control threads only: kept
+    /// with the module, so the worker it starts for and one still serving
+    /// the module it replaced never claim the same edge.
+    claimed_trigger: AtomicU32,
+    claimed_reset: AtomicU32,
+}
+
+impl Edges {
+    /// Claims the edges `counter` recorded since the last claim: whether
+    /// there were any. Only one claimer wins each edge.
+    ///
+    /// The claim is read before the count, so a claimer that read a count
+    /// before another claimed past it fails rather than moving the claim
+    /// back.
+    fn claim(counter: &EventCounter, claimed: &AtomicU32) -> bool {
+        let seen = claimed.load(Ordering::Acquire);
+        let count = counter.count();
+        seen != count
+            && (claimed.compare_exchange(seen, count, Ordering::AcqRel, Ordering::Acquire)).is_ok()
+    }
 }
 
 /// Shared runtime state for an `agent` module.
@@ -160,17 +202,14 @@ impl AgentControls {
         self.edges.reset.record();
     }
 
-    /// Rising edges seen on `trigger` so far, modulo 2^32. Seeing one also
-    /// shows every control the audio thread applied before it.
-    // The native agent worker reads it; wasm hosts have none yet.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// Edges seen on `trigger` so far, modulo 2^32.
+    #[cfg(test)]
     pub(crate) fn trigger_count(&self) -> u32 {
         self.edges.trigger.count()
     }
 
-    /// Rising edges seen on `reset` so far, modulo 2^32.
-    // The native agent worker reads it; wasm hosts have none yet.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// Edges seen on `reset` so far, modulo 2^32.
+    #[cfg(test)]
     pub(crate) fn reset_count(&self) -> u32 {
         self.edges.reset.count()
     }
@@ -180,6 +219,22 @@ impl AgentControls {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn same_instance(&self, other: &AgentControls) -> bool {
         Arc::ptr_eq(&self.edges, &other.edges)
+    }
+
+    /// Claims the `trigger` edges no worker has claimed yet: whether there
+    /// were any. A claimed edge also shows every control the audio thread
+    /// applied before it.
+    // The native agent worker claims them; wasm hosts have none yet.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn claim_trigger(&self) -> bool {
+        Edges::claim(&self.edges.trigger, &self.edges.claimed_trigger)
+    }
+
+    /// Claims the `reset` edges no worker has claimed yet, as
+    /// [`Self::claim_trigger`] does.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn claim_reset(&self) -> bool {
+        Edges::claim(&self.edges.reset, &self.edges.claimed_reset)
     }
 
     /// Writes a telemetry control: the agent worker's writer, since
@@ -220,11 +275,11 @@ impl AgentControls {
 
 impl ControlSurface for AgentControls {
     fn controls(&self) -> Vec<ControlMeta> {
-        let [enabled, cooldown, request_count]: [ControlMeta; 3] = self
+        let [enabled, cooldown, request_count, trigger, reset]: [ControlMeta; 5] = self
             .declared
             .controls()
             .try_into()
-            .expect("the agent declares three controls");
+            .expect("the agent declares five controls");
         let state = self.snapshot();
         vec![
             enabled,
@@ -248,6 +303,8 @@ impl ControlSurface for AgentControls {
                 .with_default(state.last_apply_error),
             request_count,
             cooldown,
+            trigger,
+            reset,
         ]
     }
 
@@ -414,7 +471,15 @@ mod tests {
         controls.increment_trigger();
         controls.increment_reset();
         assert_eq!((controls.trigger_count(), controls.reset_count()), (2, 1));
-        assert!(controls.same_instance(&controls.clone()));
+        // Each edge is claimed once, by whichever handle claims first.
+        let other = controls.clone();
+        assert!(controls.claim_trigger());
+        assert!(!other.claim_trigger());
+        assert!(other.claim_reset());
+        assert!(!controls.claim_reset());
+        controls.increment_trigger();
+        assert!(other.claim_trigger());
+        assert!(controls.same_instance(&other));
         assert!(!controls.same_instance(&self::controls()));
         for key in ["trigger_count", "reset_count"] {
             assert!(controls.get_control(key).is_err(), "{key}");
@@ -440,22 +505,25 @@ mod tests {
                 "last_apply_error",
                 "request_count",
                 "cooldown",
+                "trigger",
+                "reset",
             ]
         );
     }
 
     #[test]
-    fn only_enabled_and_cooldown_can_be_scheduled() {
+    fn parameters_and_events_can_be_scheduled() {
         let controls = controls();
-        for key in ["enabled", "cooldown"] {
+        for key in ["enabled", "cooldown", "trigger", "reset"] {
             assert!(controls.automation(key).is_some(), "{key}");
         }
         // Declared but not automatable: a scheduler refuses it as it loads.
         assert!(controls.declares("request_count"));
         assert!(controls.automation("request_count").is_none());
-        // The edges are inputs, not controls.
+        // The edges are events: they read idle, holding no state.
         for key in ["trigger", "reset"] {
-            assert!(controls.get_control(key).is_err(), "{key}");
+            assert!(controls.declaration(key).unwrap().decl.event, "{key}");
+            assert_eq!(controls.get_control(key), Ok(false.into()), "{key}");
         }
         // The strings are never written from the audio thread: a scheduler
         // refuses string controls as it loads.

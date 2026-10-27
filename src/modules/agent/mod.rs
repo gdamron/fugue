@@ -3,7 +3,8 @@
 //! An agent is a graph-resident trigger point for LLM-backed orchestration. It
 //! has normal Fugue input ports, so clocks, sequencers, or scripts can trigger
 //! it, but it performs no LLM work in [`Module::process`]. Instead, trigger and
-//! reset edges increment shared atomic counters that are drained by the runtime
+//! reset edges, from its inputs or written to its `trigger` and `reset` event
+//! controls, increment shared atomic counters that are drained by the runtime
 //! [`crate::agents::AgentManager`] on background threads.
 
 use std::any::Any;
@@ -17,11 +18,13 @@ use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{ConfigKey, ConfigReader};
 use crate::{ControlMeta, Module};
 
-use self::controls::{Edges, COOLDOWN as COOLDOWN_CONTROL, ENABLED, TABLE};
+use self::controls::{Edges, COOLDOWN as COOLDOWN_CONTROL, ENABLED, RESET, TABLE, TRIGGER};
 
 pub use self::controls::AgentControls;
 
 mod controls;
+#[cfg(test)]
+mod event_tests;
 mod inputs;
 mod outputs;
 
@@ -212,12 +215,24 @@ impl Module for AgentModule {
         Some((&TABLE, &self.cells))
     }
 
-    /// `enabled` and `cooldown` are held in their cells for the worker.
+    /// `enabled` and `cooldown` are held in their cells for the worker. A
+    /// `trigger` or `reset` write is one edge, counted as a rising input's
+    /// is, and leaves its cell idle.
     #[allow(private_interfaces)]
     fn apply(&mut self, control: ControlIndex, value: RtValue) -> Result<RtValue, Refusal> {
         match (control, value) {
             (ENABLED, RtValue::Bool(_)) => Ok(value),
             (COOLDOWN_CONTROL, RtValue::F32(seconds)) => Ok(RtValue::F32(seconds.max(0.0))),
+            (TRIGGER | RESET, RtValue::Bool(fire)) => {
+                let edges = match control {
+                    TRIGGER => &self.edges.trigger,
+                    _ => &self.edges.reset,
+                };
+                if fire {
+                    edges.record();
+                }
+                Ok(RtValue::Bool(false))
+            }
             _ => Err(Refusal::Unsupported),
         }
     }

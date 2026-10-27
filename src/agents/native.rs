@@ -101,13 +101,14 @@ fn run_host(
     set_string(&controller, &module_id, "status", "idle");
     set_string(&controller, &module_id, "last_error", "");
 
-    // The module's controls as last seen, and the edges already serviced. A
-    // module replaced under this worker counts its edges from zero.
-    let mut agent = agent_controls(&controller, &module_id);
-    let (mut last_trigger, mut last_reset) = agent
-        .as_ref()
-        .map(|controls| (controls.trigger_count(), controls.reset_count()))
-        .unwrap_or_default();
+    // The module instance this worker serves: the one running as it
+    // starts. A module that replaces it gets its own worker (see
+    // `AgentManager::start_module`), so this one leaves it alone, and
+    // never spends the replacement's edges on its own cooldown. Edges are
+    // claimed from the module, which counts them from zero, so one that
+    // lands before this worker first looks (a trigger written as the agent
+    // starts) is still served.
+    let mut serving = agent_controls(&controller, &module_id);
     let mut last_request_at: Option<Instant> = None;
     let mut history: Vec<Value> = Vec::new();
 
@@ -124,17 +125,13 @@ fn run_host(
         let Some(current) = agent_controls(&controller, &module_id) else {
             continue;
         };
-        if !agent
-            .as_ref()
-            .is_some_and(|seen| seen.same_instance(&current))
+        if !serving
+            .get_or_insert_with(|| current.clone())
+            .same_instance(&current)
         {
-            // A replacement counts from zero: every edge it holds is new.
-            (last_trigger, last_reset) = (0, 0);
-            agent = Some(current.clone());
+            continue;
         }
-        let (trigger_count, reset_count) = (current.trigger_count(), current.reset_count());
-        if reset_count != last_reset {
-            last_reset = reset_count;
+        if current.claim_reset() {
             history.clear();
             set_string(&controller, &module_id, "history", "[]");
             set_string(&controller, &module_id, "last_error", "");
@@ -146,10 +143,9 @@ fn run_host(
             continue;
         }
 
-        if trigger_count == last_trigger {
+        if !current.claim_trigger() {
             continue;
         }
-        last_trigger = trigger_count;
 
         let cooldown = get_number(&controller, &module_id, "cooldown").max(0.0);
         let cooldown = Duration::try_from_secs_f32(cooldown).unwrap_or(Duration::MAX);
