@@ -285,3 +285,69 @@ fn a_batch_write_made_while_an_authored_payload_waits_is_recorded_after_it() {
     assert_eq!(config["gain"], json!(0.75), "{config}");
     assert_eq!(config["notes"], json!(notes.as_string().unwrap()));
 }
+
+#[test]
+fn a_batch_write_recorded_after_an_authored_payload_is_folded_into_a_timed_edit_waiting() {
+    let mut registry = crate::ModuleRegistry::default();
+    registry.register(crate::test_support::tape::TapeFactory);
+    let tape = r#"{ "id": "tape", "type": "tape", "config": { "gain": 0.5, "notes": [1] } }"#;
+    let (mut running, pump) = start_with(registry, &base_with(tape));
+    let notes = ControlValue::String(r#"{"notes": [2], "gain": 0.25}"#.into());
+    author(&running, "tape", "notes", notes.clone());
+    running
+        .apply_edits(&[set("tape", "gain", number(0.75))])
+        .expect("the batch commits");
+    // A timed edit that keeps the tape, queued before the notes apply: they
+    // and the batch's gain after them are recorded while it waits.
+    let when = crate::rpc::EditWhen::AfterSamples { samples: 256 };
+    let lfo = [add("lfo", "oscillator", json!({ "frequency": 3.0 }))];
+    running
+        .apply_edits_at(&lfo, &when, None)
+        .expect("the edit is queued");
+    pump.block();
+    pump.render(8);
+    running.live.adopt_landed();
+
+    assert_eq!(running.get_control("tape", "gain").unwrap(), number(0.75));
+    let config = config_of(&running, "tape");
+    assert_eq!(config["gain"], json!(0.75), "{config}");
+    assert_eq!(config["notes"], json!(notes.as_string().unwrap()));
+}
+
+#[test]
+fn an_authored_payload_queued_after_a_timed_edit_landed_follows_its_write() {
+    let (running, pump) = tape_gain_waiting();
+    pump.render(8);
+    // Landed, not yet adopted: the notes are queued in that window, as a
+    // write is whose edit lands between its adoption and its submission.
+    let notes = ControlValue::String(r#"{"notes": [2], "gain": 0.25}"#.into());
+    let authoring = crate::invention::publish::Authoring {
+        value: notes.clone(),
+        origin: None,
+        safe: None,
+        then: Vec::new(),
+    };
+    let options = crate::invention::declared::WriteOptions::default();
+    let snapshot = running.snapshot();
+    let queued = snapshot
+        .make_authored(
+            "tape",
+            "notes",
+            notes.clone(),
+            &options.authored_as(&authoring),
+        )
+        .unwrap();
+    assert!(queued.safe.is_some(), "safe from the edit it follows");
+    running
+        .live
+        .reconcile_authored(("tape", "notes"), queued.safe, None);
+    pump.block();
+    running.live.adopt_landed();
+
+    // The notes' gain applies after the edit's: the document keeps the
+    // notes, which carry it, and records no gain after them.
+    assert_eq!(running.get_control("tape", "gain").unwrap(), number(0.25));
+    let config = config_of(&running, "tape");
+    assert_eq!(config["gain"], json!(null), "{config}");
+    assert_eq!(config["notes"], json!(notes.as_string().unwrap()));
+}

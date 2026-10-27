@@ -404,11 +404,17 @@ fn record(
     let origin = authoring.origin.as_deref();
     let value =
         audio_assets::rebase_asset_write(origin, state.source_path(), key, &authoring.value);
-    if publisher.timed_replaces(module_id).is_none() && !publisher.timed_chains(module_id, key) {
-        publisher.fold_timed(module_id, key, &value);
-    }
-    state.record_authored_control(module_id, key, &value);
-    for (key, value) in &authoring.then {
+    let mut record = |key: &str, value: &ControlValue| {
+        if publisher.timed_replaces(module_id).is_none() && !publisher.timed_chains(module_id, key)
+        {
+            publisher.fold_timed(module_id, key, value);
+        }
         state.record_authored_control(module_id, key, value);
+    };
+    record(key, &value);
+    // The commit's writes that applied after it, in the same order, the
+    // timed edit's document included.
+    for (key, value) in &authoring.then {
+        record(key, value);
     }
 }

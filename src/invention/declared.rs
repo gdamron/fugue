@@ -749,6 +749,12 @@ impl DeclaredSurface {
                         let write = (*raw, event, options);
                         publisher.keep_authored(module, target, write, &port.requests)
                     }
+                    // Any other authored write (a payload, one on a graph
+                    // with no clock) queued after an edit landed follows its
+                    // writes too, as one kept would.
+                    _ if options.authored.is_some() => {
+                        publisher.timed_landed().map(|id| (id, None))
+                    }
                     _ => None,
                 };
                 let (safe, copy) = (kept.map(|(safe, _)| safe), kept.and_then(|(_, copy)| copy));

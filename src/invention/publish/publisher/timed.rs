@@ -240,6 +240,13 @@ impl Publisher {
         self.timed.as_ref().map(|waiting| waiting.id)
     }
 
+    /// The timed edit waiting, when it has landed and is not yet adopted:
+    /// a write queued now applies after its writes.
+    pub(crate) fn timed_landed(&self) -> Option<RequestId> {
+        let waiting = self.timed.as_ref()?;
+        (waiting.fate.settled() == Some(true)).then_some(waiting.id)
+    }
+
     /// What the timed edit waiting, if any, does to module `id`: removes
     /// it (`Some(true)`) or rebuilds it (`Some(false)`). `None` when it
     /// keeps it, or none waits.
