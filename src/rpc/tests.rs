@@ -4,6 +4,7 @@ use crate::{Invention, ModuleSpec};
 mod discovery;
 mod edits;
 mod error;
+mod control_timing;
 mod event;
 mod package;
 mod pending;

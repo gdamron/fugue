@@ -34,6 +34,7 @@ fn perform() -> RpcCommand {
         intent: ControlWriteIntent::Perform,
         source: None,
         priority: None,
+        timing: Default::default(),
     }
 }
 
@@ -362,6 +363,7 @@ fn replay_policy_separates_reads_authoring_and_gestures() {
             intent: ControlWriteIntent::Author,
             source: None,
             priority: None,
+            timing: Default::default(),
         }),
         ResendWithTicket
     );

@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::RequestLanding;
 use crate::ControlValue;
 
 /// The most pending writes a compact listing names; the rest are counted.
@@ -63,6 +64,10 @@ pub struct PendingRequest {
     pub requested: ControlValue,
     pub source: PendingSource,
     pub waiting: PendingWait,
+    /// Where a timed write applies, as far as is known: its sample when
+    /// timed to one, its beat when timed in beats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing: Option<RequestLanding>,
 }
 
 /// How many pending writes each source has.

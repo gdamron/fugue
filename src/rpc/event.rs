@@ -1,7 +1,7 @@
 //! Server-pushed events, subscription topics, and the polled event log.
 
 use super::{
-    RequestStatus, RpcError, RuntimeFullSnapshot, SpectrogramStreamMeta, SpectrogramTile,
+    ControlRequestSettled, RequestStatus, RpcError, RuntimeFullSnapshot, SpectrogramStreamMeta, SpectrogramTile,
     RPC_SCHEMA_VERSION,
 };
 use crate::ControlValue;
@@ -87,6 +87,10 @@ pub enum RpcEventPayload {
     /// A timed request changed state: queued, landed, adopted, refused,
     /// expired or cancelled.
     RequestChanged(RequestStatus),
+    /// A timed control write settled: applied, superseded, overridden,
+    /// refused or expired. One that applied is also announced by
+    /// `ControlChanged`.
+    ControlRequestSettled(ControlRequestSettled),
 }
 
 /// Minimal sink interface for transports that collect or broadcast RPC events.

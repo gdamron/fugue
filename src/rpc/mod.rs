@@ -4,6 +4,7 @@
 //! intentionally contains no socket, WebSocket, or MCP server implementation.
 
 mod authored_snapshot;
+mod control_timing;
 mod inspection;
 pub use inspection::{
     InspectionCoverage, InspectionCursor, InspectionEntry, InspectionPage, InspectionQuery,
@@ -25,6 +26,7 @@ mod revision;
 mod snapshot;
 mod spectrogram;
 mod timed;
+pub use control_timing::{ControlRequestSettled, ControlTiming, ControlWhen};
 pub use authored_snapshot::{
     AuthoredSnapshot, SnapshotDelivery, MAX_FILE_SNAPSHOT_BYTES, MAX_INLINE_SNAPSHOT_BYTES,
 };

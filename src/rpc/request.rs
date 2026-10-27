@@ -1,7 +1,8 @@
 //! Client request envelopes and the commands a daemon accepts.
 
 use super::{
-    ControlWriteIntent, DescribeModuleQuery, EditTiming, InspectionQuery, ModuleTypeQuery,
+    ControlTiming, ControlWriteIntent, DescribeModuleQuery, EditTiming, InspectionQuery,
+    ModuleTypeQuery,
     MutationReply, MutationTicket, PackageInstallRequest, PendingDetail, PendingSource,
     RpcSubscriptionTopic, RuntimeRevision, SnapshotDelivery, StructuralEdit, RPC_SCHEMA_VERSION,
 };
@@ -142,6 +143,10 @@ pub struct ControlWrite {
     /// sample: the higher wins. 0 when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<i16>,
+    /// When it applies, if not as soon as the audio thread takes it (see
+    /// [`ControlTiming`]).
+    #[serde(flatten)]
+    pub timing: ControlTiming,
 }
 
 /// Who makes a control write over the wire, which pending requests list
@@ -168,6 +173,7 @@ impl ControlWrite {
             intent: ControlWriteIntent::Author,
             source: None,
             priority: None,
+            timing: Default::default(),
         }
     }
 
@@ -238,6 +244,9 @@ pub enum RpcCommand {
         /// Its rank within its tier (see [`ControlWrite::priority`]).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         priority: Option<i16>,
+        /// When it applies (see [`ControlWrite::timing`]).
+        #[serde(flatten)]
+        timing: ControlTiming,
     },
     /// Apply several control writes in one round trip. The daemon applies them
     /// in order within a single command, so a multi-control conducting gesture

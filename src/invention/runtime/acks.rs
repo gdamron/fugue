@@ -45,6 +45,13 @@ impl RunningInvention {
         // large batch or other writers could wrap, until the reply is built.
         self.live.hold_room(writes.len());
         for write in writes {
+            // Until timed writes are delivered, one is refused rather than
+            // applied at once.
+            if write.timing.is_set() {
+                let refusal = "timed control writes are not supported by this build";
+                error = Some(GraphCommandError::ControlError(refusal.into()));
+                break;
+            }
             let options = WriteOptions {
                 priority: write.priority.unwrap_or(0),
                 ..WriteOptions::performed(source(write.source)).awaiting()
@@ -135,6 +142,7 @@ impl RunningInvention {
             state: Some(state),
             requested: Some(ack.value),
             reason,
+            landing: None,
         }
     }
 }

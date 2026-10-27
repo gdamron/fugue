@@ -1,6 +1,7 @@
 //! Compact mutation acknowledgements: what a client that does not need the
 //! whole graph back asks for instead of a full snapshot.
 
+use super::RequestLanding;
 use crate::{ControlValue, RuntimeStatus};
 use serde::{Deserialize, Serialize};
 
@@ -91,6 +92,11 @@ pub struct AppliedControl {
     /// Why a refused write was refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Where a timed write applies, as far as is known when the reply is
+    /// sent: its sample when timed to one, its beat when timed in beats.
+    /// `None` for a write with no `when`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing: Option<RequestLanding>,
 }
 
 impl AppliedControl {
@@ -108,6 +114,7 @@ impl AppliedControl {
             state: None,
             requested: None,
             reason: None,
+            landing: None,
         }
     }
 }
@@ -130,6 +137,8 @@ pub enum ControlRequestState {
     Overridden,
     /// Refused as it was applied; `reason` says why.
     Refused,
+    /// A timed write whose ttl passed before its time came: never applied.
+    Expired,
 }
 
 impl super::RpcCommand {
