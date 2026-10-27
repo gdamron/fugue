@@ -227,6 +227,17 @@ impl RequestSender {
         self.shared.watches.cancel(id);
     }
 
+    /// Samples rendered as of the latest block ([`Transport::rendered`]):
+    /// what [`When::AfterSamples`] counts from.
+    pub(crate) fn rendered(&self) -> u64 {
+        self.shared.transport.rendered()
+    }
+
+    /// The transport the channel times relative requests against.
+    pub(crate) fn transport(&self) -> Arc<Transport> {
+        Arc::clone(&self.shared.transport)
+    }
+
     /// The count the channel's drain releases requests timed by a
     /// condition from as they settle.
     pub(crate) fn watch_slots(&self) -> Arc<WatchSlots> {

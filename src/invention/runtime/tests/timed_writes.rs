@@ -1,6 +1,7 @@
 //! Timed control writes through the runtime's front door, in the wire's
 //! terms: a write on the next downbeat is acknowledged with its beat,
 //! listed pending, read back only once it lands, and announced settled; one
+//! some samples on is acknowledged with the sample it lands on; one
 //! after another request lands that many samples after it, whether it is
 //! still waiting, applied already or a timed edit; one whose ttl passes
 //! first expires and never applies; one waiting as the invention stops is
@@ -309,4 +310,24 @@ fn writes_far_ahead_on_a_sample_never_hold_up_one_made_now() {
     pump.render(4);
     assert_eq!(running.get_control("tune", "degree.1").unwrap(), 9.0.into());
     assert_eq!(frequency(&running), 220.0.into(), "none far ahead applied");
+}
+
+#[test]
+fn a_write_some_samples_on_is_acknowledged_with_the_sample_it_lands_on() {
+    let (running, pump, sink) = start();
+    pump.render(4);
+    let when = ControlWhen::AfterSamples { samples: 4800 };
+    let ack = submit(&running, timed("osc", "frequency", 330.0.into(), when));
+    let due = ack
+        .landing
+        .unwrap()
+        .sample
+        .expect("the sample it is due on");
+    assert!(due >= 4800, "{due}");
+    pump.render(4800 / 64 + 4);
+    running.announce_applied();
+    let [landed] = &settled(&sink)[..] else {
+        panic!("settled once");
+    };
+    assert_eq!(landed.landing.sample, Some(due));
 }

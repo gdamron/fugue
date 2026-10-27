@@ -14,10 +14,11 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
 use crate::control_request::{
-    EventCursor, Outcome, OutcomeReceiver, Refusal, RequestId, RtValue, Source, When,
+    EventCursor, Outcome, OutcomeReceiver, Refusal, RequestId, RtValue, Source, Transport, When,
 };
 use crate::invention::request_log::{
     LoggedBeat, LoggedEdit, LoggedRequest, LoggedWhen, Recorder, RequestLog,
@@ -144,6 +145,9 @@ pub(crate) struct PendingLog {
     outcomes: VecDeque<(RequestId, Outcome)>,
     receiver: OutcomeReceiver,
     dropped: EventCursor,
+    /// What the graph has rendered, to tell a write timed on a sample that
+    /// passed from one that still waits once outcomes are lost.
+    transport: Arc<Transport>,
     /// Outcomes lost since they were last taken: dropped by the audio
     /// thread for want of room, or evicted here unreported.
     lost: u64,
@@ -170,8 +174,9 @@ pub(crate) struct PendingLog {
 }
 
 impl PendingLog {
-    pub(crate) fn new(receiver: OutcomeReceiver) -> Self {
+    pub(crate) fn new(receiver: OutcomeReceiver, transport: Arc<Transport>) -> Self {
         Self {
+            transport,
             writes: VecDeque::new(),
             outcomes: VecDeque::new(),
             receiver,
@@ -258,15 +263,22 @@ impl PendingLog {
             self.lost += u64::from(dropped);
             self.log.lost(u64::from(dropped));
             // Which applied cannot be known; most do, and an author's
-            // write is not to be lost from the document. Not one timed: it
-            // most likely still waits, so it stays for its own outcome, and
-            // one whose outcome was lost stays listed until it is forgotten
-            // (see `submitted`) or the invention stops.
+            // write is not to be lost from the document. Not one timed for
+            // a sample yet to render: it still waits, so it stays for its
+            // own outcome. One timed on a beat or a condition may have
+            // settled or may wait, so it stays too: listed until its
+            // outcome, or until it is forgotten (see `submitted`) or the
+            // invention stops.
+            let rendered = self.transport.rendered();
+            let settled = |write: &PendingWrite| match write.when {
+                When::Now => true,
+                When::AtSample(at) => at < rendered,
+                _ => false,
+            };
             let writes = std::mem::take(&mut self.writes);
-            let (timed, settled): (VecDeque<_>, VecDeque<_>) = writes
-                .into_iter()
-                .partition(|(_, write)| write.when != When::Now);
-            self.writes = timed;
+            let (settled, waiting): (VecDeque<_>, VecDeque<_>) =
+                writes.into_iter().partition(|(_, write)| settled(write));
+            self.writes = waiting;
             for (id, write) in settled {
                 self.authored(&write);
                 self.announce(id, &write, None);
