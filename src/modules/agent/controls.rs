@@ -110,9 +110,13 @@ pub(super) struct Edges {
 impl Edges {
     /// Claims the edges `counter` recorded since the last claim: whether
     /// there were any. Only one claimer wins each edge.
+    ///
+    /// The claim is read before the count, so a claimer that read a count
+    /// before another claimed past it fails rather than moving the claim
+    /// back.
     fn claim(counter: &EventCounter, claimed: &AtomicU32) -> bool {
-        let count = counter.count();
         let seen = claimed.load(Ordering::Acquire);
+        let count = counter.count();
         seen != count
             && (claimed.compare_exchange(seen, count, Ordering::AcqRel, Ordering::Acquire)).is_ok()
     }
@@ -208,6 +212,13 @@ impl AgentControls {
     #[cfg(test)]
     pub(crate) fn reset_count(&self) -> u32 {
         self.edges.reset.count()
+    }
+
+    /// Whether `other` is a handle on these same controls rather than on a
+    /// replacement module's.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn same_instance(&self, other: &AgentControls) -> bool {
+        Arc::ptr_eq(&self.edges, &other.edges)
     }
 
     /// Claims the `trigger` edges no worker has claimed yet: whether there
@@ -468,6 +479,8 @@ mod tests {
         assert!(!controls.claim_reset());
         controls.increment_trigger();
         assert!(other.claim_trigger());
+        assert!(controls.same_instance(&other));
+        assert!(!controls.same_instance(&self::controls()));
         for key in ["trigger_count", "reset_count"] {
             assert!(controls.get_control(key).is_err(), "{key}");
             assert!(controls.controls().iter().all(|meta| meta.key != key));

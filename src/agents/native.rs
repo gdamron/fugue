@@ -101,11 +101,14 @@ fn run_host(
     set_string(&controller, &module_id, "status", "idle");
     set_string(&controller, &module_id, "last_error", "");
 
-    // Edges are claimed from the module itself, which counts them from
-    // zero: one that lands before this worker first looks (a trigger
-    // written as the agent starts) is still served, and one this worker
-    // claims from a replacement before it is stopped is not served again by
-    // the replacement's worker.
+    // The module instance this worker serves: the one running as it
+    // starts. A module that replaces it gets its own worker (see
+    // `AgentManager::start_module`), so this one leaves it alone, and
+    // never spends the replacement's edges on its own cooldown. Edges are
+    // claimed from the module, which counts them from zero, so one that
+    // lands before this worker first looks (a trigger written as the agent
+    // starts) is still served.
+    let mut serving = agent_controls(&controller, &module_id);
     let mut last_request_at: Option<Instant> = None;
     let mut history: Vec<Value> = Vec::new();
 
@@ -122,6 +125,12 @@ fn run_host(
         let Some(current) = agent_controls(&controller, &module_id) else {
             continue;
         };
+        if !serving
+            .get_or_insert_with(|| current.clone())
+            .same_instance(&current)
+        {
+            continue;
+        }
         if current.claim_reset() {
             history.clear();
             set_string(&controller, &module_id, "history", "[]");
