@@ -97,6 +97,9 @@ pub(crate) struct Declaration {
     pub(crate) decl: ControlDecl,
     /// What it holds now.
     pub(crate) current: RtValue,
+    /// Whether its module plays every event written, in order (see
+    /// [`ControlCells::queues_events`]).
+    pub(crate) queued: bool,
 }
 
 /// A live graph's request queue, as one module's surface submits to it.
@@ -1078,6 +1081,7 @@ impl ControlSurface for DeclaredSurface {
             index,
             decl: self.table.decl(index)?.0.clone(),
             current: self.cells.load(index)?,
+            queued: self.cells.queues_events(),
         })
     }
 
