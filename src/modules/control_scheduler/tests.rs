@@ -553,3 +553,19 @@ fn tempo_map_glides_with_ramp_steps_and_refuses_ramp() {
     let err = compile_tempo_map(&old, "clock", "bpm", 1.0).unwrap_err();
     assert!(err.contains("unknown field `ramp`"), "{err}");
 }
+
+/// A graph recompiling on the audio thread (its fallback after a block
+/// size change) asks the scheduler for its targets: while a control thread
+/// holds them it gets the targets of the schedule playing, without
+/// waiting or taking the lock.
+#[test]
+fn targets_asked_on_the_audio_thread_never_wait_for_the_control_thread() {
+    let (module, _mixer, _dir) =
+        setup(r#"[{ "at_step": 0, "module": "mixer", "control": "level.0", "value": 0.5 }]"#);
+    assert_eq!(module.control_targets(), ["mixer"]);
+
+    let ctrl = module.ctrl.clone();
+    let _held = ctrl.hold_state_lock();
+    let _audio = crate::audio_thread::AudioThreadScope::enter();
+    assert_eq!(module.control_targets(), ["mixer"]);
+}

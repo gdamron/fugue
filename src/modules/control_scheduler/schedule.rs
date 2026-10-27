@@ -5,7 +5,7 @@
 //! against the invention's control surfaces before playback, so the audio
 //! thread applies them without lookups, locks, or allocation.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,15 @@ use crate::{ControlSurface, ControlValue};
 
 /// Shared control surface map used to resolve schedule targets.
 pub(crate) type SurfaceMap = IndexMap<String, Arc<dyn ControlSurface + Send + Sync>>;
+
+/// Shared directory of module control surfaces, owned by the runtime and
+/// taken by control threads only (a live graph holds it as its surface
+/// map). The scheduler holds a [`WeakDirectory`] so surfaces referenced by
+/// resolved entries never keep the whole directory alive.
+pub(crate) type SurfaceDirectory = Arc<Mutex<SurfaceMap>>;
+
+/// The scheduler's reference to its [`SurfaceDirectory`].
+pub(crate) type WeakDirectory = Weak<Mutex<SurfaceMap>>;
 
 /// A scheduled control value. Only numbers and booleans are supported so the
 /// audio thread can apply changes without allocating (string control values

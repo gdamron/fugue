@@ -121,9 +121,10 @@ fn a_block_renders_while_the_code_strings_lock_is_held() {
 }
 
 /// The negative control: a module reading the code module's strings each
-/// block, as an audio-thread write to them would, is caught waiting on
-/// their lock.
+/// block, as an audio-thread write to them would, is caught taking their
+/// control lock (debug builds), or waiting on it.
 #[test]
+#[cfg_attr(debug_assertions, should_panic(expected = "taking a control lock"))]
 fn a_block_that_reads_the_code_strings_is_caught() {
     let mut rig = Rig::new(ORCHESTRATION);
     let code: CodeControls = controls(&rig, "code");
@@ -235,6 +236,7 @@ fn a_block_renders_while_the_agent_strings_lock_is_held() {
 
 /// The negative control, for the agent's strings.
 #[test]
+#[cfg_attr(debug_assertions, should_panic(expected = "taking a control lock"))]
 fn a_block_that_reads_the_agent_strings_is_caught() {
     let mut rig = Rig::new(ORCHESTRATION);
     let agent: AgentControls = controls(&rig, "agent");

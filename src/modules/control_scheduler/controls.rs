@@ -9,8 +9,9 @@
 //! from the audio thread through an atomic.
 
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::Arc;
 
+use crate::audio_thread::ControlLock;
 use crate::control_request::{
     Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue,
 };
@@ -22,16 +23,12 @@ use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
 use super::resolved::{target_module_ids, ResolvedSchedule};
 use super::schedule::{
-    parse_schedule_json, resolve_schedule, ResolvedEntry, ScheduleEntry, SurfaceMap,
+    parse_schedule_json, resolve_schedule, ResolvedEntry, ScheduleEntry, SurfaceDirectory,
+    SurfaceMap, WeakDirectory,
 };
 
 mod rebind;
 pub(crate) use rebind::{Rebind, Written};
-
-/// Shared directory of module control surfaces, owned by the runtime. The
-/// scheduler holds a [`Weak`] reference so surfaces referenced by resolved
-/// entries never keep the whole directory alive.
-pub(crate) type SurfaceDirectory = Arc<Mutex<SurfaceMap>>;
 
 pub(super) const SCHEDULE: ControlIndex = ControlIndex(0);
 
@@ -70,12 +67,12 @@ struct Shared {
     /// `ResolvedSchedule::id`), stored by the audio thread.
     adopted: AtomicU64,
     /// Control threads only.
-    state: Mutex<ScheduleState>,
+    state: ControlLock<ScheduleState>,
     /// Held across a whole `schedule` write, so concurrent writes reach
     /// the scheduler in the order they record their schedules. Taken
     /// before `state` and the publisher, never while holding a publisher or
     /// graph lock.
-    writing: Mutex<()>,
+    writing: ControlLock<()>,
 }
 
 struct ScheduleState {
@@ -119,7 +116,7 @@ const STALE_RETRIES: usize = 8;
 
 struct Attachment {
     own_id: String,
-    directory: Weak<Mutex<SurfaceMap>>,
+    directory: WeakDirectory,
 }
 
 impl ControlSchedulerControls {
@@ -133,14 +130,14 @@ impl ControlSchedulerControls {
             shared: Arc::new(Shared {
                 step: AtomicI64::new(-1),
                 adopted: AtomicU64::new(0),
-                state: Mutex::new(ScheduleState {
+                state: ControlLock::new(ScheduleState {
                     spec,
                     targets: Vec::new(),
                     recorded: 0,
                     attachment: None,
                     unattached_id: None,
                 }),
-                writing: Mutex::new(()),
+                writing: ControlLock::new(()),
             }),
         }
     }
@@ -295,6 +292,20 @@ impl ControlSchedulerControls {
     /// process-order dependency discovery on topology changes.
     pub(crate) fn target_module_ids(&self) -> Vec<String> {
         self.shared.state.lock().unwrap().targets.clone()
+    }
+
+    /// [`Self::target_module_ids`], or `None` while a control thread holds
+    /// them: it never waits, so the audio thread may call it.
+    pub(crate) fn try_target_module_ids(&self) -> Option<Vec<String>> {
+        let state = self.shared.state.try_lock().ok()?;
+        Some(state.targets.clone())
+    }
+
+    /// Holds the schedule state's lock, for a test proving the audio
+    /// thread never waits for it.
+    #[cfg(test)]
+    pub(crate) fn hold_state_lock(&self) -> std::sync::MutexGuard<'_, impl Sized> {
+        self.shared.state.lock().unwrap()
     }
 
     /// Current step index (-1 before the first gate edge).

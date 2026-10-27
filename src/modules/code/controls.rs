@@ -6,7 +6,9 @@
 //! strings sit behind a lock only control threads take: the module holds
 //! the cells, never the lock.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use crate::audio_thread::ControlLock;
 
 use crate::control_request::{
     Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, RtValue,
@@ -49,7 +51,7 @@ pub(super) static TABLE: ControlTable = ControlTable::of(DECLS);
 pub struct CodeControls {
     declared: Arc<DeclaredSurface>,
     cells: Arc<ControlCells>,
-    shared: Arc<Mutex<CodeState>>,
+    shared: Arc<ControlLock<CodeState>>,
 }
 
 #[derive(Clone, Debug)]
@@ -69,7 +71,7 @@ impl CodeControls {
         Self {
             declared: Arc::new(DeclaredSurface::new(TABLE.clone(), cells.clone())),
             cells,
-            shared: Arc::new(Mutex::new(CodeState {
+            shared: Arc::new(ControlLock::new(CodeState {
                 status: "idle".to_string(),
                 last_error: String::new(),
                 script,

@@ -12,7 +12,9 @@
 //! take: the audio module holds the cells and the edge counters, never the
 //! lock, so no audio-thread path reaches it.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use crate::audio_thread::ControlLock;
 
 use crate::control_request::{
     Automation, ControlCells, ControlDecl, ControlIndex, ControlTable, DeclKind, EventCounter,
@@ -88,7 +90,7 @@ pub(super) struct Edges {
 pub struct AgentControls {
     declared: Arc<DeclaredSurface>,
     cells: Arc<ControlCells>,
-    shared: Arc<Mutex<AgentState>>,
+    shared: Arc<ControlLock<AgentState>>,
     edges: Arc<Edges>,
 }
 
@@ -119,7 +121,7 @@ impl AgentControls {
         Self {
             declared: Arc::new(DeclaredSurface::new(TABLE.clone(), cells.clone())),
             cells,
-            shared: Arc::new(Mutex::new(AgentState {
+            shared: Arc::new(ControlLock::new(AgentState {
                 status: "idle".to_string(),
                 last_error: String::new(),
                 prompt,

@@ -174,11 +174,12 @@ pub use self::controls::ControlSchedulerControls;
 pub use self::factory::ControlSchedulerFactory;
 pub use self::schedule::{ScheduleEntry, ScheduleValue};
 
-pub(crate) use self::controls::{Rebind, SurfaceDirectory, Written};
+pub(crate) use self::controls::{Rebind, Written};
 #[cfg(test)]
 pub(crate) use self::factory::attach_from_handle;
 pub(crate) use self::factory::{attach_from_handle_resolving, name_unattached_from_handles};
 pub(crate) use self::resolved::schedule_targets;
+pub(crate) use self::schedule::SurfaceDirectory;
 
 mod controls;
 mod factory;
@@ -563,8 +564,20 @@ impl Module for ControlScheduler {
         self.outputs.get(port)
     }
 
+    /// The targets its controls record. A graph compiles its process order
+    /// on the audio thread only as a fallback (after a block size change),
+    /// and then never waits for the control thread holding them: it orders
+    /// by the schedule playing instead.
     fn control_targets(&self) -> Vec<String> {
-        self.ctrl.target_module_ids()
+        self.ctrl.try_target_module_ids().unwrap_or_else(|| {
+            let mut ids: Vec<String> = Vec::new();
+            for entry in &self.entries {
+                if !ids.contains(&entry.module) {
+                    ids.push(entry.module.clone());
+                }
+            }
+            ids
+        })
     }
 
     #[allow(private_interfaces)]
