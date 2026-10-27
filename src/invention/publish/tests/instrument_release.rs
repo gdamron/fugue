@@ -1,7 +1,8 @@
 //! A sample instrument's note off and a release on a live graph: written
 //! for one sample, the note fades over the new release whichever was
 //! sent first; written for different samples, in one block or across
-//! two, the note off fades over the release in force at its own.
+//! two, or late together, the note off fades over the release in force at
+//! its own.
 
 use super::requests::outcomes;
 use super::sample_instrument::{rig, set, TOL};
@@ -91,4 +92,19 @@ fn a_release_sent_for_the_next_block_does_not_reach_back() {
     assert!(heard[64] > TOL && heard[64] < 0.5, "fading: {}", heard[64]);
     assert!(last(&heard).abs() < TOL, "the old release ended it");
     all_applied(&mut rig);
+}
+
+#[test]
+fn a_late_release_due_after_a_late_note_off_does_not_reach_back() {
+    let (_dir, mut rig, start) = sounding();
+    // Both due before the block they reach.
+    send(&rig, NOTE_OFF, 60.0, start - 4);
+    send(&rig, RELEASE, 1.0, start - 2);
+    let heard = rig.render(1);
+    assert!(last(&heard).abs() < TOL, "the old release ended it");
+    let late: Vec<_> = (outcomes(&mut rig).into_iter())
+        .map(|(_, outcome)| outcome)
+        .collect();
+    let applied = |due| Outcome::AppliedLate { at: start, due };
+    assert_eq!(late, [applied(start - 4), applied(start - 2)]);
 }
