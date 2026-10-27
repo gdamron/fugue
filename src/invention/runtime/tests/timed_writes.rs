@@ -3,8 +3,9 @@
 //! listed pending, read back only once it lands, and announced settled; one
 //! after another request lands that many samples after it, whether it is
 //! still waiting, applied already or a timed edit; one whose ttl passes
-//! first expires and never applies; and a time that can never come is
-//! refused with nothing queued.
+//! first expires and never applies; one waiting as the invention stops is
+//! announced refused; and a time that can never come is refused with
+//! nothing queued.
 
 use super::timed::{downbeat, BAR};
 use super::*;
@@ -257,4 +258,24 @@ fn a_timed_write_refused_where_it_cannot_wait_says_why() {
         .pending_requests(None, PendingDetail::Full)
         .items
         .is_empty());
+}
+
+#[test]
+fn a_timed_write_waiting_as_the_invention_stops_is_announced_refused() {
+    let (running, pump, sink) = start();
+    pump.render(4);
+    let ack = submit(
+        &running,
+        timed("osc", "frequency", 330.0.into(), next_bar()),
+    );
+    let untimed = submit(&running, ControlWrite::new("tune", "degree.1", 9.0.into()));
+    running.stop();
+    let [refused] = &settled(&sink)[..] else {
+        panic!("settled once, the untimed write unannounced");
+    };
+    assert_eq!(Some(&refused.request), ack.request.as_ref());
+    assert_ne!(untimed.request, ack.request);
+    assert_eq!(refused.state, ControlRequestState::Refused);
+    let reason = refused.reason.as_deref().unwrap();
+    assert_eq!(reason, "the invention it was queued on stopped");
 }

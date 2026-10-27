@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
 use crate::control_request::{
-    EventCursor, Outcome, OutcomeReceiver, RequestId, RtValue, Source, When,
+    EventCursor, Outcome, OutcomeReceiver, Refusal, RequestId, RtValue, Source, When,
 };
 use crate::invention::request_log::{
     LoggedBeat, LoggedEdit, LoggedRequest, LoggedWhen, Recorder, RequestLog,
@@ -381,6 +381,16 @@ impl PendingLog {
             outcome,
             timed: timed.then(|| write.beat.clone()),
         });
+    }
+
+    /// Settles every write still waiting as refused, every outcome received
+    /// first: the invention stopped, so none applies. A timed one is
+    /// announced so.
+    pub(crate) fn abandon(&mut self) {
+        self.settle();
+        for (id, write) in std::mem::take(&mut self.writes) {
+            self.announce(id, &write, Some(Refusal::Stopped.into()));
+        }
     }
 
     /// Each front door's write applied since the last call, oldest first,

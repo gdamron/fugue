@@ -28,6 +28,12 @@ impl LiveGraph {
         self.pending.lock().unwrap().take_announcements()
     }
 
+    /// Refuses every write still waiting, once the audio thread is gone
+    /// (see [`PendingLog::abandon`](super::pending::PendingLog::abandon)).
+    pub(crate) fn abandon_writes(&self) {
+        self.pending.lock().unwrap().abandon();
+    }
+
     /// Whether the audio thread has installed publication `generation`.
     pub(crate) fn installed(&self, generation: u64) -> bool {
         self.publisher.lock().unwrap().applied() >= generation

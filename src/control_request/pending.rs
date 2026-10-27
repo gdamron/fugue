@@ -37,6 +37,9 @@ pub(crate) enum Refusal {
     /// It waited on another request applying, which settled without
     /// applying.
     ChainBroken,
+    /// The invention stopped before it applied: refused by the host once
+    /// the audio thread is gone, never by the audio thread.
+    Stopped,
 }
 
 /// How a request left the audio thread's hands.
