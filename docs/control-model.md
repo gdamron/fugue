@@ -137,13 +137,13 @@ editor hints, and whether a write is an event.
   (one not stepped by the graph's drain) lands its block's writes on its
   targets together, at the block's start.
 
-Module types not yet migrated are listed in
-[`LEGACY_CONTROLS`](../src/control_request/legacy.rs). They keep their old
-control surface: setters writing shared state, some behind the
-version-gated `Mutex`. Schedulers write them through `set_scheduled`, which
-is lock- and allocation-free. Legacy controls get none of the request
-semantics (timing, conditions, holds, outcomes). Each migration removes an
-entry; the list must end empty. Don't add the legacy pattern to new code.
+Every module type declares its controls; a catalog test
+(`src/control_request/catalog_tests.rs`) fails a built-in type that does
+not. Only a declared control can be scheduled. A surface may still keep
+undeclared controls for host state that no audio thread reads (an agent's
+prompt, a script's status): a control thread writes them through their
+setters, and they get none of the request semantics (timing, conditions,
+holds, outcomes).
 
 ## Heavy values
 

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::control_request::{EventCounter, TableEntry, TableTarget, TableValue};
+use crate::control_request::{TableEntry, TableTarget, TableValue};
 use crate::module_config::serde_whole;
 use crate::{ControlSurface, ControlValue};
 
@@ -202,8 +202,7 @@ pub(crate) struct ResolvedEntry {
     pub(crate) module: String,
     pub(crate) control: String,
     /// Its step, ramp, value, and target: the control's automation slot
-    /// when its module declares its controls (written without a lock, an
-    /// allocation or a formatted error), else its legacy setter.
+    /// (written without a lock, an allocation or a formatted error).
     pub(crate) entry: TableEntry,
 }
 
@@ -225,7 +224,7 @@ impl ResolvedEntry {
 
     /// Automation's next event on the target, on frame `frame` of the
     /// scheduler's processing: frees it from a higher tier's hold (see
-    /// `Automation::begin`). A legacy target has no tiers.
+    /// `Automation::begin`).
     #[inline]
     pub(crate) fn begin(&self, frame: usize) {
         self.entry.target.begin(frame);
@@ -248,17 +247,6 @@ pub(crate) fn resolve_schedule(
     entries: &[ScheduleEntry],
     own_id: &str,
     surfaces: &SurfaceMap,
-) -> Result<Vec<ResolvedEntry>, String> {
-    resolve_schedule_counting(entries, own_id, surfaces, &Arc::new(EventCounter::new()))
-}
-
-/// [`resolve_schedule`], with the legacy targets counting the writes and
-/// reads their surfaces refuse in `refused`.
-pub(crate) fn resolve_schedule_counting(
-    entries: &[ScheduleEntry],
-    own_id: &str,
-    surfaces: &SurfaceMap,
-    refused: &Arc<EventCounter>,
 ) -> Result<Vec<ResolvedEntry>, String> {
     let mut resolved = Vec::with_capacity(entries.len());
     for entry in entries {
@@ -297,29 +285,25 @@ pub(crate) fn resolve_schedule_counting(
                 ));
             }
         }
-        // A declared control is written by automation or not at all: its
-        // setter takes a lock, which the audio thread must never wait on.
-        let automation = surface.automation(&entry.control);
-        if automation.is_none() && surface.declares(&entry.control) {
+        // A control is written by automation or not at all: a setter
+        // runs on a control thread, which the audio thread never waits on.
+        let Some(automation) = surface.automation(&entry.control) else {
             return Err(format!(
                 "schedule entry at step {}: control '{}.{}' cannot be scheduled \
-                 (a read-only or payload control)",
+                 (a read-only, payload or undeclared control)",
                 entry.at_step, entry.module, entry.control
             ));
-        }
+        };
         // A ramp writes on every block it crosses, so it would fire an
         // event again and again: an event is jumped to, once.
-        if entry.ramp_steps.is_some() && automation.as_ref().is_some_and(|a| a.event) {
+        if entry.ramp_steps.is_some() && automation.event {
             return Err(format!(
                 "schedule entry at step {}: control '{}.{}' is a trigger; \
                  it fires at a step and cannot be ramped",
                 entry.at_step, entry.module, entry.control
             ));
         }
-        let target = match automation {
-            Some(automation) => TableTarget::Declared(automation),
-            None => TableTarget::legacy(surface.clone(), entry.control.clone(), refused.clone()),
-        };
+        let target = TableTarget(automation);
         resolved.push(ResolvedEntry {
             module: entry.module.clone(),
             control: entry.control.clone(),

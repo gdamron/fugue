@@ -59,10 +59,10 @@
 //! `clock` input, the first being step 0, and a rising edge on `reset`
 //! restarts the schedule from step 0.
 //!
-//! A target whose module declares its controls is written through its
-//! automation slots, which the graph applies just before the target
-//! processes (see `crate::control_request::Automation`); a legacy target
-//! through its shared control surface, with no tiers.
+//! A target is written through its automation slots, which the graph
+//! applies just before the target processes (see
+//! `crate::control_request::Automation`). Only a declared control can be
+//! scheduled.
 //!
 //! What a target does with a change is its own: a mixer level, pan or
 //! master starts its [`GAIN_RAMP_MS`](crate::modules::mixer::GAIN_RAMP_MS)
@@ -88,9 +88,7 @@
 //! writes only finite values.
 //!
 //! A later entry on the control, from this scheduler or another, however
-//! either is played, ends the ramp where it stands. A legacy control (one
-//! whose module does not declare its controls) notes no entries, so there
-//! another scheduler's entry may leave the ramp running.
+//! either is played, ends the ramp where it stands.
 //!
 //! # Holds
 //!
@@ -758,7 +756,5 @@ mod payload_tests;
 mod player_tests;
 #[cfg(test)]
 mod queued_event_tests;
-#[cfg(test)]
-mod refused_tests;
 #[cfg(test)]
 mod tests;

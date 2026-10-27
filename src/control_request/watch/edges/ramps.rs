@@ -87,7 +87,7 @@ impl EdgeRamps {
     }
 
     /// Ends table `id`'s ramp on the control `entry` writes, as a newer
-    /// change supersedes it (a legacy control's too, which notes no begin).
+    /// entry of the same table supersedes it.
     pub(super) fn supersede(&mut self, id: usize, table: &dyn BeatTable, entry: &TableEntry) {
         self.0.retain(|ramp| {
             ramp.table != id

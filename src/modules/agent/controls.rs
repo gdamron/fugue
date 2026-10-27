@@ -305,9 +305,9 @@ impl ControlSurface for AgentControls {
         self.declared.bind(route, module);
     }
 
-    fn set_legacy(&self, key: &str, value: ControlValue) -> Result<(), String> {
+    fn set_undeclared(&self, key: &str, value: ControlValue) -> Result<(), String> {
         match self.declared.declares(key) {
-            true => self.declared.set_legacy(key, value),
+            true => self.declared.set_undeclared(key, value),
             false => self.set_control(key, value),
         }
     }

@@ -136,7 +136,7 @@ pub(super) fn check_rewrites(
         .map(|index| controls.targets(ControlIndex(index as u16)))
         .map(|targets| targets.into_iter().map(|(m, i)| (cells(m), i)).collect())
         .collect();
-    // A key reaching a control undeclared (a legacy one) is never wholly
+    // A key reaching an undeclared control is never wholly
     // rewritten: the walk cannot see it.
     let listed = |key: &str| {
         (definition.controls.iter())

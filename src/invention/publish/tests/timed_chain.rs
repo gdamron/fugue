@@ -1,7 +1,7 @@
 //! The control writes a timed edit makes to modules it keeps play from the
 //! sample it lands on, mid-block, and never before; one refused, cancelled
-//! or expired takes them with it. A write the edit cannot chain (a module
-//! with a legacy surface) refuses the edit with nothing queued, and every
+//! or expired takes them with it. A write the edit cannot chain (to an
+//! undeclared control) refuses the edit with nothing queued, and every
 //! block stays allocation-, free- and lock-free.
 
 use super::migrated::block_with_locks_held;
@@ -11,7 +11,7 @@ use crate::control_request::{Outcome, Refusal, Request, RequestId, RequestValue,
 use crate::invention::publish::timed::EditTime;
 use crate::invention::runtime::GraphCommandError;
 use crate::test_support::dial::LEVEL;
-use crate::test_support::legacy_dial::LegacyDialFactory;
+use crate::test_support::host_dial::HostDialFactory;
 use crate::ControlValue;
 
 /// Where the edits land: mid-block.
@@ -80,17 +80,17 @@ fn a_cancelled_edit_takes_its_writes_with_it() {
 #[test]
 fn a_write_the_edit_cannot_chain_refuses_it_with_nothing_queued() {
     let mut rig = beat_rig(97.0);
-    rig.registry.register(LegacyDialFactory);
-    let legacy_dial = rig.build("fx", "legacy_dial", serde_json::json!({}));
+    rig.registry.register(HostDialFactory);
+    let host_dial = rig.build("fx", "host_dial", serde_json::json!({}));
     rig.live
         .edit(|change| {
-            change.upsert("fx", legacy_dial);
+            change.upsert("fx", host_dial);
             Ok(())
         })
         .unwrap();
     let rate = ControlValue::Number(8.0);
-    let legacy = ("fx".to_string(), "rate".to_string(), rate);
-    let error = queue(&rig, &[legacy]).unwrap_err();
+    let host = ("fx".to_string(), "rate".to_string(), rate);
+    let error = queue(&rig, &[host]).unwrap_err();
     assert!(
         matches!(&error, GraphCommandError::ControlError(message)
         if message.contains("fx.rate")),

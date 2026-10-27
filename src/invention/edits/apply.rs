@@ -216,7 +216,8 @@ impl RunningInvention {
     /// does not touch keep their instance and phase. Control values written
     /// to surviving modules are applied right after the publication is
     /// queued: a declared control's write is a request behind it, so it never
-    /// leads the new topology; a legacy control's may lead by up to one block.
+    /// leads the new topology; an undeclared control's may lead by up to one
+    /// block.
     /// Added and rebuilt modules are built from their final configs, and the
     /// batch's writes to them are made through their setters as soon as they
     /// are built, before they are prepared: a control's key need not be the

@@ -12,14 +12,14 @@ use crate::control_request::take_automation;
 use crate::invention::declared::add_offline;
 use crate::invention::graph::{MasterObservers, SignalGraph};
 use crate::test_support::dial::DialFactory;
-use crate::test_support::legacy_dial::LegacyDialFactory;
+use crate::test_support::host_dial::HostDialFactory;
 
-/// A development factory over `definition`, with dials and legacy dials
+/// A development factory over `definition`, with dials and host dials
 /// registered.
 pub(super) fn factory(name: &str, definition: serde_json::Value) -> DevelopmentFactory {
     let mut registry = ModuleRegistry::default();
     registry.register(DialFactory);
-    registry.register(LegacyDialFactory);
+    registry.register(HostDialFactory);
     DevelopmentFactory {
         name: name.to_string(),
         definition: serde_json::from_value(definition).unwrap(),
@@ -29,13 +29,13 @@ pub(super) fn factory(name: &str, definition: serde_json::Value) -> DevelopmentF
     }
 }
 
-/// A dial and a legacy dial behind one exposed `mix`, with the legacy dial's
+/// A dial and a host dial behind one exposed `mix`, with the host dial's
 /// rate also exposed alone as `rate`, and `form` reaching the dial's shape
-/// and the legacy dial's waveform, which share no option.
+/// and the host dial's waveform, which share no option.
 pub(super) fn mixed() -> serde_json::Value {
     json!({
         "version": "1.0.0",
-        "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "legacy_dial" }],
+        "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "host_dial" }],
         "connections": [],
         "outputs": [{ "name": "a", "from": "a", "from_port": "out" }],
         "controls": [
@@ -160,13 +160,13 @@ fn inner_surfaces_are_reached_only_through_the_development() {
 }
 
 #[test]
-fn a_key_mixing_declared_and_legacy_aliases_reaches_both_but_cannot_be_scheduled() {
+fn a_key_mixing_declared_and_host_aliases_reaches_both_but_cannot_be_scheduled() {
     let (graph, surface) = running_from(factory("mixed", mixed()), json!({ "mix": 3.0 }));
     assert_eq!(outputs_a(&graph), 1.0, "the dial, clamped");
     assert_eq!(
         surface.get_control("rate").unwrap(),
         3.0.into(),
-        "the legacy dial"
+        "the host dial"
     );
     surface.set_control("mix", 0.5.into()).unwrap();
     assert_eq!(outputs_a(&graph), 0.5);
@@ -200,7 +200,7 @@ fn a_value_one_alias_cannot_hold_changes_no_alias_and_fails_a_cold_load() {
     let (graph, surface) = running_from(factory("mixed", mixed()), json!({}));
     assert!(
         surface.set_control("form", "steep".into()).is_err(),
-        "no legacy dial waveform"
+        "no host dial waveform"
     );
     outputs_a(&graph);
     assert_eq!(
@@ -293,17 +293,17 @@ pub(super) fn outputs_a(graph: &Arc<Mutex<SignalGraph>>) -> f32 {
 }
 
 #[test]
-fn a_scheduled_ramp_on_a_legacy_only_key_allocates_nothing() {
+fn a_schedule_on_a_key_reaching_only_host_controls_is_refused() {
     use crate::modules::control_scheduler::{
-        ControlScheduler, ControlSchedulerControls, ScheduleEntry, ScheduleValue,
+        ControlSchedulerControls, ScheduleEntry, ScheduleValue,
     };
     let definition = json!({
         "version": "1.0.0",
-        "modules": [{ "id": "l", "type": "legacy_dial" }],
+        "modules": [{ "id": "l", "type": "host_dial" }],
         "connections": [],
         "controls": [{ "name": "rate", "module": "l", "control": "rate" }]
     });
-    let built = factory("legacy", definition)
+    let built = factory("host", definition)
         .build(48_000, &json!({}))
         .unwrap();
     let surface = built.control_surface.unwrap();
@@ -318,15 +318,9 @@ fn a_scheduled_ramp_on_a_legacy_only_key_allocates_nothing() {
         ramp_steps: Some(2),
     };
     let controls = ControlSchedulerControls::new(vec![entry]);
-    controls.attach("sched", &directory).unwrap();
-    let mut scheduler = ControlScheduler::new(48_000, controls);
-    scheduler.settle();
-    for gate in [1.0, 0.0, 1.0, 0.0] {
-        scheduler.set_input("clock", gate).unwrap();
-        let (_, allocs, frees) = allocator_events(|| scheduler.process(64));
-        assert_eq!((allocs, frees), (0, 0));
-    }
-    assert_ne!(surface.get_control("rate").unwrap(), json_number(1.0));
+    let refused = controls.attach("sched", &directory).unwrap_err();
+    assert!(refused.contains("cannot be scheduled"), "{refused}");
+    assert_eq!(surface.get_control("rate").unwrap(), json_number(1.0));
 }
 
 fn json_number(value: f32) -> ControlValue {

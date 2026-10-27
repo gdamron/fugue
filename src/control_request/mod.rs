@@ -23,6 +23,8 @@
 #![allow(dead_code, unused_imports)]
 
 mod automation;
+#[cfg(test)]
+mod catalog_tests;
 mod cells;
 mod chains;
 mod condition;
@@ -31,7 +33,6 @@ mod declare;
 mod event;
 mod hold;
 mod key;
-mod legacy;
 mod local;
 mod outcome;
 mod pending;
@@ -86,11 +87,6 @@ pub(crate) use declare::{
 pub(crate) use event::{EventCounter, EventCursor};
 pub(crate) use hold::{admits_hold, kept_hold, take_hold, FrameScope, Rank, Standing};
 pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
-#[cfg(test)]
-pub(crate) use legacy::tests::{scheduled_surface, while_held};
-pub(crate) use legacy::{
-    scheduled_bool, scheduled_index, scheduled_number, LegacyRefusal, LEGACY_CONTROLS,
-};
 pub(crate) use local::{local_controls, local_get, local_set};
 pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
 pub(crate) use pending::{expired, Outcome, Outcomes, PendingStore, Refusal};

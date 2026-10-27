@@ -1,9 +1,6 @@
 pub mod agents;
 #[cfg(test)]
 mod alloc_counter;
-// Only the legacy test surfaces still share state through it.
-#[cfg(test)]
-mod atomic;
 pub(crate) mod audio_thread;
 pub(crate) mod control_request;
 pub mod dsp;

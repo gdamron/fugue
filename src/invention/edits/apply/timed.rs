@@ -22,8 +22,8 @@ impl RunningInvention {
     ///
     /// Refused as an untimed batch is, and also, with nothing queued, when
     /// it changes no structure (time a control write instead), writes a
-    /// control of a module it keeps that cannot be timed yet (a legacy
-    /// surface), adds or removes a code or agent module, or names a time
+    /// control of a module it keeps that cannot be timed (an undeclared
+    /// control), adds or removes a code or agent module, or names a time
     /// that can never come.
     ///
     /// Its writes to modules it keeps play from the sample it lands on;
