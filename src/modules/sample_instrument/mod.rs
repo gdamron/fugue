@@ -37,8 +37,10 @@
 //! A zone may declare loop points (in the source file's frames) so a short
 //! sample holds a long note: while the gate is high the read head wraps the
 //! loop (with an optional crossfade for un-authored loop points); on gate
-//! fall playback exits the loop into the rest of the sample, fading over
-//! the `release` time.
+//! fall the voice fades over the `release` time and exits the loop into
+//! the rest of the sample once that rest can hold what is left of the
+//! fade. A release longer than the tail keeps wrapping until it can, so
+//! the sample never ends under a fade still sounding.
 //!
 //! # Pitch shift
 //!
