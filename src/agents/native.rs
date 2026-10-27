@@ -101,12 +101,11 @@ fn run_host(
     set_string(&controller, &module_id, "status", "idle");
     set_string(&controller, &module_id, "last_error", "");
 
-    // The module's controls as last seen, and the edges already serviced.
-    // Every module this worker serves, the one it starts for included,
-    // counts its edges from zero, so an edge that lands before the worker
-    // first looks (a trigger written as the agent starts) is still served.
-    let mut agent: Option<AgentControls> = None;
-    let (mut last_trigger, mut last_reset) = (0, 0);
+    // Edges are claimed from the module itself, which counts them from
+    // zero: one that lands before this worker first looks (a trigger
+    // written as the agent starts) is still served, and one this worker
+    // claims from a replacement before it is stopped is not served again by
+    // the replacement's worker.
     let mut last_request_at: Option<Instant> = None;
     let mut history: Vec<Value> = Vec::new();
 
@@ -123,17 +122,7 @@ fn run_host(
         let Some(current) = agent_controls(&controller, &module_id) else {
             continue;
         };
-        if !agent
-            .as_ref()
-            .is_some_and(|seen| seen.same_instance(&current))
-        {
-            // A replacement counts from zero: every edge it holds is new.
-            (last_trigger, last_reset) = (0, 0);
-            agent = Some(current.clone());
-        }
-        let (trigger_count, reset_count) = (current.trigger_count(), current.reset_count());
-        if reset_count != last_reset {
-            last_reset = reset_count;
+        if current.claim_reset() {
             history.clear();
             set_string(&controller, &module_id, "history", "[]");
             set_string(&controller, &module_id, "last_error", "");
@@ -145,10 +134,9 @@ fn run_host(
             continue;
         }
 
-        if trigger_count == last_trigger {
+        if !current.claim_trigger() {
             continue;
         }
-        last_trigger = trigger_count;
 
         let cooldown = get_number(&controller, &module_id, "cooldown").max(0.0);
         let cooldown = Duration::try_from_secs_f32(cooldown).unwrap_or(Duration::MAX);

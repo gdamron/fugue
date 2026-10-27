@@ -13,6 +13,7 @@
 //! take: the audio module holds the cells and the edge counters, never the
 //! lock, so no audio-thread path reaches it.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::audio_thread::ControlLock;
@@ -94,11 +95,27 @@ pub(super) const TELEMETRY: &[&str] = &[
 
 /// Rising edges on the `trigger` and `reset` inputs, and writes to the
 /// controls of those names. The audio thread records them; the worker
-/// reads them.
+/// claims them.
 #[derive(Default)]
 pub(super) struct Edges {
     pub(super) trigger: EventCounter,
     pub(super) reset: EventCounter,
+    /// The counts workers have claimed up to. Control threads only: kept
+    /// with the module, so the worker it starts for and one still serving
+    /// the module it replaced never claim the same edge.
+    claimed_trigger: AtomicU32,
+    claimed_reset: AtomicU32,
+}
+
+impl Edges {
+    /// Claims the edges `counter` recorded since the last claim: whether
+    /// there were any. Only one claimer wins each edge.
+    fn claim(counter: &EventCounter, claimed: &AtomicU32) -> bool {
+        let count = counter.count();
+        let seen = claimed.load(Ordering::Acquire);
+        seen != count
+            && (claimed.compare_exchange(seen, count, Ordering::AcqRel, Ordering::Acquire)).is_ok()
+    }
 }
 
 /// Shared runtime state for an `agent` module.
@@ -181,26 +198,32 @@ impl AgentControls {
         self.edges.reset.record();
     }
 
-    /// Rising edges seen on `trigger` so far, modulo 2^32. Seeing one also
-    /// shows every control the audio thread applied before it.
-    // The native agent worker reads it; wasm hosts have none yet.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// Edges seen on `trigger` so far, modulo 2^32.
+    #[cfg(test)]
     pub(crate) fn trigger_count(&self) -> u32 {
         self.edges.trigger.count()
     }
 
-    /// Rising edges seen on `reset` so far, modulo 2^32.
-    // The native agent worker reads it; wasm hosts have none yet.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// Edges seen on `reset` so far, modulo 2^32.
+    #[cfg(test)]
     pub(crate) fn reset_count(&self) -> u32 {
         self.edges.reset.count()
     }
 
-    /// Whether `other` is a handle on these same controls rather than on a
-    /// replacement module's.
+    /// Claims the `trigger` edges no worker has claimed yet: whether there
+    /// were any. A claimed edge also shows every control the audio thread
+    /// applied before it.
+    // The native agent worker claims them; wasm hosts have none yet.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub(crate) fn same_instance(&self, other: &AgentControls) -> bool {
-        Arc::ptr_eq(&self.edges, &other.edges)
+    pub(crate) fn claim_trigger(&self) -> bool {
+        Edges::claim(&self.edges.trigger, &self.edges.claimed_trigger)
+    }
+
+    /// Claims the `reset` edges no worker has claimed yet, as
+    /// [`Self::claim_trigger`] does.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn claim_reset(&self) -> bool {
+        Edges::claim(&self.edges.reset, &self.edges.claimed_reset)
     }
 
     /// Writes a telemetry control: the agent worker's writer, since
@@ -437,8 +460,14 @@ mod tests {
         controls.increment_trigger();
         controls.increment_reset();
         assert_eq!((controls.trigger_count(), controls.reset_count()), (2, 1));
-        assert!(controls.same_instance(&controls.clone()));
-        assert!(!controls.same_instance(&self::controls()));
+        // Each edge is claimed once, by whichever handle claims first.
+        let other = controls.clone();
+        assert!(controls.claim_trigger());
+        assert!(!other.claim_trigger());
+        assert!(other.claim_reset());
+        assert!(!controls.claim_reset());
+        controls.increment_trigger();
+        assert!(other.claim_trigger());
         for key in ["trigger_count", "reset_count"] {
             assert!(controls.get_control(key).is_err(), "{key}");
             assert!(controls.controls().iter().all(|meta| meta.key != key));
