@@ -13,7 +13,7 @@
 use serde_json::{Map, Value};
 
 use crate::module_config::ConfigKind;
-use crate::ControlValue;
+use crate::{ControlSurface, ControlValue};
 
 use super::scalar_control_value;
 
@@ -162,4 +162,19 @@ pub(super) fn implicit_restores(
         .filter(|key| has_control(key))
         .filter_map(|key| Some((key.clone(), fresh(key)?)))
         .collect()
+}
+
+/// What control `key` of a freshly built module holds, when a write of it
+/// plays that: a number outside the range its module clamps writes to (a
+/// melody's count of an empty scale, zero, where writes start at one) has
+/// no write that restores it.
+pub(super) fn fresh_value(surface: &dyn ControlSurface, key: &str) -> Option<ControlValue> {
+    let value = surface.get_control(key).ok()?;
+    let clamp = surface
+        .declaration(key)
+        .and_then(|declared| declared.decl.clamp);
+    match (&value, clamp) {
+        (ControlValue::Number(number), Some((min, max))) if !(min..=max).contains(number) => None,
+        _ => Some(value),
+    }
 }

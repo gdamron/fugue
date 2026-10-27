@@ -285,3 +285,64 @@ fn a_restored_key_is_restored_once() {
 
     assert!(report.controls_updated.is_empty(), "{report:?}");
 }
+
+/// One development `pair` of two oscillators whose `frequency` both take
+/// its exposed `pitch`, at different initial values.
+const PAIR: &str = r#"{
+    "version": "1.0.0",
+    "developments": [{ "name": "pair", "definition": {
+        "version": "1.0.0",
+        "modules": [
+            { "id": "a", "type": "oscillator", "config": { "frequency": 220.0 } },
+            { "id": "b", "type": "oscillator", "config": { "frequency": 330.0 } }
+        ],
+        "connections": [],
+        "outputs": [{ "name": "out", "from": "a", "from_port": "audio" }],
+        "controls": [
+            { "name": "pitch", "module": "a", "control": "frequency" },
+            { "name": "pitch", "module": "b", "control": "frequency" }
+        ]
+    } }],
+    "modules": [
+        { "id": "pair", "type": "pair" },
+        { "id": "dac", "type": "dac" }
+    ],
+    "connections": [ { "from": "pair", "from_port": "out", "to": "dac", "to_port": "audio" } ]
+}"#;
+
+#[test]
+fn a_developments_implicit_key_is_not_restored_by_one_write() {
+    // One write cannot put back two inner values, and a development's
+    // config applies after a validation build reads it: reloading keeps
+    // what was written rather than restoring a value the file never plays.
+    let (mut running, pump) = start_pumped(PAIR);
+    running.set_control("pair", "pitch", number(110.0)).unwrap();
+    pump.render(1);
+
+    let report = running.reload(doc(PAIR)).expect("diff applies");
+
+    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert_nothing_rebuilt(&report);
+    assert_eq!(running.get_control("pair", "pitch").unwrap(), number(110.0));
+}
+
+#[test]
+fn a_fresh_value_no_write_reaches_is_not_restored() {
+    // An empty scale builds a count of zero, below the one its writes
+    // start at: no write restores it, so none is made.
+    let tune = melody(json!({ "degrees": [], "seed": 1 }));
+    let (mut running, pump) = start_pumped(&tune);
+    assert_eq!(
+        running.get_control("tune", "degree_count").unwrap(),
+        number(0.0)
+    );
+    running
+        .set_control("tune", "degree_count", number(2.0))
+        .unwrap();
+    pump.render(1);
+
+    let report = running.reload(doc(&tune)).expect("diff applies");
+
+    assert!(report.controls_updated.is_empty(), "{report:?}");
+    assert_nothing_rebuilt(&report);
+}

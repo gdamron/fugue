@@ -223,8 +223,9 @@ pub(crate) struct Implicit<'a> {
 /// array) and the new config does not state restore by control writes to
 /// the control's value in a fresh build of that config (see
 /// [`config_diff::implicit_restores`]), so the module sounds as the file
-/// does without a rebuild. An edit batch passes none: its document states
-/// every write it records.
+/// does without a rebuild. A write `fresh` gives no value for keeps playing
+/// (a development instance's, one no write restores). An edit batch passes
+/// none: its document states every write it records.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_reload(
     current_modules: &IndexMap<String, RuntimeModuleInfo>,
@@ -637,9 +638,25 @@ impl RunningInvention {
             let written = state.written_since.clone();
             (state.modules.clone(), state.connections.clone(), written)
         };
+        // A development instance is not restored: its config is applied as
+        // it binds, after a validation build reads it, and one key may set
+        // several inner controls to different values.
+        let developments: HashSet<&str> = (validated.resolved.modules.iter())
+            .filter(|spec| {
+                validated
+                    .definitions
+                    .loaded
+                    .get(&spec.module_type)
+                    .is_some()
+            })
+            .map(|spec| spec.id.as_str())
+            .collect();
         let fresh = |module_id: &str, key: &str| {
+            if developments.contains(module_id) {
+                return None;
+            }
             let surfaces = validated.fresh.lock().unwrap();
-            surfaces.get(module_id)?.get_control(key).ok()
+            config_diff::fresh_value(surfaces.get(module_id)?.as_ref(), key)
         };
         let mut plan = plan_reload(
             &current_modules,
