@@ -72,6 +72,31 @@ fn a_closed_queue_hands_every_later_value_back_and_keeps_what_it_holds() {
 }
 
 #[test]
+fn a_position_is_taken_once_everything_before_it_is_popped_across_the_wrap() {
+    let (producer, mut consumer) = bounded_from(4, u64::MAX - 2);
+    assert!(producer.taken_before(producer.position()), "nothing queued");
+    for lap in 0..3u32 {
+        producer.try_push(lap).unwrap();
+        let first = producer.position();
+        producer.try_push(10 + lap).unwrap();
+        let both = producer.position();
+        let claim = producer.claim().unwrap();
+        let claimed = producer.position();
+        assert!(!producer.taken_before(first), "published, not popped");
+        assert_eq!(consumer.pop(), Some(lap));
+        assert!(producer.taken_before(first));
+        assert!(!producer.taken_before(both));
+        assert_eq!(consumer.pop(), Some(10 + lap));
+        assert!(producer.taken_before(both));
+        assert!(!producer.taken_before(claimed), "claimed, not published");
+        claim(20 + lap);
+        assert!(!producer.taken_before(claimed));
+        assert_eq!(consumer.pop(), Some(20 + lap));
+        assert!(producer.taken_before(claimed));
+    }
+}
+
+#[test]
 fn positions_wrap_past_u64_max() {
     let (producer, mut consumer) = bounded_from(4, u64::MAX - 5);
     for i in 0..40u32 {

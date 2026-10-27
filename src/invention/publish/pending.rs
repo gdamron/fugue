@@ -14,11 +14,10 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use super::publisher::{OUTCOME_QUEUE_CAPACITY, REQUEST_QUEUE_CAPACITY, WAITING_CAPACITY};
 use crate::control_request::{
-    EventCursor, Outcome, OutcomeReceiver, Refusal, RequestId, RtValue, Source, Transport, When,
+    EventCursor, Outcome, OutcomeReceiver, Refusal, RequestId, RequestSender, RtValue, Source, When,
 };
 use crate::invention::request_log::{
     LoggedBeat, LoggedEdit, LoggedRequest, LoggedWhen, Recorder, RequestLog,
@@ -146,13 +145,13 @@ pub(crate) struct PendingLog {
     outcomes: VecDeque<(RequestId, Outcome)>,
     receiver: OutcomeReceiver,
     dropped: EventCursor,
-    /// What the graph has rendered, to tell a write timed on a sample that
-    /// passed from one that still waits once outcomes are lost.
-    transport: Arc<Transport>,
-    /// Writes timed on a sample that were waiting when outcomes were lost,
-    /// each with the count past which it has surely settled (see
-    /// `pending::lost`).
-    suspect: Vec<(RequestId, u64)>,
+    /// The graph's request queue, read for what it has rendered and taken
+    /// up, to tell a write timed on a sample that passed from one that
+    /// still waits once outcomes are lost.
+    requests: RequestSender,
+    /// Writes timed on a sample that were waiting when outcomes were lost
+    /// (see `pending::lost`).
+    suspect: Vec<lost::Suspect>,
     /// Outcomes lost since they were last taken: dropped by the audio
     /// thread for want of room, or evicted here unreported.
     lost: u64,
@@ -179,9 +178,9 @@ pub(crate) struct PendingLog {
 }
 
 impl PendingLog {
-    pub(crate) fn new(receiver: OutcomeReceiver, transport: Arc<Transport>) -> Self {
+    pub(crate) fn new(receiver: OutcomeReceiver, requests: RequestSender) -> Self {
         Self {
-            transport,
+            requests,
             suspect: Vec::new(),
             writes: VecDeque::new(),
             outcomes: VecDeque::new(),
@@ -219,7 +218,7 @@ impl PendingLog {
         // Read before the outcomes: every block finished by then has queued
         // (or dropped) its outcomes, so a write due before it that is still
         // here once they are received lost its own.
-        let rendered = self.transport.rendered();
+        let rendered = self.taken_up();
         while let Some((id, outcome, latched)) = self.receiver.try_recv() {
             if let Some(at) = self.timed.iter().position(|(timed, _)| *timed == id) {
                 let edit = self.timed.remove(at).and_then(|(_, edit)| edit);
@@ -271,26 +270,7 @@ impl PendingLog {
         }
         let dropped = self.dropped.take(self.receiver.dropped());
         if dropped > 0 {
-            self.lost += u64::from(dropped);
-            self.log.lost(u64::from(dropped));
-            // Which applied cannot be known; most do, and an author's
-            // write is not to be lost from the document. One timed on a
-            // sample may still wait, so it stays until its own outcome or
-            // until its sample has surely rendered. One timed on a beat or
-            // a condition may have settled or may wait, so it stays too:
-            // listed until its outcome, or until it is forgotten (see
-            // `submitted`) or the invention stops.
-            let writes = std::mem::take(&mut self.writes);
-            let (settled, waiting): (VecDeque<_>, VecDeque<_>) =
-                (writes.into_iter()).partition(|(_, write)| write.when == When::Now);
-            self.writes = waiting;
-            for (id, write) in settled {
-                self.authored(&write);
-                self.announce(id, &write, None);
-            }
-            self.suspect_lost(rendered);
-            self.timed.clear();
-            self.timed_lost = true;
+            self.lost_outcomes(dropped);
         }
         self.settle_lost(rendered);
     }
