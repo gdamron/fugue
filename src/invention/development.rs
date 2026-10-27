@@ -30,6 +30,8 @@ mod fan_out_tests;
 #[cfg(test)]
 mod instrument_fan_out_tests;
 #[cfg(test)]
+mod instrument_note_off_tests;
+#[cfg(test)]
 mod kit_fan_out_tests;
 #[cfg(test)]
 mod lost_tests;

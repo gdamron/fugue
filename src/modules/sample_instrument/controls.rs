@@ -181,7 +181,8 @@ fn table(zones: usize) -> ControlTable {
             RtValue::F32(0.0),
             "Release a held note by MIDI note number",
         )
-        .event(),
+        .event()
+        .reserved(),
         ControlDecl::new(
             "root_note",
             DeclKind::Integer { min: 0, max: 127 },

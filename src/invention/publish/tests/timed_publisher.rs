@@ -6,7 +6,7 @@
 use super::request_beats::{outcomes_of, render_counted};
 use super::*;
 use crate::control_request::{Outcome, Refusal, RequestId, When};
-use crate::invention::publish::publisher::{EDIT_RESERVE, REQUEST_QUEUE_CAPACITY};
+use crate::invention::publish::publisher::{EDIT_RESERVE, REQUEST_QUEUE_CAPACITY, RESERVED_ROOM};
 
 /// Queues `prepared` to land `when`, refused once `ttl` samples pass.
 fn time(rig: &Rig, prepared: PreparedChange, when: When, ttl: Option<u64>) -> RequestId {
@@ -121,8 +121,9 @@ fn a_change_prepared_before_a_landing_is_refused_after_it() {
 fn a_change_refused_for_a_full_queue_leaves_a_timed_edit_waiting() {
     let mut rig = Rig::new(BASE);
     rig.render(1);
-    // Every slot but one taken, then the timed edit takes that one.
-    for n in 0..REQUEST_QUEUE_CAPACITY + EDIT_RESERVE - 1 {
+    // Every slot edits may take but one taken, then the timed edit takes
+    // that one.
+    for n in 0..REQUEST_QUEUE_CAPACITY + EDIT_RESERVE - RESERVED_ROOM - 1 {
         let prepared = toggle(&rig, n);
         let mut publisher = rig.live.publisher().lock().unwrap();
         assert!(publisher.publish(prepared).is_ok());

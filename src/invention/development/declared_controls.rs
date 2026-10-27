@@ -210,6 +210,9 @@ impl DevelopmentControls {
             }
             // One event alias makes the key an event: never coalesced.
             decls[position].event |= found.decl.event;
+            // And one reserved alias (a note off) makes it reserved, so a
+            // live write to it takes the room kept for one.
+            decls[position].reserved |= found.decl.reserved;
             queued |= found.decl.event && found.queued;
             let (kind, choices) = reach(decls[position].kind, found.decl.kind);
             aliases[position].push(Alias {

@@ -22,6 +22,7 @@ pub(crate) fn request_channel(
         overflows: EventCounter::new(),
         transport,
         watches: Arc::new(WatchSlots::default()),
+        reserved: Arc::new(ReservedQueued::default()),
     });
     let sender = RequestSender {
         queue,
@@ -58,6 +59,33 @@ struct SenderShared {
     /// Requests timed by a condition in flight, released by the drain as
     /// each settles.
     watches: Arc<WatchSlots>,
+    reserved: Arc<ReservedQueued>,
+}
+
+/// Reserved requests ([`Request::reserved`]) queued and taken, so the drain
+/// knows one waits behind the head of a queue it would otherwise leave
+/// alone for a full store, and takes what is ahead of it, as it does for an
+/// edit (see `graph::requests`).
+#[derive(Debug, Default)]
+pub(crate) struct ReservedQueued {
+    queued: AtomicU64,
+    /// Written by the drain alone.
+    taken: AtomicU64,
+}
+
+impl ReservedQueued {
+    /// The drain took one.
+    pub(crate) fn took(&self) {
+        let taken = self.taken.load(Ordering::Relaxed);
+        self.taken.store(taken + 1, Ordering::Relaxed);
+    }
+
+    /// Whether one waits in the queue. Seen before the request it counts,
+    /// the drain takes what is ahead of it a block early; seen late, it
+    /// waits a block.
+    pub(crate) fn waiting(&self) -> bool {
+        self.queued.load(Ordering::Acquire) > self.taken.load(Ordering::Relaxed)
+    }
 }
 
 impl RequestSender {
@@ -131,13 +159,25 @@ impl RequestSender {
         if watching {
             self.shared.watches.take();
         }
-        let pushed = if self.reserve == 0 || self.queue.leaves(self.reserve) {
+        // A reserved request may take any slot: the handles that leave
+        // slots free leave some for it.
+        let reserve = match request.reserved {
+            true => 0,
+            false => self.reserve,
+        };
+        let reserved = request.reserved;
+        let pushed = if reserve == 0 || self.queue.leaves(reserve) {
             self.queue.try_push(request)
         } else {
             Err(request)
         };
         match pushed {
-            Ok(()) => Ok(id),
+            Ok(()) => {
+                if reserved {
+                    self.shared.reserved.queued.fetch_add(1, Ordering::Release);
+                }
+                Ok(id)
+            }
             Err(request) => {
                 if watching {
                     self.shared.watches.release();
@@ -184,6 +224,11 @@ impl RequestSender {
     /// condition from as they settle.
     pub(crate) fn watch_slots(&self) -> Arc<WatchSlots> {
         Arc::clone(&self.shared.watches)
+    }
+
+    /// The count of reserved requests queued, for the channel's drain.
+    pub(crate) fn reserved_queued(&self) -> Arc<ReservedQueued> {
+        Arc::clone(&self.shared.reserved)
     }
 
     /// Submissions refused for want of room, for telemetry.

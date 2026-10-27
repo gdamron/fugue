@@ -345,3 +345,34 @@ fn late_events_at_one_sample_stop_the_store_one_by_one() {
     assert_eq!(applied, [2, 0, 1]);
     assert_eq!(store.len(), 0);
 }
+
+#[test]
+fn a_reserved_request_takes_the_place_of_the_latest_due_one_that_is_not() {
+    let (mut store, outcomes) = store_of(4);
+    let capacity = store.capacity();
+    let reserved = |id: u64| {
+        let mut request = request(id, target(INSTALLED, 0, id as u16), 0.0);
+        request.reserved = true;
+        request
+    };
+    for n in 0..4 {
+        store.insert(request(n, target(INSTALLED, 0, n as u16), 0.0), 100 + n);
+    }
+    let ((), allocs, frees) = allocator_events(|| {
+        // At the latest one's own sample, then earlier.
+        store.insert(reserved(90), 103);
+        for id in 91..=93 {
+            store.insert(reserved(id), 10);
+        }
+        // Every one waiting is reserved: neither kind finds a place.
+        store.insert(reserved(94), 10);
+        store.insert(request(95, target(INSTALLED, 0, 95), 0.0), 10);
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!((store.len(), store.capacity()), (4, capacity));
+    let refused = |id| (id, Outcome::Refused(Refusal::PendingFull));
+    let expected = [3, 2, 1, 0, 94, 95].map(refused);
+    assert_eq!(log(&outcomes), expected);
+    let applied: Vec<_> = apply_at(&mut store, 200).iter().map(|e| e.1).collect();
+    assert_eq!(applied, [91, 92, 93, 90], "in time, then receipt, order");
+}

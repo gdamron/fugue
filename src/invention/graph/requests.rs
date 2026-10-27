@@ -46,11 +46,15 @@
 //! gone or its ttl run out: settled at once, it needs no room either);
 //! otherwise it and everything behind it stay queued, and producers get a
 //! synchronous `QueueFull` once the queue fills. Two things keep that from
-//! shutting out an edit:
+//! shutting out an edit, or a reserved request (`Request::reserved`, a
+//! note off), which ends something sounding:
 //!
 //! - control requests may fill only part of the queue
 //!   (`RequestSender::reserving`), leaving the rest for edits, so an edit
-//!   always finds a slot while installs keep up;
+//!   always finds a slot while installs keep up, and edits leave a few
+//!   (`RESERVED_ROOM`) for a reserved request, which may take any; in a
+//!   full store a reserved request takes the place of the latest-due
+//!   request that is not, refused instead;
 //! - while an edit waits behind a full store and could install (the
 //!   publisher's `published` generation is ahead of the installed one), the
 //!   requests in front of it are popped anyway and those finding no room
@@ -58,7 +62,9 @@
 //!   then installs this block: no more control requests than the block's
 //!   budget can be queued in front of it. One behind it may wait a block
 //!   once the budget is spent; a payload without retire room stops intake
-//!   ahead of any edit (below).
+//!   ahead of any edit (below). So with a reserved request waiting
+//!   (`ReservedQueued`): what is ahead of it is taken, and refused when
+//!   there is no room, rather than leave it stuck behind.
 //!
 //! A request timed in beats needs room among the watches, which may never
 //! free (a beat far off, a clock stopped): one of the installed generation
@@ -128,7 +134,7 @@ use super::SignalGraph;
 use crate::control_request::{
     admits_hold, apply_declared, expired, take_automation, take_hold, Conditions, ControlIndex,
     ControlTarget, Outcome, OutcomeSender, PendingStore, QueueConsumer, Rank, Refusal, Request,
-    RequestValue, RtValue, Standing, WatchSlots, Watches, When, CONDITION_CAPACITY,
+    RequestValue, ReservedQueued, RtValue, Standing, WatchSlots, Watches, When, CONDITION_CAPACITY,
 };
 use crate::payload::{Payload, Retirer};
 
@@ -178,6 +184,9 @@ pub(crate) struct RequestDrain {
     /// `publication::landing`). The full-store hint stays `Relaxed`: a stale
     /// value holds back one more block.
     published: Arc<AtomicU64>,
+    /// Reserved requests queued and taken: one waiting is taken even into
+    /// a full store, as an edit is.
+    reserved: Arc<ReservedQueued>,
     /// Run as the drain is dropped, before its queue: closes the link to
     /// further submissions (see `Publisher::close`).
     pub(crate) on_drop: Option<Box<dyn FnOnce() + Send>>,
@@ -191,7 +200,7 @@ pub(crate) fn offline_requests(graph: &mut SignalGraph) {
     use crate::control_request::{outcome_channel, request_channel};
     use crate::payload::RetireQueue;
     let (sender, requests) = request_channel(1, Arc::clone(&graph.transport));
-    let slots = sender.watch_slots();
+    let (slots, reserved) = (sender.watch_slots(), sender.reserved_queued());
     let (outcomes, _) = outcome_channel(1);
     let retirer = Retirer::new(RetireQueue::with_capacity(1), 1);
     graph.requests = Some(RequestDrain::new(
@@ -203,6 +212,7 @@ pub(crate) fn offline_requests(graph: &mut SignalGraph) {
         outcomes,
         Default::default(),
         slots,
+        reserved,
     ));
     graph.tables_stale = true;
 }
@@ -218,7 +228,7 @@ pub(crate) fn link_requests(
     use crate::control_request::{outcome_channel, request_channel};
     use crate::payload::RetireQueue;
     let (sender, requests) = request_channel(capacity, std::sync::Arc::clone(&graph.transport));
-    let slots = sender.watch_slots();
+    let (slots, reserved) = (sender.watch_slots(), sender.reserved_queued());
     let (outcomes, _) = outcome_channel(capacity);
     let retirer = Retirer::new(RetireQueue::with_capacity(capacity), capacity);
     graph.requests = Some(RequestDrain::new(
@@ -230,6 +240,7 @@ pub(crate) fn link_requests(
         outcomes,
         Default::default(),
         slots,
+        reserved,
     ));
     graph.tables_stale = true;
     sender
@@ -240,7 +251,7 @@ impl RequestDrain {
     /// must hold at most `pop_limit` control requests; `retirer` takes every payload
     /// the audio side does not keep, and `outcomes` reports every request.
     /// `slots` are the request channel's ([`RequestSender::watch_slots`]):
-    /// the conditions release theirs as they settle.
+    /// the conditions release theirs as they settle; so is `reserved`.
     ///
     /// [`RequestSender::watch_slots`]: crate::control_request::RequestSender::watch_slots
     #[allow(clippy::too_many_arguments)]
@@ -253,6 +264,7 @@ impl RequestDrain {
         outcomes: OutcomeSender,
         published: Arc<AtomicU64>,
         slots: Arc<WatchSlots>,
+        reserved: Arc<ReservedQueued>,
     ) -> Self {
         let mut store = PendingStore::new(pending, retirer, outcomes);
         // A condition waiting on a request submitted before it starts
@@ -268,6 +280,7 @@ impl RequestDrain {
             installed: 0,
             clockless: false,
             published,
+            reserved,
             on_drop: None,
         }
     }
@@ -440,12 +453,12 @@ impl SignalGraph {
                     // A timed one waits as any timed request does.
                     head.value.is_edit() && head.when == When::Now,
                     head.value.is_payload(),
-                    head.event,
+                    (head.event, head.reserved),
                     replaces,
                     resolve(self, head),
                 )
             });
-            let Some((is_edit, payload, event, replaces, landing)) = head else {
+            let Some((is_edit, payload, (event, reserved), replaces, landing)) = head else {
                 break;
             };
             if is_edit {
@@ -473,7 +486,9 @@ impl SignalGraph {
             let (needs_room, full) = match landing {
                 Ok(Landing::At(target, at)) => (
                     !(replaces && drain.pending.coalesces_with(&target, at, event)),
-                    drain.pending.is_full(),
+                    // A reserved one never waits: it takes a place (see
+                    // `PendingStore::insert`).
+                    drain.pending.is_full() && !reserved,
                 ),
                 // A watch may wait without end (a repeating grid, a far
                 // beat, a stopped clock), so a full store refuses one of
@@ -489,12 +504,17 @@ impl SignalGraph {
                 }
                 Err(_) => (false, false),
             };
-            if !drain.clockless && full && needs_room && !edit_waiting {
+            // A reserved request behind is as an edit.
+            let pressing = edit_waiting || drain.reserved.waiting();
+            if !drain.clockless && full && needs_room && !pressing {
                 break;
             }
             let Some(mut request) = drain.requests.pop() else {
                 break;
             };
+            if reserved {
+                drain.reserved.took();
+            }
             *budget -= 1;
             bridging |= Some(request.target.generation) == bridged;
             drain.pending.outcomes.reserve(&request);

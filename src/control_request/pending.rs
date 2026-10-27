@@ -249,8 +249,11 @@ impl PendingStore {
 
     /// Stores `request` to apply at sample `at`, replacing a waiting request
     /// for the same target and sample unless it is an event, or settles it refused
-    /// ([`Refusal::PendingFull`]) when the store is full. Binary search,
-    /// then an in-place shift: allocation- and free-free.
+    /// ([`Refusal::PendingFull`]) when the store is full; a reserved one
+    /// ([`Request::reserved`]) refuses the latest-due request that is not
+    /// in its place, and is refused only when every one waiting is
+    /// reserved. Binary search, then an in-place shift: allocation- and
+    /// free-free.
     pub(crate) fn insert(&mut self, request: Request, at: u64) {
         self.place(request, at, true);
     }
@@ -282,9 +285,23 @@ impl PendingStore {
             self.outcomes.settle(old.request, lost);
             end -= 1;
         } else if self.is_full() {
+            // A reserved request takes the place of the latest-due one that
+            // is not, refused instead; with none, it is refused itself.
+            let displaced = match request.reserved {
+                true => self.entries.iter().rposition(|e| !e.request.reserved),
+                false => None,
+            };
+            let Some(displaced) = displaced else {
+                self.outcomes
+                    .settle(request, Outcome::Refused(Refusal::PendingFull));
+                return;
+            };
+            let old = self.entries.remove(displaced);
             self.outcomes
-                .settle(request, Outcome::Refused(Refusal::PendingFull));
-            return;
+                .settle(old.request, Outcome::Refused(Refusal::PendingFull));
+            if displaced < end {
+                end -= 1;
+            }
         }
         self.entries.insert(end, Pending { request, at });
     }

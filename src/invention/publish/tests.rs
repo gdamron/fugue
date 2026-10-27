@@ -14,6 +14,7 @@ mod declared_routes;
 mod drops;
 mod front_door_sources;
 mod inputs;
+mod instrument_note_off_room;
 mod instrument_release;
 mod melody;
 mod migrated;
