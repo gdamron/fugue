@@ -178,6 +178,10 @@ pub(crate) struct ControlDecl {
     /// a state: two at one sample are two events, so its requests are
     /// never coalesced, and a module adopting its state never replays one.
     pub(crate) event: bool,
+    /// Whether its writes may take the room kept for writes that end
+    /// something sounding (a note off), so a flood of other writes never
+    /// shuts them out (see [`Request::reserved`](super::Request)).
+    pub(crate) reserved: bool,
     /// For a number its module clamps to as it applies (`min`, `max`), so
     /// automation can see the value a write will hold before it applies.
     /// For an integer, its own range: it takes any whole number a client
@@ -234,6 +238,7 @@ impl ControlDecl {
             count: 1,
             kind,
             event: false,
+            reserved: false,
             clamp: None,
             spellings: &[],
             unit: "",
@@ -284,6 +289,13 @@ impl ControlDecl {
     /// Makes each write an event rather than a state (see the field).
     pub(crate) const fn event(mut self) -> Self {
         self.event = true;
+        self
+    }
+
+    /// Lets its writes take the room kept for writes that end something
+    /// sounding (see the field).
+    pub(crate) const fn reserved(mut self) -> Self {
+        self.reserved = true;
         self
     }
 

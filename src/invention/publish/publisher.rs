@@ -42,6 +42,11 @@ pub(crate) const REQUEST_QUEUE_CAPACITY: usize = 256;
 /// publishing is refused with `QueueFull`.
 pub(crate) const EDIT_RESERVE: usize = REQUEST_QUEUE_CAPACITY;
 
+/// Slots of the [`EDIT_RESERVE`] edits leave free for reserved control
+/// requests (`Request::reserved`: note offs), which may take any slot, so
+/// edits queued behind a stalled install never shut out the end of a note.
+pub(crate) const RESERVED_ROOM: usize = 128;
+
 /// The request queue's size: control requests and the edits' reserve.
 const QUEUE_SLOTS: usize = REQUEST_QUEUE_CAPACITY + EDIT_RESERVE;
 
@@ -101,7 +106,8 @@ pub(crate) struct Publisher {
     block_size: usize,
     /// Submits each publication as an edit request, into the queue control
     /// requests share, so the audio thread meets them in one order. It may
-    /// use the slots other senders leave free ([`EDIT_RESERVE`]).
+    /// use the slots other senders leave free ([`EDIT_RESERVE`]), but for
+    /// [`RESERVED_ROOM`].
     requests: RequestSender,
     /// The newest generation queued as an edit or adopted, for the audio
     /// thread: an edit waiting there is never starved by a full pending
@@ -147,6 +153,7 @@ impl Publisher {
             outcome_tx,
             Arc::clone(&published),
             requests.watch_slots(),
+            requests.reserved_queued(),
         ));
         // A new drain plays no table yet: look for them again.
         graph.tables_stale = true;
@@ -161,7 +168,7 @@ impl Publisher {
             mirror: TopologyMirror::of(&graph.modules, &graph.edges),
             generation: 0,
             block_size: graph.block_size,
-            requests: requests.clone(),
+            requests: requests.reserving(RESERVED_ROOM as u64),
             published,
             inputs: Producer::claim(inputs),
             applied,

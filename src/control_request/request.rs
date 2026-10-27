@@ -198,6 +198,14 @@ pub(crate) struct Request {
     /// [`ControlDecl::event`](super::ControlDecl)): never coalesced with
     /// another request for the same control and sample.
     pub(crate) event: bool,
+    /// Whether it may take the room kept for writes that end something
+    /// sounding, a note off say (its control is declared so, see
+    /// [`ControlDecl::reserved`](super::ControlDecl)): any free slot of a
+    /// live queue, edits leaving it some of theirs, and in a full pending
+    /// store the place of the latest-due request that is not reserved, so
+    /// writes or edits filling either never shut it out, nor does an edit
+    /// drain refuse it.
+    pub(crate) reserved: bool,
     /// The last sample the request may apply at. Set from [`Self::ttl`] at
     /// submission; the audio thread reads only this.
     pub(crate) expires: Option<u64>,
@@ -217,6 +225,7 @@ impl Request {
             priority: 0,
             ttl: None,
             event: false,
+            reserved: false,
             expires: None,
             id: RequestId(0),
         }

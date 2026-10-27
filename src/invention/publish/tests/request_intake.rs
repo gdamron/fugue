@@ -193,11 +193,12 @@ fn requests_and_edits_in_one_block_apply_in_order_cleanly() {
 }
 
 /// Edits have the queue's reserve to themselves, but not without end:
-/// once every slot is taken, an edit is refused whole, nothing published,
+/// once every slot is taken but those left for reserved requests (note
+/// offs), an edit is refused whole, nothing published,
 /// and the ones queued install in order once there is room.
 #[test]
 fn a_full_request_queue_refuses_an_edit_and_hands_the_change_back() {
-    use crate::invention::publish::publisher::EDIT_RESERVE;
+    use crate::invention::publish::publisher::{EDIT_RESERVE, RESERVED_ROOM};
     let mut rig = Rig::new(BASE);
     rig.render(1);
     rig.hold_a_retirement();
@@ -217,7 +218,10 @@ fn a_full_request_queue_refuses_an_edit_and_hands_the_change_back() {
             Err(refused) => break refused,
         }
     };
-    assert_eq!(queued, (REQUEST_QUEUE_CAPACITY + EDIT_RESERVE) as u64);
+    assert_eq!(
+        queued,
+        (REQUEST_QUEUE_CAPACITY + EDIT_RESERVE - RESERVED_ROOM) as u64
+    );
     assert!(matches!(refused.error, GraphCommandError::QueueFull));
     assert!(refused.change.publication.is_some(), "handed back whole");
     assert_eq!(rig.generation_and_applied(), (generation + queued, applied));

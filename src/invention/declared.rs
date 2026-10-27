@@ -622,9 +622,12 @@ impl DeclaredSurface {
         options: &WriteOptions,
         authored: Option<&str>,
     ) -> Result<Queued, String> {
-        let (event, clamp, whole) = match self.table.decl(index) {
-            Some((decl, _)) => (decl.event, decl.clamp.filter(|_| self.clamps), decl.whole),
-            None => (false, None, false),
+        let (event, reserved, clamp, whole) = match self.table.decl(index) {
+            Some((decl, _)) => {
+                let clamp = decl.clamp.filter(|_| self.clamps);
+                (decl.event, decl.reserved, clamp, decl.whole)
+            }
+            None => (false, false, None, false),
         };
         let route = {
             let mut route = self.route.lock().unwrap();
@@ -771,6 +774,7 @@ impl DeclaredSurface {
                 };
                 let mut request = Request::new(target, value);
                 request.event = event;
+                request.reserved = reserved;
                 request.intent = match options.authored {
                     Some(_) => Intent::Author,
                     None => Intent::Perform,
