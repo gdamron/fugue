@@ -158,7 +158,10 @@ fn only_the_listed_files_write_a_surface_past_the_front_door() {
     sources(&root, &mut files);
     let mut writers = Vec::new();
     for path in files {
-        let text = std::fs::read_to_string(&path).unwrap();
+        // Line endings as checked out (CRLF on Windows) read as LF.
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("\r\n", "\n");
         // Up to its inline tests, if it has any.
         let code = text.split("#[cfg(test)]\nmod tests {").next().unwrap();
         let direct = ["surface.set_control(", ".set_control_transient("];
