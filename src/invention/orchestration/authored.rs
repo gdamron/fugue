@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use super::RuntimeSnapshot;
 use crate::invention::audio_assets;
 use crate::invention::declared::{Queued, WriteOptions};
+use crate::invention::publish::Contested;
 use crate::invention::runtime::GraphCommandError;
 use crate::ControlValue;
 
@@ -42,5 +43,27 @@ impl RuntimeSnapshot {
         let load = audio_assets::resolve_asset_write(source_path.as_deref(), key, value)
             .map_err(GraphCommandError::ControlError)?;
         Ok((load, source_path))
+    }
+
+    /// Writes `value`, a commit's, to control `key` of `module_id`, kept by
+    /// the commit, as [`Self::set_control_transient`] does: unrecorded, the
+    /// retained document holding it already. Unless a timed authored write
+    /// contests it (see [`Contested`]): then it is recorded as it applies,
+    /// as the value the commit's document holds, so the document ends on
+    /// whichever of the two applied later, as playback does. An event is
+    /// written unrecorded all the same.
+    pub(crate) fn set_control_committed(
+        &self,
+        (module_id, key): (&str, &str),
+        value: ControlValue,
+        contested: &Contested,
+    ) -> Result<(), GraphCommandError> {
+        let authoring = contested.authoring(module_id, key);
+        let Some(authoring) = authoring.filter(|_| !self.is_event(module_id, key)) else {
+            return self.set_control_transient(module_id, key, value);
+        };
+        let options = WriteOptions::default().authored_as(authoring);
+        self.make_authored(module_id, key, value, &options)
+            .map(drop)
     }
 }

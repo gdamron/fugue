@@ -56,11 +56,29 @@ mod timed_keep;
 mod timed_publisher;
 mod timed_rebind;
 mod timed_status;
-mod timed_writes;
 mod timed_swap;
+mod timed_writes;
 mod timelines;
 mod unwind;
 mod writes;
+
+thread_local! {
+    /// Run on the committing thread as a commit releases the publisher.
+    static AFTER_COMMIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `hook` as the next commit on this thread releases the publisher,
+/// before its caller makes the commit's control writes.
+pub(crate) fn on_commit(hook: impl FnOnce() + 'static) {
+    AFTER_COMMIT.set(Some(Box::new(hook)));
+}
+
+pub(super) fn after_commit() {
+    if let Some(hook) = AFTER_COMMIT.take() {
+        hook();
+    }
+}
 
 use probe::{DropProbeFactory, DROP_PROBE};
 

@@ -114,6 +114,10 @@ impl RunningInvention {
             .map(|spec| spec.id.as_str())
             .collect();
         let mut previous = None;
+        // Authored writes wait from the commit to its last survivor write,
+        // so none lands between what the commit reads of them and its own
+        // writes, unordered against both (see `Committed::contested`).
+        let authoring = self.live.authoring();
         let committed = self.live.commit_with(change, |state| {
             previous = state.document.replace(document.clone());
             // A survivor's stored config takes the batch's writes to keys it
@@ -141,15 +145,16 @@ impl RunningInvention {
             if built.contains(write.module_id.as_str()) {
                 continue;
             }
-            // Unrecorded: the retained document already holds the value.
-            let written = snapshot.set_control_transient(
-                &write.module_id,
-                &write.key,
+            // Unrecorded, the retained document holding the value, unless
+            // a timed write contests it.
+            let written = snapshot.set_control_committed(
+                (&write.module_id, &write.key),
                 audio_assets::resolve_checked_asset_write(
                     document.source_path.as_deref(),
                     &write.key,
                     &write.value,
                 ),
+                &committed.contested,
             );
             let outcome = written.err().map(|error| match error {
                 GraphCommandError::ControlError(message) => message,
@@ -157,6 +162,7 @@ impl RunningInvention {
             });
             last.insert((write.module_id.as_str(), write.key.as_str()), outcome);
         }
+        drop(authoring);
         // One report entry per control, and one event per control written,
         // with its final value.
         let mut actual = Vec::new();

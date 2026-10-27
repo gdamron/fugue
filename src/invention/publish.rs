@@ -39,6 +39,7 @@ use crate::ModuleRegistry;
 mod announce;
 mod authored;
 mod change;
+mod contested;
 mod pending;
 mod policy;
 mod publisher;
@@ -61,6 +62,7 @@ pub(crate) use announce::Progress;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use authored::APPLY_WAIT;
 pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
+pub(crate) use contested::Contested;
 pub(crate) use pending::{Authoring, DocumentStep, PendingLog, PendingWrite};
 #[cfg(test)]
 pub(crate) use publisher::OUTCOME_QUEUE_CAPACITY;
@@ -69,8 +71,8 @@ pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use retarget::Retarget;
 pub(crate) use timed::EditTime;
-pub(crate) use timed_write::WriteTime;
 pub(crate) use timed_status::{CancelCause, EditState, EditStatus, Touched};
+pub(crate) use timed_write::WriteTime;
 
 /// How many times an edit that builds a module ([`LiveGraph::add_module`],
 /// [`LiveGraph::swap_module`]) builds it when commits keep adopting new
@@ -213,6 +215,9 @@ pub(crate) struct Committed {
     pub(crate) started: Vec<RuntimeModuleInfo>,
     /// Modules the change removed or replaced.
     pub(crate) stopped: Vec<String>,
+    /// Its caller's writes to modules it kept that a timed authored write
+    /// contests, recorded as they apply (see [`Contested`]).
+    pub(crate) contested: Contested,
 }
 
 impl LiveGraph {
@@ -604,8 +609,14 @@ impl LiveGraph {
                 (&[], &writes),
                 (&mut VecDeque::new(), None),
             );
+            let contested = self.contested(&[], &writes);
             drop(publisher);
-            return Ok(Committed::default());
+            #[cfg(test)]
+            tests::after_commit();
+            return Ok(Committed {
+                contested,
+                ..Committed::default()
+            });
         }
         // Once the audio side is gone, `publish` refuses with
         // `AudioThreadStopped` rather than a `QueueFull` to retry forever.
@@ -643,14 +654,17 @@ impl LiveGraph {
         // Authored writes not yet recorded that the change replaced are
         // forgotten (see `authored::Fence`).
         let fence = authored::Fence::open(&self.pending, &self.state, (&VecDeque::new(), None));
-        let committed = self.commit_published(&publisher, published, &self.port(), retain);
+        let mut committed = self.commit_published(&publisher, published, &self.port(), retain);
         since.rebase(&self.state, (&committed.stopped, &writes));
         fence.close(
             (&self.pending, &self.state),
             (&committed.stopped, &writes),
             (&mut VecDeque::new(), None),
         );
+        committed.contested = self.contested(&committed.stopped, &writes);
         drop(publisher);
+        #[cfg(test)]
+        tests::after_commit();
         self.settle();
         Ok(committed)
     }
