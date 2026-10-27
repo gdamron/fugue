@@ -26,6 +26,7 @@ use crate::invention::request_log::{
 use crate::ControlValue;
 
 mod authored;
+mod lost;
 
 /// The most writes the log remembers: every request the queue, the
 /// pending store and the watches can hold at once.
@@ -148,6 +149,10 @@ pub(crate) struct PendingLog {
     /// What the graph has rendered, to tell a write timed on a sample that
     /// passed from one that still waits once outcomes are lost.
     transport: Arc<Transport>,
+    /// Writes timed on a sample that were waiting when outcomes were lost,
+    /// each with the count past which it has surely settled (see
+    /// `pending::lost`).
+    suspect: Vec<(RequestId, u64)>,
     /// Outcomes lost since they were last taken: dropped by the audio
     /// thread for want of room, or evicted here unreported.
     lost: u64,
@@ -177,6 +182,7 @@ impl PendingLog {
     pub(crate) fn new(receiver: OutcomeReceiver, transport: Arc<Transport>) -> Self {
         Self {
             transport,
+            suspect: Vec::new(),
             writes: VecDeque::new(),
             outcomes: VecDeque::new(),
             receiver,
@@ -206,9 +212,14 @@ impl PendingLog {
 
     /// Receives every outcome waiting, settling the writes they belong to.
     /// When the audio thread had to drop outcomes, which writes they
-    /// settled cannot be known, so the log forgets every write it holds
-    /// rather than list one as pending for ever.
+    /// settled cannot be known: an untimed write is taken to have applied,
+    /// and one timed on a sample is once the graph has surely rendered it
+    /// (see `pending::lost`), rather than list one as pending for ever.
     pub(crate) fn settle(&mut self) {
+        // Read before the outcomes: every block finished by then has queued
+        // (or dropped) its outcomes, so a write due before it that is still
+        // here once they are received lost its own.
+        let rendered = self.transport.rendered();
         while let Some((id, outcome, latched)) = self.receiver.try_recv() {
             if let Some(at) = self.timed.iter().position(|(timed, _)| *timed == id) {
                 let edit = self.timed.remove(at).and_then(|(_, edit)| edit);
@@ -263,29 +274,25 @@ impl PendingLog {
             self.lost += u64::from(dropped);
             self.log.lost(u64::from(dropped));
             // Which applied cannot be known; most do, and an author's
-            // write is not to be lost from the document. Not one timed for
-            // a sample yet to render: it still waits, so it stays for its
-            // own outcome. One timed on a beat or a condition may have
-            // settled or may wait, so it stays too: listed until its
-            // outcome, or until it is forgotten (see `submitted`) or the
-            // invention stops.
-            let rendered = self.transport.rendered();
-            let settled = |write: &PendingWrite| match write.when {
-                When::Now => true,
-                When::AtSample(at) => at < rendered,
-                _ => false,
-            };
+            // write is not to be lost from the document. One timed on a
+            // sample may still wait, so it stays until its own outcome or
+            // until its sample has surely rendered. One timed on a beat or
+            // a condition may have settled or may wait, so it stays too:
+            // listed until its outcome, or until it is forgotten (see
+            // `submitted`) or the invention stops.
             let writes = std::mem::take(&mut self.writes);
             let (settled, waiting): (VecDeque<_>, VecDeque<_>) =
-                writes.into_iter().partition(|(_, write)| settled(write));
+                (writes.into_iter()).partition(|(_, write)| write.when == When::Now);
             self.writes = waiting;
             for (id, write) in settled {
                 self.authored(&write);
                 self.announce(id, &write, None);
             }
+            self.suspect_lost(rendered);
             self.timed.clear();
             self.timed_lost = true;
         }
+        self.settle_lost(rendered);
     }
 
     /// Timed edits' outcomes received since the last call, oldest first,
@@ -414,6 +421,7 @@ impl PendingLog {
     /// announced so.
     pub(crate) fn abandon(&mut self) {
         self.settle();
+        self.suspect.clear();
         for (id, write) in std::mem::take(&mut self.writes) {
             self.announce(id, &write, Some(Refusal::Stopped.into()));
         }
