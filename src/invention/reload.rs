@@ -20,10 +20,10 @@ use crate::{ControlValue, Invention, ModuleRegistry};
 
 use super::builder::{load_development_definition, resolve_invention_assets, InventionBuilder};
 use super::format::ModuleSpec;
-use super::runtime::{GraphCommandError, RunningInvention};
-use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo};
+use super::runtime::{ControlSurfaceInstance, GraphCommandError, RunningInvention};
+use super::state::{RuntimeConnectionInfo, RuntimeModuleInfo, WrittenSince};
 use crate::module_config::{replaced_by, ConfigKey, ConfigKind};
-use config_diff::{configs_equal, control_updates_for, stateless_keys, without};
+use config_diff::{configs_equal, control_updates_for, implicit_restores, stateless_keys, without};
 
 /// Development definitions as loaded for a document, by declaration scope
 /// (see [`LoadedDevelopments`]). Path-based definitions are captured at load
@@ -190,6 +190,15 @@ pub(crate) struct ReloadPlan {
 /// ([`crate::ModuleFactory::reload_keys`]).
 pub(crate) type TypeKeys = (&'static [ConfigKey], &'static [&'static str]);
 
+/// What a reload restores the controls a new config leaves implicit to.
+pub(crate) struct Implicit<'a> {
+    /// The authored writes the stored configs do not record.
+    pub(crate) written: &'a WrittenSince,
+    /// The value control `key` of module `id` has in a fresh build of the
+    /// new document, when it has one.
+    pub(crate) fresh: &'a dyn Fn(&str, &str) -> Option<ControlValue>,
+}
+
 /// Diffs the new document against the current runtime topology.
 ///
 /// A module keeps its running instance (and therefore its phase and state)
@@ -208,6 +217,14 @@ pub(crate) type TypeKeys = (&'static [ConfigKey], &'static [&'static str]);
 /// reload is its own write, [`crate::ModuleFactory::writes_on_reload`]).
 /// `has_control` answers whether a module exposes a control key at
 /// runtime.
+///
+/// With `implicit`, a kept module's authored writes that its stored config
+/// does not record (to a default, an indexed key, a key stored as a null or
+/// array) and the new config does not state restore by control writes to
+/// the control's value in a fresh build of that config (see
+/// [`config_diff::implicit_restores`]), so the module sounds as the file
+/// does without a rebuild. An edit batch passes none: its document states
+/// every write it records.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_reload(
     current_modules: &IndexMap<String, RuntimeModuleInfo>,
@@ -218,6 +235,7 @@ pub(crate) fn plan_reload(
     control_kind: impl Fn(&str, &str) -> Option<ConfigKind>,
     is_event: impl Fn(&str, &str) -> bool,
     mut has_control: impl FnMut(&str, &str) -> bool,
+    implicit: Option<Implicit<'_>>,
 ) -> Result<ReloadPlan, String> {
     let mut plan = ReloadPlan::default();
 
@@ -228,6 +246,11 @@ pub(crate) fn plan_reload(
             declared
                 .map(|declared| declared.kind)
                 .or_else(|| control_kind(&spec.id, key))
+        };
+        let fresh = |key: &str| {
+            implicit
+                .as_ref()
+                .and_then(|implicit| (implicit.fresh)(&spec.id, key))
         };
         match current_modules.get(&spec.id) {
             None => plan.added.push(spec.clone()),
@@ -247,7 +270,7 @@ pub(crate) fn plan_reload(
                 });
                 let previous = without(&info.config, &stateless);
                 let config = without(&spec.config, &stateless);
-                let updates = if configs_equal(&previous, &config, &kind) {
+                let mut updates = if configs_equal(&previous, &config, &kind) {
                     (!stateless.is_empty() && info.config != spec.config).then(Vec::new)
                 } else {
                     // As a cold build applies the config: a value replacing
@@ -273,6 +296,20 @@ pub(crate) fn plan_reload(
                         }
                     }
                 };
+                if let Some(implicit) = &implicit {
+                    let pending = updates.as_deref().unwrap_or_default();
+                    let restores = implicit_restores(
+                        implicit.written.unrecorded(&spec.id),
+                        &config,
+                        pending,
+                        |key| is_event(&spec.id, key),
+                        |key| has_control(&spec.id, key),
+                        &fresh,
+                    );
+                    if !restores.is_empty() {
+                        updates.get_or_insert_with(Vec::new).extend(restores);
+                    }
+                }
                 plan.unchanged.push(spec.id.clone());
                 if let Some(updates) = updates {
                     plan.refreshed_configs
@@ -445,6 +482,10 @@ pub(crate) struct ValidatedDocument {
     pub(crate) registry: Arc<ModuleRegistry>,
     /// The document's development definitions as loaded.
     pub(crate) definitions: DevelopmentDefinitions,
+    /// The control surfaces of the validation build, by module id: what a
+    /// fresh build of the document starts each control at, for a reload to
+    /// restore what the document leaves implicit (see [`Implicit`]).
+    pub(crate) fresh: Arc<std::sync::Mutex<IndexMap<String, ControlSurfaceInstance>>>,
 }
 
 impl RunningInvention {
@@ -550,11 +591,14 @@ impl RunningInvention {
         let loaded = Arc::new(LoadedDevelopments::load(&resolved).map_err(invalid)?);
         let definitions = DevelopmentDefinitions::of(loaded.clone());
 
-        // The built runtime is discarded.
-        InventionBuilder::with_registry(self.sample_rate, self.base_registry.for_validation())
-            .with_loaded(loaded.clone())
-            .build(resolved.clone())
-            .map_err(invalid)?;
+        // The built runtime is discarded but for its control surfaces.
+        let (built, _) =
+            InventionBuilder::with_registry(self.sample_rate, self.base_registry.for_validation())
+                .with_loaded(loaded.clone())
+                .build(resolved.clone())
+                .map_err(invalid)?;
+        let fresh = built.control_surfaces.clone();
+        drop(built);
         // What the reload adopts: the document's development factories,
         // registered live from the same loaded definitions.
         let registry: ModuleRegistry =
@@ -568,6 +612,7 @@ impl RunningInvention {
             resolved,
             registry: Arc::new(registry),
             definitions,
+            fresh,
         })
     }
 
@@ -580,15 +625,21 @@ impl RunningInvention {
             changed_development_types(&self.development_definitions, &validated.definitions);
         // The modules and the lock they were built under, read together.
         #[cfg(not(target_arch = "wasm32"))]
-        let (current_modules, current_connections, built_under) = {
+        let (current_modules, current_connections, written, built_under) = {
             let state = self.state.lock().unwrap();
             let (modules, connections) = (state.modules.clone(), state.connections.clone());
-            (modules, connections, state.built_under.clone())
+            let written = state.written_since.clone();
+            (modules, connections, written, state.built_under.clone())
         };
         #[cfg(target_arch = "wasm32")]
-        let (current_modules, current_connections) = {
+        let (current_modules, current_connections, written) = {
             let state = self.state.lock().unwrap();
-            (state.modules.clone(), state.connections.clone())
+            let written = state.written_since.clone();
+            (state.modules.clone(), state.connections.clone(), written)
+        };
+        let fresh = |module_id: &str, key: &str| {
+            let surfaces = validated.fresh.lock().unwrap();
+            surfaces.get(module_id)?.get_control(key).ok()
         };
         let mut plan = plan_reload(
             &current_modules,
@@ -603,6 +654,10 @@ impl RunningInvention {
             |module_id, key| self.control_kind(module_id, key),
             |module_id, key| self.is_event_control(module_id, key),
             |module_id, key| self.reload_writes(module_id, key),
+            Some(Implicit {
+                written: &written,
+                fresh: &fresh,
+            }),
         )
         .map_err(ReloadError::Invalid)?;
         #[cfg(not(target_arch = "wasm32"))]

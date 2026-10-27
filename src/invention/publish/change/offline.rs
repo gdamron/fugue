@@ -138,12 +138,12 @@ fn commit_mirrors(
         let mut state = state.lock().unwrap();
         for id in &removed {
             state.modules.shift_remove(id);
-            state.wholes_written.remove(id);
+            state.written_since.forget(id);
             state.document_remove_module(id);
         }
         for (id, module) in &built {
             state.modules.insert(id.clone(), module.info.clone());
-            state.wholes_written.remove(id);
+            state.written_since.forget(id);
             state.document_upsert_module(id, &module.info.module_type, &module.info.config);
         }
         state.connections = mirror.edges.iter().map(connection_info).collect();

@@ -151,16 +151,17 @@ fn a_scalar_written_after_a_payload_is_kept_beside_it() {
 }
 
 #[test]
-fn a_write_within_a_payload_the_document_holds_survives_a_reload_leaving_it_be() {
+fn a_write_within_a_payload_the_document_holds_is_restored_by_reloading_it() {
     let original = json!({ "notes": carrying(0.25) });
     let (mut running, pump) = start_tape(original.clone());
     running.set_control("tape", "gain", 0.75.into()).unwrap();
     pump.render(1);
-    // As a write to any key the document does not hold: kept, unrebuilt.
+    // As a write to any key the document leaves implicit: restored to what
+    // the payload builds, unrebuilt.
     let report = running.reload(tape(original)).expect("diff applies");
     pump.render(1);
     assert!(report.swapped.is_empty(), "{report:?}");
-    assert_eq!(gain(&running), 0.75.into());
+    assert_eq!(gain(&running), 0.25.into());
 }
 
 #[test]
@@ -172,7 +173,7 @@ fn a_reload_of_the_saved_document_takes_a_written_payload_as_the_documents() {
     pump.render(1);
     // Reloading the document saved after the notes changes nothing, and
     // from then on the document holds them: a later write within them is
-    // the performer's, as on a fresh load of that document.
+    // restored by reloading it, as on a fresh load of that document.
     let document = saved(&running);
     running.reload(document.clone()).expect("diff applies");
     running.set_control("tape", "gain", 0.75.into()).unwrap();
@@ -180,7 +181,7 @@ fn a_reload_of_the_saved_document_takes_a_written_payload_as_the_documents() {
     let report = running.reload(document).expect("diff applies");
     pump.render(1);
     assert!(report.swapped.is_empty(), "{report:?}");
-    assert_eq!(gain(&running), 0.75.into());
+    assert_eq!(gain(&running), 0.5.into());
 }
 
 #[test]

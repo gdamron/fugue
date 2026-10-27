@@ -41,6 +41,7 @@ fn plan(module_type: &str, previous: Value, new: Value) -> ReloadPlan {
         |_, _| None,
         |_, _| false,
         |_, _| true,
+        None,
     )
     .unwrap()
 }

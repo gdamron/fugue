@@ -77,11 +77,10 @@ pub struct RuntimeState {
     /// graph was built or last reloaded against declares them, for the
     /// writes recorded here (see [`Self::write_stored_control`]).
     pub(crate) replacing: ReplacingKeys,
-    /// The whole values (keys that replace others) written to each module
-    /// since its stored config was last taken from a document: within one,
-    /// a later write is recorded as the module plays it (see
-    /// [`Self::write_stored_control`]).
-    pub(crate) wholes_written: HashMap<String, Vec<&'static str>>,
+    /// The authored writes made to each module since its stored config was
+    /// last taken from a document that its stored config tracks apart from
+    /// its keys (see [`WrittenSince`]).
+    pub(crate) written_since: WrittenSince,
     /// How many authored control writes the document has recorded. A
     /// commit planned from the document before the latest records them
     /// again on top of its own, or, when they are no longer all in
@@ -90,6 +89,49 @@ pub struct RuntimeState {
     /// are not overwritten.
     pub(crate) authored_epoch: u64,
     pub(crate) authored_log: AuthoredLog,
+}
+
+/// What each module's stored config does not show of the authored writes
+/// made to it since the config was last taken from a document (see
+/// [`RuntimeState::write_stored_control`]). Forgotten for a module as it is
+/// built from a document's config, and for all as a reload adopts one.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WrittenSince {
+    /// The whole values (keys that replace others) written: within one, a
+    /// later write is recorded as the module plays it.
+    wholes: HashMap<String, Vec<&'static str>>,
+    /// The controls written that the config does not record: a key it
+    /// leaves out (a default, an indexed key) or holds as a null, array or
+    /// object, or one within a whole value the document holds. A reload
+    /// keeping the module restores each the new config does not state as a
+    /// scalar to its value in a fresh build of that config.
+    unrecorded: HashMap<String, Vec<String>>,
+}
+
+impl WrittenSince {
+    /// Forgets every module's writes: each config is a document's now.
+    pub(crate) fn clear(&mut self) {
+        self.wholes.clear();
+        self.unrecorded.clear();
+    }
+
+    /// Forgets the writes to module `id`, built or removed.
+    pub(crate) fn forget(&mut self, id: &str) {
+        self.wholes.remove(id);
+        self.unrecorded.remove(id);
+    }
+
+    /// The controls of `id` written that its stored config does not record.
+    pub(crate) fn unrecorded(&self, id: &str) -> &[String] {
+        self.unrecorded.get(id).map_or(&[], Vec::as_slice)
+    }
+
+    fn mark_unrecorded(&mut self, id: &str, key: &str) {
+        let keys = self.unrecorded.entry(id.to_string()).or_default();
+        if !keys.iter().any(|written| written == key) {
+            keys.push(key.to_string());
+        }
+    }
 }
 
 /// The latest authored control writes the document recorded, oldest first.
@@ -178,7 +220,8 @@ impl RuntimeState {
     ///
     /// Reload plans by diffing the new resolved document against the stored
     /// configs, so a stored config that missed an authored write would make
-    /// reloading the original file see no change and keep the written value.
+    /// reloading the original file see no change and keep the written value;
+    /// a write it cannot hold is noted apart for reload to restore.
     /// A perform-intent write is never recorded, here or in the document.
     pub(crate) fn record_authored_control(&mut self, id: &str, key: &str, value: &ControlValue) {
         self.authored_epoch += 1;
@@ -231,15 +274,16 @@ impl RuntimeState {
     /// would make reloading the original file see that key removed, which
     /// reload can only express by rebuilding the module, resetting its phase.
     /// Leaving the key set alone means this can never introduce a rebuild;
-    /// such a write stays unrecorded here and survives that reload, as it
-    /// always has.
+    /// such a write is noted as unrecorded instead ([`WrittenSince`]), and
+    /// reloading the original restores it by a control write.
     ///
     /// Only a scalar (a number, bool or string) is overwritten, as only a
     /// scalar delta can reload restore through a control. A stored null,
     /// array or object (an oscillator's `"frequency": null`, a scheduler's
-    /// array `schedule`) is left alone, as for an absent key: replacing it
-    /// with the written scalar would make reloading the original see a
-    /// non-scalar delta, which reload can only express by rebuilding.
+    /// array `schedule`) is left alone and the write noted, as for an
+    /// absent key: replacing it with the written scalar would make reloading
+    /// the original see a non-scalar delta, which reload can only express by
+    /// rebuilding.
     ///
     /// A number is compared in the control's f32 domain: a write the stored
     /// number already holds as an f32 is left as stored, so neither a write
@@ -277,9 +321,9 @@ impl RuntimeState {
         // Within a whole value written since the config was taken from a
         // document, a key is played as that value rewrote it, so it is
         // recorded whether or not it was stored. Within one the document
-        // holds, it is not: a live write survives a reload that leaves it
-        // be, as any write to a key the config does not hold does.
-        let written = self.wholes_written.get(id).map_or(&[][..], Vec::as_slice);
+        // holds, it is not: it is noted as unrecorded, as any write to a key
+        // the config does not hold is, and a reload restores it.
+        let written = (self.written_since.wholes.get(id)).map_or(&[][..], Vec::as_slice);
         let within = keys.iter().any(|whole| {
             written.contains(&whole.key)
                 && whole.replaces.iter().any(|replaced| names(replaced, key))
@@ -288,7 +332,7 @@ impl RuntimeState {
             .iter()
             .find(|whole| whole.key == key && !whole.replaces.is_empty())
         {
-            let written = self.wholes_written.entry(id.to_string()).or_default();
+            let written = self.written_since.wholes.entry(id.to_string()).or_default();
             if !written.contains(&whole.key) {
                 written.push(whole.key);
             }
@@ -302,16 +346,13 @@ impl RuntimeState {
         if authored_document::write_entry_asset(&mut info.config, key, &asset) {
             return;
         }
-        let Some(stored) = info
-            .config
-            .as_object_mut()
+        let Some(stored) = (info.config.as_object_mut())
             .and_then(|config| config.get_mut(key))
+            .filter(|stored| scalar_control_value(stored).is_some())
         else {
+            self.written_since.mark_unrecorded(id, key);
             return;
         };
-        if scalar_control_value(stored).is_none() {
-            return;
-        }
         if let (ControlValue::Number(number), Some(previous)) = (value, stored.as_f64()) {
             if previous as f32 == *number {
                 return;

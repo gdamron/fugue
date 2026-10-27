@@ -94,6 +94,9 @@ pub(super) fn plan_edits(
         // A batch's event writes fire without landing in the document.
         |_, _| false,
         |module_id, key| written.contains(&(module_id, key)),
+        // The candidate states every write the document records, and a
+        // batch removes no key from a module it keeps.
+        None,
     )
     .map_err(|error| {
         RpcError::new(

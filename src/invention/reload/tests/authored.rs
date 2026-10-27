@@ -1,6 +1,7 @@
 //! Reloading after an authored control write: the runtime's stored configs
 //! follow every authored write to a key they contain, so reload diffs
-//! against what the modules play (FUG-289).
+//! against what the modules play. A write to a key they do not record is
+//! restored apart (see `implicit.rs`).
 
 use serde_json::json;
 
@@ -239,32 +240,6 @@ fn base_without_osc1_frequency() -> String {
 }
 
 #[test]
-fn an_authored_write_to_a_key_the_stored_config_lacks_survives_reloading_the_original() {
-    // A known limit, pinned here rather than a goal. A control key the
-    // stored config does not contain (a default the file omits) is not
-    // recorded there: adding it would make reloading the original see a
-    // removed key, which only a rebuild (a phase reset) can express. So, as before FUG-289, reloading the
-    // original leaves the authored value in place. Follow-up: restore such
-    // a key with a control write, to the value a fresh build from the file's
-    // config would have.
-    for (original, key, value) in [
-        (base_without_osc1_frequency(), "frequency", number(330.0)),
-        (BASE.to_string(), "frequency_mod_depth", number(5.0)),
-    ] {
-        let mut running = start(&original);
-        let stored = stored_config(&running, "osc1");
-        running.set_control("osc1", key, value.clone()).unwrap();
-        assert_eq!(stored_config(&running, "osc1"), stored, "{key}");
-
-        let report = running.reload(doc(&original)).expect("diff applies");
-
-        assert!(report.controls_updated.is_empty(), "{key}: {report:?}");
-        assert_nothing_rebuilt(&report);
-        assert_eq!(running.get_control("osc1", key).unwrap(), value, "{key}");
-    }
-}
-
-#[test]
 fn reloading_the_saved_document_after_a_write_to_a_key_the_stored_config_lacks_rebuilds_nothing() {
     // The saved document has the key the stored config lacks: reload sees
     // it added and writes it again as a control, redundantly.
@@ -286,55 +261,6 @@ fn reloading_the_saved_document_after_a_write_to_a_key_the_stored_config_lacks_r
         assert_nothing_rebuilt(&report);
         assert_eq!(running.get_control("osc1", key).unwrap(), value, "{key}");
     }
-}
-
-#[test]
-fn an_authored_write_over_a_stored_null_survives_reloading_the_original() {
-    // Reload restores only a scalar through a control. Replacing a stored
-    // null with the written number would make reloading the original see a
-    // null delta, which only a rebuild can express.
-    let original = BASE.replace(r#""frequency": 440.0"#, r#""frequency": null"#);
-    let mut running = start(&original);
-    running
-        .set_control("osc1", "frequency", number(330.0))
-        .unwrap();
-    assert_eq!(stored_config(&running, "osc1")["frequency"], json!(null));
-
-    let report = running.reload(doc(&original)).expect("diff applies");
-
-    assert!(report.controls_updated.is_empty(), "{report:?}");
-    assert_nothing_rebuilt(&report);
-    assert_eq!(
-        running.get_control("osc1", "frequency").unwrap(),
-        number(330.0)
-    );
-}
-
-#[test]
-fn an_authored_write_over_an_array_schedule_survives_reloading_the_original() {
-    // The scheduler's config holds its schedule as an array, its control as
-    // a string. Storing the string would make reloading the original see a
-    // non-scalar delta, rebuilding the scheduler and resetting its step.
-    let original = BASE.replace(
-        r#"{ "id": "dac", "type": "dac" }"#,
-        r#"{ "id": "dac", "type": "dac" },
-        { "id": "auto", "type": "control_scheduler", "config": { "schedule": [] } }"#,
-    );
-    let mut running = start(&original);
-    let schedule =
-        r#"[{ "at_step": 0, "module": "osc2", "control": "frequency", "value": 220.0 }]"#;
-    running
-        .set_control("auto", "schedule", ControlValue::String(schedule.into()))
-        .unwrap();
-    assert_eq!(stored_config(&running, "auto")["schedule"], json!([]));
-
-    let report = running.reload(doc(&original)).expect("diff applies");
-
-    assert!(report.controls_updated.is_empty(), "{report:?}");
-    assert!(report.added.is_empty(), "{report:?}");
-    assert!(report.removed.is_empty(), "{report:?}");
-    assert!(report.swapped.is_empty(), "{report:?}");
-    assert_eq!(report.unchanged, 4, "{report:?}");
 }
 
 #[test]
