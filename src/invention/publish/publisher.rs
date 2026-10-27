@@ -353,9 +353,10 @@ impl Publisher {
         self.block_size
     }
 
-    /// Whether the audio side of the link still exists.
+    /// Whether the audio side of the link still exists, and has not stopped
+    /// reading its queue because a render panicked.
     pub(crate) fn audio_alive(&self) -> bool {
-        !self.closed && Arc::strong_count(&self.applied) > 1
+        !self.closed && !self.requests.closed() && Arc::strong_count(&self.applied) > 1
     }
 
     /// Marks the audio side gone, refusing every later submission. The

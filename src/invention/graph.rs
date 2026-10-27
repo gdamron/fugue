@@ -57,6 +57,7 @@ mod process;
 mod publication;
 mod requests;
 mod scc;
+mod unwind;
 
 pub(crate) use compile::{compile_topology, CompiledTopology, TopologyFacts};
 pub use master::MasterLevels;
@@ -205,6 +206,12 @@ pub(crate) struct SignalGraph {
     /// The publication of an immediate edit while the requests due as it
     /// installs apply (see `requests`); none otherwise.
     pub(crate) installing: Option<Box<Publication>>,
+    /// A render panicked: every later block renders silence and touches
+    /// nothing (see `unwind`).
+    pub(crate) failed: bool,
+    /// The publication an edit installing held as a render panicked, kept
+    /// for teardown (see `unwind`).
+    pub(crate) unwound: Option<Box<Publication>>,
     /// An offline render's graph that a new render replaced: no module is
     /// added to it or removed from it again (see `declared::retire_offline`).
     pub(crate) retired: bool,
@@ -260,6 +267,8 @@ impl SignalGraph {
             topo_dirty: true,
             tables_stale: true,
             installing: None,
+            failed: false,
+            unwound: None,
             retired: false,
             offline_edits: 0,
             master,

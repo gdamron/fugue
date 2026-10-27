@@ -1,5 +1,7 @@
 //! Audio-thread block processing for the [`SignalGraph`].
 
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+
 use super::conditions::Segment;
 use super::SignalGraph;
 use crate::audio_thread::AudioThreadScope;
@@ -22,8 +24,26 @@ impl SignalGraph {
     /// sample, but runs no module and advances no time: how a backend with
     /// no clock settles what was submitted (`NullBackend`). Device streams
     /// and offline renders never ask for one.
+    ///
+    /// A panic in a module fails the graph on its way out, keeping all it
+    /// held for teardown (see [`super::unwind`]): every later block renders
+    /// silence and touches nothing.
     pub(crate) fn process_block(&mut self, left: &mut [f32], right: &mut [f32]) {
         let _audio_thread = AudioThreadScope::enter();
+        if self.failed {
+            left.fill(0.0);
+            right.fill(0.0);
+            return;
+        }
+        let rendered = catch_unwind(AssertUnwindSafe(|| self.render_block(left, right)));
+        if let Err(panic) = rendered {
+            self.fail();
+            resume_unwind(panic);
+        }
+    }
+
+    /// [`Self::process_block`] on a graph that has not failed.
+    fn render_block(&mut self, left: &mut [f32], right: &mut [f32]) {
         self.ensure_process_order();
 
         let frames = left.len().min(right.len()).min(self.block_capacity);

@@ -93,10 +93,9 @@ impl SignalGraph {
     /// Counts the segment's edges at its end, playing late what falls due
     /// on targets not split on them.
     pub(super) fn commit_edges(&mut self) {
-        if let Some(mut drain) = self.requests.take() {
+        self.with_drain(|graph, drain| {
             let Watches { edges, ramps, .. } = &mut drain.watches;
-            edges.commit(self, ramps);
-            self.requests = Some(drain);
-        }
+            edges.commit(graph, ramps);
+        });
     }
 }
