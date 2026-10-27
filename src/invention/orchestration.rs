@@ -344,6 +344,7 @@ impl RuntimeSnapshot {
             value,
             origin,
             safe: None,
+            then: Vec::new(),
         };
         let queued = self.make_authored(module_id, key, load, &options.authored_as(&authoring))?;
         let now = queued.id.is_none().then_some(&authoring);

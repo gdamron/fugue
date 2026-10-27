@@ -29,7 +29,8 @@ impl RunningInvention {
     /// for real, but a recorder opens its file only once it plays.
     ///
     /// `base_generation` is read before planning; a change published since
-    /// is [`Refused::Moved`].
+    /// is [`Refused::Moved`], and so is an authored write recorded since the
+    /// batch read its document, which the plan would read as the batch's.
     pub(super) fn prepare_edits(
         &self,
         base_generation: u64,
@@ -38,8 +39,13 @@ impl RunningInvention {
         // Only a reload adopts a registry, and it cannot run alongside a
         // batch (both take `&mut self`), so this one stays current.
         let registry = self.registry();
-        let plan =
-            super::plan::plan_edits(&self.state.lock().unwrap(), &batch.candidate, &registry)?;
+        let plan = {
+            let state = self.state.lock().unwrap();
+            if state.authored_epoch != batch.authored_at {
+                return Err(Refused::Moved);
+            }
+            super::plan::plan_edits(&state, &batch.candidate, &registry)?
+        };
         let build = |spec: &ModuleSpec| -> Result<BuiltModule, Refused> {
             let config = batch.resolved.get(&spec.id).unwrap_or(&spec.config);
             let mut module = GraphChange::build(
@@ -67,7 +73,8 @@ impl RunningInvention {
             let write = &candidate.write;
             (write.module_id.as_str(), write.key.as_str(), &write.value)
         });
-        let change = self.stage_plan(base_generation, &plan, swapped, added, writes)?;
+        let mut change = self.stage_plan(base_generation, &plan, swapped, added, writes)?;
+        change.authored_at = Some(batch.authored_at);
         // Survivors are written only at the commit; their throwaway copies
         // already hold the batch's writes.
         let mut directory = change.surfaces.clone();
@@ -86,8 +93,9 @@ impl RunningInvention {
     ///
     /// Fails, with nothing changed, only when another change published
     /// since the batch was prepared, or the audio thread is gone. A write
-    /// that still fails when made is reported, and the module's actual value
-    /// is written back to the retained document and its stored config.
+    /// that still fails when made is reported, and the retained document
+    /// keeps what it authored for the control before the batch (see
+    /// `RuntimeState::restore_authored_control`).
     pub(super) fn commit_edits(
         &self,
         prepared: PreparedEdits,
@@ -120,8 +128,6 @@ impl RunningInvention {
                 }
             }
         })?;
-        // The old document drops here, off the publisher's lock.
-        drop(previous);
 
         let snapshot = self.snapshot();
         let mut report = report_for(&plan, batch.edit_count);
@@ -187,9 +193,12 @@ impl RunningInvention {
             // changes to the document.
             let mut state = self.state.lock().unwrap();
             for (write, value) in &actual {
-                state.record_authored_control(&write.module_id, &write.key, value);
+                let control = (write.module_id.as_str(), write.key.as_str());
+                state.restore_authored_control(previous.as_ref(), control, value);
             }
         }
+        // The old document drops here, off the publisher's lock.
+        drop(previous);
 
         self.follow_up(committed);
         for (write, value) in announced {

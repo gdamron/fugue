@@ -61,6 +61,10 @@ pub(crate) struct Authoring {
     /// The timed edit the write is safe from (see `declared::Queued`),
     /// whose document does not replace it.
     pub(crate) safe: Option<RequestId>,
+    /// Controls of its module a commit wrote while it waited, one of the
+    /// two replacing the other, with the values the commit recorded: they
+    /// applied after it, so they are recorded again after it is.
+    pub(crate) then: Vec<(String, ControlValue)>,
 }
 
 /// What the retained document takes from the outcomes, in the order the
@@ -336,6 +340,33 @@ impl PendingLog {
             } => safe(authoring) || !replaced(module_id, key),
             DocumentStep::Timed => true,
         });
+    }
+
+    /// Adds to each authored write waiting, and each listed and not yet
+    /// recorded, what `follows` says a commit wrote after it (see
+    /// [`Authoring::then`]), but those safe from timed edit `except`, made
+    /// after its writes.
+    pub(crate) fn follow_authored(
+        &mut self,
+        follows: impl Fn(&str, &str) -> Vec<(String, ControlValue)>,
+        except: Option<RequestId>,
+    ) {
+        let followed = |authoring: &Authoring| except.is_none() || authoring.safe != except;
+        let waiting = (self.writes.iter_mut()).filter_map(|(_, write)| {
+            let authoring = write.authored.as_mut().filter(|a| followed(a))?;
+            Some((write.module_id.as_str(), write.key.as_str(), authoring))
+        });
+        let listed = self.steps.iter_mut().filter_map(|step| match step {
+            DocumentStep::Authored {
+                module_id,
+                key,
+                authoring,
+            } if followed(authoring) => Some((module_id.as_str(), key.as_str(), authoring)),
+            _ => None,
+        });
+        for (module_id, key, authoring) in waiting.chain(listed) {
+            authoring.then.extend(follows(module_id, key));
+        }
     }
 
     /// Whether an authored write waits to apply, or applied and is not yet

@@ -494,11 +494,14 @@ impl RunningInvention {
             // the publisher, so a change landing after this read is caught
             // when the prepared change publishes, at worst spuriously.
             let base = self.live.generation();
+            let authored = self.live.authored_epoch();
             let mut prepared = None;
             policy.prepare(&mut || {
                 prepared = Some(self.plan_document(&validated).map(|plan| {
                     let adopt = (validated.registry.clone(), validated.definitions.clone());
-                    self.prepare_plan(base, plan, Some(validated.document.clone()), Some(adopt))
+                    let document = Some(validated.document.clone());
+                    let prepared = self.prepare_plan(base, plan, document, Some(adopt));
+                    prepared.map(|prepared| prepared.planned_at(authored))
                 }))
             });
             let prepared = prepared.expect("prepare runs its body")?;

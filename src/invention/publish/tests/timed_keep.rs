@@ -105,6 +105,7 @@ fn authoring_660() -> Authoring {
         value: ControlValue::Number(660.0),
         origin: None,
         safe: None,
+        then: Vec::new(),
     }
 }
 

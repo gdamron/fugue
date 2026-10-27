@@ -52,10 +52,12 @@ impl RunningInvention {
         let mut attempt = 1;
         loop {
             let base = self.live.generation();
+            let authored = self.live.authored_epoch();
             let plan = self.plan_document(&validated)?;
             let document = Some(validated.document.clone());
             let queued = self
                 .prepare_plan(base, plan, document, None)
+                .map(|prepared| prepared.planned_at(authored))
                 .and_then(|prepared| self.queue_reload(prepared, time, ttl));
             match queued {
                 Ok(id) => return Ok(self.status_of(id)),

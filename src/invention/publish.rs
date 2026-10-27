@@ -316,6 +316,15 @@ impl LiveGraph {
         self.lock().generation()
     }
 
+    /// The retained document's authored epoch, every authored write
+    /// applied so far recorded (see `RuntimeState::authored_epoch`).
+    pub(crate) fn authored_epoch(&self) -> u64 {
+        let publisher = self.lock();
+        let epoch = self.state.lock().unwrap().authored_epoch;
+        drop(publisher);
+        epoch
+    }
+
     /// Every module's timeline context as of the latest publication, by
     /// module id (see `crate::invention::timelines`).
     pub(crate) fn timelines(&self) -> HashMap<String, crate::TimelineContext> {
@@ -527,6 +536,14 @@ impl LiveGraph {
             drop(prepared);
             return Err(GraphCommandError::TopologyMoved);
         }
+        // The authored writes recorded since the change was planned (taken
+        // just now, as the publisher was locked, or before), which its
+        // document lacks: recorded again on top of it.
+        let Some(since) = authored::Since::of(&prepared, &self.state) else {
+            drop(publisher);
+            drop(prepared);
+            return Err(GraphCommandError::TopologyMoved);
+        };
         let writes = std::mem::take(&mut prepared.writes);
         // Every commit counts, even one that publishes nothing (a reload or
         // an edit batch that only writes controls): conservative. Under the
@@ -547,6 +564,7 @@ impl LiveGraph {
             }
             let fence = authored::Fence::open(&self.pending, &self.state, (&VecDeque::new(), None));
             retain(&mut self.state.lock().unwrap());
+            since.rebase(&self.state, (&[], &writes));
             fence.close(
                 (&self.pending, &self.state),
                 (&[], &writes),
@@ -592,6 +610,7 @@ impl LiveGraph {
         // forgotten (see `authored::Fence`).
         let fence = authored::Fence::open(&self.pending, &self.state, (&VecDeque::new(), None));
         let committed = self.commit_published(&publisher, published, &self.port(), retain);
+        since.rebase(&self.state, (&committed.stopped, &writes));
         fence.close(
             (&self.pending, &self.state),
             (&committed.stopped, &writes),
