@@ -489,13 +489,23 @@ impl PendingLog {
                 .any(|(_, write)| write.authored.as_ref().is_some_and(|a| !a.timed))
     }
 
-    /// The modules of the timed authored writes waiting, listed once each.
+    /// The modules of the timed authored writes waiting, or applied and
+    /// not yet recorded, listed once each.
     pub(crate) fn timed_authored_modules(&self) -> Vec<String> {
+        let waiting = (self.writes.iter())
+            .filter_map(|(_, write)| Some((&write.module_id, write.authored.as_ref()?)));
+        let applied = self.steps.iter().filter_map(|step| match step {
+            DocumentStep::Authored {
+                module_id,
+                authoring,
+                ..
+            } => Some((module_id, authoring)),
+            DocumentStep::Timed => None,
+        });
         let mut modules: Vec<String> = Vec::new();
-        for (_, write) in &self.writes {
-            let timed = write.authored.as_ref().is_some_and(|a| a.timed);
-            if timed && !modules.contains(&write.module_id) {
-                modules.push(write.module_id.clone());
+        for (module_id, authoring) in waiting.chain(applied) {
+            if authoring.timed && !modules.contains(module_id) {
+                modules.push(module_id.clone());
             }
         }
         modules

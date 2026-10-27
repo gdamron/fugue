@@ -4,11 +4,10 @@
 use std::path::PathBuf;
 
 use super::RuntimeSnapshot;
+use crate::invention::audio_assets;
 use crate::invention::declared::{Queued, WriteOptions};
-use crate::invention::publish::Authoring;
-use crate::invention::reload::scalar_control_value;
+use crate::invention::publish::Contested;
 use crate::invention::runtime::GraphCommandError;
-use crate::invention::{audio_assets, authored_document};
 use crate::ControlValue;
 
 impl RuntimeSnapshot {
@@ -48,46 +47,23 @@ impl RuntimeSnapshot {
 
     /// Writes `value`, a commit's, to control `key` of `module_id`, kept by
     /// the commit, as [`Self::set_control_transient`] does: unrecorded, the
-    /// retained document holding it already. Unless the commit reported the
-    /// module `contested`, a timed authored write to it waiting (see
-    /// `publish::Committed::contested`): then the write is recorded as it
-    /// applies, as the value the document holds, so the document ends on
-    /// whichever of the two applied later, as playback does. An event, or
-    /// a control the document holds a whole value (a melody's scale) or
-    /// nothing for, is written unrecorded all the same.
+    /// retained document holding it already. Unless a timed authored write
+    /// contests it (see [`Contested`]): then it is recorded as it applies,
+    /// as the value the commit's document holds, so the document ends on
+    /// whichever of the two applied later, as playback does. An event is
+    /// written unrecorded all the same.
     pub(crate) fn set_control_committed(
         &self,
         (module_id, key): (&str, &str),
         value: ControlValue,
-        contested: &[String],
+        contested: &Contested,
     ) -> Result<(), GraphCommandError> {
-        let contested = contested.iter().any(|module| module == module_id);
-        let authoring = contested
-            .then(|| self.held_authoring(module_id, key))
-            .flatten();
-        let Some(authoring) = authoring else {
+        let authoring = contested.authoring(module_id, key);
+        let Some(authoring) = authoring.filter(|_| !self.is_event(module_id, key)) else {
             return self.set_control_transient(module_id, key, value);
         };
-        let options = WriteOptions::default().authored_as(&authoring);
+        let options = WriteOptions::default().authored_as(authoring);
         self.make_authored(module_id, key, value, &options)
             .map(drop)
-    }
-
-    /// The scalar the retained document holds for control `key` of
-    /// `module_id`, as an authored write records it.
-    fn held_authoring(&self, module_id: &str, key: &str) -> Option<Authoring> {
-        if self.is_event(module_id, key) {
-            return None;
-        }
-        let state = self.state.lock().unwrap();
-        let document = state.document.as_ref()?;
-        let held = authored_document::held_control(document, module_id, key)?;
-        Some(Authoring {
-            value: scalar_control_value(&held)?,
-            origin: document.source_path.clone(),
-            safe: None,
-            then: Vec::new(),
-            timed: false,
-        })
     }
 }

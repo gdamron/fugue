@@ -39,6 +39,7 @@ use crate::ModuleRegistry;
 mod announce;
 mod authored;
 mod change;
+mod contested;
 mod pending;
 mod policy;
 mod publisher;
@@ -61,6 +62,7 @@ pub(crate) use announce::Progress;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use authored::APPLY_WAIT;
 pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
+pub(crate) use contested::Contested;
 pub(crate) use pending::{Authoring, DocumentStep, PendingLog, PendingWrite};
 #[cfg(test)]
 pub(crate) use publisher::OUTCOME_QUEUE_CAPACITY;
@@ -69,8 +71,8 @@ pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use retarget::Retarget;
 pub(crate) use timed::EditTime;
-pub(crate) use timed_write::WriteTime;
 pub(crate) use timed_status::{CancelCause, EditState, EditStatus, Touched};
+pub(crate) use timed_write::WriteTime;
 
 /// How many times an edit that builds a module ([`LiveGraph::add_module`],
 /// [`LiveGraph::swap_module`]) builds it when commits keep adopting new
@@ -213,11 +215,9 @@ pub(crate) struct Committed {
     pub(crate) started: Vec<RuntimeModuleInfo>,
     /// Modules the change removed or replaced.
     pub(crate) stopped: Vec<String>,
-    /// Modules it kept with a timed authored write waiting as it committed:
-    /// what its caller writes to one is recorded as it applies, not taken
-    /// as the document already holds it, so the document follows whichever
-    /// of the two applies later (see `publish::timed_write`).
-    pub(crate) contested: Vec<String>,
+    /// Its caller's writes to modules it kept that a timed authored write
+    /// contests, recorded as they apply (see [`Contested`]).
+    pub(crate) contested: Contested,
 }
 
 impl LiveGraph {
@@ -602,7 +602,6 @@ impl LiveGraph {
                 return Err(GraphCommandError::TopologyMoved);
             }
             let fence = authored::Fence::open(&self.pending, &self.state, (&VecDeque::new(), None));
-            let contested = self.contested(&[]);
             retain(&mut self.state.lock().unwrap());
             since.rebase(&self.state, (&[], &writes));
             fence.close(
@@ -610,6 +609,7 @@ impl LiveGraph {
                 (&[], &writes),
                 (&mut VecDeque::new(), None),
             );
+            let contested = self.contested(&[], &writes);
             drop(publisher);
             return Ok(Committed {
                 contested,
@@ -653,25 +653,16 @@ impl LiveGraph {
         // forgotten (see `authored::Fence`).
         let fence = authored::Fence::open(&self.pending, &self.state, (&VecDeque::new(), None));
         let mut committed = self.commit_published(&publisher, published, &self.port(), retain);
-        committed.contested = self.contested(&committed.stopped);
         since.rebase(&self.state, (&committed.stopped, &writes));
         fence.close(
             (&self.pending, &self.state),
             (&committed.stopped, &writes),
             (&mut VecDeque::new(), None),
         );
+        committed.contested = self.contested(&committed.stopped, &writes);
         drop(publisher);
         self.settle();
         Ok(committed)
-    }
-
-    /// The modules a commit kept, but those it `stopped`, with a timed
-    /// authored write waiting (see [`Committed::contested`]).
-    fn contested(&self, stopped: &[String]) -> Vec<String> {
-        let pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut modules = pending.timed_authored_modules();
-        modules.retain(|module| !stopped.contains(module));
-        modules
     }
 
     /// Commits the runtime mirrors to `published`, now the publisher's

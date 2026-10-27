@@ -15,7 +15,7 @@ use super::scripted::Step;
 use super::*;
 use crate::control_request::Source;
 use crate::invention::declared::WriteOptions;
-use crate::invention::publish::WriteTime;
+use crate::invention::publish::{Contested, WriteTime};
 use crate::ControlWriteIntent;
 
 /// Authors `value` for `key` of `module_id` on `sample`.
@@ -152,7 +152,8 @@ fn a_batch_rebuilding_its_module_replaces_a_timed_write_before_or_after_it() {
 
 #[test]
 fn a_contested_commit_write_is_recorded_after_a_timed_write_applied_before_it() {
-    for contested in [vec!["osc1".to_string()], Vec::new()] {
+    let writes = [("osc1".to_string(), "frequency".to_string())];
+    for contested in [true, false] {
         let (running, pump) = start(BASE);
         author_at(&running, "osc1", 330.0, 64 * 2 + 7);
         // Applied on the audio thread, its outcome not yet taken, as a
@@ -162,20 +163,57 @@ fn a_contested_commit_write_is_recorded_after_a_timed_write_applied_before_it() 
         let mut state = running.state.lock().unwrap();
         state.document_write_control("osc1", "frequency", &number(220.0));
         drop(state);
+        let commit = match contested {
+            true => running.live.contested(&[], &writes),
+            false => Contested::default(),
+        };
+        // Recorded by a read before the commit's write is made: what the
+        // commit records was read as it landed, so it is not taken for it.
+        running.document().unwrap();
         let snapshot = running.snapshot();
         let control = ("osc1", "frequency");
         snapshot
-            .set_control_committed(control, number(220.0), &contested)
+            .set_control_committed(control, number(220.0), &commit)
             .unwrap();
         pump.render(2);
         let (recorded, heard) = heard_and_recorded(&running, "osc1");
         assert_eq!(heard, number(220.0), "the commit's write applied last");
         // Uncontested, the timed write is recorded over the commit's
         // document, though the commit's write plays: why a commit reports
-        // the module, so its write is recorded after.
-        let expected = if contested.is_empty() { 330.0 } else { 220.0 };
-        assert_eq!(recorded, expected, "contested: {contested:?}");
+        // the write, so it is recorded after.
+        let expected = if contested { 220.0 } else { 330.0 };
+        assert_eq!(recorded, expected, "contested: {contested}");
     }
+}
+
+#[test]
+fn a_timed_write_applied_and_not_yet_recorded_contests_a_commit() {
+    let (running, pump) = start(BASE);
+    let writes = [("osc1".to_string(), "frequency".to_string())];
+    author_at(&running, "osc1", 330.0, 64 * 2 + 7);
+    assert!(running
+        .live
+        .contested(&[], &writes)
+        .authoring("osc1", "frequency")
+        .is_some());
+    // Its outcome taken by an announcement, outside the publisher: listed
+    // for the document, not yet recorded in it.
+    pump.render(4);
+    running.announce_applied();
+    let contested = running.live.contested(&[], &writes);
+    let authoring = contested.authoring("osc1", "frequency").unwrap();
+    assert_eq!(
+        authoring.value,
+        number(440.0),
+        "the document's, not the write's"
+    );
+    // A module the commit stopped is never contested.
+    let stopped = ["osc1".to_string()];
+    assert!(running
+        .live
+        .contested(&stopped, &writes)
+        .authoring("osc1", "frequency")
+        .is_none());
 }
 
 #[test]
