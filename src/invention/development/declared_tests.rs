@@ -32,7 +32,7 @@ pub(super) fn factory(name: &str, definition: serde_json::Value) -> DevelopmentF
 /// A dial and a legacy dial behind one exposed `mix`, with the legacy dial's
 /// rate also exposed alone as `rate`, and `form` reaching the dial's shape
 /// and the legacy dial's waveform, which share no option.
-fn mixed() -> serde_json::Value {
+pub(super) fn mixed() -> serde_json::Value {
     json!({
         "version": "1.0.0",
         "modules": [{ "id": "a", "type": "dial" }, { "id": "l", "type": "legacy_dial" }],
@@ -285,7 +285,7 @@ fn a_ramp_starts_from_what_the_first_alias_holds() {
 }
 
 /// Processes one frame and returns the development's first output.
-fn outputs_a(graph: &Arc<Mutex<SignalGraph>>) -> f32 {
+pub(super) fn outputs_a(graph: &Arc<Mutex<SignalGraph>>) -> f32 {
     let mut graph = graph.lock().unwrap();
     let module = graph.modules["pair"].module_mut();
     module.process(1);

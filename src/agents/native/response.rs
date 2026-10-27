@@ -1,4 +1,6 @@
 use super::*;
+use crate::control_request::Source;
+use crate::invention::declared::WriteOptions;
 use crate::ControlWriteIntent;
 
 pub(super) fn parse_json_response(text: &str) -> Result<Value, String> {
@@ -154,14 +156,12 @@ pub(super) fn apply_response(
         // An agent's applied response is a live gesture, not an authoring
         // change: it must not land in a saved document or advance the
         // daemon's revision (FUG-266).
+        // It ranks as an agent's write.
+        let options = WriteOptions::performed(Source::Agent);
+        let perform = ControlWriteIntent::Perform;
         controller
             .snapshot
-            .set_control_with_intent(
-                &target,
-                &control,
-                control_value,
-                ControlWriteIntent::Perform,
-            )
+            .submit_control(&target, &control, control_value, perform, options)
             .map_err(|err| {
                 let message = err.to_string();
                 set_string(controller, module_id, "last_apply_error", &message);

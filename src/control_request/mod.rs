@@ -84,9 +84,7 @@ pub(crate) use declare::{
     ValueReader, Writer,
 };
 pub(crate) use event::{EventCounter, EventCursor};
-#[cfg(test)]
-pub(crate) use hold::Rank;
-pub(crate) use hold::{admits_hold, kept_hold, take_hold, FrameScope, Standing};
+pub(crate) use hold::{admits_hold, kept_hold, take_hold, FrameScope, Rank, Standing};
 pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
 #[cfg(test)]
 pub(crate) use legacy::tests::{scheduled_surface, while_held};
