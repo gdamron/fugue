@@ -37,6 +37,8 @@ use super::request::{ControlIndex, RtValue};
 use crate::Module;
 
 mod events;
+#[cfg(test)]
+mod order_tests;
 
 pub(crate) use events::{EventQueue, EventReserve};
 
@@ -112,10 +114,13 @@ impl AutomationSlots {
     }
 }
 
-/// Applies every automation write waiting for `module`, in control order,
-/// then its queued events in the order written, counting refusals. Call it
-/// on the audio thread just before the module processes. Allocation-,
-/// free- and lock-free; one `Relaxed` load when nothing is waiting.
+/// Applies every automation write waiting for `module`: its values in
+/// control order, then its events' slots, then its queued events in the
+/// order written, counting refusals. Everything waiting falls due at one
+/// sample, so an event reads the values written for it, whichever came
+/// first. Call it on the audio thread just before the module processes.
+/// Allocation-, free- and lock-free; one `Relaxed` load when nothing is
+/// waiting.
 #[inline]
 pub(crate) fn take_automation<M: Module + ?Sized>(module: &mut M) {
     let len = match module.declared() {
@@ -125,18 +130,23 @@ pub(crate) fn take_automation<M: Module + ?Sized>(module: &mut M) {
         }
         _ => return,
     };
-    for index in 0..len {
-        let index = ControlIndex(index as u16);
-        let Some((_, cells)) = module.declared() else {
-            return;
-        };
-        let Some(slot) = cells.automation.slots.get(usize::from(index.0)) else {
-            continue;
-        };
-        let word = slot.swap(EMPTY, Ordering::Relaxed);
-        if word != EMPTY && apply_declared(module, index, decode(word)).is_err() {
-            if let Some((_, cells)) = module.declared() {
-                cells.automation.refused.record();
+    for events in [false, true] {
+        for index in 0..len {
+            let index = ControlIndex(index as u16);
+            let Some((table, cells)) = module.declared() else {
+                return;
+            };
+            if table.decl(index).is_some_and(|(decl, _)| decl.event) != events {
+                continue;
+            }
+            let Some(slot) = cells.automation.slots.get(usize::from(index.0)) else {
+                continue;
+            };
+            let word = slot.swap(EMPTY, Ordering::Relaxed);
+            if word != EMPTY && apply_declared(module, index, decode(word)).is_err() {
+                if let Some((_, cells)) = module.declared() {
+                    cells.automation.refused.record();
+                }
             }
         }
     }

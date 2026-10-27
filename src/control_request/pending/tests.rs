@@ -250,3 +250,39 @@ fn edits_never_coalesce_and_a_refused_one_retires_its_publication() {
         "both went to the retire queue"
     );
 }
+
+/// Request `id` firing an event on `target` with `value`.
+fn event(id: u64, target: ControlTarget, value: f32) -> Request {
+    Request {
+        event: true,
+        ..request(id, target, value)
+    }
+}
+
+#[test]
+fn at_one_sample_values_apply_before_events_whatever_the_receipt_order() {
+    let (mut store, _outcomes) = store_of(8);
+    store.insert(event(1, target(INSTALLED, 0, 2), 60.0), 10);
+    store.insert(request(2, target(INSTALLED, 0, 0), 4.0), 10);
+    store.insert(event(3, target(INSTALLED, 0, 2), 64.0), 10);
+    store.insert(request(4, target(INSTALLED, 1, 0), 0.5), 10);
+    let applied = apply_at(&mut store, 10);
+    assert_eq!(
+        applied,
+        [(0, 0, 4.0), (1, 0, 0.5), (0, 2, 60.0), (0, 2, 64.0)]
+    );
+}
+
+#[test]
+fn writes_due_at_different_samples_apply_in_time_order() {
+    let (mut store, _outcomes) = store_of(8);
+    // Overdue, both applied at 10: the event due first still applies first.
+    store.insert(request(1, target(INSTALLED, 0, 0), 4.0), 8);
+    store.insert(event(2, target(INSTALLED, 0, 2), 60.0), 5);
+    // A held entry between them is skipped and stays.
+    store.insert(request(3, target(INSTALLED + 1, 0, 0), 1.0), 5);
+    store.insert(event(4, target(INSTALLED, 0, 2), 64.0), 8);
+    let applied = apply_at(&mut store, 10);
+    assert_eq!(applied, [(0, 2, 60.0), (0, 0, 4.0), (0, 2, 64.0)]);
+    assert_eq!(store.len(), 1, "the held entry stays");
+}

@@ -180,7 +180,7 @@ struct Pending {
 ///
 /// Receipt order is kept by position, not a stored counter: a new entry is
 /// inserted after every entry with the same `at`, so equal times apply in
-/// the order they were popped.
+/// the order they were popped, values before events.
 ///
 /// At most one entry per target and `at`: of two requests for the same
 /// control at the same sample the higher [`Rank`] stays, and at equal rank
@@ -289,8 +289,12 @@ impl PendingStore {
         self.entries.insert(end, Pending { request, at });
     }
 
-    /// Applies, in order, every entry due at `now` (`at <= now`) whose
-    /// target is in the `installed` generation, handing `apply` its
+    /// Applies, in time order, every entry due at `now` (`at <= now`) whose
+    /// target is in the `installed` generation: at each due sample its
+    /// values (a state, a payload) in receipt order, then its events (see
+    /// [`Request::fires`]), so an event reads what was written for its
+    /// sample whichever came first (a note off takes a release written
+    /// beside it). Hands `apply` its
     /// [`Standing`] (none for an event) and settling each applied, or as
     /// `apply` decides, or refused [`Refusal::Expired`] without
     /// calling `apply` when `now` is past its `expires` sample. Held
@@ -311,14 +315,43 @@ impl PendingStore {
             &mut Retirer,
         ) -> Result<(), Outcome>,
     ) {
-        let due = self.entries.partition_point(|e| e.at <= now);
-        let applied = self
-            .entries
-            .extract_if(..due, |e| e.request.target.generation == installed);
+        let mut from = 0;
+        loop {
+            let due = self.entries.partition_point(|e| e.at <= now);
+            let Some(first) = (self.entries[from..due].iter())
+                .position(|e| e.request.target.generation == installed)
+                .map(|offset| from + offset)
+            else {
+                return;
+            };
+            let at = self.entries[first].at;
+            for events in [false, true] {
+                let end = first + self.entries[first..].partition_point(|e| e.at == at);
+                let applied = self.entries.extract_if(first..end, |e| {
+                    e.request.target.generation == installed && e.request.fires() == events
+                });
+                Self::apply_each(applied, &mut self.outcomes, now, &mut apply);
+            }
+            // What is left at `at` is held.
+            from = first + self.entries[first..].partition_point(|e| e.at == at);
+        }
+    }
+
+    /// Applies each of `applied`, as [`Self::apply_due`] describes.
+    fn apply_each(
+        applied: impl Iterator<Item = Pending>,
+        outcomes: &mut Outcomes,
+        now: u64,
+        apply: &mut impl FnMut(
+            &ControlTarget,
+            Option<Standing>,
+            RequestValue,
+            &mut Retirer,
+        ) -> Result<(), Outcome>,
+    ) {
         for Pending { request, at: due } in applied {
             if expired(&request, now) {
-                self.outcomes
-                    .settle(request, Outcome::Refused(Refusal::Expired));
+                outcomes.settle(request, Outcome::Refused(Refusal::Expired));
                 continue;
             }
             let standing = Standing::of(&request, due);
@@ -326,12 +359,12 @@ impl PendingStore {
                 target, value, id, ..
             } = request;
             let payload = value.is_payload();
-            let outcome = match apply(&target, standing, value, &mut self.outcomes.retirer) {
+            let outcome = match apply(&target, standing, value, &mut outcomes.retirer) {
                 Ok(()) if due < now => Outcome::AppliedLate { at: now, due },
                 Ok(()) => Outcome::Applied { at: now },
                 Err(outcome) => outcome,
             };
-            self.outcomes.record(id, payload, outcome);
+            outcomes.record(id, payload, outcome);
         }
     }
 
