@@ -668,10 +668,7 @@ impl SignalGraph {
             }
             applied
         }) {
-            // Late events, finished before any write due after them.
-            for (_, instance) in self.modules.iter_mut() {
-                instance.module_mut().finish_events();
-            }
+            self.finish_events();
         }
         if let Some(mut publication) = self.installing.take() {
             self.hand_over_with_requests(&mut publication);
@@ -854,6 +851,24 @@ impl SignalGraph {
         apply_declared(instance.module_mut(), control, value)?;
         take_hold(instance.module(), control, standing);
         Ok(true)
+    }
+
+    /// Has every module finish the late events applied to it, before any
+    /// write due after them applies (see [`PendingStore::apply_due`]).
+    pub(crate) fn finish_events(&mut self) {
+        for (_, instance) in self.modules.iter_mut() {
+            instance.module_mut().finish_events();
+        }
+    }
+
+    /// Whether `control` of module `module_id` is declared an event.
+    pub(crate) fn is_event(&self, module_id: &str, control: ControlIndex) -> bool {
+        let module = self
+            .modules
+            .get(module_id)
+            .map(|instance| instance.module());
+        let decl = module.and_then(|module| module.declared()?.0.decl(control));
+        decl.is_some_and(|(decl, _)| decl.event)
     }
 
     /// [`Self::apply_control`] for a write due at sample `due`, which it
