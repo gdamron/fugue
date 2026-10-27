@@ -47,7 +47,7 @@ pub(super) fn apply_fanned_out(
     payload: Payload,
     mut apply: impl FnMut(usize, Payload) -> Result<Retired, (Refusal, Payload)>,
 ) -> Result<Retired, (Refusal, Payload)> {
-    let mut fanned = match payload.take_owned::<FannedOut>() {
+    let fanned = match payload.take_owned::<FannedOut>() {
         Ok(fanned) => fanned,
         Err(payload) => return Err((Refusal::Invalid, payload)),
     };
