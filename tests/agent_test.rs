@@ -3,7 +3,7 @@ mod support;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fugue::{AgentControls, ControlValue, Invention, InventionBuilder};
+use fugue::{AgentControls, ControlSurface, ControlValue, Invention, InventionBuilder};
 use support::NullAudioBackend;
 
 #[test]
@@ -456,6 +456,24 @@ fn a_trigger_write_runs_one_request_and_a_reload_runs_none() {
     let mut written = echo_agent(6, 0.0);
     written.modules[0].config["trigger"] = serde_json::json!(true);
     running.reload(written).unwrap();
+    settle_at(&running, 1.0);
+    running.stop();
+}
+
+#[test]
+fn a_trigger_written_before_the_agent_starts_is_served() {
+    let (runtime, handles) = InventionBuilder::new(48_000)
+        .build(echo_agent(6, 0.0))
+        .unwrap();
+    // Held while the agent builds, it fires as the agent first runs, which
+    // may be before its worker first looks.
+    let agent: AgentControls = handles.get("agent.controls").unwrap();
+    agent
+        .set_control("trigger", ControlValue::Bool(true))
+        .unwrap();
+    let running = runtime
+        .start_with_backend(NullAudioBackend::new(48_000))
+        .unwrap();
     settle_at(&running, 1.0);
     running.stop();
 }

@@ -101,13 +101,12 @@ fn run_host(
     set_string(&controller, &module_id, "status", "idle");
     set_string(&controller, &module_id, "last_error", "");
 
-    // The module's controls as last seen, and the edges already serviced. A
-    // module replaced under this worker counts its edges from zero.
-    let mut agent = agent_controls(&controller, &module_id);
-    let (mut last_trigger, mut last_reset) = agent
-        .as_ref()
-        .map(|controls| (controls.trigger_count(), controls.reset_count()))
-        .unwrap_or_default();
+    // The module's controls as last seen, and the edges already serviced.
+    // Every module this worker serves, the one it starts for included,
+    // counts its edges from zero, so an edge that lands before the worker
+    // first looks (a trigger written as the agent starts) is still served.
+    let mut agent: Option<AgentControls> = None;
+    let (mut last_trigger, mut last_reset) = (0, 0);
     let mut last_request_at: Option<Instant> = None;
     let mut history: Vec<Value> = Vec::new();
 
