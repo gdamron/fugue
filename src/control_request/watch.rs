@@ -55,6 +55,10 @@ pub(crate) trait BeatHost {
     /// development, an inner one both keys reach.
     fn overlaps(&self, a: &ControlTarget, b: &ControlTarget) -> bool;
 
+    /// Finishes the events applied so far, as the pending store's caller
+    /// does after a late one (see [`crate::Module::finish_events`]).
+    fn finish_events(&mut self) {}
+
     /// The table the module at `module_idx` plays automation from, if any
     /// (see [`super::table`]).
     fn table(&self, module_idx: usize) -> Option<&dyn BeatTable> {
@@ -489,6 +493,8 @@ impl Watches {
             }
             let standing = Standing::of(&watch.request, due);
             let target = watch.request.target;
+            // A late event finishes as it applies, as the pending store's.
+            let late_event = watch.request.fires() && due < now;
             if let (true, RequestValue::Value(value)) = (watch.repeats(), &watch.request.value) {
                 let value = RequestValue::Value(*value);
                 let result = host.apply(
@@ -508,6 +514,9 @@ impl Watches {
                 }
                 if result.is_ok() {
                     self.ramps.supersede(&target, &*host);
+                    if late_event {
+                        host.finish_events();
+                    }
                 }
                 let watch = &mut self.entries[i];
                 // Settled at the first beat it applied on only: the
@@ -531,6 +540,9 @@ impl Watches {
             let result = host.apply(&target, standing, value, &mut outcomes.retirer);
             if result.is_ok() {
                 self.ramps.supersede(&target, &*host);
+                if late_event {
+                    host.finish_events();
+                }
             }
             // Refused or overridden on its beat, it still latched there.
             let latched = (due == now && result.is_err()).then_some(now);

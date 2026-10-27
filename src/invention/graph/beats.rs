@@ -70,6 +70,10 @@ impl BeatHost for SignalGraph {
         shared
     }
 
+    fn finish_events(&mut self) {
+        SignalGraph::finish_events(self);
+    }
+
     fn table(&self, module_idx: usize) -> Option<&dyn BeatTable> {
         let (_, instance) = self.modules.get_index(module_idx)?;
         instance.module().beat_table()
