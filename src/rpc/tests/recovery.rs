@@ -415,3 +415,66 @@ fn committed_replays_are_compact_on_the_wire() {
     let parsed: RpcResponse = serde_json::from_value(json).unwrap();
     assert_eq!(parsed, response);
 }
+
+/// An authored write of `perform()`'s control, at a sample.
+fn author() -> RpcCommand {
+    let mut command = perform();
+    if let RpcCommand::SetControl { intent, timing, .. } = &mut command {
+        *intent = ControlWriteIntent::Author;
+        timing.when = Some(ControlWhen::AtSample { sample: 48_000 });
+    }
+    command
+}
+
+/// A receipt for `author()`, its write `state` as it replied, naming its
+/// request when it was submitted as one.
+fn receipt(state: ControlRequestState, requested: bool) -> RpcResponsePayload {
+    let control = AppliedControl {
+        request: requested.then(|| "s1.1.7".to_string()),
+        state: Some(state),
+        requested: Some(ControlValue::Number(220.0)),
+        landing: Some(RequestLanding {
+            sample: Some(48_000),
+            ..RequestLanding::default()
+        }),
+        ..AppliedControl::read_back("osc", "frequency", None)
+    };
+    RpcResponsePayload::Receipt(MutationReceipt {
+        status: crate::RuntimeStatus {
+            running: true,
+            sample_rate: 48_000,
+            module_count: 1,
+            connection_count: 0,
+            diagnostics: None,
+            session: None,
+        },
+        controls: vec![control],
+    })
+}
+
+#[test]
+fn a_retry_of_a_requested_write_replays_its_receipt() {
+    // Its request, what became of it by the reply and where it lands are
+    // what re-reading state cannot tell; one applied as it was made names
+    // no request and replays compactly, as any commit does.
+    use ControlRequestState::*;
+    for (state, requested) in [
+        (Pending, true),
+        (Expired, true),
+        (Applied, true),
+        (Applied, false),
+    ] {
+        let mut ledger = MutationLedger::default();
+        let mut revisions = RevisionTracker::new("s1");
+        let t = ticket("w-1", revisions.current());
+        let original = receipt(state, requested);
+        run(&mut ledger, &mut revisions, &t, &author(), original.clone()).unwrap();
+        let retry = replayed(ledger.admit(&t, &author(), &revisions).unwrap());
+        if requested {
+            assert_eq!(retry, original, "{state:?}");
+        } else {
+            let compact = matches!(retry, RpcResponsePayload::MutationCommitted { .. });
+            assert!(compact, "{retry:?}");
+        }
+    }
+}
