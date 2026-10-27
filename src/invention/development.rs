@@ -149,7 +149,10 @@ impl ModuleFactory for DevelopmentFactory {
 /// controls. A development has no other config surface, so every key must
 /// name an exposed control and every value must be a scalar; this is what
 /// lets a document whose control changes were written into a development
-/// instance's config rebuild with the same values on a cold load.
+/// instance's config rebuild with the same values on a cold load. A key
+/// naming an event (one an alias fires) holds no state to restore: it is
+/// read and ignored, as a plain module's build ignores one, and a reload
+/// ignores it too (see `plan_reload`).
 fn apply_development_config(
     name: &str,
     config: &serde_json::Value,
@@ -162,6 +165,12 @@ fn apply_development_config(
     };
     let mut pending = Vec::with_capacity(map.len());
     for (key, value) in map {
+        if surface
+            .declaration(key)
+            .is_some_and(|found| found.decl.event)
+        {
+            continue;
+        }
         let value = crate::invention::reload::scalar_control_value(value).ok_or_else(|| {
             format!(
                 "Development '{}' config key '{}' must be a number, bool, or string",

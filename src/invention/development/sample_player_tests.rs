@@ -97,27 +97,28 @@ fn frame(graph: &Arc<Mutex<SignalGraph>>) -> [f32; 4] {
 }
 
 #[test]
-fn a_saved_start_plays_both_players_once_and_one_sample_key_loads_into_both() {
+fn a_saved_start_plays_nothing_and_one_sample_key_loads_into_both() {
     let dir = tempfile::tempdir().unwrap();
     let a = tone(dir.path(), "a.wav", 0.2, 64);
     let b = tone(dir.path(), "b.wav", 0.4, 64);
     let c = tone(dir.path(), "c.wav", 0.6, 64);
 
+    // A saved start is no event to fire: only the player starting on its
+    // own plays, on b.
     let (graph, surface) = running(pair(&a), json!({ "sample": b, "start": true }));
-    assert_eq!(
-        frame(&graph),
-        [0.4, 0.4, 1.0, 1.0],
-        "each starts once, on b"
-    );
+    assert_eq!(frame(&graph), [0.0, 0.4, 0.0, 1.0]);
+    assert_eq!(surface.get_control("sample").unwrap(), b.as_str().into());
+
+    surface.set_control("start", true.into()).unwrap();
+    assert_eq!(frame(&graph), [0.4, 0.4, 1.0, 1.0], "each starts, on b");
     for _ in 0..8 {
         assert_eq!(frame(&graph), [0.4, 0.4, 0.0, 0.0], "and not again");
     }
-    assert_eq!(surface.get_control("sample").unwrap(), b.as_str().into());
 
     surface.set_control("sample", c.as_str().into()).unwrap();
     assert_eq!(frame(&graph), [0.6, 0.6, 1.0, 1.0], "c swapped into both");
 
-    // Without a saved start, only the player starting on its own plays.
+    // Without a saved sample, the players play what they were built with.
     let (graph, _) = running(pair(&a), json!({}));
     assert_eq!(frame(&graph), [0.0, 0.2, 0.0, 1.0]);
 }

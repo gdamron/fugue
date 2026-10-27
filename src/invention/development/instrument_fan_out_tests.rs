@@ -112,11 +112,13 @@ fn one_sample_key_loads_into_every_instrument_behind_it() {
     let c = wav(dir.path(), "c.wav", 1764);
     let (graph, surface) = running(&a, json!({ "sample": b, "note": 60 }));
     let (p, q) = sounding(&graph);
+    assert_eq!((p, q), (0, 0), "its saved note plays nothing");
+    surface.set_control("note", 60.0.into()).unwrap();
+    let (p, q) = sounding(&graph);
     assert!(
         about(960).contains(&p) && about(960).contains(&q),
-        "its saved note plays its configured sample: {p}, {q}"
+        "a note plays its configured sample: {p}, {q}"
     );
-    assert_eq!(sounding(&graph), (0, 0), "the saved note played once");
 
     surface.set_control("sample", c.as_str().into()).unwrap();
     surface.set_control("note", 60.0.into()).unwrap();
