@@ -257,10 +257,14 @@ impl Replay {
             }
             let at = due.due;
             self.next += 1;
-            // A late sample's events finish once they have applied, as
-            // live (see `PendingStore::apply_due`).
-            let next = self.due.get(self.next).filter(|next| next.sample <= now);
-            if fired && next.is_none_or(|next| next.due != at) {
+            // A late event finishes once it applies, as live: with the
+            // other events due at its sample, which change nothing it reads
+            // (see `PendingStore::apply_due`).
+            let beside = |next: &Due| {
+                let event = |control| graph.is_event(&next.module_id, control);
+                next.sample <= now && next.due == at && next.control.is_some_and(event)
+            };
+            if fired && !self.due.get(self.next).is_some_and(beside) {
                 graph.finish_events();
             }
         }

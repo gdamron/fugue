@@ -146,6 +146,10 @@ pub(crate) trait ConditionHost {
         value: RequestValue,
         retirer: &mut Retirer,
     ) -> Result<(), Outcome>;
+
+    /// Finishes the late events just applied (see
+    /// [`crate::Module::finish_events`]).
+    fn finish_events(&mut self) {}
 }
 
 /// What one part has seen.
@@ -414,6 +418,7 @@ impl Conditions {
                 continue;
             }
             let standing = Standing::of(&request, due);
+            let fires = request.fires();
             let Request {
                 target, value, id, ..
             } = request;
@@ -423,6 +428,10 @@ impl Conditions {
                 Ok(()) => Outcome::Applied { at },
                 Err(outcome) => outcome,
             };
+            // A late event finishes as it applies, as the pending store's.
+            if fires && matches!(outcome, Outcome::AppliedLate { .. }) {
+                host.finish_events();
+            }
             outcomes.record(id, payload, outcome);
             self.slots.release();
         }

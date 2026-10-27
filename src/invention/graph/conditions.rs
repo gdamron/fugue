@@ -127,6 +127,10 @@ impl ConditionHost for Superseding<'_> {
         }
         applied
     }
+
+    fn finish_events(&mut self) {
+        self.graph.finish_events();
+    }
 }
 
 impl SignalGraph {
