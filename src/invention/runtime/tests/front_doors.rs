@@ -109,8 +109,8 @@ const WRITES_A_SURFACE: &[(&str, &str)] = &[
         "validation, on a copy of a surface that never plays",
     ),
     (
-        "invention/reload/commit.rs",
-        "authored values carried into a rebuilt graph",
+        "invention/orchestration/authored.rs",
+        "a commit's writes to the modules it kept, reloads' carried values among them",
     ),
     (
         "invention/render/code_modules.rs",

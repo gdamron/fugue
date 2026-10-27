@@ -213,6 +213,11 @@ pub(crate) struct Committed {
     pub(crate) started: Vec<RuntimeModuleInfo>,
     /// Modules the change removed or replaced.
     pub(crate) stopped: Vec<String>,
+    /// Modules it kept with a timed authored write waiting as it committed:
+    /// what its caller writes to one is recorded as it applies, not taken
+    /// as the document already holds it, so the document follows whichever
+    /// of the two applies later (see `publish::timed_write`).
+    pub(crate) contested: Vec<String>,
 }
 
 impl LiveGraph {
@@ -597,6 +602,7 @@ impl LiveGraph {
                 return Err(GraphCommandError::TopologyMoved);
             }
             let fence = authored::Fence::open(&self.pending, &self.state, (&VecDeque::new(), None));
+            let contested = self.contested(&[]);
             retain(&mut self.state.lock().unwrap());
             since.rebase(&self.state, (&[], &writes));
             fence.close(
@@ -605,7 +611,10 @@ impl LiveGraph {
                 (&mut VecDeque::new(), None),
             );
             drop(publisher);
-            return Ok(Committed::default());
+            return Ok(Committed {
+                contested,
+                ..Committed::default()
+            });
         }
         // Once the audio side is gone, `publish` refuses with
         // `AudioThreadStopped` rather than a `QueueFull` to retry forever.
@@ -643,7 +652,8 @@ impl LiveGraph {
         // Authored writes not yet recorded that the change replaced are
         // forgotten (see `authored::Fence`).
         let fence = authored::Fence::open(&self.pending, &self.state, (&VecDeque::new(), None));
-        let committed = self.commit_published(&publisher, published, &self.port(), retain);
+        let mut committed = self.commit_published(&publisher, published, &self.port(), retain);
+        committed.contested = self.contested(&committed.stopped);
         since.rebase(&self.state, (&committed.stopped, &writes));
         fence.close(
             (&self.pending, &self.state),
@@ -653,6 +663,15 @@ impl LiveGraph {
         drop(publisher);
         self.settle();
         Ok(committed)
+    }
+
+    /// The modules a commit kept, but those it `stopped`, with a timed
+    /// authored write waiting (see [`Committed::contested`]).
+    fn contested(&self, stopped: &[String]) -> Vec<String> {
+        let pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut modules = pending.timed_authored_modules();
+        modules.retain(|module| !stopped.contains(module));
+        modules
     }
 
     /// Commits the runtime mirrors to `published`, now the publisher's

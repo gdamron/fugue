@@ -489,6 +489,18 @@ impl PendingLog {
                 .any(|(_, write)| write.authored.as_ref().is_some_and(|a| !a.timed))
     }
 
+    /// The modules of the timed authored writes waiting, listed once each.
+    pub(crate) fn timed_authored_modules(&self) -> Vec<String> {
+        let mut modules: Vec<String> = Vec::new();
+        for (_, write) in &self.writes {
+            let timed = write.authored.as_ref().is_some_and(|a| a.timed);
+            if timed && !modules.contains(&write.module_id) {
+                modules.push(write.module_id.clone());
+            }
+        }
+        modules
+    }
+
     /// What the retained document has yet to take, every outcome received
     /// first: each authored write that applied and each timed edit that
     /// settled, in the order the audio thread reported them.

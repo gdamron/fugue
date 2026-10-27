@@ -141,15 +141,16 @@ impl RunningInvention {
             if built.contains(write.module_id.as_str()) {
                 continue;
             }
-            // Unrecorded: the retained document already holds the value.
-            let written = snapshot.set_control_transient(
-                &write.module_id,
-                &write.key,
+            // Unrecorded, the retained document holding the value, unless
+            // a timed write contests it.
+            let written = snapshot.set_control_committed(
+                (&write.module_id, &write.key),
                 audio_assets::resolve_checked_asset_write(
                     document.source_path.as_deref(),
                     &write.key,
                     &write.value,
                 ),
+                &committed.contested,
             );
             let outcome = written.err().map(|error| match error {
                 GraphCommandError::ControlError(message) => message,

@@ -252,8 +252,11 @@ impl RunningInvention {
             // `ControlChanged` per carried value would be redundant and would
             // misattribute the reload as a conducting gesture. Unrecorded:
             // the retained document already holds the authored value, and
-            // the value is already coerced.
-            if let Err(error) = snapshot.set_control_transient(&module_id, &key, value) {
+            // the value is already coerced. Recorded as it applies, though,
+            // if a timed write contests it.
+            let contested = &committed.contested;
+            let written = snapshot.set_control_committed((&module_id, &key), value, contested);
+            if let Err(error) = written {
                 // The topology is already published; the module keeps its
                 // previous value rather than failing a change that landed.
                 let label = format!("{module_id}.{key}");

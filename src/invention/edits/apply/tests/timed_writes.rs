@@ -2,11 +2,13 @@
 //! the batch's write to its control applies later is what plays, and the
 //! document records the same, with or without a publication and whether it
 //! applies before the batch is planned, while it is, or after it commits.
-//! A batch rebuilding its module replaces it in both. One landing after a
-//! whole scale written before it is recorded as a cold build reads it, and one
-//! against a timed batch writing its control is recorded in the order each
-//! applied, the batch's write included, or not at all when the write
-//! outranks it on its sample, a whole scale over a degree included.
+//! A batch rebuilding its module replaces it in both, and one the audio
+//! thread applies just before the batch's own write is recorded before it.
+//! One landing after a whole scale written before it is recorded as a cold
+//! build reads it, and one against a timed batch writing its control is
+//! recorded in the order each applied, the batch's write included, or not
+//! at all when the write outranks it on its sample, a whole scale over a
+//! degree included.
 
 use super::real_modules::assert_document_rebuilds_the_live_melody;
 use super::scripted::Step;
@@ -145,6 +147,34 @@ fn a_batch_rebuilding_its_module_replaces_a_timed_write_before_or_after_it() {
             (330.0, number(330.0)),
             "applied first: {applied_first}"
         );
+    }
+}
+
+#[test]
+fn a_contested_commit_write_is_recorded_after_a_timed_write_applied_before_it() {
+    for contested in [vec!["osc1".to_string()], Vec::new()] {
+        let (running, pump) = start(BASE);
+        author_at(&running, "osc1", 330.0, 64 * 2 + 7);
+        // Applied on the audio thread, its outcome not yet taken, as a
+        // commit records a document of its own retuning osc1: the race a
+        // device stream can run, here in order.
+        pump.render(4);
+        let mut state = running.state.lock().unwrap();
+        state.document_write_control("osc1", "frequency", &number(220.0));
+        drop(state);
+        let snapshot = running.snapshot();
+        let control = ("osc1", "frequency");
+        snapshot
+            .set_control_committed(control, number(220.0), &contested)
+            .unwrap();
+        pump.render(2);
+        let (recorded, heard) = heard_and_recorded(&running, "osc1");
+        assert_eq!(heard, number(220.0), "the commit's write applied last");
+        // Uncontested, the timed write is recorded over the commit's
+        // document, though the commit's write plays: why a commit reports
+        // the module, so its write is recorded after.
+        let expected = if contested.is_empty() { 330.0 } else { 220.0 };
+        assert_eq!(recorded, expected, "contested: {contested:?}");
     }
 }
 
