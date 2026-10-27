@@ -6,7 +6,7 @@
 use super::*;
 use crate::invention::manual_backend::{start_manual, Pump};
 use crate::invention::publish::Progress;
-use crate::rpc::{ControlRequestState, RequestSource};
+use crate::rpc::{ControlRequestState, ControlTiming, ControlWhen, RequestSource};
 use crate::{ControlWrite, ControlWriteIntent, RpcEventPayload};
 use std::sync::Arc;
 
@@ -210,29 +210,37 @@ fn a_write_applied_before_an_edit_batch_is_announced_before_the_batchs() {
 #[test]
 fn a_batch_wider_than_the_shared_outcomes_says_what_became_of_each() {
     // Each write settles before the next is made, all at one sample, so
-    // the first, ranked highest, holds the control against the rest.
-    let backend = crate::modules::NullBackend::new(48_000);
-    let running = runtime().start_with_backend(backend).unwrap();
-    let ranked = ControlWrite {
-        priority: Some(1),
-        ..frequency(330.0, RequestSource::User)
-    };
-    let wider = crate::invention::publish::OUTCOME_QUEUE_CAPACITY + 1;
-    let rest = (0..wider).map(|step| frequency(400.0 + step as f32, RequestSource::User));
-    let writes: Vec<_> = std::iter::once(ranked).chain(rest).collect();
+    // the first, ranked highest, holds the control against the rest: made
+    // now, or timed to a sample passed already.
+    for when in [None, Some(ControlWhen::AtSample { sample: 0 })] {
+        let backend = crate::modules::NullBackend::new(48_000);
+        let running = runtime().start_with_backend(backend).unwrap();
+        let timing = ControlTiming { when, ttl_ms: None };
+        let write = |value: f32| ControlWrite {
+            timing: timing.clone(),
+            ..frequency(value, RequestSource::User)
+        };
+        let ranked = ControlWrite {
+            priority: Some(1),
+            ..write(330.0)
+        };
+        let wider = crate::invention::publish::OUTCOME_QUEUE_CAPACITY + 1;
+        let rest = (0..wider).map(|step| write(400.0 + step as f32));
+        let writes: Vec<_> = std::iter::once(ranked).chain(rest).collect();
 
-    let acks = running.write_controls(&writes);
+        let acks = running.write_controls(&writes);
 
-    assert!(acks.error.is_none());
-    assert_eq!(acks.controls[0].state, Some(ControlRequestState::Applied));
-    let lost =
-        (acks.controls[1..].iter()).filter(|ack| ack.state != Some(ControlRequestState::Applied));
-    assert_eq!(lost.count(), wider, "none of the rest applied");
-    assert_eq!(
-        running.get_control("osc", "frequency").unwrap(),
-        330.0.into()
-    );
-    running.stop();
+        assert!(acks.error.is_none());
+        assert_eq!(acks.controls[0].state, Some(ControlRequestState::Applied));
+        let lost = (acks.controls[1..].iter())
+            .filter(|ack| ack.state != Some(ControlRequestState::Applied));
+        assert_eq!(lost.count(), wider, "none of the rest applied: {timing:?}");
+        assert_eq!(
+            running.get_control("osc", "frequency").unwrap(),
+            330.0.into()
+        );
+        running.stop();
+    }
 }
 
 /// Queues an edit adding an lfo and retuning osc, landing 256 samples on.

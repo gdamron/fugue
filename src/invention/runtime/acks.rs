@@ -54,17 +54,13 @@ impl RunningInvention {
                     break;
                 }
             };
-            // A reply awaits a write due now, not one timed for later.
-            let performed = WriteOptions::performed(source(write.source));
+            // Held for the reply, timed or not: a reply waits only for one
+            // due now (see below), but reads what became of each.
             let options = WriteOptions {
                 priority: write.priority.unwrap_or(0),
                 ttl: self.ttl_samples(write.timing.ttl_ms),
                 time,
-                ..if time.is_some() {
-                    performed
-                } else {
-                    performed.awaiting()
-                }
+                ..WriteOptions::performed(source(write.source)).awaiting()
             };
             let (module_id, key) = (&write.module_id, &write.key);
             let value = write.value.clone();
