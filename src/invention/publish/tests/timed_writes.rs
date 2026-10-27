@@ -1,9 +1,9 @@
 //! Control writes timed through the front door on a live graph: one on a
 //! beat lands where a request timed on that beat does, one after another
 //! request lands that many samples after it applies (waiting still, or
-//! applied already), and every block stays allocation- and free-free. A
-//! time that cannot come, or a write that cannot wait for it, is refused
-//! before anything is queued.
+//! applied already, on a feedback loop too), and every block stays
+//! allocation- and free-free. A time that cannot come, or a write that
+//! cannot wait for it, is refused before anything is queued.
 
 use super::request_beats::{beat_rig, blocks_for, level_change, render_counted, submit_level};
 use super::requests::outcomes;
@@ -151,4 +151,23 @@ fn a_write_that_cannot_wait_for_its_time_is_refused() {
     let error = refused.unwrap_err().to_string();
     assert!(error.contains("cannot be timed"), "{error}");
     assert!(rig.live.pending_requests().is_empty(), "nothing queued");
+}
+
+#[test]
+fn a_write_after_another_on_a_feedback_loop_lands_that_many_samples_after_it() {
+    // A loop's modules compute sample by sample, unsplit: the write is due
+    // inside a block, and lands there, not at the next block's start.
+    let mut rig = Rig::new(super::carry::LOOP);
+    let start = rig.graph.current_sample;
+    let osc = ("osc1", "frequency");
+    let first = write_at(&rig, osc, 230.0, WriteTime::AtSample(start + 100)).unwrap();
+    let after = WriteTime::After {
+        request: id(&first),
+        offset: 211,
+    };
+    let second = write_at(&rig, osc, 240.0, after).unwrap();
+    render_counted(&mut rig, 8);
+    let landed = outcomes(&mut rig);
+    let applied = Outcome::Applied { at: start + 311 };
+    assert!(landed.contains(&(id(&second), applied)), "{landed:?}");
 }

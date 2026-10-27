@@ -216,6 +216,17 @@ impl Conditions {
         self.entries.len()
     }
 
+    /// The earliest sample after `now` a request of generation `installed`
+    /// is due on, its condition met already: one with an offset still to
+    /// run (see `Condition::delayed`).
+    pub(crate) fn next_due(&self, installed: u64, now: u64) -> Option<u64> {
+        (self.entries.iter())
+            .filter(|entry| entry.request.target.generation == installed)
+            .filter_map(Entry::due)
+            .filter(|&due| due > now)
+            .min()
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

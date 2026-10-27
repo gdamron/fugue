@@ -733,7 +733,15 @@ impl SignalGraph {
                 break beats;
             }
         };
-        let next = drain.pending.next_due(drain.installed).map(|at| at - now);
+        // One met with an offset to run splits the block where it is due: a
+        // target not split as it computes (a feedback group's member, a
+        // sink) applies what is due only as a segment starts.
+        let met = drain.conditions.next_due(drain.installed, now);
+        let next = match (drain.pending.next_due(drain.installed), met) {
+            (Some(at), Some(due)) => Some(at.min(due)),
+            (at, due) => at.or(due),
+        };
+        let next = next.map(|at| at - now);
         match beats {
             Some(wait) => Some(next.map_or(wait, |next| next.min(wait))),
             None => next,
