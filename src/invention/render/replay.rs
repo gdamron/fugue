@@ -249,10 +249,17 @@ impl Replay {
             let follow = |surface: &ControlSurfaceInstance| {
                 surface.follow_declared(&due.key, due.value).is_ok()
             };
+            let event = |control| graph.is_event(&due.module_id, control);
+            let fired =
+                matches!(applied, Some(Ok(_))) && due.due < now && due.control.is_some_and(event);
             if !matches!(applied, Some(Ok(_))) || !due.follow.as_ref().is_none_or(follow) {
                 self.refused += 1;
             }
             self.next += 1;
+            // A late event finishes as it applies, as live.
+            if fired {
+                graph.finish_events();
+            }
         }
         let edit = self.edits.get(self.next_edit).map(|edit| edit.sample);
         if edit.is_some_and(|sample| sample <= now) {

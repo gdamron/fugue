@@ -222,6 +222,13 @@ impl Request {
         }
     }
 
+    /// Whether it fires an event at its sample, applying after the values
+    /// due there (see `PendingStore::apply_due`). An edit is ordered by
+    /// receipt alone.
+    pub(crate) fn fires(&self) -> bool {
+        self.event && !matches!(self.value, RequestValue::Edit(_))
+    }
+
     /// A structural edit replacing graph generation `generation` with the
     /// publication `edit` holds, at once. It shares the queue, and so one
     /// order, with control requests: those submitted before it apply to

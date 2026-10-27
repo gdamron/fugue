@@ -45,6 +45,8 @@ struct Host {
     clock: Scripted,
     applied: Vec<usize>,
     latched: Vec<usize>,
+    /// How many requests had applied each time the events were finished.
+    finished: Vec<usize>,
 }
 
 impl Host {
@@ -57,6 +59,7 @@ impl Host {
             },
             applied: Vec::with_capacity(8),
             latched: Vec::with_capacity(8),
+            finished: Vec::with_capacity(8),
         }
     }
 
@@ -85,6 +88,10 @@ impl BeatHost for Host {
 
     fn overlaps(&self, a: &ControlTarget, b: &ControlTarget) -> bool {
         (a.module_idx, a.control) == (b.module_idx, b.control)
+    }
+
+    fn finish_events(&mut self) {
+        self.finished.push(self.applied.len());
     }
 
     /// A request to the clock itself resets it.
@@ -183,6 +190,36 @@ fn a_pass_neither_allocates_nor_frees() {
         watches.pass(10, INSTALLED, &mut host, &mut store.outcomes);
     });
     assert_eq!((allocs, frees, watches.len()), (0, 0, 1));
+}
+
+#[test]
+fn a_late_event_on_a_beat_finishes_before_a_later_late_write_applies() {
+    let (mut store, outcomes) = store();
+    let mut watches = Watches::new(4);
+    let mut note_off = request(1, 1, 4.0);
+    note_off.event = true;
+    watches.insert(note_off, 0, &mut store.outcomes);
+    watches.insert(request(2, 1, 4.25), 0, &mut store.outcomes);
+    // An event due on time finishes with its module, as it processes.
+    let mut on_time = request(3, 2, 0.0);
+    on_time.event = true;
+    watches.insert(on_time, 0, &mut store.outcomes);
+    let mut host = Host::at(1.0, 1.0 / 128.0);
+    watches.pass(1_000, INSTALLED, &mut host, &mut store.outcomes);
+    assert_eq!((host.applied.len(), host.finished.len()), (1, 0));
+    // The tempo raced inside the segment: both beats passed in it.
+    host.clock.position = 5.5;
+    watches.pass(1_511, INSTALLED, &mut host, &mut store.outcomes);
+    let log = log(&outcomes);
+    let late = |id| {
+        log.iter().any(|(seen, outcome)| {
+            *seen == id && matches!(outcome, Outcome::AppliedLate { at: 1_511, .. })
+        })
+    };
+    assert!(late(1) && late(2), "{log:?}");
+    // The event finished once it applied, before the write due after it.
+    assert_eq!(host.applied.len(), 3);
+    assert_eq!(host.finished, [2]);
 }
 
 #[test]

@@ -713,6 +713,15 @@ pub trait Module: Send {
         Err((Refusal::Unsupported, payload))
     }
 
+    /// Finishes the events applied since the last [`Module::process`] as
+    /// they would finish rendering, once late requests' events have
+    /// applied, so a write due later never reaches back to an event due
+    /// before it. A module whose event reads a value as it
+    /// sounds (a note off reading the release) reads it here. On the audio
+    /// thread, as [`Module::apply`].
+    #[doc(hidden)]
+    fn finish_events(&mut self) {}
+
     /// Legacy module-local control metadata surface.
     fn controls(&self) -> Vec<ControlMeta> {
         vec![]

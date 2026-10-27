@@ -88,14 +88,15 @@ fn two_events_at_one_sample_both_fire_where_values_coalesce() {
     assert_eq!(counted_block(&mut rig), (0, 0));
     let out = rig.render(1);
     assert!(out.iter().all(|v| *v == 2.75), "{out:?}");
+    // The value applies before the events due beside it.
     let applied = Outcome::Applied { at };
     assert_eq!(
         outcomes(&mut rig),
         [
             (first, Outcome::Superseded),
+            (last, applied),
             (pulses[0], applied),
             (pulses[1], applied),
-            (last, applied),
         ]
     );
 }

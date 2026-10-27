@@ -75,7 +75,7 @@ mod sync {
     }
 }
 
-pub(crate) use automation::{take_automation, Automation};
+pub(crate) use automation::{take_automation, Automation, EventReserve};
 pub(crate) use cells::{apply_declared, ControlCells};
 pub(crate) use condition::{Condition, Edge, Join, Predicate, GATE_LEVEL, MAX_PARTS};
 pub(crate) use conditions::{ConditionHost, Conditions, WatchSlots, CONDITION_CAPACITY};

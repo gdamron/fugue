@@ -531,6 +531,13 @@ impl Module for DevelopmentModule {
         })
     }
 
+    /// Finishes the events of the inner modules an alias reached.
+    fn finish_events(&mut self) {
+        for module in &mut self.graph.modules {
+            module.module_mut().finish_events();
+        }
+    }
+
     fn for_each_alias(
         &self,
         control: ControlIndex,

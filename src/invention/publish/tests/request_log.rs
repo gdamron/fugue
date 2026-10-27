@@ -158,8 +158,9 @@ fn applied_writes_are_logged_with_their_sample_in_apply_order() {
             logged(64, "shape", LoggedValue::Index(1)),
             logged(150, "level", LoggedValue::Number(0.125)),
             logged(200, "level", LoggedValue::Number(0.75)),
-            logged(300, "pulse", LoggedValue::Bool(true)),
+            // The value applies before the event due beside it.
             logged(300, "level", LoggedValue::Number(0.3)),
+            logged(300, "pulse", LoggedValue::Bool(true)),
         ]
     );
     assert_eq!((log.full, log.lost), (false, 0));

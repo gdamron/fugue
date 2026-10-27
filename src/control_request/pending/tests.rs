@@ -189,12 +189,13 @@ fn an_entry_applied_past_its_due_sample_is_late_and_past_its_expiry_is_refused()
     // Applied at 20: the first expired at 15, the second is late but still
     // in time, the third is exactly on time.
     let mut applied = Vec::with_capacity(8);
-    let ((), allocs, frees) = allocator_events(|| {
+    let (stopped, allocs, frees) = allocator_events(|| {
         store.apply_due(20, INSTALLED, |target, _, _, _| {
             applied.push(target.control.0);
             Ok(())
         })
     });
+    assert!(!stopped);
     assert_eq!((allocs, frees), (0, 0));
     assert_eq!(applied, [1, 2]);
     assert_eq!(
@@ -249,4 +250,98 @@ fn edits_never_coalesce_and_a_refused_one_retires_its_publication() {
         0,
         "both went to the retire queue"
     );
+}
+
+/// Request `id` firing an event on `target` with `value`.
+fn event(id: u64, target: ControlTarget, value: f32) -> Request {
+    Request {
+        event: true,
+        ..request(id, target, value)
+    }
+}
+
+#[test]
+fn at_one_sample_values_apply_before_events_whatever_the_receipt_order() {
+    let (mut store, _outcomes) = store_of(8);
+    store.insert(event(1, target(INSTALLED, 0, 2), 60.0), 10);
+    store.insert(request(2, target(INSTALLED, 0, 0), 4.0), 10);
+    store.insert(event(3, target(INSTALLED, 0, 2), 64.0), 10);
+    store.insert(request(4, target(INSTALLED, 1, 0), 0.5), 10);
+    let applied = apply_at(&mut store, 10);
+    assert_eq!(
+        applied,
+        [(0, 0, 4.0), (1, 0, 0.5), (0, 2, 60.0), (0, 2, 64.0)]
+    );
+}
+
+#[test]
+fn writes_due_at_different_samples_apply_in_time_order() {
+    let (mut store, _outcomes) = store_of(8);
+    store.insert(request(1, target(INSTALLED, 0, 0), 4.0), 8);
+    store.insert(event(2, target(INSTALLED, 0, 2), 60.0), 5);
+    // A held entry between them is skipped and stays.
+    store.insert(request(3, target(INSTALLED + 1, 0, 0), 1.0), 5);
+    store.insert(event(4, target(INSTALLED, 0, 2), 64.0), 8);
+    // Late at 10: the store stops behind each late event, for its caller
+    // to finish it.
+    let mut applied = Vec::new();
+    let mut apply = |store: &mut PendingStore| {
+        store.apply_due(10, INSTALLED, |target, _, value, _| {
+            let RequestValue::Value(RtValue::F32(value)) = value else {
+                panic!("unexpected value {value:?}");
+            };
+            applied.push((target.module_idx, target.control.0, value));
+            Ok(())
+        })
+    };
+    assert!(apply(&mut store), "stopped behind the event due at 5");
+    assert!(apply(&mut store), "stopped behind the event due at 8");
+    assert!(!apply(&mut store));
+    assert_eq!(applied, [(0, 2, 60.0), (0, 0, 4.0), (0, 2, 64.0)]);
+    assert_eq!(store.len(), 1, "the held entry stays");
+}
+
+#[test]
+fn only_a_late_event_that_applies_stops_the_store() {
+    let (mut store, _outcomes) = store_of(8);
+    // Late values alone apply together.
+    store.insert(request(1, target(INSTALLED, 0, 0), 1.0), 4);
+    store.insert(request(2, target(INSTALLED, 0, 1), 2.0), 6);
+    // So do the writes after a late event that expired or was refused.
+    let mut expired = event(3, target(INSTALLED, 0, 2), 60.0);
+    expired.expires = Some(9);
+    store.insert(expired, 7);
+    store.insert(event(4, target(INSTALLED, 1, 2), 62.0), 8);
+    store.insert(request(5, target(INSTALLED, 0, 1), 3.0), 9);
+    let mut applied = Vec::new();
+    let stopped = store.apply_due(10, INSTALLED, |target, _, _, _| {
+        applied.push(target.module_idx);
+        match target.module_idx {
+            1 => Err(Refusal::Unsupported.into()),
+            _ => Ok(()),
+        }
+    });
+    assert!(!stopped);
+    assert_eq!(applied, [0, 0, 1, 0]);
+    assert_eq!(store.len(), 0);
+}
+
+#[test]
+fn late_events_at_one_sample_stop_the_store_one_by_one() {
+    let (mut store, _outcomes) = store_of(8);
+    store.insert(event(1, target(INSTALLED, 0, 2), 60.0), 4);
+    store.insert(event(2, target(INSTALLED, 1, 2), 62.0), 4);
+    store.insert(request(3, target(INSTALLED, 2, 0), 1.0), 4);
+    let mut applied = Vec::new();
+    let mut stops = Vec::new();
+    for _ in 0..3 {
+        stops.push(store.apply_due(10, INSTALLED, |target, _, _, _| {
+            applied.push(target.module_idx);
+            Ok(())
+        }));
+    }
+    // The value first, then each event, finished before the next applies.
+    assert_eq!(stops, [true, true, false]);
+    assert_eq!(applied, [2, 0, 1]);
+    assert_eq!(store.len(), 0);
 }

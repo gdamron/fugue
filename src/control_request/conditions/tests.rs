@@ -27,6 +27,9 @@ struct Host {
     applied: Vec<(usize, u64)>,
     /// Control 0 of each module.
     controls: Vec<f32>,
+    /// How many requests had applied each time the late events applied
+    /// were finished.
+    finished: Vec<usize>,
 }
 
 impl Host {
@@ -39,6 +42,7 @@ impl Host {
             now: 0,
             applied: Vec::with_capacity(8),
             controls: vec![0.0; 2],
+            finished: Vec::with_capacity(8),
         }
     }
 
@@ -86,6 +90,10 @@ impl ConditionHost for Host {
     ) -> Result<(), Outcome> {
         self.applied.push((target.module_idx, self.now));
         Ok(())
+    }
+
+    fn finish_events(&mut self) {
+        self.finished.push(self.applied.len());
     }
 }
 
@@ -288,29 +296,54 @@ fn all_parts_are_met_at_the_last_ones_sample() {
 
 #[test]
 fn a_condition_read_only_after_its_target_computed_applies_late() {
+    for event in [false, true] {
+        let (mut store, outcomes) = store();
+        let (mut conditions, slots) = table(4);
+        let mut host = Host::new(vec![gate(&[30], 128)]);
+        let mut late = request(1, &[Predicate::edges(0, 0, 1)]);
+        late.event = event;
+        insert(&mut conditions, &slots, late, &mut store);
+        // The target computes first, then the source: nothing to apply yet.
+        host.segment(0);
+        conditions.start(0, INSTALLED, &host, &mut store.outcomes);
+        conditions.read(INSTALLED, Some(TARGET), &host, &store.outcomes.chains);
+        let next = conditions.apply_due(INSTALLED, Some(TARGET), 0, &mut host, &mut store.outcomes);
+        assert_eq!(next, None);
+        host.compute(0, 64);
+        conditions.read(INSTALLED, None, &host, &store.outcomes.chains);
+        // Met at 30, it applies before the target's next sample, at 64.
+        host.segment(64);
+        conditions.start(64, INSTALLED, &host, &mut store.outcomes);
+        conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store.outcomes);
+        let late = Outcome::AppliedLate { at: 64, due: 30 };
+        assert_eq!(log(&outcomes), [(1, late)]);
+        // A late event finishes as it applies.
+        assert_eq!(host.finished.len(), usize::from(event));
+    }
+}
+
+#[test]
+fn late_events_due_at_one_sample_each_finish_as_they_apply() {
     let (mut store, outcomes) = store();
     let (mut conditions, slots) = table(4);
     let mut host = Host::new(vec![gate(&[30], 128)]);
-    insert(
-        &mut conditions,
-        &slots,
-        request(1, &[Predicate::edges(0, 0, 1)]),
-        &mut store,
-    );
-    // The target computes first, then the source: nothing to apply yet.
+    let edge = [Predicate::edges(0, 0, 1)];
+    for (id, event) in [(1, true), (2, true), (3, false)] {
+        let mut late = request(id, &edge);
+        late.event = event;
+        insert(&mut conditions, &slots, late, &mut store);
+    }
     host.segment(0);
     conditions.start(0, INSTALLED, &host, &mut store.outcomes);
-    conditions.read(INSTALLED, Some(TARGET), &host, &store.outcomes.chains);
-    let next = conditions.apply_due(INSTALLED, Some(TARGET), 0, &mut host, &mut store.outcomes);
-    assert_eq!(next, None);
     host.compute(0, 64);
     conditions.read(INSTALLED, None, &host, &store.outcomes.chains);
-    // Met at 30, it applies before the target's next sample, at 64.
     host.segment(64);
     conditions.start(64, INSTALLED, &host, &mut store.outcomes);
     conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store.outcomes);
     let late = Outcome::AppliedLate { at: 64, due: 30 };
-    assert_eq!(log(&outcomes), [(1, late)]);
+    assert_eq!(log(&outcomes), [(1, late), (2, late), (3, late)]);
+    // As the pending store's and a replay's: each before the next applies.
+    assert_eq!(host.finished, [1, 2]);
 }
 
 #[test]
