@@ -46,7 +46,7 @@
 //! `sample_loading` — the fractional read head advances by
 //! `frequency / root_frequency` per frame. The elastic (time-preserving)
 //! reader can replace this once uniform note durations across the keymap
-//! are needed (see FUG-136).
+//! are needed.
 //!
 //! # Controls
 //!
