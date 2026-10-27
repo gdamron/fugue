@@ -1,7 +1,7 @@
 //! The control writes submitted and not yet applied, as a front door lists
 //! them.
 
-use super::RunningInvention;
+use super::{control_timing, RunningInvention};
 use crate::control_request::{Source, When};
 use crate::rpc::{
     PendingCounts, PendingDetail, PendingRequest, PendingRequests, PendingSource, PendingWait,
@@ -37,7 +37,8 @@ impl RunningInvention {
                 requested: write.value,
                 source: from,
                 waiting: wait(write.when),
-                landing: None,
+                landing: Some(control_timing::landing(Some(write.when), write.beat, None))
+                    .filter(|landing| landing.sample.is_some() || landing.beat.is_some()),
             });
         }
         pending.more = pending.total - pending.items.len();

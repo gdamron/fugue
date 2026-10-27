@@ -2,7 +2,7 @@ use crate::control_request::{RequestId, Source};
 use crate::invention::declared::{Queued, WriteOptions};
 use crate::invention::graph::SignalGraph;
 use crate::invention::publish::{edge, edit_offline, Authoring, Committed, GraphChange, LiveGraph};
-use crate::invention::runtime::{ControlSurfaceInstance, GraphCommandError};
+use crate::invention::runtime::{control_timing, ControlSurfaceInstance, GraphCommandError};
 use crate::registry::ModuleRegistry;
 use crate::rpc::non_finite_refusal;
 use crate::{
@@ -300,16 +300,24 @@ impl RuntimeSnapshot {
 
     /// Announces each front door's write that applied since the last call
     /// as a `ControlChanged` event naming its request (see
-    /// [`Self::set_control_with_intent`]). A host calls it now and then, so
-    /// a write that applied after its reply is announced. Offline, every
-    /// write was announced as it was made.
+    /// [`Self::set_control_with_intent`]), and each timed one that settled,
+    /// however it did, as a `ControlRequestSettled` event after it. A host
+    /// calls it now and then, so a write that applied after its reply is
+    /// announced. Offline, every write was announced as it was made.
     pub fn announce_applied(&self) {
         let Some(live) = &self.live else {
             return;
         };
         for applied in live.take_announcements() {
-            let request = Some(applied.request.0.to_string());
-            self.emit_control_changed(&applied.module_id, &applied.key, applied.value, request);
+            let settled = control_timing::settled(&applied);
+            if applied.applied() {
+                let (module_id, key) = (&applied.module_id, &applied.key);
+                let request = Some(applied.request.0.to_string());
+                self.emit_control_changed(module_id, key, applied.value, request);
+            }
+            if let Some(settled) = settled {
+                self.emit(RpcEventPayload::ControlRequestSettled(settled));
+            }
         }
     }
 
@@ -434,16 +442,21 @@ impl RuntimeSnapshot {
         value: ControlValue,
         request: Option<String>,
     ) {
+        self.emit(RpcEventPayload::ControlChanged {
+            module_id: module_id.to_string(),
+            key: key.to_string(),
+            value,
+            request,
+        });
+    }
+
+    /// Emits `payload` to the installed event sink, if any.
+    fn emit(&self, payload: RpcEventPayload) {
         // Clone the sink out under the lock, then release it before emitting so
         // a sink implementation can never re-enter this slot while we hold it.
         let sink = self.event_sink.lock().unwrap().clone();
         if let Some(sink) = sink {
-            sink.emit(RpcEvent::new(RpcEventPayload::ControlChanged {
-                module_id: module_id.to_string(),
-                key: key.to_string(),
-                value,
-                request,
-            }));
+            sink.emit(RpcEvent::new(payload));
         }
     }
 

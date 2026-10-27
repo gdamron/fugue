@@ -19,6 +19,7 @@ pub type ControlSurfaceInstance = Arc<dyn ControlSurface + Send + Sync>;
 
 mod acks;
 mod clock;
+pub(crate) mod control_timing;
 mod controls;
 mod describe;
 mod editing;
@@ -249,6 +250,9 @@ impl RunningInvention {
         self.agents.stop_all();
         self.state.lock().unwrap().running = false;
         self.backend.stop();
+        // Nothing waiting applies now: each timed write is announced refused.
+        self.live.abandon_writes();
+        self.announce_applied();
     }
 
     pub fn snapshot(&self) -> RuntimeSnapshot {

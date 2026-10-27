@@ -1,6 +1,7 @@
 //! Control writes from a front door that tells its caller what became of
 //! each: applied, still pending, or lost and why.
 
+use super::control_timing::write_time;
 use super::{GraphCommandError, RunningInvention};
 use crate::control_request::{Outcome, Refusal, Source};
 use crate::invention::declared::WriteOptions;
@@ -45,15 +46,20 @@ impl RunningInvention {
         // large batch or other writers could wrap, until the reply is built.
         self.live.hold_room(writes.len());
         for write in writes {
-            // Until timed writes are delivered, one is refused rather than
-            // applied at once.
-            if write.timing.is_set() {
-                let refusal = "timed control writes are not supported by this build";
-                error = Some(GraphCommandError::ControlError(refusal.into()));
-                break;
-            }
+            let time = write.timing.when.as_ref().map(write_time).transpose();
+            let time = match time {
+                Ok(time) => time,
+                Err(refusal) => {
+                    error = Some(refusal);
+                    break;
+                }
+            };
+            // Held for the reply, timed or not: a reply waits only for one
+            // due now (see below), but reads what became of each.
             let options = WriteOptions {
                 priority: write.priority.unwrap_or(0),
+                ttl: self.ttl_samples(write.timing.ttl_ms),
+                time,
                 ..WriteOptions::performed(source(write.source)).awaiting()
             };
             let (module_id, key) = (&write.module_id, &write.key);
@@ -66,7 +72,10 @@ impl RunningInvention {
                 }
             }
         }
-        self.await_acks(taken.iter().map(|(_, ack)| ack));
+        let due_now = taken
+            .iter()
+            .filter(|(write, _)| write.timing.when.is_none());
+        self.await_acks(due_now.map(|(_, ack)| ack));
         snapshot.announce_applied();
         let held: Vec<_> = taken.iter().filter_map(|(_, ack)| ack.request).collect();
         let controls = (taken.into_iter())
@@ -119,7 +128,7 @@ impl RunningInvention {
     }
 
     /// How far a write taken as `ack` got.
-    fn progress(&self, ack: &ControlAck) -> Progress {
+    pub(super) fn progress(&self, ack: &ControlAck) -> Progress {
         match (ack.request, ack.published) {
             (Some(id), _) => self.live.progress(id),
             _ if ack.lost => Progress::Settled(Outcome::Overridden),
@@ -131,6 +140,7 @@ impl RunningInvention {
     /// `write`, taken as `ack`, as its reply reports it.
     fn acknowledged(&self, write: &ControlWrite, ack: ControlAck) -> AppliedControl {
         let (state, reason) = state_of(self.progress(&ack));
+        let landing = write.timing.when.is_some().then(|| self.landing_of(&ack));
         let value = (state == ControlRequestState::Applied)
             .then(|| self.get_control(&write.module_id, &write.key).ok())
             .flatten();
@@ -142,14 +152,14 @@ impl RunningInvention {
             state: Some(state),
             requested: Some(ack.value),
             reason,
-            landing: None,
+            landing,
         }
     }
 }
 
 /// What a request that got as far as `progress` reports, and why it was
 /// refused, if it was.
-fn state_of(progress: Progress) -> (ControlRequestState, Option<String>) {
+pub(super) fn state_of(progress: Progress) -> (ControlRequestState, Option<String>) {
     match progress {
         Progress::Waiting => (ControlRequestState::Pending, None),
         Progress::Applied
@@ -158,6 +168,10 @@ fn state_of(progress: Progress) -> (ControlRequestState, Option<String>) {
         }
         Progress::Settled(Outcome::Superseded) => (ControlRequestState::Superseded, None),
         Progress::Settled(Outcome::Overridden) => (ControlRequestState::Overridden, None),
+        Progress::Settled(Outcome::Refused(Refusal::Expired)) => {
+            let reason = "its ttl ran out before it applied".to_string();
+            (ControlRequestState::Expired, Some(reason))
+        }
         Progress::Settled(Outcome::Refused(refusal)) => {
             (ControlRequestState::Refused, Some(refused(refusal)))
         }
@@ -179,6 +193,7 @@ fn refused(refusal: Refusal) -> String {
         Refusal::PendingFull => "the audio thread had no room for it".into(),
         Refusal::Unsupported => "its module does not take that write for this control".into(),
         Refusal::Invalid => "its value is not one the control holds".into(),
+        Refusal::Stopped => "the invention it was queued on stopped".into(),
         other => format!("refused by the audio thread ({other:?})"),
     }
 }
@@ -198,4 +213,7 @@ fn each_outcome_reports_its_state() {
     let (state, reason) = settled(Outcome::Refused(Refusal::TargetGone));
     assert_eq!(state, Refused);
     assert!(reason.unwrap().contains("removed or rebuilt"));
+    let (state, reason) = settled(Outcome::Refused(Refusal::Expired));
+    assert_eq!(state, Expired);
+    assert!(reason.unwrap().contains("ttl"));
 }

@@ -13,7 +13,7 @@ use crate::LoggedBeat;
 
 /// 480 BPM at 48 kHz: a beat every 6000 samples, a bar of four every 24000.
 const BPM: f64 = 480.0;
-const BAR: usize = 24_000;
+pub(super) const BAR: usize = 24_000;
 /// Blocks of 64 past the second downbeat.
 const PAST_TWO_BARS: usize = 2 * BAR / 64 + 4;
 
@@ -38,7 +38,7 @@ fn start() -> (RunningInvention, Pump) {
 }
 
 /// The sample the clock reaches beat `beat` on.
-fn downbeat(beat: f64) -> usize {
+pub(super) fn downbeat(beat: f64) -> usize {
     let mut clock = Clock::new(48_000, BPM);
     let mut sample = 0;
     loop {

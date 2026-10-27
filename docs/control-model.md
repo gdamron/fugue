@@ -355,7 +355,10 @@ These are part of the model but not wired through yet:
 
 - **Intent on the queue.** The request's `intent` field is not yet read:
   intent is applied above the queue.
-- **Timed control writes on the wire.** Requests timed on samples, beats or
-  conditions are implemented on the audio side; only timed structural edits
-  are exposed to clients so far.
+- **Repeating, ramped and condition-timed control writes on the wire.**
+  `SetControl` and `SetControls` take a `when` (a sample, a beat, or
+  another request applying) and a `ttl_ms` (see
+  [`rpc/control_timing.rs`](../src/rpc/control_timing.rs)); repeating
+  grids, beat ramps and signal or control conditions are implemented on the
+  audio side only.
 - Ramp shapes, and controls declared by plugins.
