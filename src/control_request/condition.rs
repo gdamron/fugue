@@ -140,6 +140,9 @@ impl Join {
 pub(crate) struct Condition {
     join: Join,
     len: u8,
+    /// Samples after it is met that its request applies: 0, on the sample
+    /// it is met.
+    offset: u32,
     parts: [Predicate; MAX_PARTS],
 }
 
@@ -156,6 +159,7 @@ impl Condition {
         Some(Self {
             join,
             len: parts.len() as u8,
+            offset: 0,
             parts: all,
         })
     }
@@ -167,6 +171,22 @@ impl Condition {
 
     pub(crate) fn join(&self) -> Join {
         self.join
+    }
+
+    /// The same condition, its request applying `samples` after it is met.
+    pub(crate) fn delayed(self, samples: u32) -> Self {
+        Self {
+            offset: samples,
+            ..self
+        }
+    }
+
+    /// The sample its request is due on, from the sample each part was met
+    /// at (`None`: not yet): `offset` after it is met, or `None` while it
+    /// is not.
+    pub(crate) fn due(&self, parts: impl Iterator<Item = Option<u64>>) -> Option<u64> {
+        let met = self.join.met(parts)?;
+        Some(met.saturating_add(u64::from(self.offset)))
     }
 
     pub(crate) fn parts(&self) -> &[Predicate] {

@@ -87,6 +87,13 @@ pub(crate) struct Authoring {
     /// two replacing the other, with the values the commit recorded: they
     /// applied after it, so they are recorded again after it is.
     pub(crate) then: Vec<(String, ControlValue)>,
+    /// A timed write: ordered against a commit by when it applies, not by
+    /// a fence (see `publish::timed_write`).
+    pub(crate) timed: bool,
+    /// A timed edit's own write, which its document holds already: recorded
+    /// again only once a write since has changed what the document holds
+    /// (see `publish::timed_chain`).
+    pub(crate) chained: bool,
 }
 
 /// What the retained document takes from the outcomes, in the order the
@@ -397,9 +404,12 @@ impl PendingLog {
     }
 
     /// The control of each authored write not yet recorded, waiting to
-    /// apply or listed, but those safe from timed edit `except`.
+    /// apply or listed, but those safe from timed edit `except` and timed
+    /// writes (see [`Authoring::timed`]).
     pub(crate) fn authored_keys(&self, except: Option<RequestId>) -> Vec<(String, String)> {
-        let watched = |authoring: &Authoring| except.is_none() || authoring.safe != except;
+        let watched = |authoring: &Authoring| {
+            !authoring.timed && (except.is_none() || authoring.safe != except)
+        };
         let waiting = (self.writes.iter())
             .filter(|(_, write)| write.authored.as_ref().is_some_and(watched))
             .map(|(_, write)| (write.module_id.clone(), write.key.clone()));
@@ -418,13 +428,14 @@ impl PendingLog {
     /// `replaced` holds unrecorded when it applies (see `authored::Fence`).
     pub(crate) fn forget_authored(
         &mut self,
-        replaced: impl Fn(&str, &str) -> bool,
+        replaced: impl Fn(&str, &str, &Authoring) -> bool,
         except: Option<RequestId>,
     ) {
         let safe = |authoring: &Authoring| except.is_some() && authoring.safe == except;
         for (_, write) in &mut self.writes {
-            if !write.authored.as_ref().is_some_and(safe) && replaced(&write.module_id, &write.key)
-            {
+            let forgotten = (write.authored.as_ref())
+                .is_some_and(|a| !safe(a) && replaced(&write.module_id, &write.key, a));
+            if forgotten {
                 write.authored = None;
             }
         }
@@ -435,7 +446,7 @@ impl PendingLog {
                 module_id,
                 key,
                 authoring,
-            } => safe(authoring) || !replaced(module_id, key),
+            } => safe(authoring) || !replaced(module_id, key, authoring),
             DocumentStep::Timed => true,
         });
     }
@@ -449,7 +460,9 @@ impl PendingLog {
         follows: impl Fn(&str, &str) -> Vec<(String, ControlValue)>,
         except: Option<RequestId>,
     ) {
-        let followed = |authoring: &Authoring| except.is_none() || authoring.safe != except;
+        let followed = |authoring: &Authoring| {
+            !authoring.timed && (except.is_none() || authoring.safe != except)
+        };
         let waiting = (self.writes.iter_mut()).filter_map(|(_, write)| {
             let authoring = write.authored.as_mut().filter(|a| followed(a))?;
             Some((write.module_id.as_str(), write.key.as_str(), authoring))
@@ -468,13 +481,12 @@ impl PendingLog {
     }
 
     /// Whether an authored write waits to apply, or applied and is not yet
-    /// recorded.
+    /// recorded. A timed one waiting is not counted: it may wait long, and
+    /// is recorded as it applies, after what is read now.
     pub(crate) fn authoring(&self) -> bool {
         !self.steps.is_empty()
-            || self
-                .writes
-                .iter()
-                .any(|(_, write)| write.authored.is_some())
+            || (self.writes.iter())
+                .any(|(_, write)| write.authored.as_ref().is_some_and(|a| !a.timed))
     }
 
     /// What the retained document has yet to take, every outcome received

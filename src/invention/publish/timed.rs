@@ -326,11 +326,9 @@ pub(super) fn adopt_into(
     for schedule in written {
         schedule.record();
     }
-    let lands = chained.clone();
     let retain = move |state: &mut RuntimeState| {
         let origin = state.source_path().map(Path::to_path_buf);
         retain(state);
-        let landing = authored::overtaken(state, &folded, &lands);
         // Written to the graph that was playing, to modules this edit
         // kept, after its document was prepared; a relative asset path
         // named from the document that was playing.
@@ -343,10 +341,8 @@ pub(super) fn adopt_into(
             );
             state.record_authored_control(module_id, key, &value);
         }
-        // Then those of the edit's own they overtook, as they landed after.
-        for (module_id, key, value) in &landing {
-            state.record_authored_control(module_id, key, value);
-        }
+        // The edit's own writes are recorded as each applies, after
+        // these: one a write here outranked on its sample never applies.
     };
     // The edit's document was planned without the authored writes not yet
     // recorded; those it replaced are forgotten.
@@ -390,7 +386,7 @@ fn logged_edit(
 }
 
 /// `spec` on clock `clock`, as the request log and the ledger show it.
-fn logged_beat(clock: &str, spec: BeatSpec) -> LoggedBeat {
+pub(super) fn logged_beat(clock: &str, spec: BeatSpec) -> LoggedBeat {
     let clock = clock.to_string();
     match spec {
         BeatSpec::After(beats) => LoggedBeat::After { clock, beats },

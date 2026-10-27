@@ -175,7 +175,7 @@ impl Fence {
                 module_id,
                 key,
                 authoring,
-            } if except.is_none() || authoring.safe != except => {
+            } if !authoring.timed && (except.is_none() || authoring.safe != except) => {
                 Some((module_id.clone(), key.clone()))
             }
             _ => None,
@@ -203,7 +203,10 @@ impl Fence {
         (stopped, writes): (&[String], &[(String, String)]),
         (later, except): (&mut VecDeque<DocumentStep>, Option<RequestId>),
     ) {
-        if self.0.is_empty() {
+        // A timed write the commit replaced only by rebuilding or removing
+        // its module: one to a control the commit writes is ordered by when
+        // each applies (see `Committed::contested`).
+        if self.0.is_empty() && stopped.is_empty() {
             return;
         }
         let replaced: Vec<_> = {
@@ -215,15 +218,18 @@ impl Fence {
                 .map(|(key, _)| key)
                 .collect()
         };
-        let is_replaced =
-            |module_id: &str, key: &str| replaced.iter().any(|(m, k)| m == module_id && k == key);
+        let is_replaced = |module_id: &str, key: &str, authoring: &Authoring| match authoring.timed
+        {
+            true => stopped.iter().any(|stopped| stopped == module_id),
+            false => replaced.iter().any(|(m, k)| m == module_id && k == key),
+        };
         let safe = |authoring: &Authoring| except.is_some() && authoring.safe == except;
         later.retain(|step| match step {
             DocumentStep::Authored {
                 module_id,
                 key,
                 authoring,
-            } => safe(authoring) || !is_replaced(module_id, key),
+            } => safe(authoring) || !is_replaced(module_id, key, authoring),
             DocumentStep::Timed => true,
         });
         (pending.lock().unwrap_or_else(PoisonError::into_inner))
@@ -241,7 +247,7 @@ impl Fence {
                     module_id,
                     key,
                     authoring,
-                } if !safe(authoring) => Some((module_id.clone(), key.clone())),
+                } if !safe(authoring) && !authoring.timed => Some((module_id.clone(), key.clone())),
                 _ => None,
             });
             (kept.into_iter().chain(later_keys))
@@ -270,7 +276,7 @@ impl Fence {
                 authoring,
             } = step
             {
-                if !safe(authoring) {
+                if !safe(authoring) && !authoring.timed {
                     authoring.then.extend(follows(module_id, key));
                 }
             }
@@ -398,7 +404,8 @@ fn held(state: &RuntimeState, (module_id, key): &(String, String)) -> Option<ser
 /// control as it lands, which records it again as it is adopted rather
 /// than lose it: the write plays on past the landing. One the edit
 /// rebuilds or writes is replaced as it lands, in what plays and in the
-/// document both (a write kept over the edit's is recorded again as its
+/// document both (a timed one the edit writes, as the edit's write applies:
+/// kept, should that lose its sample) (a write kept over the edit's is recorded again as its
 /// copy applies, see `Publisher::keep_authored`). A relative asset path is recorded
 /// as it names, from the retained document's directory, the file it named
 /// from the one it was resolved against (see
@@ -410,12 +417,20 @@ fn record(
     authoring: &Authoring,
 ) {
     let mut state = state.lock().unwrap();
+    // A timed edit's own write, applied after the edit, changes nothing
+    // unless a write recorded since has.
+    if authoring.chained && state.holds(module_id, key, &authoring.value) {
+        return;
+    }
     let origin = authoring.origin.as_deref();
     let value =
         audio_assets::rebase_asset_write(origin, state.source_path(), key, &authoring.value);
+    // A timed write is folded into a waiting edit's document even for a
+    // control the edit writes as it lands: the edit's own write, recorded
+    // as it applies, replaces it then, and leaves it should it never apply.
     let mut record = |key: &str, value: &ControlValue| {
-        if publisher.timed_replaces(module_id).is_none() && !publisher.timed_chains(module_id, key)
-        {
+        let chained = !authoring.timed && publisher.timed_chains(module_id, key);
+        if publisher.timed_replaces(module_id).is_none() && !chained {
             publisher.fold_timed(module_id, key, value);
         }
         state.record_authored_control(module_id, key, value);

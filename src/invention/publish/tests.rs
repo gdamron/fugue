@@ -56,6 +56,7 @@ mod timed_keep;
 mod timed_publisher;
 mod timed_rebind;
 mod timed_status;
+mod timed_writes;
 mod timed_swap;
 mod timelines;
 mod unwind;

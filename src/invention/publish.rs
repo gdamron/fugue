@@ -52,6 +52,7 @@ mod timed;
 mod timed_chain;
 mod timed_status;
 mod timed_swap;
+pub(crate) mod timed_write;
 // Submitted to by timed control writes, still to come.
 #[cfg_attr(not(test), allow(dead_code))]
 mod watch;
@@ -68,6 +69,7 @@ pub(crate) use reclaim::Reclaimer;
 use registry::LiveRegistry;
 pub(crate) use retarget::Retarget;
 pub(crate) use timed::EditTime;
+pub(crate) use timed_write::WriteTime;
 pub(crate) use timed_status::{CancelCause, EditState, EditStatus, Touched};
 
 /// How many times an edit that builds a module ([`LiveGraph::add_module`],
