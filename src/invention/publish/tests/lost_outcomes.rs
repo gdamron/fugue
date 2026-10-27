@@ -107,6 +107,17 @@ fn fill(sender: &mut OutcomeSender) {
     }
 }
 
+/// The values the document records, oldest first.
+fn recorded_values(log: &mut PendingLog) -> Vec<ControlValue> {
+    let steps = log.take_steps();
+    (steps.into_iter())
+        .filter_map(|step| match step {
+            DocumentStep::Authored { authoring, .. } => Some(authoring.value),
+            _ => None,
+        })
+        .collect()
+}
+
 fn recorded(log: &mut PendingLog) -> usize {
     let steps = log.take_steps();
     (steps.iter())
@@ -239,4 +250,69 @@ fn suspects_queued_apart_each_settle_past_where_they_were_taken_up() {
     assert_eq!(rig.announced(), [(second, None)], "taken to have applied");
     assert_eq!(recorded(&mut rig.log), 2);
     assert_eq!(rig.log.on_sample(), 0);
+}
+
+#[test]
+fn a_suspect_write_overtaken_by_a_later_one_is_announced_but_not_recorded() {
+    let mut rig = rig();
+    let lost = rig.queue(330.0, When::AtSample(100));
+    rig.take_up();
+    rig.drop_outcome(lost, Outcome::Applied { at: 100 });
+    rig.transport.publish(64);
+    assert!(rig.announced().is_empty(), "suspect");
+    rig.transport.publish(128);
+    assert!(rig.announced().is_empty(), "seen taken up at 128");
+
+    // A later write to the same control applies on 150, its outcome kept,
+    // and settles before the suspect is taken to have applied.
+    let later = rig.queue(220.0, When::AtSample(150));
+    rig.take_up();
+    rig.outcomes.send(later, Outcome::Applied { at: 150 }, None);
+    rig.transport.publish(192);
+    let announced = rig.announced();
+    assert_eq!(
+        announced,
+        [(later, Some(Outcome::Applied { at: 150 })), (lost, None)]
+    );
+    let recorded = recorded_values(&mut rig.log);
+    assert_eq!(recorded, [ControlValue::from(220.0)], "as playback holds");
+}
+
+#[test]
+fn a_suspect_write_due_after_one_recorded_is_recorded_over_it() {
+    let mut rig = rig();
+    let lost = rig.queue(330.0, When::AtSample(200));
+    rig.take_up();
+    rig.drop_outcome(lost, Outcome::Applied { at: 200 });
+    rig.transport.publish(128);
+    assert!(rig.announced().is_empty());
+
+    let earlier = rig.queue(220.0, When::AtSample(150));
+    rig.take_up();
+    rig.outcomes
+        .send(earlier, Outcome::Applied { at: 150 }, None);
+    rig.transport.publish(256);
+    assert_eq!(rig.announced().len(), 1, "the suspect seen taken up at 256");
+    rig.transport.publish(320);
+    assert_eq!(rig.announced(), [(lost, None)]);
+    let recorded = recorded_values(&mut rig.log);
+    let expected = [ControlValue::from(220.0), ControlValue::from(330.0)];
+    assert_eq!(recorded, expected, "in the order they applied");
+}
+
+#[test]
+fn suspect_writes_settled_together_keep_the_one_due_last() {
+    let mut rig = rig();
+    let last = rig.queue(330.0, When::AtSample(300));
+    let first = rig.queue(220.0, When::AtSample(200));
+    rig.take_up();
+    rig.drop_outcome(RequestId(20), Outcome::Applied { at: 0 });
+    assert!(rig.announced().is_empty());
+    rig.transport.publish(64);
+    assert!(rig.announced().is_empty(), "both seen taken up at 64");
+
+    rig.transport.publish(400);
+    assert_eq!(rig.announced(), [(last, None), (first, None)]);
+    let recorded = recorded_values(&mut rig.log);
+    assert_eq!(recorded, [ControlValue::from(330.0)], "as playback holds");
 }

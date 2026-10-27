@@ -152,6 +152,9 @@ pub(crate) struct PendingLog {
     /// Writes timed on a sample that were waiting when outcomes were lost
     /// (see `pending::lost`).
     suspect: Vec<lost::Suspect>,
+    /// Each control's latest authored write that applied, which a suspect
+    /// write taken to have applied must not be recorded over.
+    latest: lost::Latest,
     /// Outcomes lost since they were last taken: dropped by the audio
     /// thread for want of room, or evicted here unreported.
     lost: u64,
@@ -182,6 +185,7 @@ impl PendingLog {
         Self {
             requests,
             suspect: Vec::new(),
+            latest: lost::Latest::default(),
             writes: VecDeque::new(),
             outcomes: VecDeque::new(),
             receiver,
@@ -257,6 +261,7 @@ impl PendingLog {
                 if let Some(write) = write.as_ref() {
                     if applied {
                         self.authored(write);
+                        self.latest.applied(write, id, outcome);
                     }
                     self.announce(id, write, Some(outcome));
                 }
@@ -402,6 +407,7 @@ impl PendingLog {
     pub(crate) fn abandon(&mut self) {
         self.settle();
         self.suspect.clear();
+        self.latest = lost::Latest::default();
         for (id, write) in std::mem::take(&mut self.writes) {
             self.announce(id, &write, Some(Refusal::Stopped.into()));
         }

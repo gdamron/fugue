@@ -19,15 +19,63 @@
 //!   outcome it could have was queued or dropped by a count read later,
 //!   before receiving outcomes.
 //!
-//! One exception remains: a write for a generation not yet installed (one a
-//! timed edit, waiting for its time, will install) is held in the store
-//! until that install. Taken to have applied meanwhile, its own outcome then
-//! finds no write and is counted lost.
+//! Taken to have applied that late, it may have been overtaken: another
+//! authored write to its control, applied on a later sample, may have been
+//! recorded meanwhile. The document then keeps the later one, as playback
+//! does, and the suspect is announced but not recorded.
+//!
+//! Exceptions remain:
+//! - A write for a generation not yet installed (one a timed edit, waiting
+//!   for its time, will install) is held in the store until that install.
+//!   Taken to have applied meanwhile, its own outcome then finds no write
+//!   and is counted lost.
+//! - Overtaking is told by its own sample, so one that applied late, after
+//!   a write recorded for a sample between, is not recorded. And it is told
+//!   by key, so a whole value (`degrees`) does not overtake a part of it
+//!   (`degree.1`).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
-use super::PendingLog;
-use crate::control_request::{RequestId, When};
+use super::{PendingLog, PendingWrite};
+use crate::control_request::{Outcome, RequestId, When};
+
+/// Each control's latest authored write that applied, by module and key:
+/// its sample, then its request, which orders writes on one sample.
+#[derive(Default)]
+pub(super) struct Latest(HashMap<String, HashMap<String, (u64, RequestId)>>);
+
+impl Latest {
+    /// Notes authored `write`, request `id`, as `outcome` applied it.
+    pub(super) fn applied(&mut self, write: &PendingWrite, id: RequestId, outcome: Outcome) {
+        if let Outcome::Applied { at } | Outcome::AppliedLate { at, .. } = outcome {
+            self.note(write, id, at);
+        }
+    }
+
+    fn note(&mut self, write: &PendingWrite, id: RequestId, at: u64) {
+        if write.authored.is_none() {
+            return;
+        }
+        let keys = match self.0.get_mut(&write.module_id) {
+            Some(keys) => keys,
+            None => self.0.entry(write.module_id.clone()).or_default(),
+        };
+        match keys.get_mut(&write.key) {
+            Some(latest) => *latest = (*latest).max((at, id)),
+            None => {
+                keys.insert(write.key.clone(), (at, id));
+            }
+        }
+    }
+
+    /// Whether an authored write to `write`'s control applied after it,
+    /// request `id` on sample `at`.
+    fn overtaken(&self, write: &PendingWrite, id: RequestId, at: u64) -> bool {
+        (self.0.get(&write.module_id))
+            .and_then(|keys| keys.get(&write.key))
+            .is_some_and(|&latest| latest > (at, id))
+    }
+}
 
 /// A write that may have lost its outcome.
 pub(super) struct Suspect {
@@ -123,7 +171,10 @@ impl PendingLog {
                 return true;
             }
             if let Some((id, write)) = self.writes.remove(at) {
-                self.authored(&write);
+                if !self.latest.overtaken(&write, id, suspect.at) {
+                    self.latest.note(&write, id, suspect.at);
+                    self.authored(&write);
+                }
                 self.announce(id, &write, None);
             }
             false
