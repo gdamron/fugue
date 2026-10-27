@@ -304,6 +304,11 @@ impl RequestDrain {
         &self.published
     }
 
+    /// Closes the queue to every later submission (see `super::unwind`).
+    pub(super) fn close(&self) {
+        self.requests.close();
+    }
+
     /// Whether nothing tagged `generation` or older waits in the queue.
     /// Tags never decrease along the queue, so the head tells.
     pub(super) fn drained_through(&mut self, generation: u64) -> bool {
@@ -314,11 +319,11 @@ impl RequestDrain {
 
 impl Drop for RequestDrain {
     /// Dropped with the graph, on a control thread once the audio has
-    /// stopped; the queue then drops whatever is left in it. A render
-    /// takes the drain out of the graph while requests apply, so a panic
-    /// there drops it while unwinding, on the rendering thread and maybe
-    /// under the publisher (a settle): it then neither locks nor frees, and
-    /// leaks the hook.
+    /// stopped; the queue then drops whatever is left in it. A render that
+    /// panics puts the drain back in the graph (see `super::unwind`), so
+    /// it is not dropped while unwinding unless the graph is: then, on
+    /// the rendering thread and maybe under the publisher (a settle), it
+    /// neither locks nor frees, and leaks the hook.
     fn drop(&mut self) {
         let Some(close) = self.on_drop.take() else {
             return;
@@ -353,7 +358,21 @@ impl SignalGraph {
         budget: &mut usize,
         bridge: Option<(u64, &Publication)>,
     ) -> Option<Box<Publication>> {
-        let mut drain = self.requests.take()?;
+        let drain = |graph: &mut Self, drain: &mut RequestDrain| {
+            graph.drain_into(drain, installed, can_install, budget, bridge)
+        };
+        self.with_drain(drain).flatten()
+    }
+
+    /// [`Self::drain_requests`] on the drain, taken out of the graph.
+    fn drain_into(
+        &mut self,
+        drain: &mut RequestDrain,
+        installed: u64,
+        can_install: bool,
+        budget: &mut usize,
+        bridge: Option<(u64, &Publication)>,
+    ) -> Option<Box<Publication>> {
         drain.pending.outcomes.retirer.flush();
         drain.installed = installed;
         let now = self.current_sample;
@@ -553,20 +572,18 @@ impl SignalGraph {
             }
         }
         if bridging {
-            self.remap_drain(&mut drain, installed, bridge);
+            self.remap_drain(drain, installed, bridge);
         }
         // One order: what was submitted before the edit acts on the graph
         // it replaces, at this same sample.
-        let publication = edit.and_then(|edit| {
+        edit.and_then(|edit| {
             debug_assert_eq!(edit.target.generation, installed, "edits install in order");
             // Beat-timed requests due now included; the segment start
             // after the install looks again for the next one.
-            self.installing = Self::take_publication(&mut drain, edit);
-            let _ = self.apply_due(&mut drain, now);
+            self.installing = Self::take_publication(drain, edit);
+            let _ = self.apply_due(drain, now);
             self.installing.take()
-        });
-        self.requests = Some(drain);
-        publication
+        })
     }
 
     /// The publication an edit carries. An edit only ever carries one; any
@@ -619,11 +636,7 @@ impl SignalGraph {
     /// `installed` order, or refuses it ([`Refusal::TargetGone`]) when its
     /// module was removed or rebuilt. Allocation-, free- and lock-free.
     pub(super) fn remap_requests(&mut self, installed: u64, retired: Option<(u64, &Publication)>) {
-        let Some(mut drain) = self.requests.take() else {
-            return;
-        };
-        self.remap_drain(&mut drain, installed, retired);
-        self.requests = Some(drain);
+        self.with_drain(|graph, drain| graph.remap_drain(drain, installed, retired));
     }
 
     /// [`Self::remap_requests`] on a drain taken out of the graph.
@@ -693,9 +706,12 @@ impl SignalGraph {
         }) {
             self.finish_events();
         }
-        if let Some(mut publication) = self.installing.take() {
-            self.hand_over_with_requests(&mut publication);
-            self.installing = Some(publication);
+        if let Some(publication) = self.installing.take() {
+            let hand_over = |graph: &mut Self, publication: &mut Box<Publication>| {
+                graph.hand_over_with_requests(publication)
+            };
+            let restore = |graph: &mut Self, publication| graph.installing = Some(publication);
+            self.restoring(publication, hand_over, restore);
         }
         // What those requests applying met applies with them, before beats
         // are placed: it may move a clock (a tempo). So may what the beats
@@ -729,19 +745,17 @@ impl SignalGraph {
     /// next: up to the next due request, at most `remaining` frames, at
     /// least one. Allocation-, free- and lock-free.
     pub(super) fn apply_due_requests(&mut self, remaining: usize) -> usize {
-        let Some(mut drain) = self.requests.take() else {
+        let now = self.current_sample;
+        let apply_due = |graph: &mut Self, drain: &mut RequestDrain| graph.apply_due(drain, now);
+        let Some(mut next) = self.with_drain(apply_due) else {
             return remaining;
         };
-        let now = self.current_sample;
-        let mut next = self.apply_due(&mut drain, now);
-        self.requests = Some(drain);
         // A timed edit due now installs once what is due with it has
         // applied; what it maps may then be due too, and the tables it
         // keeps play on it (see `BeatHost::defers`).
         if self.land_timed_edit() {
-            if let Some(mut drain) = self.requests.take() {
-                next = self.apply_due(&mut drain, now);
-                self.requests = Some(drain);
+            if let Some(due) = self.with_drain(apply_due) {
+                next = due;
             }
         }
         next.map_or(remaining, |next| next.min(remaining as u64) as usize)

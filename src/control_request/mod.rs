@@ -49,7 +49,7 @@ mod watch;
 /// same source files against loom's versions instead.
 mod sync {
     pub(super) use std::hint::spin_loop;
-    pub(super) use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+    pub(super) use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
     pub(super) use std::sync::Arc;
 
     pub(super) use crate::audio_thread::debug_assert_control_thread;

@@ -64,7 +64,9 @@
 
 use std::mem::MaybeUninit;
 
-use super::sync::{debug_assert_control_thread, spin_loop, Arc, AtomicU64, Ordering, UnsafeCell};
+use super::sync::{
+    debug_assert_control_thread, spin_loop, Arc, AtomicBool, AtomicU64, Ordering, UnsafeCell,
+};
 
 /// Creates a queue holding up to `capacity` items, rounded up to a power of
 /// two and at least 2 (one lap must tell a full slot from a free one).
@@ -99,6 +101,7 @@ pub(super) fn bounded_from<T: Send>(
         slots,
         mask,
         tail: AtomicU64::new(start),
+        closed: AtomicBool::new(false),
     });
     let producer = QueueProducer {
         shared: shared.clone(),
@@ -123,6 +126,9 @@ struct Shared<T> {
     mask: u64,
     /// The next position a producer claims.
     tail: AtomicU64,
+    /// Set by [`QueueConsumer::close`]: the consumer reads no more, so
+    /// pushes are refused.
+    closed: AtomicBool,
 }
 
 // SAFETY: the queue moves `T` values between threads and never shares a
@@ -198,14 +204,24 @@ impl<T> QueueProducer<T> {
         shared.slot(ahead).seq.load(Ordering::Acquire) == ahead
     }
 
-    /// Pushes `value`, or hands it back if the queue is full. Lock-free and
-    /// allocation-free from any thread, including the audio thread.
+    /// Whether the consumer closed the queue ([`QueueConsumer::close`]).
+    pub(crate) fn is_closed(&self) -> bool {
+        self.shared.closed.load(Ordering::Acquire)
+    }
+
+    /// Pushes `value`, or hands it back if the queue is full or closed.
+    /// Lock-free and allocation-free from any thread, including the audio
+    /// thread.
     ///
     /// "Full" means the slot for the next position still holds the item
     /// pushed one lap earlier. Under contention a concurrent `pop` may have
-    /// just made room, as with any bounded queue.
+    /// just made room, as with any bounded queue. A push racing
+    /// [`QueueConsumer::close`] may still land; it is dropped with the queue.
     pub(crate) fn try_push(&self, value: T) -> Result<(), T> {
         let shared = &*self.shared;
+        if shared.closed.load(Ordering::Acquire) {
+            return Err(value);
+        }
         let mut pos = shared.tail.load(Ordering::Relaxed);
         loop {
             let slot = shared.slot(pos);
@@ -318,6 +334,13 @@ impl<T> QueueConsumer<T> {
         slot.seq.store(next_lap, Ordering::Release);
         self.head = self.head.wrapping_add(1);
         Some(value)
+    }
+
+    /// Refuses every later push: the consumer will read no more (a render
+    /// panicked). What is queued stays, to drop with the queue. Lock-free,
+    /// allocation-free and never frees.
+    pub(crate) fn close(&self) {
+        self.shared.closed.store(true, Ordering::Release);
     }
 }
 

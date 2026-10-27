@@ -147,9 +147,21 @@ impl SignalGraph {
     /// before a sample before it computes that sample. Allocation-, free-
     /// and lock-free.
     pub(super) fn process_conditioned(&mut self, module: usize, frames: usize) {
-        let Some(mut drain) = self.requests.take() else {
-            return self.process_span(module, 0, frames);
+        let spans = |graph: &mut Self, drain: &mut RequestDrain| {
+            graph.process_conditioned_spans(drain, module, frames)
         };
+        if self.with_drain(spans).is_none() {
+            self.process_span(module, 0, frames);
+        }
+    }
+
+    /// [`Self::process_conditioned`] with the drain taken out of the graph.
+    fn process_conditioned_spans(
+        &mut self,
+        drain: &mut RequestDrain,
+        module: usize,
+        frames: usize,
+    ) {
         let chains = &drain.pending.outcomes.chains;
         drain
             .conditions
@@ -164,7 +176,7 @@ impl SignalGraph {
         let mut from = 0;
         while from < frames {
             let at = start + from as u64;
-            let next = self.apply_conditions(&mut drain, Some(module), at);
+            let next = self.apply_conditions(drain, Some(module), at);
             let mut to = next.map_or(frames, |due| ((due - start) as usize).min(frames));
             if edges {
                 let Watches { edges, ramps, .. } = &mut drain.watches;
@@ -173,21 +185,18 @@ impl SignalGraph {
             self.process_span(module, from, to);
             from = to;
         }
-        self.requests = Some(drain);
     }
 
     /// Applies what is due on `module` as its group starts, for a module
     /// that is not split (a sink, a feedback group's member).
     pub(super) fn apply_conditions_on(&mut self, module: usize) {
-        let Some(mut drain) = self.requests.take() else {
-            return;
-        };
-        let chains = &drain.pending.outcomes.chains;
-        drain
-            .conditions
-            .read(drain.installed, Some(module), self, chains);
-        self.apply_conditions(&mut drain, Some(module), self.segment.start);
-        self.requests = Some(drain);
+        self.with_drain(|graph, drain| {
+            let chains = &drain.pending.outcomes.chains;
+            drain
+                .conditions
+                .read(drain.installed, Some(module), graph, chains);
+            graph.apply_conditions(drain, Some(module), graph.segment.start);
+        });
     }
 
     /// Applies every request in `drain` (on `target`, if given) whose
@@ -221,10 +230,9 @@ impl SignalGraph {
     /// Reads what every module computed of the segment just processed, for
     /// the conditions their targets could not see in time.
     pub(super) fn read_conditions(&mut self) {
-        if let Some(mut drain) = self.requests.take() {
+        self.with_drain(|graph, drain| {
             let chains = &drain.pending.outcomes.chains;
-            drain.conditions.read(drain.installed, None, self, chains);
-            self.requests = Some(drain);
-        }
+            drain.conditions.read(drain.installed, None, graph, chains);
+        });
     }
 }

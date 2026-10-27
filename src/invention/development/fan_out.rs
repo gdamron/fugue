@@ -11,7 +11,7 @@
 //! alias alone.
 
 use crate::control_request::Refusal;
-use crate::payload::{Payload, Retired};
+use crate::payload::{LeakOnUnwind, Payload, Retired};
 
 /// One payload per alias, in alias order, and what each replaced.
 struct FannedOut {
@@ -47,13 +47,16 @@ pub(super) fn apply_fanned_out(
     payload: Payload,
     mut apply: impl FnMut(usize, Payload) -> Result<Retired, (Refusal, Payload)>,
 ) -> Result<Retired, (Refusal, Payload)> {
-    let mut fanned = match payload.take_owned::<FannedOut>() {
+    let fanned = match payload.take_owned::<FannedOut>() {
         Ok(fanned) => fanned,
         Err(payload) => return Err((Refusal::Invalid, payload)),
     };
     if fanned.slots.len() != aliases || fanned.slots.iter().any(|slot| slot.payload.is_none()) {
         return Err((Refusal::Invalid, Payload::owned(fanned)));
     }
+    // An alias panicking leaves the box, and what the others replaced, to
+    // leak rather than free here.
+    let mut fanned = LeakOnUnwind::new(fanned);
     let mut refused = None;
     for (position, slot) in fanned.slots.iter_mut().enumerate() {
         let Some(payload) = slot.payload.take() else {
@@ -67,6 +70,7 @@ pub(super) fn apply_fanned_out(
             }
         }
     }
+    let fanned = fanned.into_inner();
     match refused {
         None => Ok(Retired::from(fanned)),
         Some(refusal) => Err((refusal, Payload::owned(fanned))),

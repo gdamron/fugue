@@ -16,7 +16,7 @@
 use super::compiled_graph::process_order;
 use super::*;
 use crate::control_request::Refusal;
-use crate::payload::{Payload, Retired};
+use crate::payload::{LeakOnUnwind, Payload, Retired};
 
 /// What a development's inner order is computed from, by inner module
 /// index: the ids, and the routes as `(from, to)` pairs in routing order,
@@ -86,15 +86,19 @@ pub(super) fn apply_reordered(
     payload: Payload,
     apply: impl FnOnce(Payload) -> Result<Retired, (Refusal, Payload)>,
 ) -> Result<Retired, (Refusal, Payload)> {
-    let mut reordered = match payload.take_owned::<Reordered>() {
+    let reordered = match payload.take_owned::<Reordered>() {
         Ok(reordered) => reordered,
         // Built by no development's surface (a handover): no order.
         Err(payload) => return apply(payload),
     };
+    let mut reordered = LeakOnUnwind::new(reordered);
     let Some(inner) = reordered.inner.take() else {
-        return Err((Refusal::Invalid, Payload::owned(reordered)));
+        return Err((Refusal::Invalid, Payload::owned(reordered.into_inner())));
     };
-    match apply(inner) {
+    // An inner module panicking leaves the box to leak, not to free here.
+    let applied = apply(inner);
+    let mut reordered = reordered.into_inner();
+    match applied {
         Ok(replaced) => {
             if reordered.order.len() == current.len() {
                 current.copy_from_slice(&reordered.order);

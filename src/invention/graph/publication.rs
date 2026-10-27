@@ -280,9 +280,13 @@ impl SignalGraph {
     /// reclaimer makes room; the queue behind them waits.
     /// Allocation-, free-, and lock-free; runs at the start of a block.
     pub(super) fn drain_link(&mut self) {
-        let Some(mut link) = self.link.take() else {
-            return;
-        };
+        self.with_link(Self::drain_link_with);
+    }
+
+    /// [`Self::drain_link`] with the link taken out of the graph, and each
+    /// edit's publication held `in_hand` from its pop until it retires (or
+    /// the bridge, while writes map through it).
+    fn drain_link_with(&mut self, link: &mut AudioLink, in_hand: &mut Option<Box<Publication>>) {
         let mut budget = self.requests.as_ref().map_or(0, |drain| drain.pop_limit);
         let mut installs = 0;
         // Read before anything is drained (see `landing`).
@@ -298,29 +302,32 @@ impl SignalGraph {
                 installs < MAX_INSTALLS_PER_BLOCK && link.bridge.is_none() && link.flush_held();
             let drained =
                 self.drain_requests(link.installed, can_install, &mut budget, link.bridge());
-            let Some(mut publication) = drained else {
-                if self.release_bridge(&mut link, adopted) {
+            let Some(publication) = drained else {
+                if self.release_bridge(link, in_hand, adopted) {
                     continue;
                 }
                 break;
             };
+            let publication = in_hand.insert(publication);
             let previous = link.installed;
-            self.install(&mut publication);
+            self.install(publication);
             link.installed = publication.generation;
             link.applied.fetch_add(1, Ordering::Relaxed);
-            let retired = Some((previous, &*publication));
+            let retired = Some((previous, &**publication));
             self.remap_requests(link.installed, retired);
-            self.drain_inputs(&mut link, retired);
-            link.retire(publication);
+            self.drain_inputs(link, retired);
+            if let Some(publication) = in_hand.take() {
+                link.retire(publication);
+            }
             installs += 1;
         }
-        let bridge = link.bridge.take();
-        let retired = bridge
+        // In hand, as the edits are, while the writes apply.
+        *in_hand = link.bridge.take();
+        let retired = in_hand
             .as_deref()
             .map(|bridge| (bridge.generation - 1, bridge));
-        self.drain_inputs(&mut link, retired);
-        link.bridge = bridge;
-        self.link = Some(link);
+        self.drain_inputs(link, retired);
+        link.bridge = in_hand.take();
     }
 
     /// Applies queued input writes for the installed generation, maps those
