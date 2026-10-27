@@ -294,10 +294,10 @@ impl PendingStore {
     /// values (a state, a payload) in receipt order, then its events (see
     /// [`Request::fires`]), so an event reads what was written for its
     /// sample whichever came first (a note off takes a release written
-    /// beside it). Stops after a late sample whose events applied, and
-    /// says so: its caller finishes those events
-    /// ([`crate::Module::finish_events`]) and calls again, so no write due
-    /// later, applied by this drain or the next, reaches back to them.
+    /// beside it). Stops after each late event that applies, and says so:
+    /// its caller finishes it ([`crate::Module::finish_events`]) and calls
+    /// again, so nothing applied after it, by this drain or the next,
+    /// reaches back to it, as on every other path.
     /// Hands `apply` its
     /// [`Standing`] (none for an event) and settling each applied, or as
     /// `apply` decides, or refused [`Refusal::Expired`] without
@@ -335,7 +335,9 @@ impl PendingStore {
                 let applied = self.entries.extract_if(first..end, |e| {
                     e.request.target.generation == installed && e.request.fires() == events
                 });
-                fired |= Self::apply_each(applied, &mut self.outcomes, now, &mut apply) && events;
+                let one = events && at < now;
+                fired |=
+                    Self::apply_each(applied, &mut self.outcomes, now, one, &mut apply) && events;
             }
             // What is left at `at` is held.
             from = first + self.entries[first..].partition_point(|e| e.at == at);
@@ -346,11 +348,13 @@ impl PendingStore {
     }
 
     /// Applies each of `applied`, as [`Self::apply_due`] describes, and
-    /// says whether any applied.
+    /// says whether any applied; with `one`, stops after the first that
+    /// does, leaving the rest in place.
     fn apply_each(
         applied: impl Iterator<Item = Pending>,
         outcomes: &mut Outcomes,
         now: u64,
+        one: bool,
         apply: &mut impl FnMut(
             &ControlTarget,
             Option<Standing>,
@@ -377,6 +381,9 @@ impl PendingStore {
             applied_any |= matches!(outcome, Outcome::Applied { .. })
                 || matches!(outcome, Outcome::AppliedLate { .. });
             outcomes.record(id, payload, outcome);
+            if one && applied_any {
+                break;
+            }
         }
         applied_any
     }

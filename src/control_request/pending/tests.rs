@@ -282,8 +282,8 @@ fn writes_due_at_different_samples_apply_in_time_order() {
     // A held entry between them is skipped and stays.
     store.insert(request(3, target(INSTALLED + 1, 0, 0), 1.0), 5);
     store.insert(event(4, target(INSTALLED, 0, 2), 64.0), 8);
-    // Late at 10: the store stops behind each late sample's events, for
-    // its caller to finish them.
+    // Late at 10: the store stops behind each late event, for its caller
+    // to finish it.
     let mut applied = Vec::new();
     let mut apply = |store: &mut PendingStore| {
         store.apply_due(10, INSTALLED, |target, _, value, _| {
@@ -323,5 +323,25 @@ fn only_a_late_event_that_applies_stops_the_store() {
     });
     assert!(!stopped);
     assert_eq!(applied, [0, 0, 1, 0]);
+    assert_eq!(store.len(), 0);
+}
+
+#[test]
+fn late_events_at_one_sample_stop_the_store_one_by_one() {
+    let (mut store, _outcomes) = store_of(8);
+    store.insert(event(1, target(INSTALLED, 0, 2), 60.0), 4);
+    store.insert(event(2, target(INSTALLED, 1, 2), 62.0), 4);
+    store.insert(request(3, target(INSTALLED, 2, 0), 1.0), 4);
+    let mut applied = Vec::new();
+    let mut stops = Vec::new();
+    for _ in 0..3 {
+        stops.push(store.apply_due(10, INSTALLED, |target, _, _, _| {
+            applied.push(target.module_idx);
+            Ok(())
+        }));
+    }
+    // The value first, then each event, finished before the next applies.
+    assert_eq!(stops, [true, true, false]);
+    assert_eq!(applied, [2, 0, 1]);
     assert_eq!(store.len(), 0);
 }

@@ -255,16 +255,9 @@ impl Replay {
             if !matches!(applied, Some(Ok(_))) || !due.follow.as_ref().is_none_or(follow) {
                 self.refused += 1;
             }
-            let at = due.due;
             self.next += 1;
-            // A late event finishes once it applies, as live: with the
-            // other events due at its sample, which change nothing it reads
-            // (see `PendingStore::apply_due`).
-            let beside = |next: &Due| {
-                let event = |control| graph.is_event(&next.module_id, control);
-                next.sample <= now && next.due == at && next.control.is_some_and(event)
-            };
-            if fired && !self.due.get(self.next).is_some_and(beside) {
+            // A late event finishes as it applies, as live.
+            if fired {
                 graph.finish_events();
             }
         }

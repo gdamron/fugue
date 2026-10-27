@@ -27,8 +27,9 @@ struct Host {
     applied: Vec<(usize, u64)>,
     /// Control 0 of each module.
     controls: Vec<f32>,
-    /// How many times the late events applied were finished.
-    finished: usize,
+    /// How many requests had applied each time the late events applied
+    /// were finished.
+    finished: Vec<usize>,
 }
 
 impl Host {
@@ -41,7 +42,7 @@ impl Host {
             now: 0,
             applied: Vec::with_capacity(8),
             controls: vec![0.0; 2],
-            finished: 0,
+            finished: Vec::with_capacity(8),
         }
     }
 
@@ -92,7 +93,7 @@ impl ConditionHost for Host {
     }
 
     fn finish_events(&mut self) {
-        self.finished += 1;
+        self.finished.push(self.applied.len());
     }
 }
 
@@ -317,8 +318,32 @@ fn a_condition_read_only_after_its_target_computed_applies_late() {
         let late = Outcome::AppliedLate { at: 64, due: 30 };
         assert_eq!(log(&outcomes), [(1, late)]);
         // A late event finishes as it applies.
-        assert_eq!(host.finished, usize::from(event));
+        assert_eq!(host.finished.len(), usize::from(event));
     }
+}
+
+#[test]
+fn late_events_due_at_one_sample_each_finish_as_they_apply() {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![gate(&[30], 128)]);
+    let edge = [Predicate::edges(0, 0, 1)];
+    for (id, event) in [(1, true), (2, true), (3, false)] {
+        let mut late = request(id, &edge);
+        late.event = event;
+        insert(&mut conditions, &slots, late, &mut store);
+    }
+    host.segment(0);
+    conditions.start(0, INSTALLED, &host, &mut store.outcomes);
+    host.compute(0, 64);
+    conditions.read(INSTALLED, None, &host, &store.outcomes.chains);
+    host.segment(64);
+    conditions.start(64, INSTALLED, &host, &mut store.outcomes);
+    conditions.apply_due(INSTALLED, Some(TARGET), 64, &mut host, &mut store.outcomes);
+    let late = Outcome::AppliedLate { at: 64, due: 30 };
+    assert_eq!(log(&outcomes), [(1, late), (2, late), (3, late)]);
+    // As the pending store's and a replay's: each before the next applies.
+    assert_eq!(host.finished, [1, 2]);
 }
 
 #[test]
