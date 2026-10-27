@@ -176,14 +176,16 @@ pub(crate) struct RequestDrain {
     /// than `installed` means an edit is waiting in the queue, so requests
     /// ahead of it are taken even into a full store (see the module docs).
     ///
-    /// The publisher stores it with `Release` once the edit is queued and
-    /// everything tagged with the generation before it is queued, and every
-    /// load here is `Acquire`. Seeing generation `g` therefore guarantees
-    /// the queue shows the edit that published it, and everything queued
-    /// before: [`Self::adopted`] relies on that to release the bridge (see
-    /// `publication::landing`), and the drain relies on it to take requests
-    /// in front of a waiting edit only when the edit is really there. A
-    /// stale value only holds back one more block.
+    /// The publisher stores it with `Release` once everything tagged with
+    /// the generation before is queued, and every load here is `Acquire`.
+    /// Seeing generation `g` therefore guarantees everything queued before
+    /// the store is visible, which for an edit applied at once includes the
+    /// edit itself: the drain takes requests in front of a waiting edit only
+    /// when the edit is there to peek. (A timed edit's generation is stored
+    /// once the audio thread has landed it, so none is left waiting.)
+    /// [`Self::adopted`] relies on the same guarantee to release the bridge
+    /// (see `publication::landing`). A stale value only holds back one more
+    /// block.
     published: Arc<AtomicU64>,
     /// Reserved requests queued and taken: one waiting is taken even into
     /// a full store, as an edit is.
