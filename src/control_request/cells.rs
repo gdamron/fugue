@@ -82,6 +82,12 @@ impl ControlCells {
         self.cells.len()
     }
 
+    /// Whether the module plays every event written, in order, rather than
+    /// the last at a step (see [`Self::queuing_events`]).
+    pub(crate) fn queues_events(&self) -> bool {
+        self.automation.queues_events()
+    }
+
     /// Publishes `value` as the value `index` holds. Wait-free, allocation-
     /// and lock-free; an index past the table is ignored.
     #[inline]

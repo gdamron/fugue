@@ -628,6 +628,37 @@ fn test_config_validation_errors() {
     let _ = std::fs::remove_file(wav);
 }
 
+/// Every note written before the instrument runs plays as it binds, in
+/// the order written: a chord whole, a release where it was written.
+#[test]
+fn every_note_written_before_the_instrument_runs_plays_as_it_binds() {
+    let asset = write_level_wav(0.5, 44_100);
+    let config = serde_json::json!({
+        "release": 0.001,
+        "zones": [ { "root_note": 60, "key_range": [0, 127], "asset": asset.to_str().unwrap() } ]
+    });
+    let (mut instrument, surface) = build_instrument(config);
+    let notes = [
+        ("note_on", 60.0),
+        ("note_on", 64.0),
+        ("note_on", 67.0),
+        ("note_off", 60.0),
+        ("note_off", 72.0),
+    ];
+    for (key, note) in notes {
+        surface.set_control(key, note.into()).unwrap();
+    }
+    surface.bind(
+        crate::invention::declared::Route::Inner,
+        instrument.as_mut(),
+    );
+    run(&mut instrument, 200);
+    let heard = instrument.get_output("audio_left").unwrap();
+    assert!((heard - 1.0).abs() < 2.0 * TOL, "64 and 67: {heard}");
+
+    let _ = std::fs::remove_file(asset);
+}
+
 #[test]
 fn test_note_control_validation() {
     let path = write_level_wav(0.5, 8);

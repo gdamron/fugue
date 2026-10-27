@@ -10,7 +10,8 @@
 //!   cells, and each control written so is applied to the module when it
 //!   is bound to run (what it was built with stands for the rest). An event
 //!   written so (a development restoring its saved config) fires then, once,
-//!   with the value last written, in write order.
+//!   with the value last written, in write order; for a module that queues
+//!   its events (an instrument's notes) every one written fires, in order.
 //! - **Live**: a request through the live graph's queue, applied on the
 //!   audio thread at its sample (on a `NullBackend`, by a zero-length
 //!   block before the write returns).
@@ -63,13 +64,23 @@ use crate::payload::Payload;
 use crate::traits::ControlSurfaceMap;
 use crate::{ControlMeta, ControlSurface, ControlValue, Module};
 
+/// A write made while its module builds, applied as the module binds.
+#[derive(Clone, Copy)]
+pub(crate) enum Staged {
+    /// A control, as its cell (or staged payload) holds it then.
+    Control(ControlIndex),
+    /// One event of a module that queues its events, as written.
+    Event(ControlIndex, RtValue),
+}
+
 /// Where a declared surface's writes go (see the module docs).
 #[derive(Clone)]
 pub(crate) enum Route {
     /// The controls written so far, each once, in the order of its last
     /// write: a payload rewriting controls (a melody's whole scale) applies
-    /// after those written before it and before those written after.
-    Building(Vec<ControlIndex>),
+    /// after those written before it and before those written after. An
+    /// event of a module that queues its events is kept at each write.
+    Building(Vec<Staged>),
     Live(RequestPort),
     Offline {
         graph: Weak<Mutex<SignalGraph>>,
@@ -623,8 +634,7 @@ impl DeclaredSurface {
                         if let Some(checked) = checked {
                             (checked.record)();
                         }
-                        written.retain(|earlier| *earlier != index);
-                        written.push(index);
+                        restage(written, index);
                         return Ok(Queued::default());
                     }
                 };
@@ -642,9 +652,12 @@ impl DeclaredSurface {
                     }
                     _ => value,
                 };
+                if event && self.cells.queues_events() {
+                    written.push(Staged::Event(index, held));
+                    return Ok(Queued::default());
+                }
                 self.cells.publish(index, held);
-                written.retain(|earlier| *earlier != index);
-                written.push(index);
+                restage(written, index);
                 return Ok(Queued::default());
             }
             route.clone()
@@ -909,6 +922,12 @@ impl DeclaredSurface {
     }
 }
 
+/// Moves `index` to the end of what is staged, written once.
+fn restage(written: &mut Vec<Staged>, index: ControlIndex) {
+    written.retain(|earlier| !matches!(earlier, Staged::Control(staged) if *staged == index));
+    written.push(Staged::Control(index));
+}
+
 fn refused(table: &ControlTable, index: ControlIndex, refusal: Refusal) -> String {
     let key = table.key(index).unwrap_or_default();
     match refusal {
@@ -1002,22 +1021,26 @@ impl ControlSurface for DeclaredSurface {
             // payload applies, as a payload republishes the cells it
             // rewrites. What a payload replaces, or a refused one, is
             // dropped here, on this control thread.
-            let values: Vec<_> = written
-                .iter()
-                .map(|index| self.cells.load(*index))
+            let values: Vec<_> = (written.iter())
+                .map(|staged| match *staged {
+                    Staged::Control(index) => (index, self.cells.load(index), true),
+                    Staged::Event(index, value) => (index, Some(value), false),
+                })
                 .collect();
             let mut payloads = self.payloads.lock().unwrap();
-            for (index, value) in written.iter().zip(values) {
-                match payloads.iter_mut().find(|payload| payload.index == *index) {
+            for (index, value, control) in values {
+                let payload =
+                    (payloads.iter_mut()).find(|payload| control && payload.index == index);
+                match payload {
                     Some(payload) => {
                         if let Some(staged) = payload.staged.take() {
-                            let applied = module.apply_payload(*index, staged);
+                            let applied = module.apply_payload(index, staged);
                             debug_assert!(applied.is_ok(), "a module takes what its codec builds");
                         }
                     }
                     None => {
                         if let Some(value) = value {
-                            let _ = apply_declared(module, *index, value);
+                            let _ = apply_declared(module, index, value);
                         }
                     }
                 }

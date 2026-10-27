@@ -74,6 +74,11 @@ impl AutomationSlots {
         }
     }
 
+    /// Whether event writes are queued, each kept, rather than coalesced.
+    pub(super) fn queues_events(&self) -> bool {
+        self.events.queues()
+    }
+
     /// Stores a write in `index`'s slot, or queues it when `index` is an
     /// event and the module queues its events (counted refused when there
     /// is no room).
