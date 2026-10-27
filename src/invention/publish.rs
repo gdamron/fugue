@@ -611,6 +611,8 @@ impl LiveGraph {
             );
             let contested = self.contested(&[], &writes);
             drop(publisher);
+            #[cfg(test)]
+            tests::after_commit();
             return Ok(Committed {
                 contested,
                 ..Committed::default()
@@ -661,6 +663,8 @@ impl LiveGraph {
         );
         committed.contested = self.contested(&committed.stopped, &writes);
         drop(publisher);
+        #[cfg(test)]
+        tests::after_commit();
         self.settle();
         Ok(committed)
     }

@@ -3,7 +3,8 @@
 //! document records the same, with or without a publication and whether it
 //! applies before the batch is planned, while it is, or after it commits.
 //! A batch rebuilding its module replaces it in both, and one the audio
-//! thread applies just before the batch's own write is recorded before it.
+//! thread applies just before the batch's own write is recorded before it;
+//! one submitted as a batch or a reload commits waits for its writes.
 //! One landing after a whole scale written before it is recorded as a cold
 //! build reads it, and one against a timed batch writing its control is
 //! recorded in the order each applied, the batch's write included, or not
@@ -15,6 +16,7 @@ use super::scripted::Step;
 use super::*;
 use crate::control_request::Source;
 use crate::invention::declared::WriteOptions;
+use crate::invention::orchestration::RuntimeSnapshot;
 use crate::invention::publish::{Contested, WriteTime};
 use crate::ControlWriteIntent;
 
@@ -35,15 +37,23 @@ fn author_ranked(
     value: ControlValue,
     (sample, priority): (u64, i16),
 ) {
+    let time = (WriteTime::AtSample(sample), priority);
+    author_through(&running.snapshot(), (module_id, key), value, time);
+}
+
+fn author_through(
+    snapshot: &RuntimeSnapshot,
+    (module_id, key): (&str, &str),
+    value: ControlValue,
+    (time, priority): (WriteTime<'_>, i16),
+) {
     let options = WriteOptions {
-        time: Some(WriteTime::AtSample(sample)),
+        time: Some(time),
         priority,
         ..WriteOptions::performed(Source::User)
     };
     let author = ControlWriteIntent::Author;
-    let ack = running
-        .snapshot()
-        .submit_control(module_id, key, value, author, options);
+    let ack = snapshot.submit_control(module_id, key, value, author, options);
     assert!(ack.unwrap().request.is_some(), "submitted as a request");
 }
 
@@ -214,6 +224,44 @@ fn a_timed_write_applied_and_not_yet_recorded_contests_a_commit() {
         .contested(&stopped, &writes)
         .authoring("osc1", "frequency")
         .is_none());
+}
+
+#[test]
+fn a_timed_write_submitted_as_a_commit_lands_waits_for_its_writes() {
+    use std::sync::{mpsc, Arc, Mutex};
+    // A batch with a publication or none, and a reload carrying the value.
+    for commit in 0..3 {
+        let (mut running, pump) = start(BASE);
+        let snapshot = running.snapshot();
+        let writer = Arc::new(Mutex::new(None));
+        let joined = writer.clone();
+        // As the commit releases the publisher, before its writes are made:
+        // due at once, it would apply before them, unrecorded behind it.
+        crate::invention::publish::tests::on_commit(move || {
+            let (sent, submitted) = mpsc::channel();
+            let thread = std::thread::spawn(move || {
+                let soon = WriteTime::AfterSamples(0);
+                author_through(&snapshot, ("osc1", "frequency"), number(330.0), (soon, 0));
+                let _ = sent.send(());
+            });
+            let waited = submitted.recv_timeout(std::time::Duration::from_millis(100));
+            assert!(waited.is_err(), "submitted inside the commit");
+            *writer.lock().unwrap() = Some(thread);
+        });
+        if commit < 2 {
+            running.apply_edits(&retune(commit == 1)).unwrap();
+        } else {
+            let retuned = BASE.replacen("440.0", "220.0", 1);
+            running
+                .reload(Invention::from_json(&retuned).unwrap())
+                .unwrap();
+        }
+        let thread = joined.lock().unwrap().take().expect("the commit ran");
+        thread.join().unwrap();
+        pump.render(4);
+        let both = heard_and_recorded(&running, "osc1");
+        assert_eq!(both, (330.0, number(330.0)), "commit {commit}");
+    }
 }
 
 #[test]

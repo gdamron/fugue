@@ -214,6 +214,10 @@ impl RunningInvention {
         // made. `None` when there was none: a failing control is then left
         // unauthored, to its default.
         let (mut previous, replaces) = (None, document.is_some());
+        // Authored writes wait until the carried values are written, as an
+        // edit batch's do (see `commit_edits`).
+        let live = self.live.clone();
+        let authoring = live.authoring();
         let committed = self.live.commit_adopting(change, registry, |state| {
             if let Some(replacing) = replacing {
                 state.replacing = replacing;
@@ -279,6 +283,7 @@ impl RunningInvention {
                 });
             }
         }
+        drop(authoring);
         if !kept.is_empty() {
             // Per key, so an edit landing since the commit keeps its own
             // changes to the document.

@@ -114,6 +114,10 @@ impl RunningInvention {
             .map(|spec| spec.id.as_str())
             .collect();
         let mut previous = None;
+        // Authored writes wait from the commit to its last survivor write,
+        // so none lands between what the commit reads of them and its own
+        // writes, unordered against both (see `Committed::contested`).
+        let authoring = self.live.authoring();
         let committed = self.live.commit_with(change, |state| {
             previous = state.document.replace(document.clone());
             // A survivor's stored config takes the batch's writes to keys it
@@ -158,6 +162,7 @@ impl RunningInvention {
             });
             last.insert((write.module_id.as_str(), write.key.as_str()), outcome);
         }
+        drop(authoring);
         // One report entry per control, and one event per control written,
         // with its final value.
         let mut actual = Vec::new();
