@@ -13,7 +13,7 @@
 use serde_json::{Map, Value};
 
 use crate::module_config::ConfigKind;
-use crate::ControlValue;
+use crate::{ControlSurface, ControlValue};
 
 use super::scalar_control_value;
 
@@ -132,4 +132,49 @@ pub(super) fn control_updates_for(
         updates.push((key.clone(), control_value));
     }
     Some(updates)
+}
+
+/// Restores of a kept module's controls `written` by authored writes its
+/// stored config does not record (see
+/// [`WrittenSince`](crate::invention::state::WrittenSince)): each that
+/// `config`, the new one, does not state as a scalar, and no update in
+/// `pending` writes, returns to the value `fresh` gives it, as a fresh build
+/// of `config` plays it. So reloading a file sounds as the file does, the
+/// keys it leaves implicit included, without rebuilding the module.
+///
+/// An event is never restored: writing it would fire it. A control `fresh`
+/// has no value for, or one a reload does not write, keeps what was
+/// written.
+pub(super) fn implicit_restores(
+    written: &[String],
+    config: &Value,
+    pending: &[(String, ControlValue)],
+    is_event: impl Fn(&str) -> bool,
+    mut has_control: impl FnMut(&str) -> bool,
+    fresh: &dyn Fn(&str) -> Option<ControlValue>,
+) -> Vec<(String, ControlValue)> {
+    let states =
+        |key: &str| (config.get(key)).is_some_and(|value| scalar_control_value(value).is_some());
+    written
+        .iter()
+        .filter(|key| !states(key) && !is_event(key))
+        .filter(|key| !pending.iter().any(|(updated, _)| updated == *key))
+        .filter(|key| has_control(key))
+        .filter_map(|key| Some((key.clone(), fresh(key)?)))
+        .collect()
+}
+
+/// What control `key` of a freshly built module holds, when a write of it
+/// plays that: a number outside the range its module clamps writes to (a
+/// melody's count of an empty scale, zero, where writes start at one) has
+/// no write that restores it.
+pub(super) fn fresh_value(surface: &dyn ControlSurface, key: &str) -> Option<ControlValue> {
+    let value = surface.get_control(key).ok()?;
+    let clamp = surface
+        .declaration(key)
+        .and_then(|declared| declared.decl.clamp);
+    match (&value, clamp) {
+        (ControlValue::Number(number), Some((min, max))) if !(min..=max).contains(number) => None,
+        _ => Some(value),
+    }
 }

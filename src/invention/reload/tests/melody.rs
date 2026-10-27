@@ -76,19 +76,20 @@ fn reloading_the_original_after_a_whole_scale_brings_back_what_it_replaced() {
 }
 
 #[test]
-fn a_live_count_within_a_loaded_scale_survives_a_reload_leaving_it_be() {
+fn an_authored_count_within_a_loaded_scale_is_restored_by_reloading_it() {
     let loaded = MELODY.replace(r#" "degree_count": 3,"#, "");
     let (mut running, pump) = start_pumped(&loaded);
     running
         .set_control("tune", "degree_count", number(2.0))
         .unwrap();
     pump.render(1);
-    // The document holds the scale but no count: the tweak is the
-    // performer's, as any write to a key the document does not hold.
+    // The document holds the scale but no count: reloading it restores the
+    // count its scale builds, by a control write.
     let report = running.reload(doc(&loaded)).expect("diff applies");
     pump.render(1);
     assert!(report.swapped.is_empty(), "{report:?}");
-    assert_eq!(read(&running, "tune", "degree_count"), number(2.0));
+    assert_eq!(report.controls_updated, ["tune.degree_count"]);
+    assert_eq!(read(&running, "tune", "degree_count"), number(3.0));
 }
 
 #[test]
