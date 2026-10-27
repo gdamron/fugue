@@ -22,6 +22,7 @@ mod real_modules;
 mod refusals;
 mod scheduled_targets;
 mod scripted;
+mod timed_writes;
 mod write_back;
 
 use scripted::{Scripted, SCRIPTED};

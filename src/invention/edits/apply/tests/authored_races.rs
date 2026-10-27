@@ -326,6 +326,7 @@ fn an_authored_payload_queued_after_a_timed_edit_landed_follows_its_write() {
         origin: None,
         safe: None,
         then: Vec::new(),
+        timed: false,
     };
     let options = crate::invention::declared::WriteOptions::default();
     let snapshot = running.snapshot();

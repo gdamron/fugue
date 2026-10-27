@@ -378,10 +378,15 @@ impl RuntimeSnapshot {
             origin,
             safe: None,
             then: Vec::new(),
+            timed: options.time.is_some(),
         };
         let queued = self.make_authored(module_id, key, load, &options.authored_as(&authoring))?;
-        let now = queued.id.is_none().then_some(&authoring);
-        live.reconcile_authored((module_id, key), queued.safe, now);
+        // A timed write is ordered against a timed edit by when each
+        // applies, not reconciled with it (see `publish::timed_write`).
+        if !authoring.timed {
+            let now = queued.id.is_none().then_some(&authoring);
+            live.reconcile_authored((module_id, key), queued.safe, now);
+        }
         Ok(ControlAck::new(authoring.value, &queued))
     }
 

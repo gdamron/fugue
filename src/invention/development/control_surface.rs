@@ -255,6 +255,12 @@ impl ControlSurface for DevelopmentControlSurface {
         // leave the undeclared aliases as they were. Once it applies the
         // undeclared aliases, already checked, take the value. A payload's one alias
         // records it before delivery, and `write_payload` undoes that.
+        // Applied at once, an undeclared alias cannot wait for a time.
+        if options.time.is_some() && self.writes_undeclared(key) {
+            return Err(format!(
+                "Control '{key}' cannot be timed: it reaches a module that applies writes at once"
+            ));
+        }
         if let Some(declared) = self.declared(key) {
             self.validate_control(key, &value, &self.surfaces)?;
             let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);

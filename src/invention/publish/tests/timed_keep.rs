@@ -106,6 +106,7 @@ fn authoring_660() -> Authoring {
         origin: None,
         safe: None,
         then: Vec::new(),
+        timed: false,
     }
 }
 

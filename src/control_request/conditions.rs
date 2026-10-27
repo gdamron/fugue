@@ -185,11 +185,11 @@ struct Entry {
 }
 
 impl Entry {
-    /// The sample its condition is met at, once it is.
+    /// The sample its request is due on, once its condition is met.
     fn due(&self) -> Option<u64> {
         let parts = self.condition.parts().len();
         let met = self.seen[..parts].iter().map(|seen| seen.met);
-        self.condition.join().met(met)
+        self.condition.due(met)
     }
 }
 

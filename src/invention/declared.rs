@@ -49,8 +49,8 @@ use std::sync::{Arc, Mutex, Weak};
 use super::graph::GraphCommand;
 use super::graph::SignalGraph;
 use super::publish::{
-    kept_until, Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget, Settler,
-    Touched,
+    kept_until, timed_write, Authoring, CancelCause, PendingLog, PendingWrite, Publisher, Retarget,
+    Settler, Touched, WriteTime,
 };
 use super::runtime::ControlSurfaceInstance;
 #[cfg(test)]
@@ -193,9 +193,13 @@ pub(crate) struct WriteOptions<'a> {
     pub(crate) announced: bool,
     /// A reply awaits its outcome (see `PendingWrite::awaited`).
     pub(crate) awaited: bool,
+    /// When it applies, if not as soon as the audio thread takes it: a
+    /// timed write, which only a live graph's declared, value or payload
+    /// control takes (see `publish::timed_write`).
+    pub(crate) time: Option<WriteTime<'a>>,
 }
 
-impl WriteOptions<'_> {
+impl<'a> WriteOptions<'a> {
     /// A performed write from `source` at priority 0, with no ttl.
     pub(crate) const fn performed(source: Source) -> Self {
         Self {
@@ -205,12 +209,16 @@ impl WriteOptions<'_> {
             ttl: None,
             announced: false,
             awaited: false,
+            time: None,
         }
     }
 
     /// The same write, authored: recorded as `authoring` says once it
     /// applies.
-    pub(crate) const fn authored_as(self, authoring: &Authoring) -> WriteOptions<'_> {
+    pub(crate) const fn authored_as<'b>(self, authoring: &'b Authoring) -> WriteOptions<'b>
+    where
+        'a: 'b,
+    {
         WriteOptions {
             authored: Some(authoring),
             source: self.source,
@@ -218,6 +226,7 @@ impl WriteOptions<'_> {
             ttl: self.ttl,
             announced: self.announced,
             awaited: self.awaited,
+            time: self.time,
         }
     }
 
@@ -298,6 +307,13 @@ pub(crate) struct Checked<'a> {
 pub(crate) const STALE: &str = "The graph changed while this write was prepared; try again";
 
 const QUEUE_FULL: &str = "The control request queue is full; try again";
+
+/// Why a timed write is refused where it cannot wait for its time.
+const UNTIMED: &str = "A timed control write needs a running graph and a declared control";
+const SCHEDULE_UNTIMED: &str =
+    "A schedule write cannot be timed yet: time an edit batch that writes it instead";
+const PAYLOAD_UNCHAINED: &str = "A payload write cannot wait on another request yet";
+const CHAINS_FULL: &str = "Too many requests wait on another; try again once some apply";
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl DeclaredSurface {
@@ -629,9 +645,13 @@ impl DeclaredSurface {
             }
             None => (false, false, None, false),
         };
+        let timed = options.time.is_some();
         let route = {
             let mut route = self.route.lock().unwrap();
             if let Route::Building(written) = &mut *route {
+                if timed {
+                    return Err(UNTIMED.into());
+                }
                 // Under the route lock, so a bind sees it or it sees the bind.
                 let value = match write {
                     Write::Value(value) => value,
@@ -668,6 +688,9 @@ impl DeclaredSurface {
             }
             route.clone()
         };
+        if timed && !matches!(route, Route::Live(_)) {
+            return Err(UNTIMED.into());
+        }
         match route {
             Route::Building(_) => unreachable!("handled under the lock"),
             Route::Live(port) => {
@@ -696,6 +719,9 @@ impl DeclaredSurface {
                     .is_some_and(|checked| checked.generation != Some(target.generation))
                 {
                     return Err(STALE.into());
+                }
+                if timed && checked.is_some() {
+                    return Err(SCHEDULE_UNTIMED.into());
                 }
                 if let Some(checked) = &checked {
                     if publisher.timed_races(&port.module_id, &checked.targets) {
@@ -782,7 +808,6 @@ impl DeclaredSurface {
                 request.source = options.source;
                 request.priority = options.priority;
                 request.ttl = options.ttl;
-                let (source, when) = (request.source, request.when);
                 // Never kept on a graph with no clock: there the copy's
                 // hold, at a sample that never passes, would refuse every
                 // later write to the control. The edit is cancelled instead.
@@ -792,7 +817,26 @@ impl DeclaredSurface {
                 // the write is recorded.
                 let mut pending = port.pending.lock().unwrap();
                 pending.settle();
+                let beat = match options.time {
+                    Some(time) => {
+                        let conditions = match &request.value {
+                            RequestValue::Payload(_) => Err(PAYLOAD_UNCHAINED),
+                            _ if port.requests.watchers_full() => Err(CHAINS_FULL),
+                            _ => Ok(()),
+                        };
+                        let module = port.module_id.as_str();
+                        let locked = (&mut *publisher, &mut *pending);
+                        let resolved = timed_write::resolve(time, module, locked, conditions)?;
+                        request.when = resolved.when;
+                        resolved.beat
+                    }
+                    None => None,
+                };
+                let (source, when) = (request.source, request.when);
+                // A timed write is never kept: the later of it and the
+                // edit plays (see `publish::timed_write`).
                 let kept = match (&request.value, authored) {
+                    _ if timed => None,
                     (RequestValue::Value(raw), Some(key)) if clocked => {
                         let module = (port.module_id.as_str(), key);
                         let write = (*raw, event, options);
@@ -840,7 +884,7 @@ impl DeclaredSurface {
                         key,
                         value: written,
                         raw,
-                        beat: None,
+                        beat,
                         source,
                         when,
                         announced: options.announced,

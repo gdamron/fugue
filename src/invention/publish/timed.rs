@@ -390,7 +390,7 @@ fn logged_edit(
 }
 
 /// `spec` on clock `clock`, as the request log and the ledger show it.
-fn logged_beat(clock: &str, spec: BeatSpec) -> LoggedBeat {
+pub(super) fn logged_beat(clock: &str, spec: BeatSpec) -> LoggedBeat {
     let clock = clock.to_string();
     match spec {
         BeatSpec::After(beats) => LoggedBeat::After { clock, beats },
