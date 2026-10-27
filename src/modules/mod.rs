@@ -31,6 +31,8 @@ pub mod divisi;
 pub mod filter;
 pub(crate) mod indexed_names;
 pub mod lfo;
+#[cfg(test)]
+mod lock_scan_tests;
 pub mod melody;
 pub mod mixer;
 pub mod oscillator;
