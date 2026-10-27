@@ -6,7 +6,7 @@
 //! whole scale written before it is recorded as a cold build reads it, and one
 //! against a timed batch writing its control is recorded in the order each
 //! applied, the batch's write included, or not at all when the write
-//! outranks it on its sample.
+//! outranks it on its sample, a whole scale over a degree included.
 
 use super::real_modules::assert_document_rebuilds_the_live_melody;
 use super::scripted::Step;
@@ -236,5 +236,30 @@ fn a_timed_write_outranking_a_timed_batch_on_its_sample_is_recorded_as_it_plays(
         pump.render(40);
         let both = heard_and_recorded(&running, "osc1");
         assert_eq!(both, (heard, number(heard as f32)), "priority {priority}");
+    }
+}
+
+#[test]
+fn a_timed_scale_outranking_a_timed_batch_degree_on_its_sample_is_recorded_as_it_plays() {
+    let at = 64 * 20 + 7;
+    let edit_at = crate::rpc::EditWhen::AtSample { sample: at };
+    let degree = vec![
+        add("extra", "oscillator", json!({})),
+        set("tune", "degree.1", number(9.0)),
+    ];
+    let scale = ControlValue::String("[0, 5, 7]".into());
+    // Outranking the batch's degree, the whole scale holds every degree on
+    // the sample: the batch's never applies. Outranked, the degree follows.
+    for (priority, heard) in [(1, 5.0), (-1, 9.0)] {
+        let (mut running, pump) = start(&base_with(
+            r#"{ "id": "tune", "type": "melody", "config": { "degrees": [0, 2, 4] } }"#,
+        ));
+        let write = (at, priority);
+        author_ranked(&running, ("tune", "degrees"), scale.clone(), write);
+        running.apply_edits_at(&degree, &edit_at, None).unwrap();
+        pump.render(40);
+        let played = running.get_control("tune", "degree.1").unwrap();
+        assert_eq!(played, number(heard), "priority {priority}");
+        assert_document_rebuilds_the_live_melody(&running);
     }
 }
