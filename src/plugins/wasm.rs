@@ -510,7 +510,7 @@ fn preopen(
 }
 
 #[cfg(test)]
-mod alloc_tests;
+pub(crate) mod alloc_tests;
 
 #[cfg(test)]
 mod tests {

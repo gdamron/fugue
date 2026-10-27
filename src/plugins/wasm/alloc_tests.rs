@@ -8,7 +8,7 @@ use crate::alloc_counter::allocator_events;
 
 /// Builds the fixture guest component (the one `tests/plugin_wit_test.rs`
 /// loads) and returns its path, kept alive by the returned tempdir.
-fn fixture_component() -> (tempfile::TempDir, PathBuf) {
+pub(crate) fn fixture_component() -> (tempfile::TempDir, PathBuf) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let target_dir = root.join("target/fugue-plugin-fixtures");
     let status = Command::new(env!("CARGO"))
@@ -39,7 +39,7 @@ fn fixture_component() -> (tempfile::TempDir, PathBuf) {
     (temp, path)
 }
 
-fn fixture_manifest() -> crate::pkg::PackageManifest {
+pub(crate) fn fixture_manifest() -> crate::pkg::PackageManifest {
     crate::pkg::parse_str(
         r#"{
           "id": "fugue.test.fixture",

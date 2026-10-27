@@ -9,6 +9,7 @@ use crate::{Invention, InventionBuilder};
 mod alloc;
 mod asset_payloads;
 mod carry;
+mod catalog;
 mod declared;
 mod declared_routes;
 mod drops;
