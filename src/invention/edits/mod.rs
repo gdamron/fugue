@@ -143,6 +143,13 @@ pub(crate) trait EditFacts {
     ) -> Result<Option<BTreeMap<String, ControlKind>>, String> {
         Ok(None)
     }
+
+    /// Whether `key` names one of module `id`'s event controls as the batch
+    /// has the module: a write to one fires and is never authored. None by
+    /// default.
+    fn is_event(&self, _id: &str, _key: &str) -> bool {
+        false
+    }
 }
 
 /// One `set_control` edit's authored write, tagged with the edit that made

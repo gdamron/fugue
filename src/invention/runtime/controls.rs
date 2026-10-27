@@ -41,6 +41,16 @@ impl RunningInvention {
         Some(declaration.decl.kind.config_kind())
     }
 
+    /// Whether `key` of `module_id` is one of the running module's event
+    /// controls, which fire rather than hold a value.
+    pub(crate) fn is_event_control(&self, module_id: &str, key: &str) -> bool {
+        let surfaces = self.control_surfaces.lock().unwrap();
+        (surfaces
+            .get(module_id)
+            .and_then(|surface| surface.declaration(key)))
+        .is_some_and(|declared| declared.decl.event)
+    }
+
     /// Whether a reload can write `key` of `module_id` as a control: one
     /// the module reads back and clients write. A read-only control (a
     /// mixer's `channel_count`) changes only as its module is rebuilt.

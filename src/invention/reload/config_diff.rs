@@ -17,11 +17,8 @@ use crate::ControlValue;
 
 use super::scalar_control_value;
 
-/// Whether the two configs build the same module. A null config and an
-/// empty object are equivalent: omitting `config` parses as `null`, while
-/// an explicit `{}` is an empty object.
-/// `config` without `keys`, which a reload reads but a running module does
-/// not hold (see [`crate::ModuleFactory::reload_keys`]).
+/// `config` without `keys`, which a running module holds no state for (see
+/// [`stateless_keys`]).
 pub(super) fn without<'a>(config: &'a Value, keys: &[&str]) -> std::borrow::Cow<'a, Value> {
     match config.as_object() {
         Some(map) if keys.iter().any(|key| map.contains_key(*key)) => {
@@ -35,6 +32,30 @@ pub(super) fn without<'a>(config: &'a Value, keys: &[&str]) -> std::borrow::Cow<
     }
 }
 
+/// The keys of `configs` a running module holds no state for: `reload_only`
+/// (see [`crate::ModuleFactory::reload_keys`]) and those `is_event` names
+/// one of its event controls.
+pub(super) fn stateless_keys<'a>(
+    reload_only: &[&'a str],
+    configs: [&'a Value; 2],
+    is_event: impl Fn(&str) -> bool,
+) -> Vec<&'a str> {
+    let mut keys = reload_only.to_vec();
+    let present = configs
+        .into_iter()
+        .filter_map(Value::as_object)
+        .flat_map(Map::keys);
+    for key in present {
+        if !keys.contains(&key.as_str()) && is_event(key) {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
+/// Whether the two configs build the same module. A null config and an
+/// empty object are equivalent: omitting `config` parses as `null`, while
+/// an explicit `{}` is an empty object.
 pub(super) fn configs_equal(
     previous: &Value,
     new: &Value,

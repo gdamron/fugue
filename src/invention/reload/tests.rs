@@ -7,6 +7,7 @@ mod authored;
 mod clock;
 mod development_events;
 mod development_wholes;
+mod event_keys;
 mod melody;
 mod mixer_rebuild;
 mod mixer_removal;
@@ -311,6 +312,7 @@ fn config_deltas_that_cannot_be_controls_force_a_swap() {
             &HashSet::new(),
             no_keys,
             |_, _| None,
+            |_, _| false,
             |_, _| has_control,
         )
         .unwrap()
@@ -374,6 +376,7 @@ fn null_and_empty_configs_are_equivalent() {
         no_keys,
         |_, _| None,
         |_, _| false,
+        |_, _| false,
     )
     .unwrap();
     assert_eq!(plan.unchanged, vec!["dac"]);
@@ -417,6 +420,7 @@ fn connection_diff_skips_endpoints_of_removed_modules() {
         &HashSet::new(),
         no_keys,
         |_, _| None,
+        |_, _| false,
         |_, _| false,
     )
     .unwrap();

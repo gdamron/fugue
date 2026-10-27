@@ -39,6 +39,7 @@ fn plan(module_type: &str, previous: Value, new: Value) -> ReloadPlan {
             (keys, registry.reload_keys(module_type))
         },
         |_, _| None,
+        |_, _| false,
         |_, _| true,
     )
     .unwrap()

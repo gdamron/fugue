@@ -91,6 +91,8 @@ pub(super) fn plan_edits(
             (keys, registry.reload_keys(module_type))
         },
         |_, _| None,
+        // A batch's event writes fire without landing in the document.
+        |_, _| false,
         |module_id, key| written.contains(&(module_id, key)),
     )
     .map_err(|error| {

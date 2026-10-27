@@ -316,6 +316,14 @@ impl EditFacts for LiveFacts {
         Some(controls)
     }
 
+    fn is_event(&self, id: &str, key: &str) -> bool {
+        let described = || self.described.get(id).and_then(Option::as_ref);
+        let surface =
+            (self.provisional.get(id).or_else(described)).or_else(|| self.surfaces.get(id));
+        (surface.and_then(|surface| surface.declaration(key)))
+            .is_some_and(|declared| declared.decl.event)
+    }
+
     fn write_control(
         &mut self,
         id: &str,
