@@ -14,6 +14,7 @@ mod editing;
 mod front_doors;
 mod non_finite;
 mod pending;
+mod script_timing;
 #[cfg(feature = "spectrogram")]
 mod spectrum;
 mod timed;
