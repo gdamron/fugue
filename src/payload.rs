@@ -77,7 +77,7 @@ use crate::audio_thread::on_audio_thread;
 use crate::spsc::{Producer, Ring};
 
 mod rendering;
-pub(crate) use rendering::RenderScope;
+pub(crate) use rendering::{LeakOnUnwind, RenderScope};
 
 /// Retirements an engine's [`RetireQueue`] holds before its [`Retirer`]
 /// starts holding them. The reclaimer drains every few tens of ms.
