@@ -332,6 +332,24 @@ fn a_full_outcome_queue_counts_what_it_drops() {
     assert_eq!(cursor.take(receiver.dropped()), 1);
 }
 
+#[test]
+fn untimed_outcomes_leave_the_room_kept_for_timed_ones() {
+    let (mut sender, receiver) = outcome_channel_reserving(2, 2);
+    let mut cursor = EventCursor::new();
+    for id in 1..=3 {
+        sender.send(RequestId(id), Outcome::Superseded, None);
+    }
+    assert_eq!(cursor.take(receiver.dropped()), 1, "the third untimed one");
+    for id in 10..=12 {
+        sender.send_timed(RequestId(id), Outcome::Superseded, None);
+    }
+    let received: Vec<_> = std::iter::from_fn(|| receiver.try_recv())
+        .map(|(id, ..)| id.0)
+        .collect();
+    assert_eq!(received, [1, 2, 10, 11]);
+    assert_eq!(cursor.take(receiver.dropped()), 1, "past the reserve");
+}
+
 const CONTROLS: usize = 4;
 const LEVEL: ControlKey<f32, CONTROLS> = ControlKey::new(0);
 const STEPS: ControlKeys<i32, CONTROLS> = ControlKeys::new(1, 3);

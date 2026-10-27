@@ -4,7 +4,7 @@
 use super::chains::{Chains, RECENT};
 use super::hold::{Rank, Standing};
 use super::outcome::OutcomeSender;
-use super::request::{ControlTarget, Request, RequestValue};
+use super::request::{ControlTarget, Request, RequestValue, When};
 use crate::payload::{Retirer, MAX_RETIRES_PER_REQUEST};
 
 /// Why a request was not applied.
@@ -134,18 +134,27 @@ impl Outcomes {
         outcome: Outcome,
         latched: Option<u64>,
     ) {
-        let Request { value, id, .. } = request;
+        let Request {
+            value, id, when, ..
+        } = request;
         let payload = value.is_payload();
         if let RequestValue::Payload(payload) | RequestValue::Edit(payload) = value {
             self.retirer.retire(payload);
         }
-        self.record_on_beat(id, payload, outcome, latched);
+        self.record_on_beat(id, payload, outcome, latched, when != When::Now);
     }
 
     /// Records the outcome of a request whose value is already disposed of,
-    /// releases its reservation and sends the outcome to the control side.
-    pub(super) fn record(&mut self, id: super::RequestId, payload: bool, outcome: Outcome) {
-        self.record_on_beat(id, payload, outcome, None);
+    /// releases its reservation and sends the outcome to the control side,
+    /// in the room kept for timed requests' when `timed`.
+    pub(super) fn record(
+        &mut self,
+        id: super::RequestId,
+        payload: bool,
+        outcome: Outcome,
+        timed: bool,
+    ) {
+        self.record_on_beat(id, payload, outcome, None, timed);
     }
 
     /// [`Self::record`] for a request timed in beats, with the sample it
@@ -156,12 +165,17 @@ impl Outcomes {
         payload: bool,
         outcome: Outcome,
         latched: Option<u64>,
+        timed: bool,
     ) {
         if payload {
             self.reserved -= MAX_RETIRES_PER_REQUEST;
         }
         self.chains.settled(id, outcome);
-        self.sender.send(id, outcome, latched);
+        if timed {
+            self.sender.send_timed(id, outcome, latched);
+        } else {
+            self.sender.send(id, outcome, latched);
+        }
     }
 }
 
@@ -390,7 +404,11 @@ impl PendingStore {
             }
             let standing = Standing::of(&request, due);
             let Request {
-                target, value, id, ..
+                target,
+                value,
+                id,
+                when,
+                ..
             } = request;
             let payload = value.is_payload();
             let outcome = match apply(&target, standing, value, &mut outcomes.retirer) {
@@ -400,7 +418,7 @@ impl PendingStore {
             };
             applied_any |= matches!(outcome, Outcome::Applied { .. })
                 || matches!(outcome, Outcome::AppliedLate { .. });
-            outcomes.record(id, payload, outcome);
+            outcomes.record(id, payload, outcome, when != When::Now);
             if one && applied_any {
                 break;
             }

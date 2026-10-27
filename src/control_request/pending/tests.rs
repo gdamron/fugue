@@ -4,7 +4,8 @@
 use super::*;
 use crate::alloc_counter::allocator_events;
 use crate::control_request::{
-    outcome_channel, ControlIndex, OutcomeReceiver, RequestId, RtValue, When,
+    outcome_channel, outcome_channel_reserving, ControlIndex, OutcomeReceiver, RequestId, RtValue,
+    When,
 };
 
 const INSTALLED: u64 = 2;
@@ -69,6 +70,23 @@ fn the_same_target_at_the_same_time_coalesces_last_wins() {
     // The replacement takes the latest receipt position at its time.
     assert_eq!(apply_at(&mut store, 10), [(0, 1, 2.0), (0, 0, 3.0)]);
     assert_eq!(apply_at(&mut store, 11), [(0, 0, 4.0)]);
+}
+
+#[test]
+fn a_timed_request_s_outcome_takes_the_room_kept_for_it() {
+    let queue = crate::payload::RetireQueue::with_capacity(4);
+    // Four slots, one of them kept for timed requests' outcomes.
+    let (sender, outcomes) = outcome_channel_reserving(3, 1);
+    let mut store = PendingStore::new(8, Retirer::new(queue, 8), sender);
+    for n in 1..=4 {
+        store.insert(request(n, target(INSTALLED, 0, n as u16), 0.0), 10);
+    }
+    let mut timed = request(5, target(INSTALLED, 1, 0), 0.0);
+    timed.when = When::AtSample(10);
+    store.insert(timed, 10);
+    assert_eq!(apply_at(&mut store, 10).len(), 5);
+    let received: Vec<_> = log(&outcomes).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(received, [1, 2, 3, 5], "the fourth untimed one dropped");
 }
 
 #[test]

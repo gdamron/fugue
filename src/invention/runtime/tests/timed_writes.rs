@@ -12,7 +12,7 @@
 use super::timed::{downbeat, BAR};
 use super::*;
 use crate::invention::manual_backend::{start_manual, Pump};
-use crate::invention::publish::timed_write::SAMPLE_TIMED_CAPACITY;
+use crate::invention::publish::timed_write::{SAMPLE_TIMED_CAPACITY, TIMED_WRITE_CAPACITY};
 use crate::rpc::{
     ControlRequestSettled, ControlRequestState, ControlTiming, ControlWhen, EditWhen,
     PendingDetail, PendingWait, RequestSource,
@@ -330,4 +330,27 @@ fn a_write_some_samples_on_is_acknowledged_with_the_sample_it_lands_on() {
         panic!("settled once");
     };
     assert_eq!(landed.landing.sample, Some(due));
+}
+
+#[test]
+fn timed_writes_past_the_bound_are_refused_however_timed() {
+    let (running, pump, _sink) = start();
+    let value = |n: usize| (300.0 + n as f32).into();
+    let all: Vec<usize> = (0..SAMPLE_TIMED_CAPACITY).collect();
+    for batch in all.chunks(64) {
+        let far = |&n: &usize| timed("osc", "frequency", value(n), at(1_000_000_000 + n as u64));
+        let acks = running.write_controls(&batch.iter().map(far).collect::<Vec<_>>());
+        assert!(acks.error.is_none(), "{:?}", acks.error);
+        pump.render(1);
+    }
+    // The rest on a bar, left in the queue.
+    let rest: Vec<usize> = (SAMPLE_TIMED_CAPACITY..TIMED_WRITE_CAPACITY).collect();
+    for batch in rest.chunks(64) {
+        let bar = |&n: &usize| timed("osc", "frequency", value(n), next_bar());
+        let acks = running.write_controls(&batch.iter().map(bar).collect::<Vec<_>>());
+        assert!(acks.error.is_none(), "{:?}", acks.error);
+    }
+    let refused = running.write_controls(&[timed("osc", "frequency", value(0), next_bar())]);
+    let error = refused.error.unwrap().to_string();
+    assert!(error.contains("timed writes already wait"), "{error}");
 }

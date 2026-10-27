@@ -1,12 +1,9 @@
 //! Outcomes the audio thread drops when no control thread has made room:
-//! an untimed write, or one timed on a sample already rendered, is taken
-//! to have applied, as most do, but one timed on a sample yet to render
-//! still waits, so it stays listed, unrecorded, until its own outcome
-//! settles it.
+//! an untimed write is taken to have applied, as most do. A timed one's
+//! outcome has room kept for it, so it stays listed, unrecorded, until its
+//! own outcome settles it.
 
-use std::sync::Arc;
-
-use crate::control_request::{outcome_channel, Outcome, RequestId, Source, Transport, When};
+use crate::control_request::{outcome_channel_reserving, Outcome, RequestId, Source, When};
 use crate::invention::publish::{Authoring, DocumentStep, PendingLog, PendingWrite};
 use crate::ControlValue;
 
@@ -41,39 +38,52 @@ fn recorded(log: &mut PendingLog) -> usize {
 }
 
 #[test]
-fn a_write_timed_on_a_sample_yet_to_render_stays_through_lost_outcomes() {
-    let (mut sender, receiver) = outcome_channel(4);
-    let transport = Arc::new(Transport::new());
-    let mut log = PendingLog::new(receiver, Arc::clone(&transport));
-    let (ahead, passed, untimed) = (RequestId(1), RequestId(2), RequestId(3));
-    log.submitted(ahead, write(330.0, When::AtSample(1_000_000)));
-    log.submitted(passed, write(220.0, When::AtSample(100)));
+fn a_timed_write_waiting_as_outcomes_are_lost_stays_for_its_own() {
+    let (mut sender, receiver) = outcome_channel_reserving(4, 4);
+    let mut log = PendingLog::new(receiver);
+    let (timed, untimed) = (RequestId(1), RequestId(2));
+    log.submitted(timed, write(330.0, When::AtSample(1_000_000)));
     log.submitted(untimed, write(440.0, When::Now));
-    transport.publish(4096);
-    // More outcomes than the channel holds, none received: the newest
-    // dropped, the passed write's own among them.
-    for id in 10..14 {
+    // More untimed outcomes than they have room for, none received: some
+    // dropped, the untimed write's own maybe among them.
+    for id in 10..20 {
         sender.send(RequestId(id), Outcome::Applied { at: 0 }, None);
     }
-    sender.send(passed, Outcome::Applied { at: 100 }, None);
 
     let announced = log.take_announcements();
     let lost: Vec<_> = announced.iter().map(|a| (a.request, a.outcome)).collect();
-    assert_eq!(
-        lost,
-        [(passed, None), (untimed, None)],
-        "taken to have applied"
-    );
-    assert_eq!(recorded(&mut log), 2, "both recorded");
-    assert!(log.waiting(ahead), "the write ahead still waits");
-    assert_eq!(log.on_sample(), 1);
+    assert_eq!(lost, [(untimed, None)], "only the untimed write as applied");
+    assert_eq!(recorded(&mut log), 1, "the untimed write recorded");
+    assert!(log.waiting(timed), "the timed write still waits");
+    assert!(!log.waiting(untimed));
 
-    sender.send(ahead, Outcome::Applied { at: 1_000_000 }, None);
+    // More untimed outcomes, and the timed write's own, kept room for.
+    for id in 20..30 {
+        sender.send(RequestId(id), Outcome::Applied { at: 0 }, None);
+    }
+    sender.send_timed(timed, Outcome::Applied { at: 1_000_000 }, None);
     let [settled] = &Vec::from(log.take_announcements())[..] else {
-        panic!("the write ahead announced once it settles");
+        panic!("the timed write announced once it settles");
     };
-    assert_eq!(settled.request, ahead);
+    assert_eq!(settled.request, timed);
     assert_eq!(settled.outcome, Some(Outcome::Applied { at: 1_000_000 }));
     assert_eq!(recorded(&mut log), 1, "recorded as it applied");
-    assert!(!log.waiting(ahead));
+    assert!(!log.waiting(timed));
+}
+
+#[test]
+fn a_full_log_forgets_untimed_writes_before_a_timed_one() {
+    let (_sender, receiver) = outcome_channel_reserving(4, 4);
+    let mut log = PendingLog::new(receiver);
+    let timed = RequestId(1);
+    log.submitted(timed, write(330.0, When::AtSample(1_000_000)));
+    // More untimed writes than the log remembers, none settled.
+    for id in 2..2000 {
+        log.submitted(RequestId(id), write(440.0, When::Now));
+    }
+    assert!(log.waiting(timed), "still waiting for its own outcome");
+    assert!(
+        !log.waiting(RequestId(2)),
+        "the oldest untimed one forgotten"
+    );
 }

@@ -88,7 +88,9 @@ pub(crate) use event::{EventCounter, EventCursor};
 pub(crate) use hold::{admits_hold, kept_hold, take_hold, FrameScope, Rank, Standing};
 pub(crate) use key::{ControlKey, ControlKeys, RtScalar};
 pub(crate) use local::{local_controls, local_get, local_set};
-pub(crate) use outcome::{outcome_channel, OutcomeReceiver, OutcomeSender};
+pub(crate) use outcome::{
+    outcome_channel, outcome_channel_reserving, OutcomeReceiver, OutcomeSender,
+};
 pub(crate) use pending::{expired, Outcome, Outcomes, PendingStore, Refusal};
 pub(crate) use queue::{bounded, QueueConsumer, QueueProducer};
 pub(crate) use ramps::Ramps;
