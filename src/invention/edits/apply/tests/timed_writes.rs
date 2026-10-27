@@ -5,7 +5,8 @@
 //! A batch rebuilding its module replaces it in both. One landing after a
 //! whole scale written before it is recorded as a cold build reads it, and one
 //! against a timed batch writing its control is recorded in the order each
-//! applied, the batch's write included.
+//! applied, the batch's write included, or not at all when the write
+//! outranks it on its sample.
 
 use super::real_modules::assert_document_rebuilds_the_live_melody;
 use super::scripted::Step;
@@ -22,8 +23,19 @@ fn author(
     value: ControlValue,
     sample: u64,
 ) {
+    author_ranked(running, (module_id, key), value, (sample, 0));
+}
+
+/// [`author`], at `priority`.
+fn author_ranked(
+    running: &RunningInvention,
+    (module_id, key): (&str, &str),
+    value: ControlValue,
+    (sample, priority): (u64, i16),
+) {
     let options = WriteOptions {
         time: Some(WriteTime::AtSample(sample)),
+        priority,
         ..WriteOptions::performed(Source::User)
     };
     let author = ControlWriteIntent::Author;
@@ -205,5 +217,24 @@ fn a_timed_choice_and_a_timed_batch_choosing_it_are_recorded_as_they_play() {
             other => panic!("a choice plays as text, not {other:?}"),
         };
         assert_eq!(recorded, heard, "at {write_at}");
+    }
+}
+
+#[test]
+fn a_timed_write_outranking_a_timed_batch_on_its_sample_is_recorded_as_it_plays() {
+    let at = 64 * 20 + 7;
+    let edit_at = crate::rpc::EditWhen::AtSample { sample: at };
+    // Outranking the batch's write, it wins the sample: the batch's never
+    // applies. Outranked, the batch's write wins it.
+    for (priority, heard) in [(1, 330.0), (-1, 220.0)] {
+        let (mut running, pump) = start(BASE);
+        let write = (at, priority);
+        author_ranked(&running, ("osc1", "frequency"), number(330.0), write);
+        running
+            .apply_edits_at(&retune(true), &edit_at, None)
+            .unwrap();
+        pump.render(40);
+        let both = heard_and_recorded(&running, "osc1");
+        assert_eq!(both, (heard, number(heard as f32)), "priority {priority}");
     }
 }

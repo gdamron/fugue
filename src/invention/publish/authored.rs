@@ -404,7 +404,8 @@ fn held(state: &RuntimeState, (module_id, key): &(String, String)) -> Option<ser
 /// control as it lands, which records it again as it is adopted rather
 /// than lose it: the write plays on past the landing. One the edit
 /// rebuilds or writes is replaced as it lands, in what plays and in the
-/// document both (a write kept over the edit's is recorded again as its
+/// document both (a timed one the edit writes, as the edit's write applies:
+/// kept, should that lose its sample) (a write kept over the edit's is recorded again as its
 /// copy applies, see `Publisher::keep_authored`). A relative asset path is recorded
 /// as it names, from the retained document's directory, the file it named
 /// from the one it was resolved against (see
@@ -424,9 +425,12 @@ fn record(
     let origin = authoring.origin.as_deref();
     let value =
         audio_assets::rebase_asset_write(origin, state.source_path(), key, &authoring.value);
+    // A timed write is folded into a waiting edit's document even for a
+    // control the edit writes as it lands: the edit's own write, recorded
+    // as it applies, replaces it then, and leaves it should it never apply.
     let mut record = |key: &str, value: &ControlValue| {
-        if publisher.timed_replaces(module_id).is_none() && !publisher.timed_chains(module_id, key)
-        {
+        let chained = !authoring.timed && publisher.timed_chains(module_id, key);
+        if publisher.timed_replaces(module_id).is_none() && !chained {
             publisher.fold_timed(module_id, key, value);
         }
         state.record_authored_control(module_id, key, value);
