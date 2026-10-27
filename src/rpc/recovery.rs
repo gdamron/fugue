@@ -29,10 +29,13 @@
 //! A committed original is answered with a compact
 //! [`RpcResponsePayload::MutationCommitted`] naming the revision it produced,
 //! never with the original (possibly large) payload. A rejected original is
-//! answered with the same rejection it produced the first time, and one whose
-//! receipt names a control write's request with that receipt, no larger than
-//! its command: the request, what became of it by the reply (a timed write
-//! expired, say) and where it lands, which state read again cannot tell.
+//! answered with the same rejection it produced the first time. A control
+//! write submitted as a request (most are; a write a module applies directly
+//! is not) is answered with its receipt as it was sent: the request, what
+//! became of it by the reply (a timed write expired, say) and where it lands,
+//! which state read again cannot tell. Such a receipt holds each write's
+//! request, state and value as read back, so it is a few times its command's
+//! size, never more; the replayed state is as of the original reply.
 //!
 //! # Lifetime and limits
 //!

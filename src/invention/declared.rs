@@ -57,8 +57,8 @@ use super::runtime::ControlSurfaceInstance;
 use super::runtime::{GraphCommandError, ModuleInstance};
 use crate::control_request::{
     apply_declared, Automation, ControlCells, ControlContext, ControlDecl, ControlIndex,
-    ControlTable, DeclKind, Intent, PayloadCodec, Rank, Refusal, Request, RequestId,
-    RequestSender, RequestValue, RtValue, Source, Writer,
+    ControlTable, DeclKind, Intent, PayloadCodec, Rank, Refusal, Request, RequestId, RequestSender,
+    RequestValue, RtValue, Source, When, Writer,
 };
 use crate::payload::Payload;
 use crate::traits::ControlSurfaceMap;
@@ -827,7 +827,14 @@ impl DeclaredSurface {
                         let module = port.module_id.as_str();
                         let locked = (&mut *publisher, &mut *pending);
                         let resolved = timed_write::resolve(time, module, locked, conditions)?;
-                        request.when = resolved.when;
+                        // Counted from now as the sender would count it,
+                        // so the log knows the sample it is due on.
+                        request.when = match resolved.when {
+                            When::AfterSamples(samples) => {
+                                When::AtSample(port.requests.rendered().saturating_add(samples))
+                            }
+                            when => when,
+                        };
                         resolved.beat
                     }
                     None => None,

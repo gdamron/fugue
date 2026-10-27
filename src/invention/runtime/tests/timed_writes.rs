@@ -1,15 +1,18 @@
 //! Timed control writes through the runtime's front door, in the wire's
 //! terms: a write on the next downbeat is acknowledged with its beat,
 //! listed pending, read back only once it lands, and announced settled; one
+//! some samples on is acknowledged with the sample it lands on; one
 //! after another request lands that many samples after it, whether it is
 //! still waiting, applied already or a timed edit; one whose ttl passes
 //! first expires and never applies; one waiting as the invention stops is
-//! announced refused; and a time that can never come is refused with
-//! nothing queued.
+//! announced refused; one on a sample past as many as may wait is refused,
+//! so writes far ahead never hold up one made now; and a time that can
+//! never come, or a ttl without a time, is refused with nothing queued.
 
 use super::timed::{downbeat, BAR};
 use super::*;
 use crate::invention::manual_backend::{start_manual, Pump};
+use crate::invention::publish::timed_write::SAMPLE_TIMED_CAPACITY;
 use crate::rpc::{
     ControlRequestSettled, ControlRequestState, ControlTiming, ControlWhen, EditWhen,
     PendingDetail, PendingWait, RequestSource,
@@ -254,6 +257,12 @@ fn a_timed_write_refused_where_it_cannot_wait_says_why() {
     };
     let refused = running.write_controls(&[timed("osc", "frequency", 1.0.into(), not_a_clock)]);
     assert!(refused.error.is_some());
+    // A ttl bounds only a timed write: alone it is refused, as MCP refuses it.
+    let mut bounded = ControlWrite::new("osc", "frequency", 1.0.into());
+    bounded.timing.ttl_ms = Some(10);
+    let refused = running.write_controls(&[bounded]);
+    let error = refused.error.unwrap().to_string();
+    assert!(error.contains("only with a `when`"), "{error}");
     assert!(running
         .pending_requests(None, PendingDetail::Full)
         .items
@@ -278,4 +287,47 @@ fn a_timed_write_waiting_as_the_invention_stops_is_announced_refused() {
     assert_eq!(refused.state, ControlRequestState::Refused);
     let reason = refused.reason.as_deref().unwrap();
     assert_eq!(reason, "the invention it was queued on stopped");
+}
+
+#[test]
+fn writes_far_ahead_on_a_sample_never_hold_up_one_made_now() {
+    let (running, pump, _sink) = start();
+    let far = |n: usize| {
+        let value = (300.0 + n as f32).into();
+        timed("osc", "frequency", value, at(1_000_000_000 + n as u64))
+    };
+    let all: Vec<usize> = (0..SAMPLE_TIMED_CAPACITY).collect();
+    for batch in all.chunks(64) {
+        let acks = running.write_controls(&batch.iter().map(|&n| far(n)).collect::<Vec<_>>());
+        assert!(acks.error.is_none(), "{:?}", acks.error);
+        pump.render(1);
+    }
+    let refused = running.write_controls(&[far(SAMPLE_TIMED_CAPACITY)]);
+    let error = refused.error.unwrap().to_string();
+    assert!(error.contains("wait on a sample"), "{error}");
+
+    submit(&running, ControlWrite::new("tune", "degree.1", 9.0.into()));
+    pump.render(4);
+    assert_eq!(running.get_control("tune", "degree.1").unwrap(), 9.0.into());
+    assert_eq!(frequency(&running), 220.0.into(), "none far ahead applied");
+}
+
+#[test]
+fn a_write_some_samples_on_is_acknowledged_with_the_sample_it_lands_on() {
+    let (running, pump, sink) = start();
+    pump.render(4);
+    let when = ControlWhen::AfterSamples { samples: 4800 };
+    let ack = submit(&running, timed("osc", "frequency", 330.0.into(), when));
+    let due = ack
+        .landing
+        .unwrap()
+        .sample
+        .expect("the sample it is due on");
+    assert!(due >= 4800, "{due}");
+    pump.render(4800 / 64 + 4);
+    running.announce_applied();
+    let [landed] = &settled(&sink)[..] else {
+        panic!("settled once");
+    };
+    assert_eq!(landed.landing.sample, Some(due));
 }

@@ -23,7 +23,8 @@ pub struct ControlTiming {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<ControlWhen>,
     /// With `when`: expired, and never applied, once this many
-    /// milliseconds pass without it applying.
+    /// milliseconds pass without it applying. A write with a ttl and no
+    /// `when` is refused, with nothing sent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_ms: Option<u64>,
 }
