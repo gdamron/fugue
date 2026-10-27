@@ -96,6 +96,7 @@ fn write(value: f32, when: When) -> PendingWrite {
         }),
         announced: true,
         awaited: false,
+        submitted: 0,
     }
 }
 
@@ -315,4 +316,64 @@ fn suspect_writes_settled_together_keep_the_one_due_last() {
     assert_eq!(rig.announced(), [(last, None), (first, None)]);
     let recorded = recorded_values(&mut rig.log);
     assert_eq!(recorded, [ControlValue::from(330.0)], "as playback holds");
+}
+
+#[test]
+fn an_untimed_write_after_a_suspect_keeps_its_place_when_both_outcomes_drop() {
+    let mut rig = rig();
+    let timed = rig.queue(330.0, When::AtSample(100));
+    rig.transport.publish(128);
+    let untimed = rig.queue(220.0, When::Now);
+    rig.take_up();
+    // Both outcomes are dropped.
+    fill(&mut rig.outcomes);
+    rig.outcomes.send(timed, Outcome::Applied { at: 100 }, None);
+    rig.outcomes
+        .send(untimed, Outcome::Applied { at: 128 }, None);
+    assert_eq!(rig.announced(), [(untimed, None)]);
+    rig.transport.publish(192);
+    assert!(rig.announced().is_empty(), "seen taken up at 192");
+    rig.transport.publish(256);
+    assert_eq!(rig.announced(), [(timed, None)]);
+    let recorded = recorded_values(&mut rig.log);
+    assert_eq!(recorded, [ControlValue::from(220.0)], "as playback holds");
+}
+
+#[test]
+fn a_suspect_due_after_an_untimed_write_is_recorded_over_it_when_both_drop() {
+    let mut rig = rig();
+    let timed = rig.queue(330.0, When::AtSample(1000));
+    let untimed = rig.queue(220.0, When::Now);
+    rig.take_up();
+    fill(&mut rig.outcomes);
+    rig.outcomes.send(untimed, Outcome::Applied { at: 0 }, None);
+    assert_eq!(rig.announced(), [(untimed, None)]);
+    rig.transport.publish(64);
+    assert!(rig.announced().is_empty(), "seen taken up at 64");
+    rig.transport.publish(1064);
+    assert_eq!(rig.announced(), [(timed, None)]);
+    let recorded = recorded_values(&mut rig.log);
+    let expected = [ControlValue::from(220.0), ControlValue::from(330.0)];
+    assert_eq!(recorded, expected, "in the order they applied");
+}
+
+#[test]
+fn a_suspect_queued_after_an_untimed_write_is_recorded_over_it_when_both_drop() {
+    let mut rig = rig();
+    rig.transport.publish(200);
+    let untimed = rig.queue(220.0, When::Now);
+    // Due on a sample already rendered: it applies late, after the other.
+    let timed = rig.queue(330.0, When::AtSample(100));
+    rig.take_up();
+    fill(&mut rig.outcomes);
+    rig.outcomes
+        .send(untimed, Outcome::Applied { at: 200 }, None);
+    assert_eq!(rig.announced(), [(untimed, None)]);
+    rig.transport.publish(264);
+    assert!(rig.announced().is_empty(), "seen taken up at 264");
+    rig.transport.publish(328);
+    assert_eq!(rig.announced(), [(timed, None)]);
+    let recorded = recorded_values(&mut rig.log);
+    let expected = [ControlValue::from(220.0), ControlValue::from(330.0)];
+    assert_eq!(recorded, expected, "in the order they applied");
 }

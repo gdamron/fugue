@@ -362,6 +362,8 @@ fn a_live_write_is_listed_pending_until_the_audio_thread_applies_it() {
         when: crate::control_request::When::Now,
         announced: false,
         awaited: false,
+        // Listed after the rig rendered one block.
+        submitted: 64,
         authored: None,
     };
     assert_eq!(

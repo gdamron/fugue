@@ -64,6 +64,9 @@ pub(crate) struct PendingWrite {
     /// ring of outcomes until the reply releases it (see
     /// [`PendingLog::release`]).
     pub(crate) awaited: bool,
+    /// The count rendered when it was submitted, set by
+    /// [`PendingLog::submitted`]: an untimed write applies no earlier.
+    pub(crate) submitted: u64,
 }
 
 /// A front door's write that applied, for its `ControlChanged` event, or
@@ -355,13 +358,15 @@ impl PendingLog {
     /// Records a write just submitted as request `id`. Call it under the
     /// log's lock, taken before the submission, so the outcome cannot be
     /// received before the write is recorded.
-    pub(crate) fn submitted(&mut self, id: RequestId, write: PendingWrite) {
+    pub(crate) fn submitted(&mut self, id: RequestId, mut write: PendingWrite) {
+        write.submitted = self.requests.rendered();
         if self.writes.len() == LOG_CAPACITY {
             // Forgotten unsettled: recorded as the dropped are, but for one
             // timed, which is not taken to have applied (its outcome, if it
             // comes, is counted lost).
             if let Some((id, oldest)) = self.writes.pop_front() {
                 if oldest.when == When::Now {
+                    self.latest.untimed(&oldest, id);
                     self.authored(&oldest);
                     self.announce(id, &oldest, None);
                 }

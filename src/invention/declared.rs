@@ -896,6 +896,7 @@ impl DeclaredSurface {
                         when,
                         announced: options.announced,
                         awaited: options.awaited,
+                        submitted: 0,
                         // Safe from the timed edit it was kept over, or that
                         // landed before it: its record follows that edit's.
                         authored: options.authored.map(|authoring| Authoring {

@@ -139,6 +139,7 @@ impl LiveGraph {
                     authored,
                     announced: false,
                     awaited: false,
+                    submitted: 0,
                 };
                 pending.submitted(id, write);
             }

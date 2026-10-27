@@ -30,7 +30,9 @@
 //!   Taken to have applied meanwhile, its own outcome then finds no write
 //!   and is counted lost.
 //! - Overtaking is told by its own sample, so one that applied late, after
-//!   a write recorded for a sample between, is not recorded. And it is told
+//!   a write recorded for a sample between, is not recorded. An untimed
+//!   write taken to have applied is placed by the count read as it was
+//!   listed, which can be a block after it applied. And overtaking is told
 //!   by key, so a whole value (`degrees`) does not overtake a part of it
 //!   (`degree.1`).
 
@@ -40,19 +42,27 @@ use super::{PendingLog, PendingWrite};
 use crate::control_request::{Outcome, RequestId, When};
 
 /// Each control's latest authored write that applied, by module and key:
-/// its sample, then its request, which orders writes on one sample.
+/// its sample, then its request, which orders writes on one sample, and
+/// whether the sample is its own. An untimed write taken to have applied
+/// has only the count rendered when it was submitted, which it applied no
+/// earlier than.
 #[derive(Default)]
-pub(super) struct Latest(HashMap<String, HashMap<String, (u64, RequestId)>>);
+pub(super) struct Latest(HashMap<String, HashMap<String, (u64, RequestId, bool)>>);
 
 impl Latest {
     /// Notes authored `write`, request `id`, as `outcome` applied it.
     pub(super) fn applied(&mut self, write: &PendingWrite, id: RequestId, outcome: Outcome) {
         if let Outcome::Applied { at } | Outcome::AppliedLate { at, .. } = outcome {
-            self.note(write, id, at);
+            self.note(write, id, at, true);
         }
     }
 
-    fn note(&mut self, write: &PendingWrite, id: RequestId, at: u64) {
+    /// Notes authored untimed `write`, request `id`, taken to have applied.
+    pub(super) fn untimed(&mut self, write: &PendingWrite, id: RequestId) {
+        self.note(write, id, write.submitted, false);
+    }
+
+    fn note(&mut self, write: &PendingWrite, id: RequestId, at: u64, exact: bool) {
         if write.authored.is_none() {
             return;
         }
@@ -61,19 +71,20 @@ impl Latest {
             None => self.0.entry(write.module_id.clone()).or_default(),
         };
         match keys.get_mut(&write.key) {
-            Some(latest) => *latest = (*latest).max((at, id)),
+            Some(latest) => *latest = (*latest).max((at, id, exact)),
             None => {
-                keys.insert(write.key.clone(), (at, id));
+                keys.insert(write.key.clone(), (at, id, exact));
             }
         }
     }
 
     /// Whether an authored write to `write`'s control applied after it,
-    /// request `id` on sample `at`.
+    /// request `id` on sample `at`. An untimed one queued before it was
+    /// taken up first, so it applied no later.
     fn overtaken(&self, write: &PendingWrite, id: RequestId, at: u64) -> bool {
         (self.0.get(&write.module_id))
             .and_then(|keys| keys.get(&write.key))
-            .is_some_and(|&latest| latest > (at, id))
+            .is_some_and(|&(after, by, exact)| (after, by) > (at, id) && (exact || by > id))
     }
 }
 
@@ -125,6 +136,7 @@ impl PendingLog {
             (writes.into_iter()).partition(|(_, write)| write.when == When::Now);
         self.writes = waiting;
         for (id, write) in settled {
+            self.latest.untimed(&write, id);
             self.authored(&write);
             self.announce(id, &write, None);
         }
@@ -172,7 +184,7 @@ impl PendingLog {
             }
             if let Some((id, write)) = self.writes.remove(at) {
                 if !self.latest.overtaken(&write, id, suspect.at) {
-                    self.latest.note(&write, id, suspect.at);
+                    self.latest.note(&write, id, suspect.at, true);
                     self.authored(&write);
                 }
                 self.announce(id, &write, None);
