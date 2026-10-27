@@ -233,7 +233,7 @@ fn a_legacy_write_leaves_every_declared_control_as_it_was() {
         if registry.is_sink(type_id) || UNBUILDABLE.iter().any(|(id, _)| *id == type_id) {
             continue;
         }
-        let built = registry.build(type_id, 48_000, &scheduled_config(type_id));
+        let built = registry.build(type_id, 48_000, &base_config(type_id));
         let built = built.unwrap_or_else(|error| panic!("'{type_id}' did not build: {error}"));
         let Some(surface) = built.control_surface else {
             continue;
