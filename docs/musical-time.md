@@ -111,6 +111,18 @@ On the wire, timed structural edits (`SwapModule`, `ApplyEdits`,
 the engine keeps. The beat forms take an optional `clock`, and every form an
 optional `ttl_ms`.
 
+Control writes (`SetControl`, each write of `SetControls`) take the same
+`when` and `ttl_ms`, and one more form, `after_request` (`request`,
+`offset_samples`): that many samples after another request applies, a
+control write's or a timed edit's, named as its reply named it
+([`rpc/control_timing.rs`](../src/rpc/control_timing.rs)). The reply names
+where the write lands (its sample, or its beat), the pending listing shows
+it while it waits, and a `ControlRequestSettled` event reports what became
+of it: applied, superseded, overridden, refused or expired. An authored
+write is recorded in the document as it applies, and whichever of it and
+any other write to the control applies later is what plays and what is
+recorded.
+
 ### Which clock: the timeline context
 
 A request may name its clock. When it does not, it counts on the clock that
@@ -271,9 +283,8 @@ must not assume a step is a whole number of samples.
 
 - Naming a clock inside a development from a request.
 - OR, NOT and sequence joins for conditions.
-- Timed control writes on the wire: `SetControl` applies at once. Beat-timed
-  and condition-timed control writes, repeating grids and beat ramps exist in
-  the engine and its in-process API, but only structural edits take a `when`
-  over RPC today.
+- Repeating grids, beat ramps and signal or control conditions on the
+  wire: they exist in the engine and its in-process API, but a control
+  write over RPC takes a single sample, beat or request to follow.
 - Metre awareness. If it comes, it belongs in a module that adds bars to the
   timeline context, not in the engine's beat count.

@@ -19,6 +19,7 @@ pub type ControlSurfaceInstance = Arc<dyn ControlSurface + Send + Sync>;
 
 mod acks;
 mod clock;
+pub(crate) mod control_timing;
 mod controls;
 mod describe;
 mod editing;

@@ -18,6 +18,7 @@ mod pending;
 mod spectrum;
 mod timed;
 mod timed_batch;
+mod timed_writes;
 
 struct TickBackend {
     sample_rate: u32,

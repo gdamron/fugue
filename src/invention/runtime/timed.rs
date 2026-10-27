@@ -89,7 +89,7 @@ impl RunningInvention {
     }
 }
 
-fn parse_id(id: &str) -> Option<RequestId> {
+pub(super) fn parse_id(id: &str) -> Option<RequestId> {
     id.parse().ok().map(RequestId)
 }
 

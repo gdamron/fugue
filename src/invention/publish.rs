@@ -63,7 +63,7 @@ pub(crate) use announce::Progress;
 pub(crate) use authored::APPLY_WAIT;
 pub(crate) use change::{edit_offline, BuiltModule, GraphChange, PreparedChange};
 pub(crate) use contested::Contested;
-pub(crate) use pending::{Authoring, DocumentStep, PendingLog, PendingWrite};
+pub(crate) use pending::{Announcement, Authoring, DocumentStep, PendingLog, PendingWrite};
 #[cfg(test)]
 pub(crate) use publisher::OUTCOME_QUEUE_CAPACITY;
 pub(crate) use publisher::{kept_until, Publisher, Refused};

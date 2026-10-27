@@ -63,13 +63,35 @@ pub(crate) struct PendingWrite {
     pub(crate) awaited: bool,
 }
 
-/// A front door's write that applied, for its `ControlChanged` event.
+/// A front door's write that applied, for its `ControlChanged` event, or
+/// a timed one that settled, for its `ControlRequestSettled` event too.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Announcement {
     pub(crate) request: RequestId,
     pub(crate) module_id: String,
     pub(crate) key: String,
     pub(crate) value: ControlValue,
+    /// What became of it: `None` for one whose outcome was lost, listed as
+    /// applied, as most are.
+    pub(crate) outcome: Option<Outcome>,
+    /// Timed, announced however it settled, with its beat when timed in
+    /// beats.
+    pub(crate) timed: Option<Option<LoggedBeat>>,
+}
+
+impl Announcement {
+    /// Whether it applied, as far as is known.
+    pub(crate) fn applied(&self) -> bool {
+        self.outcome.is_none_or(applied)
+    }
+}
+
+/// Whether `outcome` says its request applied.
+fn applied(outcome: Outcome) -> bool {
+    matches!(
+        outcome,
+        Outcome::Applied { .. } | Outcome::AppliedLate { .. }
+    )
 }
 
 /// An authored write as the retained document records it once it applies:
@@ -211,16 +233,15 @@ impl PendingLog {
                 let write = write
                     .and_then(|at| self.writes.remove(at))
                     .map(|(_, write)| write);
-                let applied = matches!(
-                    outcome,
-                    Outcome::Applied { .. } | Outcome::AppliedLate { .. }
-                );
+                let applied = applied(outcome);
                 if write.as_ref().is_some_and(|write| write.awaited) {
                     self.held.push((id, outcome));
                 }
-                if let Some(write) = write.as_ref().filter(|_| applied) {
-                    self.authored(write);
-                    self.announce(id, write);
+                if let Some(write) = write.as_ref() {
+                    if applied {
+                        self.authored(write);
+                    }
+                    self.announce(id, write, Some(outcome));
                 }
                 self.record(write, outcome, latched);
             }
@@ -238,7 +259,7 @@ impl PendingLog {
             // write is not to be lost from the document.
             for (id, write) in std::mem::take(&mut self.writes) {
                 self.authored(&write);
-                self.announce(id, &write);
+                self.announce(id, &write, None);
             }
             self.timed.clear();
             self.timed_lost = true;
@@ -325,7 +346,7 @@ impl PendingLog {
             // Forgotten unsettled: recorded as the dropped are.
             if let Some((id, oldest)) = self.writes.pop_front() {
                 self.authored(&oldest);
-                self.announce(id, &oldest);
+                self.announce(id, &oldest, None);
             }
         }
         self.writes.push_back((id, write));
@@ -342,9 +363,11 @@ impl PendingLog {
         }
     }
 
-    /// Lists `write`, applied as request `id`, for its event, if announced.
-    fn announce(&mut self, id: RequestId, write: &PendingWrite) {
-        if !write.announced {
+    /// Lists `write`, settled as request `id` as `outcome` says, for its
+    /// events, if announced and it applied or was timed.
+    fn announce(&mut self, id: RequestId, write: &PendingWrite, outcome: Option<Outcome>) {
+        let timed = write.when != When::Now;
+        if !write.announced || !(outcome.is_none_or(applied) || timed) {
             return;
         }
         if self.announcements.len() == OUTCOME_QUEUE_CAPACITY {
@@ -355,6 +378,8 @@ impl PendingLog {
             module_id: write.module_id.clone(),
             key: write.key.clone(),
             value: write.value.clone(),
+            outcome,
+            timed: timed.then(|| write.beat.clone()),
         });
     }
 

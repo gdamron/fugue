@@ -16,8 +16,6 @@ use crate::control_request::{BeatSpec, BeatTime, Condition, Outcome, Predicate, 
 use crate::invention::request_log::LoggedBeat;
 
 /// When a timed control write applies.
-// Built by the front doors that take a time, still to come.
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum WriteTime<'a> {
     /// On this sample of the transport.
