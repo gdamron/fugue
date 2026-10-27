@@ -60,21 +60,21 @@ const DECLS: &[ControlDecl] = &[
         "Completed request count (read-only)",
     )
     .telemetry(),
-    // Events: each write is one edge, as a rising input is. They hold no
+    // Events: each true write is one edge, as a rising input is. They hold no
     // state, so the document never authors one and a reload never fires
     // one.
     ControlDecl::new(
         "trigger",
         DeclKind::Bool,
         RtValue::Bool(false),
-        "Trigger: each write starts one agent request",
+        "Trigger: a true write asks for a request (edges the worker sees together, or within cooldown, make one)",
     )
     .event(),
     ControlDecl::new(
         "reset",
         DeclKind::Bool,
         RtValue::Bool(false),
-        "Trigger: each write clears the agent's history and errors",
+        "Trigger: a true write clears the agent's history and errors",
     )
     .event(),
 ];
