@@ -287,7 +287,9 @@ fn play_due_apart(held: bool) -> (Vec<(u64, Outcome)>, Applied) {
     let on_8 = [Predicate::Applied(RequestId(8))];
     insert(&mut conditions, &slots, request(2, &on_8), &mut store);
     for (id, at) in [(7, 30), (8, 64)] {
-        store.outcomes.settle(request(id, &AFTER), Outcome::Applied { at });
+        store
+            .outcomes
+            .settle(request(id, &AFTER), Outcome::Applied { at });
     }
     play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
     assert_eq!((conditions.len(), slots.taken()), (0, 0));
@@ -351,7 +353,10 @@ fn a_full_table_landing_at_one_sample_applies_once_without_allocating() {
     assert_eq!((allocs, frees), (0, 0));
     assert_eq!(host.applied, [(9, 70)]);
     assert_eq!((conditions.len(), slots.taken()), (0, 0));
-    let settled: Vec<_> = log(&outcomes).into_iter().filter(|(id, _)| *id >= 100).collect();
+    let settled: Vec<_> = log(&outcomes)
+        .into_iter()
+        .filter(|(id, _)| *id >= 100)
+        .collect();
     let applied: Vec<_> = settled.iter().filter(|(_, o)| *o == LANDED).collect();
     assert_eq!(applied, [&(top, LANDED)]);
     let superseded = settled.iter().filter(|(_, o)| *o == Outcome::Superseded);
