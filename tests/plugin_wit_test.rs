@@ -88,11 +88,11 @@ fn loads_fixture_component_and_processes_audio_block() {
 #[test]
 fn fugue_module_wit_declares_required_exports() {
     let wit = include_str!("../wit/fugue-module.wit");
+    assert!(wit.contains("emit-output: func(index: u32, samples: list<f32>);"));
     for export in [
         "export init:",
         "export set-input:",
         "export process:",
-        "export process-output-block:",
         "export get-output:",
         "export set-control:",
     ] {

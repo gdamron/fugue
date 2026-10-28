@@ -1,4 +1,17 @@
-package fugue:module@0.1.0;
+package fugue:module@0.2.0;
+
+/// What the host gives a guest.
+interface host {
+    /// Writes output `index`'s samples for the block `process` is rendering.
+    ///
+    /// The host copies the samples into a buffer it owns, so nothing is
+    /// handed back for the host to free. Call it once per output from inside
+    /// `process`: an output not written in a block reads as silence for that
+    /// block, a list shorter than the block is padded with silence, and
+    /// samples past the block are ignored. A call from outside `process`, or
+    /// with an index past `outputs`, fails the module.
+    emit-output: func(index: u32, samples: list<f32>);
+}
 
 /// A component world for Fugue graph modules.
 ///
@@ -6,6 +19,8 @@ package fugue:module@0.1.0;
 /// functions mirror the legacy `Module` helpers used by tests and control
 /// commands.
 world module {
+    import host;
+
     export init: func(sample-rate: u32, config-json: string) -> result<_, string>;
     export name: func() -> string;
     export inputs: func() -> list<string>;
@@ -13,11 +28,10 @@ world module {
     export set-input: func(port: string, value: f32) -> result<_, string>;
     export set-input-connected: func(index: u32, connected: bool);
     export set-input-block: func(index: u32, values: list<f32>) -> result<_, string>;
+    /// Renders one block of `frames` samples, writing each output with
+    /// `emit-output`. Returns false once the module has finished, so a
+    /// one-shot or envelope guest can signal completion.
     export process: func(frames: u32) -> bool;
-    /// Fused single-output fast path. The bool carries the same active flag
-    /// returned by `process` so one-shot/envelope guests can signal completion.
-    export process-output-block: func(frames: u32) -> result<tuple<bool, list<f32>>, string>;
-    export output-block: func(index: u32) -> result<list<f32>, string>;
     export get-output: func(port: string) -> result<f32, string>;
     export set-control: func(key: string, value: f32) -> result<_, string>;
 }

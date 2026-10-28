@@ -5,13 +5,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use wasmtime::component::{Component, Instance, Linker, ResourceTable, TypedFunc};
+use wasmtime::component::{Component, Instance, Linker, TypedFunc};
 use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
-use crate::pkg::{Capability, EntrySpec, PackageManifest};
+use crate::pkg::{EntrySpec, PackageManifest};
 use crate::{Module, MAX_BLOCK};
+
+use host::{HostState, OutputBlocks};
+
+mod host;
+mod world;
 
 const CACHE_VERSION: &str = "v1";
 
@@ -98,17 +102,15 @@ type SetInputBlockFunc = TypedFunc<(u32, &'static [f32]), (Result<(), String>,)>
 /// Guest exports `set-input(port, value)` and `set-control(key, value)`. The
 /// name is lowered from a borrowed `&str`, so a call makes no host `String`.
 type SetNamedFunc = TypedFunc<(&'static str, f32), (Result<(), String>,)>;
-/// Guest export `process-output-block(frames)`, returning `(active, samples)`.
-type ProcessOutputBlockFunc = TypedFunc<(u32,), (Result<(bool, Vec<f32>), String>,)>;
 
 /// A Fugue `Module` backed by a Wasmtime component instance.
 pub struct WasmModule {
     store: Store<HostState>,
     instance: Instance,
     set_input_block: SetInputBlockFunc,
+    /// Guest export `process(frames)`, which writes each output into the
+    /// store's [`OutputBlocks`] through `emit-output`.
     process: TypedFunc<(u32,), (bool,)>,
-    process_output_block: Option<ProcessOutputBlockFunc>,
-    output_block: TypedFunc<(u32,), (Result<Vec<f32>, String>,)>,
     set_input: SetNamedFunc,
     set_input_connected: Option<TypedFunc<(u32, bool), ()>>,
     set_control: SetNamedFunc,
@@ -118,7 +120,6 @@ pub struct WasmModule {
     input_names: Vec<&'static str>,
     output_names: Vec<&'static str>,
     input_blocks: Vec<[f32; MAX_BLOCK]>,
-    output_blocks: Vec<[f32; MAX_BLOCK]>,
     input_connected: Vec<bool>,
     /// Latched after a guest trap; a trapped store fails every subsequent
     /// call, so we stop calling into it instead of paying full call cost
@@ -135,8 +136,10 @@ impl WasmModule {
     ) -> Result<Self, Box<dyn Error>> {
         let engine = component_engine()?;
         let component = cached_component(&engine, wasm_path)?;
+        world::check_world(&engine, &component)?;
         let mut linker = Linker::<HostState>::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+        host::add_to_linker(&mut linker)?;
 
         let mut store = Store::new(&engine, HostState::from_manifest(manifest)?);
         store.set_fuel(u64::MAX / 2)?;
@@ -149,9 +152,6 @@ impl WasmModule {
 
         let set_input_block = instance.get_typed_func(&mut store, "set-input-block")?;
         let process = instance.get_typed_func(&mut store, "process")?;
-        let process_output_block =
-            optional_typed_func(&instance, &mut store, "process-output-block")?;
-        let output_block = instance.get_typed_func(&mut store, "output-block")?;
         let set_input = instance.get_typed_func(&mut store, "set-input")?;
         let set_input_connected =
             optional_typed_func(&instance, &mut store, "set-input-connected")?;
@@ -162,8 +162,6 @@ impl WasmModule {
             instance,
             set_input_block,
             process,
-            process_output_block,
-            output_block,
             set_input,
             set_input_connected,
             set_control,
@@ -173,7 +171,6 @@ impl WasmModule {
             input_names: Vec::new(),
             output_names: Vec::new(),
             input_blocks: Vec::new(),
-            output_blocks: Vec::new(),
             input_connected: Vec::new(),
             failed: false,
         })
@@ -184,7 +181,7 @@ impl WasmModule {
         self.inputs = self.call_string_list("inputs")?;
         self.outputs = self.call_string_list("outputs")?;
         self.input_blocks = vec![[0.0; MAX_BLOCK]; self.inputs.len()];
-        self.output_blocks = vec![[0.0; MAX_BLOCK]; self.outputs.len()];
+        self.store.data_mut().outputs = OutputBlocks::new(self.outputs.len());
         self.input_connected = vec![false; self.inputs.len()];
 
         self.input_names = leak_port_names(&self.inputs);
@@ -220,12 +217,12 @@ impl WasmModule {
 
     /// Latches the module as failed after a guest trap or error, zeroing all
     /// outputs so downstream modules don't hold a stale sustained value.
-    fn fail(&mut self, export: &str) -> bool {
+    fn fail(&mut self, export: &str, error: &dyn std::fmt::Display) -> bool {
         eprintln!(
-            "wasm module '{}' failed in `{export}`; muting output",
+            "wasm module '{}' failed in `{export}`: {error}; muting output",
             self.name
         );
-        for block in &mut self.output_blocks {
+        for block in &mut self.store.data_mut().outputs.blocks {
             block.fill(0.0);
         }
         self.failed = true;
@@ -249,50 +246,25 @@ impl Module for WasmModule {
             }
             // Lowered straight from the input block: no host-side copy.
             let values = &self.input_blocks[index][..frames];
-            let Ok((Ok(()),)) = self
+            match self
                 .set_input_block
                 .call(&mut self.store, (index as u32, values))
-            else {
-                return self.fail("set-input-block");
-            };
-        }
-
-        // Note: each block lifts the guest's `list<f32>` into a fresh `Vec`,
-        // an allocation inherent to component-model lifting. A shared-memory
-        // output path is the planned follow-up to make this hot path
-        // allocation-free.
-        if self.output_blocks.len() == 1 {
-            if let Some(process_output_block) = &self.process_output_block {
-                let Ok((Ok((active, values)),)) =
-                    process_output_block.call(&mut self.store, (frames as u32,))
-                else {
-                    return self.fail("process-output-block");
-                };
-                let n = frames.min(values.len());
-                self.output_blocks[0][..n].copy_from_slice(&values[..n]);
-                if n < frames {
-                    self.output_blocks[0][n..frames].fill(0.0);
-                }
-                return active;
+            {
+                Ok((Ok(()),)) => {}
+                Ok((Err(error),)) => return self.fail("set-input-block", &error),
+                Err(error) => return self.fail("set-input-block", &error),
             }
         }
 
-        let Ok((active,)) = self.process.call(&mut self.store, (frames as u32,)) else {
-            return self.fail("process");
-        };
-
-        for index in 0..self.output_blocks.len() {
-            let Ok((Ok(values),)) = self.output_block.call(&mut self.store, (index as u32,)) else {
-                return self.fail("output-block");
-            };
-            let n = frames.min(values.len());
-            self.output_blocks[index][..n].copy_from_slice(&values[..n]);
-            if n < frames {
-                self.output_blocks[index][n..frames].fill(0.0);
-            }
+        // The guest writes each output through `emit-output`, which copies
+        // it into the store's blocks: nothing is lifted into a host `Vec`.
+        self.store.data_mut().outputs.begin(frames);
+        let processed = self.process.call(&mut self.store, (frames as u32,));
+        self.store.data_mut().outputs.end();
+        match processed {
+            Ok((active,)) => active,
+            Err(error) => self.fail("process", &error),
         }
-
-        active
     }
 
     fn inputs(&self) -> &[&str] {
@@ -308,7 +280,7 @@ impl Module for WasmModule {
     }
 
     fn output_block(&self, index: usize) -> &[f32] {
-        &self.output_blocks[index]
+        &self.store.data().outputs.blocks[index]
     }
 
     fn set_input(&mut self, port: &str, value: f32) -> Result<(), String> {
@@ -325,7 +297,7 @@ impl Module for WasmModule {
             .iter()
             .position(|name| name == port)
             .ok_or_else(|| format!("Unknown output port: {port}"))?;
-        Ok(self.output_blocks[index][0])
+        Ok(self.store.data().outputs.blocks[index][0])
     }
 
     fn set_input_connected(&mut self, index: usize, connected: bool) {
@@ -452,111 +424,12 @@ where
     Ok(Some(instance.get_typed_func(&mut *store, name)?))
 }
 
-struct HostState {
-    table: ResourceTable,
-    wasi: WasiCtx,
-}
-
-impl HostState {
-    fn from_manifest(manifest: &PackageManifest) -> Result<Self, Box<dyn Error>> {
-        let mut builder = WasiCtx::builder();
-        for cap in &manifest.requires.capabilities {
-            match Capability::parse(cap).ok_or_else(|| format!("invalid capability: {cap}"))? {
-                Capability::Random | Capability::Time => {}
-                Capability::FsRead(scope) => {
-                    preopen(&mut builder, &scope, false)?;
-                }
-                Capability::FsWrite(scope) => {
-                    preopen(&mut builder, &scope, true)?;
-                }
-                Capability::Net(host) => {
-                    return Err(format!(
-                        "network capability is not supported for wasm modules yet: {host}"
-                    )
-                    .into());
-                }
-            }
-        }
-
-        Ok(Self {
-            table: ResourceTable::new(),
-            wasi: builder.build(),
-        })
-    }
-}
-
-impl WasiView for HostState {
-    fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView {
-            ctx: &mut self.wasi,
-            table: &mut self.table,
-        }
-    }
-}
-
-fn preopen(
-    builder: &mut wasmtime_wasi::WasiCtxBuilder,
-    scope: &str,
-    writable: bool,
-) -> Result<(), Box<dyn Error>> {
-    let path = Path::new(scope);
-    let perms = if writable {
-        wasmtime_wasi::FsPerms::ReadWrite
-    } else {
-        wasmtime_wasi::FsPerms::ReadOnly
-    };
-    builder.preopened_dir(path, scope, perms)?;
-    Ok(())
-}
-
 #[cfg(test)]
 pub(crate) mod alloc_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pkg::{Author, EntrySpec, PackageKind, Requires, Target};
-
-    fn manifest_with_caps(capabilities: Vec<String>) -> PackageManifest {
-        PackageManifest {
-            id: "fugue.test.module".to_string(),
-            version: "1.0.0".to_string(),
-            kind: PackageKind::Module,
-            license: "MIT".to_string(),
-            authors: vec![Author {
-                name: "Fugue Test".to_string(),
-                url: None,
-            }],
-            description: None,
-            homepage: None,
-            targets: vec![Target::InGraphAgent],
-            requires: Requires {
-                mcp_tools: Vec::new(),
-                capabilities,
-            },
-            deps: Vec::new(),
-            entry: EntrySpec::Module {
-                wasm: "module.fugue-module.wasm".to_string(),
-            },
-            signing: None,
-        }
-    }
-
-    #[test]
-    fn host_state_rejects_unsupported_network_capability() {
-        let manifest = manifest_with_caps(vec!["net:example.com".to_string()]);
-        let err = match HostState::from_manifest(&manifest) {
-            Ok(_) => panic!("network capability should be rejected"),
-            Err(err) => err.to_string(),
-        };
-        assert!(err.contains("network capability is not supported"));
-    }
-
-    #[test]
-    fn host_state_accepts_random_and_time_without_extra_grants() {
-        let manifest = manifest_with_caps(vec!["random".to_string(), "time".to_string()]);
-        HostState::from_manifest(&manifest).expect("random/time capabilities are valid");
-    }
 
     #[test]
     fn cache_path_changes_with_wasm_bytes() {
