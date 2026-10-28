@@ -276,10 +276,39 @@ fn a_crossing_written_before_an_edit_is_read_as_without_it() {
     assert_eq!(met(true), twin);
 }
 
+/// A write due now, an edit keeping its module, then one on the same
+/// control waiting for the first to apply: it applies with it, as with no
+/// edit (the first, staged before the condition started, is flushed for it).
+#[test]
+fn a_write_waiting_on_one_staged_before_an_edit_applies_with_it() {
+    let play = |with_edit: bool| {
+        let mut rig = edit_rig();
+        let start = rig.graph.current_sample;
+        let first = submit_level(&rig, "dial", 0.75, Due::Now, start);
+        if with_edit {
+            rebuild_spare(&rig);
+        }
+        let publisher = rig.live.publisher().lock().unwrap();
+        let target = publisher.control_target("dial", LEVEL).unwrap();
+        drop(publisher);
+        let mut request = Request::new(target, RequestValue::Value(RtValue::F32(0.5)));
+        let applied = Condition::all(&[Predicate::Applied(first)]).unwrap();
+        request.when = When::Condition(applied);
+        let then = rig.live.requests.submit(request).unwrap();
+        let out = render_counted(&mut rig, 4);
+        (start, out, settled(&mut rig, vec![first, then]))
+    };
+    let (start, twin, without) = play(false);
+    assert_eq!(without[1], [Outcome::Applied { at: start }]);
+    let (_, out, settled) = play(true);
+    assert_eq!(out, twin);
+    assert_eq!(settled, without);
+}
+
 /// An edit held two blocks, waiting for room to retire what it replaces:
 /// writes due now and 70 samples on before it, then behind it one due five
-/// samples before the first and one due 20 samples on, which apply once
-/// the edit installs. Each written before them and due later still
+/// samples before the first, a second edit, and one due 20 samples on,
+/// which apply once both install. Each written before them and due later still
 /// stands, as with no edit (once the second is due); a late write
 /// submitted after that applies as it arrives, as any does.
 #[test]
@@ -309,6 +338,10 @@ fn a_late_write_behind_a_held_edit_does_not_reach_back() {
             rig.publish_unreclaimed(|change| change.upsert("spare", spare));
         }
         ids.push(submit_level(&rig, "dial", 0.1, Due::Late(5), start));
+        if with_edit {
+            let spare = rig.build("spare", DIAL, serde_json::json!({}));
+            rig.publish_unreclaimed(|change| change.upsert("spare", spare));
+        }
         ids.push(submit_level(&rig, "dial", 0.15, Due::Ahead(20), start));
         let mut out = render_counted(&mut rig, 2);
         rig.live.reclaim();

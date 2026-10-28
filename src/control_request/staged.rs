@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering:
 
 use super::automation::take_automation;
 use super::cells::{apply_declared, decode, encode, ControlCells};
+use super::chains::Chains;
 use super::declare::{ControlDecl, DeclKind};
 use super::hold::{admits_hold, rank_of, Rank, Standing};
 use super::pending::{Outcome, Outcomes};
@@ -76,9 +77,13 @@ impl Outcomes {
 
     /// As the edit installs: until [`Self::weighed`], the requests queued
     /// behind it are weighed as if it had installed when first due, against
-    /// the writes standing since ([`contest`]).
+    /// the writes standing since ([`contest`]). Edits installing one after
+    /// another keep the earliest such sample.
     pub(crate) fn edit_installs(&mut self) {
-        self.staging.since = self.staging.held.take();
+        if let Some(held) = self.staging.held.take() {
+            let since = self.staging.since.map_or(held, |since| since.min(held));
+            self.staging.since = Some(since);
+        }
     }
 
     /// Ends what [`Self::edit_installs`] began, once those requests applied.
@@ -199,6 +204,18 @@ impl Staged {
             let slot = self.slots.get(usize::from(control.load(Relaxed)));
             slot.is_none_or(|slot| {
                 slot.held.load(Relaxed) == EMPTY || Some(slot.at.load(Relaxed)) == at
+            })
+        })
+    }
+
+    /// Whether a condition waits on a write staged here.
+    fn watched(&self, chains: &Chains) -> bool {
+        let len = self.len.load(Relaxed);
+        self.order.iter().take(len).any(|control| {
+            let slot = self.slots.get(usize::from(control.load(Relaxed)));
+            slot.is_some_and(|slot| {
+                slot.held.load(Relaxed) != EMPTY
+                    && chains.watching(RequestId(slot.id.load(Relaxed)))
             })
         })
     }
@@ -411,6 +428,20 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
 #[inline]
 pub(crate) fn flush_staged<M: Module + ?Sized>(module: &mut M, outcomes: &mut Outcomes) {
     flush_staged_before(module, None, outcomes);
+}
+
+/// [`flush_staged`], once a condition waits on a write staged on `module`
+/// (one staged before the condition started): it learns the write applied
+/// at its sample, as a write it waits on applies at once. Allocation- and
+/// lock-free.
+pub(crate) fn flush_watched<M: Module + ?Sized>(module: &mut M, outcomes: &mut Outcomes) {
+    let watched = match module.declared() {
+        Some((_, cells)) => cells.staged.watched(&outcomes.chains),
+        None => false,
+    };
+    if watched {
+        flush_staged(module, outcomes);
+    }
 }
 
 /// [`flush_staged`], but a write staged at `applying`'s sample stronger

@@ -3,8 +3,8 @@
 
 use super::{Publication, SignalGraph};
 use crate::control_request::{
-    contest, flush_staged, flush_staged_before, stage_write, stand, Applying, ControlTarget,
-    Outcome, Outcomes, Ramps, RequestValue, Standing,
+    contest, flush_staged, flush_staged_before, flush_watched, stage_write, stand, Applying,
+    ControlTarget, Outcome, Outcomes, Ramps, RequestValue, Standing,
 };
 
 impl SignalGraph {
@@ -165,6 +165,17 @@ impl SignalGraph {
                 }
             }
         });
+    }
+
+    /// Flushes each module a condition waits on a staged write of, as
+    /// conditions start: the write it waits on applied at its sample.
+    pub(super) fn flush_watched(&mut self, outcomes: &mut Outcomes) {
+        if outcomes.staged() == 0 {
+            return;
+        }
+        for (_, instance) in self.modules.iter_mut() {
+            flush_watched(instance.module_mut(), outcomes);
+        }
     }
 
     /// [`Self::flush_module`] through the graph's drain, when it holds it.
