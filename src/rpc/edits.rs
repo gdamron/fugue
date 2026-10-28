@@ -82,6 +82,7 @@ pub enum StructuralEdit {
     SetControl {
         module_id: String,
         key: String,
+        #[serde(deserialize_with = "crate::traits::exact_number::deserialize")]
         value: ControlValue,
     },
 }

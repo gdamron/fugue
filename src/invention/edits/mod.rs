@@ -157,6 +157,13 @@ pub(crate) trait EditFacts {
     fn is_event(&self, _id: &str, _key: &str) -> bool {
         false
     }
+
+    /// Whether `key` names one of module `id`'s whole-number controls as
+    /// the batch has the module, which reads number text exactly (see
+    /// `exact_number`). None by default.
+    fn is_whole(&self, _id: &str, _key: &str) -> bool {
+        false
+    }
 }
 
 /// One `set_control` edit's authored write, tagged with the edit that made

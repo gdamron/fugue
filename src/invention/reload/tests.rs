@@ -18,6 +18,7 @@ mod development_assets;
 mod development_events;
 mod development_wholes;
 mod event_keys;
+mod exact_integers;
 mod implicit;
 mod melody;
 mod mixer_rebuild;

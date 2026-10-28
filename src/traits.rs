@@ -16,6 +16,7 @@ use crate::payload::{Payload, Retired};
 mod control_hints;
 mod control_meta;
 mod control_validation;
+pub(crate) mod exact_number;
 
 pub use control_hints::{ControlScale, NumberHints};
 pub use control_validation::ControlSurfaceMap;
@@ -346,12 +347,28 @@ pub trait ControlSurface: Send + Sync {
     /// [`ControlSurface::set_control`] still owns the "unknown control" error.
     /// Control-plane callers use this so a write survives a client that
     /// stringifies values; it is not for the audio thread (it allocates via
-    /// [`ControlSurface::controls`]).
+    /// [`ControlSurface::controls`]). A whole-number control keeps number
+    /// text an f32 would misread, for its declaration to read exactly (see
+    /// `exact_number`).
     fn coerce_value(&self, key: &str, value: ControlValue) -> ControlValue {
+        if exact_number::keeps_text(&value) && self.is_whole(key) {
+            return value;
+        }
         match self.controls().into_iter().find(|meta| meta.key == key) {
             Some(meta) => value.coerced_to(&meta.kind),
             None => value,
         }
+    }
+
+    /// Whether `key` is declared a whole-number control. Control thread.
+    #[doc(hidden)]
+    fn is_whole(&self, key: &str) -> bool {
+        self.declaration(key).is_some_and(|found| {
+            matches!(
+                found.decl.kind,
+                crate::control_request::DeclKind::Integer { .. }
+            )
+        })
     }
 }
 
