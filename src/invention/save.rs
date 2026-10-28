@@ -45,10 +45,7 @@ impl Invention {
         let Some(source_dir) = self.source_path.as_deref().and_then(Path::parent) else {
             return Ok(document);
         };
-        let target_dir = match target.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => std::path::absolute(parent)?,
-            _ => std::env::current_dir()?,
-        };
+        let target_dir = absolute_dir(target.parent())?;
 
         for spec in &mut document.developments {
             if let Some(dev_path) = spec.path.as_mut() {
@@ -68,7 +65,7 @@ impl Invention {
         let developments = match LoadedDevelopments::load(self) {
             Ok(developments) => developments,
             Err(error) if self.modules.iter().any(|module| self.holds_slots(module)) => {
-                if std::path::absolute(source_dir)? == target_dir {
+                if absolute_dir(Some(source_dir))? == target_dir {
                     return Ok(document);
                 }
                 let reason = format!(
@@ -107,6 +104,15 @@ impl Invention {
             && module_asset_values(&mut module.config.clone())
                 .next()
                 .is_some()
+    }
+}
+
+/// A file's directory as an absolute path: the current directory when the
+/// file was named without one.
+fn absolute_dir(parent: Option<&Path>) -> std::io::Result<PathBuf> {
+    match parent {
+        Some(parent) if !parent.as_os_str().is_empty() => std::path::absolute(parent),
+        _ => std::env::current_dir(),
     }
 }
 
@@ -256,5 +262,13 @@ mod tests {
         let saved = Invention::from_file(&target.to_string_lossy()).unwrap();
         let dev_path = PathBuf::from(saved.developments[0].path.as_deref().unwrap());
         assert!(dev_path.is_absolute(), "{}", dev_path.display());
+    }
+
+    #[test]
+    fn a_file_named_without_a_directory_lies_in_the_current_one() {
+        let here = std::env::current_dir().unwrap();
+        let bare = std::path::Path::new("piece.json").parent();
+        assert_eq!(super::absolute_dir(bare).unwrap(), here);
+        assert_eq!(super::absolute_dir(None).unwrap(), here);
     }
 }
