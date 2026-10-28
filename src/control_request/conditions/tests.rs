@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::alloc_counter::allocator_events;
+use crate::control_request::hold::Holds;
 use crate::control_request::pending::PendingStore;
 use crate::control_request::{
     outcome_channel, request_channel, ControlIndex, Edge, OutcomeReceiver, RequestId, RtValue,
@@ -30,6 +31,9 @@ pub(super) struct Host {
     /// How many requests had applied each time the late events applied
     /// were finished.
     finished: Vec<usize>,
+    /// Holds on the target's controls, weighed as the graph weighs them,
+    /// when set.
+    pub(super) holds: Option<Holds>,
 }
 
 impl Host {
@@ -43,6 +47,7 @@ impl Host {
             applied: Vec::with_capacity(8),
             controls: vec![0.0; 2],
             finished: Vec::with_capacity(8),
+            holds: None,
         }
     }
 
@@ -84,10 +89,14 @@ impl ConditionHost for Host {
     fn apply(
         &mut self,
         target: &ControlTarget,
-        _standing: Option<Standing>,
+        standing: Option<Standing>,
         _value: RequestValue,
         _retirer: &mut Retirer,
     ) -> Result<(), Outcome> {
+        if let (Some(holds), Some(standing)) = (&self.holds, standing) {
+            holds.admits(target.control, standing)?;
+            holds.take(target.control, standing);
+        }
         self.applied.push((target.module_idx, self.now));
         Ok(())
     }

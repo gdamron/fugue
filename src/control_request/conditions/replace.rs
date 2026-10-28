@@ -23,7 +23,7 @@
 //!
 //! Writes that could not replace on arrival (that copy and that write,
 //! writes on different conditions met at one sample, writes with a ttl)
-//! replace as they fall due together, by the same rule, before either
+//! replace as they fall due at one sample, by the same rule, before either
 //! reaches the module ([`Conditions::give_way`]): one setter runs for a
 //! control at a sample, so a stateful one (a reverb retuning) runs once.
 //!
@@ -104,25 +104,30 @@ impl Conditions {
 
 impl Conditions {
     /// Settles, before entry `i` (due by `at`) reaches its module, every
-    /// other plain write here due by `at` for the same control, or entry
-    /// `i` itself, as two received together replace: the lower [`Rank`],
-    /// at equal rank the earlier received (entries are in receipt order),
-    /// gives way, so one setter runs for the control at the sample, the
-    /// one that would have stood last. Those this table could not replace
-    /// on arrival meet here: a kept copy and a write waiting on its edit
-    /// alone, writes on different conditions met together, and writes
-    /// with a ttl not yet run out. Returns where entry `i` now is, or
-    /// `None` once it gave way. Allocation- and free-free.
+    /// other plain write here to the same control due at the same sample,
+    /// or entry `i` itself, as two received together replace: the lower
+    /// [`Rank`], at equal rank the earlier received (entries are in
+    /// receipt order), gives way, so one setter runs for the control at
+    /// the sample, the one that would have stood last. Those this table
+    /// could not replace on arrival meet here: a kept copy and a write
+    /// waiting on its edit alone, writes on different conditions met
+    /// together, and writes with a ttl not yet run out. Writes due at
+    /// different samples are left to the holds, which weigh each at its
+    /// own sample ([`Standing`](crate::control_request::Standing)): at
+    /// one sample, a hold that turns away the winner turns away the rest
+    /// too, so none is lost to it.
+    /// Returns where entry `i` now is, or `None` once it gave way.
+    /// Allocation- and free-free; one pass over the table per contender.
     pub(super) fn give_way(
         &mut self,
         mut i: usize,
         at: u64,
         outcomes: &mut Outcomes,
     ) -> Option<usize> {
-        if !self.contends(i, at) {
+        let Some(due) = self.contends(i, at) else {
             return Some(i);
-        }
-        while let Some(other) = self.contender(i, at) {
+        };
+        while let Some(other) = self.contender(i, due, at) {
             let mine = Rank::of(&self.entries[i].request).expect("not an event");
             let theirs = Rank::of(&self.entries[other].request).expect("not an event");
             let loser = match mine.cmp(&theirs) {
@@ -145,21 +150,22 @@ impl Conditions {
         Some(i)
     }
 
-    /// Whether entry `i` would apply by `at` as a plain write: not broken,
-    /// due, and its ttl not run out.
-    fn contends(&self, i: usize, at: u64) -> bool {
+    /// The sample entry `i` is due at, if it would apply by `at` as a
+    /// plain write: not broken, due, and its ttl not run out.
+    fn contends(&self, i: usize, at: u64) -> Option<u64> {
         let entry = &self.entries[i];
-        !entry.broken
-            && plain(&entry.request)
-            && entry.due().is_some_and(|due| due <= at)
-            && !expired(&entry.request, at)
+        let live = !entry.broken && plain(&entry.request) && !expired(&entry.request, at);
+        entry.due().filter(|&due| live && due <= at)
     }
 
-    /// Another entry that would apply by `at` to entry `i`'s control.
-    fn contender(&self, i: usize, at: u64) -> Option<usize> {
+    /// Another entry that would apply by `at` to entry `i`'s control, due
+    /// at `due` as entry `i` is.
+    fn contender(&self, i: usize, due: u64, at: u64) -> Option<usize> {
         let target = self.entries[i].request.target;
         (0..self.entries.len()).find(|&other| {
-            other != i && self.entries[other].request.target == target && self.contends(other, at)
+            other != i
+                && self.entries[other].request.target == target
+                && self.contends(other, at) == Some(due)
         })
     }
 }

@@ -4,9 +4,10 @@
 use super::super::tests::{insert, log, play_ordered, request, store, table, Host};
 use crate::alloc_counter::allocator_events;
 use crate::control_request::condition::{Condition, Predicate};
+use crate::control_request::hold::{Holds, Standing};
 use crate::control_request::pending::{Outcome, Refusal};
 use crate::control_request::request::{Request, When};
-use crate::control_request::RequestId;
+use crate::control_request::{ControlIndex, RequestId};
 
 const AFTER: [Predicate; 1] = [Predicate::Applied(RequestId(7))];
 
@@ -257,4 +258,61 @@ fn writes_on_different_conditions_met_together_apply_once() {
         .collect();
     assert_eq!(settled, [(1, Outcome::Superseded), (2, LANDED)]);
     assert_eq!(host.applied.len(), 1);
+}
+
+/// The module and sample of each request that reached the module.
+type Applied = Vec<(usize, u64)>;
+
+/// Plays write 1 at priority 1 met (late) at 30 and write 2 at priority 0
+/// met at 64 on the control, the host weighing holds, with `held` (a
+/// priority-2 write due at 40) holding it first when set. What settled,
+/// and the samples requests reached the module at.
+fn play_due_apart(held: bool) -> (Vec<(u64, Outcome)>, Applied) {
+    let (mut store, outcomes) = store();
+    let (mut conditions, slots) = table(4);
+    let mut host = Host::new(vec![vec![0.0; 128]]);
+    let holds = Holds::new(1);
+    if held {
+        let mut write = request(99, &AFTER);
+        write.priority = 2;
+        holds.take(ControlIndex(0), Standing::of(&write, 40).unwrap());
+    }
+    host.holds = Some(holds);
+    let mut early = request(1, &AFTER);
+    early.priority = 1;
+    insert(&mut conditions, &slots, early, &mut store);
+    let on_8 = [Predicate::Applied(RequestId(8))];
+    insert(&mut conditions, &slots, request(2, &on_8), &mut store);
+    for (id, at) in [(7, 30), (8, 64)] {
+        store.outcomes.settle(request(id, &AFTER), Outcome::Applied { at });
+    }
+    play_ordered(&mut conditions, &mut host, &mut store, 64, 64);
+    assert_eq!((conditions.len(), slots.taken()), (0, 0));
+    let settled = log(&outcomes)
+        .into_iter()
+        .filter(|(id, _)| [1, 2].contains(id));
+    (settled.collect(), host.applied)
+}
+
+/// Writes due at different samples do not contend: the holds weigh each
+/// at its own. One turned away by a hold leaves the later write, due
+/// after the hold, to play, though it ranks lower.
+#[test]
+fn a_write_a_hold_turns_away_leaves_the_later_due_one_to_play() {
+    let (settled, applied) = play_due_apart(true);
+    let at_64 = Outcome::Applied { at: 64 };
+    assert_eq!(settled, [(1, Outcome::Superseded), (2, at_64)]);
+    assert_eq!(applied, [(9, 64)]);
+}
+
+/// With no hold, the late write applies at its due sample's standing, and
+/// the write due after it takes the control back, as a newer scheduled
+/// write does.
+#[test]
+fn a_write_due_later_takes_the_control_back_from_a_late_one() {
+    let (settled, applied) = play_due_apart(false);
+    let late = Outcome::AppliedLate { at: 64, due: 30 };
+    let at_64 = Outcome::Applied { at: 64 };
+    assert_eq!(settled, [(1, late), (2, at_64)]);
+    assert_eq!(applied, [(9, 64), (9, 64)]);
 }
