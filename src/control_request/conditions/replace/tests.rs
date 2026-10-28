@@ -1,7 +1,10 @@
 //! A request waiting on another applying replacing one waiting for the
 //! same control on the same request, by rank, and nothing else replacing.
 
-use super::super::tests::{insert, log, play_ordered, request, store, table, Host};
+use super::super::tests::{
+    apply_all, insert, log, play_ordered, request, store, store_for, table, Host, INSTALLED, TARGET,
+};
+use super::super::CONDITION_CAPACITY;
 use crate::alloc_counter::allocator_events;
 use crate::control_request::condition::{Condition, Predicate};
 use crate::control_request::hold::{Holds, Standing};
@@ -315,4 +318,42 @@ fn a_write_due_later_takes_the_control_back_from_a_late_one() {
     let at_64 = Outcome::Applied { at: 64 };
     assert_eq!(settled, [(1, late), (2, at_64)]);
     assert_eq!(applied, [(9, 64), (9, 64)]);
+}
+
+/// A full table of writes to one control landing at one sample, none
+/// able to replace another on arrival (each has a ttl): one setter runs,
+/// the highest rank's, and settling the rest allocates and frees nothing.
+/// The bound the scan works within: each due entry scans the table once
+/// per write it settles, and once more.
+#[test]
+fn a_full_table_landing_at_one_sample_applies_once_without_allocating() {
+    let (mut store, outcomes) = store_for(4 * CONDITION_CAPACITY);
+    let (mut conditions, slots) = table(CONDITION_CAPACITY);
+    let mut host = Host::new(vec![vec![0.0; 128]]);
+    let ids = 100..100 + CONDITION_CAPACITY as u64;
+    let top = 100 + CONDITION_CAPACITY as u64 / 2;
+    for id in ids {
+        let mut write = request(id, &AFTER);
+        write.expires = Some(1_000);
+        write.priority = i16::from(id == top);
+        insert(&mut conditions, &slots, write, &mut store);
+    }
+    assert_eq!(conditions.len(), CONDITION_CAPACITY);
+    store.outcomes.settle(request(7, &AFTER), LANDED);
+    host.segment(64);
+    host.compute(0, 128);
+    let ((), allocs, frees) = allocator_events(|| {
+        conditions.start(64, INSTALLED, &host, &mut store.outcomes);
+        conditions.read(INSTALLED, Some(TARGET), &host, &store.outcomes.chains);
+        host.now = 70;
+        apply_all(&mut conditions, &mut host, &mut store, 70);
+    });
+    assert_eq!((allocs, frees), (0, 0));
+    assert_eq!(host.applied, [(9, 70)]);
+    assert_eq!((conditions.len(), slots.taken()), (0, 0));
+    let settled: Vec<_> = log(&outcomes).into_iter().filter(|(id, _)| *id >= 100).collect();
+    let applied: Vec<_> = settled.iter().filter(|(_, o)| *o == LANDED).collect();
+    assert_eq!(applied, [&(top, LANDED)]);
+    let superseded = settled.iter().filter(|(_, o)| *o == Outcome::Superseded);
+    assert_eq!(superseded.count(), CONDITION_CAPACITY - 1);
 }

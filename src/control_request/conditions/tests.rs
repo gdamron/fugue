@@ -13,9 +13,9 @@ use crate::control_request::{
     outcome_channel, request_channel, ControlIndex, Edge, OutcomeReceiver, RequestId, RtValue,
 };
 
-const INSTALLED: u64 = 1;
+pub(super) const INSTALLED: u64 = 1;
 /// The module whose control the requests write.
-const TARGET: usize = 9;
+pub(super) const TARGET: usize = 9;
 
 /// Signals by module (port 0 each), and how far each is computed in the
 /// current segment.
@@ -24,7 +24,7 @@ pub(super) struct Host {
     start: u64,
     computed: Vec<u64>,
     /// The sample the target computes next, where requests apply.
-    now: u64,
+    pub(super) now: u64,
     pub(super) applied: Vec<(usize, u64)>,
     /// Control 0 of each module.
     controls: Vec<f32>,
@@ -52,14 +52,14 @@ impl Host {
     }
 
     /// Starts a segment at `start`, nothing computed yet.
-    fn segment(&mut self, start: u64) {
+    pub(super) fn segment(&mut self, start: u64) {
         self.start = start;
         self.now = start;
         self.computed.fill(start);
     }
 
     /// Computes module `module` up to sample `to`.
-    fn compute(&mut self, module: usize, to: u64) {
+    pub(super) fn compute(&mut self, module: usize, to: u64) {
         self.computed[module] = to;
     }
 }
@@ -116,8 +116,13 @@ fn gate(onsets: &[usize], len: usize) -> Vec<f32> {
 }
 
 pub(super) fn store() -> (PendingStore, OutcomeReceiver) {
+    store_for(64)
+}
+
+/// A store whose outcome channel holds `outcomes` before it drops any.
+pub(super) fn store_for(outcomes: usize) -> (PendingStore, OutcomeReceiver) {
     let queue = crate::payload::RetireQueue::with_capacity(4);
-    let (sender, outcomes) = outcome_channel(64);
+    let (sender, outcomes) = outcome_channel(outcomes);
     let store = PendingStore::new(4, Retirer::new(queue, 8), sender);
     (store, outcomes)
 }
@@ -191,7 +196,7 @@ pub(super) fn play_ordered(
 
 /// Applies what is due on the target at `at`, and what that meets in
 /// turn, as the graph does.
-fn apply_all(
+pub(super) fn apply_all(
     conditions: &mut Conditions,
     host: &mut Host,
     store: &mut PendingStore,
