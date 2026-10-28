@@ -51,7 +51,8 @@ fn edit_rig() -> Rig {
     );
     rig.registry.register(DialFactory);
     rig.adopt_registry();
-    let [dial, spare, gone] = ["dial", "spare", "gone"].map(|id| rig.build(id, DIAL, serde_json::json!({})));
+    let [dial, spare, gone] =
+        ["dial", "spare", "gone"].map(|id| rig.build(id, DIAL, serde_json::json!({})));
     rig.live
         .edit(|change| {
             change.upsert("dial", dial);
@@ -101,7 +102,12 @@ fn play(steps: &[Step], with_edits: bool) -> (Vec<f32>, Vec<Vec<Outcome>>) {
 /// How each of `ids` settled, in order.
 fn settled(rig: &mut Rig, ids: Vec<RequestId>) -> Vec<Vec<Outcome>> {
     let all = outcomes(rig);
-    let of = |id| all.iter().filter(|(got, _)| *got == id).map(|(_, o)| *o).collect();
+    let of = |id| {
+        all.iter()
+            .filter(|(got, _)| *got == id)
+            .map(|(_, o)| *o)
+            .collect()
+    };
     ids.into_iter().map(of).collect()
 }
 
@@ -313,6 +319,9 @@ fn a_late_write_behind_a_held_edit_does_not_reach_back() {
     };
     let (out, settled) = play(true);
     assert_eq!(out[70..], play(false).0[70..]);
-    assert_eq!(settled[2..4], [[Outcome::Superseded], [Outcome::Superseded]]);
+    assert_eq!(
+        settled[2..4],
+        [[Outcome::Superseded], [Outcome::Superseded]]
+    );
     assert!(matches!(settled[4][..], [Outcome::AppliedLate { .. }]));
 }

@@ -14,8 +14,8 @@
 //! [`Handover::with_requests`]).
 
 use super::{Publication, SignalGraph};
-use crate::invention::runtime::ModuleInstance;
 use crate::control_request::ControlIndex;
+use crate::invention::runtime::ModuleInstance;
 use crate::payload::{Payload, Retired};
 
 /// A payload for a surviving module's declared payload control, applied

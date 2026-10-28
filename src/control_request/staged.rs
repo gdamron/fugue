@@ -303,11 +303,12 @@ pub(crate) fn contest<M: Module + ?Sized>(
         return Ok(false);
     };
     let mine = (standing.due, standing.rank, applying.id.0);
-    let since = outcomes.staging.since.map_or(applying.at, |at| at.min(applying.at));
-    if let Some(theirs) = slot
-        .standing_since(since)
-        .filter(|theirs| mine < *theirs)
-    {
+    let since = outcomes
+        .staging
+        .since
+        .unwrap_or(applying.at)
+        .min(applying.at);
+    if let Some(theirs) = slot.standing_since(since).filter(|theirs| mine < *theirs) {
         return Err(standing.rank.loses_to(theirs.1));
     }
     admits_hold(module, control, standing)?;
