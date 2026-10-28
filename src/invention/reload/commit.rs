@@ -209,6 +209,9 @@ impl RunningInvention {
         } = prepared;
         let (registry, definitions) = adopt.unzip();
         let replacing = registry.as_deref().map(crate::registry::ReplacingKeys::of);
+        let audio = registry
+            .clone()
+            .map(crate::invention::audio_assets::AudioControls::of);
         // The document as it was before the commit, when the commit replaced
         // it, or the one it kept; read back only should a write fail when
         // made. `None` when there was none: a failing control is then left
@@ -221,6 +224,9 @@ impl RunningInvention {
         let committed = self.live.commit_adopting(change, registry, |state| {
             if let Some(replacing) = replacing {
                 state.replacing = replacing;
+            }
+            if let Some(audio) = audio {
+                state.audio = audio;
             }
             // Every module's config is the document's now, unchanged or
             // refreshed: none holds a write made since.

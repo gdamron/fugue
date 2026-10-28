@@ -205,7 +205,8 @@ impl RunningInvention {
     ) -> Result<ValidatedDocument, ReloadError> {
         let document = invention.clone();
         let invalid = |error: Box<dyn std::error::Error>| ReloadError::Invalid(error.to_string());
-        let (resolved, loaded) = resolve_invention_assets(invention, None).map_err(invalid)?;
+        let (resolved, loaded) =
+            resolve_invention_assets(invention, None, None).map_err(invalid)?;
         let definitions = DevelopmentDefinitions::of(loaded.clone());
 
         // The built runtime is discarded but for its control surfaces.

@@ -28,11 +28,12 @@
 use std::borrow::Cow;
 
 use super::format::Invention;
-use super::reload::LoadedDevelopments;
 use crate::ControlValue;
 
-/// Whether `key` is a control that names an audio asset: a module's `asset`,
-/// or a sample's `asset.N`.
+/// Whether `key` is shaped as a control that names an audio asset: a
+/// module's `asset`, or a sample's `asset.N`. A development instance's
+/// control so named loads audio only as its development declares it (see
+/// [`AudioControls`]).
 pub(crate) fn is_asset_control(key: &str) -> bool {
     key == "asset"
         || key
@@ -40,17 +41,18 @@ pub(crate) fn is_asset_control(key: &str) -> bool {
             .is_some_and(|index| index.parse::<usize>().is_ok())
 }
 
-/// The value the runtime's stored module config keeps for a control write.
+/// The value the runtime's stored module config keeps for a control write,
+/// to a control that loads the audio it names when `asset`.
 ///
 /// The stored config holds assets resolved, as [`resolve_audio_assets`]
 /// left them at load, so a package ref written to an asset control is
 /// stored as the file it resolves to: a reload of a saved document naming
 /// the same ref then diffs equal and keeps the module. Any other write, and
 /// a ref that does not resolve, is kept as written.
-pub(crate) fn stored_asset_write<'a>(key: &str, value: &'a ControlValue) -> Cow<'a, ControlValue> {
+pub(crate) fn stored_asset_write(asset: bool, value: &ControlValue) -> Cow<'_, ControlValue> {
     match value {
         ControlValue::String(text)
-            if is_asset_control(key) && crate::pkg::PackageAudioRef::parse(text).is_some() =>
+            if asset && crate::pkg::PackageAudioRef::parse(text).is_some() =>
         {
             match crate::modules::sample_loading::resolve_source(text) {
                 Ok(resolved) => Cow::Owned(ControlValue::String(resolved)),
@@ -64,7 +66,7 @@ pub(crate) fn stored_asset_write<'a>(key: &str, value: &'a ControlValue) -> Cow<
 mod developments;
 mod live;
 
-pub(crate) use developments::audio_slots;
+pub(crate) use developments::{audio_slots, AudioControls, Declarations};
 pub(crate) use live::{
     is_relative_path, rebase_asset_write, resolve_asset_write, resolve_checked_asset_write,
 };
@@ -77,7 +79,7 @@ pub(crate) use live::{
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn resolve_audio_assets(
     invention: &mut Invention,
-    developments: &LoadedDevelopments,
+    declarations: &Declarations<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::pkg::AudioAssetRef;
 
@@ -90,7 +92,7 @@ pub(crate) fn resolve_audio_assets(
 
     for module in &mut invention.modules {
         let module_id = module.id.clone();
-        for value in audio_slots(module, developments) {
+        for value in audio_slots(module, declarations) {
             let asset: AudioAssetRef = serde_json::from_value(value.clone()).map_err(|err| {
                 format!(
                     "module '{}': invalid asset reference {}: {}",
@@ -111,13 +113,13 @@ pub(crate) fn resolve_audio_assets(
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn resolve_audio_assets(
     invention: &mut Invention,
-    developments: &LoadedDevelopments,
+    declarations: &Declarations<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::pkg::AudioAssetRef;
 
     for module in &mut invention.modules {
         let module_id = module.id.clone();
-        for value in audio_slots(module, developments) {
+        for value in audio_slots(module, declarations) {
             let asset: AudioAssetRef = serde_json::from_value(value.clone()).map_err(|err| {
                 format!(
                     "module '{}': invalid asset reference {}: {}",

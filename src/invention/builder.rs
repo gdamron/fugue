@@ -129,7 +129,8 @@ impl InventionBuilder {
         // runtime can be saved back to disk without inlining `$asset`
         // references or losing developments, title, and the exposed sections.
         let document = invention.clone();
-        let (invention, loaded) = resolve_invention_assets(invention, self.loaded.clone())?;
+        let (invention, loaded) =
+            resolve_invention_assets(invention, self.loaded.clone(), Some(&self.registry))?;
         let development_definitions = DevelopmentDefinitions::of(loaded.clone());
         self.register_developments(&invention, &loaded)?;
         self.validate_invention(&invention)?;
@@ -229,6 +230,9 @@ impl InventionBuilder {
             #[cfg(not(target_arch = "wasm32"))]
             built_under: crate::pkg::lock::governing(),
             replacing: crate::registry::ReplacingKeys::of(&self.registry),
+            audio: crate::invention::audio_assets::AudioControls::of(Arc::new(
+                self.registry.clone(),
+            )),
             written_since: Default::default(),
             authored_epoch: 0,
             authored_log: Default::default(),
@@ -445,10 +449,13 @@ pub(crate) fn load_development_definition(
 ///
 /// Returns the document with the developments it declares, `loaded` when
 /// given, otherwise loaded here: a development instance's config holds the
-/// controls its development exposes, which name audio only as declared.
+/// controls its development exposes, which name audio only as declared:
+/// by `loaded`, then by `registry`, which holds the developments a nested
+/// build inherits from where its development is used.
 pub(crate) fn resolve_invention_assets(
     mut invention: Invention,
     loaded: Option<Arc<LoadedDevelopments>>,
+    registry: Option<&ModuleRegistry>,
 ) -> Result<(Invention, Arc<LoadedDevelopments>), Box<dyn std::error::Error>> {
     resolve_json_assets(&mut invention)?;
     let loaded = match loaded {
@@ -457,7 +464,8 @@ pub(crate) fn resolve_invention_assets(
     };
     // After `$asset` expansion, so an audio ref may itself come from a
     // shared JSON asset.
-    crate::invention::audio_assets::resolve_audio_assets(&mut invention, &loaded)?;
+    let declarations = crate::invention::audio_assets::Declarations::of(&loaded, registry);
+    crate::invention::audio_assets::resolve_audio_assets(&mut invention, &declarations)?;
     Ok((invention, loaded))
 }
 

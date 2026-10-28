@@ -382,13 +382,17 @@ fn control_values_are_coerced_to_the_declared_kind() {
     let applied: Vec<(usize, String, ControlValue)> = candidate
         .control_writes
         .iter()
-        .map(|CandidateWrite { edit_index, write }| {
-            (
-                *edit_index,
-                format!("{}.{}", write.module_id, write.key),
-                write.value.clone(),
-            )
-        })
+        .map(
+            |CandidateWrite {
+                 edit_index, write, ..
+             }| {
+                (
+                    *edit_index,
+                    format!("{}.{}", write.module_id, write.key),
+                    write.value.clone(),
+                )
+            },
+        )
         .collect();
     assert_eq!(
         applied,
