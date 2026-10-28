@@ -70,6 +70,8 @@ mod timed_writes;
 mod timelines;
 mod unwind;
 mod values_across_edits;
+#[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
+mod wasm_failure;
 mod writes;
 
 thread_local! {
@@ -366,7 +368,7 @@ fn concurrent_writers_all_land() {
     let mut rig = Rig::new(BASE);
     // As a runtime does: without a reclaimer thread, writers outpacing the
     // blocks would be refused (`QueueFull`) until a block catches up.
-    assert!(rig.live.start_reclaimer());
+    rig.live.start_reclaimer().expect("a reclaimer thread");
     let writers: Vec<_> = (0..4)
         .map(|writer| {
             let live = rig.live.clone();
@@ -522,7 +524,7 @@ fn a_started_reclaimer_frees_removed_modules_off_the_audio_thread() {
     assert_eq!(frees, 0);
     assert!(probes.wait_for_drops(1, Duration::ZERO).is_empty());
 
-    assert!(rig.live.start_reclaimer());
+    rig.live.start_reclaimer().expect("a reclaimer thread");
     let drops = probes.wait_for_drops(1, Duration::from_secs(2));
     assert_eq!(drops.len(), 1, "the removed probe was not freed");
     assert_ne!(drops[0], std::thread::current().id());

@@ -110,8 +110,9 @@ impl InventionRuntime {
             settle,
         );
         // Removed modules (a sink finalizing its file, say) are freed on a
-        // control thread within a few blocks, not at the next edit.
-        live.start_reclaimer();
+        // control thread within a few blocks, not at the next edit, and the
+        // note offs the request channel holds for want of room are queued.
+        reclaimer_started(live.start_reclaimer())?;
 
         // Requests timed by wall clock are placed on the transport through
         // an anchor at each device callback. wasm32 has no `Instant` clock.
@@ -166,6 +167,18 @@ impl InventionRuntime {
         running.scripts.start_all(running.controller());
         running.agents.start_all(running.controller());
         Ok(running)
+    }
+}
+
+/// Turns the reclaimer thread's start into the runtime's: a host with
+/// threads that cannot start one does not start, because held note offs
+/// would then wait for a later write. wasm32 has no threads, and reclaims on
+/// the thread that changes or writes instead.
+fn reclaimer_started(started: std::io::Result<()>) -> Result<(), Box<dyn std::error::Error>> {
+    match started {
+        Err(_) if cfg!(target_arch = "wasm32") => Ok(()),
+        Err(error) => Err(format!("could not start the reclaimer thread: {error}").into()),
+        Ok(()) => Ok(()),
     }
 }
 
