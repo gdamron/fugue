@@ -19,6 +19,8 @@ const BLOCKS: usize = 400;
 enum Due {
     /// So many samples before it.
     Late(u64),
+    /// So many samples after it.
+    Ahead(u64),
     Now,
     /// On the clock.
     Beat(BeatSpec),
@@ -66,6 +68,7 @@ fn submit_level(rig: &Rig, module: &str, level: f32, due: Due, start: u64) -> Re
     let value = RtValue::F32(level);
     let when = match due {
         Due::Late(by) => When::AtSample(start - by),
+        Due::Ahead(by) => When::AtSample(start + by),
         Due::Now => When::Now,
         Due::Beat(spec) => return submit_on(rig, (module, LEVEL), value, "clock", spec, None),
     };
@@ -268,10 +271,11 @@ fn a_crossing_written_before_an_edit_is_read_as_without_it() {
 }
 
 /// An edit held two blocks, waiting for room to retire what it replaces:
-/// a write due now before it, then one due five samples earlier behind
-/// it, which applies once the edit installs. The write due later still
-/// stands, as with no edit; a late write submitted after that applies as
-/// it arrives, as any does.
+/// writes due now and 70 samples on before it, then behind it one due five
+/// samples before the first and one due 20 samples on, which apply once
+/// the edit installs. Each written before them and due later still
+/// stands, as with no edit (once the second is due); a late write
+/// submitted after that applies as it arrives, as any does.
 #[test]
 fn a_late_write_behind_a_held_edit_does_not_reach_back() {
     let play = |with_edit: bool| {
@@ -290,12 +294,16 @@ fn a_late_write_behind_a_held_edit_does_not_reach_back() {
         rig.render(1);
         rig.hold_a_retirement();
         let start = rig.graph.current_sample;
-        let mut ids = vec![submit_level(&rig, "dial", 0.2, Due::Now, start)];
+        let mut ids = vec![
+            submit_level(&rig, "dial", 0.2, Due::Now, start),
+            submit_level(&rig, "dial", 0.3, Due::Ahead(70), start),
+        ];
         if with_edit {
             let spare = rig.build("spare", DIAL, serde_json::json!({}));
             rig.publish_unreclaimed(|change| change.upsert("spare", spare));
         }
         ids.push(submit_level(&rig, "dial", 0.1, Due::Late(5), start));
+        ids.push(submit_level(&rig, "dial", 0.15, Due::Ahead(20), start));
         let mut out = render_counted(&mut rig, 2);
         rig.live.reclaim();
         out.extend(render_counted(&mut rig, 4));
@@ -304,7 +312,7 @@ fn a_late_write_behind_a_held_edit_does_not_reach_back() {
         (out, settled(&mut rig, ids))
     };
     let (out, settled) = play(true);
-    assert_eq!(out, play(false).0);
-    assert_eq!(settled[1], [Outcome::Superseded]);
-    assert!(matches!(settled[2][..], [Outcome::AppliedLate { .. }]));
+    assert_eq!(out[70..], play(false).0[70..]);
+    assert_eq!(settled[2..4], [[Outcome::Superseded], [Outcome::Superseded]]);
+    assert!(matches!(settled[4][..], [Outcome::AppliedLate { .. }]));
 }
