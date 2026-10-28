@@ -30,8 +30,8 @@
 //! as its text through its control's front door, off the graph's lock, as
 //! a front door writes an offline render: its codec builds the payload on
 //! the control thread, and the render's graph keeps it at once, before the
-//! requests logged after it. It holds its control from the sample it
-//! applies at, as an offline write does.
+//! requests logged after it. It holds its control from the sample it was
+//! due at, as a scalar does.
 //!
 //! A timed edit that landed lands on the same sample, after every request
 //! logged at or before it, as the live landing came after every request due
@@ -245,15 +245,16 @@ impl Replay {
 
     /// The payload write [`Self::apply_due`] stopped at, its clock already
     /// latched: its module, control and text, for the render to write
-    /// through the control's front door.
-    pub(super) fn take_payload(&mut self) -> Option<(String, String, String)> {
+    /// through the control's front door, and the sample it was due at,
+    /// which it holds from.
+    pub(super) fn take_payload(&mut self) -> Option<(String, String, String, u64)> {
         let due = self.due.get_mut(self.next)?;
         let DueValue::Payload(text) = &mut due.value else {
             return None;
         };
         let text = std::mem::take(text);
         self.next += 1;
-        Some((due.module_id.clone(), due.key.clone(), text))
+        Some((due.module_id.clone(), due.key.clone(), text, due.due))
     }
 
     /// Fails naming the first clock a logged beat names that keeps no beat

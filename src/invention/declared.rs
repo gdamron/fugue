@@ -197,6 +197,10 @@ pub(crate) struct WriteOptions<'a> {
     /// timed write, which only a live graph's declared, value or payload
     /// control takes (see `publish::timed_write`).
     pub(crate) time: Option<WriteTime<'a>>,
+    /// The sample an offline payload write was due at, which it holds
+    /// from when earlier than now, as a request applied late does: a
+    /// replayed one (see `render::replay`).
+    pub(crate) due: Option<u64>,
 }
 
 impl<'a> WriteOptions<'a> {
@@ -210,6 +214,7 @@ impl<'a> WriteOptions<'a> {
             announced: false,
             awaited: false,
             time: None,
+            due: None,
         }
     }
 
@@ -227,6 +232,7 @@ impl<'a> WriteOptions<'a> {
             announced: self.announced,
             awaited: self.awaited,
             time: self.time,
+            due: self.due,
         }
     }
 
@@ -949,7 +955,8 @@ impl DeclaredSurface {
                         if generation.is_some_and(|seen| seen != graph.offline_edits) {
                             return Err(STALE.into());
                         }
-                        let applied = graph.apply_payload(&module_id, index, payload, rank);
+                        let standing = (rank, options.due);
+                        let applied = graph.apply_payload(&module_id, index, payload, standing);
                         if applied == Ok(true) {
                             self.show(index, shown, None);
                             if let Some(checked) = checked {

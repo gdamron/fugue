@@ -80,9 +80,40 @@ fn a_payload_written_at_once_holds_its_control() {
     let at = rig.graph.current_sample;
     let notes = Payload::new(Notes(vec![2.0], None));
     let user = crate::control_request::Rank::USER;
-    rig.graph.apply_payload("tape", NOTES, notes, user).unwrap();
+    rig.graph
+        .apply_payload("tape", NOTES, notes, (user, None))
+        .unwrap();
     let script = submit_notes(&rig, 0.5, at, Source::Script);
     block(&mut rig);
     assert_eq!(output(&rig), 2.0);
     assert_eq!(outcomes(&mut rig), [(script, Outcome::Overridden)]);
+}
+
+/// A payload written at once as due earlier (a replayed late write) holds
+/// from that sample: a lower tier's write due after it still applies, as
+/// one due before it loses.
+#[test]
+fn a_payload_written_at_once_as_due_earlier_holds_from_then() {
+    let mut rig = rig();
+    let now = rig.graph.current_sample;
+    let notes = Payload::new(Notes(vec![2.0], None));
+    let held = (crate::control_request::Rank::USER, Some(now - 4));
+    rig.graph.apply_payload("tape", NOTES, notes, held).unwrap();
+    let before = submit_notes(&rig, 0.5, now - 6, Source::Script);
+    let after = submit_notes(&rig, 0.25, now - 2, Source::Script);
+    block(&mut rig);
+    assert_eq!(output(&rig), 0.25);
+    assert_eq!(
+        outcomes(&mut rig),
+        [
+            (before, Outcome::Overridden),
+            (
+                after,
+                Outcome::AppliedLate {
+                    at: now,
+                    due: now - 2
+                }
+            ),
+        ]
+    );
 }
