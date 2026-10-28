@@ -99,11 +99,18 @@ fn play(steps: &[Step], with_edits: bool) -> (Vec<f32>, Vec<Vec<Outcome>>) {
 
 /// Asserts `steps` sound and settle as they would without their edits.
 fn as_without_edits(steps: &[Step]) {
+    let without = play(steps, false).1;
+    assert_eq!(sounds_as_without_edits(steps), without);
+}
+
+/// Asserts `steps` sound as they would without their edits, returning
+/// how they settle.
+fn sounds_as_without_edits(steps: &[Step]) -> Vec<Vec<Outcome>> {
     let (out, settled) = play(steps, true);
-    let (twin, without) = play(steps, false);
+    let (twin, _) = play(steps, false);
     let parted = out.iter().zip(&twin).position(|(a, b)| a != b);
     assert_eq!(parted, None, "parted at {parted:?}");
-    assert_eq!(settled, without);
+    settled
 }
 
 fn add_osc(rig: &Rig) {
@@ -169,4 +176,53 @@ fn a_note_off_due_now_fades_over_a_release_on_a_removed_clocks_beat() {
         Step::NoteOff(Due::Now),
         Step::Edit(remove_clock),
     ]);
+}
+
+/// Two releases before the edit, the later replacing the earlier, then a
+/// note off due between them behind it: it fades over the earlier, in
+/// force at its due sample (which reports Superseded, as it gave way).
+#[test]
+fn a_note_off_between_two_staged_releases_fades_over_the_earlier() {
+    let settled = sounds_as_without_edits(&[
+        Step::Release(Due::Late(6)),
+        Step::Release(Due::Late(2)),
+        Step::Edit(add_osc),
+        Step::NoteOff(Due::Late(4)),
+    ]);
+    assert_eq!(settled[0], [Outcome::Superseded]);
+}
+
+/// Two releases before the edit, then a note off due before both behind
+/// it: the old release ends the note.
+#[test]
+fn a_note_off_before_two_staged_releases_reads_neither() {
+    as_without_edits(&[
+        Step::Release(Due::Late(3)),
+        Step::Release(Due::Late(1)),
+        Step::Edit(add_osc),
+        Step::NoteOff(Due::Late(4)),
+    ]);
+}
+
+/// A release replaced in an earlier block is gone once it flushed: a note
+/// off behind an edit, due before a release staged ahead of it, reads the
+/// release in force (the short one written last), not the replaced one.
+#[test]
+fn a_release_replaced_a_block_before_is_not_read_again() {
+    let play = |with_edit: bool| {
+        let (_dir, mut rig) = sounding();
+        let start = rig.graph.current_sample;
+        send(&rig, RELEASE, 1.0, Due::Late(6), start);
+        send(&rig, RELEASE, 0.001, Due::Late(2), start);
+        let mut out = rig.render(1);
+        let start = rig.graph.current_sample;
+        send(&rig, RELEASE, 1.0, Due::Late(2), start);
+        if with_edit {
+            add_osc(&rig);
+        }
+        send(&rig, NOTE_OFF, 60.0, Due::Late(4), start);
+        out.extend(rig.render(4));
+        out
+    };
+    assert_eq!(play(true), play(false));
 }

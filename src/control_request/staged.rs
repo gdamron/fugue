@@ -48,27 +48,25 @@ pub(crate) struct Applying {
 pub(crate) struct Before {
     at: u64,
     key: (u64, Rank, u64),
+    event: bool,
 }
 
 impl Before {
     /// For a write of `standing`, weighed as [`contest`] weighs it.
     pub(crate) fn write(standing: Standing, applying: Applying) -> Self {
         let key = (standing.due, standing.rank, applying.id.0);
-        Self {
-            at: applying.at,
-            key,
-        }
+        let (at, event) = (applying.at, false);
+        Self { at, key, event }
     }
 
     /// For an event, which holds nothing: after every write staged at its
     /// sample due no later than it, before those due after it, so it reads
-    /// the values in force at its own due sample.
+    /// the values in force at its own due sample: one a write due after it
+    /// replaced there runs before it (`Slot::earlier`).
     pub(crate) fn event(applying: Applying) -> Self {
         let key = (applying.due, Rank::MAX, u64::MAX);
-        Self {
-            at: applying.at,
-            key,
-        }
+        let (at, event) = (applying.at, true);
+        Self { at, key, event }
     }
 
     /// The sample it applies at.
@@ -162,6 +160,11 @@ struct Slot {
     /// The hold word the write took, and the one it replaced.
     hold: AtomicU64,
     prev: AtomicU64,
+    /// The value of a write due earlier that gave way to it here
+    /// ([`EMPTY`] when none), and its due sample: in force between the
+    /// two, for an event due there ([`Before::event`]).
+    earlier: AtomicU64,
+    earlier_due: AtomicU64,
 }
 
 impl Slot {
@@ -184,11 +187,15 @@ impl Slot {
     /// Settles the write staged here at `at` as losing to one of
     /// `winner`'s, its setter never run; the winner takes its hold over,
     /// as it would from one applied. Whether one was staged.
-    fn give_way(&self, at: u64, winner: Rank, outcomes: &mut Outcomes) -> bool {
+    fn give_way(&self, at: u64, (due, winner): (u64, Rank), outcomes: &mut Outcomes) -> bool {
         let staged = self.held.load(Relaxed) != EMPTY && self.at.load(Relaxed) == at;
         let (Some(rank), true) = (rank_of(self.hold.load(Relaxed)), staged) else {
             return false;
         };
+        let earlier = self.due.load(Relaxed);
+        let value = (earlier < due).then(|| self.value.load(Relaxed));
+        self.earlier.store(value.unwrap_or(EMPTY), Relaxed);
+        self.earlier_due.store(earlier, Relaxed);
         self.held.store(EMPTY, Relaxed);
         self.hold.store(0, Relaxed);
         let id = RequestId(self.id.load(Relaxed));
@@ -221,6 +228,7 @@ impl Staged {
         let slots: Box<[Slot]> = (0..len)
             .map(|_| Slot {
                 held: AtomicU64::new(EMPTY),
+                earlier: AtomicU64::new(EMPTY),
                 ..Slot::default()
             })
             .collect();
@@ -290,11 +298,24 @@ impl Staged {
         stronger
     }
 
+    /// The value a write staged on the `kept`th control listed replaced,
+    /// if due by `due` (then in force), taken so it runs once.
+    fn earlier_by(&self, kept: usize, due: u64) -> Option<(ControlIndex, RtValue)> {
+        let control = ControlIndex(self.order.get(kept)?.load(Relaxed));
+        let slot = self.slots.get(usize::from(control.0))?;
+        if slot.earlier_due.load(Relaxed) > due {
+            return None;
+        }
+        let word = slot.earlier.swap(EMPTY, Relaxed);
+        (word != EMPTY).then(|| (control, decode(word)))
+    }
+
     /// Takes the `position`th write staged, emptying its slot (none for
     /// one that gave way).
     fn take(&self, position: usize) -> Option<Write> {
         let control = ControlIndex(self.order.get(position)?.load(Relaxed));
         let slot = self.slots.get(usize::from(control.0))?;
+        slot.earlier.store(EMPTY, Relaxed);
         if slot.held.swap(EMPTY, Relaxed) == EMPTY {
             return None;
         }
@@ -367,7 +388,7 @@ pub(crate) fn contest<M: Module + ?Sized>(
         return Err(standing.rank.loses_to(theirs.1));
     }
     admits_hold(module, control, standing)?;
-    Ok(slot.give_way(applying.at, standing.rank, outcomes))
+    Ok(slot.give_way(applying.at, (standing.due, standing.rank), outcomes))
 }
 
 /// Records that a write of `standing`, applying as `applying` names,
@@ -502,6 +523,12 @@ pub(crate) fn flush_staged_before<M: Module + ?Sized>(
             return;
         };
         if cells.staged.keeps(position, kept, than) {
+            let earlier = than.filter(|than| than.event);
+            let earlier = earlier.and_then(|than| cells.staged.earlier_by(kept, than.key.0));
+            if let Some((control, value)) = earlier {
+                // Reported already, as it gave way; only its value is read.
+                let _ = apply_declared(module, control, value);
+            }
             kept += 1;
             continue;
         }

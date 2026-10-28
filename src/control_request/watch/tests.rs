@@ -48,6 +48,8 @@ struct Host {
     latched: Vec<usize>,
     /// How many requests had applied each time the events were finished.
     finished: Vec<usize>,
+    /// The sample each was due at, as it applied.
+    dues: Vec<u64>,
 }
 
 impl Host {
@@ -61,6 +63,7 @@ impl Host {
             applied: Vec::with_capacity(8),
             latched: Vec::with_capacity(8),
             finished: Vec::with_capacity(8),
+            dues: Vec::with_capacity(8),
         }
     }
 
@@ -101,9 +104,11 @@ impl BeatHost for Host {
         target: &ControlTarget,
         _standing: Option<Standing>,
         _value: RequestValue,
-        _outcomes: &mut Outcomes,
+        outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
         self.applied.push(target.module_idx);
+        self.dues
+            .extend(outcomes.take_applying().map(|applying| applying.due));
         if target.module_idx == 0 {
             let begun = (self.clock.position.floor() + 1.0) as u64;
             self.clock.beats_before += begun;
@@ -243,6 +248,7 @@ fn a_beat_passed_inside_a_segment_applies_late_and_says_when_it_was_due() {
         due: 1_460,
     };
     assert_eq!(log(&outcomes), [(7, late)]);
+    assert_eq!(host.dues, [1_460]);
     assert!(watches.is_empty());
 }
 
@@ -542,6 +548,7 @@ fn a_grid_beat_passed_inside_a_segment_applies_late_once() {
         panic!("not applied late once");
     };
     assert!(due < 127);
+    assert_eq!(host.dues, [due]);
 }
 
 #[test]
