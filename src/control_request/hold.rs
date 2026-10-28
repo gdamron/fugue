@@ -123,6 +123,14 @@ thread_local! {
 /// Outside processing.
 const NOWHERE: u64 = u64::MAX;
 
+/// The sample frame 0 of the modules processing on this thread falls on,
+/// or `None` outside processing. Allocation-, free- and lock-free.
+#[inline]
+pub(crate) fn frame_zero() -> Option<u64> {
+    let zero = FRAME_ZERO.with(Cell::get);
+    (zero != NOWHERE).then_some(zero)
+}
+
 /// Marks frame 0 of the modules about to process on this thread as sample
 /// `sample` until dropped, restoring the previous mark, so scopes nest: a
 /// graph enters one per segment, and per sample where it processes a

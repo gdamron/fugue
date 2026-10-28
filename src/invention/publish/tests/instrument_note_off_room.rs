@@ -148,18 +148,17 @@ fn note_offs_held_across_an_edit_drain_end_their_notes() {
     assert_eq!(tally(&mut rig), (OFFS, 100 + OFFS));
 }
 
-#[test]
-fn a_note_off_finds_room_in_a_queue_full_of_requests_and_stalled_edits() {
+/// [`sounding`], its retirement held so edits stall, the queue full of
+/// note ons due long after and of edits behind them, but for the room
+/// left for reserved requests.
+fn stalled(dir: &std::path::Path) -> Rig {
     use crate::invention::publish::publisher::{EDIT_RESERVE, RESERVED_ROOM};
-    let dir = tempfile::tempdir().unwrap();
-    let mut rig = sounding(dir.path());
+    let mut rig = sounding(dir);
     rig.hold_a_retirement();
     let far = rig.graph.current_sample + 10_000_000;
     for n in 0..REQUEST_QUEUE_CAPACITY as u64 {
         note_on(&rig, far + n).unwrap();
     }
-    // Edits queue behind the install they wait on until only the room
-    // left for reserved requests is free.
     let fm = edge("osc1", "audio", "osc2", "frequency_mod");
     let mut edits = 0;
     loop {
@@ -175,16 +174,47 @@ fn a_note_off_finds_room_in_a_queue_full_of_requests_and_stalled_edits() {
         edits += 1;
     }
     assert_eq!(edits, EDIT_RESERVE - RESERVED_ROOM);
+    rig
+}
 
-    note_offs(&rig);
+/// Renders until what is queued has applied, and counts the note offs
+/// that did.
+fn applied_after_stall(rig: &mut Rig) -> (Vec<f32>, usize) {
     let mut heard = Vec::new();
+    let mut applied = 0;
     for _ in 0..64 {
         rig.live.reclaim();
         heard = rig.render(1);
+        applied += (outcomes(rig).into_iter())
+            .filter(|(_, outcome)| matches!(outcome, Outcome::Applied { .. }))
+            .count();
     }
+    (heard, applied)
+}
+
+#[test]
+fn a_note_off_finds_room_in_a_queue_full_of_requests_and_stalled_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = stalled(dir.path());
+    note_offs(&rig);
+    let (heard, applied) = applied_after_stall(&mut rig);
     assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
-    let applied = (outcomes(&mut rig).into_iter())
-        .filter(|(_, outcome)| matches!(outcome, Outcome::Applied { .. }))
-        .count();
     assert_eq!(applied, OFFS, "every note off");
+}
+
+/// As many note offs as forty full instruments release at once all find
+/// room behind a full queue and stalled edits, and apply once the
+/// installs go on.
+#[test]
+fn every_voice_of_many_instruments_ends_behind_stalled_edits() {
+    const VOICES: usize = 40 * crate::modules::sample_instrument::MAX_VOICES;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rig = stalled(dir.path());
+    for n in 0..VOICES {
+        let note = (60 + n) % 128;
+        set(&rig, "note_off", (note as f32).into()).unwrap();
+    }
+    let (heard, applied) = applied_after_stall(&mut rig);
+    assert!(heard.iter().all(|level| level.abs() < TOL), "{heard:?}");
+    assert_eq!(applied, VOICES, "every note off");
 }

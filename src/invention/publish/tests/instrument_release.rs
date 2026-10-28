@@ -1,8 +1,8 @@
 //! A sample instrument's note off and a release on a live graph: written
 //! for one sample, the note fades over the new release whichever was
 //! sent first; written for different samples, in one block or across
-//! two, or late together, the note off fades over the release in force at
-//! its own.
+//! two, or late together (an edit installing between them too), the note
+//! off fades over the release in force at its own.
 
 use super::requests::outcomes;
 use super::sample_instrument::{rig, set, TOL};
@@ -107,4 +107,23 @@ fn a_late_release_due_after_a_late_note_off_does_not_reach_back() {
         .collect();
     let applied = |due| Outcome::AppliedLate { at: start, due };
     assert_eq!(late, [applied(start - 4), applied(start - 2)]);
+}
+
+/// An edit installs between a late note off and a late release due after
+/// it: the note off, queued before the edit, applies on the graph the edit
+/// replaces; the release, queued after it, on the graph it installs. The
+/// release does not reach back to the note off.
+#[test]
+fn a_late_release_queued_behind_an_edit_does_not_reach_back() {
+    let (_dir, mut rig, start) = sounding();
+    send(&rig, NOTE_OFF, 60.0, start - 4);
+    let osc = rig.build("osc3", "oscillator", serde_json::json!({}));
+    rig.publish_unreclaimed(|change| change.upsert("osc3", osc));
+    send(&rig, RELEASE, 1.0, start - 2);
+    let heard = rig.render(1);
+    assert!(
+        last(&heard).abs() < TOL,
+        "the old release ended it: {}",
+        last(&heard)
+    );
 }

@@ -5,7 +5,7 @@
 //! [`Predicate::Applied`]: super::Predicate::Applied
 
 use super::condition::MAX_PARTS;
-use super::conditions::CONDITION_CAPACITY;
+use super::conditions::CONDITION_ROOM;
 use super::pending::Outcome;
 use super::request::RequestId;
 
@@ -43,7 +43,7 @@ impl Chains {
     /// starting to wait. Allocates: control thread.
     pub(crate) fn new(remembered: usize) -> Self {
         Self {
-            watched: Vec::with_capacity(CONDITION_CAPACITY * MAX_PARTS),
+            watched: Vec::with_capacity(CONDITION_ROOM * MAX_PARTS),
             recent: Vec::with_capacity(remembered),
             remembered,
             oldest: 0,

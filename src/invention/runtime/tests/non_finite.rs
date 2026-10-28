@@ -128,7 +128,13 @@ fn a_set_controls_batch_stops_at_a_non_finite_write() {
     // it); the one after never runs.
     let stood = || running.get_control("osc", "frequency").unwrap() == ControlValue::Number(550.0);
     assert!(crate::test_support::wait_until(stood));
-    assert_eq!(authored_frequency(&running).as_f64(), Some(550.0));
+    // Recorded as it applies, which a read listing it pending may precede.
+    let recorded = || authored_frequency(&running).as_f64() == Some(550.0);
+    assert!(
+        crate::test_support::wait_until(recorded),
+        "{}",
+        authored_frequency(&running)
+    );
     running.stop();
 }
 

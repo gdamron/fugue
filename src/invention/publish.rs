@@ -132,9 +132,11 @@ impl Settler {
     ///
     /// Renders until every edit published so far has installed: a block
     /// installs a bounded number, so a burst of edits from several threads
-    /// can take a few. One block that installs them all also takes up every
-    /// request queued (they never outnumber its budget); after several, one
-    /// more takes up the requests behind the last install.
+    /// can take a few. One block that installs them all also takes up the
+    /// requests queued, as many as its budget, and only a burst of reserved
+    /// ones (note offs), which may take any slot, can outnumber it, the rest
+    /// taken in the blocks after; after several, one more takes up the
+    /// requests behind the last install.
     pub(crate) fn settle(&self) {
         // Most retirements are freed here, off both locks.
         self.reclaimer.reclaim();

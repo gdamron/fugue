@@ -42,6 +42,8 @@ mod request_tiers;
 mod request_timing;
 mod request_watch;
 mod requests;
+mod reserved_front_doors;
+mod reserved_waits;
 mod same_instant_swaps;
 mod sample_instrument;
 mod sample_kit;
