@@ -19,6 +19,9 @@ const PATCH: &str = r#"{
     ]
 }"#;
 
+/// Blocks enough for a level write's glide to land.
+const GLIDE_BLOCKS: usize = 16;
+
 fn read(rig: &Rig, id: &str, key: &str) -> ControlValue {
     let surfaces = rig.live.control_surfaces.lock().unwrap();
     surfaces[id].get_control(key).unwrap()
@@ -39,6 +42,8 @@ fn vca_writes_apply_on_the_audio_thread_and_read_back() {
 
     assert_eq!(counted_block(&mut rig), (0, 0));
     assert_eq!(read(&rig, "vca", "level"), 0.25.into());
+    // The level glides there over the mixer's gain ramp.
+    rig.render(GLIDE_BLOCKS);
     let peak = rig
         .render(4)
         .iter()
@@ -52,6 +57,7 @@ fn vca_writes_apply_on_the_audio_thread_and_read_back() {
         0.0.into(),
         "as the vca clamped it"
     );
+    rig.render(GLIDE_BLOCKS);
     assert!(rig.render(1).iter().all(|v| *v == 0.0));
 }
 
