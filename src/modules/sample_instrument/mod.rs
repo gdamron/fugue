@@ -72,8 +72,10 @@ use crate::control_request::{
     local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
     RtValue,
 };
+use crate::dsp::LinearRamp;
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{finite_f32, whole_number, whole_number_in, ConfigKey, ConfigReader};
+use crate::modules::mixer::gain_ramp_frames;
 use crate::modules::sample_loading::check_entry_fields;
 use crate::music::Note;
 use crate::payload::{Payload, Retired, Shared};
@@ -285,12 +287,16 @@ pub struct SampleInstrument {
     outputs: outputs::SampleInstrumentOutputs,
     zones: Vec<ZoneRuntime>,
     voices: Vec<Voice>,
-    /// Zone levels as the mix plays them: taken from `level_targets` as a
-    /// block begins, after its notes, so a note stealing a voice fades the
-    /// old note out at the level it was sounding at.
+    /// Zone levels as the mix plays them on this frame, so a note stealing
+    /// a voice fades the old note out at the level it was sounding at.
     levels: Vec<f32>,
-    /// Zone levels as last written.
-    level_targets: Vec<f32>,
+    /// Zone levels gliding to each write while the zone sounds, as a
+    /// mixer's fader does: a level that stepped mid-note would click.
+    level_ramps: Vec<LinearRamp>,
+    /// The zones whose level glides while they sound, each once. Bounded
+    /// by the voice count once silent zones are dropped, as only a sounding
+    /// zone glides; preallocated.
+    gliding: Vec<usize>,
     /// Release fade, in seconds.
     release: f32,
     /// Whether a note off written since the last block waits for its
@@ -335,6 +341,7 @@ impl SampleInstrument {
             .map(|zone| number(InstrumentControl::Level(zone), 1.0))
             .collect();
         let release = number(InstrumentControl::Release, DEFAULT_RELEASE);
+        let glide = gain_ramp_frames(sample_rate);
         Self {
             table,
             cells,
@@ -344,14 +351,91 @@ impl SampleInstrument {
             voices: (0..voices.clamp(1, MAX_VOICES))
                 .map(|_| Voice::new())
                 .collect(),
-            level_targets: levels.clone(),
+            level_ramps: levels
+                .iter()
+                .map(|&level| LinearRamp::new(level, glide))
+                .collect(),
             levels,
+            gliding: Vec::with_capacity(MAX_VOICES),
             release,
             releasing: false,
             next_started: 0,
             sample_rate: sample_rate as f32,
             declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
             last_gate: 0.0,
+        }
+    }
+
+    /// Whether a voice plays zone `zone`. A stolen note's crossfade tail
+    /// keeps the level it had, so only active voices count.
+    fn sounds(&self, zone: usize) -> bool {
+        self.voices
+            .iter()
+            .any(|voice| voice.active && voice.zone == zone)
+    }
+
+    /// Moves zone `zone`'s level to `level`: a glide while the zone
+    /// sounds, at once while it is silent, as nothing heard would step.
+    fn set_level(&mut self, zone: usize, level: f32) {
+        self.level_ramps[zone].set_target(level);
+        if !self.sounds(zone) {
+            self.settle_level(zone);
+            return;
+        }
+        if self.gliding.contains(&zone) {
+            return;
+        }
+        if self.gliding.len() == self.gliding.capacity() {
+            self.drop_silent_glides();
+        }
+        // Once silent zones are dropped, each entry has a voice of its own,
+        // so the list has room: a sounding zone never steps for want of it.
+        if self.gliding.len() < self.gliding.capacity() {
+            self.gliding.push(zone);
+        } else {
+            self.settle_level(zone);
+        }
+    }
+
+    /// Lands every listed zone that no longer sounds on its target, and
+    /// drops it: notes stolen between renders can leave such entries.
+    fn drop_silent_glides(&mut self) {
+        let mut i = 0;
+        while i < self.gliding.len() {
+            let zone = self.gliding[i];
+            if self.sounds(zone) {
+                i += 1;
+            } else {
+                self.settle_level(zone);
+                self.gliding.swap_remove(i);
+            }
+        }
+    }
+
+    /// Ends zone `zone`'s glide at its target.
+    fn settle_level(&mut self, zone: usize) {
+        let ramp = &mut self.level_ramps[zone];
+        ramp.settle();
+        self.levels[zone] = ramp.value();
+    }
+
+    /// The gliding zones' levels for the next frame. A zone that fell
+    /// silent mid-glide lands on its target, so its next note starts there.
+    #[inline]
+    fn next_levels(&mut self) {
+        let mut i = 0;
+        while i < self.gliding.len() {
+            let zone = self.gliding[i];
+            if self.sounds(zone) {
+                self.levels[zone] = self.level_ramps[zone].next_value();
+            } else {
+                self.settle_level(zone);
+            }
+            if self.level_ramps[zone].is_gliding() {
+                i += 1;
+            } else {
+                self.gliding.swap_remove(i);
+            }
         }
     }
 
@@ -374,6 +458,11 @@ impl SampleInstrument {
         };
         let ratio = f64::from(freq) / f64::from(self.zones[zone_index].root_freq);
 
+        // A zone silent since a write plays its next note at the level
+        // written, not partway along a glide.
+        if !self.sounds(zone_index) {
+            self.settle_level(zone_index);
+        }
         let slot = self.claim_voice(note);
         // Taking over a sounding voice would cut its waveform mid-cycle;
         // hand the old note to the crossfade slot so it rings out instead.
@@ -467,11 +556,8 @@ impl Module for SampleInstrument {
         // came first, and one written later never reaches back.
         self.finish_events();
 
-        // Levels are control-rate: taken once per block, after the notes
-        // the block's writes played.
-        self.levels.copy_from_slice(&self.level_targets);
-
         for i in 0..frames {
+            self.next_levels();
             let gate = self.inputs.gate(i);
             if gate > 0.5 && self.last_gate <= 0.5 {
                 self.note_on(self.inputs.frequency(i), self.inputs.velocity(i));
@@ -576,8 +662,9 @@ impl Module for SampleInstrument {
                 Ok(RtValue::F32(0.0))
             }
             Some(InstrumentControl::Level(zone)) => {
-                self.level_targets[zone] = number.clamp(0.0, 2.0);
-                Ok(RtValue::F32(self.level_targets[zone]))
+                let level = number.clamp(0.0, 2.0);
+                self.set_level(zone, level);
+                Ok(RtValue::F32(level))
             }
             _ => Err(Refusal::Unsupported),
         }

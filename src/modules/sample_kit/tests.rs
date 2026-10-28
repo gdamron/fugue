@@ -43,11 +43,11 @@ fn write_levels_wav(levels: &[f32]) -> PathBuf {
 }
 
 /// A mono WAV whose every frame has amplitude `level`.
-fn write_level_wav(level: f32, frames: usize) -> PathBuf {
+pub(super) fn write_level_wav(level: f32, frames: usize) -> PathBuf {
     write_levels_wav(&vec![level; frames])
 }
 
-fn build_kit(
+pub(super) fn build_kit(
     config: serde_json::Value,
 ) -> (
     Box<dyn crate::Module + Send>,
@@ -72,7 +72,7 @@ fn two_slot_config(kick: &std::path::Path, snare: &std::path::Path) -> serde_jso
 }
 
 /// 16-bit WAV quantization tolerance.
-const TOL: f32 = 2e-3;
+pub(super) const TOL: f32 = 2e-3;
 
 #[test]
 fn test_play_value_selects_slot() {
@@ -383,7 +383,11 @@ fn a_play_while_building_fires_once_the_kit_binds() {
     let (mut kit, surface) = build_kit(serde_json::json!({ "samples": slot }));
     surface.set_control("play", 36.0.into()).unwrap();
     kit.process(1);
-    assert_eq!(kit.get_output("audio_left").unwrap(), 0.0, "held until it runs");
+    assert_eq!(
+        kit.get_output("audio_left").unwrap(),
+        0.0,
+        "held until it runs"
+    );
 
     let graph = Arc::new(std::sync::Mutex::new(SignalGraph::new(
         Default::default(),
@@ -435,7 +439,10 @@ fn the_modules_own_setter_refuses_play_which_its_surface_reads() {
     let (mut kit, _surface) = build_kit(serde_json::json!({ "samples": slot }));
     for value in [0.0, 36.0] {
         let error = kit.set_control("play", value).unwrap_err();
-        assert!(error.contains("read by its module's own surface"), "{error}");
+        assert!(
+            error.contains("read by its module's own surface"),
+            "{error}"
+        );
     }
     kit.process(1);
     assert_eq!(kit.get_output("audio_left").unwrap(), 0.0, "nothing played");

@@ -26,8 +26,10 @@ use crate::control_request::{
     local_controls, local_get, local_set, ControlCells, ControlIndex, ControlTable, Refusal,
     RtValue,
 };
+use crate::dsp::LinearRamp;
 use crate::factory::{GraphModule, ModuleBuildResult, ModuleFactory};
 use crate::module_config::{finite_f32, whole_number, ConfigReader};
+use crate::modules::mixer::gain_ramp_frames;
 use crate::modules::sample_loading::{check_entry_fields, SampleData};
 use crate::payload::{Payload, Retired, Shared};
 use crate::{ControlMeta, Module};
@@ -74,7 +76,13 @@ impl ModuleFactory for SampleKitFactory {
         crate::factory::apply_control_keys(&built.surface, config, |key| {
             key.starts_with("level.") || key.starts_with("key.")
         })?;
-        let kit = SampleKit::new(built.table, built.cells, built.samples, numeric_keys);
+        let kit = SampleKit::new(
+            built.table,
+            built.cells,
+            built.samples,
+            numeric_keys,
+            sample_rate,
+        );
 
         Ok(ModuleBuildResult {
             module: GraphModule::Module(Box::new(kit)),
@@ -181,13 +189,18 @@ struct Voice {
     previous: Shared<SampleData>,
     /// Whether the voice is playing `previous`.
     ringing_out: bool,
-    level: f32,
+    /// The slot's level, gliding to each write while the slot sounds, as a
+    /// mixer's fader does: a level that stepped mid-sample would click.
+    level: LinearRamp,
     position: usize,
     active: bool,
 }
 
 impl Voice {
     fn start(&mut self) {
+        // A play restarts the slot's one voice, so it sounds at the level
+        // written: a glide smooths only a sound that carries on.
+        self.level.settle();
         self.ringing_out = false;
         self.position = 0;
         self.active = self.sample.len() > 0;
@@ -230,8 +243,10 @@ impl SampleKit {
         cells: Arc<ControlCells>,
         samples: Vec<Shared<SampleData>>,
         numeric_keys: Vec<Option<i32>>,
+        sample_rate: u32,
     ) -> Self {
         let slots = samples.len();
+        let glide = gain_ramp_frames(sample_rate);
         let voices = (samples.into_iter().enumerate())
             .map(|(slot, sample)| {
                 // The authored level; a write made before the build is
@@ -244,7 +259,7 @@ impl SampleKit {
                     previous: sample.clone(),
                     sample,
                     ringing_out: false,
-                    level,
+                    level: LinearRamp::new(level, glide),
                     position: 0,
                     active: false,
                 }
@@ -297,8 +312,9 @@ impl Module for SampleKit {
                 let sample = voice.sounding();
                 let (l, r) = sample.frame_at(voice.position);
                 let len = sample.len();
-                left += l * voice.level;
-                right += r * voice.level;
+                let level = voice.level.next_value();
+                left += l * level;
+                right += r * level;
                 voice.position += 1;
                 if voice.position >= len {
                     voice.active = false;
@@ -355,8 +371,12 @@ impl Module for SampleKit {
             }
             (Some(KitControl::Level(slot)), RtValue::F32(level)) => {
                 let voice = &mut self.voices[slot];
-                voice.level = level.clamp(0.0, 2.0);
-                Ok(RtValue::F32(voice.level))
+                let level = level.clamp(0.0, 2.0);
+                voice.level.set_target(level);
+                if !voice.active {
+                    voice.level.settle();
+                }
+                Ok(RtValue::F32(level))
             }
             _ => Err(Refusal::Unsupported),
         }
@@ -392,5 +412,7 @@ impl Module for SampleKit {
     }
 }
 
+#[cfg(test)]
+mod level_tests;
 #[cfg(test)]
 mod tests;
