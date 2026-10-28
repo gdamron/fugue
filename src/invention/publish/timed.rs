@@ -336,7 +336,7 @@ pub(super) fn adopt_into(
             let value = audio_assets::rebase_asset_write(
                 origin.as_deref(),
                 state.source_path(),
-                key,
+                state.names_audio(module_id, key),
                 value,
             );
             state.record_authored_control(module_id, key, &value);

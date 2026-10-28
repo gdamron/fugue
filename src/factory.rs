@@ -72,6 +72,15 @@ pub trait ModuleFactory: Send + Sync + 'static {
         self.build(sample_rate, config)
     }
 
+    /// The development this factory builds, when it is one: what a
+    /// nested build inherits from where its development is used, read
+    /// without building it. `None` by default.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn development(&self) -> Option<&crate::invention::development::DevelopmentFactory> {
+        None
+    }
+
     /// Constructs a throwaway instance on the control thread that checks
     /// `config` builds, then is dropped without processing audio. Like
     /// inspection, it must not write files, open streams, or activate

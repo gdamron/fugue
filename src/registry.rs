@@ -169,6 +169,15 @@ impl ModuleRegistry {
         self.factories.contains_key(type_id)
     }
 
+    /// The development registered as `type_id`, if it is one (see
+    /// [`ModuleFactory::development`]).
+    pub(crate) fn development(
+        &self,
+        type_id: &str,
+    ) -> Option<&crate::invention::development::DevelopmentFactory> {
+        self.factories.get(type_id)?.development()
+    }
+
     /// Returns true if the given module type is a sink.
     ///
     /// Sink modules are final destinations that drive pull-based processing

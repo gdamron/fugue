@@ -332,7 +332,8 @@ impl Since {
         let overtaken = overtaken(&state, &earlier, writes);
         for (module_id, key, value) in earlier {
             let (from, to) = (self.origin.as_deref(), state.source_path());
-            let value = audio_assets::rebase_asset_write(from, to, &key, &value);
+            let asset = state.names_audio(&module_id, &key);
+            let value = audio_assets::rebase_asset_write(from, to, asset, &value);
             state.record_authored_control(&module_id, &key, &value);
         }
         // Then those of the commit's own they would hide, made after.
@@ -423,8 +424,9 @@ fn record(
         return;
     }
     let origin = authoring.origin.as_deref();
+    let asset = state.names_audio(module_id, key);
     let value =
-        audio_assets::rebase_asset_write(origin, state.source_path(), key, &authoring.value);
+        audio_assets::rebase_asset_write(origin, state.source_path(), asset, &authoring.value);
     // A timed write is folded into a waiting edit's document even for a
     // control the edit writes as it lands: the edit's own write, recorded
     // as it applies, replaces it then, and leaves it should it never apply.

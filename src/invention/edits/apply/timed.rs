@@ -76,12 +76,12 @@ impl RunningInvention {
         };
         let source_path = batch.candidate.document.source_path.as_deref();
         let writes: Vec<_> = (batch.candidate.final_writes().into_iter())
-            .map(|candidate| &candidate.write)
-            .filter(|write| kept(&write.module_id))
-            .map(|write| {
+            .filter(|candidate| kept(&candidate.write.module_id))
+            .map(|candidate| {
+                let write = &candidate.write;
                 let load = audio_assets::resolve_checked_asset_write(
                     source_path,
-                    &write.key,
+                    (&write.key, candidate.asset),
                     &write.value,
                 );
                 (write.module_id.clone(), write.key.clone(), load)

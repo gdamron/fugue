@@ -151,7 +151,7 @@ impl RunningInvention {
                 (&write.module_id, &write.key),
                 audio_assets::resolve_checked_asset_write(
                     document.source_path.as_deref(),
-                    &write.key,
+                    (&write.key, candidate.asset),
                     &write.value,
                 ),
                 &committed.contested,
@@ -242,7 +242,8 @@ fn write_built(
             .surface
             .as_ref()
             .ok_or_else(|| refused_write(candidate, "the module has no controls".to_string()))?;
-        let load = audio_assets::resolve_checked_asset_write(source_path, &write.key, &write.value);
+        let asset = (write.key.as_str(), candidate.asset);
+        let load = audio_assets::resolve_checked_asset_write(source_path, asset, &write.value);
         let outcome = surface.set_control(&write.key, load.clone()).err();
         last.insert(write.key.as_str(), outcome);
         // Made again on a replay, failures included, so it ends the same.

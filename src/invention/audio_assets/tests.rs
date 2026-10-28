@@ -45,7 +45,7 @@ fn local_object_resolves_relative_to_invention_file() {
         tmp.path(),
         serde_json::json!({ "path": "./loops/melody.wav" }),
     );
-    resolve_audio_assets(&mut invention, &Default::default()).unwrap();
+    resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None)).unwrap();
     assert_eq!(
         resolved_asset(&invention),
         tmp.path().join("./loops/melody.wav").to_string_lossy()
@@ -58,14 +58,14 @@ fn local_object_resolves_relative_to_invention_file() {
 fn absolute_and_url_paths_pass_through() {
     let tmp = tempfile::tempdir().unwrap();
     let mut invention = invention_with_asset(tmp.path(), serde_json::json!("/abs/kick.wav"));
-    resolve_audio_assets(&mut invention, &Default::default()).unwrap();
+    resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None)).unwrap();
     assert_eq!(resolved_asset(&invention), "/abs/kick.wav");
 
     let mut invention = invention_with_asset(
         tmp.path(),
         serde_json::json!("https://example.com/kick.wav"),
     );
-    resolve_audio_assets(&mut invention, &Default::default()).unwrap();
+    resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None)).unwrap();
     assert_eq!(resolved_asset(&invention), "https://example.com/kick.wav");
 }
 
@@ -81,7 +81,7 @@ fn package_ref_resolves_and_records_lockfile() {
             &inv_dir,
             serde_json::json!("fugue.drums.808@1.2.0:kick/long.wav"),
         );
-        resolve_audio_assets(&mut invention, &Default::default()).unwrap();
+        resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None)).unwrap();
         let resolved = resolved_asset(&invention).to_string();
         // Built with the resolver's own joins so separators match the
         // platform (the file path segment stays `/`-separated as
@@ -107,7 +107,7 @@ fn package_ref_resolves_and_records_lockfile() {
 
         // Re-resolving the resolved document is a no-op (reload path).
         let before = fs::read(inv_dir.join(LOCKFILE_NAME)).unwrap();
-        resolve_audio_assets(&mut invention, &Default::default()).unwrap();
+        resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None)).unwrap();
         assert_eq!(resolved_asset(&invention), resolved);
         assert_eq!(fs::read(inv_dir.join(LOCKFILE_NAME)).unwrap(), before);
     });
@@ -143,7 +143,7 @@ fn locked_version_pins_and_keeps_recorded_integrity() {
 
         let mut invention =
             invention_with_asset(&inv_dir, serde_json::json!("fugue.drums.808@^1.2:kick.wav"));
-        resolve_audio_assets(&mut invention, &Default::default()).unwrap();
+        resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None)).unwrap();
         assert!(resolved_asset(&invention).contains("1.2.0"));
 
         let lock = Lockfile::read(&inv_dir.join(LOCKFILE_NAME)).unwrap();
@@ -164,9 +164,10 @@ fn missing_package_names_module_in_error() {
             tmp.path(),
             serde_json::json!("fugue.drums.808@1.2.0:kick.wav"),
         );
-        let err = resolve_audio_assets(&mut invention, &Default::default())
-            .unwrap_err()
-            .to_string();
+        let err =
+            resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None))
+                .unwrap_err()
+                .to_string();
         assert!(err.contains("module 'kick'"), "{err}");
         assert!(err.contains("no installed version"), "{err}");
     });
@@ -176,7 +177,7 @@ fn missing_package_names_module_in_error() {
 fn invalid_asset_shape_errors() {
     let tmp = tempfile::tempdir().unwrap();
     let mut invention = invention_with_asset(tmp.path(), serde_json::json!(42));
-    let err = resolve_audio_assets(&mut invention, &Default::default())
+    let err = resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None))
         .unwrap_err()
         .to_string();
     assert!(err.contains("invalid asset reference"), "{err}");
@@ -203,7 +204,7 @@ fn sample_slot_refs_resolve_and_record_lockfile() {
         });
         let mut invention = Invention::from_json(&json.to_string()).unwrap();
         invention.source_path = Some(inv_dir.join("groove.json"));
-        resolve_audio_assets(&mut invention, &Default::default()).unwrap();
+        resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None)).unwrap();
 
         let samples = invention.modules[0].config["samples"].as_array().unwrap();
         assert_eq!(
@@ -245,7 +246,7 @@ fn zone_refs_resolve_and_record_lockfile() {
         });
         let mut invention = Invention::from_json(&json.to_string()).unwrap();
         invention.source_path = Some(inv_dir.join("nocturne.json"));
-        resolve_audio_assets(&mut invention, &Default::default()).unwrap();
+        resolve_audio_assets(&mut invention, &Declarations::of(&Default::default(), None)).unwrap();
 
         let zones = invention.modules[0].config["zones"].as_array().unwrap();
         assert_eq!(
