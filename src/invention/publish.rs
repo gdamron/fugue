@@ -264,11 +264,12 @@ impl LiveGraph {
                 reclaimer: Arc::clone(&reclaimer),
             }
         });
+        let transport = ends.requests.transport();
         let live = Self {
             publisher,
             reclaimer,
             requests: ends.requests,
-            pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes))),
+            pending: Arc::new(Mutex::new(PendingLog::new(ends.outcomes, transport))),
             state,
             control_surfaces,
             module_ports,

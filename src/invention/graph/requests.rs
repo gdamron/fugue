@@ -311,9 +311,12 @@ impl RequestDrain {
         &self.published
     }
 
-    /// Closes the queue to every later submission (see `super::unwind`).
+    /// Closes the queue to every later submission, and says no outcome
+    /// will come after those sent so far, so the control side settles
+    /// what still waits (see `super::unwind`).
     pub(super) fn close(&self) {
         self.requests.close();
+        self.pending.outcomes.end();
     }
 
     /// Whether nothing tagged `generation` or older waits in the queue.

@@ -57,7 +57,8 @@ pub(super) fn saved(running: &RunningInvention) -> Invention {
 }
 
 /// Sounds the first slot or zone with `sound` and returns the loudest
-/// left-channel sample over the next blocks. An instrument's note is then
+/// left-channel sample over the next blocks (a kit's past the fade of the
+/// play it cut off). An instrument's note is then
 /// released and left to fade, so the next note starts from silence.
 pub(super) fn peak(running: &RunningInvention, pump: &Pump, sound: (&str, f32)) -> f32 {
     let play = |key: &str| {
@@ -66,6 +67,11 @@ pub(super) fn peak(running: &RunningInvention, pump: &Pump, sound: (&str, f32)) 
             .unwrap()
     };
     play(sound.0);
+    if sound.0 == "play" {
+        // A kit play cuts off the slot's last one, which fades over the
+        // first 144 frames: measure the new one past it.
+        pump.render(3);
+    }
     let peak = pump
         .render(4)
         .iter()

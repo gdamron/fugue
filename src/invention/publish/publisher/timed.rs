@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use super::{Published, Publisher, Refused};
 use crate::control_request::{
-    Condition, ControlTarget, Intent, Predicate, QueueFull, Request, RequestId, RequestSender,
-    RequestValue, RtValue, When,
+    Condition, ControlTarget, Intent, QueueFull, Request, RequestId, RequestSender, RequestValue,
+    RtValue, When,
 };
 use crate::invention::declared::{RequestPort, WriteOptions};
 use crate::invention::graph::{Fate, TIMED_EDIT_MODULE};
@@ -297,33 +297,39 @@ impl Publisher {
     /// (at `target`, in the graph that is playing), about to be queued,
     /// against the timed edit waiting, and returns the edit it is safe from
     /// (one whose write to the control does not replace it, see
-    /// `LiveGraph::reconcile_authored`) with the id of the copy it queued,
-    /// if any. One landed already: the write follows its writes. One that
-    /// writes the control as it lands: the write is kept over it, a copy
-    /// chained to the landing as the edit's own write is, at the same rank.
-    /// The audio thread meets requests in the order they are queued and
-    /// applies those waiting on a condition in the order it received them,
-    /// and at one sample, of equal rank, the later wins: the copy, queued
-    /// after the edit and so after its write, replaces it (and any copy
-    /// kept before) as it reaches the audio thread, holding one slot
-    /// however long a drag. So the copy plays at the landing, and the
-    /// edit's value never sounds when the copy reaches the audio thread
-    /// before the landing; held back past it, the copy plays as soon as it
-    /// does (see [`Ledger::kept`]). It carries the write's rank, intent
-    /// and ttl, so its hold is the author's own, refusing no later write a
-    /// plain one would not, and it expires as the write would. `None`, with
-    /// nothing queued, when neither: none waits, it does not write the
-    /// control, or the write cannot be kept (an event, the requests waiting
-    /// on conditions are full, or `requests`, the sender the write goes
-    /// through, has no room for both), and an edit writing the control is
-    /// cancelled as the write is recorded.
+    /// `LiveGraph::reconcile_authored`) with the copy it queued, if any.
+    /// One landed already: the write follows its writes. One that writes
+    /// the control as it lands: the write is kept over it, a copy chained
+    /// to the landing as the edit's own write is, at the write's rank, and
+    /// to the write applying ([`Condition::kept`]).
+    ///
+    /// The write must then be queued with the copy's [`Kept::write`] id,
+    /// straight after it. The audio thread meets requests in the order they
+    /// are queued and applies those waiting on a condition in the order it
+    /// received them, and at one sample, of equal rank, the later wins: the
+    /// copy, queued after the edit and so after its write, plays at the
+    /// landing, and the edit's value never sounds when the copy reaches the
+    /// audio thread before the landing; held back past it, the copy plays
+    /// as soon as it does (see [`Ledger::kept`]). A copy replaces the copy
+    /// kept before it as it reaches the audio thread, holding one slot
+    /// however long a drag. A write that loses at its own sample breaks its
+    /// copy, so a value that never played is not re-asserted as the edit
+    /// lands. The copy carries the write's intent and ttl, so its hold is
+    /// the author's own, refusing no later write a plain one would not, and
+    /// it expires as the write would.
+    ///
+    /// `None`, with nothing queued, when neither: none waits, it does not
+    /// write the control, or the write cannot be kept (an event, the
+    /// requests waiting on conditions are full, or `requests`, the sender
+    /// the write goes through, has no room for both), and an edit writing
+    /// the control is cancelled as the write is recorded.
     pub(crate) fn keep_authored(
         &mut self,
         (module_id, key): (&str, &str),
         target: ControlTarget,
         (raw, event, options): (RtValue, bool, &WriteOptions),
         requests: &RequestSender,
-    ) -> Option<(RequestId, Option<RequestId>)> {
+    ) -> Option<(RequestId, Option<Kept>)> {
         let waiting = self.timed.as_ref()?;
         match waiting.fate.settled() {
             Some(true) => return Some((waiting.id, None)),
@@ -340,15 +346,16 @@ impl Publisher {
             return None;
         }
         let id = waiting.id;
+        let write = requests.take_id();
         let mut kept = Request::new(target, RequestValue::Value(raw));
         kept.intent = Intent::Author;
         kept.source = options.source;
         kept.priority = options.priority;
         kept.ttl = options.ttl;
-        kept.when = kept_until(id);
+        kept.when = kept_until(id, write);
         let copy = requests.submit(kept).ok()?;
         self.ledger.kept(id, format!("{module_id}.{key}"));
-        Some((id, Some(copy)))
+        Some((id, Some(Kept { copy, write })))
     }
 
     /// Every recent timed edit's status (see `timed_status`).
@@ -357,8 +364,17 @@ impl Publisher {
     }
 }
 
-/// When a write kept over timed edit `edit` is copied to apply: as the
-/// edit lands.
-pub(crate) fn kept_until(edit: RequestId) -> When {
-    When::Condition(Condition::all(&[Predicate::Applied(edit)]).expect("one part"))
+/// A write kept over a timed edit (see [`Publisher::keep_authored`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Kept {
+    /// The copy, applying as the edit lands.
+    pub(crate) copy: RequestId,
+    /// The id the write must be queued with, which the copy waits on.
+    pub(crate) write: RequestId,
+}
+
+/// When `write`, kept over timed edit `edit`, is copied to apply: as the
+/// edit lands, if `write` applied.
+pub(crate) fn kept_until(edit: RequestId, write: RequestId) -> When {
+    When::Condition(Condition::kept(edit, write))
 }

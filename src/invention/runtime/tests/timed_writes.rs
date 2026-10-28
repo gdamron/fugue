@@ -286,7 +286,10 @@ fn a_timed_write_waiting_as_the_invention_stops_is_announced_refused() {
     assert_ne!(untimed.request, ack.request);
     assert_eq!(refused.state, ControlRequestState::Refused);
     let reason = refused.reason.as_deref().unwrap();
-    assert_eq!(reason, "the invention it was queued on stopped");
+    assert_eq!(
+        reason,
+        "the invention it was queued on stopped, or its audio failed"
+    );
 }
 
 #[test]

@@ -123,7 +123,7 @@ impl LiveGraph {
         request.ttl = ttl;
         request.event = write.event;
         request.reserved = write.reserved;
-        let (source, when) = (request.source, request.when);
+        let (source, when, ttl) = (request.source, request.when, request.ttl);
 
         // Recorded as a declared surface records its writes (see
         // `invention::declared`): the log locked before the submission.
@@ -141,6 +141,7 @@ impl LiveGraph {
                 beat: None,
                 source,
                 when,
+                expires: self.requests.expires_by(ttl),
                 authored: None,
                 announced: false,
                 awaited: false,

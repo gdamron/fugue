@@ -360,6 +360,7 @@ fn a_live_write_is_listed_pending_until_the_audio_thread_applies_it() {
         beat: None,
         source: crate::control_request::Source::User,
         when: crate::control_request::When::Now,
+        expires: None,
         announced: false,
         awaited: false,
         authored: None,
