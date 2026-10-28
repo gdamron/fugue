@@ -4,15 +4,23 @@
 //! heard result is the same; a ramp starting from the control reads the
 //! staged value ([`ControlCells::current`]). Slots are allocated with the
 //! module, and only the thread running it touches them (`Relaxed`).
+//!
+//! One write stands on a control at a sample ([`contest`]): of the requests
+//! reaching it there, staged or applied at once, the one due last, then of
+//! the higher rank, then received last, as if each had applied on time.
+//! One that loses reports so at once, and a staged one's setter never runs.
+//! A write applied at once runs after the weaker writes staged on its
+//! module and before the stronger ([`flush_staged_before`]).
 
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering::Relaxed};
 
 use super::automation::take_automation;
 use super::cells::{apply_declared, decode, encode, ControlCells};
 use super::declare::{ControlDecl, DeclKind};
-use super::hold::{admits_hold, Standing};
+use super::hold::{admits_hold, rank_of, Rank, Standing};
 use super::pending::{Outcome, Outcomes};
 use super::request::{ControlIndex, RequestId, RtValue};
+use crate::control_request::declare::ControlTable;
 use crate::Module;
 
 /// No write staged: no tag [`encode`] makes.
@@ -71,6 +79,8 @@ impl Outcomes {
     }
 }
 
+/// A control's staged write, and the write standing on it at sample `at`:
+/// the one staged, else the last applied at once (none while `hold` is 0).
 #[derive(Default)]
 struct Slot {
     /// The value its setter takes.
@@ -85,6 +95,31 @@ struct Slot {
     /// The hold word the write took, and the one it replaced.
     hold: AtomicU64,
     prev: AtomicU64,
+}
+
+impl Slot {
+    /// The write standing here at `at`, by what decides between two: its
+    /// due sample, rank and receipt.
+    fn standing_at(&self, at: u64) -> Option<(u64, Rank, u64)> {
+        let rank = rank_of(self.hold.load(Relaxed))?;
+        let due = self.due.load(Relaxed);
+        (self.at.load(Relaxed) == at).then(|| (due, rank, self.id.load(Relaxed)))
+    }
+
+    /// Settles the write staged here at `at` as losing to one of
+    /// `winner`'s, its setter never run; the winner takes its hold over,
+    /// as it would from one applied. Whether one was staged.
+    fn give_way(&self, at: u64, winner: Rank, outcomes: &mut Outcomes) -> bool {
+        let staged = self.held.load(Relaxed) != EMPTY && self.at.load(Relaxed) == at;
+        let (Some(rank), true) = (rank_of(self.hold.load(Relaxed)), staged) else {
+            return false;
+        };
+        self.held.store(EMPTY, Relaxed);
+        self.hold.store(0, Relaxed);
+        let id = RequestId(self.id.load(Relaxed));
+        outcomes.flushed(id, rank.loses_to(winner), self.timed.load(Relaxed));
+        true
+    }
 }
 
 /// One module's staged writes: a slot per declared control, and the
@@ -125,6 +160,17 @@ impl Staged {
         self.len.load(Relaxed) == 0
     }
 
+    /// Whether every write still staged is for sample `at` (as those
+    /// stronger than one applied at once there are, waiting to run after
+    /// it).
+    pub(crate) fn waits_only_at(&self, at: u64) -> bool {
+        let len = self.len.load(Relaxed);
+        self.order.iter().take(len).all(|control| {
+            let slot = self.slots.get(usize::from(control.load(Relaxed)));
+            slot.is_none_or(|slot| slot.held.load(Relaxed) == EMPTY || slot.at.load(Relaxed) == at)
+        })
+    }
+
     /// The write staged on `index`, as its module will hold it.
     #[inline]
     pub(crate) fn held(&self, index: ControlIndex) -> Option<RtValue> {
@@ -139,11 +185,32 @@ impl Staged {
         self.len.store(len + 1, Relaxed);
     }
 
-    /// Takes the `position`th write staged, emptying its slot.
+    /// Whether the `position`th write staged is stronger than one of
+    /// `than` at its sample, moving it to place `kept` if so.
+    fn keeps(&self, position: usize, kept: usize, than: Option<(Standing, Applying)>) -> bool {
+        let (Some((standing, applying)), Some(control)) = (than, self.order.get(position)) else {
+            return false;
+        };
+        let control = control.load(Relaxed);
+        let mine = (standing.due, standing.rank, applying.id.0);
+        // One that gave way stands no more (its hold is 0).
+        let stronger = (self.slots.get(usize::from(control)))
+            .and_then(|slot| slot.standing_at(applying.at))
+            .is_some_and(|theirs| theirs > mine);
+        if stronger {
+            self.order[kept].store(control, Relaxed);
+        }
+        stronger
+    }
+
+    /// Takes the `position`th write staged, emptying its slot (none for
+    /// one that gave way).
     fn take(&self, position: usize) -> Option<Write> {
         let control = ControlIndex(self.order.get(position)?.load(Relaxed));
         let slot = self.slots.get(usize::from(control.0))?;
-        slot.held.store(EMPTY, Relaxed);
+        if slot.held.swap(EMPTY, Relaxed) == EMPTY {
+            return None;
+        }
         let (at, due) = (slot.at.load(Relaxed), slot.due.load(Relaxed));
         Some(Write {
             control,
@@ -185,9 +252,64 @@ fn held(decl: &ControlDecl, value: RtValue) -> RtValue {
     }
 }
 
+/// Weighs a write of `standing`, applying as `applying` names, against the
+/// write standing on `control` at the same sample (see the module docs),
+/// then against the holds as [`admits_hold`] does: `Err` what it loses
+/// as. Once it wins, a write staged there gives way: `Ok(true)` when one
+/// did. Allocation- and lock-free.
+pub(crate) fn contest<M: Module + ?Sized>(
+    module: &M,
+    control: ControlIndex,
+    standing: Standing,
+    applying: Applying,
+    outcomes: &mut Outcomes,
+) -> Result<bool, Outcome> {
+    let Some(slot) = module
+        .declared()
+        .and_then(|(_, cells)| cells.staged.slots.get(usize::from(control.0)))
+    else {
+        return Ok(false);
+    };
+    let mine = (standing.due, standing.rank, applying.id.0);
+    if let Some(theirs) = slot
+        .standing_at(applying.at)
+        .filter(|theirs| mine < *theirs)
+    {
+        return Err(standing.rank.loses_to(theirs.1));
+    }
+    admits_hold(module, control, standing)?;
+    Ok(slot.give_way(applying.at, standing.rank, outcomes))
+}
+
+/// Records that a write of `standing`, applying as `applying` names,
+/// applied at once to `control` and every control it reaches: it stands
+/// there for [`contest`], but for a stronger write still staged there to
+/// run after it. Allocation- and lock-free.
+pub(crate) fn stand<M: Module + ?Sized>(
+    module: &M,
+    control: ControlIndex,
+    standing: Standing,
+    applying: Applying,
+) {
+    let mut stand = |_: &ControlTable, cells: &ControlCells, index: ControlIndex| {
+        let slot = cells.staged.slots.get(usize::from(index.0));
+        if let Some(slot) = slot.filter(|slot| slot.held.load(Relaxed) == EMPTY) {
+            slot.at.store(applying.at, Relaxed);
+            slot.due.store(standing.due, Relaxed);
+            slot.id.store(applying.id.0, Relaxed);
+            slot.hold.store(standing.word(), Relaxed);
+        }
+    };
+    if let Some((table, cells)) = module.declared() {
+        stand(table, cells, control);
+    }
+    module.for_each_alias(control, &mut stand);
+}
+
 /// Stages a plain write, taking its hold now: `Ok(false)` when it must apply
 /// at once (an event, or a control that rewrites others), `Err` what it
-/// lost as. A staged control flushes first. Allocation- and lock-free.
+/// lost as ([`contest`]). One staged at an earlier sample flushes first.
+/// Allocation- and lock-free.
 pub(crate) fn stage_write<M: Module + ?Sized>(
     module: &mut M,
     control: ControlIndex,
@@ -199,19 +321,22 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
     let Some((table, cells)) = module.declared() else {
         return Ok(false);
     };
-    let Some((decl, _)) = table.decl(control) else {
+    let (Some((decl, _)), Some(slot)) = (
+        table.decl(control),
+        cells.staged.slots.get(usize::from(control.0)),
+    ) else {
         return Ok(false);
     };
-    let staged = cells.staged.held(control).is_some();
+    let earlier = slot.held.load(Relaxed) != EMPTY && slot.at.load(Relaxed) != applying.at;
     let mut rewrites = false;
     module.for_each_alias(control, &mut |_, _, _| rewrites = true);
     if rewrites || decl.event {
         return Ok(false);
     }
-    if staged {
+    if earlier {
         flush_staged(module, outcomes);
     }
-    admits_hold(module, control, standing)?;
+    let listed = contest(&*module, control, standing, applying, outcomes)?;
     // Automation still waiting was written before this sample.
     take_automation(module);
     let Some((table, cells)) = module.declared() else {
@@ -224,6 +349,12 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
         return Ok(false);
     };
     let (hold, prev) = cells.holds.swap(control, standing);
+    // In the place of one that gave way, as if neither had applied.
+    let prev = if listed {
+        slot.prev.load(Relaxed)
+    } else {
+        prev
+    };
     slot.value.store(encode(value), Relaxed);
     slot.held.store(encode(held(decl, value)), Relaxed);
     slot.id.store(applying.id.0, Relaxed);
@@ -232,15 +363,30 @@ pub(crate) fn stage_write<M: Module + ?Sized>(
     slot.timed.store(applying.timed, Relaxed);
     slot.hold.store(hold, Relaxed);
     slot.prev.store(prev, Relaxed);
-    cells.staged.push(control);
+    // One that gave way here keeps its place in the order.
+    if !listed {
+        cells.staged.push(control);
+    }
     outcomes.park();
     Ok(true)
 }
 
 /// Runs every setter staged on `module`, in order, and reports each; one
-/// refused gives back its hold. Allocation- and lock-free.
+/// refused gives back its hold, and stands no more. Allocation- and
+/// lock-free.
 #[inline]
 pub(crate) fn flush_staged<M: Module + ?Sized>(module: &mut M, outcomes: &mut Outcomes) {
+    flush_staged_before(module, None, outcomes);
+}
+
+/// [`flush_staged`], but a write staged at `applying`'s sample stronger
+/// than one of `standing` (by due sample, rank and receipt) stays staged,
+/// to run after it. Allocation- and lock-free.
+pub(crate) fn flush_staged_before<M: Module + ?Sized>(
+    module: &mut M,
+    than: Option<(Standing, Applying)>,
+    outcomes: &mut Outcomes,
+) {
     if outcomes.staged() == 0 {
         return;
     }
@@ -248,11 +394,16 @@ pub(crate) fn flush_staged<M: Module + ?Sized>(module: &mut M, outcomes: &mut Ou
         Some((_, cells)) if !cells.staged.is_empty() => cells.staged.len.load(Relaxed),
         _ => return,
     };
+    let mut kept = 0;
     for position in 0..len {
-        let Some(write) = module
-            .declared()
-            .and_then(|(_, cells)| cells.staged.take(position))
-        else {
+        let Some((_, cells)) = module.declared() else {
+            return;
+        };
+        if cells.staged.keeps(position, kept, than) {
+            kept += 1;
+            continue;
+        }
+        let Some(write) = cells.staged.take(position) else {
             continue;
         };
         let outcome = match apply_declared(module, write.control, write.value) {
@@ -260,6 +411,9 @@ pub(crate) fn flush_staged<M: Module + ?Sized>(module: &mut M, outcomes: &mut Ou
             Err(refusal) => {
                 if let Some((_, cells)) = module.declared() {
                     cells.holds.restore(write.control, write.hold, write.prev);
+                    if let Some(slot) = cells.staged.slots.get(usize::from(write.control.0)) {
+                        slot.hold.store(0, Relaxed);
+                    }
                 }
                 Outcome::Refused(refusal)
             }
@@ -267,7 +421,7 @@ pub(crate) fn flush_staged<M: Module + ?Sized>(module: &mut M, outcomes: &mut Ou
         outcomes.flushed(write.id, outcome, write.timed);
     }
     if let Some((_, cells)) = module.declared() {
-        cells.staged.len.store(0, Relaxed);
+        cells.staged.len.store(kept, Relaxed);
     }
 }
 

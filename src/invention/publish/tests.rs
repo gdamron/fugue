@@ -23,6 +23,7 @@ mod melody;
 mod migrated;
 mod mixer;
 mod null_backend;
+mod one_setter;
 mod orchestration;
 mod payload_controls;
 mod payload_edits;

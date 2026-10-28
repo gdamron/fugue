@@ -3,12 +3,15 @@
 
 use super::SignalGraph;
 use crate::control_request::{
-    flush_staged, stage_write, ControlTarget, Outcome, Outcomes, Ramps, RequestValue, Standing,
+    contest, flush_staged, flush_staged_before, stage_write, stand, Applying, ControlTarget,
+    Outcome, Outcomes, Ramps, RequestValue, Standing,
 };
 
 impl SignalGraph {
     /// [`Self::apply_ranked`], staging a plain write: anything else, or a
     /// write a condition waits on (`Chains::watching`), applies at once.
+    /// Either way, the one write standing on the control at the sample
+    /// applies ([`contest`]).
     pub(super) fn stage(
         &mut self,
         target: &ControlTarget,
@@ -29,7 +32,7 @@ impl SignalGraph {
                 }
             }
         }
-        self.apply_now(target, standing, value, outcomes)
+        self.apply_at_once(target, standing, value, applying, outcomes)
     }
 
     /// [`Self::stage`], ending the request ramps on `target` once it
@@ -61,9 +64,48 @@ impl SignalGraph {
         value: RequestValue,
         outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
-        outcomes.take_applying();
-        self.flush_module(target.module_idx, outcomes);
-        self.apply_ranked(target, standing, value, &mut outcomes.retirer)
+        let applying = outcomes.take_applying();
+        self.apply_at_once(target, standing, value, applying, outcomes)
+    }
+
+    /// [`Self::apply_now`] for the request `applying` names, if any: a
+    /// value or payload write weighed against the one standing on its
+    /// control at the sample, after the weaker writes staged on its module
+    /// and before the stronger, as if each applied on time.
+    fn apply_at_once(
+        &mut self,
+        target: &ControlTarget,
+        standing: Option<Standing>,
+        value: RequestValue,
+        applying: Option<Applying>,
+        outcomes: &mut Outcomes,
+    ) -> Result<(), Outcome> {
+        let weighed = applying
+            .zip(standing)
+            .filter(|_| !matches!(value, RequestValue::Edit(_)));
+        let index = target.module_idx;
+        if let Some((_, instance)) = self.modules.get_index_mut(index) {
+            let than = weighed.map(|(applying, standing)| (standing, applying));
+            flush_staged_before(instance.module_mut(), than, outcomes);
+        }
+        if let (Some((applying, standing)), Some((_, instance))) =
+            (weighed, self.modules.get_index(index))
+        {
+            let module = instance.module();
+            if let Err(lost) = contest(module, target.control, standing, applying, outcomes) {
+                if let RequestValue::Payload(payload) = value {
+                    outcomes.retirer.retire(payload);
+                }
+                return Err(lost);
+            }
+        }
+        self.apply_ranked(target, standing, value, &mut outcomes.retirer)?;
+        if let (Some((applying, standing)), Some((_, instance))) =
+            (weighed, self.modules.get_index(index))
+        {
+            stand(instance.module(), target.control, standing, applying);
+        }
+        Ok(())
     }
 
     /// Whether `id`'s write may stage (never under a test's request hook).

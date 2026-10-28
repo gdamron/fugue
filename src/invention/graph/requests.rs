@@ -839,7 +839,7 @@ impl SignalGraph {
         debug_assert!(
             (self.modules.get_index(module_idx))
                 .and_then(|(_, instance)| instance.module().declared())
-                .is_none_or(|(_, cells)| cells.staged.is_empty()),
+                .is_none_or(|(_, cells)| cells.staged.waits_only_at(self.current_sample)),
             "applied past a write staged before it"
         );
         match value {

@@ -9,6 +9,7 @@ use crate::control_request::timeline::first_sample_reaching;
 use crate::control_request::{
     outcome_channel, BeatTime, ControlIndex, OutcomeReceiver, RequestId, RtValue, BEFORE_START,
 };
+use crate::payload::Retirer;
 
 const INSTALLED: u64 = 1;
 
@@ -100,7 +101,7 @@ impl BeatHost for Host {
         target: &ControlTarget,
         _standing: Option<Standing>,
         _value: RequestValue,
-        _retirer: &mut Retirer,
+        _outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
         self.applied.push(target.module_idx);
         if target.module_idx == 0 {

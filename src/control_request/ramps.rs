@@ -46,11 +46,11 @@ use std::sync::Arc;
 
 use super::event::EventCounter;
 use super::hold::Standing;
+use super::pending::Outcomes;
 use super::request::{ControlTarget, RequestValue, RtValue};
 use super::table::{TableTarget, TableValue};
 use super::timeline::Timeline;
 use super::watch::BeatHost;
-use crate::payload::Retirer;
 
 /// The most ramps in beats one graph keeps waiting for their beat or
 /// running.
@@ -428,7 +428,7 @@ impl Ramps {
         &mut self,
         installed: u64,
         host: &mut impl BeatHost,
-        retirer: &mut Retirer,
+        outcomes: &mut Outcomes,
     ) -> Option<u64> {
         let mut i = 0;
         while i < self.entries.len() {
@@ -473,7 +473,7 @@ impl Ramps {
             let written = match on {
                 RampOn::Request { target, standing } => {
                     let value = RequestValue::Value(RtValue::F32(value));
-                    host.apply(&target, Some(standing), value, retirer).is_ok()
+                    host.apply(&target, Some(standing), value, outcomes).is_ok()
                 }
                 // Dropped while a higher tier holds the control: it ends,
                 // and the table's next entry on the control takes it back.

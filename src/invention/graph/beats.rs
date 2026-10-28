@@ -6,10 +6,9 @@
 
 use super::{Publication, RoutingConnection, SignalGraph};
 use crate::control_request::{
-    kept_hold, take_automation, BeatHost, BeatTable, ControlTarget, Outcome, Outcomes, Player,
-    RequestValue, RtValue, Standing, StepClock, Timeline, Watches,
+    flush_staged, kept_hold, take_automation, BeatHost, BeatTable, ControlTarget, Outcome,
+    Outcomes, Player, RequestValue, RtValue, Standing, StepClock, Timeline, Watches,
 };
-use crate::payload::Retirer;
 
 impl BeatHost for SignalGraph {
     fn timeline(&self, module_idx: usize) -> Option<&dyn Timeline> {
@@ -32,9 +31,10 @@ impl BeatHost for SignalGraph {
         let module = instance.module();
         // A development's control reads its first alias, to the leaf, as a
         // scheduler's ramp does (`Automation::current`).
+        // A write staged on it is where it will be.
         let value = match module.alias_value(target.control) {
             Some(value) => value,
-            None => module.declared()?.1.load(target.control)?,
+            None => module.declared()?.1.current(target.control)?,
         };
         match value {
             RtValue::F32(value) => Some(value),
@@ -95,9 +95,9 @@ impl BeatHost for SignalGraph {
         target: &ControlTarget,
         standing: Option<Standing>,
         value: RequestValue,
-        retirer: &mut Retirer,
+        outcomes: &mut Outcomes,
     ) -> Result<(), Outcome> {
-        self.apply_ranked(target, standing, value, retirer)
+        self.apply_now(target, standing, value, outcomes)
     }
 }
 
@@ -149,15 +149,12 @@ impl SignalGraph {
         if watches.is_empty() {
             return None;
         }
-        // A clock's timeline settles what was written to it before the
-        // beats are placed on it.
-        self.flush_all(outcomes);
         // A clock's position counts its automation from here, as its
         // requests do (written before this sample, taken before it plays).
         // So a request timed in beats applies after automation written for
         // the same sample, and wins; one timed in samples applies before
         // it, and the automation wins.
-        self.take_clocks(watches, installed);
+        self.take_clocks(watches, outcomes, installed);
         // An application can move a clock (a reset or tempo timed on
         // beats), and so can a ramp's write (one of a tempo), so pass again
         // after them until none applies, the deadlines then as the clocks
@@ -170,14 +167,14 @@ impl SignalGraph {
         let now = self.current_sample;
         loop {
             if watches.pass(now, installed, self, outcomes).0 {
-                self.take_clocks(watches, installed);
+                self.take_clocks(watches, outcomes, installed);
                 continue;
             }
-            watches.ramps.step(installed, self, &mut outcomes.retirer);
-            self.take_clocks(watches, installed);
+            watches.ramps.step(installed, self, outcomes);
+            self.take_clocks(watches, outcomes, installed);
             let arrives = watches.ramps.arrival(installed, self);
             let (applied, wait) = watches.pass(now, installed, self, outcomes);
-            self.take_clocks(watches, installed);
+            self.take_clocks(watches, outcomes, installed);
             if !applied {
                 return match (wait, arrives) {
                     (Some(wait), Some(arrives)) => Some(wait.min(arrives)),
@@ -187,11 +184,13 @@ impl SignalGraph {
         }
     }
 
-    /// Takes the automation written to every clock a watch, ramp or table
-    /// waits on.
-    fn take_clocks(&mut self, watches: &Watches, installed: u64) {
+    /// Takes what was written to every clock a watch, ramp or table waits
+    /// on, staged and automation, so its timeline settles it before beats
+    /// are placed on it. Other modules' writes stay staged.
+    fn take_clocks(&mut self, watches: &Watches, outcomes: &mut Outcomes, installed: u64) {
         for clock in watches.clocks(installed) {
             if let Some((_, instance)) = self.modules.get_index_mut(clock) {
+                flush_staged(instance.module_mut(), outcomes);
                 take_automation(instance.module_mut());
             }
         }

@@ -188,6 +188,11 @@ impl Standing {
     pub(crate) fn of(request: &Request, due: u64) -> Option<Self> {
         Rank::of(request).map(|rank| Self { rank, due })
     }
+
+    /// The hold word a write of this standing takes.
+    pub(super) fn word(self) -> u64 {
+        encode(self.rank, self.due)
+    }
 }
 
 /// No hold.
@@ -209,6 +214,11 @@ fn decode(word: u64) -> Option<(Rank, u64)> {
     let tier = (word >> 17 & 0b11) as u8;
     let priority = (word >> 1) as u16 as i16;
     (word != FREE).then_some((Rank { tier, priority }, word >> 19))
+}
+
+/// The rank of a hold word (none for no hold).
+pub(super) fn rank_of(word: u64) -> Option<Rank> {
+    decode(word).map(|(rank, _)| rank)
 }
 
 /// The hold on each of a module's declared controls (see the module docs).
