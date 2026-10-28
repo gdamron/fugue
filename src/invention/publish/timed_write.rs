@@ -20,7 +20,8 @@
 //! take, as long as the front doors keep at most [`TIMED_WRITE_ROOM`]
 //! waiting.
 //!
-//! A reserved write (a note off) may wait past each limit by
+//! A reserved write (a note off) may wait past the limit on a sample by
+//! [`SAMPLE_TIMED_RESERVE`], and past the limit on them all by
 //! [`TIMED_RESERVE`], as it may take the watches' and the condition
 //! table's reserves, so other writes waiting never shut out the end of a
 //! note. So a timed write stays listed until its own outcome settles
