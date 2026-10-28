@@ -126,7 +126,11 @@ impl Voice {
     fn keep_residual(&mut self) {
         let (l, r) = self.tail_frame();
         let gain = declick_gain(self.residual_gain);
-        let held = if self.residual_gain > 0.0 { self.residual_amp } else { 0.0 };
+        let held = if self.residual_gain > 0.0 {
+            self.residual_amp
+        } else {
+            0.0
+        };
         let amp = self.tail.amp.max(held);
         let bound = |v: f32| v.max(-amp).min(amp);
         self.residual = (

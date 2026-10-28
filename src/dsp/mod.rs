@@ -19,7 +19,9 @@ mod ramp;
 
 pub use allpass::Allpass;
 pub use damper::Damper;
-pub(crate) use declick::{declick_gain, declick_step, DECLICK_SECONDS};
+#[cfg(test)]
+pub(crate) use declick::DECLICK_SECONDS;
+pub(crate) use declick::{declick_gain, declick_step};
 pub use delay_line::DelayLine;
 #[cfg(feature = "spectrogram")]
 pub(crate) use fft::RealFft;

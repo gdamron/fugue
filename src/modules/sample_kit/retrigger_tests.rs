@@ -2,10 +2,10 @@
 //! stopping it dead, and a swap during that fade leaves it on its buffer.
 
 use super::tests::{build_kit, write_level_wav, write_levels_wav, TOL};
-use crate::dsp::{declick_gain, declick_step, DECLICK_SECONDS};
 use crate::alloc_counter::allocator_events;
 use crate::audio_thread::AudioThreadScope;
 use crate::control_request::RtValue;
+use crate::dsp::{declick_gain, declick_step, DECLICK_SECONDS};
 use crate::modules::sample_kit::controls::{index_of, KitControl};
 use crate::modules::sample_loading::load_cached_sample;
 use crate::payload::Payload;

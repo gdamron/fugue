@@ -84,8 +84,8 @@ use crate::{ControlMeta, Module};
 pub use self::controls::{LoopSpec, ZoneSpec};
 pub use self::voice::MAX_VOICES;
 
-use self::controls::{held_release, RELEASE_RANGE};
 use self::controls::{control_at, index_of, midi_note, InstrumentControl, ZoneAudio};
+use self::controls::{held_release, RELEASE_RANGE};
 use self::voice::{note_from_freq, resolve_zone, Voice, ZoneRuntime};
 
 mod controls;
@@ -452,7 +452,10 @@ impl SampleInstrument {
         if self.release <= 0.0 {
             return (self.declick_step, true);
         }
-        (1.0 / (self.release.max(RELEASE_RANGE.0) * self.sample_rate), false)
+        (
+            1.0 / (self.release.max(RELEASE_RANGE.0) * self.sample_rate),
+            false,
+        )
     }
 
     /// Starts a note, returning the voice it took.
