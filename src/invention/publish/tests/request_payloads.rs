@@ -6,12 +6,14 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::migrated::write;
 use super::requests::{counted_block, outcomes, try_submit_value};
 use super::*;
 use crate::control_request::{
     ControlIndex, Outcome, Refusal, RequestId, RequestValue, RtValue, When,
 };
-use crate::payload::{Payload, Retirer, Shared, MAX_RETIRES_PER_REQUEST};
+use crate::invention::publish::publisher::PAYLOAD_RETIRE_HOLD;
+use crate::payload::{self, Payload, Retirer, Shared, MAX_RETIRES_PER_REQUEST};
 
 /// Counts how many of its values were dropped.
 #[derive(Clone, Default)]
@@ -235,4 +237,54 @@ fn payloads_queued_behind_a_deferred_edit_settle_after_it_installs() {
     assert_eq!(settled as u64, queued);
     reclaim_all(&mut rig);
     assert_eq!(drops.count() - refused_at_the_door, settled);
+}
+
+/// With no reclaimer thread, a control write frees what blocks retired
+/// before it submits. So an edit waiting behind a payload request for
+/// retire room, while a far-future one reserves room, installs at the next
+/// write rather than the next change, and the payloads the install retires
+/// are freed by later writes, on this control thread.
+#[test]
+fn without_a_reclaimer_thread_writes_free_room_for_an_edit_behind_payloads() {
+    let mut rig = Rig::new(BASE);
+    rig.render(1);
+    rig.live.reclaim();
+    let drops = Drops::default();
+    let far = rig.graph.current_sample + 1_000_000;
+    let waiting = submit(&rig, "osc1", drops.payload(), When::AtSample(far));
+    assert_eq!(counted_block(&mut rig), (0, 0), "reserving room to wait");
+    // Leaves the far-future request's reservation and no more.
+    while retirer(&mut rig).has_room(2 * MAX_RETIRES_PER_REQUEST) {
+        retirer(&mut rig).retire(Box::new(0u8));
+    }
+    let payload = submit(&rig, "osc2", drops.payload(), When::Now);
+    rig.publish_unreclaimed(|change| change.remove("osc1"));
+    for _ in 0..2 {
+        assert_eq!(counted_block(&mut rig), (0, 0), "waiting for room");
+        assert_eq!(rig.generation_and_applied().1, 0, "the edit waits");
+    }
+
+    write(&rig, "osc2", "frequency", 660.0.into());
+    assert_eq!(
+        counted_block(&mut rig),
+        (0, 0),
+        "taking it, then installing"
+    );
+    assert_eq!(rig.generation_and_applied(), (1, 1));
+    assert_eq!(rig.module_ids(), ["osc2", "dac"]);
+    let settled = outcomes(&mut rig);
+    assert!(settled.contains(&(payload, Outcome::Refused(Refusal::Unsupported))));
+    assert!(settled.contains(&(waiting, Outcome::Refused(Refusal::TargetGone))));
+    assert_eq!(drops.count(), 0, "retired, not freed, on the audio thread");
+
+    // Each write frees what the blocks before it retired, a ring at a time.
+    let rounds = PAYLOAD_RETIRE_HOLD.div_ceil(payload::RETIRE_CAPACITY) + 1;
+    let mut writes = 0;
+    while drops.count() < 2 {
+        assert!(writes < rounds, "freed within a write per ring of the hold");
+        assert_eq!(counted_block(&mut rig), (0, 0), "flushing the hold");
+        write(&rig, "osc2", "frequency", 660.0.into());
+        writes += 1;
+    }
+    assert_eq!(drops.count(), 2, "both freed by writes");
 }
