@@ -137,7 +137,10 @@ fn a_reload_on_the_next_downbeat_lands_whole_on_it() {
     assert_eq!(audio.render(INTO_THE_BAR), twin.render(INTO_THE_BAR));
 
     let reloaded = DOCUMENT
-        .replace(r#""cutoff": 400.0"#, r#""filter_type": "highpass""#)
+        .replace(
+            r#""type": "filter", "config": { "cutoff": 400.0 }"#,
+            r#""type": "vca", "config": {}"#,
+        )
         .replace(r#""frequency": 220.0"#, r#""frequency": 330.0"#);
     let reloaded = Invention::from_json(&reloaded).unwrap();
     let queued = (running.reload_at(reloaded, &next_bar(), None)).unwrap();
@@ -248,4 +251,46 @@ fn an_authored_write_to_a_control_the_batch_leaves_alone_is_kept() {
 
 fn state_of(running: &RunningInvention, id: &str) -> RequestState {
     running.request_status(id).unwrap().state
+}
+
+/// Reloads `from` without its module `id`'s `key`, timed to the next
+/// downbeat: no condition can time the write that would restore it, so the
+/// module is rebuilt as the reload lands, as a removed key always was.
+fn removal_rebuilds_on_the_downbeat(
+    registry: crate::ModuleRegistry,
+    from: &str,
+    (id, key): (&str, &str),
+) {
+    let invention = Invention::from_json(from).unwrap();
+    let (runtime, _) = InventionBuilder::with_registry(48_000, registry)
+        .build(invention)
+        .unwrap();
+    let (mut running, audio) = start_manual(runtime);
+    audio.render(INTO_THE_BAR);
+    let mut removed = Invention::from_json(from).unwrap();
+    let spec = removed.modules.iter_mut().find(|spec| spec.id == id);
+    spec.unwrap().config.as_object_mut().unwrap().remove(key);
+
+    let queued = (running.reload_at(removed, &next_bar(), None)).unwrap();
+    assert_eq!(queued.state, RequestState::Queued);
+    audio.render(PAST_TWO_BARS);
+    let adopted = running.request_status(&queued.id).unwrap();
+    assert_eq!(adopted.state, RequestState::Adopted);
+    assert_eq!(adopted.built, [id]);
+}
+
+#[test]
+fn a_timed_reload_rebuilds_a_module_whose_removed_key_no_condition_times() {
+    // A melody's whole scale is a payload.
+    let scale = r#"{ "id": "tune", "type": "melody", "config": { "degrees": "[0, 4]", "seed": 1 } }, { "id": "dac""#;
+    let tuned = DOCUMENT.replace(r#"{ "id": "dac""#, scale);
+    let registry = crate::ModuleRegistry::default();
+    removal_rebuilds_on_the_downbeat(registry, &tuned, ("tune", "degrees"));
+
+    // A module whose controls are outside the request queue.
+    let mut registry = crate::ModuleRegistry::default();
+    registry.register(HostDialFactory);
+    let dial = r#"{ "id": "ld", "type": "host_dial", "config": { "rate": 4.0 } }, { "id": "dac""#;
+    let dialled = DOCUMENT.replace(r#"{ "id": "dac""#, dial);
+    removal_rebuilds_on_the_downbeat(registry, &dialled, ("ld", "rate"));
 }

@@ -4,8 +4,10 @@
 //! `publish::timed_chain`).
 
 use super::commit::PreparedCommit;
-use super::{ReloadError, RELOAD_ATTEMPTS};
+use super::{ReloadError, ReloadPlan, RELOAD_ATTEMPTS};
 use crate::control_request::RequestId;
+use crate::invention::declared::DeclaredSurface;
+use crate::invention::format::ModuleSpec;
 use crate::invention::publish::EditTime;
 use crate::invention::runtime::timed::edit_time;
 use crate::invention::runtime::{GraphCommandError, RunningInvention};
@@ -27,7 +29,10 @@ impl RunningInvention {
     /// that can never come.
     ///
     /// Its config changes to modules it keeps (a clock's reset included)
-    /// play from the sample it lands on. Its document is retained once it
+    /// play from the sample it lands on. A module it keeps whose change no
+    /// condition can time (a payload, such as a melody's whole scale, or a
+    /// key removed from an undeclared module) is rebuilt as it lands
+    /// instead. Its document is retained once it
     /// is adopted, with any authored write made meanwhile to a module it
     /// keeps and a control it does not change. While it waits, any other
     /// structural edit, reload or edit batch cancels it, as does an
@@ -53,7 +58,8 @@ impl RunningInvention {
         loop {
             let base = self.live.generation();
             let authored = self.live.authored_epoch();
-            let plan = self.plan_document(&validated)?;
+            let mut plan = self.plan_document(&validated)?;
+            self.rebuild_unchained(&mut plan, &validated.resolved);
             let document = Some(validated.document.clone());
             let queued = self
                 .prepare_plan(base, plan, document, None)
@@ -64,6 +70,55 @@ impl RunningInvention {
                 Err(GraphCommandError::TopologyMoved) if attempt < RELOAD_ATTEMPTS => attempt += 1,
                 Err(error) => return Err(ReloadError::Apply(error)),
             }
+        }
+    }
+
+    /// Rebuilds, rather than writes as it lands, a module `plan` keeps
+    /// whose write no condition can chain to the landing: a payload (a
+    /// melody's whole scale), or a key the document removes from a module
+    /// whose controls are outside the request queue. Its new spec, built
+    /// now, plays that key as a fresh build does from the sample the
+    /// reload lands on.
+    fn rebuild_unchained(&self, plan: &mut ReloadPlan, document: &Invention) {
+        let stated = |config: &serde_json::Value, key: &str| config.get(key).is_some();
+        let removed: Vec<(String, String)> = {
+            let state = self.state.lock().unwrap();
+            (plan.control_updates.iter())
+                .filter(|(id, key, _)| {
+                    let spec = document.modules.iter().find(|spec| spec.id == *id);
+                    let was = state
+                        .modules
+                        .get(id)
+                        .is_some_and(|info| stated(&info.config, key));
+                    was && spec.is_some_and(|spec| !stated(&spec.config, key))
+                })
+                .map(|(id, key, _)| (id.clone(), key.clone()))
+                .collect()
+        };
+        let rebuilt: Vec<ModuleSpec> = {
+            let surfaces = self.control_surfaces.lock().unwrap();
+            let unchained = |module_id: &str, key: &str| {
+                let declared = (surfaces.get(module_id))
+                    .and_then(|surface| surface.as_any())
+                    .and_then(|any| any.downcast_ref::<DeclaredSurface>());
+                match declared {
+                    Some(declared) => declared.is_payload(key),
+                    None => (removed.iter()).any(|(id, gone)| id == module_id && gone == key),
+                }
+            };
+            (document.modules.iter())
+                .filter(|spec| {
+                    (plan.control_updates.iter())
+                        .any(|(id, key, _)| *id == spec.id && unchained(id, key))
+                })
+                .cloned()
+                .collect()
+        };
+        for spec in rebuilt {
+            plan.control_updates.retain(|(id, _, _)| *id != spec.id);
+            plan.refreshed_configs.retain(|(id, _)| *id != spec.id);
+            plan.unchanged.retain(|id| *id != spec.id);
+            plan.swapped.push(spec);
         }
     }
 

@@ -135,12 +135,14 @@ fn a_scalar_written_after_a_payload_is_kept_beside_it() {
     assert!(report.controls_updated.is_empty(), "{report:?}");
     assert_eq!(gain(&running), 0.75.into());
 
-    // The document saved between the two writes plays the notes' gain,
-    // by a rebuild, as a removed key always is.
+    // The document saved between the two writes plays the notes' gain: the
+    // removed gain returns to it by writing the notes again, as a fresh
+    // build of that document holds it.
     let between = tape(json!({ "notes": carrying(0.25) }));
     let report = running.reload(between.clone()).expect("diff applies");
     pump.render(1);
-    assert_eq!(report.swapped, ["tape"]);
+    assert!(report.swapped.is_empty(), "{report:?}");
+    assert_eq!(report.controls_updated, ["tape.notes"], "{report:?}");
     assert_eq!(gain(&running), built_gain(&between));
     assert_eq!(gain(&running), 0.25.into());
 
