@@ -97,6 +97,9 @@ fn oscillator_writes_apply_on_the_audio_thread_and_read_back() {
 
     write(&rig, "vca", "level", 0.5.into());
     assert_eq!(counted_block(&mut rig), (0, 0));
+    // The write glides the level down from full scale.
+    assert!(rig.render(1).iter().all(|v| v.abs() < 1.0));
+    rig.render(GLIDE_BLOCKS);
     assert!(rig.render(1).iter().all(|v| v.abs() == 0.5));
 }
 

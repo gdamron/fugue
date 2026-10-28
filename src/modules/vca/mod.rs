@@ -143,6 +143,13 @@ impl Module for Vca {
                 let value = self.inputs.audio(i) * self.inputs.cv(i, 0.0);
                 self.outputs.set(i, value);
             }
+            // The level glides on under the CV, so a disconnect falls back
+            // to the level written, not to one written long ago.
+            if self.level.is_gliding() {
+                for _ in 0..frames {
+                    self.level.next_value();
+                }
+            }
         } else if self.level.is_gliding() {
             for i in 0..frames {
                 let value = self.inputs.audio(i) * self.level.next_value();
@@ -346,6 +353,19 @@ mod tests {
             previous = value;
         }
         assert_eq!(heard[glide - 1], 0.0, "it lands on the level");
+    }
+
+    #[test]
+    fn a_level_written_under_cv_is_the_one_heard_after_a_disconnect() {
+        let mut vca = Vca::with_level_at(1.0, 44_100);
+        let glide = gain_ramp_frames(44_100) as usize;
+        vca.set_input_connected(1, true);
+        vca.set_control("level", 0.0).unwrap();
+        vca.process(glide);
+        vca.set_input_connected(1, false);
+        vca.input_block_mut(0)[0] = 1.0;
+        vca.process(1);
+        assert_eq!(vca.output_block(0)[0], 0.0, "not a glide from 1.0");
     }
 
     #[test]
