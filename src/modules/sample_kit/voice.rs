@@ -50,6 +50,11 @@ pub(super) struct Voice {
     position: usize,
     pub(super) active: bool,
     tail: Tail,
+    /// What a tail still fading was about to add when a closer retrigger
+    /// replaced it, held as a constant that fades out over the same time,
+    /// so dropping that tail leaves no step.
+    residual: (f32, f32),
+    residual_gain: f32,
     /// The tail's fade per frame.
     declick_step: f32,
 }
@@ -76,6 +81,8 @@ impl Voice {
                 amp: 0.0,
                 gain: 0.0,
             },
+            residual: (0.0, 0.0),
+            residual_gain: 0.0,
             declick_step: 1.0 / (DECLICK_SECONDS * sample_rate as f32).max(1.0),
         }
     }
@@ -86,6 +93,7 @@ impl Voice {
         // A voice that has sounded nothing yet (played again at the
         // instant it started) has nothing to fade.
         if self.active && self.position > 0 {
+            self.keep_residual();
             self.tail = Tail {
                 source: if self.ringing_out {
                     Source::Previous
@@ -103,6 +111,27 @@ impl Voice {
         self.ringing_out = false;
         self.position = 0;
         self.active = self.sample.len() > 0;
+    }
+
+    /// Folds what the fading tail would add next frame into the residual,
+    /// before a retrigger replaces it.
+    fn keep_residual(&mut self) {
+        let (l, r) = self.tail_frame();
+        let gain = self.residual_gain;
+        self.residual = (self.residual.0 * gain + l, self.residual.1 * gain + r);
+        self.residual_gain = 1.0;
+    }
+
+    /// The tail's next frame, without advancing it.
+    fn tail_frame(&self) -> (f32, f32) {
+        let tail = &self.tail;
+        let sample = self.handle(tail.source);
+        if tail.gain <= 0.0 || tail.position >= sample.len() {
+            return (0.0, 0.0);
+        }
+        let (l, r) = sample.frame_at(tail.position);
+        let amp = tail.amp * tail.gain;
+        (l * amp, r * amp)
     }
 
     fn handle(&self, source: Source) -> &SampleData {
@@ -123,7 +152,7 @@ impl Voice {
     /// Whether the voice adds anything this frame.
     #[inline]
     pub(super) fn audible(&self) -> bool {
-        self.active || self.tail.gain > 0.0
+        self.active || self.tail.gain > 0.0 || self.residual_gain > 0.0
     }
 
     /// The voice's next frame: its sound at its level, plus any fading
@@ -149,20 +178,23 @@ impl Voice {
 
     #[inline]
     fn fade_out(&mut self) -> (f32, f32) {
-        let tail = &self.tail;
-        if tail.gain <= 0.0 {
-            return (0.0, 0.0);
+        let (mut left, mut right) = (0.0, 0.0);
+        if self.residual_gain > 0.0 {
+            left = self.residual.0 * self.residual_gain;
+            right = self.residual.1 * self.residual_gain;
+            self.residual_gain = (self.residual_gain - self.declick_step).max(0.0);
         }
-        let sample = self.handle(tail.source);
-        if tail.position >= sample.len() {
+        if self.tail.gain <= 0.0 {
+            return (left, right);
+        }
+        if self.tail.position >= self.handle(self.tail.source).len() {
             self.tail.gain = 0.0;
-            return (0.0, 0.0);
+            return (left, right);
         }
-        let (l, r) = sample.frame_at(tail.position);
-        let amp = tail.amp * tail.gain;
+        let (l, r) = self.tail_frame();
         self.tail.position += 1;
         self.tail.gain = (self.tail.gain - self.declick_step).max(0.0);
-        (l * amp, r * amp)
+        (left + l, right + r)
     }
 
     /// Takes `sample` for the next play, handing back the handle it no
